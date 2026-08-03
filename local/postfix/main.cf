@@ -46,16 +46,30 @@ virtual_transport = lmtp:inet:dovecot:24
 #  bounced afterwards. Accept-then-bounce makes you a backscatter source and
 #  is one of the faster ways to get an IP range blocklisted.
 # ----------------------------------------------------------------------------
+#  THIS LIST IS FOR PORT 25 - THE PUBLIC INTERNET. IT TRUSTS NOBODY.
+#
+#  An earlier version began with permit_mynetworks, and mynetworks included
+#  172.16.0.0/12. The Docker bridge gateway is 172.18.0.1, so every connection
+#  from the host matched, permit short-circuited the rest of the list, and
+#  Postfix happily relayed to any domain on earth. That is an open relay, and
+#  the isolation-style test caught it.
+#
+#  The rule: port 25 accepts mail FOR us, never FROM us. Client trust belongs
+#  on the submission port (587) and nowhere else. Spammers scan for open
+#  relays continuously; one on a real IP is blocklisted within hours.
 smtpd_recipient_restrictions =
-    permit_mynetworks
-    permit_sasl_authenticated
     reject_unauth_destination
     reject_unlisted_recipient
+    permit
 
 smtpd_helo_required = yes
 
-# Local dev only. In production this is the container/host network,
-# not a blanket set of private ranges.
+#  Consulted ONLY by the submission service in master.cf, never by port 25.
+#  Broad here because the Docker bridge address varies between machines.
+#
+#  IN PRODUCTION: narrow this to the loopback and require SASL authentication
+#  on 587 instead. Never let a private-range CIDR stand in for authentication
+#  on a host that faces the internet.
 mynetworks = 127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
 
 # ----------------------------------------------------------------------------

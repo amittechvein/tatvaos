@@ -9,10 +9,25 @@ This is Sprint 0.1–0.3 of the delivery plan, minus the parts that require a pu
 ## Quick start
 
 ```bash
-# inside WSL, from this directory
-docker compose up -d --build          # first run: ~3 minutes
-./scripts/test-mail.sh                # proves the loop works
-./scripts/test-isolation.sh           # proves tenants cannot see each other
+# one command: build, wait, verify, report
+./scripts/up.sh
+```
+
+From PowerShell:
+
+```powershell
+wsl -d Ubuntu bash ./scripts/up.sh
+```
+
+It brings the stack up, waits for it to stabilise, runs both test suites, and
+runs `diagnose.sh` automatically if anything fails. The individual scripts are
+still there if you want them:
+
+```bash
+docker compose up -d --build
+./scripts/test-mail.sh        # inbound delivery, aliases, reject paths
+./scripts/test-isolation.sh   # tenants cannot see each other
+./scripts/diagnose.sh         # where is it broken?
 ```
 
 Then open **http://localhost:8025** — every outbound message lands there.

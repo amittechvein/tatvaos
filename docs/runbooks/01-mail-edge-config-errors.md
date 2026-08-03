@@ -130,3 +130,59 @@ This never exercises the password. Postfix connects over TCP, which does:
 docker exec tv-postfix bash -c \
   'PGPASSWORD=dev_mail_pw psql -h postgres -U tatvaos_mailedge -d tatvaos_mail -c "SELECT 1"'
 ```
+
+---
+
+## Trap 4 — `permit_mynetworks` on port 25 is an open relay
+
+Symptom, from `test-mail.sh`:
+
+```
+[FAIL] relay to a foreign domain ACCEPTED - you have an open relay
+```
+
+Postfix evaluates `smtpd_recipient_restrictions` left to right and **stops at the
+first verdict**. A list beginning with `permit_mynetworks` therefore never reaches
+`reject_unauth_destination` for any client inside `mynetworks`.
+
+The trap on Docker: the bridge gateway is `172.18.0.1`, which falls inside
+`172.16.0.0/12`. Every connection from the host looked like a trusted internal
+client, so Postfix relayed to any domain in the world.
+
+**The rule:** port 25 accepts mail *for* you and never *from* you. Client trust
+belongs on the submission port (587), which exists precisely to relay outbound,
+and nowhere else.
+
+Port 25:
+
+```
+smtpd_recipient_restrictions =
+    reject_unauth_destination
+    reject_unlisted_recipient
+    permit
+```
+
+Port 587, in `master.cf`:
+
+```
+-o smtpd_recipient_restrictions=permit_mynetworks,reject_unauth_destination,reject
+```
+
+**Production:** replace `permit_mynetworks` on 587 with `permit_sasl_authenticated`
+and narrow `mynetworks` to loopback. A private-range CIDR is not authentication.
+
+### Why this one matters more than the rest
+
+An open relay on a public IP is found by automated scanners within hours, used to
+send spam within minutes of that, and lands the range on Spamhaus shortly after.
+Delisting is slow and IP reputation is the hardest thing to rebuild — see
+architecture §12. This is the single most expensive misconfiguration in the file.
+
+### Check it deliberately
+
+```bash
+swaks --server localhost:2525 --from t@example.com --to someone@notourdomain.com
+```
+
+Anything other than a `554` rejection is a defect. `test-mail.sh` asserts this on
+every run; keep that assertion for the life of the project.

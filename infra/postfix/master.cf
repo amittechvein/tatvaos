@@ -7,6 +7,10 @@
 
 # ----------------------------------------------------------------------------
 # Inbound SMTP :25  -  "the internet" in local dev (host port 2525)
+#
+#  Inherits smtpd_recipient_restrictions from main.cf, which deliberately does
+#  NOT begin with permit_mynetworks. This port must never trust its client -
+#  it accepts mail addressed to us and refuses everything else.
 # ----------------------------------------------------------------------------
 smtp      inet  n       -       n       -       -       smtpd
     -o smtpd_client_restrictions=
@@ -14,9 +18,13 @@ smtp      inet  n       -       n       -       -       smtpd
 # ----------------------------------------------------------------------------
 # Submission :587  -  authenticated client send (host port 5870)
 #
+#  THIS is where client trust belongs, and only here. Relaying to external
+#  domains is the entire purpose of a submission port, so permit_mynetworks
+#  is correct at this position and dangerous on port 25.
+#
 #  Production requires TLS and SASL here. Local dev accepts unauthenticated
 #  submission from mynetworks so swaks and the API can send without a
-#  certificate. This is the one setting that must NOT be copied to production.
+#  certificate. These three -o lines must NOT be copied to production.
 # ----------------------------------------------------------------------------
 submission inet n       -       n       -       -       smtpd
     -o syslog_name=postfix/submission

@@ -101,11 +101,34 @@ The purpose of Phase 0 is to fail cheaply. Every expensive mistake in this categ
 
 ### ▣ PHASE 0 EXIT GATE
 
-- [ ] Mail received from the internet and delivered to a Postgres-backed virtual user
-- [ ] Outbound reaching Gmail **inbox**, verified
-- [ ] Mail edge rebuildable from git
+- [x] Mail delivered to a Postgres-backed virtual user *(locally — 26/26 green)*
+- [ ] Outbound reaching Gmail **inbox**, verified  ← **the actual gate**
+- [x] Mail edge rebuildable from git *(`local/` rebuilds from scratch)*
 - [ ] **Decision recorded: relay-first (expected) or own IPs**
 - [ ] Provider confirmed in writing on port 25 + rDNS
+
+**Status: local half done, real half not started.**
+
+What the local stack proved: the software works. Virtual domain and mailbox
+lookups, alias resolution, reject-at-SMTP-time, LMTP handoff, IMAP auth against
+Postgres, and tenant isolation under RLS.
+
+What it cannot prove, and what Phase 0 actually exists to answer: **whether mail
+from a new IP reaches a Gmail inbox.** That needs a real VM with a real address.
+No amount of local green ticks substitutes for it, and it is the finding that
+decides whether this business is viable — see §12 and §16.
+
+Three defects found and fixed while getting here, all recorded in
+`docs/runbooks/01-mail-edge-config-errors.md`:
+
+| Defect | Why it mattered |
+|---|---|
+| Postfix trailing comments | `bad numerical configuration` — config silently invalid |
+| Dovecot one-line blocks | `Garbage after '{'` — container crash-looped |
+| **`permit_mynetworks` on port 25** | **Open relay.** Would have been found by scanners within hours of going live |
+
+The third is the one worth remembering. It was caught by a test asserting that
+something which *should* fail does. Keep writing those.
 
 **Fail condition:** if you cannot get clean delivery and cannot get relay economics to work, stop here. That is a good outcome for six weeks of effort.
 
