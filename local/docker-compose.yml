@@ -1,0 +1,171 @@
+# ============================================================================
+#  TatvaOS Mail - local development stack
+# ============================================================================
+#
+#  Nothing here can send mail to the real internet. Postfix relays everything
+#  outbound to Mailpit, which is a dead end with a web UI. That is deliberate:
+#  a misconfigured dev stack that can reach the internet is how test messages
+#  end up at real addresses and how a new IP range earns its first complaint.
+#
+#  Ports on the host are deliberately non-standard so they cannot collide with
+#  anything Windows already has bound.
+#
+#    2525  -> postfix :25    inbound SMTP    (simulate the internet with swaks)
+#    5870  -> postfix :587   submission      (authenticated send)
+#    1143  -> dovecot :143   IMAP            (point Thunderbird here)
+#    8025  -> mailpit :8025  web UI          (everything outbound lands here)
+#    5432  -> postgres
+#    6379  -> redis
+#   11334  -> rspamd :11334  web UI
+#
+#    docker compose up -d
+#    ./scripts/test-mail.sh
+# ============================================================================
+
+name: tatvaos-mail-local
+
+services:
+
+  # --------------------------------------------------------------------------
+  postgres:
+    image: postgres:17-alpine
+    container_name: tv-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tatvaos_mail
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: devpass
+      # C locale + explicit encoding keeps citext behaviour predictable
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Files here run once, in filename order, on an EMPTY data directory only.
+      # If you edit them you must `docker compose down -v` to see the change.
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d tatvaos_mail"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks: [mailnet]
+
+  # --------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: tv-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+    networks: [mailnet]
+
+  # --------------------------------------------------------------------------
+  #  Mailpit - catches ALL outbound. Nothing leaves your machine.
+  # --------------------------------------------------------------------------
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: tv-mailpit
+    restart: unless-stopped
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    ports:
+      - "8025:8025"      # web UI - open http://localhost:8025
+    networks: [mailnet]
+
+  # --------------------------------------------------------------------------
+  #  Postfix - MTA with Postgres-backed virtual domains, mailboxes and aliases
+  # --------------------------------------------------------------------------
+  postfix:
+    build:
+      context: ./postfix
+    container_name: tv-postfix
+    restart: unless-stopped
+    hostname: mail.techvein.local
+    depends_on:
+      postgres:
+        condition: service_healthy
+      dovecot:
+        condition: service_started
+    ports:
+      - "2525:25"        # inbound  - swaks --server localhost:2525
+      - "5870:587"       # submission
+    volumes:
+      - ./postfix/main.cf:/etc/postfix/main.cf:ro
+      - ./postfix/master.cf:/etc/postfix/master.cf:ro
+      - ./postfix/sql:/etc/postfix/sql:ro
+      - maillogs:/var/log
+    networks: [mailnet]
+
+  # --------------------------------------------------------------------------
+  #  Dovecot - IMAP + LMTP, authenticating against Postgres
+  # --------------------------------------------------------------------------
+  dovecot:
+    build:
+      context: ./dovecot
+    container_name: tv-dovecot
+    restart: unless-stopped
+    hostname: mail.techvein.local
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "1143:143"       # IMAP - point Thunderbird here
+    volumes:
+      - ./dovecot/dovecot.conf:/etc/dovecot/dovecot.conf:ro
+      - ./dovecot/dovecot-sql.conf.ext:/etc/dovecot/dovecot-sql.conf.ext:ro
+      - vmail:/var/mail/vhosts
+    networks: [mailnet]
+
+  # --------------------------------------------------------------------------
+  #  Rspamd - spam scoring. Optional locally; start it with:
+  #      docker compose --profile spam up -d
+  # --------------------------------------------------------------------------
+  rspamd:
+    image: rspamd/rspamd:latest
+    container_name: tv-rspamd
+    restart: unless-stopped
+    profiles: [spam]
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "11334:11334"    # web UI - http://localhost:11334
+    volumes:
+      - ./rspamd:/etc/rspamd/local.d:ro
+      - rspamddata:/var/lib/rspamd
+    networks: [mailnet]
+
+  # --------------------------------------------------------------------------
+  #  Adminer - lightweight DB browser. Start with:
+  #      docker compose --profile tools up -d
+  #  (DBeaver on Windows connecting to localhost:5432 is usually nicer.)
+  # --------------------------------------------------------------------------
+  adminer:
+    image: adminer:latest
+    container_name: tv-adminer
+    restart: unless-stopped
+    profiles: [tools]
+    ports:
+      - "8080:8080"
+    networks: [mailnet]
+
+networks:
+  mailnet:
+    driver: bridge
+
+volumes:
+  pgdata:
+  redisdata:
+  vmail:
+  maillogs:
+  rspamddata:

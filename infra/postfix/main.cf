@@ -1,0 +1,87 @@
+# ============================================================================
+#  Postfix main.cf  -  TatvaOS Mail local development
+# ============================================================================
+#  Mirrors the production shape: fully virtual, Postgres-backed, LMTP handoff
+#  to Dovecot. The only local concessions are no TLS and a relayhost pointing
+#  at Mailpit so nothing can escape.
+# ============================================================================
+
+compatibility_level = 3.6
+
+# ----------------------------------------------------------------------------
+# Identity
+# ----------------------------------------------------------------------------
+myhostname = mail.techvein.local
+mydomain   = techvein.local
+myorigin   = $mydomain
+
+# EMPTY ON PURPOSE. Every domain is virtual and comes from Postgres.
+# Listing anything here would make Postfix treat it as a local Unix-user
+# domain and bypass the virtual lookups entirely.
+mydestination =
+
+inet_interfaces = all
+inet_protocols  = ipv4
+
+# Containers log to stdout, not syslog
+maillog_file = /dev/stdout
+
+# ----------------------------------------------------------------------------
+# Virtual domains, mailboxes and aliases - all from PostgreSQL
+# ----------------------------------------------------------------------------
+virtual_mailbox_domains = pgsql:/etc/postfix/sql/virtual-domains.cf
+virtual_mailbox_maps    = pgsql:/etc/postfix/sql/virtual-mailboxes.cf
+virtual_alias_maps      = pgsql:/etc/postfix/sql/virtual-aliases.cf
+
+# Hand delivery to Dovecot over LMTP. Dovecot owns the mail store; Postfix
+# never writes a maildir itself. This is the correct split and it is what
+# lets you swap either side independently.
+virtual_transport = lmtp:inet:dovecot:24
+
+# ----------------------------------------------------------------------------
+# Recipient validation
+# ----------------------------------------------------------------------------
+#  reject_unlisted_recipient is the important one: unknown recipients are
+#  refused DURING the SMTP transaction with 550, rather than accepted and
+#  bounced afterwards. Accept-then-bounce makes you a backscatter source and
+#  is one of the faster ways to get an IP range blocklisted.
+# ----------------------------------------------------------------------------
+smtpd_recipient_restrictions =
+    permit_mynetworks
+    permit_sasl_authenticated
+    reject_unauth_destination
+    reject_unlisted_recipient
+
+smtpd_helo_required = yes
+
+# Local dev only. In production this is the container/host network,
+# not a blanket set of private ranges.
+mynetworks = 127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+
+# ----------------------------------------------------------------------------
+# Outbound - everything goes to Mailpit
+# ----------------------------------------------------------------------------
+#  This single line is what makes the stack safe to experiment with.
+#  Remove it and your test messages go to real people.
+# ----------------------------------------------------------------------------
+relayhost = [mailpit]:1025
+
+# Mailpit speaks plain SMTP; no TLS locally
+smtp_tls_security_level  = none
+smtpd_tls_security_level = none
+
+# ----------------------------------------------------------------------------
+# Limits - matched to the architecture doc
+# ----------------------------------------------------------------------------
+message_size_limit = 26214400        # 25 MB, same as Gmail
+mailbox_size_limit = 0               # quotas are enforced by Dovecot, not here
+
+# ----------------------------------------------------------------------------
+# Misc
+# ----------------------------------------------------------------------------
+alias_maps     = hash:/etc/aliases
+alias_database = hash:/etc/aliases
+biff           = no
+append_dot_mydomain = no
+readme_directory    = no
+smtputf8_enable     = yes

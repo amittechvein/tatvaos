@@ -1,0 +1,16 @@
+# Does this domain belong to an active tenant on this platform?
+# Postfix only cares whether a row comes back, not what it contains.
+#
+# NOTE: connects as tatvaos_mailedge, which has SELECT on the routing tables
+# ONLY. It cannot read a single message even if this container is compromised.
+
+hosts    = postgres
+user     = tatvaos_mailedge
+password = dev_mail_pw
+dbname   = tatvaos_mail
+
+query = SELECT 1 FROM domains d
+        JOIN tenants t ON t.id = d.tenant_id
+        WHERE d.fqdn = '%s'
+          AND d.is_active = true
+          AND t.status = 'active'
