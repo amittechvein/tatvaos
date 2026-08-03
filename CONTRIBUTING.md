@@ -40,6 +40,20 @@ Conventional commits: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`
 - `console.log` left in application code
 - A migration that drops a column without a documented rollback
 
+## Line endings
+
+`.gitattributes` pins everything to LF except `.ps1`/`.bat`/`.cmd`. This is not
+style — a `.sh` or Postfix `.cf` file checked out with CRLF fails inside the
+container with errors that point nowhere useful (`bad interpreter`, hostname
+lookups for `postgres\r`). Do not override it, and do not set
+`core.autocrlf=true` for this repo.
+
+If you ever see a script fail with a `\r` in the error, that is the cause:
+
+```bash
+file local/scripts/test-mail.sh     # should say "ASCII text", not "with CRLF"
+```
+
 ## Adding a dependency
 
 Ask: does this need to exist? Every package is something to patch, audit and eventually migrate off. For anything touching mail parsing, crypto or auth, prefer the boring well-maintained option over the clever new one.
