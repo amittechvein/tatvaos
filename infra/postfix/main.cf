@@ -73,8 +73,18 @@ smtpd_tls_security_level = none
 # ----------------------------------------------------------------------------
 # Limits - matched to the architecture doc
 # ----------------------------------------------------------------------------
-message_size_limit = 26214400        # 25 MB, same as Gmail
-mailbox_size_limit = 0               # quotas are enforced by Dovecot, not here
+#
+#  NOTE: Postfix has NO trailing-comment syntax. Everything after '=' to the
+#  end of the line is the value, '#' included. Writing
+#      message_size_limit = 26214400   # 25 MB
+#  produces "bad numerical configuration" because the value is the whole string.
+#  Comments must sit on their own line. This applies to every Postfix map file
+#  too, including the pgsql lookups in sql/.
+#
+# 25 MB - the same limit Gmail enforces
+message_size_limit = 26214400
+# 0 = unlimited here; per-mailbox quotas are enforced by Dovecot
+mailbox_size_limit = 0
 
 # ----------------------------------------------------------------------------
 # Misc

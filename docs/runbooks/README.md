@@ -6,6 +6,7 @@ Format: **symptom → diagnosis → fix → confirm**.
 
 ## Needed before taking paying customers
 
+- [x] [Postfix/Dovecot config errors](01-mail-edge-config-errors.md)
 - [ ] Mail queue backing up
 - [ ] Delivery latency above SLA
 - [ ] Blocklist entry appeared — delisting procedure

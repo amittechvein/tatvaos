@@ -28,12 +28,26 @@ for i in $(seq 1 30); do
     sleep 2
 done
 
-# Validate config; print problems but keep going so logs are inspectable
-postfix check || echo "[postfix] WARNING: postfix check reported issues"
+# Validate config and PRINT WHAT IS WRONG.
+#
+# The previous version swallowed the output behind "check reported issues",
+# which told you something was broken but not what - useless in a restart loop.
+echo "[postfix] --- postfix check ---"
+if ! postfix check 2>&1 | sed 's/^/[postfix]   /'; then
+    echo "[postfix] --- end check (problems above) ---"
+else
+    echo "[postfix] --- config OK ---"
+fi
 
 echo "[postfix] starting in foreground"
 echo "[postfix]   inbound     -> host port 2525"
 echo "[postfix]   submission  -> host port 5870"
 echo "[postfix]   all outbound relays to mailpit (nothing leaves this machine)"
 
-exec postfix start-fg
+# If start-fg dies, show why rather than silently restarting forever
+postfix start-fg
+rc=$?
+echo "[postfix] start-fg exited with code $rc"
+echo "[postfix] --- last words ---"
+postconf -n 2>&1 | head -40 | sed 's/^/[postfix]   /'
+exit "$rc"
