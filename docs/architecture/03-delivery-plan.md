@@ -65,7 +65,7 @@ The purpose of Phase 0 is to fail cheaply. Every expensive mistake in this categ
 
 | # | Task | Note |
 |---|---|---|
-| 1 | **Verify outbound port 25 and PTR control with your hosting provider — in writing, before paying** | Hard go/no-go. Many providers block 25 outright or will not delegate rDNS. Discovering this in month eight is catastrophic |
+| 1 | **Get outbound SMTP unblocked on Linode** — see `docs/setup/04-linode-smtp-unblock.md` | Hard go/no-go. Linode blocks 25/465/587 by default. DNS must be configured **before** the ticket, or you lose days to a round trip |
 | 2 | Register a **throwaway** test domain | Never experiment on `tatvaos.com` or `techvein.com` — a burned reputation is very slow to repair |
 | 3 | Provision 2 VMs: `mail-edge`, `app` | Hetzner or OVH. Separate hosts from day one |
 | 4 | Postfix installed, accepting on :25 | |
