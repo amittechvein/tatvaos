@@ -21,9 +21,17 @@ import {
 export type ColorMode = 'light' | 'dark';
 export type RailMode = 'expanded' | 'icons' | 'hidden';
 
+// The defaults are named constants, not ACCENTS[0].hex. The project compiles
+// with noUncheckedIndexedAccess, which — correctly — treats an array index as
+// possibly undefined. Reaching for ! to silence that would be suppressing a
+// real rule to save a line; naming the value says what it is and the arrays
+// then reference it, so there is still one source of truth.
+export const DEFAULT_ACCENT = '#6c5ffc';
+export const DEFAULT_RAIL = '#1c1c2b';
+
 /** Accent presets. The switcher also accepts any hex. */
 export const ACCENTS: { name: string; hex: string }[] = [
-  { name: 'Indigo',  hex: '#6c5ffc' },
+  { name: 'Indigo',  hex: DEFAULT_ACCENT },
   { name: 'Blue',    hex: '#3563f0' },
   { name: 'Teal',    hex: '#0ca5a5' },
   { name: 'Violet',  hex: '#a855f7' },
@@ -33,7 +41,7 @@ export const ACCENTS: { name: string; hex: string }[] = [
 
 /** Sidebar backgrounds. */
 export const RAILS: { name: string; hex: string }[] = [
-  { name: 'Charcoal', hex: '#1c1c2b' },
+  { name: 'Charcoal', hex: DEFAULT_RAIL },
   { name: 'Navy',     hex: '#152449' },
   { name: 'Teal',     hex: '#0b3a45' },
   { name: 'Plum',     hex: '#331b46' },
@@ -56,8 +64,8 @@ interface Theme {
 
 const DEFAULTS = {
   mode: 'light' as ColorMode,
-  accent: ACCENTS[0].hex,
-  rail: RAILS[0].hex,
+  accent: DEFAULT_ACCENT,
+  rail: DEFAULT_RAIL,
   railMode: 'expanded' as RailMode,
 };
 
