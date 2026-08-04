@@ -6,7 +6,12 @@ RUN corepack enable
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* ./
 COPY apps/web/package.json apps/web/
 COPY packages ./packages
-RUN pnpm install --frozen-lockfile || pnpm install
+# No `|| pnpm install` fallback. Falling back to an unfrozen install when the
+# lockfile does not match means the image can be built with dependency
+# versions CI never tested - and it does so silently, which is the worst part.
+# If this line fails, the lockfile is genuinely out of date and needs
+# committing, not working around.
+RUN pnpm install --frozen-lockfile
 
 FROM node:22-alpine AS build
 WORKDIR /repo
