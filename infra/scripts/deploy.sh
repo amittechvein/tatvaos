@@ -48,6 +48,45 @@ fi
 ok "secrets present"
 
 # ---------------------------------------------------------------------------
+#  Docker must exist AND be usable by this user.
+#
+#  Checked here because without it every later step fails individually while
+#  the script carries on and prints "[ ok ] images ready" — a green line under
+#  a command that never ran. A missing prerequisite should stop the deploy at
+#  the top with one clear message, not produce fifty lines of noise ending in
+#  "services did not stabilise".
+# ---------------------------------------------------------------------------
+if ! command -v docker >/dev/null 2>&1; then
+    bad "docker is not installed on this server"
+    note "As root:  curl -fsSL https://get.docker.com | sh"
+    note "          usermod -aG docker $(id -un)"
+    exit 1
+fi
+
+if ! docker info >/dev/null 2>&1; then
+    bad "docker is installed but this user cannot talk to the daemon"
+    note "As root:  usermod -aG docker $(id -un)"
+    note "Group membership applies to NEW sessions — reconnect afterwards."
+    exit 1
+fi
+
+if ! docker compose version >/dev/null 2>&1; then
+    bad "the docker compose plugin is missing"
+    note "As root:  apt-get install -y docker-compose-plugin"
+    exit 1
+fi
+ok "docker $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo present)"
+
+# 1 GB runs Postfix and little else. The full stack on a Nanode will be
+# OOM-killed partway through the build, which surfaces as a container that
+# vanishes rather than as an obvious memory error.
+MEM_MB=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)
+if [ "$MEM_MB" -gt 0 ] && [ "$MEM_MB" -lt 3500 ]; then
+    printf '   %s[warn]%s %s MB RAM. The full stack wants 4 GB.\n' "$Y" "$X" "$MEM_MB"
+    note "Resize the Linode, or expect the build to be OOM-killed."
+fi
+
+# ---------------------------------------------------------------------------
 #  The guard that matters.
 #
 #  Deploying the testing overlay to production would silently disable outbound
@@ -93,7 +132,15 @@ fi
 # ---------------------------------------------------------------------------
 step "Pulling and building"
 $COMPOSE pull 2>&1 | grep -Ei 'error|warn' | sed 's/^/   /' || true
-$COMPOSE build 2>&1 | tail -5 | sed 's/^/   /'
+
+# The exit status of the build, not of `tail`. Piping to tail made the
+# pipeline always succeed, so "images ready" printed whatever happened.
+if ! build_out=$($COMPOSE build 2>&1); then
+    bad "build failed"
+    printf '%s\n' "$build_out" | tail -30 | sed 's/^/      /'
+    exit 1
+fi
+printf '%s\n' "$build_out" | tail -5 | sed 's/^/   /'
 ok "images ready"
 
 # ---------------------------------------------------------------------------
@@ -118,11 +165,37 @@ $COMPOSE up -d --remove-orphans 2>&1 | tail -12 | sed 's/^/   /'
 
 # ---------------------------------------------------------------------------
 step "Applying schema"
-sleep 6
-for f in local/postgres/init/*.sql; do
-    $COMPOSE exec -T postgres psql -U postgres -d tatvaos_mail -v ON_ERROR_STOP=1 < "$f" >/dev/null 2>&1 \
-        && ok "$(basename "$f")" || bad "$(basename "$f")"
+
+# Wait for Postgres to accept connections rather than sleeping and hoping.
+# A fixed sleep is either too short on a cold first deploy or wasted on every
+# one after.
+for i in $(seq 1 30); do
+    $COMPOSE exec -T postgres pg_isready -U postgres >/dev/null 2>&1 && break
+    sleep 2
 done
+
+schema_failed=0
+for f in local/postgres/init/*.sql; do
+    # Output is NOT swallowed. Hiding psql's stderr behind /dev/null turns a
+    # one-line "relation does not exist" into a silent FAIL that takes an hour
+    # to track down — which is exactly what the Postfix entrypoint did to us.
+    if out=$($COMPOSE exec -T postgres psql -U postgres -d tatvaos_mail \
+             -v ON_ERROR_STOP=1 < "$f" 2>&1); then
+        ok "$(basename "$f")"
+    else
+        bad "$(basename "$f")"
+        printf '%s\n' "$out" | tail -20 | sed 's/^/      /'
+        schema_failed=1
+    fi
+done
+
+# A half-applied schema is worse than a failed deploy: the containers come up,
+# the health check may even pass, and the breakage surfaces later as missing
+# columns under load.
+[ "$schema_failed" -eq 0 ] || {
+    bad "schema did not apply cleanly — stopping"
+    exit 1
+}
 
 # ---------------------------------------------------------------------------
 step "Health"
