@@ -7,8 +7,8 @@ user     = tatvaos_mailedge
 password = dev_mail_pw
 dbname   = tatvaos_mail
 
-query = SELECT 1 FROM mailboxes m
-        JOIN tenants t ON t.id = m.tenant_id
+query = SELECT 1 FROM mail.mailboxes m
+        JOIN core.tenants t ON t.id = m.tenant_id
         WHERE m.address = '%s'
           AND m.is_active = true
           AND t.status = 'active'

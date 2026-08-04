@@ -9,8 +9,8 @@ user     = tatvaos_mailedge
 password = dev_mail_pw
 dbname   = tatvaos_mail
 
-query = SELECT 1 FROM domains d
-        JOIN tenants t ON t.id = d.tenant_id
+query = SELECT 1 FROM core.domains d
+        JOIN core.tenants t ON t.id = d.tenant_id
         WHERE d.fqdn = '%s'
           AND d.is_active = true
           AND t.status = 'active'

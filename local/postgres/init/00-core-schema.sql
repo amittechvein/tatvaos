@@ -324,7 +324,11 @@ CREATE TABLE IF NOT EXISTS core.audit_logs (
     tenant_id     uuid NOT NULL REFERENCES core.tenants(id) ON DELETE CASCADE,
     product_code  text REFERENCES core.products(code),
     actor_user_id uuid,
-    actor_ip      inet,
+    -- text, not inet. Npgsql maps a C# string to text and PostgreSQL has no
+    -- implicit text -> inet cast, so an inet column here means every audit
+    -- write fails at runtime. Nothing queries this by subnet; if that ever
+    -- changes, cast at read time rather than breaking the write path.
+    actor_ip      text,
     action        text NOT NULL,
     target_type   text,
     target_id     text,

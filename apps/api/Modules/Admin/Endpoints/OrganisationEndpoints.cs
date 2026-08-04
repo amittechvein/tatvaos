@@ -48,8 +48,9 @@ public static class OrganisationEndpoints
             // Scope to each organisation in turn. The alternative — one query
             // with RLS off — is exactly the unbounded read this design avoids.
             tenant.EnterPlatformScope(org.Id, actor);
+            await db.SyncTenantAsync(ct);
 
-            var cap = await storage.GetCapacityAsync(org.Id, ct);
+            var cap = await storage.GetCapacityAsync(org.Id, "mail", ct);
             var domain = await db.Domains.AsNoTracking()
                 .Where(d => d.Type == "primary")
                 .Select(d => d.Fqdn)
@@ -58,7 +59,7 @@ public static class OrganisationEndpoints
 
             results.Add(new OrganisationResponse(
                 org.Id, org.Name, org.Type, org.Status,
-                domain ?? "—", org.StorageModel, org.MaxUsers,
+                domain ?? "—", cap.StorageModel, cap.MaxUsers,
                 cap.UserCount, cap.TotalBytes, cap.UsedBytes,
                 domainCount, org.AdminEmail, org.CreatedAt, org.TrialEndsAt));
         }
@@ -74,14 +75,15 @@ public static class OrganisationEndpoints
         if (org is null) return Results.NotFound();
 
         tenant.EnterPlatformScope(org.Id, CurrentUserId(http));
+        await db.SyncTenantAsync(ct);
 
-        var cap = await storage.GetCapacityAsync(org.Id, ct);
+        var cap = await storage.GetCapacityAsync(org.Id, "mail", ct);
         var domain = await db.Domains.AsNoTracking()
             .Where(d => d.Type == "primary").Select(d => d.Fqdn).FirstOrDefaultAsync(ct);
 
         return Results.Ok(new OrganisationResponse(
             org.Id, org.Name, org.Type, org.Status, domain ?? "—",
-            org.StorageModel, org.MaxUsers, cap.UserCount,
+            cap.StorageModel, cap.MaxUsers, cap.UserCount,
             cap.TotalBytes, cap.UsedBytes,
             await db.Domains.CountAsync(ct), org.AdminEmail, org.CreatedAt, org.TrialEndsAt));
     }
@@ -117,16 +119,18 @@ public static class OrganisationEndpoints
         if (await db.Domains.IgnoreQueryFilters().AnyAsync(d => d.Fqdn == fqdn, ct))
             return Results.Conflict(new { error = $"The domain {fqdn} is already registered on this platform." });
 
+        if (!await db.Plans.AnyAsync(p => p.Id == req.PlanId, ct))
+            return Results.BadRequest(new { error = "Unknown plan." });
+
+        // The tenant row is now identity and contact details only. Commercial
+        // terms live in core.subscriptions and core.storage_pools, because they
+        // change on a different schedule and for different reasons — an upgrade
+        // should not be an UPDATE on the organisation's name row.
         var org = new Tenant
         {
             Name = req.Name.Trim(),
             Type = req.Type,
             Status = "pending",
-            PlanId = req.PlanId,
-            StorageModel = req.StorageModel,
-            MaxUsers = req.MaxUsers,
-            PerUserQuotaBytes = req.StorageModel == "per_user" ? req.PerUserQuotaBytes : null,
-            PooledStorageBytes = req.StorageModel == "pooled" ? req.PooledStorageBytes : null,
             AdminName = req.AdminName,
             AdminEmail = req.AdminEmail,
             Phone = req.Phone,
@@ -138,8 +142,38 @@ public static class OrganisationEndpoints
         db.Tenants.Add(org);
         await db.SaveChangesAsync(ct);
 
-        // From here on, act inside the new organisation.
+        // From here on, act inside the new organisation. SyncTenantAsync
+        // pushes the switch down to the database session; without it a write
+        // to an RLS-forced table below would still be under the old tenant.
         tenant.EnterPlatformScope(org.Id, CurrentUserId(http));
+        await db.SyncTenantAsync(ct);
+
+        db.Subscriptions.Add(new Subscription
+        {
+            TenantId = org.Id,
+            PlanId = req.PlanId,
+            Status = "trial",
+            Seats = req.MaxUsers ?? 0,
+            RenewsAt = DateTimeOffset.UtcNow.AddDays(30),
+        });
+
+        db.StoragePools.Add(new StoragePool
+        {
+            TenantId = org.Id,
+            StorageModel = req.StorageModel,
+            TotalBytes = req.StorageModel == "pooled" ? req.PooledStorageBytes ?? 0 : 0,
+            PerUserQuotaBytes = req.StorageModel == "per_user" ? req.PerUserQuotaBytes : null,
+        });
+
+        // Mail gets an allocation from the start; other products are added when
+        // the customer turns them on. A NULL allocation means "whatever is
+        // left", so Mail under a pooled plan is not capped before Drive exists.
+        db.StorageAllocations.Add(new StorageAllocation
+        {
+            TenantId = org.Id,
+            ProductCode = "mail",
+            AllocatedBytes = null,
+        });
 
         var domain = new Domain
         {
@@ -161,7 +195,7 @@ public static class OrganisationEndpoints
         await db.SaveChangesAsync(ct);
 
         await audit.WriteAsync("organisation.created", "tenant", org.Id.ToString(),
-            after: new { org.Name, org.Type, org.StorageModel, domain = fqdn }, ct: ct);
+            after: new { org.Name, org.Type, storageModel = req.StorageModel, domain = fqdn }, ct: ct);
 
         return Results.Created($"/api/admin/organisations/{org.Id}", new
         {
@@ -192,6 +226,7 @@ public static class OrganisationEndpoints
         await db.SaveChangesAsync(ct);
 
         tenant.EnterPlatformScope(org.Id, CurrentUserId(http));
+        await db.SyncTenantAsync(ct);
         await audit.WriteAsync("organisation.suspended", "tenant", org.Id.ToString(),
             before, new { org.Status }, ct);
 
@@ -214,6 +249,7 @@ public static class OrganisationEndpoints
         await db.SaveChangesAsync(ct);
 
         tenant.EnterPlatformScope(org.Id, CurrentUserId(http));
+        await db.SyncTenantAsync(ct);
         await audit.WriteAsync("organisation.activated", "tenant", org.Id.ToString(),
             before, new { org.Status }, ct);
 
@@ -237,29 +273,35 @@ public static class OrganisationEndpoints
     {
         const long GB = 1024L * 1024 * 1024;
 
-        (string Name, long Quota, string Role, bool External, string Colour)[] defs = orgType switch
+        // Products are listed per category rather than per organisation because
+        // that is where the difference actually falls: a school buys Drive for
+        // its staff and not for its 400 students.
+        string[] mail = ["mail"];
+
+        (string Name, long Quota, string Role, bool External, string Colour, string[] Products)[] defs
+            = orgType switch
         {
             "school" =>
             [
-                ("Leadership",     50 * GB, "org_admin", true,  "#ea580c"),
-                ("Teachers",       15 * GB, "employee",  true,  "#3563f0"),
-                ("Administration", 20 * GB, "manager",   true,  "#a855f7"),
+                ("Leadership",     50 * GB, "org_admin", true,  "#ea580c", mail),
+                ("Teachers",       15 * GB, "employee",  true,  "#3563f0", mail),
+                ("Administration", 20 * GB, "manager",   true,  "#a855f7", mail),
                 // Students blocked from external send by default. A school
                 // requirement, and one of the strongest abuse controls we have.
-                ("Students",        2 * GB, "employee",  false, "#16a34a"),
+                ("Students",        2 * GB, "employee",  false, "#16a34a", mail),
             ],
             "hospital" =>
             [
-                ("Doctors",        30 * GB, "employee", true,  "#3563f0"),
-                ("Nursing",        15 * GB, "employee", true,  "#16a34a"),
-                ("Reception",      10 * GB, "employee", true,  "#a855f7"),
-                ("Administration", 30 * GB, "manager",  true,  "#ea580c"),
+                ("Doctors",        30 * GB, "employee", true,  "#3563f0", mail),
+                ("Nursing",        15 * GB, "employee", true,  "#16a34a", mail),
+                ("Reception",      10 * GB, "employee", true,  "#a855f7", mail),
+                ("Administration", 30 * GB, "manager",  true,  "#ea580c", mail),
             ],
             _ =>
             [
-                ("Leadership",  50 * GB, "org_admin", true, "#ea580c"),
-                ("Staff",       30 * GB, "employee",  true, "#3563f0"),
-                ("Contractors",  5 * GB, "employee",  true, "#a855f7"),
+                ("Leadership",  50 * GB, "org_admin", true, "#ea580c", mail),
+                ("Staff",       30 * GB, "employee",  true, "#3563f0", mail),
+                ("Contractors",  5 * GB, "employee",  true, "#a855f7", mail),
             ],
         };
 
@@ -269,6 +311,7 @@ public static class OrganisationEndpoints
             Name = d.Name,
             DefaultQuotaBytes = d.Quota,
             DefaultRole = d.Role,
+            DefaultProducts = d.Products,
             CanSendExternal = d.External,
             Colour = d.Colour,
         });

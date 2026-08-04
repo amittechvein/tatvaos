@@ -47,15 +47,15 @@ hdr "Database lookups (as the mail-edge role)"
 
 q() { docker exec tv-postgres psql -U tatvaos_mailedge -d tatvaos_mail -tAc "$1" 2>/dev/null; }
 
-[ "$(q "SELECT count(*) FROM domains WHERE is_active")" -ge 2 ] \
+[ "$(q "SELECT count(*) FROM core.domains WHERE is_active")" -ge 2 ] \
     && pass "domains visible to mail edge" || fail "domain lookup failed"
 
-[ "$(q "SELECT count(*) FROM mailboxes WHERE is_active")" -ge 4 ] \
+[ "$(q "SELECT count(*) FROM mail.mailboxes WHERE is_active")" -ge 4 ] \
     && pass "mailboxes visible to mail edge" || fail "mailbox lookup failed"
 
 # The mail edge must NOT be able to read message content.
 if docker exec tv-postgres psql -U tatvaos_mailedge -d tatvaos_mail \
-        -tAc "SELECT count(*) FROM messages" >/dev/null 2>&1; then
+        -tAc "SELECT count(*) FROM mail.messages" >/dev/null 2>&1; then
     fail "mail edge CAN read messages - grants are wrong, fix before going further"
 else
     pass "mail edge cannot read messages (permission denied, as designed)"

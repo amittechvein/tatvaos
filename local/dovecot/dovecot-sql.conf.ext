@@ -17,11 +17,21 @@ default_pass_scheme = SHA512-CRYPT
 #
 # The tenants join matters: suspending a tenant must immediately stop its
 # users authenticating, without touching a single mailbox row.
+# imap_password_hash, not the Core password. An app password is scoped and
+# revocable on its own, so removing Thunderbird's access does not lock the
+# person out of every other TatvaOS product.
+#
+# The core.users join is what makes a suspended PERSON stop authenticating.
+# The tenants join does the same for a suspended ORGANISATION. A shared
+# mailbox has no user_id, so the LEFT JOIN must not filter it out - hence
+# the "u.id IS NULL OR u.status = 'active'" rather than a plain WHERE.
 password_query = \
     SELECT m.address AS user, \
-           m.password_hash AS password \
-    FROM   mailboxes m \
-    JOIN   tenants   t ON t.id = m.tenant_id \
+           m.imap_password_hash AS password \
+    FROM   mail.mailboxes m \
+    JOIN   core.tenants   t ON t.id = m.tenant_id \
+    LEFT   JOIN core.users u ON u.id = m.user_id \
     WHERE  m.address = '%u' \
       AND  m.is_active = true \
-      AND  t.status = 'active'
+      AND  t.status = 'active' \
+      AND  (u.id IS NULL OR u.status = 'active')

@@ -1,17 +1,39 @@
 #!/usr/bin/env bash
 #
-# TatvaOS Mail - tenant isolation test
+# TatvaOS - tenant isolation test
 #
-# This is the seed of tests/isolation from the delivery plan. It is the actual
-# guarantee that one organisation cannot read another's mail; the RLS policy is
-# only its implementation.
+# THE test. It is the actual guarantee that one organisation cannot read
+# another's mail; the RLS policy is only its implementation.
 #
 # Grow this file with every endpoint you add, for the life of the project.
+#
+# ---------------------------------------------------------------------------
+#  ONE script, two ways of reaching Postgres.
+#
+#  This used to exist as two copies - one for the local Docker stack, one
+#  inlined into .github/workflows/ci.yml. They drifted, and a psql
+#  command-tag bug that had already been fixed in one reappeared in the
+#  other. Copies of assertions do not stay in sync; the connection details
+#  are the only thing that legitimately differs, so that is the only thing
+#  parameterised.
+#
+#    TATVAOS_PSQL_MODE=docker   (default)  docker exec tv-postgres psql -U <role>
+#    TATVAOS_PSQL_MODE=direct              psql -h $PGHOST, then SET ROLE <role>
+#
+#  Direct mode is for CI service containers, where only the superuser has a
+#  password and roles are reached with SET ROLE.
+# ---------------------------------------------------------------------------
 
 set -uo pipefail
 
 TECHVEIN='11111111-1111-1111-1111-111111111111'
 SCHOOL='22222222-2222-2222-2222-222222222222'
+
+MODE="${TATVAOS_PSQL_MODE:-docker}"
+PGHOST="${PGHOST:-localhost}"
+PGUSER="${PGUSER:-postgres}"
+PGDATABASE="${PGDATABASE:-tatvaos_mail}"
+CONTAINER="${TATVAOS_PG_CONTAINER:-tv-postgres}"
 
 PASSED=0; FAILED=0
 c() { [ -t 1 ] && printf '%s' "$1" || true; }
@@ -21,43 +43,59 @@ hdr()  { printf '\n%s== %s%s\n' "$CYAN" "$1" "$RST"; }
 pass() { printf '  %s[PASS]%s %s\n' "$GREEN" "$RST" "$1"; PASSED=$((PASSED+1)); }
 fail() { printf '  %s[FAIL]%s %s\n' "$RED" "$RST" "$1"; FAILED=$((FAILED+1)); }
 
-# Run a query as the application role with a given tenant context.
+# Run SQL as a given role. Returns psql's exit status; output goes to stdout.
+run_as() {
+    local role="$1" sql="$2"
+    if [ "$MODE" = "direct" ]; then
+        psql -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE" -tAc "SET ROLE $role; $sql"
+    else
+        docker exec "$CONTAINER" psql -U "$role" -d "$PGDATABASE" -tAc "$sql"
+    fi
+}
+
+# Scalar result of a query run as a role.
 #
-# psql emits a command tag for every statement, so "SET ...; SELECT count(*)"
-# returns two lines: "SET" then "1". Without tail -n1 the caller sees "SET1"
-# and every numeric comparison fails with "integer expected".
+# tail -n1 is not cosmetic. psql prints a command tag for every non-SELECT
+# statement, so "SET ROLE x; SET app.tenant_id = y; SELECT count(*)" returns
+# "SET", "SET", then the number. Without this the caller sees "SETSET0" and
+# reports a failure that has nothing to do with isolation.
+scalar_as() {
+    run_as "$1" "$2" 2>/dev/null | tail -n1 | tr -d '[:space:]'
+}
+
 as_tenant() {
-    local tenant="$1" sql="$2"
-    docker exec tv-postgres psql -U tatvaos_app -d tatvaos_mail -tAc \
-        "SET app.tenant_id = '$tenant'; $sql" 2>/dev/null | tail -n1 | tr -d '[:space:]'
+    scalar_as tatvaos_app "SET app.tenant_id = '$1'; $2"
 }
 
 no_context() {
-    docker exec tv-postgres psql -U tatvaos_app -d tatvaos_mail -tAc "$1" 2>/dev/null | tr -d '[:space:]'
+    scalar_as tatvaos_app "$1"
 }
 
-docker ps --format '{{.Names}}' | grep -qx tv-postgres || {
-    printf '%sPostgres is not running.%s\n' "$RED" "$RST"; exit 1; }
+# ---------------------------------------------------------------------------
+if [ "$MODE" = "docker" ]; then
+    docker ps --format '{{.Names}}' | grep -qx "$CONTAINER" || {
+        printf '%sPostgres container %s is not running.%s\n' "$RED" "$CONTAINER" "$RST"; exit 1; }
+fi
 
 # ---------------------------------------------------------------------------
 hdr "Each tenant sees only its own messages"
 
-t=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM messages")
-s=$(as_tenant "$SCHOOL"   "SELECT count(*) FROM messages")
+t=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM mail.messages")
+s=$(as_tenant "$SCHOOL"   "SELECT count(*) FROM mail.messages")
 [ "${t:-0}" -ge 1 ] && pass "Techvein sees its own messages ($t)" || fail "Techvein sees nothing - RLS too strict or seed missing"
 [ "${s:-0}" -ge 1 ] && pass "ABC School sees its own messages ($s)" || fail "ABC School sees nothing"
 
 hdr "Neither tenant can see the other's mail"
 
-leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM messages WHERE tenant_id = '$SCHOOL'")
+leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM mail.messages WHERE tenant_id = '$SCHOOL'")
 [ "${leak:-1}" -eq 0 ] && pass "Techvein cannot see ABC School rows" || fail "LEAK: Techvein sees $leak ABC School row(s)"
 
-leak=$(as_tenant "$SCHOOL" "SELECT count(*) FROM messages WHERE tenant_id = '$TECHVEIN'")
+leak=$(as_tenant "$SCHOOL" "SELECT count(*) FROM mail.messages WHERE tenant_id = '$TECHVEIN'")
 [ "${leak:-1}" -eq 0 ] && pass "ABC School cannot see Techvein rows" || fail "LEAK: ABC School sees $leak Techvein row(s)"
 
 hdr "Subject lines do not cross the boundary"
 
-subj=$(as_tenant "$SCHOOL" "SELECT string_agg(subject,'|') FROM messages")
+subj=$(as_tenant "$SCHOOL" "SELECT string_agg(subject,'|') FROM mail.messages")
 case "$subj" in
     *TECHVEIN*) fail "LEAK: ABC School can read a Techvein subject line" ;;
     *)          pass "no Techvein subject visible to ABC School" ;;
@@ -65,44 +103,63 @@ esac
 
 hdr "Unset tenant context fails CLOSED"
 
-n=$(no_context "SELECT count(*) FROM messages")
+n=$(no_context "SELECT count(*) FROM mail.messages")
 [ "${n:-1}" -eq 0 ] && pass "no tenant context returns zero rows" \
                     || fail "DANGEROUS: ${n} row(s) visible with no tenant set"
 
+hdr "Core content is isolated too, not just mail"
+
+# Added when Core took ownership of billing. A leak here exposes what another
+# organisation pays, which is commercially damaging in a different way from a
+# mail leak and is just as unacceptable.
+leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM core.subscriptions WHERE tenant_id = '$SCHOOL'")
+[ "${leak:-1}" -eq 0 ] && pass "Techvein cannot see ABC School's subscription" \
+                       || fail "LEAK: billing data visible across tenants"
+
+leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM core.storage_pools WHERE tenant_id = '$SCHOOL'")
+[ "${leak:-1}" -eq 0 ] && pass "Techvein cannot see ABC School's storage pool" \
+                       || fail "LEAK: storage pool visible across tenants"
+
 hdr "Writes cannot be forged into another tenant"
 
-forge_out=$(docker exec tv-postgres psql -U tatvaos_app -d tatvaos_mail -tAc \
+forge_out=$(run_as tatvaos_app \
     "SET app.tenant_id = '$TECHVEIN';
-     INSERT INTO messages (tenant_id, mailbox_id, folder_id, subject)
+     INSERT INTO mail.messages (tenant_id, mailbox_id, folder_id, subject)
      SELECT '$SCHOOL', m.id, f.id, 'forged-by-isolation-test'
-     FROM   mailboxes m
-     JOIN   folders   f ON f.mailbox_id = m.id AND f.name = 'INBOX'
+     FROM   mail.mailboxes m
+     JOIN   mail.folders   f ON f.mailbox_id = m.id AND f.name = 'INBOX'
      WHERE  m.address = 'amit@techvein.local'
      LIMIT  1;" 2>&1)
 forge_rc=$?
 
+# The source row is one Techvein CAN see, stamped with ABC School's id. An
+# earlier version selected from a row belonging to the other tenant, which RLS
+# made invisible - so nothing was inserted, psql exited 0, and the test passed
+# while proving nothing.
 if [ "$forge_rc" -ne 0 ] && printf '%s' "$forge_out" | grep -qi 'row-level security\|violates'; then
     pass "cross-tenant INSERT blocked by WITH CHECK"
 elif printf '%s' "$forge_out" | grep -q 'INSERT 0 0'; then
     fail "test inconclusive - source row not visible, rewrite the fixture"
 else
     fail "LEAK: Techvein wrote a row tagged as ABC School - WITH CHECK is missing"
-    # clean up so the next run is not polluted by the forged row
-    docker exec tv-postgres psql -U postgres -d tatvaos_mail -tAc \
-        "DELETE FROM messages WHERE subject = 'forged-by-isolation-test';" >/dev/null 2>&1
+    run_as postgres "DELETE FROM mail.messages WHERE subject = 'forged-by-isolation-test';" >/dev/null 2>&1
 fi
 
 hdr "Mail edge cannot reach content tables"
 
-if docker exec tv-postgres psql -U tatvaos_mailedge -d tatvaos_mail \
-        -tAc "SELECT count(*) FROM messages" >/dev/null 2>&1; then
+if run_as tatvaos_mailedge "SELECT count(*) FROM mail.messages" >/dev/null 2>&1; then
     fail "mail edge can read messages - revoke that grant"
 else
     pass "mail edge denied on messages"
 fi
 
-if docker exec tv-postgres psql -U tatvaos_mailedge -d tatvaos_mail \
-        -tAc "SELECT count(*) FROM mailboxes" >/dev/null 2>&1; then
+if run_as tatvaos_mailedge "SELECT count(*) FROM core.subscriptions" >/dev/null 2>&1; then
+    fail "mail edge can read billing - revoke that grant"
+else
+    pass "mail edge denied on billing"
+fi
+
+if run_as tatvaos_mailedge "SELECT count(*) FROM mail.mailboxes" >/dev/null 2>&1; then
     pass "mail edge can still read mailboxes (needed for routing)"
 else
     fail "mail edge cannot read mailboxes - Postfix will reject everything"

@@ -6,9 +6,9 @@ user     = tatvaos_mailedge
 password = dev_mail_pw
 dbname   = tatvaos_mail
 
-query = SELECT m.address FROM aliases a
-        JOIN mailboxes m ON m.id = a.target_mailbox_id
-        JOIN tenants   t ON t.id = a.tenant_id
+query = SELECT m.address FROM mail.aliases a
+        JOIN mail.mailboxes m ON m.id = a.target_mailbox_id
+        JOIN core.tenants   t ON t.id = a.tenant_id
         WHERE a.address = '%s'
           AND a.is_active = true
           AND m.is_active = true
