@@ -91,15 +91,20 @@ export function Sidebar({ sections, brand }: { sections: NavSection[]; brand: st
       <Box sx={{ overflowY: 'auto', overflowX: 'hidden', flex: 1, pb: 2 }} className="scroll-thin">
         {sections.map((section) => (
           <List key={section.heading} dense sx={{ px: 1.5, py: 0 }}>
+            {/* Heading with a rule running off to the right — Materio's way of
+                separating groups without drawing a full divider across the
+                rail, which would cut the active pill in half. */}
             {!icons && (
-              <Typography
-                variant="caption"
-                sx={{ display: 'block', px: 1.5, pt: 2, pb: 0.5, fontWeight: 600,
-                      letterSpacing: '0.06em', textTransform: 'uppercase',
-                      color: 'text.disabled', fontSize: 11 }}
-              >
-                {section.heading}
-              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, px: 1.5, pt: 2.5, pb: 1 }}>
+                <Typography
+                  variant="caption"
+                  sx={{ fontWeight: 500, color: 'text.disabled', fontSize: 12,
+                        whiteSpace: 'nowrap' }}
+                >
+                  {section.heading}
+                </Typography>
+                <Box sx={{ flex: 1, height: '1px', bgcolor: 'divider' }} />
+              </Box>
             )}
 
             {section.items.map((item) => {
@@ -141,9 +146,14 @@ export function Sidebar({ sections, brand }: { sections: NavSection[]; brand: st
                     />
                   )}
                   {!icons && item.children && (
-                    <Box component="span" sx={{ ml: 'auto', fontSize: 12, opacity: 0.7,
-                      transform: expanded ? 'rotate(90deg)' : 'none', transition: '0.15s' }}>
-                      ›
+                    <Box component="span" sx={{ ml: 'auto', display: 'flex', opacity: 0.6,
+                      transform: expanded ? 'rotate(90deg)' : 'none',
+                      transition: 'transform 0.15s' }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                           stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+                           strokeLinejoin="round">
+                        <path d="M9 6l6 6-6 6" />
+                      </svg>
                     </Box>
                   )}
                 </ListItemButton>
@@ -161,9 +171,18 @@ export function Sidebar({ sections, brand }: { sections: NavSection[]; brand: st
                             component={Link}
                             href={c.href}
                             selected={pathname === c.href}
-                            sx={{ borderRadius: 999, minHeight: 34,
+                            sx={{ borderRadius: 999, minHeight: 34, pl: 1.5,
                                   '&.Mui-selected': { bgcolor: 'transparent', color: 'primary.main' } }}
                           >
+                            {/* A small ring rather than an icon. Nested items
+                                in Materio are marked, not iconified — giving
+                                each one its own glyph makes the group read as
+                                five unrelated destinations. */}
+                            <ListItemIcon sx={{ minWidth: 26 }}>
+                              <Box sx={{ width: 6, height: 6, borderRadius: '50%',
+                                         border: '1.5px solid currentColor',
+                                         opacity: pathname === c.href ? 1 : 0.55 }} />
+                            </ListItemIcon>
                             <ListItemText
                               primary={c.label}
                               slotProps={{ primary: { sx: { fontSize: 13 } } }}

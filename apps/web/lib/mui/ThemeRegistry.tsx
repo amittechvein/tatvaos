@@ -28,20 +28,18 @@ export function MuiRegistry({ children }: { children: React.ReactNode }) {
   const { accent, mode } = useAppearance();
   const theme = useMemo(() => buildTheme(accent), [accent]);
 
+  // enableCssLayer is deliberately NOT set.
+  //
+  // It wraps every MUI style in `@layer mui`, and CSS layers always lose to
+  // unlayered rules regardless of specificity — that is what layers are for.
+  // Tailwind 3 compiles its own @layer directives away and emits plain
+  // unlayered CSS, so with it enabled Tailwind's reset beat MUI's component
+  // styles and the product rendered as unstyled text: inputs with no outline,
+  // buttons with no fill.
+  //
+  // Only safe to turn on once Tailwind emits native layers (v4) and the order
+  // is declared explicitly.
   return (
-    {/*
-      enableCssLayer is deliberately OFF.
-
-      It wraps every MUI style in `@layer mui`, and CSS layers always lose to
-      unlayered rules regardless of specificity. Tailwind 3 compiles its own
-      @layer directives away and emits plain unlayered CSS — so with the layer
-      enabled, Tailwind's preflight reset beat MUI's component styles and the
-      product rendered as unstyled text: inputs with no outline, buttons with
-      no fill.
-
-      Turning it on again is only safe once Tailwind also emits native layers
-      (v4) and the order is declared explicitly.
-    */}
     <AppRouterCacheProvider options={{ key: 'mui' }}>
       <ThemeProvider theme={theme} defaultMode={mode} modeStorageKey="tatvaos.mui-mode">
         {/* Normalises browser defaults and applies the palette's background
