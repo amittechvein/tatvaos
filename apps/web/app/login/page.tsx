@@ -100,7 +100,10 @@ function SignInForm() {
   }
 
   return (
-    <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: 'background.paper' }}>
+    // minHeight AND height: the panel is a fixed-height column that manages
+    // its own overflow, so the page itself should not scroll on a laptop.
+    <Box sx={{ display: 'flex', minHeight: '100vh', height: { lg: '100vh' },
+               overflow: { lg: 'hidden' }, bgcolor: 'background.paper' }}>
       {/* ---------------------------------------------------------------- */}
       {/*  Left: what this is                                              */}
       {/* ---------------------------------------------------------------- */}
@@ -109,9 +112,16 @@ function SignInForm() {
           display: { xs: 'none', lg: 'flex' },
           flexDirection: 'column',
           width: '54%',
-          p: 7,
+          // Tighter padding and a scroll container, because the panel has to
+          // survive a 660px-tall laptop viewport. Without this the roadmap —
+          // the one part that answers "what else is coming" — falls below the
+          // fold, which is the only part of the panel that cannot be inferred
+          // from the rest.
+          px: { lg: 5, xl: 7 },
+          py: { lg: 4.5, xl: 6 },
           position: 'relative',
           overflow: 'hidden',
+          maxHeight: '100vh',
           color: '#fff',
           background: (t) =>
             `linear-gradient(135deg, ${t.palette.primary.dark} 0%, ${t.palette.primary.main} 55%, ${t.palette.primary.light} 100%)`,
@@ -143,17 +153,17 @@ function SignInForm() {
             </Box>
           </Box>
 
-          <Typography sx={{ mt: 6, fontSize: 34, fontWeight: 600, lineHeight: 1.22,
-                            maxWidth: 520, letterSpacing: '-0.02em' }}>
+          <Typography sx={{ mt: { lg: 4, xl: 6 }, fontSize: { lg: 30, xl: 34 }, fontWeight: 600,
+                            lineHeight: 1.2, maxWidth: 520, letterSpacing: '-0.02em' }}>
             One identity.<br />Every product.
           </Typography>
 
-          <Typography sx={{ mt: 2, fontSize: 15.5, opacity: 0.82, maxWidth: 500, lineHeight: 1.65 }}>
+          <Typography sx={{ mt: 1.75, fontSize: 15, opacity: 0.82, maxWidth: 500, lineHeight: 1.6 }}>
             Core is the layer your organisation runs on — people, domains, storage
             and billing in one place. Products plug into it.
           </Typography>
 
-          <Stack spacing={3} sx={{ mt: 5.5, maxWidth: 520 }}>
+          <Stack spacing={{ lg: 2.25, xl: 3 }} sx={{ mt: { lg: 3.5, xl: 5 }, maxWidth: 520 }}>
             {CAPABILITIES.map((c) => (
               <Box key={c.title} sx={{ display: 'flex', gap: 2 }}>
                 <Box sx={{ width: 38, height: 38, borderRadius: 2, flexShrink: 0,
@@ -177,9 +187,9 @@ function SignInForm() {
           {/* The roadmap, stated rather than implied. Shipped and not-yet are
               visibly different — promising six products and delivering one is
               how a platform loses the customer it just won. */}
-          <Box sx={{ mt: 'auto', pt: 6 }}>
+          <Box sx={{ mt: 'auto', pt: { lg: 3.5, xl: 6 } }}>
             <Typography sx={{ fontSize: 11.5, fontWeight: 600, letterSpacing: '0.09em',
-                              textTransform: 'uppercase', opacity: 0.62, mb: 1.75 }}>
+                              textTransform: 'uppercase', opacity: 0.62, mb: 1.5 }}>
               Products
             </Typography>
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>

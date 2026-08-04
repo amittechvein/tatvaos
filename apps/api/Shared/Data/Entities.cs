@@ -70,6 +70,23 @@ public class Domain
     [MaxLength(256)] public string? DkimPrivateKeyRef { get; set; }
     [MaxLength(16)]  public string DmarcPolicy { get; set; } = "none";
 
+    // ---- Verification state ---------------------------------------------
+    // Five independent timestamps, not one flag. Ownership proven while MX
+    // still points elsewhere is a different problem from nothing being
+    // configured, and the admin has to be told which they have.
+    public DateTimeOffset? SpfVerifiedAt { get; set; }
+    public DateTimeOffset? DkimVerifiedAt { get; set; }
+    public DateTimeOffset? DmarcVerifiedAt { get; set; }
+    public DateTimeOffset? LastCheckedAt { get; set; }
+    [MaxLength(500)] public string? LastCheckResult { get; set; }
+
+    /// <summary>
+    /// A subdomain of a domain TatvaOS owns, issued at onboarding. Verified by
+    /// construction, and not deletable by the customer — it is how they sign
+    /// in if their own domain's DNS ever breaks.
+    /// </summary>
+    public bool IsPlatform { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public Tenant? Tenant { get; set; }
 }

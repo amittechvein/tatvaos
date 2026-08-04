@@ -175,11 +175,40 @@ public static class OrganisationEndpoints
             AllocatedBytes = null,
         });
 
+        // ------------------------------------------------------------------
+        //  A working address, immediately.
+        //
+        //  The organisation gets a subdomain of one WE own, active from the
+        //  moment it is created because we control the parent zone. They can
+        //  sign in, create people and send mail this afternoon.
+        //
+        //  Requiring DNS verification before first login is how onboarding
+        //  stalls for a week: the person evaluating the product is almost
+        //  never the person who can edit DNS. Their own domain is added and
+        //  verified later, from their own console, with their existing mail
+        //  untouched until they choose to move it.
+        // ------------------------------------------------------------------
+        var platformFqdn = await AllocateSubdomainAsync(db, req.Name, ct);
+
+        db.Domains.Add(new Domain
+        {
+            TenantId = org.Id,
+            Fqdn = platformFqdn,
+            Type = "primary",
+            IsActive = true,
+            IsPlatform = true,
+            OwnershipVerifiedAt = DateTimeOffset.UtcNow,
+            MxVerifiedAt = DateTimeOffset.UtcNow,
+            DkimSelector = $"tv{DateTime.UtcNow:yyyy}a",
+        });
+
+        // Their own domain — added now so the record exists, but inactive
+        // until they prove ownership.
         var domain = new Domain
         {
             TenantId = org.Id,
             Fqdn = fqdn,
-            Type = "primary",
+            Type = "alias",
             IsActive = false,
             VerificationToken = GenerateVerificationToken(),
             DkimSelector = $"tv{DateTime.UtcNow:yyyy}a",
@@ -202,13 +231,25 @@ public static class OrganisationEndpoints
             org.Id,
             org.Name,
             org.Status,
-            domain = fqdn,
-            verification = new
+
+            // The address they can use today.
+            signInDomain = platformFqdn,
+            note = $"They can sign in immediately on {platformFqdn} and start creating people. " +
+                   $"No DNS changes are needed for that.",
+
+            // The one they will move to, when they are ready.
+            ownDomain = new
             {
-                type = "TXT",
-                host = "@",
-                value = $"tatvaos-verification={domain.VerificationToken}",
-                note = "The organisation must publish this record before any mail is accepted for the domain.",
+                fqdn,
+                active = false,
+                verification = new
+                {
+                    type = "TXT",
+                    host = "@",
+                    value = $"tatvaos-verification={domain.VerificationToken}",
+                    note = "Publish this on their own domain, then verify it from their console. " +
+                           "Their existing mail is unaffected until they move the MX record.",
+                },
             },
         });
     }
@@ -260,6 +301,42 @@ public static class OrganisationEndpoints
 
     private static Guid CurrentUserId(HttpContext http) =>
         Guid.TryParse(http.User.FindFirst("sub")?.Value, out var id) ? id : Guid.Empty;
+
+    /// <summary>
+    /// Turns "ABC School & Co." into abcschool.tatvaos.com, adding a numeric
+    /// suffix if that is taken.
+    ///
+    /// Derived from the name rather than random, because the customer has to
+    /// read this address aloud to their staff on day one. "abcschool" is
+    /// memorable; "t-7f3a9c" is a support call.
+    /// </summary>
+    private static async Task<string> AllocateSubdomainAsync(
+        AppDbContext db, string name, CancellationToken ct)
+    {
+        var zone = "tatvaos.com";
+
+        var slug = System.Text.RegularExpressions.Regex
+            .Replace(name.ToLowerInvariant(), @"[^a-z0-9]+", "")
+            .Trim();
+
+        if (slug.Length < 3) slug = $"org{slug}";
+        if (slug.Length > 30) slug = slug[..30];
+
+        // Reserved names would collide with our own hosts. A customer called
+        // "Mail Systems Ltd" must not be handed mail.tatvaos.com.
+        string[] reserved = ["mail", "www", "api", "app", "admin", "staging", "smtp", "imap", "mx", "ns"];
+        if (reserved.Contains(slug)) slug = $"{slug}org";
+
+        var candidate = $"{slug}.{zone}";
+        var n = 1;
+        while (await db.Domains.IgnoreQueryFilters().AnyAsync(d => d.Fqdn == candidate, ct))
+        {
+            n++;
+            candidate = $"{slug}{n}.{zone}";
+        }
+
+        return candidate;
+    }
 
     private static string GenerateVerificationToken() =>
         Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();

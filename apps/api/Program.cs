@@ -5,6 +5,8 @@ using Microsoft.IdentityModel.Tokens;
 using TatvaOS.Api.Modules.Admin;
 using TatvaOS.Api.Modules.Admin.Endpoints;
 using TatvaOS.Api.Modules.Auth.Endpoints;
+using TatvaOS.Api.Modules.Core;
+using TatvaOS.Api.Modules.Core.Endpoints;
 using TatvaOS.Api.Shared.Auth;
 using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Tenancy;
@@ -79,6 +81,10 @@ builder.Services.AddScoped<TokenIssuer>();
 builder.Services.AddScoped<StorageAllocator>();
 builder.Services.AddScoped<AuditWriter>();
 
+// Singleton: it holds a DNS client with its own connection handling, and a
+// new resolver per request would discard that for no benefit.
+builder.Services.AddSingleton<DomainVerifier>();
+
 builder.Services.AddOpenApi();
 
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
@@ -113,6 +119,7 @@ app.UseAuthorization();
 app.MapAuthEndpoints();
 app.MapOrganisationEndpoints();
 app.MapUserEndpoints();
+app.MapDomainEndpoints();
 
 // ---------------------------------------------------------------------------
 //  Bootstrap the first super admin
