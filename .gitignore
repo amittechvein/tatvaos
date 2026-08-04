@@ -11,6 +11,12 @@ bin/
 obj/
 *.user
 
+# Turborepo local task cache. Compressed build artifacts keyed by a hash of
+# the inputs - regenerated on demand and meaningless on another machine.
+# Committing them bloats the repo with binaries that change on every build.
+.turbo/
+**/.turbo/
+
 # Expo
 .expo/
 *.ipa
