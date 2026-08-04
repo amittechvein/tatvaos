@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import Box from '@mui/material/Box';
+import Chip from '@mui/material/Chip';
 import Collapse from '@mui/material/Collapse';
 import Drawer from '@mui/material/Drawer';
 import List from '@mui/material/List';
@@ -19,6 +20,10 @@ export interface NavItem {
   label: string;
   icon: React.ReactNode;
   children?: { href: string; label: string }[];
+  /** Visible but not navigable — a product that does not exist yet. */
+  disabled?: boolean;
+  /** Small chip on the right, e.g. "Soon". */
+  badge?: string;
 }
 
 export interface NavSection {
@@ -116,10 +121,12 @@ export function Sidebar({ sections, brand }: { sections: NavSection[]; brand: st
 
               const row = (
                 <ListItemButton
-                  {...(item.children
-                    ? { onClick: () => setOpen(expanded ? null : item.href) }
-                    : { component: Link, href: item.href })}
-                  selected={!!active}
+                  {...(item.disabled
+                    ? { disabled: true }
+                    : item.children
+                      ? { onClick: () => setOpen(expanded ? null : item.href) }
+                      : { component: Link, href: item.href })}
+                  selected={!item.disabled && !!active}
                   title={icons ? item.label : undefined}
                   sx={{
                     borderRadius: 999,
@@ -145,6 +152,17 @@ export function Sidebar({ sections, brand }: { sections: NavSection[]; brand: st
                       slotProps={{ primary: { sx: { fontSize: 14, fontWeight: 500 } } }}
                     />
                   )}
+                  {!icons && item.badge && (
+                    <Chip
+                      label={item.badge}
+                      size="small"
+                      sx={{ ml: 'auto', height: 20, fontSize: 10, fontWeight: 600,
+                            // Opacity is inherited from the disabled button, so
+                            // this needs lifting back or the chip is unreadable.
+                            opacity: 2 }}
+                    />
+                  )}
+
                   {!icons && item.children && (
                     <Box component="span" sx={{ ml: 'auto', display: 'flex', opacity: 0.6,
                       transform: expanded ? 'rotate(90deg)' : 'none',
