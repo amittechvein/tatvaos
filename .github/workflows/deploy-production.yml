@@ -1,0 +1,101 @@
+# ============================================================================
+#  Deploy to PRODUCTION — manual only
+# ============================================================================
+#  Deliberately NOT triggered by a push.
+#
+#  Production is the only environment where outbound mail reaches real
+#  inboxes and where the data belongs to paying customers. A deploy here is a
+#  decision, not a consequence of merging — so it requires a human to start it
+#  and a GitHub environment approval to proceed.
+# ============================================================================
+
+name: Deploy production
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "production" to confirm'
+        required: true
+        type: string
+      ref:
+        description: 'Commit or tag to deploy (default: main)'
+        required: false
+        default: 'main'
+        type: string
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    name: Confirmation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the typed confirmation
+        run: |
+          if [ "${{ inputs.confirm }}" != "production" ]; then
+            echo "Confirmation text did not match. Nothing deployed."
+            exit 1
+          fi
+
+  deploy:
+    name: Deploy to production
+    needs: guard
+    runs-on: ubuntu-latest
+    # Requires a reviewer in GitHub -> Settings -> Environments -> production.
+    # A typed string is a speed bump; an approval is a second person.
+    environment:
+      name: production
+      url: https://app.tatvaos.com
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script_stop: true
+          command_timeout: 20m
+          script: |
+            set -euo pipefail
+            cd /srv/tatvaos-production
+            git fetch --all --prune
+            git reset --hard ${{ inputs.ref }}
+            # deploy.sh takes its own pre-deploy database backup and refuses
+            # to continue if that fails.
+            CI=1 ./infra/scripts/deploy.sh production
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 20); do
+            code=$(curl -sk -o /dev/null -w '%{http_code}' https://api.tatvaos.com/health || true)
+            [ "$code" = "200" ] && { echo "healthy"; exit 0; }
+            sleep 6
+          done
+          echo "Production did not become healthy — investigate immediately"
+          exit 1
+
+      - name: Mail flow still works
+        run: |
+          # A web app that responds while mail is silently broken is the worst
+          # failure mode this product has, because nobody notices for hours.
+          code=$(curl -sk -o /dev/null -w '%{http_code}' https://api.tatvaos.com/health/db || true)
+          [ "$code" = "200" ] || { echo "Database unreachable from the API"; exit 1; }
+          echo "database reachable"
+
+      - name: If this failed
+        if: failure()
+        run: |
+          echo "Deploy failed. On the production server:"
+          echo "  cd /srv/tatvaos-production"
+          echo "  git log --oneline -5"
+          echo "  git reset --hard <previous-sha> && ./infra/scripts/deploy.sh production"
+          echo "  Pre-deploy backup: backups/pre-deploy-*.sql"

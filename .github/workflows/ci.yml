@@ -1,0 +1,152 @@
+# ============================================================================
+#  CI — runs on every push and pull request
+# ============================================================================
+#  Nothing deploys from here. This only answers "is the code sound", so that a
+#  deploy workflow never has to.
+# ============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main, 'feat/**', 'fix/**']
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm build
+
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '10.0.x' }
+
+      - run: dotnet restore
+        working-directory: apps/api
+
+      # Warnings are errors in the csproj. A nullable warning on a tenant id is
+      # exactly the kind of thing that must not reach a review, let alone a deploy.
+      - run: dotnet build --no-restore -c Release
+        working-directory: apps/api
+
+  isolation:
+    name: Tenant isolation
+    runs-on: ubuntu-latest
+    # ------------------------------------------------------------------
+    #  THE GATE THAT MATTERS.
+    #
+    #  Runs against a REAL PostgreSQL, because row-level security does not
+    #  exist in an in-memory provider — every test would pass and prove
+    #  nothing. A cross-tenant leak is the one bug this product does not
+    #  recover from, so this job blocks the merge.
+    # ------------------------------------------------------------------
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: devpass
+          POSTGRES_DB: tatvaos_mail
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+        ports: ['5432:5432']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: Apply schema
+        env: { PGPASSWORD: devpass }
+        run: |
+          for f in local/postgres/init/*.sql; do
+            echo "-- $f"
+            psql -h localhost -U postgres -d tatvaos_mail -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Assert isolation holds
+        env: { PGPASSWORD: devpass }
+        run: |
+          set -euo pipefail
+          TECHVEIN='11111111-1111-1111-1111-111111111111'
+          SCHOOL='22222222-2222-2222-2222-222222222222'
+
+          q() { psql -h localhost -U postgres -d tatvaos_mail -tAc "$1" | tr -d '[:space:]'; }
+          as_tenant() {
+            psql -h localhost -U postgres -d tatvaos_mail -tAc \
+              "SET ROLE tatvaos_app; SET app.tenant_id='$1'; $2" | tail -n1 | tr -d '[:space:]'
+          }
+
+          fail=0
+          check() {
+            if [ "$2" = "$3" ]; then echo "  PASS $1"
+            else echo "  FAIL $1 (got '$2', want '$3')"; fail=1; fi
+          }
+
+          check "Techvein cannot see ABC School rows" \
+                "$(as_tenant $TECHVEIN "SELECT count(*) FROM messages WHERE tenant_id='$SCHOOL'")" "0"
+          check "ABC School cannot see Techvein rows" \
+                "$(as_tenant $SCHOOL "SELECT count(*) FROM messages WHERE tenant_id='$TECHVEIN'")" "0"
+          check "unset tenant context returns nothing" \
+                "$(q "SET ROLE tatvaos_app; SELECT count(*) FROM messages")" "0"
+
+          if psql -h localhost -U postgres -d tatvaos_mail -tAc \
+               "SET ROLE tatvaos_mailedge; SELECT count(*) FROM messages" >/dev/null 2>&1; then
+            echo "  FAIL mail edge can read messages"; fail=1
+          else
+            echo "  PASS mail edge denied on messages"
+          fi
+
+          [ "$fail" -eq 0 ] || { echo; echo "ISOLATION BROKEN — merge blocked."; exit 1; }
+
+  mail-stack:
+    name: Mail stack
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and start
+        working-directory: local
+        run: docker compose up -d --build
+
+      - name: Install swaks
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq swaks
+
+      - name: Wait for readiness
+        run: sleep 25
+
+      - name: Mail flow and reject paths
+        working-directory: local
+        run: bash ./scripts/test-mail.sh
+
+      - name: Logs on failure
+        if: failure()
+        working-directory: local
+        run: docker compose logs --tail 80

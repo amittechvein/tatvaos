@@ -1,0 +1,130 @@
+# ============================================================================
+#  TatvaOS Mail — shared service definitions
+# ============================================================================
+#
+#  Never used alone. Combined with an environment overlay:
+#
+#      docker compose -f docker-compose.base.yml \
+#                     -f docker-compose.testing.yml up -d
+#
+#  Everything environment-specific — ports, domains, resource limits, whether
+#  outbound mail can leave the box — lives in the overlay. Keeping the base
+#  free of those means testing and production run the SAME service
+#  definitions, which is the only way a test result means anything.
+# ============================================================================
+
+name: tatvaos
+
+services:
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tatvaos_mail}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../../local/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-tatvaos_mail}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks: [mailnet]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    networks: [mailnet]
+
+  postfix:
+    build:
+      context: ../../local/postfix
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      dovecot:  { condition: service_started }
+    volumes:
+      - ../postfix/main.cf:/etc/postfix/main.cf:ro
+      - ../postfix/master.cf:/etc/postfix/master.cf:ro
+      - ../postfix/sql:/etc/postfix/sql:ro
+      - maillogs:/var/log
+    networks: [mailnet]
+
+  dovecot:
+    build:
+      context: ../../local/dovecot
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+    volumes:
+      - ../dovecot/dovecot.conf:/etc/dovecot/dovecot.conf:ro
+      - ../dovecot/dovecot-sql.conf.ext:/etc/dovecot/dovecot-sql.conf.ext:ro
+      - vmail:/var/mail/vhosts
+    networks: [mailnet]
+
+  api:
+    build:
+      context: ../../apps/api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-tatvaos_mail};Username=tatvaos_app;Password=${APP_DB_PASSWORD:?APP_DB_PASSWORD must be set};Pooling=true"
+      Jwt__SigningKey: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set}
+      Jwt__Issuer: ${JWT_ISSUER}
+      Jwt__Audience: tatvaos-mail
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [mailnet]
+
+  web:
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      api: { condition: service_started }
+    environment:
+      NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL}
+      NODE_ENV: production
+    networks: [mailnet]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    networks: [mailnet]
+
+networks:
+  mailnet:
+    driver: bridge
+
+volumes:
+  pgdata:
+  redisdata:
+  vmail:
+  maillogs:
+  caddydata:
+  caddyconfig:

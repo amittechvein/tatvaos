@@ -1,0 +1,66 @@
+# ============================================================================
+#  PRODUCTION overlay
+# ============================================================================
+#
+#  Differences from testing, each for a reason:
+#
+#   1. NO Mailpit. Outbound goes to the real internet — or to the configured
+#      relay. This is the only environment where that is true.
+#   2. NO Roundcube. Customers use our own client.
+#   3. NO database port published, not even on loopback. Reach it through the
+#      API or an SSH session, never over the network.
+#   4. Real MX ports (25, 587, 143, 993) rather than the shifted test ports.
+#   5. Larger limits, and log rotation, because this box is expected to stay
+#      up rather than be rebuilt on a whim.
+# ============================================================================
+
+services:
+
+  postgres:
+    # No ports section at all. Deliberate — the database is not on the network.
+    deploy:
+      resources:
+        limits: { memory: 2G }
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "5" }
+
+  redis:
+    deploy:
+      resources:
+        limits: { memory: 512M }
+
+  postfix:
+    hostname: mail.tatvaos.com
+    ports:
+      - "25:25"      # inbound from the internet
+      - "587:587"    # authenticated submission
+    environment:
+      RELAY_TO_MAILPIT: "false"
+      RELAY_HOST: ${RELAY_HOST:-}
+    logging:
+      driver: json-file
+      options: { max-size: "100m", max-file: "10" }
+
+  dovecot:
+    hostname: mail.tatvaos.com
+    ports:
+      - "143:143"
+      - "993:993"
+    logging:
+      driver: json-file
+      options: { max-size: "100m", max-file: "10" }
+
+  api:
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+    deploy:
+      resources:
+        limits: { memory: 1G }
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "5" }
+
+  web:
+    environment:
+      NEXT_PUBLIC_ENVIRONMENT: production

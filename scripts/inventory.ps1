@@ -1,10 +1,10 @@
-<#
+﻿<#
 .SYNOPSIS
     Confirm what is installed and explain what each tool is for.
 
 .DESCRIPTION
-    Read-only. Checks every tool the project depends on — Windows side, WSL side
-    and Docker — reports its version, and states what it is actually used for and
+    Read-only. Checks every tool the project depends on - Windows side, WSL side
+    and Docker - reports its version, and states what it is actually used for and
     at which phase.
 
 .EXAMPLE
@@ -21,9 +21,9 @@ $PF = ${env:ProgramFiles}; $PF86 = ${env:ProgramFiles(x86)}; $LOC = $env:LOCALAP
 
 function Section { param($t)
     Write-Host ''
-    Write-Host ('─' * 78) -ForegroundColor DarkCyan
+    Write-Host ('-' * 78) -ForegroundColor DarkCyan
     Write-Host "  $t" -ForegroundColor Cyan
-    Write-Host ('─' * 78) -ForegroundColor DarkCyan
+    Write-Host ('-' * 78) -ForegroundColor DarkCyan
 }
 
 $script:Found = 0; $script:Gone = 0
@@ -34,18 +34,45 @@ function Show {
         [string]$Cmd,
         [string[]]$Paths,
         [string]$VersionArg = '--version',
+        [int]$MinMajor = 0,
         [Parameter(Mandatory)][string]$Purpose,
         [string]$Phase = ''
     )
 
-    $ver = $null; $present = $false
+    $ver = $null; $present = $false; $wrongVersion = $false
 
     if ($Cmd -and (Get-Command $Cmd -ErrorAction SilentlyContinue)) {
         $present = $true
         try { $ver = (& $Cmd $VersionArg 2>$null | Select-Object -First 1) } catch {}
+
+        # Reporting a version is not the same as checking it. An SDK of the
+        # wrong major version is worse than a missing one - it looks fine here
+        # and fails at build time with an error that points elsewhere.
+        if ($MinMajor -gt 0) {
+            try {
+                $raw = if ($Cmd -eq 'dotnet') { (dotnet --list-sdks 2>$null) -join "`n" } else { $ver }
+                $majors = [regex]::Matches("$raw", '(?m)^\s*v?(\d+)\.') |
+                          ForEach-Object { [int]$_.Groups[1].Value }
+                $best = if ($majors) { ($majors | Measure-Object -Maximum).Maximum } else { 0 }
+                if ($best -lt $MinMajor) {
+                    $wrongVersion = $true
+                    $ver = "$ver  (need $MinMajor+)"
+                }
+            } catch { }
+        }
     }
     elseif ($Paths) {
         foreach ($p in $Paths) { if ($p -and (Test-Path -LiteralPath $p)) { $present = $true; break } }
+    }
+
+    if ($wrongVersion) {
+        $script:Gone++
+        Write-Host ("  {0,-20} " -f $Name) -NoNewline -ForegroundColor White
+        Write-Host ("{0,-36}" -f (($ver -replace '\s+',' ').Trim())) -NoNewline -ForegroundColor DarkGray
+        Write-Host "WRONG VERSION" -ForegroundColor Red
+        Write-Host ("      {0}" -f $Purpose) -ForegroundColor DarkGray
+        Write-Host ("      fix: winget install --id Microsoft.DotNet.SDK.{0} --exact" -f $MinMajor) -ForegroundColor Yellow
+        return
     }
 
     if ($present) {
@@ -70,11 +97,11 @@ function Show {
     }
 }
 
-Write-Host "`n  TatvaOS Mail — software inventory" -ForegroundColor Cyan
+Write-Host "`n  TatvaOS Mail - software inventory" -ForegroundColor Cyan
 Write-Host "  What is installed, and what each thing is for.`n" -ForegroundColor DarkGray
 
 # ===========================================================================
-Section 'Core — you touch these every day'
+Section 'Core - you touch these every day'
 
 Show -Name 'Git' -Cmd git -Purpose 'Version control. The repo, branches, history.' -Phase 'day 1'
 Show -Name 'VS Code' -Cmd code -Paths @("$LOC\Programs\Microsoft VS Code\Code.exe") `
@@ -87,24 +114,24 @@ Show -Name 'PowerToys' -Paths @("$LOC\PowerToys\PowerToys.exe","$PF\PowerToys\Po
      -Purpose 'Window management and a fast launcher. Quality of life, not required.' -Phase 'optional'
 
 # ===========================================================================
-Section 'Runtimes — what the product is built with'
+Section 'Runtimes - what the product is built with'
 
-Show -Name '.NET 10 SDK' -Cmd dotnet -Purpose 'The backend API. LTS, supported to Nov 2028. Not .NET 9 — that goes EOL 10 Nov 2026.' -Phase 'Phase 1'
-Show -Name 'Node.js 22' -Cmd node -Purpose 'Runs Next.js (web) and Expo (mobile). LTS.' -Phase 'Phase 1'
+Show -Name '.NET 10 SDK' -Cmd dotnet -MinMajor 10 -Purpose 'The backend API. LTS, supported to Nov 2028. Not .NET 8 or 9 - both reach EOL 10 Nov 2026.' -Phase 'Phase 1'
+Show -Name 'Node.js 22' -Cmd node -MinMajor 22 -Purpose 'Runs Next.js (web) and Expo (mobile). LTS.' -Phase 'Phase 1'
 Show -Name 'pnpm' -Cmd pnpm -Purpose 'Monorepo package manager. Faster and stricter than npm about phantom dependencies.' -Phase 'Phase 1'
 
 # ===========================================================================
-Section 'Containers — the local mail platform'
+Section 'Containers - the local mail platform'
 
 Show -Name 'Docker Desktop' -Cmd docker -Purpose 'Runs the whole local stack: Postgres, Redis, Postfix, Dovecot, Mailpit.' -Phase 'now'
 Show -Name 'Docker Compose' -Cmd docker -VersionArg 'compose version' `
      -Purpose 'Defines and starts the five-container stack in local/docker-compose.yml.' -Phase 'now'
 
 # ===========================================================================
-Section 'Mail — testing and operations'
+Section 'Mail - testing and operations'
 
 Show -Name 'Thunderbird' -Paths @("$PF\Mozilla Thunderbird\thunderbird.exe") `
-     -Purpose 'A real IMAP client. Proves your server works with software you did not write — the only honest test.' -Phase 'now'
+     -Purpose 'A real IMAP client. Proves your server works with software you did not write - the only honest test.' -Phase 'now'
 Show -Name 'Tailscale' -Cmd tailscale -Paths @("$PF\Tailscale\tailscale.exe") `
      -Purpose 'Private network to the Linode. Lets you reach it without exposing SSH to the internet.' -Phase 'Sprint 0.1'
 Show -Name 'cloudflared' -Cmd cloudflared `
@@ -122,7 +149,7 @@ Show -Name 'Bruno' -Paths @("$LOC\Programs\Bruno\Bruno.exe") `
 Section 'Mobile'
 
 Show -Name 'Android Studio' -Paths @("$PF\Android\Android Studio\bin\studio64.exe") `
-     -Purpose 'Android SDK, emulator and adb. Not the editor — you write the app in VS Code.' -Phase 'Phase 2 (~month 7)'
+     -Purpose 'Android SDK, emulator and adb. Not the editor - you write the app in VS Code.' -Phase 'Phase 2 (~month 7)'
 
 # ===========================================================================
 Section 'Operations'
@@ -136,7 +163,7 @@ Show -Name 'Firefox' -Paths @("$PF\Mozilla Firefox\firefox.exe") `
      -Purpose 'Second browser. The web client must work outside Chrome, and you want to find that out early.' -Phase 'Phase 1'
 
 # ===========================================================================
-Section 'WSL — where the Linux work happens'
+Section 'WSL - where the Linux work happens'
 
 $wsl = $false
 try { $null = wsl --status 2>&1; $wsl = ($LASTEXITCODE -eq 0) } catch {}
@@ -155,9 +182,9 @@ if (-not $wsl) {
         @{n='redis-cli';c='redis-cli --version';           p='Inspect the cache and job queue.'}
         @{n='openssl';  c='openssl version';               p='Generates DKIM keys, inspects TLS certificates.'}
         @{n='jq';       c='jq --version';                  p='Parse JSON in shell scripts and API responses.'}
-        @{n='node';     c='node --version';                p='Node inside Linux — where builds actually run.'}
+        @{n='node';     c='node --version';                p='Node inside Linux - where builds actually run.'}
         @{n='pnpm';     c='pnpm --version';                p='Package manager inside Linux.'}
-        @{n='dotnet';   c='$HOME/.dotnet/dotnet --version';p='.NET SDK inside Linux — where the API is built and run.'}
+        @{n='dotnet';   c='$HOME/.dotnet/dotnet --version';p='.NET SDK inside Linux - where the API is built and run.'}
         @{n='telnet';   c='which telnet';                  p='Raw port and SMTP conversation testing. Crude and irreplaceable.'}
         @{n='git';      c='git --version';                 p='Version control inside WSL.'}
     )
@@ -183,7 +210,7 @@ if (-not $wsl) {
 }
 
 # ===========================================================================
-Section 'Docker images — the local mail platform'
+Section 'Docker images - the local mail platform'
 
 if (Get-Command docker -ErrorAction SilentlyContinue) {
     $imgs = @(
@@ -203,7 +230,7 @@ if (Get-Command docker -ErrorAction SilentlyContinue) {
         } else {
             Write-Host ("  {0,-20} " -f $i.n) -NoNewline -ForegroundColor White
             Write-Host ("{0,-36}" -f 'not built') -NoNewline -ForegroundColor DarkGray
-            Write-Host "—" -ForegroundColor Yellow
+            Write-Host "-" -ForegroundColor Yellow
         }
         Write-Host ("      {0}" -f $i.p) -ForegroundColor DarkGray
     }
@@ -219,7 +246,7 @@ Section 'Not installed, deliberately'
     @{n='RabbitMQ';    w='Cut for v1. A Postgres queue with SKIP LOCKED gives transactional enqueue and zero new infrastructure.'}
     @{n='OpenSearch';  w='Cut for v1. Postgres full-text search handles mail well into the tens of GB.'}
     @{n='MinIO';       w='Never self-host object storage. If it loses data you have lost customer mail permanently.'}
-    @{n='ClamAV';      w='Not on the 1 GB Linode — needs 1–2 GB for signatures alone. Add after resizing.'}
+    @{n='ClamAV';      w='Not on the 1 GB Linode - needs 1-2 GB for signatures alone. Add after resizing.'}
     @{n='Visual Studio';w='VS Code covers it. Add JetBrains Rider only if you feel the gap in C# refactoring.'}
 ) | ForEach-Object {
     Write-Host ("  {0,-20} " -f $_.n) -NoNewline -ForegroundColor DarkGray
@@ -228,7 +255,7 @@ Section 'Not installed, deliberately'
 
 # ===========================================================================
 Write-Host ''
-Write-Host ('─' * 78) -ForegroundColor DarkCyan
+Write-Host ('-' * 78) -ForegroundColor DarkCyan
 Write-Host ("  present: {0}    missing: {1}" -f $script:Found, $script:Gone) -ForegroundColor $(if ($script:Gone) {'Yellow'} else {'Green'})
 if ($script:Gone -gt 0) {
     Write-Host "  Install what is missing:  .\scripts\setup-dev-env.ps1" -ForegroundColor DarkGray

@@ -1,0 +1,82 @@
+# ============================================================================
+#  TESTING overlay
+# ============================================================================
+#
+#  What makes this environment safe to break:
+#
+#   1. OUTBOUND MAIL CANNOT LEAVE. Postfix relays to Mailpit, exactly as the
+#      local stack does. Testers can send to any address they like and it
+#      lands in a web inbox rather than a stranger's.
+#
+#      This is the single most important difference. A test environment that
+#      can email real people will eventually email real people.
+#
+#   2. Seeded with fake tenants, so there is realistic data to break.
+#   3. Smaller resource limits — it shares a box with nothing valuable.
+#   4. Roundcube exposed, so non-technical testers have a UI.
+# ============================================================================
+
+services:
+
+  postgres:
+    ports: ["127.0.0.1:5432:5432"]   # loopback only, reachable over SSH tunnel
+    deploy:
+      resources:
+        limits: { memory: 768M }
+
+  redis:
+    deploy:
+      resources:
+        limits: { memory: 256M }
+
+  postfix:
+    hostname: mail.staging.tatvaos.com
+    ports:
+      - "2525:25"
+      - "5870:587"
+    environment:
+      # THE containment line. Removing it lets test mail reach real inboxes.
+      RELAY_TO_MAILPIT: "true"
+
+  dovecot:
+    hostname: mail.staging.tatvaos.com
+    ports: ["1143:143"]
+
+  api:
+    environment:
+      ASPNETCORE_ENVIRONMENT: Staging
+    deploy:
+      resources:
+        limits: { memory: 512M }
+
+  web:
+    environment:
+      NEXT_PUBLIC_ENVIRONMENT: testing
+
+  # Catches everything outbound. Not present in production.
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    networks: [mailnet]
+
+  # Webmail for testers. Not present in production — customers use our client.
+  roundcube:
+    image: roundcube/roundcubemail:latest
+    restart: unless-stopped
+    depends_on:
+      dovecot: { condition: service_started }
+    environment:
+      ROUNDCUBEMAIL_DB_TYPE: sqlite
+      ROUNDCUBEMAIL_DEFAULT_HOST: dovecot
+      ROUNDCUBEMAIL_DEFAULT_PORT: 143
+      ROUNDCUBEMAIL_SMTP_SERVER: postfix
+      ROUNDCUBEMAIL_SMTP_PORT: 587
+    volumes:
+      - roundcubedata:/var/roundcube/db
+    networks: [mailnet]
+
+volumes:
+  roundcubedata:

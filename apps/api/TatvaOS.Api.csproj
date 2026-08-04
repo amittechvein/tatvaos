@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TatvaOS.Api</RootNamespace>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Nullable warnings as errors: a null tenant id must not compile -->
+    <WarningsNotAsErrors>CS1591</WarningsNotAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.0" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0" />
+    <!--
+      Pinned to patch CVE-2026-49451 (GHSA-v5pm-xwqc-g5wc, CVSS 7.5).
+
+      Microsoft.AspNetCore.OpenApi pulls in Microsoft.OpenApi 2.0.0
+      transitively. Versions from 2.0.0-preview11 to 2.7.5 crash the process
+      via stack overflow when parsing a document with circular schema
+      references. Fixed in 2.7.5.
+
+      A transitive dependency cannot be upgraded in place, so it is declared
+      explicitly here to override the resolved version. Remove this line once
+      Microsoft.AspNetCore.OpenApi ships a version that pulls 2.7.5+ itself.
+    -->
+    <PackageReference Include="Microsoft.OpenApi" Version="2.7.5" />
+    <PackageReference Include="Konscious.Security.Cryptography.Argon2" Version="1.3.1" />
+    <PackageReference Include="FluentValidation.AspNetCore" Version="11.3.0" />
+    <PackageReference Include="Serilog.AspNetCore" Version="8.0.3" />
+  </ItemGroup>
+
+</Project>

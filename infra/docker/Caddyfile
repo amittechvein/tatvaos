@@ -1,0 +1,41 @@
+# TatvaOS Mail — reverse proxy
+#
+# Caddy over Nginx for one reason: automatic TLS. Certificates are obtained
+# and renewed with no cron job, no certbot, and no 3am expiry incident.
+# {$SITE_DOMAIN} comes from the environment file, so the SAME Caddyfile
+# serves staging and production.
+
+{$SITE_DOMAIN} {
+    encode zstd gzip
+
+    handle /api/* {
+        reverse_proxy api:8080
+    }
+
+    handle /health* {
+        reverse_proxy api:8080
+    }
+
+    handle {
+        reverse_proxy web:3000
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+}
+
+# Testing only. In production these blocks are unreachable because the
+# hostnames do not resolve — but keep an eye on that, because a wildcard DNS
+# record would silently expose them.
+mail-catcher.{$SITE_DOMAIN} {
+    reverse_proxy mailpit:8025
+}
+
+webmail.{$SITE_DOMAIN} {
+    reverse_proxy roundcube:80
+}

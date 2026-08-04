@@ -16,6 +16,27 @@ Anything ending `.ps1` runs in **[WIN]**. Anything ending `.sh` runs in **[WSL]*
 
 ---
 
+## Start everything after a reboot or closing terminals
+
+**[WIN]** · `C:\Users\amitd\Downloads\tatvaOS`
+
+```powershell
+.\scripts\start-all.ps1
+```
+
+Starts Docker if needed, brings up the mail stack, applies any schema changes,
+and opens a window each for the API and the web app.
+
+**Docker survives a closed terminal — the API and web app do not.** They are
+foreground processes and need a live window each, which is why this opens them
+rather than expecting you to remember two more commands.
+
+It also re-sets `JWT_SIGNING_KEY`, which lives in the environment and is lost
+when a terminal closes. There is deliberately no default in `Program.cs` — a
+hardcoded fallback would eventually ship to production.
+
+---
+
 ## Daily — local development
 
 ### Start everything and verify it
@@ -159,6 +180,41 @@ export SEED_YAHOO=you@yahoo.com
 ```
 
 Only sends to addresses you set. Writes a results template to `results/` — **filling it in by hand is the deliverable.**
+
+---
+
+## Cloud environments
+
+Two environments, same deployment script, different overlay. Full detail:
+`docs/setup/08-cloud-environments.md`
+
+### Deploy
+
+**[SERVER]** · the repo checkout on the target Linode
+
+```bash
+./infra/scripts/deploy.sh testing
+./infra/scripts/deploy.sh production
+```
+
+Refuses to run if `.env` still has `CHANGE_ME`, if the server's
+`/etc/tatvaos-environment` disagrees with the environment named, or if the
+pre-deploy database backup fails. Production additionally requires typing
+`production` to confirm.
+
+### The difference that matters
+
+| | Testing | Production |
+|---|---|---|
+| Outbound mail | **Captured — cannot leave** | **Reaches real inboxes** |
+| Database port | Loopback only | Not published |
+| Testers' webmail | Roundcube + Mailpit | Neither |
+
+Mark each server once so a wrong-environment deploy is caught:
+
+```bash
+echo testing | sudo tee /etc/tatvaos-environment
+```
 
 ---
 

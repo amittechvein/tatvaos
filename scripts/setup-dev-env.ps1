@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     TatvaOS Mail - install the full Windows development environment.
     Installs only what is missing. Safe to run repeatedly.
@@ -103,9 +103,11 @@ $Catalogue = [ordered]@{
 
     Runtimes = @(
         @{ Id='Microsoft.DotNet.SDK.10'; Name='.NET 10 SDK (LTS)'; Cmd='dotnet'
+           MinMajor=10
            Paths=@("$PF\dotnet\dotnet.exe") }
 
         @{ Id='OpenJS.NodeJS.LTS'; Name='Node.js 22 LTS'; Cmd='node'
+           MinMajor=22
            Paths=@("$PF\nodejs\node.exe") }
     )
 
@@ -201,6 +203,38 @@ function Test-OnPath {
     return [bool](Get-Command $Cmd -ErrorAction SilentlyContinue)
 }
 
+<#
+    Version-aware check.
+
+    "Is the command on PATH" is NOT the same question as "is the right major
+    version installed". Having dotnet 8 on PATH satisfied the PATH check and
+    made this script report ".NET 10 SDK already present", which was wrong and
+    only surfaced when a build failed with NETSDK1045.
+
+    Where a package declares MinMajor, the version is what counts.
+#>
+function Test-VersionSatisfied {
+    param([hashtable]$Pkg)
+
+    if (-not $Pkg.MinMajor) { return $true }
+
+    try {
+        $raw = switch ($Pkg.Cmd) {
+            'dotnet' { (dotnet --list-sdks 2>$null) -join "`n" }
+            'node'   { node --version 2>$null }
+            default  { & $Pkg.Cmd --version 2>$null }
+        }
+        if (-not $raw) { return $false }
+
+        $majors = [regex]::Matches($raw, '(?m)^\s*v?(\d+)\.') |
+                  ForEach-Object { [int]$_.Groups[1].Value }
+        if (-not $majors) { return $false }
+
+        return (($majors | Measure-Object -Maximum).Maximum -ge $Pkg.MinMajor)
+    }
+    catch { return $false }
+}
+
 function Test-OnDisk {
     param([string[]]$Paths)
     if (-not $Paths) { return $false }
@@ -212,6 +246,11 @@ function Test-OnDisk {
 
 function Get-AppPresence {
     param([hashtable]$Pkg)
+
+    # A wrong-major-version install counts as ABSENT, so the correct one is
+    # fetched rather than skipped.
+    if ($Pkg.MinMajor -and -not (Test-VersionSatisfied -Pkg $Pkg)) { return $null }
+
     if (Test-OnPath  $Pkg.Cmd)   { return 'PATH' }
     if (Test-OnDisk  $Pkg.Paths) { return 'disk' }
     if (Test-InWinget $Pkg.Id)   { return 'winget' }

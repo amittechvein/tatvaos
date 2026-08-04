@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Diagnose the TatvaOS Mail development environment and print exact fixes.
 

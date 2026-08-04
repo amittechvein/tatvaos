@@ -1,25 +1,54 @@
-# apps/web — Next.js
+# apps/web — TatvaOS Mail web client
 
-Desktop web, mobile web and the installable PWA. One responsive codebase.
+Next.js. Desktop web, mobile web and the installable PWA from one responsive codebase.
+
+## Run it
+
+**Machine:** Windows PowerShell · **Directory:** `C:\Users\amitd\Downloads\tatvaOS`
+
+```powershell
+pnpm install
+pnpm web
+```
+
+Then http://localhost:3000
+
+## Current state
+
+Runs against **mock data** in `packages/core/src/mock.ts`. The API does not exist
+until Phase 1, so the UI was built first and the data source swaps underneath it.
+The mock mirrors the seeded local database — same tenants, same addresses — so
+switching is a change of source, not of shape.
+
+| Working | Not yet |
+|---|---|
+| Folder navigation, unread counts | Real data (Phase 1) |
+| Message list, read/unread, starring | Sending (Phase 1) |
+| Reading pane, attachments | Attachments upload |
+| **Sandboxed HTML rendering** | Virtualised list — needed before 50k messages |
+| Search across the loaded folder | Server-side search |
+| Compose and reply UI | Threading view |
+| Responsive three → two → one pane | Admin console |
+
+## The component that matters most
+
+`components/mail/SafeHtml.tsx` renders untrusted email HTML. Every message is
+attacker-controlled input sent by strangers. Four independent layers — DOMPurify,
+a sandboxed cross-origin iframe with no `allow-scripts`, a strict CSP, and remote
+content blocked until asked for.
+
+**Do not weaken the `sandbox` attribute to fix a layout problem.** Read the
+comments in that file before changing anything in it.
 
 ## Layout
 
 | Folder | Contents |
 |---|---|
-| `app/` | Routes and pages (App Router). File path = URL path |
-| `components/ui/` | Generic building blocks — buttons, inputs, dialogs |
-| `components/mail/` | Mail-specific — message list, thread view, composer |
-| `components/admin/` | Admin console |
-| `styles/` | `globals.css` and Tailwind config. **Only** file-level CSS lives here |
-| `lib/` | Helpers, API setup, formatting |
-| `hooks/` | Custom React hooks |
-| `public/` | Static assets served as-is — `images/`, `fonts/`, `icons/` |
+| `app/` | Routes. File path = URL path |
+| `components/ui/` | Generic — Avatar, Icon |
+| `components/mail/` | Sidebar, MessageList, MessageView, Composer, SafeHtml |
+| `styles/` | `globals.css` and Tailwind config only |
+| `lib/`, `hooks/` | Helpers and custom hooks |
 
-## Where styling lives
-
-Tailwind classes go **in the component**, not in a separate stylesheet. `styles/` holds `globals.css` and theme config only. This is the framework's convention and fighting it creates work with no benefit.
-
-## Non-negotiables here
-
-- **Virtualise every long list** (TanStack Virtual). A 50,000-message folder must scroll at 60fps.
-- **Render untrusted email HTML in a sandboxed iframe on a separate origin**, with DOMPurify and a strict CSP, remote images blocked by default. This is the highest-severity attack surface in the whole product — every message is attacker-controlled HTML sent by strangers.
+Tailwind classes go in the component, not in a separate stylesheet. That is the
+framework convention and fighting it buys nothing.

@@ -88,9 +88,12 @@ ON CONFLICT (address) DO NOTHING;
 -- ----------------------------------------------------------------------------
 -- Volume — a folder with enough messages that virtualisation and paging matter
 -- ----------------------------------------------------------------------------
+--  NOT idempotent via ON CONFLICT: every row gets a fresh uuid, so there is
+--  never a conflict to detect and a second run simply inserts 150 more.
+--  Guarded with a marker in headers instead. Re-running is now a no-op.
 INSERT INTO messages (tenant_id, mailbox_id, folder_id, imap_uid,
                       from_addr, to_addrs, subject, sent_at, received_at,
-                      raw_body, size_bytes, is_read)
+                      raw_body, size_bytes, is_read, headers)
 SELECT m.tenant_id, m.id, f.id, gs,
        'sender' || gs || '@example.com',
        ARRAY[m.address::text],
@@ -105,12 +108,30 @@ SELECT m.tenant_id, m.id, f.id, gs,
        now() - (gs || ' hours')::interval,
        'Test message body number ' || gs || '. Ordinary business correspondence.',
        200 + gs,
-       (gs % 3 = 0)
+       (gs % 3 = 0),
+       '{"seed":"tester-bulk"}'::jsonb
 FROM   mailboxes m
 JOIN   folders   f ON f.mailbox_id = m.id AND f.name = 'INBOX'
 CROSS  JOIN generate_series(100, 249) gs
 WHERE  m.address = 'amit@techvein.local'
-ON CONFLICT DO NOTHING;
+  AND  NOT EXISTS (
+           SELECT 1 FROM messages
+           WHERE headers @> '{"seed":"tester-bulk"}'::jsonb
+       );
+
+-- ----------------------------------------------------------------------------
+-- Repair: if an earlier, non-idempotent run left duplicates, collapse them
+-- back to a single set of 150.
+-- ----------------------------------------------------------------------------
+DELETE FROM messages
+WHERE  id IN (
+    SELECT id FROM (
+        SELECT id, row_number() OVER (PARTITION BY subject, mailbox_id ORDER BY id) AS rn
+        FROM   messages
+        WHERE  headers @> '{"seed":"tester-bulk"}'::jsonb
+    ) dupes
+    WHERE rn > 1
+);
 
 -- ----------------------------------------------------------------------------
 DO $$

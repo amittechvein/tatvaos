@@ -1,0 +1,64 @@
+# ============================================================================
+#  Deploy to TESTING — automatic on every green main
+# ============================================================================
+#  Safe to automate because outbound mail cannot leave the testing box. The
+#  worst a bad deploy does is break the testers' environment for ten minutes.
+# ============================================================================
+
+name: Deploy testing
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-testing
+  cancel-in-progress: false      # never interrupt a deploy mid-flight
+
+jobs:
+  deploy:
+    name: Deploy to testing
+    runs-on: ubuntu-latest
+    environment:
+      name: testing
+      url: https://app-test.tatvaos.com
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Deploying an untested commit to the environment testers rely on wastes
+      # their time and teaches them to distrust it.
+      - name: Require CI to have passed
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.sha }}
+          running-workflow-name: 'Deploy to testing'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 15
+          allowed-conclusions: success
+
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.TESTING_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd /srv/tatvaos-testing
+            git fetch --all --prune
+            git reset --hard origin/main
+            ./infra/scripts/deploy.sh testing
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 20); do
+            code=$(curl -sk -o /dev/null -w '%{http_code}' https://api-test.tatvaos.com/health || true)
+            [ "$code" = "200" ] && { echo "healthy"; exit 0; }
+            sleep 6
+          done
+          echo "Testing environment did not become healthy"
+          exit 1
