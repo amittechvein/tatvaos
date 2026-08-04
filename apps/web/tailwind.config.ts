@@ -23,6 +23,19 @@ import type { Config } from 'tailwindcss';
 const withAlpha = (v: string) => `rgb(var(${v}) / <alpha-value>)`;
 
 export default {
+  // ---------------------------------------------------------------------------
+  //  Preflight OFF.
+  //
+  //  Two CSS resets in one page fight each other. MUI's CssBaseline already
+  //  normalises the document, and Tailwind's preflight is more aggressive —
+  //  it zeroes every border width, which is exactly how MUI's outlined inputs
+  //  lost their outline and its buttons lost their fill.
+  //
+  //  Tailwind's utilities still work; only the reset is gone, and MUI is
+  //  doing that job.
+  // ---------------------------------------------------------------------------
+  corePlugins: { preflight: false },
+
   darkMode: 'class',
   content: [
     './app/**/*.{ts,tsx}',
