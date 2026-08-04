@@ -25,8 +25,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No version pin here on purpose. package.json already declares
+      # "packageManager": "pnpm@9.15.0", and the action refuses to run when
+      # both are set. One source of truth, and it is the one the developers
+      # on their laptops also obey via corepack.
       - uses: pnpm/action-setup@v4
-        with: { version: 9 }
 
       - uses: actions/setup-node@v4
         with:
@@ -98,7 +101,11 @@ jobs:
           TECHVEIN='11111111-1111-1111-1111-111111111111'
           SCHOOL='22222222-2222-2222-2222-222222222222'
 
-          q() { psql -h localhost -U postgres -d tatvaos_mail -tAc "$1" | tr -d '[:space:]'; }
+          # tail -n1 is not cosmetic. psql echoes a command tag for every
+          # non-SELECT statement, so "SET ROLE x; SELECT count(*)" prints
+          # "SET" and then the number. Without this the comparison sees
+          # "SET0" and reports an isolation breach that does not exist.
+          q() { psql -h localhost -U postgres -d tatvaos_mail -tAc "$1" | tail -n1 | tr -d '[:space:]'; }
           as_tenant() {
             psql -h localhost -U postgres -d tatvaos_mail -tAc \
               "SET ROLE tatvaos_app; SET app.tenant_id='$1'; $2" | tail -n1 | tr -d '[:space:]'
@@ -117,7 +124,10 @@ jobs:
           check "unset tenant context returns nothing" \
                 "$(q "SET ROLE tatvaos_app; SELECT count(*) FROM messages")" "0"
 
-          if psql -h localhost -U postgres -d tatvaos_mail -tAc \
+          # ON_ERROR_STOP is explicit rather than relying on psql's default
+          # exit status for -c. This assertion is only meaningful if a
+          # permission denial reliably produces a non-zero exit.
+          if psql -h localhost -U postgres -d tatvaos_mail -v ON_ERROR_STOP=1 -tAc \
                "SET ROLE tatvaos_mailedge; SELECT count(*) FROM messages" >/dev/null 2>&1; then
             echo "  FAIL mail edge can read messages"; fail=1
           else
