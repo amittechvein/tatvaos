@@ -205,6 +205,12 @@ export interface UserCategory {
   /** Applied to new users in this category. Ignored when storage is pooled. */
   defaultQuotaBytes?: number;
   defaultRole: Role;
+  /**
+   * Which products a new user in this category receives. A school buys Drive
+   * for its staff and not for its 400 students, so this belongs here rather
+   * than on the organisation.
+   */
+  defaultProducts: string[];
   /** Groups every member is added to automatically, e.g. all-staff@ */
   autoGroups?: string[];
   /** Whether members may send outside the organisation. Useful for students. */
@@ -213,16 +219,32 @@ export interface UserCategory {
   colour: string;
 }
 
+/**
+ * A PERSON, from core.users — not a mailbox.
+ *
+ * The distinction is load-bearing. `id` identifies the human across every
+ * TatvaOS product, so suspending them or resetting their password is one call
+ * that covers Mail, Drive and Payroll. A mailbox is something Mail grants
+ * them, which is why `mailboxAddress` is nullable: a Payroll-only worker needs
+ * a payslip and no email account, and that is a normal state rather than an
+ * error to code around.
+ *
+ * `email` is the sign-in identity and usually equals the mailbox address, but
+ * they are separate fields because they are separate things.
+ */
 export interface OrgUser {
   id: Uuid;
-  tenantId: Uuid;
-  mailboxId: Uuid;
-  address: string;
+  email: string;
   displayName: string;
+  /** Null when the person has no mailbox. */
+  mailboxAddress: string | null;
   categoryId: Uuid | null;
   categoryName?: string;
   role: Role;
-  status: 'active' | 'suspended' | 'pending';
+  status: 'active' | 'suspended' | 'pending' | 'deleted';
+  /** Product codes this person can use: 'mail', 'drive', 'payroll', … */
+  products: string[];
+  /** Mailbox quota. Zero when there is no mailbox. */
   quotaBytes: number;
   usedBytes: number;
   mfaEnabled: boolean;

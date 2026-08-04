@@ -34,7 +34,7 @@ export default function OrgUsers() {
     return users.filter((u) => {
       const matchCat = activeCat === 'all' || u.categoryId === activeCat;
       const matchQ =
-        !q || u.displayName.toLowerCase().includes(q) || u.address.toLowerCase().includes(q);
+        !q || u.displayName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
       return matchCat && matchQ;
     });
   }, [users, activeCat, query]);
@@ -45,7 +45,7 @@ export default function OrgUsers() {
     <AdminShell
       scope="organisation"
       title="Users"
-      subtitle={org ? `${org.name} · ${users.length} mailboxes` : undefined}
+      subtitle={org ? `${org.name} · ${users.length} people` : undefined}
       nav={NAV}
       actions={
         <button
@@ -107,12 +107,17 @@ export default function OrgUsers() {
             <tbody className="divide-y divide-gray-100">
               {filtered.map((u) => {
                 const cat = cats.find((c) => c.id === u.categoryId);
-                const pct = Math.round((u.usedBytes / u.quotaBytes) * 100);
+                // Guard the divide. A person with no mailbox has a zero quota,
+                // and NaN% renders as a blank bar that looks like a loading
+                // state rather than "this user has no mail account".
+                const pct = u.quotaBytes > 0
+                  ? Math.round((u.usedBytes / u.quotaBytes) * 100)
+                  : 0;
                 return (
                   <tr key={u.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3">
                       <div className="font-medium text-gray-900">{u.displayName}</div>
-                      <div className="text-xs text-gray-500">{u.address}</div>
+                      <div className="text-xs text-gray-500">{u.email}</div>
                     </td>
                     <td className="px-4 py-3">
                       {cat && (
@@ -129,16 +134,22 @@ export default function OrgUsers() {
                       {u.role.replace(/_/g, ' ')}
                     </td>
                     <td className="px-4 py-3">
-                      <div className="text-gray-700">
-                        {formatBytes(u.usedBytes)}
-                        <span className="text-gray-400"> / {formatBytes(u.quotaBytes)}</span>
-                      </div>
-                      <div className="mt-1 h-1 w-24 overflow-hidden rounded-full bg-gray-200">
-                        <div
-                          className={`h-full ${pct > 90 ? 'bg-red-500' : pct > 75 ? 'bg-amber-500' : 'bg-brand-500'}`}
-                          style={{ width: `${Math.min(pct, 100)}%` }}
-                        />
-                      </div>
+                      {u.mailboxAddress ? (
+                        <>
+                          <div className="text-gray-700">
+                            {formatBytes(u.usedBytes)}
+                            <span className="text-gray-400"> / {formatBytes(u.quotaBytes)}</span>
+                          </div>
+                          <div className="mt-1 h-1 w-24 overflow-hidden rounded-full bg-gray-200">
+                            <div
+                              className={`h-full ${pct > 90 ? 'bg-red-500' : pct > 75 ? 'bg-amber-500' : 'bg-brand-500'}`}
+                              style={{ width: `${Math.min(pct, 100)}%` }}
+                            />
+                          </div>
+                        </>
+                      ) : (
+                        <span className="text-xs text-gray-400">No mailbox</span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       {u.mfaEnabled ? (
@@ -250,17 +261,21 @@ function CreateUserDialog({
 
   function submit() {
     if (!cat) return;
+    const address = `${localPart}@${org.primaryDomain}`;
+    const products = cat.defaultProducts ?? ['mail'];
+    const hasMailbox = products.includes('mail');
+
     onCreate({
       id: `u-${Date.now()}`,
-      tenantId: org.id,
-      mailboxId: `mb-${Date.now()}`,
-      address: `${localPart}@${org.primaryDomain}`,
+      email: address,
       displayName,
+      mailboxAddress: hasMailbox ? address : null,
       categoryId: cat.id,
       categoryName: cat.name,
       role: cat.defaultRole,
       status: 'pending',
-      quotaBytes: quotaGb * GB,
+      products,
+      quotaBytes: hasMailbox ? quotaGb * GB : 0,
       usedBytes: 0,
       mfaEnabled: false,
       lastLoginAt: null,

@@ -7,8 +7,24 @@
 
 name: Deploy testing
 
+# ---------------------------------------------------------------------------
+#  Triggered BY CI finishing, not by the push.
+#
+#  This used to run on push and then poll for CI's checks with a third-party
+#  action. That is a race: the deploy starts at the same moment as CI, and has
+#  to guess when the checks it is waiting for exist and whether "not finished
+#  yet" means keep waiting or give up. It gave up, every time.
+#
+#  workflow_run is the native mechanism. The event only fires once CI has
+#  completed, and conclusion is already known — nothing to poll and nothing to
+#  race. The cost is that head_sha must be passed explicitly to checkout,
+#  because a workflow_run event's default ref is the default branch, not the
+#  commit that was tested.
+# ---------------------------------------------------------------------------
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -20,36 +36,45 @@ jobs:
   deploy:
     name: Deploy to testing
     runs-on: ubuntu-latest
+
+    # Deploying an untested commit to the environment testers rely on wastes
+    # their time and teaches them to distrust it. Manual dispatch is allowed
+    # through deliberately, for redeploying a known-good commit.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+
     environment:
       name: testing
       url: https://app-test.tatvaos.com
 
     steps:
       - uses: actions/checkout@v4
-
-      # Deploying an untested commit to the environment testers rely on wastes
-      # their time and teaches them to distrust it.
-      - name: Require CI to have passed
-        uses: lewagon/wait-on-check-action@v1.3.4
         with:
-          ref: ${{ github.sha }}
-          running-workflow-name: 'Deploy to testing'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 15
-          allowed-conclusions: success
+          # The commit CI actually tested. Without this, a workflow_run build
+          # checks out whatever main points at now, which is not necessarily
+          # the same thing.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         with:
           host: ${{ secrets.TESTING_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: TARGET_SHA
           script_stop: true
           script: |
             set -euo pipefail
             cd /srv/tatvaos-testing
             git fetch --all --prune
-            git reset --hard origin/main
+            # The exact commit CI tested, not "whatever main is now". Between
+            # CI finishing and this line running, main can have moved - and
+            # deploying an untested commit is precisely what the gate above
+            # exists to prevent.
+            git reset --hard "$TARGET_SHA"
             ./infra/scripts/deploy.sh testing
 
       - name: Smoke test

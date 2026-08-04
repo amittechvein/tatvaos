@@ -85,36 +85,45 @@ export const MOCK_ORGS: Organisation[] = [
 export const MOCK_CATEGORIES: Record<string, UserCategory[]> = {
   '22222222-2222-2222-2222-222222222222': [
     { id: 'cat-teach', tenantId: '22222222-2222-2222-2222-222222222222', name: 'Teachers',
-      description: 'Teaching staff', defaultQuotaBytes: 15 * GB, defaultRole: 'employee',
+      description: 'Teaching staff', defaultQuotaBytes: 15 * GB, defaultRole: 'employee', defaultProducts: ['mail'],
       autoGroups: ['staff@abcschool.edu.in'], canSendExternal: true, userCount: 42, colour: '#3563f0' },
     { id: 'cat-stud', tenantId: '22222222-2222-2222-2222-222222222222', name: 'Students',
-      description: 'Enrolled students', defaultQuotaBytes: 2 * GB, defaultRole: 'employee',
+      description: 'Enrolled students', defaultQuotaBytes: 2 * GB, defaultRole: 'employee', defaultProducts: ['mail'],
       autoGroups: [], canSendExternal: false, userCount: 226, colour: '#16a34a' },
     { id: 'cat-admin', tenantId: '22222222-2222-2222-2222-222222222222', name: 'Administration',
-      description: 'Office and accounts', defaultQuotaBytes: 20 * GB, defaultRole: 'manager',
+      description: 'Office and accounts', defaultQuotaBytes: 20 * GB, defaultRole: 'manager', defaultProducts: ['mail'],
       autoGroups: ['staff@abcschool.edu.in', 'office@abcschool.edu.in'],
       canSendExternal: true, userCount: 14, colour: '#a855f7' },
     { id: 'cat-lead', tenantId: '22222222-2222-2222-2222-222222222222', name: 'Leadership',
-      description: 'Principal and heads', defaultQuotaBytes: 50 * GB, defaultRole: 'org_admin',
+      description: 'Principal and heads', defaultQuotaBytes: 50 * GB, defaultRole: 'org_admin', defaultProducts: ['mail'],
       autoGroups: ['staff@abcschool.edu.in'], canSendExternal: true, userCount: 2, colour: '#ea580c' },
   ],
   '11111111-1111-1111-1111-111111111111': [
     { id: 'cat-eng', tenantId: '11111111-1111-1111-1111-111111111111', name: 'Engineering',
-      defaultQuotaBytes: 30 * GB, defaultRole: 'employee', canSendExternal: true, userCount: 6, colour: '#3563f0' },
+      defaultQuotaBytes: 30 * GB, defaultRole: 'employee', defaultProducts: ['mail'], canSendExternal: true, userCount: 6, colour: '#3563f0' },
     { id: 'cat-sales', tenantId: '11111111-1111-1111-1111-111111111111', name: 'Sales',
-      defaultQuotaBytes: 30 * GB, defaultRole: 'employee',
+      defaultQuotaBytes: 30 * GB, defaultRole: 'employee', defaultProducts: ['mail'],
       autoGroups: ['sales@techvein.com'], canSendExternal: true, userCount: 3, colour: '#16a34a' },
     { id: 'cat-ops', tenantId: '11111111-1111-1111-1111-111111111111', name: 'Operations',
-      defaultQuotaBytes: 30 * GB, defaultRole: 'manager', canSendExternal: true, userCount: 3, colour: '#a855f7' },
+      defaultQuotaBytes: 30 * GB, defaultRole: 'manager', defaultProducts: ['mail'], canSendExternal: true, userCount: 3, colour: '#a855f7' },
   ],
 };
 
+// _tenantId is kept in the signature so the call sites below stay readable
+// as "this user belongs to that org", but it is not part of OrgUser: the API
+// never returns it, because every response is already scoped to one tenant.
+// Sending it would invite a client to filter on it, and a client-side tenant
+// filter is a cross-tenant read waiting for someone to remove it.
 function user(
-  id: string, tenantId: string, address: string, displayName: string,
+  id: string, _tenantId: string, email: string, displayName: string,
   categoryId: string, categoryName: string, p: Partial<OrgUser> = {},
 ): OrgUser {
   return {
-    id, tenantId, mailboxId: `mb-${id}`, address, displayName,
+    id, email, displayName,
+    // Mock users all have mail. mailboxAddress is nullable in the real shape
+    // because a Payroll-only person has none.
+    mailboxAddress: email,
+    products: ['mail'],
     categoryId, categoryName, role: 'employee', status: 'active',
     quotaBytes: 15 * GB, usedBytes: 2 * GB, mfaEnabled: false,
     lastLoginAt: new Date(Date.now() - 3_600_000).toISOString(),
@@ -124,7 +133,14 @@ function user(
 
 const SCHOOL = '22222222-2222-2222-2222-222222222222';
 
-export const MOCK_ORG_USERS: OrgUser[] = [
+// Keyed by tenant, like MOCK_CATEGORIES, rather than one flat array the
+// caller filters. The real API returns users already scoped to the caller's
+// tenant, so a mock that hands you every organisation's users and asks you to
+// filter teaches the wrong shape — and the filter is the thing that
+// eventually gets refactored away.
+export const MOCK_ORG_USERS: Record<string, OrgUser[]> = {};
+
+MOCK_ORG_USERS[SCHOOL] = [
   user('u-01', SCHOOL, 'principal@abcschool.edu.in', 'Sunita Rao', 'cat-lead', 'Leadership',
     { role: 'org_owner', quotaBytes: 50 * GB, usedBytes: 22 * GB, mfaEnabled: true }),
   user('u-02', SCHOOL, 'vice.principal@abcschool.edu.in', 'Rajesh Kumar', 'cat-lead', 'Leadership',
@@ -156,6 +172,5 @@ export const adminApi = {
   getOrgs: () => delay(MOCK_ORGS),
   getOrg: (id: string) => delay(MOCK_ORGS.find((o) => o.id === id) ?? null),
   getCategories: (tenantId: string) => delay(MOCK_CATEGORIES[tenantId] ?? []),
-  getUsers: (tenantId: string) =>
-    delay(MOCK_ORG_USERS.filter((u) => u.tenantId === tenantId)),
+  getUsers: (tenantId: string) => delay(MOCK_ORG_USERS[tenantId] ?? []),
 };
