@@ -1,17 +1,38 @@
 'use client';
 
 // ============================================================================
-//  The primitives every screen is built from.
+//  The primitives every screen is built from — now MUI underneath.
 //
-//  In one file on purpose. Six files each holding a fifteen-line component
-//  makes the set harder to see whole, and the point of a kit is that someone
-//  can read it in one sitting and know what already exists rather than
-//  inventing a seventh button.
+//  The API is unchanged from the Tailwind version on purpose. Every page
+//  imports Card, Button, Stat, Table and the rest from here, so keeping the
+//  props identical meant the styling library could be swapped without editing
+//  twenty pages in the same commit. That is the whole reason this file exists
+//  rather than pages importing MUI directly.
+//
+//  New screens may use MUI directly. These stay because they encode decisions
+//  that should not be re-made per page — which red means danger, where the
+//  storage thresholds sit, what a card header looks like.
 // ============================================================================
+
+import MuiCard from '@mui/material/Card';
+import MuiCardContent from '@mui/material/CardContent';
+import CardHeader from '@mui/material/CardHeader';
+import MuiButton, { type ButtonProps } from '@mui/material/Button';
+import Chip from '@mui/material/Chip';
+import Box from '@mui/material/Box';
+import LinearProgress from '@mui/material/LinearProgress';
+import MuiTable from '@mui/material/Table';
+import TableBody from '@mui/material/TableBody';
+import TableCell from '@mui/material/TableCell';
+import TableContainer from '@mui/material/TableContainer';
+import TableHead from '@mui/material/TableHead';
+import TableRow from '@mui/material/TableRow';
+import Typography from '@mui/material/Typography';
+import { alpha } from '@mui/material/styles';
 
 // ---------------------------------------------------------------------------
 export function Card({
-  title, subtitle, actions, children, className = '', padded = true,
+  title, subtitle, actions, children, className, padded = true,
 }: {
   title?: string;
   subtitle?: string;
@@ -22,63 +43,49 @@ export function Card({
   padded?: boolean;
 }) {
   return (
-    <section className={`rounded-card border border-line bg-surface shadow-card ${className}`}>
+    <MuiCard className={className}>
       {(title || actions) && (
-        <header className="flex flex-wrap items-start gap-3 border-b border-line px-5 py-4">
-          <div className="min-w-0">
-            {title && <h2 className="text-[15px] font-semibold uppercase tracking-wide text-ink">{title}</h2>}
-            {subtitle && <p className="mt-0.5 text-[13px] text-ink-muted">{subtitle}</p>}
-          </div>
-          {actions && <div className="ml-auto flex gap-2">{actions}</div>}
-        </header>
+        <CardHeader title={title} subheader={subtitle} action={actions} />
       )}
-      <div className={padded ? 'p-5' : ''}>{children}</div>
-    </section>
+      {padded ? <MuiCardContent>{children}</MuiCardContent> : children}
+    </MuiCard>
   );
 }
 
 // ---------------------------------------------------------------------------
-type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
+type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 
-const BUTTON: Record<ButtonVariant, string> = {
-  primary:   'bg-brand-600 text-white hover:bg-brand-700 shadow-card',
-  secondary: 'bg-surface text-ink border border-line hover:border-ink-faint',
-  ghost:     'text-ink-muted hover:bg-canvas hover:text-ink',
+const MAP: Record<Variant, Pick<ButtonProps, 'variant' | 'color'>> = {
+  primary:   { variant: 'contained', color: 'primary' },
+  secondary: { variant: 'outlined',  color: 'inherit' },
+  ghost:     { variant: 'text',      color: 'inherit' },
   // Destructive actions are red everywhere, and red is not themeable. A
   // customer picking a green accent must not end up with a green Delete.
-  danger:    'bg-danger text-white hover:brightness-95',
+  danger:    { variant: 'contained', color: 'error' },
 };
 
 export function Button({
-  variant = 'secondary', className = '', children, ...rest
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }) {
-  return (
-    <button
-      {...rest}
-      className={`inline-flex items-center justify-center gap-2 rounded-card px-4 py-2 text-[13px] font-medium
-                  transition disabled:cursor-not-allowed disabled:opacity-50 ${BUTTON[variant]} ${className}`}
-    >
-      {children}
-    </button>
-  );
+  variant = 'secondary', children, ...rest
+}: Omit<ButtonProps, 'variant' | 'color'> & { variant?: Variant }) {
+  return <MuiButton {...MAP[variant]} {...rest}>{children}</MuiButton>;
 }
 
 // ---------------------------------------------------------------------------
 type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral';
 
-const TONE: Record<Tone, string> = {
-  ok:      'bg-ok/12 text-ok',
-  warn:    'bg-warn/15 text-warn',
-  danger:  'bg-danger/12 text-danger',
-  info:    'bg-info/12 text-info',
-  neutral: 'bg-ink-muted/12 text-ink-muted',
+const TONE: Record<Tone, 'success' | 'warning' | 'error' | 'info' | 'default'> = {
+  ok: 'success', warn: 'warning', danger: 'error', info: 'info', neutral: 'default',
 };
 
 export function Badge({ tone = 'neutral', children }: { tone?: Tone; children: React.ReactNode }) {
   return (
-    <span className={`inline-flex items-center rounded px-2 py-0.5 text-[11px] font-semibold capitalize ${TONE[tone]}`}>
-      {children}
-    </span>
+    <Chip
+      size="small"
+      color={TONE[tone]}
+      label={children}
+      sx={{ textTransform: 'capitalize' }}
+      variant="filled"
+    />
   );
 }
 
@@ -93,10 +100,6 @@ export function statusTone(status: string): Tone {
 }
 
 // ---------------------------------------------------------------------------
-/**
- * A headline number with its caption and a circular icon — the tile that runs
- * across the top of every dashboard in the reference.
- */
 export function Stat({
   label, value, caption, delta, icon,
 }: {
@@ -107,56 +110,68 @@ export function Stat({
   icon?: React.ReactNode;
 }) {
   // Up is not automatically good. Storage used rising is not a success, so
-  // callers say what they mean rather than the component guessing from an
+  // callers say what they mean rather than the component inferring it from an
   // arrow direction.
   const positive = delta ? (delta.good ?? delta.direction === 'up') : false;
 
   return (
-    <div className="rounded-card border border-line bg-surface p-5 shadow-card">
-      <div className="flex items-start gap-4">
-        <div className="min-w-0 flex-1">
-          <p className="text-label font-semibold uppercase text-ink-muted">{label}</p>
-          {caption && <p className="mt-1 text-[12px] text-ink-faint">{caption}</p>}
-          <p className="mt-2 text-2xl font-semibold tracking-tight text-ink">{value}</p>
-          {delta && (
-            <p className={`mt-1.5 text-[12px] ${positive ? 'text-ok' : 'text-danger'}`}>
-              <span className="font-semibold">{delta.value}</span>{' '}
-              <span className="text-ink-muted">{delta.direction === 'up' ? 'higher' : 'lower'}</span>
-            </p>
+    <MuiCard>
+      <MuiCardContent sx={{ display: 'flex', gap: 2, alignItems: 'flex-start' }}>
+        <Box sx={{ minWidth: 0, flex: 1 }}>
+          <Typography variant="caption" sx={{ fontWeight: 600, letterSpacing: '0.06em',
+                                              textTransform: 'uppercase', color: 'text.secondary' }}>
+            {label}
+          </Typography>
+          {caption && (
+            <Typography variant="caption" sx={{ display: 'block', color: 'text.disabled' }}>
+              {caption}
+            </Typography>
           )}
-        </div>
+          <Typography variant="h4" sx={{ mt: 1 }}>{value}</Typography>
+          {delta && (
+            <Typography variant="caption"
+                        sx={{ display: 'block', mt: 0.5, color: positive ? 'success.main' : 'error.main' }}>
+              <strong>{delta.value}</strong>{' '}
+              <Box component="span" sx={{ color: 'text.secondary' }}>
+                {delta.direction === 'up' ? 'higher' : 'lower'}
+              </Box>
+            </Typography>
+          )}
+        </Box>
         {icon && (
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-600">
+          <Box sx={{ width: 44, height: 44, borderRadius: 2, display: 'grid', placeItems: 'center',
+                     flexShrink: 0, color: 'primary.main',
+                     bgcolor: (t) => alpha(t.palette.primary.main, 0.12) }}>
             {icon}
-          </span>
+          </Box>
         )}
-      </div>
-    </div>
+      </MuiCardContent>
+    </MuiCard>
   );
 }
 
 // ---------------------------------------------------------------------------
 export function Table({ head, children }: { head: string[]; children: React.ReactNode }) {
   return (
-    <div className="scroll-thin overflow-x-auto">
-      <table className="w-full text-left text-[13px]">
-        <thead>
-          <tr className="border-b border-line">
-            {head.map((h) => (
-              <th key={h} className="whitespace-nowrap px-5 py-3 text-label font-semibold uppercase text-ink-muted">
-                {h}
-              </th>
+    <TableContainer>
+      <MuiTable size="small">
+        <TableHead>
+          <TableRow>
+            {head.map((h, i) => (
+              // Blank column headings are legitimate — an actions column has no
+              // name — so the index disambiguates rather than the label.
+              <TableCell key={`${h}-${i}`}>{h}</TableCell>
             ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-line">{children}</tbody>
-      </table>
-    </div>
+          </TableRow>
+        </TableHead>
+        <TableBody>{children}</TableBody>
+      </MuiTable>
+    </TableContainer>
   );
 }
 
-export function Td({ children, className = '' }: { children?: React.ReactNode; className?: string }) {
-  return <td className={`px-5 py-3 align-middle text-ink ${className}`}>{children}</td>;
+export function Td({ children, className }: { children?: React.ReactNode; className?: string }) {
+  return <TableCell className={className}>{children}</TableCell>;
 }
 
 // ---------------------------------------------------------------------------
@@ -164,28 +179,27 @@ export function Td({ children, className = '' }: { children?: React.ReactNode; c
  * A progress bar that changes colour as it fills.
  *
  * The thresholds are the same ones StorageAllocator enforces on the server:
- * 80% warns, 95% blocks new users. Showing amber at the point the backend
- * starts warning means the screen and the API tell the same story.
+ * 80% warns, 95% blocks new users. Showing amber where the backend starts
+ * warning means the screen and the API tell the same story.
  */
 export function Meter({ used, total }: { used: number; total: number }) {
   const pct = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0;
-  const colour = pct >= 95 ? 'bg-danger' : pct >= 80 ? 'bg-warn' : 'bg-brand-500';
+  const colour = pct >= 95 ? 'error' : pct >= 80 ? 'warning' : 'primary';
 
-  return (
-    <div className="h-1.5 w-full overflow-hidden rounded-full bg-line" role="progressbar"
-         aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
-      <div className={`h-full rounded-full transition-all ${colour}`} style={{ width: `${pct}%` }} />
-    </div>
-  );
+  return <LinearProgress variant="determinate" value={pct} color={colour} />;
 }
 
 // ---------------------------------------------------------------------------
 export function Empty({ title, hint, action }: { title: string; hint?: string; action?: React.ReactNode }) {
   return (
-    <div className="px-5 py-14 text-center">
-      <p className="text-[15px] font-medium text-ink">{title}</p>
-      {hint && <p className="mx-auto mt-1 max-w-sm text-[13px] text-ink-muted">{hint}</p>}
-      {action && <div className="mt-5">{action}</div>}
-    </div>
+    <Box sx={{ px: 3, py: 7, textAlign: 'center' }}>
+      <Typography variant="body1" sx={{ fontWeight: 500 }}>{title}</Typography>
+      {hint && (
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mx: 'auto', maxWidth: 420 }}>
+          {hint}
+        </Typography>
+      )}
+      {action && <Box sx={{ mt: 3 }}>{action}</Box>}
+    </Box>
   );
 }

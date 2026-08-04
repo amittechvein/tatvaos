@@ -3,7 +3,16 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
-import { useTheme } from '@/lib/theme';
+import Box from '@mui/material/Box';
+import Collapse from '@mui/material/Collapse';
+import Drawer from '@mui/material/Drawer';
+import List from '@mui/material/List';
+import ListItemButton from '@mui/material/ListItemButton';
+import ListItemIcon from '@mui/material/ListItemIcon';
+import ListItemText from '@mui/material/ListItemText';
+import Typography from '@mui/material/Typography';
+import { alpha } from '@mui/material/styles';
+import { useTheme as useAppearance } from '@/lib/theme';
 
 export interface NavItem {
   href: string;
@@ -17,55 +26,80 @@ export interface NavSection {
   items: NavItem[];
 }
 
+export const RAIL_WIDTH = 260;
+export const RAIL_WIDTH_ICONS = 72;
+
 /**
- * The rail.
+ * The navigation rail.
  *
- * The active row is the piece worth understanding. It is filled with the PAGE
- * colour, not a highlight colour, and joined to the content area by two
- * concave corners — so it reads as a tab pulled out of the rail rather than a
- * band painted onto it. The curve itself is in globals.css (.rail-active),
- * because CSS has no outward border-radius and it takes two pseudo-elements
- * with an inverted box-shadow to fake one.
+ * The active item is a fully rounded pill with a violet gradient and a
+ * coloured glow beneath it — Materio's signature, and the thing that makes
+ * the accent colour feel like the product's rather than a highlight applied
+ * to it. Built from theme values, not fixed hexes, so it follows whatever
+ * accent the user picks in the appearance panel.
+ *
+ * A permanent Drawer rather than a fixed <aside>: MUI handles the elevation,
+ * the scroll containment and the width transition, and switching to a
+ * temporary Drawer on mobile later is one prop rather than a rewrite.
  */
-export function Sidebar({
-  sections,
-  brand,
-}: {
-  sections: NavSection[];
-  brand: string;
-}) {
+export function Sidebar({ sections, brand }: { sections: NavSection[]; brand: string }) {
   const pathname = usePathname();
-  const { railMode } = useTheme();
+  const { railMode } = useAppearance();
   const [open, setOpen] = useState<string | null>(null);
 
-  const icons = railMode === 'icons';
-
   if (railMode === 'hidden') return null;
+  const icons = railMode === 'icons';
+  const width = icons ? RAIL_WIDTH_ICONS : RAIL_WIDTH;
 
   return (
-    <aside
-      className={`fixed inset-y-0 left-0 z-40 flex flex-col bg-rail shadow-rail transition-rail duration-200
-                  ${icons ? 'w-rail-sm' : 'w-rail'}`}
+    <Drawer
+      variant="permanent"
+      sx={{
+        width,
+        flexShrink: 0,
+        // The transition is on the paper too, or the rail snaps to its new
+        // width while the content area slides.
+        transition: (t) => t.transitions.create('width', { duration: 200 }),
+        '& .MuiDrawer-paper': {
+          width,
+          border: 0,
+          boxShadow: (t) => `0 0 12px 0 ${alpha(t.palette.text.primary, 0.08)}`,
+          overflowX: 'hidden',
+          transition: (t) => t.transitions.create('width', { duration: 200 }),
+        },
+      }}
     >
       {/* Brand */}
-      <div className={`flex h-topbar shrink-0 items-center gap-2.5 border-b border-white/5 ${icons ? 'justify-center px-0' : 'px-5'}`}>
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-brand-500 text-sm font-bold text-white">
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, height: 64, px: icons ? 0 : 3,
+                 justifyContent: icons ? 'center' : 'flex-start', flexShrink: 0 }}>
+        <Box
+          sx={{
+            width: 32, height: 32, borderRadius: 1.5, display: 'grid', placeItems: 'center',
+            fontWeight: 700, fontSize: 15, color: '#fff',
+            background: (t) => `linear-gradient(72deg, ${t.palette.primary.main}, ${t.palette.primary.light})`,
+          }}
+        >
           T
-        </div>
+        </Box>
         {!icons && (
-          <span className="truncate text-[15px] font-semibold tracking-wide text-white">
+          <Typography sx={{ fontWeight: 700, letterSpacing: '0.02em', fontSize: 19 }}>
             {brand}
-          </span>
+          </Typography>
         )}
-      </div>
+      </Box>
 
-      <nav className="scroll-thin flex-1 overflow-y-auto py-4">
+      <Box sx={{ overflowY: 'auto', overflowX: 'hidden', flex: 1, pb: 2 }} className="scroll-thin">
         {sections.map((section) => (
-          <div key={section.heading} className="mb-2">
+          <List key={section.heading} dense sx={{ px: 1.5, py: 0 }}>
             {!icons && (
-              <p className="px-5 pb-1 pt-3 text-label font-semibold uppercase text-rail-heading">
+              <Typography
+                variant="caption"
+                sx={{ display: 'block', px: 1.5, pt: 2, pb: 0.5, fontWeight: 600,
+                      letterSpacing: '0.06em', textTransform: 'uppercase',
+                      color: 'text.disabled', fontSize: 11 }}
+              >
                 {section.heading}
-              </p>
+              </Typography>
             )}
 
             {section.items.map((item) => {
@@ -73,82 +107,78 @@ export function Sidebar({
                 pathname === item.href ||
                 pathname.startsWith(`${item.href}/`) ||
                 item.children?.some((c) => pathname === c.href);
-
               const expanded = open === item.href;
 
-              return (
-                <div key={item.href}>
-                  {item.children ? (
-                    <button
-                      type="button"
-                      onClick={() => setOpen(expanded ? null : item.href)}
-                      aria-expanded={expanded}
-                      className={rowClass(!!active, icons)}
-                    >
-                      <Row item={item} icons={icons} active={!!active} />
-                      {!icons && (
-                        <svg
-                          className={`ml-auto h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
-                          viewBox="0 0 20 20" fill="currentColor" aria-hidden
-                        >
-                          <path d="M7.5 5l5 5-5 5" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      )}
-                    </button>
-                  ) : (
-                    <Link href={item.href} className={rowClass(!!active, icons)} title={icons ? item.label : undefined}>
-                      <Row item={item} icons={icons} active={!!active} />
-                    </Link>
+              const row = (
+                <ListItemButton
+                  {...(item.children
+                    ? { onClick: () => setOpen(expanded ? null : item.href) }
+                    : { component: Link, href: item.href })}
+                  selected={!!active}
+                  title={icons ? item.label : undefined}
+                  sx={{
+                    borderRadius: 999,
+                    minHeight: 42,
+                    mb: 0.25,
+                    px: icons ? 0 : 2,
+                    justifyContent: icons ? 'center' : 'flex-start',
+                    '&.Mui-selected, &.Mui-selected:hover': {
+                      color: '#fff',
+                      background: (t) =>
+                        `linear-gradient(72deg, ${t.palette.primary.main}, ${t.palette.primary.light})`,
+                      boxShadow: (t) => `0 2px 6px 0 ${alpha(t.palette.primary.main, 0.48)}`,
+                      '& .MuiListItemIcon-root': { color: '#fff' },
+                    },
+                  }}
+                >
+                  <ListItemIcon sx={{ minWidth: icons ? 0 : 34, color: 'text.secondary' }}>
+                    {item.icon}
+                  </ListItemIcon>
+                  {!icons && (
+                    <ListItemText
+                      primary={item.label}
+                      slotProps={{ primary: { sx: { fontSize: 14, fontWeight: 500 } } }}
+                    />
                   )}
+                  {!icons && item.children && (
+                    <Box component="span" sx={{ ml: 'auto', fontSize: 12, opacity: 0.7,
+                      transform: expanded ? 'rotate(90deg)' : 'none', transition: '0.15s' }}>
+                      ›
+                    </Box>
+                  )}
+                </ListItemButton>
+              );
 
-                  {!icons && item.children && expanded && (
-                    <div className="mb-1 ml-[38px] mr-3 border-l border-white/10 pl-3">
-                      {item.children.map((c) => (
-                        <Link
-                          key={c.href}
-                          href={c.href}
-                          className={`block rounded py-1.5 pl-2 text-[13px] transition
-                            ${pathname === c.href
-                              ? 'text-white'
-                              : 'text-rail-text hover:text-white'}`}
-                        >
-                          {c.label}
-                        </Link>
-                      ))}
-                    </div>
+              return (
+                <Box key={item.href}>
+                  {row}
+                  {!icons && item.children && (
+                    <Collapse in={expanded} unmountOnExit>
+                      <List dense sx={{ pl: 4, py: 0 }}>
+                        {item.children.map((c) => (
+                          <ListItemButton
+                            key={c.href}
+                            component={Link}
+                            href={c.href}
+                            selected={pathname === c.href}
+                            sx={{ borderRadius: 999, minHeight: 34,
+                                  '&.Mui-selected': { bgcolor: 'transparent', color: 'primary.main' } }}
+                          >
+                            <ListItemText
+                              primary={c.label}
+                              slotProps={{ primary: { sx: { fontSize: 13 } } }}
+                            />
+                          </ListItemButton>
+                        ))}
+                      </List>
+                    </Collapse>
                   )}
-                </div>
+                </Box>
               );
             })}
-          </div>
+          </List>
         ))}
-      </nav>
-    </aside>
+      </Box>
+    </Drawer>
   );
-}
-
-function Row({ item, icons, active }: { item: NavItem; icons: boolean; active: boolean }) {
-  return (
-    <>
-      <span
-        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition
-          ${active ? 'bg-brand-500 text-white shadow-[0_4px_12px_rgba(0,0,0,0.25)]' : 'text-rail-text'}`}
-      >
-        {item.icon}
-      </span>
-      {!icons && <span className="truncate">{item.label}</span>}
-    </>
-  );
-}
-
-function rowClass(active: boolean, icons: boolean) {
-  return [
-    'relative flex w-full items-center gap-3 text-[13.5px] font-medium transition',
-    icons ? 'justify-center px-0 py-2' : 'py-1.5 pl-4 pr-5',
-    active
-      // The page colour plus the curved joins. Text goes brand-coloured
-      // because on a light canvas white would be invisible.
-      ? 'rail-active bg-canvas text-brand-700 dark:text-brand-300'
-      : 'text-rail-text hover:text-white',
-  ].join(' ');
 }

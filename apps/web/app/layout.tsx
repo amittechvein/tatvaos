@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { AuthProvider } from '@/lib/auth';
 import { ThemeProvider } from '@/lib/theme';
+import { MuiRegistry } from '@/lib/mui/ThemeRegistry';
 import '../styles/globals.css';
 
 export const metadata: Metadata = {
@@ -28,9 +29,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         know a preference stored in the browser, so that first attribute change
         is expected rather than a bug worth warning about.
       */}
+      {/*
+        Order matters. ThemeProvider holds the user's chosen accent and mode;
+        MuiRegistry reads them to build the MUI theme. Reversing these means
+        MUI mounts before the preference is known and the product repaints
+        after load.
+      */}
       <body className="h-full">
         <ThemeProvider>
-          <AuthProvider>{children}</AuthProvider>
+          <MuiRegistry>
+            <AuthProvider>{children}</AuthProvider>
+          </MuiRegistry>
         </ThemeProvider>
       </body>
     </html>

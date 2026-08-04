@@ -1,16 +1,19 @@
 'use client';
 
-import { useTheme } from '@/lib/theme';
+import Box from '@mui/material/Box';
+import Breadcrumbs from '@mui/material/Breadcrumbs';
+import Link from '@mui/material/Link';
+import Typography from '@mui/material/Typography';
 import { Sidebar, type NavSection } from './Sidebar';
 import { Topbar } from './Topbar';
 
 /**
- * Rail on the left, topbar across the top, content in the middle.
+ * Rail, topbar, content.
  *
  * One shell for the platform console, the customer console and the mail
- * client. They differ in navigation and in one badge — not in layout. Three
- * shells would drift, and the day they drift is the day someone confuses the
- * platform console with a customer's.
+ * client. They differ in navigation and in one chip — not in layout. Three
+ * shells would drift, and the day they drift is the day someone mistakes the
+ * platform console for a customer's.
  */
 export function AppShell({
   scope,
@@ -29,51 +32,50 @@ export function AppShell({
   actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
-  const { railMode } = useTheme();
-
-  // Margin, not padding on a wrapper: the rail is fixed so it stays put while
-  // the content scrolls, and a fixed element takes up no layout space.
-  const offset =
-    railMode === 'hidden' ? 'ml-0'
-      : railMode === 'icons' ? 'ml-rail-sm'
-        : 'ml-rail';
-
   return (
-    <div className="min-h-screen bg-canvas">
+    <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: 'background.default' }}>
       <Sidebar sections={sections} brand={brand} />
 
-      <div className={`transition-rail duration-200 ${offset}`}>
+      {/* minWidth:0 is load-bearing. A flex child defaults to min-width:auto,
+          so one wide table would push the whole column past the viewport
+          instead of scrolling inside its own container. */}
+      <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <Topbar scope={scope} />
 
-        <main className="p-4 sm:p-6">
+        <Box component="main" sx={{ flex: 1, p: { xs: 2, sm: 3 } }}>
           {(title || breadcrumb || actions) && (
-            <div className="mb-5 flex flex-wrap items-start gap-3">
-              <div className="min-w-0">
-                {title && (
-                  <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-[26px]">
-                    {title}
-                  </h1>
-                )}
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'flex-start', mb: 3 }}>
+              <Box sx={{ minWidth: 0 }}>
+                {title && <Typography variant="h4">{title}</Typography>}
                 {breadcrumb && (
-                  <nav aria-label="Breadcrumb" className="mt-1 flex flex-wrap items-center gap-1.5 text-[13px]">
-                    {breadcrumb.map((b, i) => (
-                      <span key={b.label} className="flex items-center gap-1.5">
-                        {i > 0 && <span className="text-ink-faint">/</span>}
-                        {b.href
-                          ? <a href={b.href} className="text-brand-600 hover:underline">{b.label}</a>
-                          : <span className="text-ink-muted">{b.label}</span>}
-                      </span>
-                    ))}
-                  </nav>
+                  <Breadcrumbs sx={{ mt: 0.5, fontSize: 13 }}>
+                    {breadcrumb.map((b) =>
+                      b.href ? (
+                        <Link key={b.label} href={b.href} underline="hover" color="primary">
+                          {b.label}
+                        </Link>
+                      ) : (
+                        // sx, not fontSize as a prop. MUI v9 removed the
+                        // system shorthands from Typography — they made every
+                        // component's prop surface enormous and ambiguous
+                        // against real HTML attributes.
+                        <Typography key={b.label} sx={{ color: 'text.secondary', fontSize: 13 }}>
+                          {b.label}
+                        </Typography>
+                      ),
+                    )}
+                  </Breadcrumbs>
                 )}
-              </div>
-              {actions && <div className="ml-auto flex flex-wrap gap-2">{actions}</div>}
-            </div>
+              </Box>
+              {actions && (
+                <Box sx={{ ml: 'auto', display: 'flex', gap: 1, flexWrap: 'wrap' }}>{actions}</Box>
+              )}
+            </Box>
           )}
 
           {children}
-        </main>
-      </div>
-    </div>
+        </Box>
+      </Box>
+    </Box>
   );
 }

@@ -1,197 +1,145 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
-import { ACCENTS, RAILS, useTheme, type ColorMode, type RailMode } from '@/lib/theme';
+import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
+import Divider from '@mui/material/Divider';
+import Drawer from '@mui/material/Drawer';
+import IconButton from '@mui/material/IconButton';
+import Typography from '@mui/material/Typography';
+import ToggleButton from '@mui/material/ToggleButton';
+import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
+import { ACCENTS, useTheme as useAppearance, type ColorMode, type RailMode } from '@/lib/theme';
 
 /**
- * The theme panel behind the gear icon.
+ * The appearance panel.
  *
- * Scoped deliberately. The reference template also offers right-to-left
- * layout, horizontal navigation, six sidebar variants and photographic menu
- * backgrounds — those exist to demonstrate range to people evaluating a
- * template, and each one is a permanent second layout to keep working. What
- * is here is what a customer will actually use: dark mode, an accent colour,
- * a sidebar colour, and how much of the sidebar to show.
+ * Materio's own customizer is a paid feature; this is ours, and it is
+ * deliberately shorter than theirs. Their panel offers right-to-left layout,
+ * horizontal navigation, six sidebar variants and photographic backgrounds —
+ * options that exist to demonstrate range to someone evaluating a template.
+ * Each one is a second layout to keep working forever. These four are the ones
+ * a customer will actually touch.
  *
- * Any of the rest can be added later; none of them should be added by default.
+ * The sidebar colour picker is gone since the move to MUI: Materio's rail is
+ * the paper surface, so it follows light/dark rather than being coloured
+ * separately. Colouring it independently is what made the old design need a
+ * separate control.
  */
 export function Switcher({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const {
-    mode, setMode, accent, setAccent, rail, setRail, railMode, setRailMode, reset,
-  } = useTheme();
-
-  const panel = useRef<HTMLDivElement>(null);
-
-  // Escape closes it. A panel that can only be dismissed by finding a small
-  // button is a panel people leave open.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  const { mode, setMode, accent, setAccent, railMode, setRailMode, reset } = useAppearance();
 
   return (
-    <>
-      <div
-        onClick={onClose}
-        aria-hidden
-        className={`fixed inset-0 z-40 bg-black/20 transition-opacity duration-200
-          ${open ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
-      />
+    <Drawer
+      anchor="right"
+      open={open}
+      onClose={onClose}
+      slotProps={{ paper: { sx: { width: 300 } } }}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                 px: 3, height: 64 }}>
+        <Typography variant="h6">Appearance</Typography>
+        <IconButton onClick={onClose} size="small" aria-label="Close">
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M5 5l10 10M15 5L5 15" strokeLinecap="round" />
+          </svg>
+        </IconButton>
+      </Box>
+      <Divider />
 
-      <div
-        ref={panel}
-        role="dialog"
-        aria-label="Appearance"
-        aria-hidden={!open}
-        className={`fixed inset-y-0 right-0 z-50 flex w-[300px] flex-col bg-surface shadow-raised
-                    transition-transform duration-200 ${open ? 'translate-x-0' : 'translate-x-full'}`}
+      <Box sx={{ p: 3, overflowY: 'auto' }}>
+        <Section label="Mode">
+          <ToggleButtonGroup
+            exclusive
+            fullWidth
+            size="small"
+            value={mode}
+            onChange={(_, v: ColorMode | null) => v && setMode(v)}
+          >
+            <ToggleButton value="light">Light</ToggleButton>
+            <ToggleButton value="dark">Dark</ToggleButton>
+          </ToggleButtonGroup>
+        </Section>
+
+        <Section label="Accent colour">
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5 }}>
+            {ACCENTS.map((a) => (
+              <Box
+                key={a.hex}
+                component="button"
+                onClick={() => setAccent(a.hex)}
+                title={a.name}
+                aria-label={a.name}
+                aria-pressed={accent.toLowerCase() === a.hex.toLowerCase()}
+                sx={{
+                  width: 34, height: 34, borderRadius: '50%', cursor: 'pointer', p: 0,
+                  border: 0, bgcolor: a.hex,
+                  outline: accent.toLowerCase() === a.hex.toLowerCase()
+                    ? '2px solid currentColor' : 'none',
+                  outlineOffset: 2,
+                  transition: '0.15s',
+                  '&:hover': { transform: 'scale(1.08)' },
+                }}
+              />
+            ))}
+          </Box>
+
+          {/* Native colour input: keyboard accessible, works on touch, and
+              remembers recent choices — none of which a bespoke picker gets
+              for free. */}
+          <Box component="label" sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 2 }}>
+            <Box
+              component="input"
+              type="color"
+              value={accent}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAccent(e.target.value)}
+              aria-label="Custom accent colour"
+              sx={{ width: 38, height: 28, p: 0.25, cursor: 'pointer',
+                    border: '1px solid', borderColor: 'divider', borderRadius: 1, bgcolor: 'transparent' }}
+            />
+            <Typography variant="caption" color="text.secondary">Pick any colour</Typography>
+          </Box>
+        </Section>
+
+        <Section label="Sidebar">
+          <ToggleButtonGroup
+            exclusive
+            orientation="vertical"
+            fullWidth
+            size="small"
+            value={railMode}
+            onChange={(_, v: RailMode | null) => v && setRailMode(v)}
+          >
+            <ToggleButton value="expanded">Full</ToggleButton>
+            <ToggleButton value="icons">Icons only</ToggleButton>
+            <ToggleButton value="hidden">Hidden</ToggleButton>
+          </ToggleButtonGroup>
+        </Section>
+
+        <Button fullWidth variant="outlined" onClick={reset} sx={{ mt: 1 }}>
+          Reset to defaults
+        </Button>
+
+        <Typography variant="caption" color="text.disabled"
+                    sx={{ display: 'block', mt: 2, lineHeight: 1.6 }}>
+          Saved in this browser only. Your organisation&apos;s own branding is a
+          separate setting.
+        </Typography>
+      </Box>
+    </Drawer>
+  );
+}
+
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <Box sx={{ mb: 3.5 }}>
+      <Typography
+        variant="caption"
+        sx={{ display: 'block', mb: 1.5, fontWeight: 600, letterSpacing: '0.06em',
+              textTransform: 'uppercase', color: 'text.secondary' }}
       >
-        <header className="flex h-topbar shrink-0 items-center justify-between border-b border-line px-5">
-          <h2 className="text-sm font-semibold text-ink">Appearance</h2>
-          <button
-            onClick={onClose}
-            aria-label="Close appearance panel"
-            className="rounded p-1 text-ink-muted transition hover:bg-canvas hover:text-ink"
-          >
-            <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M5 5l10 10M15 5L5 15" strokeLinecap="round" />
-            </svg>
-          </button>
-        </header>
-
-        <div className="scroll-thin flex-1 overflow-y-auto p-5">
-          <Group label="Mode">
-            <div className="grid grid-cols-2 gap-2">
-              {(['light', 'dark'] as ColorMode[]).map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setMode(m)}
-                  aria-pressed={mode === m}
-                  className={`rounded-card border px-3 py-2 text-[13px] capitalize transition
-                    ${mode === m
-                      ? 'border-brand-500 bg-brand-50 font-medium text-brand-700'
-                      : 'border-line text-ink-muted hover:border-ink-faint'}`}
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
-          </Group>
-
-          <Group label="Accent colour">
-            <Swatches options={ACCENTS} value={accent} onChange={setAccent} />
-            <CustomColour value={accent} onChange={setAccent} label="Custom accent" />
-          </Group>
-
-          <Group label="Sidebar colour">
-            <Swatches options={RAILS} value={rail} onChange={setRail} disabled={mode === 'dark'} />
-            <CustomColour value={rail} onChange={setRail} label="Custom sidebar" disabled={mode === 'dark'} />
-            {mode === 'dark' && (
-              <p className="mt-2 text-xs text-ink-faint">
-                In dark mode the sidebar matches the page, so this is ignored.
-              </p>
-            )}
-          </Group>
-
-          <Group label="Sidebar">
-            <div className="space-y-2">
-              {([
-                ['expanded', 'Full', 'Icons and labels'],
-                ['icons', 'Icons only', 'Narrow rail, labels on hover'],
-                ['hidden', 'Hidden', 'Maximum room for content'],
-              ] as [RailMode, string, string][]).map(([v, title, hint]) => (
-                <button
-                  key={v}
-                  onClick={() => setRailMode(v)}
-                  aria-pressed={railMode === v}
-                  className={`w-full rounded-card border px-3 py-2 text-left transition
-                    ${railMode === v
-                      ? 'border-brand-500 bg-brand-50'
-                      : 'border-line hover:border-ink-faint'}`}
-                >
-                  <span className={`block text-[13px] font-medium ${railMode === v ? 'text-brand-700' : 'text-ink'}`}>
-                    {title}
-                  </span>
-                  <span className="block text-xs text-ink-muted">{hint}</span>
-                </button>
-              ))}
-            </div>
-          </Group>
-        </div>
-
-        <footer className="shrink-0 border-t border-line p-5">
-          <button
-            onClick={reset}
-            className="w-full rounded-card border border-line px-3 py-2 text-[13px] text-ink-muted transition hover:border-ink-faint hover:text-ink"
-          >
-            Reset to defaults
-          </button>
-          <p className="mt-3 text-xs leading-relaxed text-ink-faint">
-            Saved in this browser only. Your organisation&apos;s own branding is a
-            separate setting.
-          </p>
-        </footer>
-      </div>
-    </>
-  );
-}
-
-function Group({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <section className="mb-6">
-      <h3 className="mb-2.5 text-label font-semibold uppercase text-ink-muted">{label}</h3>
+        {label}
+      </Typography>
       {children}
-    </section>
-  );
-}
-
-function Swatches({
-  options, value, onChange, disabled,
-}: {
-  options: { name: string; hex: string }[];
-  value: string;
-  onChange: (hex: string) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <div className={`flex flex-wrap gap-2 ${disabled ? 'pointer-events-none opacity-40' : ''}`}>
-      {options.map((o) => (
-        <button
-          key={o.hex}
-          onClick={() => onChange(o.hex)}
-          title={o.name}
-          aria-label={o.name}
-          aria-pressed={value.toLowerCase() === o.hex.toLowerCase()}
-          className={`h-8 w-8 rounded-full ring-offset-2 ring-offset-surface transition
-            ${value.toLowerCase() === o.hex.toLowerCase() ? 'ring-2 ring-ink' : 'hover:scale-110'}`}
-          style={{ backgroundColor: o.hex }}
-        />
-      ))}
-    </div>
-  );
-}
-
-/**
- * A native colour input rather than a bespoke picker. It is keyboard
- * accessible, works on touch, remembers recent choices, and is one line.
- */
-function CustomColour({
-  value, onChange, label, disabled,
-}: {
-  value: string; onChange: (hex: string) => void; label: string; disabled?: boolean;
-}) {
-  return (
-    <label className={`mt-3 flex items-center gap-2 text-xs text-ink-muted ${disabled ? 'pointer-events-none opacity-40' : ''}`}>
-      <input
-        type="color"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        aria-label={label}
-        className="h-7 w-9 cursor-pointer rounded border border-line bg-transparent p-0.5"
-      />
-      Pick any colour
-    </label>
+    </Box>
   );
 }

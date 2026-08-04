@@ -12,6 +12,12 @@
   "dependencies": {
     "@tatvaos/core": "workspace:*",
     "@tatvaos/types": "workspace:*",
+    "@mui/material": "^9.1.0",
+    "@mui/material-nextjs": "^9.1.0",
+    "@mui/icons-material": "^9.1.0",
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.0",
+    "@emotion/cache": "^11.14.0",
     "dompurify": "^3.2.3",
     "next": "^15.1.0",
     "react": "^19.0.0",
