@@ -77,13 +77,32 @@ jobs:
             git reset --hard "$TARGET_SHA"
             ./infra/scripts/deploy.sh testing
 
-      - name: Smoke test
-        run: |
-          set -euo pipefail
-          for i in $(seq 1 20); do
-            code=$(curl -sk -o /dev/null -w '%{http_code}' https://api-test.tatvaos.com/health || true)
-            [ "$code" = "200" ] && { echo "healthy"; exit 0; }
-            sleep 6
-          done
-          echo "Testing environment did not become healthy"
-          exit 1
+      # Runs ON the server, through Caddy, with the Host header set.
+      #
+      # The previous version hit https://api-test.tatvaos.com from the runner,
+      # which conflates three things: the app working, public DNS existing, and
+      # a TLS certificate having been issued. When it failed you could not tell
+      # which. Public reachability is a separate concern with a separate fix
+      # (a DNS record), so it gets a separate check below.
+      - name: Smoke test through Caddy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.TESTING_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd /srv/tatvaos-testing
+            DOMAIN=$(grep '^SITE_DOMAIN=' infra/docker/.env | cut -d= -f2)
+            for i in $(seq 1 20); do
+              code=$(curl -s -o /dev/null -w '%{http_code}' \
+                     -H "Host: ${DOMAIN}" http://localhost/health || true)
+              if [ "$code" = "200" ]; then echo "healthy via Caddy"; exit 0; fi
+              sleep 6
+            done
+            echo "Not healthy. Last code: ${code:-none}"
+            docker compose -f infra/docker/docker-compose.base.yml \
+                           -f infra/docker/docker-compose.testing.yml \
+                           --env-file infra/docker/.env logs --tail 40 api caddy
+            exit 1
