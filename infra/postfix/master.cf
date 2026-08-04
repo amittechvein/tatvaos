@@ -26,11 +26,27 @@ smtp      inet  n       -       n       -       -       smtpd
 #  submission from mynetworks so swaks and the API can send without a
 #  certificate. These three -o lines must NOT be copied to production.
 # ----------------------------------------------------------------------------
+#  THE OUTBOUND GATE lives on this line:
+#
+#      -o smtpd_sender_restrictions=check_sender_access pgsql:.../sender-external-gate.cf
+#
+#  Signup is self-service, so anyone can create an account. That lookup returns
+#  'internal_only' for a mailbox whose tenant has not yet verified a domain of
+#  its own, which invokes the restriction class in main.cf: deliver to domains
+#  we host, reject everything else.
+#
+#  Without it, a spammer signs up at 3am and burns the IP reputation every
+#  paying customer depends on. It is also the answer we gave Linode when they
+#  asked how abuse is prevented — removing it makes that answer untrue.
+#
+#  Sender restrictions run BEFORE recipient restrictions, which is what lets a
+#  sender-based lookup decide which recipients are acceptable.
 submission inet n       -       n       -       -       smtpd
     -o syslog_name=postfix/submission
     -o smtpd_tls_security_level=none
     -o smtpd_sasl_auth_enable=no
     -o smtpd_client_restrictions=permit_mynetworks,reject
+    -o smtpd_sender_restrictions=$submission_sender_restrictions
     -o smtpd_recipient_restrictions=permit_mynetworks,reject_unauth_destination,reject
 
 # ----------------------------------------------------------------------------

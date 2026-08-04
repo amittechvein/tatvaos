@@ -45,6 +45,13 @@ public class Tenant
     [MaxLength(100)] public string Country { get; set; } = "India";
     [MaxLength(20)]  public string? Gstin { get; set; }
 
+    /// <summary>
+    /// "signup" (self-service form) or "onboarded" (created by Techvein).
+    /// Recorded because they warrant different trust — an account created after
+    /// a conversation is not the same risk as one created by a form at 3am.
+    /// </summary>
+    [MaxLength(16)] public string Origin { get; set; } = "signup";
+
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? SuspendedAt { get; set; }
     public DateTimeOffset? TrialEndsAt { get; set; }
@@ -65,6 +72,13 @@ public class Domain
     [MaxLength(64)] public string? VerificationToken { get; set; }
     public DateTimeOffset? OwnershipVerifiedAt { get; set; }
     public DateTimeOffset? MxVerifiedAt { get; set; }
+
+    /// <summary>
+    /// How ownership was proven. Recorded because CNAME, HTML-file and
+    /// meta-tag verifications lapse when a customer moves their website, and
+    /// knowing which was used turns an hour of support into five minutes.
+    /// </summary>
+    [MaxLength(16)] public string? VerificationMethod { get; set; }
 
     [MaxLength(64)]  public string? DkimSelector { get; set; }
     [MaxLength(256)] public string? DkimPrivateKeyRef { get; set; }
@@ -208,6 +222,53 @@ public class UserCategory
     public string[] AutoGroups { get; set; } = [];
     [MaxLength(9)] public string Colour { get; set; } = "#3563f0";
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// An unfinished signup.
+///
+/// Holds everything until domain verification passes, at which point a tenant,
+/// an owner and a domain are created together. Nothing half-made ever exists.
+///
+/// A draft that never converts is not waste — it is a lead. Somebody typed
+/// their organisation's name, their own name and their phone number because
+/// they wanted this, then hit a step needing DNS access they may not have.
+/// </summary>
+public class SignupDraft
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    [MaxLength(200)] public required string OrgName { get; set; }
+    [MaxLength(32)]  public string OrgType { get; set; } = "business";
+    [MaxLength(100)] public string Country { get; set; } = "India";
+    [MaxLength(20)]  public string? Gstin { get; set; }
+
+    [MaxLength(200)] public required string AdminName { get; set; }
+    [MaxLength(320)] public required string AdminEmail { get; set; }
+    [MaxLength(32)]  public string? AdminPhone { get; set; }
+
+    [MaxLength(253)] public string? Fqdn { get; set; }
+
+    [MaxLength(64)] public required string VerificationToken { get; set; }
+    [MaxLength(16)] public string? VerificationMethod { get; set; }
+
+    public int Attempts { get; set; }
+    public DateTimeOffset? LastAttemptAt { get; set; }
+    [MaxLength(500)] public string? LastAttemptError { get; set; }
+
+    /// <summary>
+    /// Where they stopped. Drives "resume where you left off" and the sales
+    /// queue — abandoning at step 4 is a lead worth calling; step 1 is a
+    /// bounced visitor.
+    /// </summary>
+    public int ReachedStep { get; set; } = 1;
+
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    /// <summary>Kept rather than deleted on success, so the funnel is measurable.</summary>
+    public DateTimeOffset? CompletedAt { get; set; }
+    public Guid? ConvertedTenantId { get; set; }
 }
 
 /// <summary>Which user may use which product. One row, not a schema change.</summary>

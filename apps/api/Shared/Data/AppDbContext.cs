@@ -48,6 +48,14 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
 
+    /// <summary>
+    /// Unfinished signups. NOT tenant-scoped — a draft belongs to nobody yet,
+    /// because the whole point is that no tenant exists until verification
+    /// passes. Access is controlled by the endpoints, which take an
+    /// unguessable id.
+    /// </summary>
+    public DbSet<SignupDraft> SignupDrafts => Set<SignupDraft>();
+
     // ---- mail ----
     public DbSet<Mailbox> Mailboxes => Set<Mailbox>();
     public DbSet<Alias> Aliases => Set<Alias>();
@@ -73,6 +81,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<StorageAllocation>().ToTable("storage_allocations", "core");
         b.Entity<AuditLog>().ToTable("audit_logs", "core");
         b.Entity<RefreshToken>().ToTable("refresh_tokens", "core");
+        b.Entity<SignupDraft>().ToTable("signup_drafts", "core");
 
         b.Entity<Mailbox>().ToTable("mailboxes", "mail");
         b.Entity<Alias>().ToTable("aliases", "mail");

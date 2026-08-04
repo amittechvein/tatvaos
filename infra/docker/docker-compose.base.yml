@@ -96,6 +96,23 @@ services:
       # once - see apps/api/Shared/Auth/BootstrapAdmin.cs.
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      # The mail host customers point their MX at, and the SPF include we ask
+      # them to add. DomainVerifier checks against exactly these values, so the
+      # records shown on screen and the records tested are the same strings.
+      # tatvaos.com, deliberately — NOT a customer's domain.
+      #
+      # Every customer's MX record points at Mail__Host forever. If that
+      # hostname lived inside a domain that were also a tenant, the day that
+      # domain moved or expired would break mail for every organisation on the
+      # platform. Infrastructure identity stays separate from any customer.
+      # mx, not mail. mail.tatvaos.com already points at Bluehost's shared
+      # mail server and may have live mailboxes behind it — repointing it to
+      # take over the name would break whatever is there. A hostname nothing
+      # is using costs nothing and removes the risk entirely.
+      Mail__Host: ${MAIL_HOST:-mx.tatvaos.com}
+      Mail__SpfInclude: ${MAIL_SPF_INCLUDE:-_spf.tatvaos.com}
+      # Zone new organisations get their free sign-in subdomain under.
+      Mail__PlatformZone: ${MAIL_PLATFORM_ZONE:-tatvaos.com}
     # No healthcheck. The .NET runtime image has neither wget nor curl, so this
     # check could never pass - the container reported "unhealthy" while serving
     # traffic fine. See the reasoning in apps/api/Dockerfile; liveness is

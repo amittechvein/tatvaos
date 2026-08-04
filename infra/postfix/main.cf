@@ -64,6 +64,44 @@ smtpd_recipient_restrictions =
 
 smtpd_helo_required = yes
 
+# ----------------------------------------------------------------------------
+#  THE OUTBOUND GATE
+# ----------------------------------------------------------------------------
+#  Signup is self-service, so anyone can create an organisation. Until that
+#  organisation has verified a domain of its OWN, its mailboxes may email
+#  domains we host and nothing else.
+#
+#  The submission service invokes this by name: sender-external-gate.cf returns
+#  the literal string 'internal_only' for a not-yet-verified sender, and Postfix
+#  looks that up here.
+#
+#  Order inside the class matters. check_recipient_access returns OK for a
+#  domain we host, which permits and stops. Anything else falls through to
+#  reject. Putting reject first would refuse everything, including internal
+#  mail — and the failure would look like the database lookup was broken.
+#
+#  This is the abuse control the Linode SMTP unblock request rests on. It is
+#  not a nicety: without it a spammer signs up at 3am and destroys the IP
+#  reputation every paying customer shares.
+# ----------------------------------------------------------------------------
+smtpd_restriction_classes = internal_only
+
+internal_only =
+    check_recipient_access pgsql:/etc/postfix/sql/local-recipient-domains.cf
+    check_recipient_access static:"REJECT Sending outside your organisation requires a verified domain. Add and verify yours under Domains in your TatvaOS console."
+
+# ----------------------------------------------------------------------------
+#  Named here, referenced from master.cf.
+#
+#  master.cf's -o values cannot contain spaces, so
+#  "check_sender_access pgsql:..." cannot be written inline there — a comma
+#  would make Postfix read the map as a second, invalid restriction. Defining
+#  it as a parameter and referencing $submission_sender_restrictions is the
+#  documented way round that.
+# ----------------------------------------------------------------------------
+submission_sender_restrictions =
+    check_sender_access pgsql:/etc/postfix/sql/sender-external-gate.cf
+
 #  Consulted ONLY by the submission service in master.cf, never by port 25.
 #  Broad here because the Docker bridge address varies between machines.
 #

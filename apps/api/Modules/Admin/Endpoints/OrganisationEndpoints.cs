@@ -100,7 +100,7 @@ public static class OrganisationEndpoints
     private static async Task<IResult> CreateAsync(
         CreateOrganisationRequest req,
         AppDbContext db, TenantContext tenant, AuditWriter audit,
-        HttpContext http, CancellationToken ct)
+        IConfiguration config, HttpContext http, CancellationToken ct)
     {
         var fqdn = req.PrimaryDomain.Trim().ToLowerInvariant();
 
@@ -188,7 +188,7 @@ public static class OrganisationEndpoints
         //  verified later, from their own console, with their existing mail
         //  untouched until they choose to move it.
         // ------------------------------------------------------------------
-        var platformFqdn = await AllocateSubdomainAsync(db, req.Name, ct);
+        var platformFqdn = await AllocateSubdomainAsync(db, config, req.Name, ct);
 
         db.Domains.Add(new Domain
         {
@@ -311,9 +311,12 @@ public static class OrganisationEndpoints
     /// memorable; "t-7f3a9c" is a support call.
     /// </summary>
     private static async Task<string> AllocateSubdomainAsync(
-        AppDbContext db, string name, CancellationToken ct)
+        AppDbContext db, IConfiguration config, string name, CancellationToken ct)
     {
-        var zone = "tatvaos.com";
+        // Configured, not hardcoded. The platform zone is an infrastructure
+        // decision that has already changed once; baking it into a string
+        // literal here means it changes in two places next time.
+        var zone = config["Mail:PlatformZone"] ?? "trineetra.com";
 
         var slug = System.Text.RegularExpressions.Regex
             .Replace(name.ToLowerInvariant(), @"[^a-z0-9]+", "")

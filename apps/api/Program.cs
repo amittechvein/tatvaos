@@ -84,6 +84,7 @@ builder.Services.AddScoped<AuditWriter>();
 // Singleton: it holds a DNS client with its own connection handling, and a
 // new resolver per request would discard that for no benefit.
 builder.Services.AddSingleton<DomainVerifier>();
+builder.Services.AddSingleton<SignupVerifier>();
 
 builder.Services.AddOpenApi();
 
@@ -120,6 +121,7 @@ app.MapAuthEndpoints();
 app.MapOrganisationEndpoints();
 app.MapUserEndpoints();
 app.MapDomainEndpoints();
+app.MapSignupEndpoints();
 
 // ---------------------------------------------------------------------------
 //  Bootstrap the first super admin

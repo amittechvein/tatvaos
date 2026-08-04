@@ -1,0 +1,43 @@
+# ============================================================================
+#  Is this sender allowed to email the outside world?
+# ============================================================================
+#
+#  Returns the string 'internal_only' for a mailbox that is NOT yet permitted
+#  to send off-platform. Postfix treats that as the name of a restriction class
+#  (defined in main.cf) which then permits our own domains and rejects
+#  everything else.
+#
+#  Returns nothing for a sender that IS allowed — no row means no restriction,
+#  and the rest of the normal checks apply.
+#
+#  ---------------------------------------------------------------------------
+#  WHY THIS EXISTS
+#
+#  Signup is self-service, so anyone can create an account. This is what stops
+#  them using it to spam: until the tenant has verified a domain of its own,
+#  its mailboxes can email their own organisation and nothing else.
+#
+#  It is the abuse control our Linode SMTP unblock request rests on. Removing
+#  it does not just risk the IP's reputation — it makes the answer we gave them
+#  untrue.
+#  ---------------------------------------------------------------------------
+#
+#  Connects as tatvaos_mailedge: SELECT on routing tables and this view only.
+#  It cannot read a single message.
+
+hosts    = postgres
+user     = tatvaos_mailedge
+password = dev_mail_pw
+dbname   = tatvaos_mail
+
+# NOT EXISTS against the view rather than a join, so a sender we have never
+# heard of returns nothing and falls through to the normal unknown-sender
+# handling — rather than being silently restricted, which would look like an
+# unexplained delivery failure.
+query = SELECT 'internal_only'
+        FROM   mail.mailboxes m
+        WHERE  m.address = '%s'
+          AND  NOT EXISTS (
+                   SELECT 1 FROM mail.senders_allowed_external s
+                    WHERE  s.address = m.address
+               )
