@@ -166,8 +166,22 @@ These are the mistakes that are expensive or impossible to undo.
 
 ---
 
+## How this project is run
+
+| Role | Owns |
+|---|---|
+| **Engineering Manager** (Amit) | Requirements, priorities, decisions, acceptance |
+| **Development team** (Claude) | Design, implementation, tests, documentation |
+
+The manager does not review code. Acceptance is by using the thing and
+confirming it does what was asked. See the delivery plan for the working
+contract, what only the manager can decide, and the cadence.
+
 ## Status
 
-Pre-Phase 0. The local stack runs; the applications do not exist yet.
+**Phase 0, in progress.** The local mail platform works end to end — 26/26 mail
+flow tests and 9/9 tenant isolation tests. The remaining Phase 0 gate is whether
+mail from our own IP reaches a Gmail inbox, which is waiting on Linode lifting
+the SMTP block.
 
 See [`docs/architecture/03-delivery-plan.md`](docs/architecture/03-delivery-plan.md) for phases, sprints and exit gates.

@@ -2,7 +2,7 @@
 
 **Companion to:** TatvaOS Mail Architecture v0.1
 **Date:** 2 August 2026
-**Team:** Amit + Claude (solo build with AI leverage)
+**Team:** Amit (engineering manager) + Claude (development team, ~5 developers of throughput)
 **Covers:** Web app, mobile web, native Android, native iOS, backend, infrastructure
 
 ---
@@ -333,6 +333,11 @@ Building these yourself is a poor use of a two-person team:
 | CI/CD | GitHub Actions + EAS |
 
 ---
+
+> **Note on sizing.** Sections below were written for a solo build. The stack
+> choices stand — they were chosen for operability, not headcount, and a smaller
+> number of moving parts is right at any team size. Only the timeline changed;
+> see `03-delivery-plan.md` for current estimates.
 
 ## 10. Build Order
 

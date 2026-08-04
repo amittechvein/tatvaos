@@ -146,6 +146,39 @@ services:
     networks: [mailnet]
 
   # --------------------------------------------------------------------------
+  #  Roundcube - webmail UI for TESTERS.
+  #
+  #  apps/web does not exist until Phase 1, so non-technical testers would
+  #  otherwise have nothing to click. Roundcube speaks IMAP to Dovecot and
+  #  SMTP to Postfix exactly as any third-party client would - which makes it
+  #  a genuine test of the server, not a simulation of one.
+  #
+  #      docker compose --profile testers up -d
+  #      http://localhost:8000
+  # --------------------------------------------------------------------------
+  roundcube:
+    image: roundcube/roundcubemail:latest
+    container_name: tv-roundcube
+    restart: unless-stopped
+    profiles: [testers]
+    depends_on:
+      dovecot:
+        condition: service_started
+    environment:
+      ROUNDCUBEMAIL_DB_TYPE: sqlite
+      ROUNDCUBEMAIL_DEFAULT_HOST: dovecot
+      ROUNDCUBEMAIL_DEFAULT_PORT: 143
+      ROUNDCUBEMAIL_SMTP_SERVER: postfix
+      ROUNDCUBEMAIL_SMTP_PORT: 587
+      ROUNDCUBEMAIL_PLUGINS: archive,zipdownload,managesieve
+      ROUNDCUBEMAIL_UPLOAD_MAX_FILESIZE: 25M
+    ports:
+      - "8000:80"
+    volumes:
+      - roundcubedata:/var/roundcube/db
+    networks: [mailnet]
+
+  # --------------------------------------------------------------------------
   #  Adminer - lightweight DB browser. Start with:
   #      docker compose --profile tools up -d
   #  (DBeaver on Windows connecting to localhost:5432 is usually nicer.)
@@ -165,6 +198,7 @@ networks:
 
 volumes:
   pgdata:
+  roundcubedata:
   redisdata:
   vmail:
   maillogs:

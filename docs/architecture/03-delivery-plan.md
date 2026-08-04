@@ -1,447 +1,355 @@
-# TatvaOS Mail — Phase-Wise Development Plan
+# TatvaOS Mail — Phase-Wise Delivery Plan
 
-**Companion to:** Architecture v0.1 · Technology Stack
-**Date:** 2 August 2026
-**Team assumption:** **1 engineer (Amit) + Claude**
-**Supersedes:** the phase tables in Architecture §15 and Tech Stack §10, which assumed a larger team
+**Companion to:** Architecture v0.1 · Technology Stack · Dev Environment
+**Revision:** 2.0 — restructured for the manager / development-team model
+**Date:** 4 August 2026
+
+| Role | Who | Owns |
+|---|---|---|
+| **Engineering Manager** | Amit | Requirements, priorities, decisions, acceptance |
+| **Development team** | Claude (~5 developers of throughput) | Design, implementation, tests, documentation, delivery |
 
 ---
 
-## 0. What Solo Actually Changes
+## 0. The Working Contract
 
-Worth being direct about this up front, because every date and every scope decision below follows from it.
+### What the development team delivers
 
-**What one person plus Claude can genuinely do:** write this codebase. That is not optimism. A multi-tenant mail platform is a large but well-understood body of code — schemas, APIs, sync logic, two clients, admin consoles. With heavy AI leverage, code output stops being the binding constraint.
+Everything that is code, configuration, schema, test or written documentation. You do not need to read the implementation to accept it.
 
-**What one person plus Claude cannot do:** *operate* it. The list is short and non-negotiable:
+### What only the manager can decide
 
-| Solo does not scale to | Why |
+There are exactly four categories. Everything else is the team's problem.
+
+| Category | Examples |
 |---|---|
-| 24×7 on-call | A two-hour outage means a customer missed a contract. One person cannot hold a pager indefinitely, and email has no acceptable maintenance window |
-| Deliverability operations | Months of IP warm-up, daily postmaster-tool monitoring, blocklist delisting, abuse-desk response. It is a part-time job that never ends |
-| Support in customer hours | Every onboarding generates DNS tickets. Business customers expect a reply the same day |
-| Compliance questionnaires | Enterprise deals arrive with 200-question security reviews |
+| **Product** | Which features, which segments, what ships in v1 |
+| **Commercial** | Pricing, plans, which providers to pay, what the SLA promises |
+| **Risk appetite** | Relay-first vs own IPs, when to accept paying customers, free tier or not |
+| **External** | Anything requiring a human identity — Linode tickets, Apple enrolment, KYC, contracts, design-partner relationships |
 
-This does not block the build. It blocks **selling with an SLA**, which is a different and later problem. The plan below is therefore structured so that everything up to and including a private beta is solo-feasible, and the hard hiring gate sits at Phase 4 — before the first paying customer who is entitled to be angry.
+### The honest constraint
 
-### The three decisions solo forces
+**Five developers of throughput does not mean five times the delivery speed.** Code output stops being the bottleneck almost immediately, and three other things become the bottleneck instead.
 
-**1. Relay-first outbound is now settled, not open.** Architecture §17 listed own-IPs vs relay as an open decision. Solo closes it: relay through SES/Postmark/Resend on your own domains and DKIM keys for the first 12–18 months. You give up some margin and control. You gain: no IP warm-up schedule, no blocklist firefighting, no reputation cliff caused by one spammy tenant, and roughly a full day a week back. Warm your own IPs in parallel, quietly, and migrate when there is someone to watch them.
-
-**2. Scope shrinks to the smallest thing that is genuinely useful.** Cuts, applied throughout: no POP3 at v1 (IMAP only), no DLP, no archiving/legal hold, no white-label, no multi-domain-per-tenant until Phase 3, no AI features until post-GA. Each is defensible to a customer. Shipping late is not.
-
-**3. Dogfooding starts in Phase 1, not Phase 4.** Your own mail on the platform is the only realistic substitute for a QA function. If it is not good enough for you, it is not good enough to sell — and you will find out in month five instead of month fifteen.
-
-### Revised timeline
-
-| Phase | Duration | Cumulative | Milestone |
-|---|---|---|---|
-| 0 — Spike | 6 wks | 1.5 mo | Real mail sent and received |
-| 1 — Backend + web | 5 mo | 6.5 mo | You use it as your primary mail |
-| 2 — Core extract + mobile | 3 mo | 9.5 mo | Apps on TestFlight / Play internal |
-| 3 — Private beta | 3.5 mo | 13 mo | 5 design-partner tenants live |
-| 4 — Hardening | 4 mo | 17 mo | Pentest closed, ops cover in place |
-| 5 — GA | 2.5 mo | **~19.5 mo** | Public launch |
-
-**Roughly 19–20 months to a credible GA, with a private beta at 13 months.** The Tech Stack doc's 12–16 month figure assumed two people; this is the honest solo adjustment. If that timeline is unacceptable, the lever is hiring, not compression — §8 lists what to cut and what it costs you.
-
----
-
-## 1. How to Read the Phase Detail
-
-Phases 0–2 are broken into two-week sprints, because they are near enough to plan concretely. Phases 3–6 are epic-level, because sprint-planning work 12 months out is fiction.
-
-Every phase has an **exit gate**. Gates are not milestones to celebrate — they are questions with a "no" answer available. A gate that cannot fail is decoration.
-
----
-
-# PHASE 0 — Spike
-
-**Duration:** 6 weeks (3 sprints) · **Goal:** prove the mail edge before building anything on top of it
-
-The purpose of Phase 0 is to fail cheaply. Every expensive mistake in this category of product is discoverable in six weeks, and almost nobody looks.
-
-### Sprint 0.1 — Infrastructure reality check (weeks 1–2)
-
-| # | Task | Note |
-|---|---|---|
-| 1 | **Get outbound SMTP unblocked on Linode** — see `docs/setup/04-linode-smtp-unblock.md` | Hard go/no-go. Linode blocks 25/465/587 by default. DNS must be configured **before** the ticket, or you lose days to a round trip |
-| 2 | Register a **throwaway** test domain | Never experiment on `tatvaos.com` or `techvein.com` — a burned reputation is very slow to repair |
-| 3 | Provision 2 VMs: `mail-edge`, `app` | Hetzner or OVH. Separate hosts from day one |
-| 4 | Postfix installed, accepting on :25 | |
-| 5 | Dovecot installed, IMAP login with a static file-backed user | |
-| 6 | Connect Thunderbird, read a message | |
-
-**Exit:** you have received a real email from the public internet and read it in a real client.
-
-### Sprint 0.2 — Deliverability baseline (weeks 3–4)
-
-| # | Task | Note |
-|---|---|---|
-| 1 | SPF, DKIM, DMARC on the test domain | DKIM signing via Rspamd |
-| 2 | PTR / rDNS configured and verified | |
-| 3 | Rspamd installed, scoring inbound | |
-| 4 | **Send to Gmail, Outlook, Yahoo. Record inbox vs spam for each** | This is your reality baseline. Write the results down |
-| 5 | mail-tester.com — target 10/10 | |
-| 6 | Register Google Postmaster Tools, Microsoft SNDS | Free, and you want history before you need it |
-| 7 | **Send the same test through SES or Postmark and compare** | This is the empirical input to the relay-vs-own-IP decision |
-
-**Exit:** 10/10 on mail-tester, and a documented comparison of cold-IP vs relay delivery to the big three receivers. If cold-IP mail is landing in spam, you have learned the single most important fact about this business in four weeks rather than fourteen months.
-
-### Sprint 0.3 — The integration seam (weeks 5–6)
-
-| # | Task | Note |
-|---|---|---|
-| 1 | Postgres with a minimal `domains` / `mailboxes` schema | |
-| 2 | Dovecot `userdb`/`passdb` backed by Postgres | Proves virtual users work — the whole multi-tenant model depends on it |
-| 3 | Postfix → Dovecot delivery over LMTP | |
-| 4 | Milter (or Rspamd Lua) calling a stub .NET endpoint for recipient validation | **Reject unknown recipients at SMTP time**, never accept-then-bounce |
-| 5 | All config committed as code — `docker-compose` + config files in git | No hand-edited servers, ever |
-| 6 | Teardown-and-rebuild test | Can you recreate the edge from git in under an hour? |
-
-### ▣ PHASE 0 EXIT GATE
-
-- [x] Mail delivered to a Postgres-backed virtual user *(locally — 26/26 green)*
-- [ ] Outbound reaching Gmail **inbox**, verified  ← **the actual gate**
-- [x] Mail edge rebuildable from git *(`local/` rebuilds from scratch)*
-- [ ] **Decision recorded: relay-first (expected) or own IPs**
-- [ ] Provider confirmed in writing on port 25 + rDNS
-
-**Status: local half done, real half not started.**
-
-What the local stack proved: the software works. Virtual domain and mailbox
-lookups, alias resolution, reject-at-SMTP-time, LMTP handoff, IMAP auth against
-Postgres, and tenant isolation under RLS.
-
-What it cannot prove, and what Phase 0 actually exists to answer: **whether mail
-from a new IP reaches a Gmail inbox.** That needs a real VM with a real address.
-No amount of local green ticks substitutes for it, and it is the finding that
-decides whether this business is viable — see §12 and §16.
-
-Three defects found and fixed while getting here, all recorded in
-`docs/runbooks/01-mail-edge-config-errors.md`:
-
-| Defect | Why it mattered |
+| What genuinely compresses ~5× | What does not compress at all |
 |---|---|
-| Postfix trailing comments | `bad numerical configuration` — config silently invalid |
-| Dovecot one-line blocks | `Garbage after '{'` — container crash-looped |
-| **`permit_mynetworks` on port 25** | **Open relay.** Would have been found by scanners within hours of going live |
+| Writing application code | **IP warm-up** — 4–8 weeks of graduated volume, physics of reputation |
+| Schemas, migrations, API surfaces | **DNS propagation, provider tickets, KYC approvals** |
+| Tests, fixtures, CI configuration | **Design-partner feedback** — real users need real weeks |
+| Documentation and runbooks | **Penetration test + retest** — external, scheduled |
+| Refactors and repayment of debt | **Your review and decision latency** |
+| Investigation and debugging | **24×7 operations** — one pager, one person |
 
-The third is the one worth remembering. It was caught by a test asserting that
-something which *should* fail does. Keep writing those.
+The consequence: **early phases compress a lot, late phases barely at all.** Phase 1 is nearly all code. Phase 4 is nearly all waiting, watching and process. A 5× team turns 19 months into roughly 12 — not into 4.
 
-**Fail condition:** if you cannot get clean delivery and cannot get relay economics to work, stop here. That is a good outcome for six weeks of effort.
+### The new bottleneck is you
+
+With code no longer scarce, the rate-limiting step becomes **decisions and acceptance**. If a question sits for three days, the team stalls for three days regardless of capacity.
+
+What that requires, concretely:
+
+- **Decision turnaround inside 24 hours** on anything flagged `DECISION NEEDED`
+- **Acceptance testing at each gate** — not code review; using the thing and confirming it does what you asked
+- **One planning conversation per phase** to set priorities and scope
+
+That is the whole ask. It is small, but it is not zero, and it is now on the critical path.
+
+---
+
+## 1. Requirements Format
+
+The more precisely a requirement states its *outcome*, the less of your time it consumes later.
+
+**Sufficient:**
+
+> Organisation admins must be able to create a mailbox and have the user receive mail within a minute. Admins cannot read that user's mail.
+
+**Not sufficient:**
+
+> Add user management.
+
+If a requirement is ambiguous the team will pick a sensible default, implement it, and flag the assumption in the delivery note. Reversing a flagged assumption is cheap; discovering an unflagged one at beta is not.
+
+---
+
+## 2. Timeline
+
+| Phase | Solo estimate | **5× team** | Cumulative | Compression | Why |
+|---|---|---|---|---|---|
+| **0 — Spike** | 6 wks | **3 wks** | 3 wks | 2× | Mostly waiting on Linode, DNS and IP checks. *Local half already complete* |
+| **1 — Backend + web** | 5 mo | **2 mo** | ~2.5 mo | 2.5× | Almost pure code. Compresses best of any phase |
+| **2 — Core + mobile** | 3 mo | **6 wks** | ~4 mo | 2× | Code-heavy, but store review and device testing are fixed cost |
+| **3 — Private beta** | 3.5 mo | **2.5 mo** | ~6.5 mo | 1.4× | Migration tooling compresses; **design-partner feedback does not** |
+| **4 — Hardening** | 4 mo | **3.5 mo** | ~10 mo | 1.15× | IP warm-up, pentest, DR drills. Barely compresses at all |
+| **5 — GA** | 2.5 mo | **2 mo** | **~12 mo** | 1.25× | Docs and launch compress; legal and support process do not |
+
+**≈12 months to GA. Private beta at ~6.5 months.**
+
+Assumptions this rests on, stated so they can be challenged:
+
+1. Decisions returned within 24 hours
+2. Scope held to §1.2 of the architecture doc — the deferral list is a commitment, not a wish list
+3. Operational cover resolved before Phase 4 closes (§9)
+4. Linode grants the SMTP unblock, or relay-first is accepted early rather than late
+
+---
+
+# PHASE 0 — Deliverability Spike
+
+**3 weeks · Goal: prove mail from our IP reaches a Gmail inbox**
+
+### Status
+
+| | |
+|---|---|
+| ✅ Local mail platform | Postfix + Dovecot + Postgres, 26/26 tests green |
+| ✅ Tenant isolation | RLS enforced and verified, 9/9 |
+| ✅ Dev environment | Windows + WSL2 + Docker, fully provisioned |
+| ✅ Repo, CI-ready structure, runbooks | 5 commits |
+| ✅ DNS + DKIM for tatvaos.com | Records specified, 2048-bit key generated |
+| ⏳ Linode SMTP unblock | **Submitted, awaiting response** |
+| ⬜ Cold-IP delivery to Gmail / Outlook / Yahoo | **The actual gate** |
+
+### Remaining work
+
+| # | Task | Owner |
+|---|---|---|
+| 1 | Publish DNS records for tatvaos.com | **Manager** — registrar access |
+| 2 | Set rDNS in Linode Cloud Manager | **Manager** — account access |
+| 3 | Check IP against Spamhaus / MXToolbox | Team |
+| 4 | Provision the Linode: Postfix, SPF/DKIM/DMARC signing | Team |
+| 5 | Send to Gmail, Outlook, Yahoo — record inbox vs spam | Team |
+| 6 | Send the same via SES/Postmark and compare | Team |
+| 7 | mail-tester.com → 10/10 | Team |
+| 8 | Register Google Postmaster Tools + Microsoft SNDS | **Manager** — identity |
+
+### ▣ GATE
+
+- [ ] Mail from `172.105.57.198` reaches a Gmail **inbox**, not spam
+- [ ] mail-tester 10/10
+- [ ] Relay comparison documented
+- [ ] **DECISION NEEDED — relay-first or own IPs** (§17.1)
+
+**This gate can fail, and failing it is a good outcome at week three.** If cold-IP delivery does not work, we learn it now for the price of a domain and a $5 server rather than after twelve months of building.
 
 ---
 
 # PHASE 1 — Backend and Web Client
 
-**Duration:** 5 months (10 sprints) · **Goal:** you use TatvaOS Mail as your primary mail account
+**2 months · Goal: a working multi-tenant mail platform you use as your own mail**
 
-### Sprint 1.1 — Foundations (weeks 1–2)
+Delivered in two-week increments; each ends with something you can use.
 
-- Monorepo: pnpm workspaces + Turborepo, tooling configured once
-- .NET 10 solution as a modular monolith — `Tenancy`, `Mail`, `Admin`, `Billing`, `Search` modules
-- Postgres 17, EF Core 10, first migration
-- **RLS enabled in the first migration, not retrofitted.** `FORCE ROW LEVEL SECURITY`, app role without `BYPASSRLS`
-- `TenantContext` + `SET LOCAL app.tenant_id` on connection open
-- Testcontainers harness — real Postgres in tests, since RLS cannot be tested against an in-memory provider
-- **`tests/isolation` created with its first three cases**
+| Increment | Delivered | You will be able to |
+|---|---|---|
+| **1.1** | Monorepo, .NET 10 API, Postgres + RLS from the first migration, isolation test suite, auth | Create an org and sign in |
+| **1.2** | Users, mailboxes, roles, audit log, admin API | Provision mailboxes via the admin console |
+| **1.3** | Domain onboarding, ownership verification, **DNS checker** | Add a domain and see exactly which records are wrong |
+| **1.4** | Inbound mail path, delivery service, object storage, search indexing | Receive real mail into the platform |
+| **1.5** | Outbound, DKIM signing, rate limits, job queue | Send real mail from the platform |
+| **1.6** | Sync API (JMAP-shaped), full-text search, live updates | — foundation for both clients |
+| **1.7** | Web client: message list, threads, sandboxed HTML rendering | Read your mail in a browser |
+| **1.8** | Compose, attachments, search UI, responsive + PWA | Use it as your primary mail |
 
-> The isolation suite is started in week one and grows with every feature for the rest of the project. It is the actual tenant-isolation guarantee; the RLS policy is only its implementation.
+### Decisions needed during this phase
 
-### Sprint 1.2 — Identity and tenancy (weeks 3–4)
+| When | Decision |
+|---|---|
+| 1.2 | Which roles ship in v1 — the full §4 table or a subset |
+| 1.3 | Which registrars get auto-configuration first |
+| 1.5 | Relay provider, if relay-first was chosen |
+| 1.7 | Any brand direction, or a neutral default |
 
-- Tenant signup → organization creation
-- ASP.NET Identity, Argon2id hashing
-- OIDC + JWT, refresh-token rotation, server-side revocation
-- Role model from Architecture §4 (including `Support Engineer` and `Delegate`)
-- Audit-log write path — append-only, wired in from the start rather than bolted on
-- TOTP MFA for admin roles
+### ▣ GATE
 
-### Sprint 1.3 — Users, mailboxes, admin skeleton (weeks 5–6)
-
-- `users` and `mailboxes` as **separate entities** (Architecture §2.1)
-- Admin API: create/suspend/delete users, provision mailboxes, reset passwords
-- Quota fields, incremental `used_bytes` accounting
-- Admin console shell in Next.js
-
-### Sprint 1.4 — Domains and DNS (weeks 7–8)
-
-- Add domain, TXT ownership token, polling verification with backoff
-- Per-domain DKIM keypair generation, private key in a secrets store
-- **The DNS checker** — every required record shown as pass / fail / *present-but-wrong*, with actual value beside expected
-
-> The DNS checker is the highest-ROI feature in the entire product. Most support tickets in this business are DNS tickets, and solo, every deflected ticket is an hour you did not lose.
-
-### Sprint 1.5 — Inbound mail path (weeks 9–10)
-
-- Milter: recipient validation against Postgres, tenant resolution from recipient domain
-- Delivery service: MIME body → object storage (R2/B2), metadata + headers → Postgres
-- Attachment extraction, SHA-256 dedup **within tenant only**
-- ClamAV scanning
-- `messages` partitioned by tenant hash + `received_at` range
-- Folder model with IMAP `UIDVALIDITY` / monotonic `UID` designed in now
-
-### Sprint 1.6 — Outbound and jobs (weeks 11–12)
-
-- Submission on :587, authenticated, STARTTLS
-- Per-user and per-tenant rate limits
-- DKIM signing with the tenant's domain key
-- Relay integration (SES/Postmark) with bounce and complaint webhooks
-- Suppression list
-- Postgres job queue via `FOR UPDATE SKIP LOCKED`
-
-### Sprint 1.7 — Sync API and search (weeks 13–14)
-
-- **JMAP-shaped delta-sync API**: `/sync/changes?since=<cursor>` + batched get, tombstones for deletes
-- Postgres FTS with `tsvector` + GIN
-- SignalR channel for live updates
-
-> Build the sync API *before* the web client, even though only one client exists. The web app is then your proof that the API is right, months before the mobile app depends on it.
-
-### Sprints 1.8–1.9 — Web client core (weeks 15–18)
-
-- Next.js app shell, auth flow, layout
-- Message list with **TanStack Virtual** — non-negotiable at 50k messages
-- Thread view and conversation grouping
-- **HTML email rendering done properly the first time**: server-side sanitise on ingest, DOMPurify client-side, sandboxed iframe on a separate origin, strict CSP, remote content blocked until the user asks
-- Folders, read/unread, archive, delete, star
-
-### Sprint 1.10 — Compose and responsive (weeks 19–20)
-
-- TipTap composer, draft autosave state machine, attachments
-- Reply / reply-all / forward with correct quoting and headers
-- Search UI
-- Responsive: three-pane → two-pane → single-pane with swipe
-- PWA manifest, service worker, installable
-- Settings: signature, filters, aliases display
-
-### ▣ PHASE 1 EXIT GATE
-
-- [ ] **Your own mail runs on it, on a real domain, as your primary account**
-- [ ] Isolation suite green, covering every endpoint added so far
-- [ ] Send, receive, search, compose, attach — all working from the web app
-- [ ] Two tenants coexisting with verified data separation
-- [ ] Backup taken **and restored** at least once
-
-**The dogfood criterion is the real gate.** If you are still keeping Gmail open in another tab, Phase 1 is not done, and no amount of feature checkboxes changes that.
+- [ ] **You have closed the Gmail tab.** This is the gate; feature checklists are not
+- [ ] Isolation suite green, covering every endpoint added
+- [ ] Two tenants coexisting with verified separation
+- [ ] A backup taken **and restored**
 
 ---
 
 # PHASE 2 — Shared Core and Mobile Apps
 
-**Duration:** 3 months (6 sprints) · **Goal:** iOS and Android apps in testing, push working reliably
+**6 weeks · Goal: iOS and Android apps in testing with reliable push**
 
-### Sprint 2.1 — Extract `packages/core` (weeks 1–2)
+| Increment | Delivered |
+|---|---|
+| **2.1** | `packages/core` extracted — threading, MIME, sync reconciliation, shared by both clients |
+| **2.2** | Expo app scaffold, EAS build pipeline, auth, offline SQLite store |
+| **2.3** | Message list, thread view, sandboxed rendering, offline read |
+| **2.4** | Push pipeline: APNs + FCM, device registry, remote wipe |
+| **2.5** | Compose, attachments, offline outbox, biometric lock, cert pinning |
+| **2.6** | Store listings, privacy declarations, TestFlight + Play internal |
 
-Threading, MIME helpers, search query parsing, draft state machine, sync reconciliation, date/quota formatting, validation schemas — pulled out of the web app into shared packages, with tests.
+### What the manager must do here
 
-> **This is the sprint people skip and regret.** Extracting shared logic before the second client exists costs two weeks. Extracting it afterwards costs a rewrite, plus every bug you already fixed once and now get to fix twice. Do not let it slip.
+| When | Action | Lead time |
+|---|---|---|
+| **Before 2.1** | **Enrol in the Apple Developer Program** | **1–2 weeks, may need D-U-N-S** |
+| Before 2.2 | Google Play Console account | Days |
+| 2.6 | Approve store listing copy and screenshots | — |
 
-### Sprint 2.2 — Mobile scaffolding (weeks 3–4)
+**Apple enrolment gates the entire phase and cannot be compressed. Start it at the beginning of Phase 1, not Phase 2.**
 
-- Expo SDK 57 app, Expo Router
-- **EAS Build configured for both platforms on day one** — Apple Developer account, certificates, provisioning, Play Console setup. Signing eats a week and it is better spent now than during a release crunch
-- Auth via PKCE, tokens in `expo-secure-store`
-- SQLite + Drizzle local store, schema mirroring the sync API
+### ▣ GATE
 
-### Sprint 2.3 — Mobile mail UI (weeks 5–6)
-
-- Message list with FlashList, thread view
-- WebView rendering with **JavaScript disabled**, remote content blocked
-- Offline-first read: headers and recent bodies local, attachments on demand
-- Swipe actions, pull-to-refresh
-
-### Sprint 2.4 — Push pipeline (weeks 7–8)
-
-- `devices` table and registration flow
-- .NET push-dispatch worker: delivery event → device lookup → APNs / FCM
-- **Minimal payloads** — identifier and change token only, never subject or body
-- Notification Service Extension on iOS for fetch-on-wake
-- **Test on real devices, real cellular networks, backgrounded, in low-power mode.** Simulator results mean nothing here
-- APNs `.p8` rotation runbook; stale token pruning
-
-> Users judge a mail app almost entirely on notification reliability. Budget the full sprint and expect it to be the fiddliest work in the project.
-
-### Sprint 2.5 — Compose, offline, security (weeks 9–10)
-
-- Compose with attachments, offline outbox with retry
-- Biometric app lock, configurable auto-lock
-- Certificate pinning with a documented rotation procedure
-- Remote wipe endpoint and admin UI
-- Sentry on all three surfaces
-
-### Sprint 2.6 — Store submission (weeks 11–12)
-
-- Store listings, screenshots, privacy and data-safety declarations
-- **Sign-in only — no account creation, no in-app purchase** (Tech Stack §5.5)
-- Background-mode justification written before submitting
-- TestFlight and Play internal testing
-- **Submit early and expect rejection.** A first-round rejection is routine; budget two weeks of round-trips
-
-### ▣ PHASE 2 EXIT GATE
-
-- [ ] Apps live on TestFlight and Play internal track
-- [ ] **Push arriving in under 10 seconds, verified on real devices over cellular**
+- [ ] Apps on TestFlight and Play internal track
+- [ ] **Push arriving in under 10 seconds on real devices over cellular**
 - [ ] Your phone's primary mail app is your own
-- [ ] Offline read and queued send both working
-- [ ] `packages/core` genuinely shared — not copy-pasted
 
 ---
 
 # PHASE 3 — Private Beta
 
-**Duration:** 3.5 months · **Goal:** five real organizations running production mail
+**2.5 months · Goal: five real organisations running production mail**
 
-Epic level from here.
+| Workstream | Notes |
+|---|---|
+| **Migration tooling** | Resumable IMAP sync from Gmail / M365 / Zoho. Largest single piece. Compresses well — it is pure code |
+| Aliases, alias domains, multi-domain | |
+| Distribution groups | Including SRS sender rewriting |
+| Shared mailboxes and delegation | |
+| Quotas, retention, warning thresholds | |
+| Billing | Razorpay + Stripe, plans, proration, GST invoicing |
+| Admin console completion | |
+| Support scaffolding | Help docs, ticket flow, runbooks |
 
-| Epic | Detail | Weight |
-|---|---|---|
-| **Migration tooling** | Resumable IMAP sync from Gmail / M365 / Zoho / cPanel, with a delta pass at cutover. **The single largest epic in this phase** — no organization with five years of mail will switch without it. Do not underestimate it | XL |
-| Aliases and multi-domain | Alias domains vs independent domains; address uniqueness per tenant | M |
-| Distribution groups | Posting policy, moderation, nesting with cycle detection, **SRS sender rewriting** — forwarding unchanged breaks SPF/DKIM and lands the group in spam | L |
-| Shared mailboxes | Delegate permissions, send-as / send-on-behalf, per-human audit attribution | M |
-| Quotas and retention | Warning thresholds, `452` on full (never `552`), retention policies via partition drop | M |
-| Billing | Razorpay + Stripe, plans, seat proration, GST invoicing, suspension grace periods | L |
-| Admin console completion | Every §4 role, audit log views, device management | M |
-| Support scaffolding | Help docs, ticket inbox, runbooks written as you go | M |
+**The compression limit here is not code.** Five organisations need to actually use the product for thirty days. That is thirty days of calendar regardless of how fast it was built.
 
-**Design partners:** Techvein first, then 4 organizations who know they are beta users, get it free, and are willing to call you. Bias toward one school and one clinic — the segments in Architecture §10 have requirements you want to discover now, not during an enterprise deal.
+### Manager actions
 
-### ▣ PHASE 3 EXIT GATE
+| Action | Lead time |
+|---|---|
+| **Razorpay KYC** | **1–2 weeks** — start during Phase 2 |
+| Recruit 5 design partners | Weeks. Bias to one school and one clinic — those segments have requirements worth discovering early |
+| Approve pricing before billing is built | — |
+
+### ▣ GATE
 
 - [ ] 5 tenants on production mail for 30 consecutive days
 - [ ] **Zero data-loss incidents.** Not "recovered" — zero
-- [ ] At least 2 tenants successfully migrated from a previous provider
-- [ ] Support load measured and written down (hours/week) — this number decides your hiring date
-- [ ] Billing has charged a real card and issued a valid GST invoice
+- [ ] At least 2 tenants migrated from a previous provider
+- [ ] Support load measured in hours/week — this number sets the hiring date
 
 ---
 
 # PHASE 4 — Hardening
 
-**Duration:** 4 months · **Goal:** earn the right to charge money with an SLA attached
+**3.5 months · Goal: earn the right to charge with an SLA attached**
 
-This phase is mostly not coding, which is exactly why it tends to get skipped.
+**This phase barely compresses, and that is worth understanding rather than resisting.** Most of it is not code.
 
-| Epic | Detail |
+| Workstream | Compresses? |
 |---|---|
-| **Own-IP warm-up** | If migrating off relay: 4–8 weeks of graduated volume per IP, running in parallel with relay. Do not cut over until metrics justify it |
-| Egress IP tiering | Trusted / standard / probation pools, automatic demotion on complaint and bounce thresholds (Architecture §6.2) |
-| Anti-spam tuning | Rspamd trained against real tenant traffic; per-tenant quarantine review |
-| Commercial AV | Add a second engine alongside ClamAV |
-| **Backup and restore drill** | Monthly, actually restored to a fresh host and verified. An untested backup is a hope |
-| **DR drill** | Full region-loss rehearsal against the RPO ≤ 5 min / RTO ≤ 4 hr targets |
-| **External penetration test** | Scope must include cross-tenant isolation and email HTML rendering. Budget for a retest |
-| Observability | OpenTelemetry → Grafana, alerting on delivery latency, queue depth, blocklist status, certificate expiry |
-| Runbooks | Written before the first outage, not during it |
-| Status page | Email customers will ask for one on day one |
-| Abuse desk | Monitored `abuse@` with a documented response SLA — ignoring it gets ranges delisted slowly and relisted fast |
+| **IP warm-up** | **No — 4–8 weeks of graduated volume. Physics of reputation** |
+| Egress IP tiering, automatic demotion | Yes |
+| Anti-spam tuning against real traffic | Partly — needs real traffic to tune against |
+| **External penetration test + retest** | **No — external, scheduled** |
+| **Backup restore drill, DR rehearsal** | **No — must run in real time to be meaningful** |
+| Observability, alerting, runbooks | Yes |
+| Status page, abuse desk | Yes |
 
-### ▣ PHASE 4 EXIT GATE — the hard one
+### ▣ GATE — the hard one
 
 - [ ] Restore tested and verified within RTO
 - [ ] Pentest findings closed and retested
 - [ ] DR rehearsal completed
-- [ ] Blocklist and postmaster monitoring alerting correctly
-- [ ] **Operational cover in place: a second operator hired, a NOC contracted, or an explicitly limited SLA that you disclose honestly to customers**
+- [ ] **DECISION NEEDED — operational cover: a second operator, a contracted NOC, or an explicitly limited SLA disclosed honestly**
 
-That last item is a gate, not a preference. Taking money for business email with a 99.9% promise and one person on call is a commitment you cannot keep, and the first 3 a.m. outage during a family emergency is when everyone finds out. All three options are legitimate — including the honest limited SLA, which some customers will happily accept at the right price. Choosing none of them is not.
+**A five-developer team does not answer a pager.** Everything in this document assumes the software is excellent; none of it prevents a 3am outage during a family emergency. All three options are legitimate — including the honest limited SLA, which some customers will happily accept at the right price. Choosing none is not.
 
 ---
 
 # PHASE 5 — General Availability
 
-**Duration:** 2.5 months
+**2 months**
 
-| Epic | Detail |
+| Workstream | Notes |
 |---|---|
-| Self-serve signup | With the anti-abuse controls from Architecture §3.2 — phone OTP, no outbound until payment on file or a hard daily cap |
-| Public pricing | Plans from Architecture §13; web checkout only |
-| Documentation | Setup guides, registrar-specific DNS walkthroughs, migration guides |
-| Marketing site | SSR'd, separate from the app |
-| Onboarding automation | Registrar auto-configuration for GoDaddy, Cloudflare, BigRock, Namecheap — the largest single source of onboarding drop-off |
-| SLA and legal | Terms, DPA, privacy policy, DPDP compliance statement |
-| Launch | Soft launch to a waitlist before opening signups |
+| Self-serve signup with anti-abuse controls | Phone OTP, no outbound until payment or hard cap |
+| Public pricing, web checkout | **Never in-app purchase** — see tech stack §5.5 |
+| Documentation, registrar-specific DNS guides | |
+| Marketing site | |
+| **SLA, terms, DPA, privacy policy** | **Manager — needs legal review, allow 2–3 weeks** |
+| Soft launch to a waitlist | |
 
-### ▣ PHASE 5 EXIT GATE
+### ▣ GATE
 
-- [ ] Self-serve signup to working mailbox without human intervention
-- [ ] Abuse controls verified by deliberate red-teaming of your own signup flow
+- [ ] Signup to working mailbox with no human intervention
+- [ ] Abuse controls verified by deliberately attacking your own signup flow
 - [ ] Support response times meeting the published SLA for 30 days
 
 ---
 
-# PHASE 6 — Differentiation (post-GA, ongoing)
+# PHASE 6 — Differentiation
 
-Sequenced by revenue impact, not by interest:
+Ongoing, sequenced by revenue impact rather than interest:
 
-1. **TatvaOS ERP integration** — email-to-task, quotes and invoices from the inbox. This is the actual moat. Zoho is cheaper and more mature at plain email; being the mail client that already knows your business data is a thing they cannot easily copy for your customers
-2. **Calendar and contacts** — CalDAV/CardDAV. The most-requested gap versus Workspace
-3. **AI layer** — smart replies, classification, priority inbox, thread summarisation
-4. **Enterprise compliance** — DLP, archiving, legal hold, SSO/SAML, SOC 2
-5. **White-label / reseller** — strong GTM lever in the Indian channel, significant added complexity
-6. **S/MIME, PGP** — checkbox items, near-zero real usage
-
----
-
-## 8. If You Fall Behind — Cut In This Order
-
-Ordered from cheapest to most painful. Cut from the top; never from the bottom.
-
-| Order | Cut | Cost of cutting |
-|---|---|---|
-| 1 | POP3 | Almost none. IMAP covers every modern client |
-| 2 | Multi-domain per tenant | Defer to post-GA. Most SMBs have one domain |
-| 3 | Distribution groups | Workaround: aliases plus manual forwarding |
-| 4 | Android app (ship iOS first) | iOS has the worse third-party mail story, so it is the app that must exist. Android users can use the PWA for a while |
-| 5 | Shared mailboxes | Painful for the `support@` use case, survivable |
-| 6 | Admin console polish | Do it via API and support requests initially |
-| 7 | Migration tooling | **Expensive** — it blocks every switching customer, and switching customers are your market |
-| — | **Never cut:** isolation tests, backups + restore drills, HTML sanitisation, push reliability | These are the failures you do not recover from |
+1. **TatvaOS ERP integration** — the actual moat. Zoho is cheaper and more mature at plain email; being the mail client that already knows the customer's business data is what they cannot easily copy
+2. Calendar and contacts (CalDAV/CardDAV) — the most-requested gap versus Workspace
+3. AI layer — smart replies, classification, priority inbox
+4. Enterprise compliance — DLP, archiving, legal hold, SSO, SOC 2
+5. White-label / reseller
+6. S/MIME, PGP
 
 ---
 
-## 9. Hiring Triggers
+## 8. If We Fall Behind — Cut In This Order
 
-Solo works until specific, observable things happen. Watch for them rather than picking a date:
-
-| Hire | Trigger | Latest acceptable |
+| Order | Cut | Cost |
 |---|---|---|
-| **Ops / support** | Support exceeds ~1 day/week (measure it in Phase 3) | **Phase 4 gate — before the first SLA customer** |
-| Second engineer | You are context-switching between support and code daily and shipping nothing | Early Phase 5 |
+| 1 | POP3 | Almost none |
+| 2 | Multi-domain per tenant | Most SMBs have one domain |
+| 3 | Distribution groups | Aliases plus manual forwarding |
+| 4 | Android app (ship iOS first) | iOS has the worse third-party mail story, so it must exist. Android users get the PWA |
+| 5 | Shared mailboxes | Painful for `support@`, survivable |
+| 6 | Admin console polish | API plus support requests initially |
+| 7 | Migration tooling | **Expensive — blocks every switching customer, and switchers are the market** |
+| — | **Never cut:** isolation tests, backups + restore drills, HTML sanitisation, push reliability | The failures you do not recover from |
+
+---
+
+## 9. Hiring — What a Development Team Cannot Replace
+
+| Role | Trigger | Latest acceptable |
+|---|---|---|
+| **Ops / support** | Support exceeds ~1 day/week — measured in Phase 3 | **Phase 4 gate. Before the first SLA customer** |
 | Deliverability contractor | Only if migrating to own IPs | Phase 4, part-time |
-| Compliance consultant | First enterprise security questionnaire arrives | On demand |
+| Compliance consultant | First enterprise security questionnaire | On demand |
 
-The Phase 4 ops hire is the one that is genuinely load-bearing. Everything before it is a preference.
+Note what is absent: a second *developer*. That is the one role this model genuinely covers.
 
 ---
 
-## 10. Standing Risks
+## 10. Risks
 
-| Risk | Phase it bites | Early warning |
+| Risk | Phase | Early warning |
 |---|---|---|
-| Deliverability never reaches parity | 0 and 4 | Spam placement in Sprint 0.2 — the reason that sprint exists |
-| Solo burnout | 3–4 | Sprints slipping with no scope change; support crowding out build time |
+| Deliverability never reaches parity | 0 and 4 | Spam placement in the Phase 0 gate — the reason that gate exists |
+| **Decision latency stalls the team** | All | Any `DECISION NEEDED` item older than 48 hours |
+| Scope expands because capacity feels free | 1–3 | Anything from the §1.2 deferral list appearing in a sprint |
 | Migration tooling underestimated | 3 | First design partner cannot switch |
 | Cross-tenant leak | Any | Isolation suite coverage falling behind new endpoints |
-| Zoho undercuts you | 5 | Design partners citing price rather than capability |
-| Scope creep into calendar/chat/AI | 2–3 | Any of these appearing in a sprint before Phase 6 |
+| Ops burden with no operator | 4–5 | Arrives on schedule and is not solved by code |
+| Zoho undercuts on price | 5 | Design partners citing price rather than capability |
+
+**The second row is new, and it is now the most likely cause of slippage.** When code is no longer scarce, the queue forms in front of decisions.
 
 ---
 
-## 11. The Weekly Rhythm
+## 11. Cadence
 
-Solo, with no team to create structure, the calendar has to:
+| Rhythm | What happens |
+|---|---|
+| **Per increment (~2 weeks)** | Team delivers; manager accepts by using it |
+| **Per phase** | One planning conversation to set scope and priorities |
+| **As raised** | `DECISION NEEDED` items — target under 24 hours |
+| **Continuous** | Team implements, tests, documents, and flags assumptions |
 
-- **Mon–Thu:** build. Protect these — this is the only time the product moves forward
-- **Fri AM:** support, tickets, customer DNS hand-holding
-- **Fri PM:** ops — patching, backup verification, blocklist and postmaster check, metrics review
-- **Sprint boundary:** demo to yourself against the exit criteria, honestly. Reforecast if a gate has slipped
-
-From Phase 3 onward, support and ops expand. When Friday alone stops covering them, that is the hiring trigger in §9 arriving — treat it as data, not as a personal failure.
+Delivery notes state what was built, what was assumed, what was deliberately left out, and what needs a decision. Reading one should take two minutes and should never require opening the code.
 
 ---
 
-*Two gates carry more weight than everything else in this document: **Phase 0** (mail actually reaches Gmail's inbox) and **Phase 4** (someone other than you can answer the pager). The first decides whether the product is possible. The second decides whether the business is.*
+*Two gates decide the outcome and neither is a coding problem: **Phase 0** — does mail reach a Gmail inbox, and **Phase 4** — can someone other than you answer the pager. The first determines whether the product is possible. The second determines whether the business is.*

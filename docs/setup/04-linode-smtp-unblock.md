@@ -122,6 +122,37 @@ If they still decline, that is a genuine signal rather than an obstacle: go rela
 
 ---
 
+## Sizing — 1 GB is right for now, wrong for Phase 1
+
+Current instance: **1 vCPU / 1 GB RAM / 25 GB**  (Nanode).
+
+**For Phase 0 this is fine, because Phase 0 only needs Postfix.** The question
+being answered is "does mail from this IP reach a Gmail inbox" — that needs an
+MTA, correct DNS, and nothing else. Do not install the full stack here.
+
+What will *not* fit on 1 GB:
+
+| Component | Reality |
+|---|---|
+| **ClamAV** | Needs 1–2 GB for its signature database alone. Will OOM-kill the box |
+| Rspamd | ~300–500 MB with reasonable settings. Tight |
+| PostgreSQL + Redis + Dovecot + Postfix together | Runs, but with no headroom |
+
+**Plan:** resize to **4 GB before Phase 1**, and 8 GB by the time real tenants
+exist. Linode resizing is a few minutes plus a reboot, and the disk grows with
+it — so starting small costs nothing. Just do not mistake "Phase 0 works on
+1 GB" for "the platform runs on 1 GB".
+
+Add swap regardless; it turns an OOM kill into slowness:
+
+```bash
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
+---
+
 ## Realistic timeline
 
 | Step | Time |

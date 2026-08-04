@@ -24,6 +24,10 @@ obj/
 !.env.example
 
 # Mail edge secrets
+# DKIM private keys - committing one means rotating every domain that uses it
+infra/dkim/*.key
+infra/dkim/*.private
+**/dkim/*.key
 infra/**/dkim/*.key
 infra/**/*.pem
 !infra/**/*.example.pem
