@@ -107,8 +107,61 @@ public class User
     public DateTimeOffset? LastLoginAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
+    // ---- Sign-in state ---------------------------------------------------
+    /// <summary>Reset to zero on any successful sign-in.</summary>
+    public int FailedLoginCount { get; set; }
+
+    /// <summary>
+    /// Set after too many failures. A lockout, not a ban — it expires on its
+    /// own, because the usual cause is someone mistyping their own password
+    /// and an admin ticket for that is a waste of everyone's afternoon.
+    /// </summary>
+    public DateTimeOffset? LockedUntil { get; set; }
+
+    public DateTimeOffset? PasswordChangedAt { get; set; }
+
+    /// <summary>True while the account still has the password an admin read
+    /// off a screen and typed into a chat window.</summary>
+    public bool MustChangePassword { get; set; }
+
     public UserCategory? Category { get; set; }
     public Domain? Domain { get; set; }
+}
+
+/// <summary>
+/// A revocable session.
+///
+/// Access tokens are not checked against the database — that is what makes
+/// them fast, and what makes them impossible to withdraw early. This is the
+/// counterweight: every renewal goes through a row that can be revoked, so
+/// suspending a person takes effect within one access-token lifetime rather
+/// than whenever their token happens to expire.
+///
+/// The stored value is a SHA-256 hash, never the token itself.
+/// </summary>
+public class RefreshToken
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid UserId { get; set; }
+
+    [MaxLength(64)] public required string TokenHash { get; set; }
+
+    public Guid? ReplacedBy { get; set; }
+
+    /// <summary>
+    /// Every token descended from one sign-in shares this. Presenting an
+    /// already-revoked token means a replay, so the whole family is killed.
+    /// </summary>
+    public Guid FamilyId { get; set; }
+
+    public DateTimeOffset IssuedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset ExpiresAt { get; set; }
+    public DateTimeOffset? RevokedAt { get; set; }
+    [MaxLength(100)] public string? RevokeReason { get; set; }
+
+    [MaxLength(512)] public string? UserAgent { get; set; }
+    [MaxLength(64)]  public string? IpAddress { get; set; }
 }
 
 /// <summary>

@@ -46,6 +46,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<StoragePool> StoragePools => Set<StoragePool>();
     public DbSet<StorageAllocation> StorageAllocations => Set<StorageAllocation>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
 
     // ---- mail ----
     public DbSet<Mailbox> Mailboxes => Set<Mailbox>();
@@ -71,6 +72,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<StoragePool>().ToTable("storage_pools", "core");
         b.Entity<StorageAllocation>().ToTable("storage_allocations", "core");
         b.Entity<AuditLog>().ToTable("audit_logs", "core");
+        b.Entity<RefreshToken>().ToTable("refresh_tokens", "core");
 
         b.Entity<Mailbox>().ToTable("mailboxes", "mail");
         b.Entity<Alias>().ToTable("aliases", "mail");
@@ -105,6 +107,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<StoragePool>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<StorageAllocation>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<AuditLog>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<RefreshToken>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Mailbox>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Alias>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Folder>().HasQueryFilter(e => e.TenantId == tenant.TenantId);

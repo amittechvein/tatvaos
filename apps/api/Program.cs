@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using TatvaOS.Api.Modules.Admin;
 using TatvaOS.Api.Modules.Admin.Endpoints;
+using TatvaOS.Api.Modules.Auth.Endpoints;
 using TatvaOS.Api.Shared.Auth;
 using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Tenancy;
@@ -74,6 +75,7 @@ builder.Services.AddAuthorizationBuilder()
 //  Application services
 // ---------------------------------------------------------------------------
 builder.Services.AddScoped<IPasswordHasher, Argon2PasswordHasher>();
+builder.Services.AddScoped<TokenIssuer>();
 builder.Services.AddScoped<StorageAllocator>();
 builder.Services.AddScoped<AuditWriter>();
 
@@ -108,8 +110,23 @@ app.UseAuthentication();
 app.UseMiddleware<TenantMiddleware>();
 app.UseAuthorization();
 
+app.MapAuthEndpoints();
 app.MapOrganisationEndpoints();
 app.MapUserEndpoints();
+
+// ---------------------------------------------------------------------------
+//  Bootstrap the first super admin
+// ---------------------------------------------------------------------------
+//  A fresh database has no way in. Passwords are Argon2id, so they cannot be
+//  seeded from SQL — there is no way to write a valid hash by hand — and a
+//  seeded default password would be the same on every install, which is worse
+//  than no login at all.
+//
+//  So: if no super admin exists AND both variables are set, create one. Runs
+//  once; on every later start the account exists and this does nothing. Unset
+//  the variables after the first start.
+// ---------------------------------------------------------------------------
+await BootstrapAdmin.EnsureAsync(app.Services, app.Logger);
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }))
    .AllowAnonymous()

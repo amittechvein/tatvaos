@@ -182,6 +182,9 @@ public static class UserEndpoints
             Role = category?.DefaultRole ?? "employee",
             Status = "pending",
             PasswordHash = hasher.Hash(password),
+            // An admin generated this and will send it over chat or read it
+            // aloud. It is a handover credential, not the person's password.
+            MustChangePassword = true,
         };
         db.Users.Add(user);
 

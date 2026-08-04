@@ -91,6 +91,11 @@ services:
       Jwt__SigningKey: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set}
       Jwt__Issuer: ${JWT_ISSUER}
       Jwt__Audience: tatvaos-mail
+      # Creates the first super admin if none exists, then does nothing on
+      # every later start. Blank is fine and normal once you have signed in
+      # once - see apps/api/Shared/Auth/BootstrapAdmin.cs.
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
     # No healthcheck. The .NET runtime image has neither wget nor curl, so this
     # check could never pass - the container reported "unhealthy" while serving
     # traffic fine. See the reasoning in apps/api/Dockerfile; liveness is
