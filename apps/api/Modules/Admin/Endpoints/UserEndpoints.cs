@@ -72,28 +72,53 @@ public static class UserEndpoints
                 EF.Functions.ILike(u.DisplayName, term));
         }
 
-        var list = await query
+        // Three queries, not one projection with correlated subqueries.
+        //
+        // Pulling the mailbox fields as three separate subqueries per user
+        // would issue three round trips per row, and collecting the product
+        // codes inside a projection is not something EF reliably translates.
+        // A school listing 400 students is the normal case here, so the shape
+        // of this query is the difference between a page that loads and one
+        // that times out.
+        var rows = await query
             .OrderBy(u => u.Email)
-            .Select(u => new UserResponse(
-                u.Id,
-                u.Email,
-                u.DisplayName,
-                db.Mailboxes.Where(m => m.UserId == u.Id)
-                            .Select(m => m.Address).FirstOrDefault(),
-                u.CategoryId,
-                u.Category != null ? u.Category.Name : null,
-                u.Role,
-                u.Status,
-                db.ProductAccess.Where(p => p.UserId == u.Id && p.RevokedAt == null)
-                                .Select(p => p.ProductCode).ToArray(),
-                db.Mailboxes.Where(m => m.UserId == u.Id)
-                            .Select(m => m.QuotaBytes).FirstOrDefault(),
-                db.Mailboxes.Where(m => m.UserId == u.Id)
-                            .Select(m => m.UsedBytes).FirstOrDefault(),
-                u.MfaEnabled,
-                u.LastLoginAt,
-                u.CreatedAt))
+            .Select(u => new
+            {
+                u.Id, u.Email, u.DisplayName, u.CategoryId,
+                CategoryName = u.Category != null ? u.Category.Name : null,
+                u.Role, u.Status, u.MfaEnabled, u.LastLoginAt, u.CreatedAt,
+            })
             .ToListAsync(ct);
+
+        var ids = rows.Select(r => r.Id).ToList();
+
+        var boxes = await db.Mailboxes.AsNoTracking()
+            .Where(m => m.UserId != null && ids.Contains(m.UserId.Value))
+            .Select(m => new { UserId = m.UserId!.Value, m.Address, m.QuotaBytes, m.UsedBytes })
+            .ToListAsync(ct);
+
+        var access = await db.ProductAccess.AsNoTracking()
+            .Where(p => ids.Contains(p.UserId) && p.RevokedAt == null)
+            .Select(p => new { p.UserId, p.ProductCode })
+            .ToListAsync(ct);
+
+        var boxByUser = boxes.GroupBy(b => b.UserId).ToDictionary(g => g.Key, g => g.First());
+        var productsByUser = access.GroupBy(a => a.UserId)
+            .ToDictionary(g => g.Key, g => g.Select(a => a.ProductCode).ToArray());
+
+        var list = rows.Select(r =>
+        {
+            boxByUser.TryGetValue(r.Id, out var box);
+            return new UserResponse(
+                r.Id, r.Email, r.DisplayName,
+                box?.Address,
+                r.CategoryId, r.CategoryName,
+                r.Role, r.Status,
+                productsByUser.TryGetValue(r.Id, out var p) ? p : [],
+                box?.QuotaBytes ?? 0,
+                box?.UsedBytes ?? 0,
+                r.MfaEnabled, r.LastLoginAt, r.CreatedAt);
+        }).ToList();
 
         return Results.Ok(list);
     }

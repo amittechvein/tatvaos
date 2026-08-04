@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { adminApi, formatBytes } from '@tatvaos/core';
-import type { OnboardingDraft, OrgType, Plan, StorageModel } from '@tatvaos/types';
+import type { OnboardingDraft, OrgType, Plan } from '@tatvaos/types';
 import { AdminShell } from '@/components/admin/AdminShell';
 
 const GB = 1024 ** 3;
