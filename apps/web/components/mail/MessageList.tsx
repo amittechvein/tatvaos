@@ -27,7 +27,7 @@ export function MessageList({
 }) {
   if (messages.length === 0) {
     return (
-      <div className="flex h-full flex-col items-center justify-center px-6 text-center text-gray-400">
+      <div className="flex h-full flex-col items-center justify-center px-6 text-center text-ink-faint">
         <Icon name="inbox" className="mb-3 h-10 w-10" />
         <p className="text-sm">Nothing here</p>
       </div>
@@ -35,7 +35,7 @@ export function MessageList({
   }
 
   return (
-    <ul className="scroll-thin h-full divide-y divide-gray-100 overflow-y-auto">
+    <ul className="scroll-thin h-full divide-y divide-line overflow-y-auto">
       {messages.map((m) => {
         const active = m.id === selectedId;
         return (
@@ -51,7 +51,7 @@ export function MessageList({
                 }
               }}
               className={`flex cursor-pointer gap-3 px-4 py-3 transition ${
-                active ? 'bg-brand-50' : m.isRead ? 'bg-white hover:bg-gray-50' : 'bg-blue-50/40 hover:bg-blue-50'
+                active ? 'bg-brand-50' : m.isRead ? 'bg-surface hover:bg-canvas' : 'bg-blue-50/40 hover:bg-blue-50'
               }`}
             >
               <Avatar address={m.from} size={36} />
@@ -59,25 +59,25 @@ export function MessageList({
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline gap-2">
                   <span
-                    className={`truncate text-sm ${m.isRead ? 'text-gray-700' : 'font-semibold text-gray-900'}`}
+                    className={`truncate text-sm ${m.isRead ? 'text-ink' : 'font-semibold text-ink'}`}
                   >
                     {displayName(m.from)}
                   </span>
-                  <span className="ml-auto shrink-0 text-xs text-gray-500">
+                  <span className="ml-auto shrink-0 text-xs text-ink-muted">
                     {formatMessageDate(m.sentAt)}
                   </span>
                 </div>
 
                 <div
-                  className={`truncate text-sm ${m.isRead ? 'text-gray-600' : 'font-medium text-gray-900'}`}
+                  className={`truncate text-sm ${m.isRead ? 'text-ink-muted' : 'font-medium text-ink'}`}
                 >
                   {m.subject || '(no subject)'}
                 </div>
 
                 <div className="flex items-center gap-1.5">
-                  <span className="truncate text-xs text-gray-500">{m.snippet}</span>
+                  <span className="truncate text-xs text-ink-muted">{m.snippet}</span>
                   {m.hasAttachments && (
-                    <Icon name="attach" className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                    <Icon name="attach" className="h-3.5 w-3.5 shrink-0 text-ink-faint" />
                   )}
                 </div>
               </div>
@@ -90,7 +90,7 @@ export function MessageList({
                 }}
                 aria-label={m.isFlagged ? 'Remove star' : 'Add star'}
                 className={`self-start p-1 transition ${
-                  m.isFlagged ? 'text-amber-500' : 'text-gray-300 hover:text-gray-400'
+                  m.isFlagged ? 'text-warn' : 'text-ink-faint/60 hover:text-ink-faint'
                 }`}
               >
                 <Icon name="star" filled={m.isFlagged} className="h-4 w-4" />

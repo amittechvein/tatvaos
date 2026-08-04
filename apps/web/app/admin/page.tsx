@@ -74,12 +74,12 @@ export default function AdminOrganisations() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search by name or domain"
-          className="w-full max-w-xs rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-brand-500"
+          className="w-full max-w-xs rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-brand-500"
         />
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-brand-500"
+          className="rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-brand-500"
         >
           <option value="all">All statuses</option>
           <option value="active">Active</option>
@@ -89,10 +89,10 @@ export default function AdminOrganisations() {
         </select>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+      <div className="overflow-hidden rounded-xl border border-line bg-surface">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="border-b border-gray-200 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
+            <thead className="border-b border-line bg-canvas text-left text-xs uppercase tracking-wide text-ink-muted">
               <tr>
                 <th className="px-4 py-3 font-medium">Organisation</th>
                 <th className="px-4 py-3 font-medium">Type</th>
@@ -103,29 +103,29 @@ export default function AdminOrganisations() {
                 <th className="px-4 py-3" />
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-line">
               {filtered.map((o) => {
                 const total =
                   o.storageModel === 'pooled'
                     ? (o.pooledStorageBytes ?? 0)
                     : (o.perUserQuotaBytes ?? 0) * o.userCount;
                 return (
-                  <tr key={o.id} className="hover:bg-gray-50">
+                  <tr key={o.id} className="hover:bg-canvas">
                     <td className="px-4 py-3">
-                      <div className="font-medium text-gray-900">{o.name}</div>
-                      <div className="text-xs text-gray-500">{o.primaryDomain}</div>
+                      <div className="font-medium text-ink">{o.name}</div>
+                      <div className="text-xs text-ink-muted">{o.primaryDomain}</div>
                     </td>
-                    <td className="px-4 py-3 text-gray-600">{TYPE_LABEL[o.type]}</td>
+                    <td className="px-4 py-3 text-ink-muted">{TYPE_LABEL[o.type]}</td>
                     <td className="px-4 py-3">
-                      <div className="text-gray-900">{o.planName}</div>
-                      <div className="text-xs text-gray-500">
+                      <div className="text-ink">{o.planName}</div>
+                      <div className="text-xs text-ink-muted">
                         {o.storageModel === 'pooled' ? 'Pooled storage' : 'Per-user quota'}
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-gray-600">
+                    <td className="px-4 py-3 text-ink-muted">
                       {o.userCount}
                       {o.maxUsers !== null && (
-                        <span className="text-gray-400"> / {o.maxUsers}</span>
+                        <span className="text-ink-faint"> / {o.maxUsers}</span>
                       )}
                     </td>
                     <td className="px-4 py-3">
@@ -134,7 +134,7 @@ export default function AdminOrganisations() {
                     <td className="px-4 py-3">
                       <StatusBadge status={o.status} />
                       {o.trialEndsAt && (
-                        <div className="mt-0.5 text-xs text-gray-500">
+                        <div className="mt-0.5 text-xs text-ink-muted">
                           ends {new Date(o.trialEndsAt).toLocaleDateString()}
                         </div>
                       )}
@@ -152,7 +152,7 @@ export default function AdminOrganisations() {
               })}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-gray-400">
+                  <td colSpan={7} className="px-4 py-10 text-center text-ink-faint">
                     No organisations match
                   </td>
                 </tr>

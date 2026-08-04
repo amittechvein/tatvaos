@@ -1,14 +1,20 @@
 'use client';
 
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { AppShell } from '@/components/shell/AppShell';
+import type { NavSection } from '@/components/shell/Sidebar';
 
 /**
- * Shell for both admin surfaces.
+ * Adapter kept so the existing admin pages did not all have to change at once.
  *
- * The colour band is deliberate. Super admin sees EVERY organisation's data;
- * org admin sees one. Confusing the two is how an operator suspends the wrong
- * tenant, so the two panels never look alike.
+ * It takes the flat `nav` list those pages already pass and renders the real
+ * AppShell — rail, topbar, page header. New screens should use AppShell
+ * directly; this exists so the redesign did not require rewriting every page
+ * in the same commit, which is how a redesign turns into a rewrite.
+ *
+ * The scope distinction is preserved and still matters: super admin acts
+ * across every organisation, org admin acts within one. The badge lives in the
+ * topbar now rather than a coloured band, but the reason is unchanged — the
+ * cost of confusing them is suspending the wrong tenant.
  */
 export function AdminShell({
   scope,
@@ -25,62 +31,64 @@ export function AdminShell({
   children: React.ReactNode;
   actions?: React.ReactNode;
 }) {
-  const pathname = usePathname();
   const isPlatform = scope === 'platform';
 
+  const sections: NavSection[] = [
+    {
+      heading: isPlatform ? 'Platform' : 'Organisation',
+      items: nav.map((n) => ({
+        href: n.href,
+        label: n.label,
+        icon: <NavGlyph label={n.label} />,
+      })),
+    },
+    {
+      heading: 'Products',
+      items: [{ href: '/mail/f-inbox', label: 'Mail', icon: <NavGlyph label="Mail" /> }],
+    },
+  ];
+
   return (
-    <div className="min-h-full bg-gray-50">
-      <div className={isPlatform ? 'bg-slate-900' : 'bg-brand-700'}>
-        <div className="mx-auto max-w-7xl px-6 py-3">
-          <div className="flex items-center gap-3">
-            <span
-              className={`rounded px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider ${
-                isPlatform ? 'bg-amber-400 text-slate-900' : 'bg-white/20 text-white'
-              }`}
-            >
-              {isPlatform ? 'Platform admin' : 'Organisation admin'}
-            </span>
-            <span className="text-sm text-white/70">
-              {isPlatform ? 'All organisations' : 'This organisation only'}
-            </span>
-            <Link href="/mail/f-inbox" className="ml-auto text-sm text-white/70 hover:text-white">
-              Back to mail
-            </Link>
-          </div>
-        </div>
-      </div>
+    <AppShell
+      scope={isPlatform ? 'platform' : 'organisation'}
+      brand="TatvaOS"
+      sections={sections}
+      title={title}
+      breadcrumb={[
+        { label: isPlatform ? 'Platform' : 'Organisation' },
+        ...(subtitle ? [{ label: subtitle }] : []),
+      ]}
+      actions={actions}
+    >
+      {children}
+    </AppShell>
+  );
+}
 
-      <header className="border-b border-gray-200 bg-white">
-        <div className="mx-auto max-w-7xl px-6">
-          <div className="flex flex-wrap items-center gap-4 py-5">
-            <div className="min-w-0">
-              <h1 className="text-2xl font-semibold text-gray-900">{title}</h1>
-              {subtitle && <p className="mt-0.5 text-sm text-gray-500">{subtitle}</p>}
-            </div>
-            {actions && <div className="ml-auto flex gap-2">{actions}</div>}
-          </div>
-          <nav className="flex gap-1 overflow-x-auto">
-            {nav.map((n) => {
-              const active = pathname === n.href;
-              return (
-                <Link
-                  key={n.href}
-                  href={n.href}
-                  className={`whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium transition ${
-                    active
-                      ? 'border-brand-600 text-brand-700'
-                      : 'border-transparent text-gray-600 hover:border-gray-300 hover:text-gray-900'
-                  }`}
-                >
-                  {n.label}
-                </Link>
-              );
-            })}
-          </nav>
-        </div>
-      </header>
+/**
+ * Chooses a glyph from the label.
+ *
+ * A stopgap, and worth replacing with an explicit icon per route. It is here
+ * because the alternative was editing every page in this commit to pass one,
+ * and a redesign that touches every file at once is a redesign nobody can
+ * review.
+ */
+function NavGlyph({ label }: { label: string }) {
+  const l = label.toLowerCase();
 
-      <main className="mx-auto max-w-7xl px-6 py-6">{children}</main>
-    </div>
+  const path =
+    l.includes('organisation') || l.includes('client') ? 'M3 21h18M5 21V7l7-4 7 4v14M9 21v-5h6v5'
+      : l.includes('user') || l.includes('people') ? 'M16 19v-2a4 4 0 00-8 0v2M12 11a3 3 0 100-6 3 3 0 000 6'
+        : l.includes('categor') ? 'M4 6h16M4 12h16M4 18h10'
+          : l.includes('mail') ? 'M3 7l9 6 9-6M3 7h18v10H3z'
+            : l.includes('storage') || l.includes('plan') ? 'M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7'
+              : l.includes('billing') ? 'M3 7h18v10H3zM3 11h18'
+                : 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z';
+
+  return (
+    <svg className="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d={path} />
+    </svg>
   );
 }

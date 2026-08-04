@@ -30,7 +30,7 @@ export default function OrgOverview() {
   if (!org) {
     return (
       <AdminShell scope="organisation" title="Loading…" nav={NAV}>
-        <div className="text-sm text-gray-400">Loading…</div>
+        <div className="text-sm text-ink-faint">Loading…</div>
       </AdminShell>
     );
   }
@@ -68,24 +68,24 @@ export default function OrgOverview() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <section className="rounded-xl border border-gray-200 bg-white p-5">
-          <h2 className="mb-1 text-sm font-semibold text-gray-900">Storage</h2>
-          <p className="mb-4 text-xs text-gray-500">
+        <section className="rounded-xl border border-line bg-surface p-5">
+          <h2 className="mb-1 text-sm font-semibold text-ink">Storage</h2>
+          <p className="mb-4 text-xs text-ink-muted">
             {org.storageModel === 'pooled'
               ? 'Pooled — one allocation shared across every mailbox'
               : 'Per-user quota — each mailbox has its own fixed allowance'}
           </p>
           <StorageBar used={org.storageUsedBytes} total={totalStorage} />
           {org.storageModel === 'pooled' && (
-            <p className="mt-3 text-xs text-gray-500">
+            <p className="mt-3 text-xs text-ink-muted">
               When a pool fills, every mailbox stops receiving at once. Set a warning threshold well
               below the limit.
             </p>
           )}
         </section>
 
-        <section className="rounded-xl border border-gray-200 bg-white p-5">
-          <h2 className="mb-4 text-sm font-semibold text-gray-900">Users by category</h2>
+        <section className="rounded-xl border border-line bg-surface p-5">
+          <h2 className="mb-4 text-sm font-semibold text-ink">Users by category</h2>
           <ul className="space-y-3">
             {cats.map((c) => (
               <li key={c.id} className="flex items-center gap-3">
@@ -93,12 +93,12 @@ export default function OrgOverview() {
                   className="h-2.5 w-2.5 shrink-0 rounded-full"
                   style={{ backgroundColor: c.colour }}
                 />
-                <span className="flex-1 text-sm text-gray-700">{c.name}</span>
-                <span className="text-sm font-medium text-gray-900">{c.userCount}</span>
+                <span className="flex-1 text-sm text-ink">{c.name}</span>
+                <span className="text-sm font-medium text-ink">{c.userCount}</span>
               </li>
             ))}
             {cats.length === 0 && (
-              <li className="text-sm text-gray-400">No categories defined yet</li>
+              <li className="text-sm text-ink-faint">No categories defined yet</li>
             )}
           </ul>
         </section>

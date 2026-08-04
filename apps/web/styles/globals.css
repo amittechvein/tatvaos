@@ -2,15 +2,125 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ==========================================================================
+   Runtime theming
+   ==========================================================================
+
+   Colours live as CSS custom properties, and tailwind.config points at them.
+   That is what lets the switcher recolour the whole product instantly without
+   a rebuild — a Tailwind class like bg-brand-600 compiles to
+   rgb(var(--brand-600)), so changing the variable changes every element that
+   uses it, everywhere, in the same frame.
+
+   The alternative — shipping a stylesheet per theme and swapping the link —
+   means a flash of the old colours on every change and a build step for every
+   new palette.
+
+   Values are space-separated RGB channels, NOT hex. Tailwind needs to insert
+   an alpha channel for things like bg-brand-600/50, and it can only do that
+   with rgb(var(--x) / <alpha-value>).
+   ========================================================================== */
+
 @layer base {
+  :root {
+    /* Primary — the indigo. Overwritten by the switcher. */
+    --brand-50:  241 240 253;
+    --brand-100: 228 226 251;
+    --brand-200: 201 197 247;
+    --brand-300: 169 162 241;
+    --brand-400: 138 127 234;
+    --brand-500: 108  95 252;
+    --brand-600:  98  89 202;
+    --brand-700:  78  70 165;
+    --brand-800:  61  55 130;
+    --brand-900:  47  42  99;
+
+    /* The sidebar rail */
+    --rail:         28  28  43;
+    --rail-soft:    37  37  58;
+    --rail-text:   163 164 185;
+    --rail-heading: 107 108 133;
+
+    /* The page behind the cards, and the topbar */
+    --canvas:  240 240 248;
+    --surface: 255 255 255;
+
+    /* Text */
+    --ink:       40  47  83;
+    --ink-muted:123 129 145;
+    --ink-faint:168 173 184;
+
+    --line: 237 237 245;
+  }
+
+  /* ------------------------------------------------------------------------
+     Dark mode.
+     Applied by adding .dark to <html>, which is how the switcher toggles it.
+     Card surfaces lift slightly above the canvas rather than both being the
+     same near-black — without that separation a dense admin screen becomes an
+     undifferentiated dark rectangle.
+     ------------------------------------------------------------------------ */
+  .dark {
+    --canvas:   23  23  36;
+    --surface:  33  33  51;
+    --rail:     23  23  36;
+    --rail-soft:33  33  51;
+    --ink:      230 231 240;
+    --ink-muted:150 154 172;
+    --ink-faint:112 116 133;
+    --line:     47  47  70;
+  }
+
   html, body { height: 100%; }
-  body { @apply bg-gray-50 text-gray-900 antialiased; }
+
+  body {
+    @apply bg-canvas text-ink antialiased;
+    /* Colour changes should feel like the product responding, not repainting */
+    transition: background-color 150ms ease, color 150ms ease;
+  }
 }
 
 @layer utilities {
-  /* Thin scrollbars — mail is a dense, list-heavy interface */
-  .scroll-thin { scrollbar-width: thin; scrollbar-color: #d1d5db transparent; }
+  /* Thin scrollbars — this is a dense, list-heavy interface */
+  .scroll-thin { scrollbar-width: thin; scrollbar-color: rgb(var(--ink-faint)) transparent; }
   .scroll-thin::-webkit-scrollbar { width: 8px; height: 8px; }
-  .scroll-thin::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
+  .scroll-thin::-webkit-scrollbar-thumb { background: rgb(var(--ink-faint) / 0.5); border-radius: 4px; }
   .scroll-thin::-webkit-scrollbar-track { background: transparent; }
+
+  /* ------------------------------------------------------------------------
+     The curved active item in the sidebar.
+
+     The reference marks the active row by making it the same colour as the
+     page, joined to the content area by two concave corners — so the row
+     reads as a tab pulled out of the rail rather than a highlight painted on
+     it.
+
+     Done with two pseudo-elements: a square of page colour with a rail-
+     coloured circle cut out of it. There is no border-radius that curves
+     outward, which is why this cannot be one property.
+     ------------------------------------------------------------------------ */
+  .rail-active { position: relative; }
+
+  .rail-active::before,
+  .rail-active::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    width: 24px;
+    height: 24px;
+    background-color: rgb(var(--canvas));
+    pointer-events: none;
+  }
+
+  .rail-active::before {
+    top: -24px;
+    border-bottom-right-radius: 24px;
+    box-shadow: 8px 8px 0 8px rgb(var(--rail));
+  }
+
+  .rail-active::after {
+    bottom: -24px;
+    border-top-right-radius: 24px;
+    box-shadow: 8px -8px 0 8px rgb(var(--rail));
+  }
 }

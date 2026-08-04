@@ -10,14 +10,14 @@ export function StorageBar({
   compact?: boolean;
 }) {
   const pct = quotaPercent(used, total);
-  const tone = pct > 90 ? 'bg-red-500' : pct > 75 ? 'bg-amber-500' : 'bg-brand-500';
+  const tone = pct > 90 ? 'bg-danger' : pct > 75 ? 'bg-warn' : 'bg-brand-500';
 
   return (
     <div className={compact ? 'w-32' : 'w-full'}>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-200">
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-line">
         <div className={`h-full rounded-full ${tone}`} style={{ width: `${pct}%` }} />
       </div>
-      <div className="mt-1 text-xs text-gray-500">
+      <div className="mt-1 text-xs text-ink-muted">
         {formatBytes(used)} / {formatBytes(total)} ({pct}%)
       </div>
     </div>

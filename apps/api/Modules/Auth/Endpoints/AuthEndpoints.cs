@@ -39,6 +39,44 @@ public static class AuthEndpoints
     private const string GenericFailure =
         "That email address and password combination was not recognised.";
 
+    // ---------------------------------------------------------------------
+    //  The refresh token also goes out as an httpOnly cookie.
+    //
+    //  This is a mail product: it renders HTML written by strangers. Assume a
+    //  cross-site scripting bug will happen one day, and design so that it is
+    //  survivable. A token in localStorage is readable by any script on the
+    //  page; an httpOnly cookie is not readable by script at all.
+    //
+    //  Web clients should therefore ignore the refreshToken in the response
+    //  body entirely and let the browser handle the cookie. It stays in the
+    //  body for the mobile apps, which have no cookie jar to rely on and put
+    //  it in the Keychain or Keystore — storage that XSS cannot reach either.
+    //
+    //  Path is scoped to /api/auth so the token is not attached to every
+    //  ordinary API call, and SameSite=Strict because there is no legitimate
+    //  cross-site request that should carry it.
+    // ---------------------------------------------------------------------
+    private const string RefreshCookie = "tv_refresh";
+
+    private static void SetRefreshCookie(HttpContext http, string token) =>
+        http.Response.Cookies.Append(RefreshCookie, token, new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = true,
+            SameSite = SameSiteMode.Strict,
+            Path = "/api/auth",
+            Expires = DateTimeOffset.UtcNow.Add(TokenIssuer.RefreshTokenLifetime),
+        });
+
+    private static void ClearRefreshCookie(HttpContext http) =>
+        http.Response.Cookies.Delete(RefreshCookie, new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = true,
+            SameSite = SameSiteMode.Strict,
+            Path = "/api/auth",
+        });
+
     public static void MapAuthEndpoints(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api/auth").WithTags("Authentication");
@@ -118,6 +156,7 @@ public static class AuthEndpoints
         var (refresh, _) = await IssueRefreshAsync(db, user, Guid.NewGuid(), http, ct);
         var access = tokens.IssueAccessToken(user);
         await db.SaveChangesAsync(ct);
+        SetRefreshCookie(http, refresh);
 
         return Results.Ok(new AuthResponse(
             AccessToken: access.Value,
@@ -132,10 +171,15 @@ public static class AuthEndpoints
         RefreshRequest req, AppDbContext db, TokenIssuer tokens,
         TenantContext tenant, HttpContext http, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(req.RefreshToken))
+        // Cookie first. A browser sends it automatically and never exposes it
+        // to script; the body is the mobile path.
+        var presented = http.Request.Cookies[RefreshCookie];
+        if (string.IsNullOrWhiteSpace(presented)) presented = req.RefreshToken;
+
+        if (string.IsNullOrWhiteSpace(presented))
             return Results.BadRequest(new { error = "A refresh token is required." });
 
-        var hash = TokenIssuer.HashRefreshToken(req.RefreshToken);
+        var hash = TokenIssuer.HashRefreshToken(presented);
 
         // core.refresh_tokens is RLS-forced and we do not yet know the tenant,
         // so this goes through the SECURITY DEFINER function that exists for
@@ -199,6 +243,7 @@ public static class AuthEndpoints
 
         var access = tokens.IssueAccessToken(user);
         await db.SaveChangesAsync(ct);
+        SetRefreshCookie(http, newToken);
 
         return Results.Ok(new AuthResponse(
             access.Value, access.ExpiresAt, newToken, user.MustChangePassword, Describe(user)));
@@ -206,13 +251,16 @@ public static class AuthEndpoints
 
     // ------------------------------------------------------------------
     private static async Task<IResult> LogoutAsync(
-        RefreshRequest req, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        RefreshRequest? req, AppDbContext db, TenantContext tenant,
+        HttpContext http, CancellationToken ct)
     {
+        var presented = http.Request.Cookies[RefreshCookie] ?? req?.RefreshToken;
+
         // Revokes the whole family, so "sign out" means signed out — not
         // "signed out until the refresh token is used again".
-        if (!string.IsNullOrWhiteSpace(req.RefreshToken))
+        if (!string.IsNullOrWhiteSpace(presented))
         {
-            var hash = TokenIssuer.HashRefreshToken(req.RefreshToken);
+            var hash = TokenIssuer.HashRefreshToken(presented);
             var row = await db.RefreshTokens.FirstOrDefaultAsync(t => t.TokenHash == hash, ct);
             if (row is not null)
             {
@@ -224,6 +272,7 @@ public static class AuthEndpoints
             }
         }
 
+        ClearRefreshCookie(http);
         return Results.Ok(new { signedOut = true });
     }
 

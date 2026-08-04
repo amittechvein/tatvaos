@@ -29,14 +29,14 @@ export function Sidebar({
   const pct = quotaPercent(session.mailbox.usedBytes, session.mailbox.quotaBytes);
 
   return (
-    <nav className="flex h-full w-64 shrink-0 flex-col border-r border-gray-200 bg-white">
+    <nav className="flex h-full w-64 shrink-0 flex-col border-r border-line bg-surface">
       <div className="flex items-center gap-2 px-4 py-4">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-sm font-bold text-white">
           T
         </div>
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold">TatvaOS Mail</div>
-          <div className="truncate text-xs text-gray-500">{session.tenantName}</div>
+          <div className="truncate text-xs text-ink-muted">{session.tenantName}</div>
         </div>
       </div>
 
@@ -63,7 +63,7 @@ export function Sidebar({
                 className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition ${
                   active
                     ? 'bg-brand-50 font-semibold text-brand-800'
-                    : 'text-gray-700 hover:bg-gray-100'
+                    : 'text-ink hover:bg-canvas'
                 }`}
               >
                 <Icon name={FOLDER_ICONS[f.specialUse ?? ''] ?? 'inbox'} className="h-4.5 w-4.5" />
@@ -79,26 +79,26 @@ export function Sidebar({
         })}
       </ul>
 
-      <div className="border-t border-gray-200 p-4">
-        <div className="mb-1.5 flex justify-between text-xs text-gray-500">
+      <div className="border-t border-line p-4">
+        <div className="mb-1.5 flex justify-between text-xs text-ink-muted">
           <span>Storage</span>
           <span>{pct}%</span>
         </div>
-        <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-200">
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-line">
           <div
             className={`h-full rounded-full transition-all ${
-              pct > 90 ? 'bg-red-500' : pct > 75 ? 'bg-amber-500' : 'bg-brand-500'
+              pct > 90 ? 'bg-danger' : pct > 75 ? 'bg-warn' : 'bg-brand-500'
             }`}
             style={{ width: `${pct}%` }}
           />
         </div>
-        <div className="mt-1.5 text-xs text-gray-500">
+        <div className="mt-1.5 text-xs text-ink-muted">
           {formatBytes(session.mailbox.usedBytes)} of {formatBytes(session.mailbox.quotaBytes)}
         </div>
 
-        <div className="mt-4 border-t border-gray-100 pt-3">
+        <div className="mt-4 border-t border-line pt-3">
           <div className="truncate text-sm font-medium">{session.mailbox.displayName}</div>
-          <div className="truncate text-xs text-gray-500">{session.mailbox.address}</div>
+          <div className="truncate text-xs text-ink-muted">{session.mailbox.address}</div>
         </div>
       </div>
     </nav>

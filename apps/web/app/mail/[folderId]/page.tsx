@@ -74,7 +74,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
 
   if (loading || !session) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-gray-400">Loading…</div>
+      <div className="flex h-full items-center justify-center text-sm text-ink-faint">Loading…</div>
     );
   }
 
@@ -107,30 +107,30 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
 
       {/* Message list */}
       <section
-        className={`flex min-w-0 flex-col border-r border-gray-200 bg-white lg:w-[380px] lg:shrink-0 ${
+        className={`flex min-w-0 flex-col border-r border-line bg-surface lg:w-[380px] lg:shrink-0 ${
           selected ? 'hidden lg:flex' : 'flex flex-1'
         }`}
       >
-        <header className="border-b border-gray-200 px-4 py-3">
+        <header className="border-b border-line px-4 py-3">
           <div className="mb-3 flex items-center gap-2">
             <button
               type="button"
               onClick={() => setNavOpen(true)}
               aria-label="Open menu"
-              className="rounded p-1 text-gray-600 hover:bg-gray-100 lg:hidden"
+              className="rounded p-1 text-ink-muted hover:bg-canvas lg:hidden"
             >
               <Icon name="menu" className="h-5 w-5" />
             </button>
             <h1 className="text-base font-semibold">{currentFolder?.name ?? 'Mail'}</h1>
-            <span className="text-sm text-gray-400">{filtered.length}</span>
+            <span className="text-sm text-ink-faint">{filtered.length}</span>
           </div>
-          <div className="flex items-center gap-2 rounded-lg bg-gray-100 px-3 py-2">
-            <Icon name="search" className="h-4 w-4 shrink-0 text-gray-400" />
+          <div className="flex items-center gap-2 rounded-lg bg-canvas px-3 py-2">
+            <Icon name="search" className="h-4 w-4 shrink-0 text-ink-faint" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search mail"
-              className="w-full border-0 bg-transparent p-0 text-sm outline-none placeholder:text-gray-400"
+              className="w-full border-0 bg-transparent p-0 text-sm outline-none placeholder:text-ink-faint"
             />
           </div>
         </header>

@@ -99,22 +99,22 @@ export default function OnboardOrganisation() {
                     ? 'bg-brand-600 text-white'
                     : i === step
                       ? 'bg-brand-100 text-brand-800 ring-2 ring-brand-600'
-                      : 'bg-gray-100 text-gray-400'
+                      : 'bg-canvas text-ink-faint'
                 }`}
               >
                 {i < step ? '✓' : i + 1}
               </div>
               <span
-                className={`hidden text-sm sm:inline ${i === step ? 'font-medium text-gray-900' : 'text-gray-500'}`}
+                className={`hidden text-sm sm:inline ${i === step ? 'font-medium text-ink' : 'text-ink-muted'}`}
               >
                 {label}
               </span>
-              {i < STEPS.length - 1 && <div className="ml-1 h-px flex-1 bg-gray-200" />}
+              {i < STEPS.length - 1 && <div className="ml-1 h-px flex-1 bg-line" />}
             </li>
           ))}
         </ol>
 
-        <div className="rounded-xl border border-gray-200 bg-white p-6">
+        <div className="rounded-xl border border-line bg-surface p-6">
           {/* ---------------------------------------------------------- 1 */}
           {step === 0 && (
             <div className="space-y-5">
@@ -140,11 +140,11 @@ export default function OnboardOrganisation() {
                       className={`rounded-lg border px-3 py-2.5 text-left transition ${
                         draft.type === t.value
                           ? 'border-brand-600 bg-brand-50'
-                          : 'border-gray-200 hover:border-gray-300'
+                          : 'border-line hover:border-line'
                       }`}
                     >
-                      <div className="text-sm font-medium text-gray-900">{t.label}</div>
-                      {t.hint && <div className="text-xs text-gray-500">{t.hint}</div>}
+                      <div className="text-sm font-medium text-ink">{t.label}</div>
+                      {t.hint && <div className="text-xs text-ink-muted">{t.hint}</div>}
                     </button>
                   ))}
                 </div>
@@ -193,22 +193,22 @@ export default function OnboardOrganisation() {
                 />
               </Field>
 
-              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm">
-                <div className="font-medium text-amber-900">Nothing is delivered yet</div>
-                <p className="mt-1 text-amber-800">
+              <div className="rounded-lg border border-warn/30 bg-warn/10 p-4 text-sm">
+                <div className="font-medium text-warn">Nothing is delivered yet</div>
+                <p className="mt-1 text-warn">
                   Adding a domain does not accept mail for it. The organisation must publish a
                   verification TXT record first, then MX, SPF, DKIM and DMARC. Until ownership is
                   proven, no mail is accepted and no user can send as this domain.
                 </p>
-                <p className="mt-2 text-amber-800">
+                <p className="mt-2 text-warn">
                   This is what stops anyone claiming a domain they do not control — and it is the
                   answer we give providers who ask how we prevent abuse.
                 </p>
               </div>
 
               {draft.primaryDomain && (
-                <div className="rounded-lg bg-gray-50 p-4 font-mono text-xs text-gray-700">
-                  <div className="mb-2 font-sans text-xs font-medium uppercase text-gray-500">
+                <div className="rounded-lg bg-canvas p-4 font-mono text-xs text-ink">
+                  <div className="mb-2 font-sans text-xs font-medium uppercase text-ink-muted">
                     They will be asked to add
                   </div>
                   TXT @ tatvaos-verification=&lt;token&gt;
@@ -238,13 +238,13 @@ export default function OnboardOrganisation() {
                       className={`flex items-start gap-3 rounded-lg border px-4 py-3 text-left transition ${
                         draft.planId === p.id
                           ? 'border-brand-600 bg-brand-50'
-                          : 'border-gray-200 hover:border-gray-300'
+                          : 'border-line hover:border-line'
                       }`}
                     >
                       <div className="flex-1">
                         <div className="flex items-baseline gap-2">
-                          <span className="font-medium text-gray-900">{p.name}</span>
-                          <span className="text-xs text-gray-500">
+                          <span className="font-medium text-ink">{p.name}</span>
+                          <span className="text-xs text-ink-muted">
                             {p.maxUsers === null ? 'Unlimited users' : `up to ${p.maxUsers} users`}
                             {' · '}
                             {p.storageModel === 'pooled'
@@ -252,7 +252,7 @@ export default function OnboardOrganisation() {
                               : `${formatBytes(p.perUserQuotaBytes ?? 0)} per user`}
                           </span>
                         </div>
-                        <div className="mt-0.5 text-xs text-gray-500">
+                        <div className="mt-0.5 text-xs text-ink-muted">
                           {p.features.slice(0, 3).join(' · ')}
                         </div>
                       </div>
@@ -260,14 +260,14 @@ export default function OnboardOrganisation() {
                         {p.pricePerUserMonthly ? (
                           <>
                             <span className="font-semibold">₹{p.pricePerUserMonthly}</span>
-                            <span className="text-gray-500">/user/mo</span>
+                            <span className="text-ink-muted">/user/mo</span>
                           </>
                         ) : (
                           <>
                             <span className="font-semibold">
                               ₹{p.priceMonthly?.toLocaleString('en-IN')}
                             </span>
-                            <span className="text-gray-500">/mo</span>
+                            <span className="text-ink-muted">/mo</span>
                           </>
                         )}
                       </div>
@@ -333,19 +333,19 @@ export default function OnboardOrganisation() {
                 )}
               </div>
 
-              <div className="rounded-lg bg-gray-50 p-4 text-sm">
+              <div className="rounded-lg bg-canvas p-4 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-gray-600">Total storage committed</span>
-                  <span className="font-semibold text-gray-900">{formatBytes(totalCommitted)}</span>
+                  <span className="text-ink-muted">Total storage committed</span>
+                  <span className="font-semibold text-ink">{formatBytes(totalCommitted)}</span>
                 </div>
                 {draft.storageModel === 'per_user' && draft.maxUsers !== null && (
-                  <div className="mt-1 text-xs text-gray-500">
+                  <div className="mt-1 text-xs text-ink-muted">
                     {draft.perUserQuotaGb} GB × {draft.maxUsers} users. Only consumed as mailboxes
                     are created.
                   </div>
                 )}
                 {draft.storageModel === 'pooled' && (
-                  <div className="mt-1 text-xs text-gray-500">
+                  <div className="mt-1 text-xs text-ink-muted">
                     Shared across every mailbox. A school of 200 students at 2 GB each plus 40 staff
                     at 15 GB needs roughly 1 TB — against 4.8 TB committed under a flat 20 GB
                     per-user quota.
@@ -380,8 +380,8 @@ export default function OnboardOrganisation() {
                 />
               </Field>
 
-              <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-                <div className="mb-3 text-sm font-medium text-gray-900">Summary</div>
+              <div className="rounded-lg border border-line bg-canvas p-4">
+                <div className="mb-3 text-sm font-medium text-ink">Summary</div>
                 <dl className="space-y-1.5 text-sm">
                   <Row k="Organisation" v={draft.name || '—'} />
                   <Row k="Type" v={ORG_TYPES.find((t) => t.value === draft.type)?.label ?? '—'} />
@@ -400,7 +400,7 @@ export default function OnboardOrganisation() {
                 </dl>
               </div>
 
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-ink-muted">
                 On creation the organisation is <strong>pending</strong>. It becomes active once the
                 domain is verified. No mail is accepted for the domain before that.
               </p>
@@ -413,7 +413,7 @@ export default function OnboardOrganisation() {
             <button
               type="button"
               onClick={() => setStep((s) => s - 1)}
-              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              className="rounded-lg border border-line px-4 py-2 text-sm font-medium text-ink hover:bg-canvas"
             >
               Back
             </button>
@@ -422,7 +422,7 @@ export default function OnboardOrganisation() {
             <button
               type="button"
               onClick={() => router.push('/admin')}
-              className="rounded-lg px-4 py-2 text-sm text-gray-600 hover:bg-gray-100"
+              className="rounded-lg px-4 py-2 text-sm text-ink-muted hover:bg-canvas"
             >
               Cancel
             </button>
@@ -453,7 +453,7 @@ export default function OnboardOrganisation() {
 }
 
 const inputCls =
-  'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-brand-500';
+  'w-full rounded-lg border border-line px-3 py-2 text-sm outline-none transition focus:border-brand-500';
 
 function Field({
   label,
@@ -468,12 +468,12 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-sm font-medium text-gray-900">
+      <span className="mb-1.5 block text-sm font-medium text-ink">
         {label}
         {required && <span className="ml-0.5 text-red-500">*</span>}
       </span>
       {children}
-      {hint && <span className="mt-1 block text-xs text-gray-500">{hint}</span>}
+      {hint && <span className="mt-1 block text-xs text-ink-muted">{hint}</span>}
     </label>
   );
 }
@@ -496,12 +496,12 @@ function StorageOption({
       type="button"
       onClick={onClick}
       className={`rounded-lg border p-4 text-left transition ${
-        active ? 'border-brand-600 bg-brand-50' : 'border-gray-200 hover:border-gray-300'
+        active ? 'border-brand-600 bg-brand-50' : 'border-line hover:border-line'
       }`}
     >
-      <div className="text-sm font-medium text-gray-900">{title}</div>
-      <p className="mt-1 text-xs text-gray-600">{body}</p>
-      <p className="mt-1.5 text-xs text-gray-400">{caveat}</p>
+      <div className="text-sm font-medium text-ink">{title}</div>
+      <p className="mt-1 text-xs text-ink-muted">{body}</p>
+      <p className="mt-1.5 text-xs text-ink-faint">{caveat}</p>
     </button>
   );
 }
@@ -509,8 +509,8 @@ function StorageOption({
 function Row({ k, v }: { k: string; v: string }) {
   return (
     <div className="flex justify-between gap-4">
-      <dt className="text-gray-500">{k}</dt>
-      <dd className="text-right font-medium text-gray-900">{v}</dd>
+      <dt className="text-ink-muted">{k}</dt>
+      <dd className="text-right font-medium text-ink">{v}</dd>
     </div>
   );
 }

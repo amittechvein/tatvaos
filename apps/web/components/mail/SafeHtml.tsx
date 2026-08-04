@@ -146,17 +146,17 @@ export function SafeHtml({ html, allowRemoteInitially = false }: SafeHtmlProps) 
   return (
     <div className="space-y-2">
       {blockedCount > 0 && !allowRemote && (
-        <div className="flex items-center gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm">
-          <span className="text-amber-900">
+        <div className="flex items-center gap-3 rounded-md border border-warn/30 bg-warn/10 px-3 py-2 text-sm">
+          <span className="text-warn">
             {blockedCount} remote {blockedCount === 1 ? 'image' : 'images'} blocked.
-            <span className="ml-1 text-amber-700">
+            <span className="ml-1 text-warn">
               Loading them tells the sender you opened this message.
             </span>
           </span>
           <button
             type="button"
             onClick={() => setAllowRemote(true)}
-            className="ml-auto shrink-0 rounded border border-amber-300 bg-white px-2.5 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100"
+            className="ml-auto shrink-0 rounded border border-warn/40 bg-surface px-2.5 py-1 text-xs font-medium text-warn hover:bg-warn/10"
           >
             Show images
           </button>
