@@ -26,15 +26,19 @@ export type RailMode = 'expanded' | 'icons' | 'hidden';
 // possibly undefined. Reaching for ! to silence that would be suppressing a
 // real rule to save a line; naming the value says what it is and the arrays
 // then reference it, so there is still one source of truth.
-export const DEFAULT_ACCENT = '#6c5ffc';
+// Materio's violet. This is THE default accent and must match
+// DEFAULT_PRIMARY in lib/mui/theme.ts — MUI builds its palette from whatever
+// this resolves to, so two files disagreeing means the product ships in a
+// colour neither of them names.
+export const DEFAULT_ACCENT = '#7367f0';
 export const DEFAULT_RAIL = '#1c1c2b';
 
 /** Accent presets. The switcher also accepts any hex. */
 export const ACCENTS: { name: string; hex: string }[] = [
-  { name: 'Indigo',  hex: DEFAULT_ACCENT },
+  { name: 'Violet',  hex: DEFAULT_ACCENT },
   { name: 'Blue',    hex: '#3563f0' },
   { name: 'Teal',    hex: '#0ca5a5' },
-  { name: 'Violet',  hex: '#a855f7' },
+  { name: 'Magenta', hex: '#a855f7' },
   { name: 'Green',   hex: '#22a35b' },
   { name: 'Coral',   hex: '#ef5455' },
 ];
