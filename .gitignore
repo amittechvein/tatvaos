@@ -11,6 +11,10 @@ bin/
 obj/
 *.user
 
+# TypeScript incremental build state. Machine-local, regenerated on every
+# typecheck, and a merge conflict every time two people run tsc.
+*.tsbuildinfo
+
 # Turborepo local task cache. Compressed build artifacts keyed by a hash of
 # the inputs - regenerated on demand and meaningless on another machine.
 # Committing them bloats the repo with binaries that change on every build.
