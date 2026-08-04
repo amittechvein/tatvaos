@@ -2,6 +2,16 @@
 
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
+import Alert from '@mui/material/Alert';
+import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
+import Card from '@mui/material/Card';
+import CardContent from '@mui/material/CardContent';
+import IconButton from '@mui/material/IconButton';
+import InputAdornment from '@mui/material/InputAdornment';
+import TextField from '@mui/material/TextField';
+import Typography from '@mui/material/Typography';
+
 import { useAuth } from '@/lib/auth';
 
 function SignInForm() {
@@ -11,6 +21,7 @@ function SignInForm() {
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [reveal, setReveal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -39,63 +50,95 @@ function SignInForm() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-canvas px-4">
-      <div className="w-full max-w-sm">
-        <div className="mb-8 text-center">
-          <h1 className="text-2xl font-semibold text-ink">TatvaOS</h1>
-          <p className="mt-1 text-sm text-ink-muted">Sign in to your account</p>
-        </div>
+    <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center',
+               bgcolor: 'background.default', p: 2 }}>
+      <Box sx={{ width: '100%', maxWidth: 420 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
+                   gap: 1.5, mb: 4 }}>
+          <Box sx={{ width: 40, height: 40, borderRadius: 2, display: 'grid',
+                     placeItems: 'center', color: '#fff', fontWeight: 700, fontSize: 18,
+                     background: (t) => `linear-gradient(72deg, ${t.palette.primary.main}, ${t.palette.primary.light})` }}>
+            T
+          </Box>
+          <Typography variant="h4" sx={{ fontWeight: 700, letterSpacing: '0.02em' }}>
+            TatvaOS
+          </Typography>
+        </Box>
 
-        <form onSubmit={submit} className="rounded-lg border border-line bg-surface p-6 shadow-sm">
-          {error && (
-            <div
-              role="alert"
-              className="mb-4 rounded border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger"
-            >
-              {error}
-            </div>
-          )}
+        <Card>
+          <CardContent sx={{ p: { xs: 3, sm: 4 } }}>
+            <Typography variant="h5" sx={{ mb: 0.5 }}>Welcome back</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+              Sign in to reach your organisation.
+            </Typography>
 
-          <label className="block text-sm font-medium text-ink" htmlFor="email">
-            Email address
-          </label>
-          <input
-            id="email"
-            type="email"
-            autoComplete="username"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="mt-1 w-full rounded border border-line px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-          />
+            <Box component="form" onSubmit={submit} noValidate>
+              {error && <Alert severity="error" sx={{ mb: 2.5 }}>{error}</Alert>}
 
-          <label className="mt-4 block text-sm font-medium text-ink" htmlFor="password">
-            Password
-          </label>
-          <input
-            id="password"
-            type="password"
-            autoComplete="current-password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="mt-1 w-full rounded border border-line px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-          />
+              <TextField
+                fullWidth
+                label="Email address"
+                type="email"
+                autoComplete="username"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                sx={{ mb: 2.5 }}
+              />
 
-          <button
-            type="submit"
-            disabled={busy || !email || !password}
-            className="mt-6 w-full rounded bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {busy ? 'Signing in…' : 'Sign in'}
-          </button>
-        </form>
+              <TextField
+                fullWidth
+                label="Password"
+                type={reveal ? 'text' : 'password'}
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                slotProps={{
+                  input: {
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        {/* A reveal toggle reduces failed attempts on long
+                            passwords, and this account locks after five. */}
+                        <IconButton
+                          onClick={() => setReveal((v) => !v)}
+                          edge="end"
+                          size="small"
+                          aria-label={reveal ? 'Hide password' : 'Show password'}
+                        >
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                               stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                            <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z" />
+                            <circle cx="12" cy="12" r="3" />
+                            {!reveal && <path d="M4 20L20 4" />}
+                          </svg>
+                        </IconButton>
+                      </InputAdornment>
+                    ),
+                  },
+                }}
+              />
 
-        <p className="mt-6 text-center text-xs text-ink-faint">
+              <Button
+                type="submit"
+                fullWidth
+                variant="contained"
+                size="large"
+                disabled={busy || !email || !password}
+                sx={{ mt: 3.5 }}
+              >
+                {busy ? 'Signing in…' : 'Sign in'}
+              </Button>
+            </Box>
+          </CardContent>
+        </Card>
+
+        <Typography variant="caption" color="text.disabled"
+                    sx={{ display: 'block', textAlign: 'center', mt: 3 }}>
           Forgotten your password? Your organisation&apos;s administrator can reset it.
-        </p>
-      </div>
-    </div>
+        </Typography>
+      </Box>
+    </Box>
   );
 }
 

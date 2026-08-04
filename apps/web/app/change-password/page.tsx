@@ -2,6 +2,15 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import Alert from '@mui/material/Alert';
+import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
+import Card from '@mui/material/Card';
+import CardContent from '@mui/material/CardContent';
+import LinearProgress from '@mui/material/LinearProgress';
+import TextField from '@mui/material/TextField';
+import Typography from '@mui/material/Typography';
+
 import { useAuth } from '@/lib/auth';
 
 /**
@@ -45,88 +54,102 @@ export default function ChangePasswordPage() {
   if (done) {
     return (
       <Shell>
-        <h1 className="text-lg font-semibold text-ink">Password changed</h1>
-        <p className="mt-2 text-sm text-ink-muted">
+        <Typography variant="h5" sx={{ mb: 1 }}>Password changed</Typography>
+        <Typography variant="body2" color="text.secondary">
           Every other session has been signed out, including on your other devices.
           That is deliberate — if someone else knew the old password, leaving their
           session running would defeat the point of changing it.
-        </p>
-        <button
-          onClick={() => router.replace('/login')}
-          className="mt-6 w-full rounded bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
-        >
+        </Typography>
+        <Button fullWidth variant="contained" size="large" sx={{ mt: 3.5 }}
+                onClick={() => router.replace('/login')}>
           Sign in again
-        </button>
+        </Button>
       </Shell>
     );
   }
 
   return (
     <Shell>
-      <h1 className="text-lg font-semibold text-ink">Choose a new password</h1>
-      <p className="mt-1 text-sm text-ink-muted">
-        Your current password was created by an administrator, so more than one person knows it.
-      </p>
+      <Typography variant="h5" sx={{ mb: 0.5 }}>Choose a new password</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+        Your current password was created by an administrator, so more than one
+        person knows it.
+      </Typography>
 
-      <form onSubmit={submit} className="mt-6">
-        {error && (
-          <div role="alert" className="mb-4 rounded border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
-            {error}
-          </div>
-        )}
+      <Box component="form" onSubmit={submit} noValidate>
+        {error && <Alert severity="error" sx={{ mb: 2.5 }}>{error}</Alert>}
 
-        <Field label="Current password" id="current" value={current} onChange={setCurrent}
-               autoComplete="current-password" />
-        <Field label="New password" id="next" value={next} onChange={setNext}
-               autoComplete="new-password" />
-        <Field label="Confirm new password" id="confirm" value={confirm} onChange={setConfirm}
-               autoComplete="new-password" />
+        <TextField fullWidth type="password" label="Current password" required
+                   autoComplete="current-password" value={current} sx={{ mb: 2.5 }}
+                   onChange={(e) => setCurrent(e.target.value)} />
 
-        <p className="mt-3 text-xs text-ink-muted">
-          At least 12 characters. Length matters far more than symbols — a short phrase you
-          will actually remember beats something unmemorable with a punctuation mark in it.
-        </p>
+        <TextField fullWidth type="password" label="New password" required
+                   autoComplete="new-password" value={next}
+                   onChange={(e) => setNext(e.target.value)} />
 
-        <button
-          type="submit"
-          disabled={busy || !current || !next || !confirm}
-          className="mt-6 w-full rounded bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
-        >
+        <Strength value={next} />
+
+        <TextField
+          fullWidth type="password" label="Confirm new password" required
+          autoComplete="new-password" value={confirm} sx={{ mt: 2.5 }}
+          onChange={(e) => setConfirm(e.target.value)}
+          error={confirm.length > 0 && confirm !== next}
+          helperText={confirm.length > 0 && confirm !== next ? 'These do not match.' : ' '}
+        />
+
+        <Typography variant="caption" color="text.secondary"
+                    sx={{ display: 'block', mt: 1, lineHeight: 1.6 }}>
+          At least 12 characters. Length matters far more than symbols — a short
+          phrase you will actually remember beats something unmemorable with a
+          punctuation mark in it.
+        </Typography>
+
+        <Button type="submit" fullWidth variant="contained" size="large" sx={{ mt: 3 }}
+                disabled={busy || !current || !next || !confirm}>
           {busy ? 'Changing…' : 'Change password'}
-        </button>
-      </form>
+        </Button>
+      </Box>
     </Shell>
+  );
+}
+
+/**
+ * Length only — deliberately not a character-class score.
+ *
+ * Scores that reward a capital and a digit rate "Password1!" highly, and it is
+ * on every wordlist there is. Length is the property that actually resists
+ * guessing, so that is the only thing shown.
+ */
+function Strength({ value }: { value: string }) {
+  if (!value) return <Box sx={{ height: 22 }} />;
+
+  const pct = Math.min(100, (value.length / 16) * 100);
+  const weak = value.length < 12;
+  const strong = value.length >= 16;
+
+  return (
+    <Box sx={{ mt: 1 }}>
+      <LinearProgress
+        variant="determinate"
+        value={pct}
+        color={weak ? 'error' : strong ? 'success' : 'warning'}
+      />
+      <Typography variant="caption"
+                  color={weak ? 'error.main' : strong ? 'success.main' : 'warning.main'}>
+        {weak ? `${12 - value.length} more character${12 - value.length === 1 ? '' : 's'}`
+              : strong ? 'Good length' : 'Long enough'}
+      </Typography>
+    </Box>
   );
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-canvas px-4">
-      <div className="w-full max-w-sm rounded-lg border border-line bg-surface p-6 shadow-sm">
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function Field({
-  label, id, value, onChange, autoComplete,
-}: {
-  label: string; id: string; value: string;
-  onChange: (v: string) => void; autoComplete: string;
-}) {
-  return (
-    <div className="mt-4 first:mt-0">
-      <label className="block text-sm font-medium text-ink" htmlFor={id}>{label}</label>
-      <input
-        id={id}
-        type="password"
-        required
-        autoComplete={autoComplete}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="mt-1 w-full rounded border border-line px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-      />
-    </div>
+    <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center',
+               bgcolor: 'background.default', p: 2 }}>
+      <Card sx={{ width: '100%', maxWidth: 440 }}>
+        <CardContent sx={{ p: { xs: 3, sm: 4 } }}>{children}</CardContent>
+      </Card>
+    </Box>
   );
 }
