@@ -92,17 +92,66 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script_stop: true
           script: |
-            set -euo pipefail
+            set -uo pipefail
             cd /srv/tatvaos-testing
             DOMAIN=$(grep '^SITE_DOMAIN=' infra/docker/.env | cut -d= -f2)
+
+            # ----------------------------------------------------------------
+            #  Test the APPLICATION, on the private docker network.
+            #
+            #  Not through Caddy on :80, because Caddy redirects HTTP to HTTPS
+            #  and HTTPS needs a certificate it cannot get until DNS exists.
+            #  That made the smoke test fail for a reason that had nothing to
+            #  do with whether the software works — the deploy is either good
+            #  or not, and a missing DNS record is a separate, fixable thing.
+            # ----------------------------------------------------------------
+            NET=$(docker network ls --format '{{.Name}}' | grep -m1 mailnet)
+            ok=0
             for i in $(seq 1 20); do
-              code=$(curl -s -o /dev/null -w '%{http_code}' \
-                     -H "Host: ${DOMAIN}" http://localhost/health || true)
-              if [ "$code" = "200" ]; then echo "healthy via Caddy"; exit 0; fi
+              if docker run --rm --network "$NET" curlimages/curl:latest \
+                   -sf http://api:8080/health >/dev/null 2>&1; then
+                ok=1; break
+              fi
               sleep 6
             done
-            echo "Not healthy. Last code: ${code:-none}"
-            docker compose -f infra/docker/docker-compose.base.yml \
-                           -f infra/docker/docker-compose.testing.yml \
-                           --env-file infra/docker/.env logs --tail 40 api caddy
-            exit 1
+
+            if [ "$ok" -ne 1 ]; then
+              echo "FAIL: the API never became healthy."
+              docker compose -f infra/docker/docker-compose.base.yml \
+                             -f infra/docker/docker-compose.testing.yml \
+                             --env-file infra/docker/.env logs --tail 40 api
+              exit 1
+            fi
+            echo "API healthy"
+
+            # /health/db is the one that proves 03-role-passwords.sql worked.
+            # /health only says the process is up; this says it can actually
+            # authenticate to Postgres as tatvaos_app.
+            if docker run --rm --network "$NET" curlimages/curl:latest \
+                 -sf http://api:8080/health/db >/dev/null 2>&1; then
+              echo "API can reach the database"
+            else
+              echo "FAIL: API is up but cannot reach the database."
+              docker compose -f infra/docker/docker-compose.base.yml \
+                             -f infra/docker/docker-compose.testing.yml \
+                             --env-file infra/docker/.env logs --tail 40 api
+              exit 1
+            fi
+
+            # ----------------------------------------------------------------
+            #  Public reachability. A WARNING, not a failure — it depends on a
+            #  DNS record, which is not something a deploy can fix.
+            # ----------------------------------------------------------------
+            if getent hosts "$DOMAIN" >/dev/null 2>&1; then
+              echo "DNS: $DOMAIN resolves"
+            else
+              echo ""
+              echo "  NOTE: $DOMAIN does not resolve yet."
+              echo "  Caddy cannot obtain a TLS certificate until it does, so"
+              echo "  the environment is running but not reachable over HTTPS."
+              echo "  Add A records pointing at this server for:"
+              echo "    $DOMAIN"
+              echo "    webmail.$DOMAIN"
+              echo "    mail-catcher.$DOMAIN"
+              echo ""
+            fi
