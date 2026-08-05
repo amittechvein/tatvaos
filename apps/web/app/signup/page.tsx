@@ -6,23 +6,19 @@ import Alert from '@mui/material/Alert';
 import AlertTitle from '@mui/material/AlertTitle';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
-import Card from '@mui/material/Card';
-import CardContent from '@mui/material/CardContent';
-import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
-import IconButton from '@mui/material/IconButton';
+import Link from '@mui/material/Link';
 import MenuItem from '@mui/material/MenuItem';
 import Step from '@mui/material/Step';
 import StepLabel from '@mui/material/StepLabel';
 import Stepper from '@mui/material/Stepper';
 import TextField from '@mui/material/TextField';
-import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { alpha } from '@mui/material/styles';
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? '/api';
 
-const STEPS = ['Organisation', 'You', 'Domain', 'Verify'];
+const STEPS = ['Organisation', 'You', 'Verify'];
 
 const ORG_TYPES = [
   { value: 'business', label: 'Business' },
@@ -33,18 +29,13 @@ const ORG_TYPES = [
   { value: 'other', label: 'Other' },
 ];
 
-interface MethodOption {
-  method: string; label: string; where: string; what: string;
-  note: string; recommended: boolean;
-}
-
 // ============================================================================
-//  Signup
-// ============================================================================
+//  Signup: organisation → you → prove email and phone → account.
 //
-//  Four steps, and the fourth can fail without losing anything — that is the
-//  point of the design, so the screen has to say so loudly rather than
-//  presenting a dead end.
+//  The domain is deliberately NOT here. It is added from inside the console,
+//  because the person signing up is often not the person who can edit DNS —
+//  and losing them over a step they cannot complete was the problem with the
+//  previous flow. Ownership still gates what it always gated: outbound mail.
 // ============================================================================
 
 function Wizard() {
@@ -66,23 +57,24 @@ function Wizard() {
   const [adminPhone, setAdminPhone] = useState('');
   const [password, setPassword] = useState('');
 
-  const [fqdn, setFqdn] = useState('');
-  const [options, setOptions] = useState<MethodOption[]>([]);
-  const [method, setMethod] = useState('txt');
+  const [emailCode, setEmailCode] = useState('');
+  const [phoneCode, setPhoneCode] = useState('');
+  const [emailOk, setEmailOk] = useState(false);
+  const [phoneOk, setPhoneOk] = useState(false);
+  const [phoneMasked, setPhoneMasked] = useState('');
+  const [devCodes, setDevCodes] = useState<{ email?: string; phone?: string }>({});
+  const [codeErrors, setCodeErrors] = useState<string[]>([]);
 
-  const [failure, setFailure] = useState<string | null>(null);
-  const [done, setDone] = useState<{ signInAt: string; email: string } | null>(null);
+  const [done, setDone] = useState<{ email: string } | null>(null);
 
-  // Resume from a link. A signup abandoned on Friday has to be resumable on
-  // Monday, or the draft it saved was pointless.
+  // Resume from the emailed link — a signup abandoned on Friday must be
+  // resumable on Monday, or saving the draft was pointless.
   const resume = params.get('draft');
-
   const loadDraft = useCallback(async (id: string) => {
     const res = await fetch(`${API}/signup/${id}`);
     if (!res.ok) return;
     const d = await res.json();
     if (d.completed) return;
-
     setDraftId(d.draftId);
     setOrgName(d.orgName ?? '');
     setOrgType(d.orgType ?? 'business');
@@ -90,75 +82,78 @@ function Wizard() {
     setGstin(d.gstin ?? '');
     setAdminName(d.adminName ?? '');
     setAdminEmail(d.adminEmail ?? '');
-    setAdminPhone(d.adminPhone ?? '');
-    setFqdn(d.fqdn ?? '');
-    if (d.verificationMethod) setMethod(d.verificationMethod);
-    if (d.lastError) setFailure(d.lastError);
-    setStep(Math.max(0, (d.step ?? 1) - 1));
+    setPhoneMasked(d.phoneMasked ?? '');
+    setEmailOk(!!d.emailVerified);
+    setPhoneOk(!!d.phoneVerified);
+    setStep(2);
   }, []);
-
   useEffect(() => { if (resume) void loadDraft(resume); }, [resume, loadDraft]);
 
-  async function saveIdentity() {
+  async function start() {
     setBusy(true); setError(null);
     try {
       const res = await fetch(`${API}/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          orgName, orgType, country, gstin,
-          adminName, adminEmail, adminPhone,
-        }),
+        body: JSON.stringify({ orgName, orgType, country, gstin, adminName, adminEmail, adminPhone }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? 'Could not continue.');
       setDraftId(body.draftId);
+      setPhoneMasked(body.sentTo?.phone ?? '');
+      setDevCodes({ email: body.devEmailCode, phone: body.devPhoneCode });
       setStep(2);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not continue.');
     } finally { setBusy(false); }
   }
 
-  async function saveDomain() {
+  async function verifyCodes() {
     if (!draftId) return;
-    setBusy(true); setError(null);
-    try {
-      const res = await fetch(`${API}/signup/${draftId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fqdn: fqdn.trim().toLowerCase(), method }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? 'Could not save that domain.');
-
-      const m = await fetch(`${API}/signup/${draftId}/methods`);
-      if (m.ok) setOptions((await m.json()).options ?? []);
-      setStep(3);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not save that domain.');
-    } finally { setBusy(false); }
-  }
-
-  async function verify() {
-    if (!draftId) return;
-    setBusy(true); setError(null); setFailure(null);
+    setBusy(true); setError(null); setCodeErrors([]);
     try {
       const res = await fetch(`${API}/signup/${draftId}/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ method, password }),
+        body: JSON.stringify({
+          emailCode: emailOk ? null : emailCode.trim(),
+          phoneCode: phoneOk ? null : phoneCode.trim(),
+        }),
       });
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? 'Could not check.');
+      if (!res.ok) throw new Error(body.error ?? 'Could not check the codes.');
+      setEmailOk(body.emailVerified);
+      setPhoneOk(body.phoneVerified);
+      setCodeErrors(body.errors ?? []);
 
-      if (body.verified) setDone({ signInAt: body.signInAt, email: body.email });
-      else setFailure(body.detail);
+      if (body.emailVerified && body.phoneVerified) {
+        const fin = await fetch(`${API}/signup/${draftId}/complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password }),
+        });
+        const finBody = await fin.json();
+        if (!fin.ok) throw new Error(finBody.error ?? 'Could not create the account.');
+        setDone({ email: finBody.email });
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not check.');
+      setError(e instanceof Error ? e.message : 'Could not check the codes.');
     } finally { setBusy(false); }
   }
 
-  const chosen = options.find((o) => o.method.toLowerCase() === method);
+  async function resend() {
+    if (!draftId) return;
+    setBusy(true); setError(null);
+    try {
+      const res = await fetch(`${API}/signup/${draftId}/resend`, { method: 'POST' });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? 'Could not resend.');
+      setDevCodes({ email: body.devEmailCode, phone: body.devPhoneCode });
+      setCodeErrors([]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not resend.');
+    } finally { setBusy(false); }
+  }
 
   // ---------------------------------------------------------------- done
   if (done) {
@@ -173,16 +168,15 @@ function Wizard() {
               <path d="M20 6L9 17l-5-5" />
             </svg>
           </Box>
-          <Typography variant="h4" sx={{ mb: 1 }}>You&apos;re in</Typography>
+          <Typography variant="h4" sx={{ mb: 1 }}>Account created</Typography>
           <Typography variant="body1" color="text.secondary" sx={{ mb: 1 }}>
-            {fqdn} is verified and your organisation is ready.
+            Sign in and add your organisation&apos;s domain under <strong>Domains</strong> —
+            you will get clear instructions and a choice of ways to verify it.
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>
-            Your email still goes wherever it does today. Moving it across is a
-            separate step, inside your console, whenever you are ready.
+            Until then your email keeps arriving exactly where it does today.
           </Typography>
-          <Button variant="contained" size="large" fullWidth
-                  onClick={() => router.push('/login')}>
+          <Button variant="contained" size="large" fullWidth onClick={() => router.push('/login')}>
             Sign in as {done.email}
           </Button>
         </Box>
@@ -200,7 +194,6 @@ function Wizard() {
 
         {error && <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>{error}</Alert>}
 
-        {/* -------------------------------------------------------- 1 */}
         {step === 0 && (
           <Pane title="Your organisation"
                 hint="This is what your people will see, and what appears on invoices.">
@@ -225,7 +218,6 @@ function Wizard() {
           </Pane>
         )}
 
-        {/* -------------------------------------------------------- 2 */}
         {step === 1 && (
           <Pane title="About you"
                 hint="You will be the owner of this organisation, and can add others afterwards.">
@@ -233,113 +225,66 @@ function Wizard() {
                        onChange={(e) => setAdminName(e.target.value)} sx={{ mb: 2.5 }} />
             <TextField fullWidth label="Email address" type="email" required value={adminEmail}
                        onChange={(e) => setAdminEmail(e.target.value)} sx={{ mb: 2.5 }}
-                       helperText="Where invoices and password resets go. Use an address you can read today — not one on the domain you are about to add." />
-            <TextField fullWidth label="Phone" value={adminPhone}
+                       helperText="A code is sent here now, and invoices later. Use an address you can read today." />
+            <TextField fullWidth label="Mobile number" required value={adminPhone}
                        onChange={(e) => setAdminPhone(e.target.value)}
-                       placeholder="+91 98765 43210"
-                       helperText="So we can help if the next step gives you trouble." />
-            <Nav onBack={() => setStep(0)} onNext={saveIdentity} busy={busy}
-                 nextDisabled={adminName.trim().length < 2 || !/\S+@\S+\.\S+/.test(adminEmail)} />
-          </Pane>
-        )}
-
-        {/* -------------------------------------------------------- 3 */}
-        {step === 2 && (
-          <Pane title="Your domain"
-                hint="The domain your email addresses use, or will use.">
-            <TextField fullWidth label="Domain" required value={fqdn}
-                       onChange={(e) => setFqdn(e.target.value)}
-                       placeholder="abcschool.edu.in"
-                       slotProps={{ htmlInput: { autoCapitalize: 'none', spellCheck: false } }} />
-
-            <Alert severity="info" sx={{ mt: 3 }}>
-              <AlertTitle sx={{ fontSize: 14 }}>Your email will not change</AlertTitle>
-              Next you prove you own this domain. That is all it does — your mail
-              keeps arriving exactly where it does now. Moving it to TatvaOS is a
-              separate step you choose later.
-            </Alert>
-
-            <Nav onBack={() => setStep(1)} onNext={saveDomain} busy={busy}
-                 nextDisabled={!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(fqdn.trim())} />
-          </Pane>
-        )}
-
-        {/* -------------------------------------------------------- 4 */}
-        {step === 3 && (
-          <Pane title={`Prove you own ${fqdn}`}
-                hint="Pick whichever you can actually do. They all prove the same thing.">
-            <Box sx={{ display: 'grid', gap: 1.5, mb: 3 }}>
-              {options.map((o) => {
-                const active = o.method.toLowerCase() === method;
-                return (
-                  <Card key={o.method}
-                        onClick={() => setMethod(o.method.toLowerCase())}
-                        sx={{ cursor: 'pointer', border: '1px solid',
-                              borderColor: active ? 'primary.main' : 'transparent',
-                              bgcolor: (t) => active ? alpha(t.palette.primary.main, 0.05) : undefined,
-                              transition: '0.15s' }}>
-                    <CardContent sx={{ py: 1.75 }}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Typography variant="body2" sx={{ fontWeight: 600 }}>{o.label}</Typography>
-                        {o.recommended && <Chip label="recommended" size="small" color="primary" />}
-                      </Box>
-                      <Typography variant="caption" color="text.secondary"
-                                  sx={{ display: 'block', mt: 0.25 }}>
-                        {o.note}
-                      </Typography>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </Box>
-
-            {chosen && (
-              <Box sx={{ mb: 3 }}>
-                <Typography variant="body2" sx={{ fontWeight: 600, mb: 1 }}>
-                  {chosen.where}
-                </Typography>
-                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                  <Box sx={{ flex: 1, p: 1.5, borderRadius: 1.5, fontFamily: 'monospace',
-                             fontSize: 12.5, wordBreak: 'break-all',
-                             bgcolor: 'background.default' }}>
-                    {chosen.what}
-                  </Box>
-                  <Tooltip title="Copy">
-                    <IconButton size="small"
-                                onClick={() => void navigator.clipboard.writeText(chosen.what)}>
-                      <svg width="17" height="17" viewBox="0 0 24 24" fill="none"
-                           stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                        <rect x="9" y="9" width="12" height="12" rx="2" />
-                        <path d="M5 15V5a2 2 0 012-2h10" />
-                      </svg>
-                    </IconButton>
-                  </Tooltip>
-                </Box>
-              </Box>
-            )}
-
+                       placeholder="+91 98765 43210" sx={{ mb: 2.5 }}
+                       helperText="A code is sent here too. Include the country code." />
             <TextField fullWidth type="password" label="Choose a password" required
                        value={password} onChange={(e) => setPassword(e.target.value)}
-                       helperText="At least 12 characters. A short phrase you will remember beats a short password you will not."
-                       sx={{ mb: 1 }} />
+                       helperText="At least 12 characters. A short phrase you will remember beats a short password you will not." />
+            <Nav onBack={() => setStep(0)} onNext={start} busy={busy}
+                 nextLabel="Send codes"
+                 nextDisabled={adminName.trim().length < 2
+                   || !/\S+@\S+\.\S+/.test(adminEmail)
+                   || adminPhone.replace(/\D/g, '').length < 8
+                   || password.length < 12} />
+          </Pane>
+        )}
 
-            {/* The failure state is the important one. It has to read as
-                "saved, come back" — not as a dead end. */}
-            {failure && (
-              <Alert severity="warning" sx={{ mt: 2 }}>
-                <AlertTitle sx={{ fontSize: 14 }}>Not found yet — nothing is lost</AlertTitle>
-                {failure}
-                <Typography variant="body2" sx={{ mt: 1.5 }}>
-                  Your details are saved. DNS changes can take up to an hour, so
-                  it is often just a matter of waiting. We have your number and
-                  will help if it does not come through.
-                </Typography>
+        {step === 2 && (
+          <Pane title="Two codes"
+                hint={`One emailed to ${adminEmail || 'your address'}, one sent by SMS to ${phoneMasked || 'your mobile'}.`}>
+            {(devCodes.email || devCodes.phone) && (
+              <Alert severity="info" sx={{ mb: 3 }}>
+                <AlertTitle sx={{ fontSize: 14 }}>Test environment</AlertTitle>
+                Codes are shown here because this is staging — in production they
+                arrive only by email and SMS.
+                {devCodes.email && <Box component="span" sx={{ display: 'block', fontFamily: 'monospace', mt: 1 }}>Email: {devCodes.email}</Box>}
+                {devCodes.phone && <Box component="span" sx={{ display: 'block', fontFamily: 'monospace' }}>SMS: {devCodes.phone}</Box>}
               </Alert>
             )}
 
-            <Nav onBack={() => setStep(2)} onNext={verify} busy={busy}
-                 nextLabel={failure ? 'Check again' : 'Verify and create account'}
-                 nextDisabled={password.length < 12} />
+            <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 1 }}>
+              <TextField label="Email code" value={emailCode} disabled={emailOk}
+                         onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, ''))}
+                         sx={{ flex: 1, minWidth: 180 }}
+                         slotProps={{ htmlInput: { inputMode: 'numeric', maxLength: 6 } }}
+                         helperText={emailOk ? 'Verified' : ' '}
+                         color={emailOk ? 'success' : undefined} focused={emailOk || undefined} />
+              <TextField label="SMS code" value={phoneCode} disabled={phoneOk}
+                         onChange={(e) => setPhoneCode(e.target.value.replace(/\D/g, ''))}
+                         sx={{ flex: 1, minWidth: 180 }}
+                         slotProps={{ htmlInput: { inputMode: 'numeric', maxLength: 6 } }}
+                         helperText={phoneOk ? 'Verified' : ' '}
+                         color={phoneOk ? 'success' : undefined} focused={phoneOk || undefined} />
+            </Box>
+
+            {codeErrors.map((e) => (
+              <Alert key={e} severity="warning" sx={{ mb: 1 }}>{e}</Alert>
+            ))}
+
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+              Nothing arrived?{' '}
+              <Link component="button" type="button" onClick={resend} disabled={busy}>
+                Send fresh codes
+              </Link>
+              {' '}— they expire after 10 minutes.
+            </Typography>
+
+            <Nav onBack={() => setStep(1)} onNext={verifyCodes} busy={busy}
+                 nextLabel="Verify and create account"
+                 nextDisabled={(!emailOk && emailCode.length !== 6) || (!phoneOk && phoneCode.length !== 6)} />
           </Pane>
         )}
 
@@ -356,9 +301,7 @@ function Wizard() {
 }
 
 // ---------------------------------------------------------------------------
-function Pane({ title, hint, children }: {
-  title: string; hint: string; children: React.ReactNode;
-}) {
+function Pane({ title, hint, children }: { title: string; hint: string; children: React.ReactNode }) {
   return (
     <Box>
       <Typography variant="h4" sx={{ mb: 0.75 }}>{title}</Typography>
@@ -376,14 +319,14 @@ function Nav({ onBack, onNext, busy, nextDisabled, nextLabel = 'Continue' }: {
     <Box sx={{ display: 'flex', gap: 1.5, mt: 4 }}>
       {onBack && <Button onClick={onBack} disabled={busy}>Back</Button>}
       <Button variant="contained" size="large" onClick={onNext}
-              disabled={busy || nextDisabled} sx={{ ml: 'auto', minWidth: 180 }}>
+              disabled={busy || nextDisabled} sx={{ ml: 'auto', minWidth: 200 }}>
         {busy ? <CircularProgress size={20} color="inherit" /> : nextLabel}
       </Button>
     </Box>
   );
 }
 
-/** The branded panel, same language as sign-in so the two feel like one product. */
+/** Branded panel, same language as sign-in so the two feel like one product. */
 function Split({ children }: { children: React.ReactNode }) {
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: 'background.paper' }}>
@@ -409,12 +352,13 @@ function Split({ children }: { children: React.ReactNode }) {
 
           <Typography sx={{ mt: { lg: 5, xl: 7 }, fontSize: { lg: 28, xl: 32 }, fontWeight: 600,
                             lineHeight: 1.25, letterSpacing: '-0.02em' }}>
-            Set up in minutes.<br />Move your mail later.
+            Two minutes to an account.<br />Your mail stays put.
           </Typography>
 
           <Typography sx={{ mt: 2, fontSize: 15, opacity: 0.82, lineHeight: 1.65, maxWidth: 380 }}>
-            You will prove you own your domain — nothing more. Your existing email
-            keeps working untouched until you decide to move it.
+            Prove your email and mobile are real and you are in. Your domain is
+            added later, from your console — with your existing email untouched
+            until you decide to move it.
           </Typography>
 
           <Box sx={{ mt: 'auto', pt: 5, display: 'grid', gap: 2 }}>

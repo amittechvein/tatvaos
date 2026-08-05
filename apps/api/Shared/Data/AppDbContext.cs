@@ -56,6 +56,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     /// </summary>
     public DbSet<SignupDraft> SignupDrafts => Set<SignupDraft>();
 
+    /// <summary>Platform-wide, no tenant scope — see the entity's comment.</summary>
+    public DbSet<PlatformSetting> PlatformSettings => Set<PlatformSetting>();
+
     // ---- mail ----
     public DbSet<Mailbox> Mailboxes => Set<Mailbox>();
     public DbSet<Alias> Aliases => Set<Alias>();
@@ -82,6 +85,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<AuditLog>().ToTable("audit_logs", "core");
         b.Entity<RefreshToken>().ToTable("refresh_tokens", "core");
         b.Entity<SignupDraft>().ToTable("signup_drafts", "core");
+        b.Entity<PlatformSetting>().ToTable("platform_settings", "core");
+        b.Entity<PlatformSetting>().HasKey(s => s.Key);
 
         b.Entity<Mailbox>().ToTable("mailboxes", "mail");
         b.Entity<Alias>().ToTable("aliases", "mail");

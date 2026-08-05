@@ -7,6 +7,8 @@ using TatvaOS.Api.Modules.Admin.Endpoints;
 using TatvaOS.Api.Modules.Auth.Endpoints;
 using TatvaOS.Api.Modules.Core;
 using TatvaOS.Api.Modules.Core.Endpoints;
+using TatvaOS.Api.Shared.Notify;
+using TatvaOS.Api.Shared.Settings;
 using TatvaOS.Api.Shared.Auth;
 using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Tenancy;
@@ -85,6 +87,13 @@ builder.Services.AddScoped<AuditWriter>();
 // new resolver per request would discard that for no benefit.
 builder.Services.AddSingleton<DomainVerifier>();
 builder.Services.AddSingleton<SignupVerifier>();
+// Scoped, not singleton: both read platform settings from the database, so a
+// credential saved in the console takes effect on the next request with no
+// cache to invalidate and no restart.
+builder.Services.AddHttpClient();
+builder.Services.AddScoped<SettingsReader>();
+builder.Services.AddScoped<SystemMailer>();
+builder.Services.AddScoped<ISmsSender, SmsSender>();
 
 builder.Services.AddOpenApi();
 
@@ -122,6 +131,7 @@ app.MapOrganisationEndpoints();
 app.MapUserEndpoints();
 app.MapDomainEndpoints();
 app.MapSignupEndpoints();
+app.MapSettingsEndpoints();
 
 // ---------------------------------------------------------------------------
 //  Bootstrap the first super admin

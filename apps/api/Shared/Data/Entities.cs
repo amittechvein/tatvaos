@@ -155,6 +155,13 @@ public class User
     /// off a screen and typed into a chat window.</summary>
     public bool MustChangePassword { get; set; }
 
+    /// <summary>
+    /// When the address was proven readable — set by the signup OTP, or later
+    /// by a confirmation link for admin-created accounts. Password resets and
+    /// invoices go here, so an unconfirmed address is a support case waiting.
+    /// </summary>
+    public DateTimeOffset? EmailConfirmedAt { get; set; }
+
     public UserCategory? Category { get; set; }
     public Domain? Domain { get; set; }
 }
@@ -256,10 +263,23 @@ public class SignupDraft
     public DateTimeOffset? LastAttemptAt { get; set; }
     [MaxLength(500)] public string? LastAttemptError { get; set; }
 
+    // ---- Contact verification -------------------------------------------
+    // Codes hashed, never stored plain: the drafts table is readable by the
+    // sales queue, and a readable live code is a takeover of that signup.
+    [MaxLength(64)] public string? EmailCodeHash { get; set; }
+    public DateTimeOffset? EmailCodeSentAt { get; set; }
+    public DateTimeOffset? EmailVerifiedAt { get; set; }
+
+    [MaxLength(64)] public string? PhoneCodeHash { get; set; }
+    public DateTimeOffset? PhoneCodeSentAt { get; set; }
+    public DateTimeOffset? PhoneVerifiedAt { get; set; }
+
+    public int CodeAttempts { get; set; }
+
     /// <summary>
     /// Where they stopped. Drives "resume where you left off" and the sales
-    /// queue — abandoning at step 4 is a lead worth calling; step 1 is a
-    /// bounced visitor.
+    /// queue — abandoning at contact verification is a lead worth calling;
+    /// step 1 is a bounced visitor.
     /// </summary>
     public int ReachedStep { get; set; } = 1;
 
@@ -269,6 +289,20 @@ public class SignupDraft
     /// <summary>Kept rather than deleted on success, so the funnel is measurable.</summary>
     public DateTimeOffset? CompletedAt { get; set; }
     public Guid? ConvertedTenantId { get; set; }
+}
+
+/// <summary>
+/// A platform-wide setting — provider credentials and switches the super admin
+/// manages from the console rather than from .env. Secrets are stored but
+/// never returned by the API; a GET only says whether one is set.
+/// </summary>
+public class PlatformSetting
+{
+    [MaxLength(100)] public required string Key { get; set; }
+    public required string Value { get; set; }
+    public bool IsSecret { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public Guid? UpdatedBy { get; set; }
 }
 
 /// <summary>Which user may use which product. One row, not a schema change.</summary>

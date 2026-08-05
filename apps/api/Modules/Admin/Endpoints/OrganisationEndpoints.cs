@@ -67,8 +67,10 @@ public static class OrganisationEndpoints
                 d.ReachedStep, d.LastAttemptError, d.LastAttemptAt,
                 d.CreatedAt, d.UpdatedAt,
                 // Pre-computed so the screen does not re-derive the one thing
-                // that decides whether to pick up the phone.
-                stalledAtVerification = d.ReachedStep == 4 && d.Attempts > 0,
+                // that decides whether to pick up the phone. Step 3 is now
+                // contact verification — reaching it and burning attempts
+                // means the codes are not arriving, which is exactly a call.
+                stalledAtVerification = d.ReachedStep >= 3 && d.CodeAttempts > 0,
                 resumeUrl = "/signup?draft=" + d.Id,
             })
             .ToListAsync(ct);

@@ -110,6 +110,12 @@ services:
       # take over the name would break whatever is there. A hostname nothing
       # is using costs nothing and removes the risk entirely.
       Mail__Host: ${MAIL_HOST:-mx.tatvaos.com}
+      # System mail (OTP codes, later invoices) goes out through our own
+      # Postfix submission port. On testing that relays to Mailpit, so signup
+      # codes are readable at mail-catcher.staging rather than emailing anyone.
+      Smtp__Host: postfix
+      Smtp__Port: "587"
+      Smtp__From: ${SMTP_FROM:-no-reply@tatvaos.com}
       Mail__SpfInclude: ${MAIL_SPF_INCLUDE:-_spf.tatvaos.com}
       # Zone new organisations get their free sign-in subdomain under.
       Mail__PlatformZone: ${MAIL_PLATFORM_ZONE:-tatvaos.com}
