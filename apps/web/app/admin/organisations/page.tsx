@@ -43,7 +43,7 @@ export default function AdminOrganisations() {
       const matchQ = !q
         || o.name.toLowerCase().includes(q)
         || o.primaryDomain.toLowerCase().includes(q)
-        || o.adminEmail.toLowerCase().includes(q);
+        || (o.adminEmail ?? '').toLowerCase().includes(q);
       return matchQ && (status === 'all' || o.status === status);
     });
   }, [orgs, query, status]);
