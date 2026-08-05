@@ -4,7 +4,7 @@ import Box from '@mui/material/Box';
 import Breadcrumbs from '@mui/material/Breadcrumbs';
 import Link from '@mui/material/Link';
 import Typography from '@mui/material/Typography';
-import { PANEL_WIDTH, PRODUCT_RAIL_WIDTH, Sidebar, type NavSection } from './Sidebar';
+import { PANEL_WIDTH, PANEL_WIDTH_ICONS, Sidebar, type NavSection } from './Sidebar';
 import { useTheme as useAppearance } from '@/lib/theme';
 import { Topbar } from './Topbar';
 
@@ -40,9 +40,9 @@ export function AppShell({
   // has to be offset by hand — this is the price of the sticky rail, and it is
   // one number rather than a scroll listener.
   const offset =
-    railMode === 'hidden'   ? 0
-    : railMode === 'icons'  ? PRODUCT_RAIL_WIDTH
-    : PRODUCT_RAIL_WIDTH + PANEL_WIDTH;
+    railMode === 'hidden'  ? 0
+    : railMode === 'icons' ? PANEL_WIDTH_ICONS
+    : PANEL_WIDTH;
 
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: 'background.default' }}>

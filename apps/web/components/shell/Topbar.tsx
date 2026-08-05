@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import AppBar from '@mui/material/AppBar';
 import Avatar from '@mui/material/Avatar';
+import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Chip from '@mui/material/Chip';
 import IconButton from '@mui/material/IconButton';
@@ -13,6 +14,7 @@ import Toolbar from '@mui/material/Toolbar';
 import { alpha } from '@mui/material/styles';
 import { useAuth } from '@/lib/auth';
 import { AccountMenu } from './AccountMenu';
+import { AppLauncher } from './AppLauncher';
 import { useTheme as useAppearance } from '@/lib/theme';
 import { Switcher } from './Switcher';
 
@@ -66,16 +68,39 @@ export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' 
             </IconButton>
           </Tooltip>
 
+          {/* Ghost search, like the reference: icon, muted prompt, a ⌘K hint.
+              A bordered input up here reads as a form stranded outside its
+              page — the border only appears once it has focus and is real. */}
           <TextField
-            placeholder="Search…"
+            placeholder="Search"
             size="small"
-            sx={{ maxWidth: 320, display: { xs: 'none', md: 'block' },
-                  '& .MuiOutlinedInput-root': { borderRadius: 999 } }}
+            sx={{
+              width: 300, display: { xs: 'none', md: 'block' },
+              '& .MuiOutlinedInput-root': {
+                borderRadius: 999,
+                bgcolor: 'transparent',
+                '& fieldset': { border: 'none' },
+                '&.Mui-focused': {
+                  bgcolor: 'background.paper',
+                  boxShadow: (t) => `0 2px 10px 0 ${alpha(t.palette.text.primary, 0.1)}`,
+                },
+              },
+            }}
             slotProps={{
               input: {
                 startAdornment: (
                   <InputAdornment position="start">
                     <Glyph d="M15 15l4 4M17 10a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </InputAdornment>
+                ),
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <Box sx={{ px: 0.75, py: 0.1, borderRadius: 1, fontSize: 11,
+                               fontWeight: 600, letterSpacing: '0.04em',
+                               color: 'text.disabled',
+                               border: '1px solid', borderColor: 'divider' }}>
+                      Ctrl K
+                    </Box>
                   </InputAdornment>
                 ),
               },
@@ -94,6 +119,8 @@ export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' 
 
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5,
                      ml: scope === 'platform' ? 1 : 'auto' }}>
+            <AppLauncher />
+
             <IconButton
               size="small"
               onClick={() => setMode(mode === 'dark' ? 'light' : 'dark')}
@@ -109,12 +136,25 @@ export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' 
             </IconButton>
 
             <IconButton onClick={(e) => setAnchor(e.currentTarget)} size="small" sx={{ ml: 0.5 }}>
-              <Avatar
-                sx={{ width: 34, height: 34, fontSize: 14, fontWeight: 600,
-                      background: (t) => `linear-gradient(72deg, ${t.palette.primary.main}, ${t.palette.primary.light})` }}
+              {/* The dot means "this session is live", which — unlike a fake
+                  notification count — is true whenever it renders. */}
+              <Badge
+                overlap="circular"
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+                variant="dot"
+                sx={{ '& .MuiBadge-badge': {
+                  bgcolor: 'success.main',
+                  boxShadow: (t) => `0 0 0 2px ${t.palette.background.paper}`,
+                  width: 9, height: 9, borderRadius: '50%',
+                } }}
               >
-                {(user?.displayName ?? '?').charAt(0).toUpperCase()}
-              </Avatar>
+                <Avatar
+                  sx={{ width: 36, height: 36, fontSize: 14, fontWeight: 600,
+                        background: (t) => `linear-gradient(72deg, ${t.palette.primary.main}, ${t.palette.primary.light})` }}
+                >
+                  {(user?.displayName ?? '?').charAt(0).toUpperCase()}
+                </Avatar>
+              </Badge>
             </IconButton>
 
             <AccountMenu anchorEl={anchor} onClose={() => setAnchor(null)} />

@@ -99,8 +99,12 @@ export function buildTheme(primary: string = DEFAULT_PRIMARY): Theme {
     shape: { borderRadius: 6 },
 
     typography: {
+      // var(--font-inter) is set by next/font in the root layout. The literal
+      // 'Inter' stays as the second choice so a missing variable degrades to
+      // any locally installed copy rather than straight to Segoe UI.
       fontFamily: [
-        'Inter', 'ui-sans-serif', 'system-ui', 'Segoe UI', 'Roboto', 'Arial', 'sans-serif',
+        'var(--font-inter)', 'Inter', 'ui-sans-serif', 'system-ui',
+        'Segoe UI', 'Roboto', 'Arial', 'sans-serif',
       ].join(','),
       h1: { fontSize: '2.375rem', fontWeight: 500, letterSpacing: '-0.02em' },
       h2: { fontSize: '2rem', fontWeight: 500, letterSpacing: '-0.02em' },
@@ -118,11 +122,14 @@ export function buildTheme(primary: string = DEFAULT_PRIMARY): Theme {
         defaultProps: { elevation: 0 },
         styleOverrides: {
           root: {
-            borderRadius: 10,
-            boxShadow: shadow(2, 10, 0.1),
+            borderRadius: 12,
+            // Softer and wider than the default — depth rather than outline.
+            boxShadow: shadow(3, 14, 0.08),
             // No border. Materio separates cards with shadow alone; adding a
             // border as well makes a dense screen look like a spreadsheet.
             backgroundImage: 'none',
+            transition: 'box-shadow 0.2s',
+            '&:hover': { boxShadow: shadow(5, 20, 0.12) },
           },
         },
       },
@@ -136,12 +143,12 @@ export function buildTheme(primary: string = DEFAULT_PRIMARY): Theme {
             subheader: { variant: 'body2' },
           },
         },
-        styleOverrides: { root: { padding: '20px 20px 12px' } },
+        styleOverrides: { root: { padding: '22px 24px 12px' } },
       },
 
       MuiCardContent: {
         styleOverrides: {
-          root: { padding: '20px', '&:last-child': { paddingBottom: '20px' } },
+          root: { padding: '24px', '&:last-child': { paddingBottom: '24px' } },
         },
       },
 

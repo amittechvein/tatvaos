@@ -62,27 +62,31 @@ export interface RailProduct {
   live: boolean;
   /** Path prefixes this entry owns. */
   match: string[];
+  /** Tile colour in the app launcher. Each product owns one, the way Gmail
+   *  is red and Drive is green — it is how people find an app in a grid
+   *  without reading. */
+  colour: string;
 }
 
 export const RAIL_PRODUCTS: RailProduct[] = [
   { code: 'core', label: 'Core', href: '/org', icon: <Icon d={PATHS.building} />,
-    live: true, match: ['/org', '/account'] },
+    live: true, colour: '#7367f0', match: ['/org', '/account'] },
   { code: 'mail', label: 'Mail', href: '/mail/f-inbox', icon: <Icon d={PATHS.mail} />,
-    live: true, match: ['/mail'] },
+    live: true, colour: '#ff4c51', match: ['/mail'] },
   { code: 'drive', label: 'Drive', href: '/drive', icon: <Icon d={PATHS.drive} />,
-    live: false, match: ['/drive'] },
+    live: false, colour: '#28c76f', match: ['/drive'] },
   { code: 'people', label: 'People', href: '/people', icon: <Icon d={PATHS.people} />,
-    live: false, match: ['/people'] },
+    live: false, colour: '#00cfe8', match: ['/people'] },
   { code: 'payroll', label: 'Payroll', href: '/payroll', icon: <Icon d={PATHS.payroll} />,
-    live: false, match: ['/payroll'] },
+    live: false, colour: '#ff9f43', match: ['/payroll'] },
   { code: 'sheet', label: 'Sheet', href: '/sheet', icon: <Icon d={PATHS.sheet} />,
-    live: false, match: ['/sheet'] },
+    live: false, colour: '#1e9e63', match: ['/sheet'] },
   { code: 'word', label: 'Word', href: '/word', icon: <Icon d={PATHS.word} />,
-    live: false, match: ['/word'] },
+    live: false, colour: '#2f6fed', match: ['/word'] },
   // Techvein only. The panel it opens is a different world from a customer's,
   // which is why it sits apart at the end rather than among the products.
   { code: 'platform', label: 'Platform admin', href: '/admin',
-    icon: <Icon d={PATHS.gear} />, live: true, match: ['/admin'] },
+    icon: <Icon d={PATHS.gear} />, live: true, colour: '#5c5c72', match: ['/admin'] },
 ];
 
 /** Techvein running the platform. */
