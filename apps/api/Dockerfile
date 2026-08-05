@@ -20,10 +20,25 @@ COPY --from=build /app .
 #  Debian perl script from the adduser package, and the .NET runtime images
 #  are slim enough not to carry it. That failed with exit 127.
 #
-#  Note there is deliberately no chown. The published files stay owned by
-#  root and readable by app, so the process cannot modify its own binaries.
+#  Note there is deliberately no chown of /app. The published files stay owned
+#  by root and readable by app, so the process cannot modify its own binaries.
 #  Chowning them to the runtime user would make an RCE self-persisting.
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+#  /dkim — where DKIM private keys are materialised for OpenDKIM.
+#
+#  Created here, owned by the runtime user, BEFORE the volume is mounted.
+#  Docker seeds a fresh named volume from the image's directory, ownership
+#  included — so this line is what makes the volume writable by a non-root
+#  process. Without it the mount arrives root-owned, every key write fails
+#  with EACCES, and the only symptom is that outbound mail is never signed.
+#
+#  0700: the API is the sole writer. OpenDKIM reads through its own container,
+#  where the entrypoint runs as root before dropping privilege.
+# ---------------------------------------------------------------------------
+RUN mkdir -p /dkim && chown $APP_UID:$APP_UID /dkim && chmod 700 /dkim
+
 USER $APP_UID
 
 ENV ASPNETCORE_URLS=http://+:8080

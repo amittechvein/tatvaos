@@ -83,6 +83,28 @@ services:
     networks: [mailnet]
 
   # --------------------------------------------------------------------------
+  #  OpenDKIM - signs outbound with the sending domain's own key
+  # --------------------------------------------------------------------------
+  #  Same image and same entrypoint as the cloud stack, so the signing path CI
+  #  exercises is the one production runs. Keys arrive on the shared volume
+  #  from the API; there is no separate local key-loading step to drift.
+  # --------------------------------------------------------------------------
+  opendkim:
+    build:
+      context: ./opendkim
+    container_name: tv-opendkim
+    restart: unless-stopped
+    environment:
+      # Lets the entrypoint generate throwaway keys for the seeded domains.
+      # Anything other than "local" and it refuses — see the entrypoint.
+      TATVAOS_ENV: local
+    volumes:
+      # Writable HERE only, because there is no API container locally to
+      # materialise keys. The cloud stack mounts this read-only.
+      - dkimkeys:/dkim
+    networks: [mailnet]
+
+  # --------------------------------------------------------------------------
   #  Postfix - MTA with Postgres-backed virtual domains, mailboxes and aliases
   # --------------------------------------------------------------------------
   postfix:
@@ -95,6 +117,8 @@ services:
       postgres:
         condition: service_healthy
       dovecot:
+        condition: service_started
+      opendkim:
         condition: service_started
     ports:
       - "2525:25"        # inbound  - swaks --server localhost:2525
@@ -204,6 +228,7 @@ networks:
     driver: bridge
 
 volumes:
+  dkimkeys:
   pgdata:
   roundcubedata:
   redisdata:

@@ -27,7 +27,6 @@ const PATHS = {
   dashboard: 'M4 13h6V4H4v9zm0 7h6v-5H4v5zm10 0h6v-9h-6v9zm0-16v5h6V4h-6z',
   building:  'M3 21h18M5 21V7l7-4 7 4v14M9 21v-5h6v5M9 9h.01M15 9h.01M9 13h.01M15 13h.01',
   users:     'M17 20v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9.5 10a3.5 3.5 0 100-7 3.5 3.5 0 000 7M22 20v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75',
-  tag:       'M4 6h16M4 12h16M4 18h10',
   globe:     'M12 21a9 9 0 100-18 9 9 0 000 18zM3.6 9h16.8M3.6 15h16.8M12 3a15 15 0 010 18a15 15 0 010-18',
   database:  'M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3',
   card:      'M3 7h18v10H3zM3 11h18M7 15h3',
@@ -41,30 +40,50 @@ const PATHS = {
   word:      'M6 3h9l5 5v13H6zM15 3v5h5M9 13h6M9 17h6',
 };
 
-/** Products that exist. Everything else in core.products is future work. */
-const LIVE_PRODUCTS = new Set(['mail']);
-
-const PRODUCTS: { code: string; label: string; href: string; icon: string }[] = [
-  { code: 'mail',    label: 'Mail',    href: '/mail/f-inbox', icon: PATHS.mail },
-  { code: 'drive',   label: 'Drive',   href: '/drive',        icon: PATHS.drive },
-  { code: 'people',  label: 'People',  href: '/people',       icon: PATHS.people },
-  { code: 'payroll', label: 'Payroll', href: '/payroll',      icon: PATHS.payroll },
-  { code: 'sheet',   label: 'Sheet',   href: '/sheet',        icon: PATHS.sheet },
-  { code: 'word',    label: 'Word',    href: '/word',         icon: PATHS.word },
-];
-
-function productSection(): NavSection {
-  return {
-    heading: 'Products',
-    items: PRODUCTS.map((p) => ({
-      href: LIVE_PRODUCTS.has(p.code) ? p.href : '',
-      label: p.label,
-      icon: <Icon d={p.icon} />,
-      disabled: !LIVE_PRODUCTS.has(p.code),
-      badge: LIVE_PRODUCTS.has(p.code) ? undefined : 'Soon',
-    })),
-  };
+// ============================================================================
+//  The product rail — tier one of the navigation
+// ============================================================================
+//
+//  One entry per product, plus the consoles. This is the list the narrow
+//  coloured rail renders, and `match` is how it works out which entry owns the
+//  current URL so the right one lights up.
+//
+//  Future products appear disabled rather than hidden. A customer looking at
+//  the rail should be able to see that Drive and Payroll are coming without
+//  being able to click into a screen that does not exist — hiding them makes
+//  TatvaOS look like a mail product, which is exactly the impression the
+//  Core/product split exists to avoid.
+// ============================================================================
+export interface RailProduct {
+  code: string;
+  label: string;
+  href: string;
+  icon: React.ReactNode;
+  live: boolean;
+  /** Path prefixes this entry owns. */
+  match: string[];
 }
+
+export const RAIL_PRODUCTS: RailProduct[] = [
+  { code: 'core', label: 'Core', href: '/org', icon: <Icon d={PATHS.building} />,
+    live: true, match: ['/org', '/account'] },
+  { code: 'mail', label: 'Mail', href: '/mail/f-inbox', icon: <Icon d={PATHS.mail} />,
+    live: true, match: ['/mail'] },
+  { code: 'drive', label: 'Drive', href: '/drive', icon: <Icon d={PATHS.drive} />,
+    live: false, match: ['/drive'] },
+  { code: 'people', label: 'People', href: '/people', icon: <Icon d={PATHS.people} />,
+    live: false, match: ['/people'] },
+  { code: 'payroll', label: 'Payroll', href: '/payroll', icon: <Icon d={PATHS.payroll} />,
+    live: false, match: ['/payroll'] },
+  { code: 'sheet', label: 'Sheet', href: '/sheet', icon: <Icon d={PATHS.sheet} />,
+    live: false, match: ['/sheet'] },
+  { code: 'word', label: 'Word', href: '/word', icon: <Icon d={PATHS.word} />,
+    live: false, match: ['/word'] },
+  // Techvein only. The panel it opens is a different world from a customer's,
+  // which is why it sits apart at the end rather than among the products.
+  { code: 'platform', label: 'Platform admin', href: '/admin',
+    icon: <Icon d={PATHS.gear} />, live: true, match: ['/admin'] },
+];
 
 /** Techvein running the platform. */
 export function platformNav(): NavSection[] {
@@ -91,7 +110,6 @@ export function platformNav(): NavSection[] {
         { href: '/admin/settings', label: 'Settings', icon: <Icon d={PATHS.gear} /> },
       ],
     },
-    productSection(),
   ];
 }
 
@@ -116,6 +134,5 @@ export function organisationNav(): NavSection[] {
         { href: '/org/billing', label: 'Billing', icon: <Icon d={PATHS.card} /> },
       ],
     },
-    productSection(),
   ];
 }

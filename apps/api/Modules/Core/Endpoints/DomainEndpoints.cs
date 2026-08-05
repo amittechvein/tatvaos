@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using TatvaOS.Api.Modules.Admin;
 using TatvaOS.Api.Shared.Data;
+using TatvaOS.Api.Shared.Mail;
 using TatvaOS.Api.Shared.Tenancy;
 
 namespace TatvaOS.Api.Modules.Core.Endpoints;
@@ -50,6 +51,20 @@ public static class DomainEndpoints
     }
 
     // ------------------------------------------------------------------
+    /// <summary>
+    /// The DKIM public key for a domain, or null if it has none yet.
+    ///
+    /// Reads the PUBLIC half only. There is deliberately no code path in this
+    /// file that touches PrivateKeyPem — see DkimKeyService.
+    /// </summary>
+    private static Task<string?> DkimPublicAsync(
+        AppDbContext db, Guid domainId, CancellationToken ct) =>
+        db.DkimKeys.AsNoTracking()
+          .Where(k => k.DomainId == domainId && k.IsActive)
+          .OrderByDescending(k => k.CreatedAt)
+          .Select(k => (string?)$"v=DKIM1; k=rsa; p={k.PublicKeyB64}")
+          .FirstOrDefaultAsync(ct);
+
     private static async Task<IResult> GetAsync(
         Guid id, AppDbContext db, DomainVerifier verifier, CancellationToken ct)
     {
@@ -67,14 +82,16 @@ public static class DomainEndpoints
             // needless friction.
             records = d.IsPlatform
                 ? []
-                : verifier.RequiredRecords(d.Fqdn, d.VerificationToken ?? "", d.DkimSelector, null),
+                : verifier.RequiredRecords(d.Fqdn, d.VerificationToken ?? "", d.DkimSelector,
+                                           await DkimPublicAsync(db, d.Id, ct)),
         });
     }
 
     // ------------------------------------------------------------------
     private static async Task<IResult> AddAsync(
         AddDomainRequest req, AppDbContext db, TenantContext tenant,
-        AuditWriter audit, DomainVerifier verifier, CancellationToken ct)
+        AuditWriter audit, DomainVerifier verifier, DkimKeyService dkimKeys,
+        CancellationToken ct)
     {
         var fqdn = req.Fqdn?.Trim().ToLowerInvariant().TrimEnd('.') ?? "";
 
@@ -106,15 +123,23 @@ public static class DomainEndpoints
 
         db.Domains.Add(domain);
         await db.SaveChangesAsync(ct);
+
+        // Generated NOW, not when they first try to send. A customer who has
+        // to come back for a second round of DNS records after somebody
+        // remembers DKIM will publish the first set and never return for the
+        // second — and then wonder why their mail lands in spam.
+        var dkim = await dkimKeys.EnsureKeyAsync(domain, ct);
+
         await audit.WriteAsync("domain.added", "domain", domain.Id.ToString(),
-            after: new { domain.Fqdn }, ct: ct);
+            after: new { domain.Fqdn, dkimSelector = dkim.Selector }, ct: ct);
 
         return Results.Created($"/api/org/domains/{domain.Id}", new
         {
             domain.Id,
             domain.Fqdn,
             ownershipVerified = false,
-            records = verifier.RequiredRecords(fqdn, domain.VerificationToken!, domain.DkimSelector, null),
+            records = verifier.RequiredRecords(fqdn, domain.VerificationToken!,
+                                               dkim.Selector, dkim.Value),
             note = "Add the ownership record first, then check again. Your existing mail is " +
                    "unaffected — nothing changes until you move the MX record.",
         });
@@ -123,7 +148,7 @@ public static class DomainEndpoints
     // ------------------------------------------------------------------
     private static async Task<IResult> VerifyAsync(
         Guid id, AppDbContext db, DomainVerifier verifier, AuditWriter audit,
-        CancellationToken ct)
+        DkimKeyService dkimKeys, CancellationToken ct)
     {
         var d = await db.Domains.FirstOrDefaultAsync(x => x.Id == id, ct);
         if (d is null) return Results.NotFound();
@@ -135,6 +160,12 @@ public static class DomainEndpoints
                 summary = "This is a TatvaOS subdomain — nothing to verify.",
                 checks = Array.Empty<object>(),
             });
+
+        // Re-materialises the key file as a side effect. Containers get
+        // replaced and volumes get restored; a key row with no matching file
+        // means unsigned mail, and unsigned mail produces no error anywhere —
+        // it just quietly stops arriving in inboxes.
+        var dkim = await dkimKeys.EnsureKeyAsync(d, ct);
 
         var result = await verifier.CheckAsync(d.Fqdn, d.VerificationToken ?? "", d.DkimSelector, ct);
         var now = DateTimeOffset.UtcNow;
@@ -180,7 +211,8 @@ public static class DomainEndpoints
             summary = result.Summary,
             checkedAt = now,
             checks = result.Checks,
-            records = verifier.RequiredRecords(d.Fqdn, d.VerificationToken ?? "", d.DkimSelector, null),
+            records = verifier.RequiredRecords(d.Fqdn, d.VerificationToken ?? "",
+                                               dkim.Selector, dkim.Value),
         });
     }
 

@@ -60,6 +60,26 @@ public class Tenant
     public List<User> Users { get; set; } = [];
 }
 
+/// <summary>
+/// A DKIM signing key. One per domain — see 10-dkim.sql for why this is a
+/// separate table rather than columns on Domain.
+///
+/// PrivateKeyPem has no read path anywhere in the API. It is written once and
+/// materialised to the signing volume; nothing returns it.
+/// </summary>
+public class DkimKey
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid DomainId { get; set; }
+    [MaxLength(64)] public required string Selector { get; set; }
+    public required string PrivateKeyPem { get; set; }
+    public required string PublicKeyB64 { get; set; }
+    public bool IsActive { get; set; } = true;
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset? RetiredAt { get; set; }
+}
+
 public class Domain
 {
     public Guid Id { get; set; } = Guid.NewGuid();

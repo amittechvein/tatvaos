@@ -119,6 +119,33 @@ smtp_tls_security_level  = none
 smtpd_tls_security_level = none
 
 # ----------------------------------------------------------------------------
+# DKIM signing
+# ----------------------------------------------------------------------------
+#  OpenDKIM signs outbound with the sending domain's own key. A key per domain,
+#  not one platform key, because DKIM only helps if the signing domain aligns
+#  with the From domain - a customer sending as @theirschool.edu.in signed by a
+#  key published under tatvaos.com fails DMARC alignment and the signature
+#  counts for nothing.
+#
+#  non_smtpd_milters covers mail this server generates itself: bounces, and
+#  anything sendmail-injected. Without it those go out unsigned, and bounces
+#  are exactly the messages a receiver is most suspicious of.
+#
+#  ---------------------------------------------------------------------------
+#  tempfail, NOT accept.
+#
+#  If OpenDKIM is down, milter_default_action decides what happens. accept
+#  means mail flows out unsigned and nobody notices for weeks, by which point
+#  the domain's reputation is already damaged. tempfail means the sender's
+#  server retries in a few minutes, by which time we have almost certainly
+#  restarted - delivery is delayed rather than silently degraded.
+#  ---------------------------------------------------------------------------
+milter_protocol      = 6
+milter_default_action = tempfail
+smtpd_milters        = inet:opendkim:8891
+non_smtpd_milters    = inet:opendkim:8891
+
+# ----------------------------------------------------------------------------
 # Limits - matched to the architecture doc
 # ----------------------------------------------------------------------------
 #

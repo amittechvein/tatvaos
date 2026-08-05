@@ -36,6 +36,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<Product> Products => Set<Product>();
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<Domain> Domains => Set<Domain>();
+    public DbSet<DkimKey> DkimKeys => Set<DkimKey>();
     public DbSet<User> Users => Set<User>();
     public DbSet<Department> Departments => Set<Department>();
 
@@ -127,12 +128,26 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<Folder>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Message>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Attachment>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<DkimKey>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
 
         // ---- Uniqueness ---------------------------------------------------
         // Domains are unique across the WHOLE platform, not per tenant. Two
         // organisations cannot both claim example.com — whoever verifies
         // ownership first holds it.
         b.Entity<Domain>().HasIndex(d => d.Fqdn).IsUnique();
+
+        // One key per selector per domain. Rotation adds a row with a NEW
+        // selector rather than replacing this one, so both can sign while DNS
+        // propagates and no message in flight loses its signature.
+        b.Entity<DkimKey>().HasIndex(k => new { k.DomainId, k.Selector }).IsUnique();
+
+        // Declared explicitly, like every other relationship here. EF orders
+        // inserts by the relationships it KNOWS about, not by the constraints
+        // in the database — an undeclared FK is how the signup 500 happened.
+        b.Entity<DkimKey>().HasOne<Domain>().WithMany()
+            .HasForeignKey(k => k.DomainId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<DkimKey>().HasOne<Tenant>().WithMany()
+            .HasForeignKey(k => k.TenantId).OnDelete(DeleteBehavior.Cascade);
 
         // Addresses likewise. A single address resolves to exactly one mailbox
         // anywhere on the platform, or delivery is ambiguous.

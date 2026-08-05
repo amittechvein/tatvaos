@@ -57,6 +57,16 @@ services:
       retries: 6
     networks: [mailnet]
 
+  opendkim:
+    build:
+      context: ../../local/opendkim
+    restart: unless-stopped
+    volumes:
+      # READ-ONLY. The signer must never be able to write a key — only the API
+      # generates them, and only it should be able to.
+      - dkimkeys:/dkim:ro
+    networks: [mailnet]
+
   postfix:
     build:
       context: ../../local/postfix
@@ -64,6 +74,9 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       dovecot:  { condition: service_started }
+      # milter_default_action is tempfail, so Postfix starting first would
+      # defer every message until the signer appeared. Cheap to order.
+      opendkim: { condition: service_started }
     environment:
       # The .cf files in source control say 'dev_mail_pw'. The entrypoint
       # renders real ones from sql-src at start, so the password never sits in
@@ -126,6 +139,8 @@ services:
     restart: unless-stopped
     depends_on:
       postgres: { condition: service_healthy }
+    volumes:
+      - dkimkeys:/dkim
     environment:
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-tatvaos_mail};Username=tatvaos_app;Password=${APP_DB_PASSWORD:?APP_DB_PASSWORD must be set};Pooling=true"
       Jwt__SigningKey: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set}
@@ -135,6 +150,9 @@ services:
       # everything. ".tatvaos.com" in production so a session started in Core
       # is carried to Mail. See the cookie-domain block in AuthEndpoints.
       Auth__CookieDomain: ${AUTH_COOKIE_DOMAIN:-}
+      # Where DKIM private keys are written for OpenDKIM to read. The API is
+      # the only writer; the signer mounts the same volume read-only.
+      Dkim__KeyDirectory: /dkim
       # Creates the first super admin if none exists, then does nothing on
       # every later start. Blank is fine and normal once you have signed in
       # once - see apps/api/Shared/Auth/BootstrapAdmin.cs.
@@ -208,6 +226,7 @@ networks:
     driver: bridge
 
 volumes:
+  dkimkeys:
   pgdata:
   redisdata:
   vmail:

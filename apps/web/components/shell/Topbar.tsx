@@ -6,6 +6,7 @@ import Avatar from '@mui/material/Avatar';
 import Box from '@mui/material/Box';
 import Chip from '@mui/material/Chip';
 import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
 import InputAdornment from '@mui/material/InputAdornment';
 import TextField from '@mui/material/TextField';
 import Toolbar from '@mui/material/Toolbar';
@@ -25,7 +26,7 @@ import { Switcher } from './Switcher';
  */
 export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' }) {
   const { user } = useAuth();
-  const { mode, setMode, toggleRail } = useAppearance();
+  const { mode, setMode, railMode, toggleRail } = useAppearance();
   const [switcher, setSwitcher] = useState(false);
   const [anchor, setAnchor] = useState<null | HTMLElement>(null);
 
@@ -42,9 +43,28 @@ export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' 
         }}
       >
         <Toolbar sx={{ gap: 1, minHeight: { xs: 60, sm: 64 } }}>
-          <IconButton onClick={toggleRail} aria-label="Toggle sidebar" size="small">
-            <Glyph d="M4 7h16M4 12h10M4 17h16" />
-          </IconButton>
+          {/* One control, three stops: full → icons → hidden → full. The
+              glyph shows what you will GET, not what you have, so the button
+              is a preview rather than a status light — and the tooltip names
+              it, because an icon alone cannot explain a three-way cycle. */}
+          <Tooltip title={
+            railMode === 'expanded' ? 'Collapse to icons'
+            : railMode === 'icons'  ? 'Hide the sidebar'
+            : 'Show the sidebar'
+          }>
+            <IconButton onClick={toggleRail} size="small"
+                        aria-label={
+                          railMode === 'expanded' ? 'Collapse sidebar to icons'
+                          : railMode === 'icons'  ? 'Hide sidebar'
+                          : 'Show sidebar'
+                        }>
+              {railMode === 'expanded'
+                ? <Glyph d="M4 7h16M4 12h10M4 17h16" />
+                : railMode === 'icons'
+                  ? <Glyph d="M15 5l-7 7 7 7M20 5v14" />
+                  : <Glyph d="M9 5l7 7-7 7M4 5v14" />}
+            </IconButton>
+          </Tooltip>
 
           <TextField
             placeholder="Search…"

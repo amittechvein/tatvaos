@@ -30,10 +30,11 @@ info() { printf '  %s%s%s\n' "$GRAY" "$1" "$RST"; }
 need() { command -v "$1" >/dev/null 2>&1 || { printf '%sMissing %s. Install it: sudo apt install -y %s%s\n' "$RED" "$1" "$2" "$RST"; exit 1; }; }
 need swaks swaks
 need docker docker
+need curl curl
 
 # ---------------------------------------------------------------------------
 hdr "Containers"
-for svc in tv-postgres tv-postfix tv-dovecot tv-mailpit; do
+for svc in tv-postgres tv-postfix tv-dovecot tv-mailpit tv-opendkim; do
     if docker ps --format '{{.Names}}' | grep -qx "$svc"; then
         pass "$svc running"
     else
@@ -279,6 +280,70 @@ fi
 gate_teardown
 trap - EXIT
 pass "fixture removed"
+
+# ===========================================================================
+#  DKIM SIGNING
+# ===========================================================================
+#
+#  Unsigned mail from a new IP goes to spam, and the failure is invisible from
+#  our side — no error, no bounce, just nobody replying. So this asserts the
+#  signature is actually on the wire rather than trusting that a container
+#  started.
+# ===========================================================================
+hdr "DKIM"
+
+if docker ps --format '{{.Names}}' | grep -qx tv-opendkim; then
+    pass "tv-opendkim running"
+else
+    fail "tv-opendkim NOT running — outbound mail is unsigned"
+fi
+
+signed_count=$(docker logs tv-opendkim 2>&1 | grep -c 'signing .* domain' || true)
+[ "${signed_count:-0}" -gt 0 ] \
+    && pass "opendkim loaded its key table" \
+    || fail "opendkim never reported a key table — check: docker compose logs opendkim"
+
+# Postfix must actually be pointed at it. A milter configured and not wired is
+# the failure this whole section exists to catch.
+if docker exec tv-postfix postconf -h smtpd_milters 2>/dev/null | grep -q 'opendkim:8891'; then
+    pass "postfix is wired to the milter"
+else
+    fail "postfix has no milter configured — nothing is being signed"
+fi
+
+# End to end: submit a message and read it back out of Mailpit.
+dkim_subject="dkim probe $(date +%s)"
+swaks --server "$SMTP_HOST:${SUB_PORT:-5870}" \
+      --from "amit@techvein.local" --to "someone@example.com" \
+      --header "Subject: $dkim_subject" --body "signed?" \
+      --hide-all --silent 3 >/dev/null 2>&1
+sleep 3
+
+# Mailpit keeps the raw source, which is the only place a header can be
+# checked without trusting an intermediate summary.
+msg_id=$(curl -s "http://localhost:8025/api/v1/search?query=$(printf '%s' "$dkim_subject" | sed 's/ /%20/g')" \
+         2>/dev/null | grep -o '"ID":"[^"]*"' | head -1 | cut -d'"' -f4)
+
+if [ -z "$msg_id" ]; then
+    fail "the probe message never reached mailpit — cannot check for a signature"
+else
+    raw=$(curl -s "http://localhost:8025/api/v1/message/$msg_id/raw" 2>/dev/null)
+    if printf '%s' "$raw" | grep -qi '^DKIM-Signature:'; then
+        pass "outbound mail carries a DKIM-Signature"
+        # d= must be the SENDING domain. A signature by the wrong domain is
+        # worse than none: it passes verification and fails DMARC alignment,
+        # which is far harder to work out from a spam folder.
+        if printf '%s' "$raw" | tr -d '\n\r' | grep -qi 'd=techvein.local'; then
+            pass "signed by the sending domain (d=techvein.local)"
+        else
+            fail "signed by the WRONG domain — DMARC alignment will fail"
+            printf '         %s\n' "$(printf '%s' "$raw" | grep -i -m1 'd=')"
+        fi
+    else
+        fail "NO DKIM-Signature header — mail is going out unsigned"
+        info "check: docker compose logs opendkim postfix"
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 hdr "Outbound containment"

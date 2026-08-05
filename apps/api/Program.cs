@@ -86,6 +86,11 @@ builder.Services.AddScoped<AuditWriter>();
 // Singleton: it holds a DNS client with its own connection handling, and a
 // new resolver per request would discard that for no benefit.
 builder.Services.AddSingleton<DomainVerifier>();
+
+// Scoped, not singleton: it writes through AppDbContext and reads TenantContext,
+// both of which are per-request. A singleton holding either would serve one
+// tenant's scope to the next request that arrived.
+builder.Services.AddScoped<TatvaOS.Api.Shared.Mail.DkimKeyService>();
 builder.Services.AddSingleton<SignupVerifier>();
 // Scoped, not singleton: both read platform settings from the database, so a
 // credential saved in the console takes effect on the next request with no

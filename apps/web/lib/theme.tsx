@@ -174,8 +174,20 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     } catch { /* private browsing */ }
   }, [mode, accent, rail, railMode]);
 
+  /**
+   * Three states, cycled by one control: expanded → icons → hidden → expanded.
+   *
+   * A two-state toggle would need a second control to reach "hidden", and a
+   * rail that can only be full or narrow is not much of a choice on a laptop
+   * where the mail list wants every pixel. One button, three stops.
+   *
+   * The order matters. Each click takes away a little more, so the direction
+   * is predictable — you never have to remember which way round it goes, only
+   * that pressing again gives you more room until it wraps.
+   */
   const toggleRail = useCallback(() => {
-    setRailModeState((m) => (m === 'expanded' ? 'icons' : 'expanded'));
+    setRailModeState((m) =>
+      m === 'expanded' ? 'icons' : m === 'icons' ? 'hidden' : 'expanded');
   }, []);
 
   const reset = useCallback(() => {
