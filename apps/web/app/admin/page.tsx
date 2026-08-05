@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import { adminApi, formatBytes } from '@tatvaos/core';
-import type { Organisation } from '@tatvaos/types';
+import { formatBytes } from '@tatvaos/core';
+import { fetchOrganisations, type OrgRow } from '@/lib/adminData';
 import { AdminShell } from '@/components/admin/AdminShell';
 import { StatusBadge } from '@/components/admin/StatusBadge';
 import { Badge, Button, Card, Empty, Meter, Stat, Table, Td } from '@/components/ui/Kit';
@@ -25,13 +25,16 @@ const NAV = [
  * cause an action were left out.
  */
 export default function PlatformDashboard() {
-  const { user } = useAuth();
-  const [orgs, setOrgs] = useState<Organisation[]>([]);
+  const { user, authedFetch } = useAuth();
+  const [orgs, setOrgs] = useState<OrgRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    adminApi.getOrgs().then(setOrgs).finally(() => setLoading(false));
-  }, []);
+    fetchOrganisations(authedFetch)
+      .then(setOrgs)
+      .catch(() => setOrgs([]))
+      .finally(() => setLoading(false));
+  }, [authedFetch]);
 
   const totals = useMemo(() => {
     const users = orgs.reduce((s, o) => s + o.userCount, 0);
@@ -39,11 +42,9 @@ export default function PlatformDashboard() {
 
     // Committed, not used. A pooled customer has bought their whole pool
     // whether or not they have filled it, so that is the number that matters
-    // for capacity planning.
-    const committed = orgs.reduce((s, o) => {
-      if (o.storageModel === 'pooled') return s + (o.pooledStorageBytes ?? 0);
-      return s + (o.perUserQuotaBytes ?? 0) * (o.maxUsers ?? o.userCount);
-    }, 0);
+    // for capacity planning. The server computes it — StorageAllocator is the
+    // one place that logic lives, so the screen cannot disagree with the API.
+    const committed = orgs.reduce((s, o) => s + o.storageTotalBytes, 0);
 
     return {
       orgs: orgs.length,
@@ -66,12 +67,11 @@ export default function PlatformDashboard() {
   /** Nearest to their storage limit first — the ones about to have a problem. */
   const atRisk = useMemo(() => {
     return orgs
-      .map((o) => {
-        const cap = o.storageModel === 'pooled'
-          ? (o.pooledStorageBytes ?? 0)
-          : (o.perUserQuotaBytes ?? 0) * (o.maxUsers ?? o.userCount);
-        return { org: o, cap, pct: cap > 0 ? (o.storageUsedBytes / cap) * 100 : 0 };
-      })
+      .map((o) => ({
+        org: o,
+        cap: o.storageTotalBytes,
+        pct: o.storageTotalBytes > 0 ? (o.storageUsedBytes / o.storageTotalBytes) * 100 : 0,
+      }))
       .filter((r) => r.pct >= 60)
       .sort((a, b) => b.pct - a.pct)
       .slice(0, 5);
@@ -187,7 +187,11 @@ export default function PlatformDashboard() {
                     <div className="font-medium">{org.name}</div>
                     <div className="text-[12px] text-ink-muted">{org.primaryDomain}</div>
                   </Td>
-                  <Td><span className="text-ink-muted">{org.planName}</span></Td>
+                  <Td>
+                    <span className="text-ink-muted" style={{ textTransform: 'capitalize' }}>
+                      {org.storageModel.replace('_', ' ')}
+                    </span>
+                  </Td>
                   <Td>
                     <div className="text-[12px]">
                       {formatBytes(org.storageUsedBytes)}

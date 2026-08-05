@@ -176,6 +176,16 @@ done
 
 schema_failed=0
 for f in local/postgres/init/*.sql; do
+    # Demo seed data stays local. It exists so the dev stack and CI have two
+    # tenants to prove isolation against — on a cloud environment it becomes
+    # fictional customers in the real database, with SHA512-CRYPT dev
+    # passwords, that the console then shows to whoever signs in.
+    #
+    # The seeds are idempotency-guarded, so without this skip they would also
+    # quietly re-create themselves on every deploy after being cleaned out.
+    case "$(basename "$f")" in
+        *seed*) note "skipping $(basename "$f") (demo data - local and CI only)"; continue ;;
+    esac
     # Output is NOT swallowed. Hiding psql's stderr behind /dev/null turns a
     # one-line "relation does not exist" into a silent FAIL that takes an hour
     # to track down — which is exactly what the Postfix entrypoint did to us.

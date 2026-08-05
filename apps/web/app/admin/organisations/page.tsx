@@ -2,8 +2,9 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import { adminApi, formatBytes } from '@tatvaos/core';
-import type { Organisation } from '@tatvaos/types';
+import { formatBytes } from '@tatvaos/core';
+import { fetchOrganisations, type OrgRow } from '@/lib/adminData';
+import { useAuth } from '@/lib/auth';
 import { AdminShell } from '@/components/admin/AdminShell';
 import { StatusBadge } from '@/components/admin/StatusBadge';
 import { Button, Card, Empty, Meter, Table, Td } from '@/components/ui/Kit';
@@ -23,14 +24,18 @@ const STATUSES = ['all', 'active', 'trial', 'suspended', 'pending'] as const;
 
 /** Every customer on the platform. The dashboard summarises; this is the list. */
 export default function AdminOrganisations() {
-  const [orgs, setOrgs] = useState<Organisation[]>([]);
+  const { authedFetch } = useAuth();
+  const [orgs, setOrgs] = useState<OrgRow[]>([]);
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<string>('all');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    adminApi.getOrgs().then(setOrgs).finally(() => setLoading(false));
-  }, []);
+    fetchOrganisations(authedFetch)
+      .then(setOrgs)
+      .catch(() => setOrgs([]))
+      .finally(() => setLoading(false));
+  }, [authedFetch]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -100,9 +105,7 @@ export default function AdminOrganisations() {
         ) : (
           <Table head={['Organisation', 'Type', 'Plan', 'People', 'Storage', 'Status']}>
             {filtered.map((o) => {
-              const cap = o.storageModel === 'pooled'
-                ? (o.pooledStorageBytes ?? 0)
-                : (o.perUserQuotaBytes ?? 0) * (o.maxUsers ?? o.userCount);
+              const cap = o.storageTotalBytes;
 
               return (
                 <tr key={o.id} className="hover:bg-canvas">
@@ -114,7 +117,7 @@ export default function AdminOrganisations() {
                   </Td>
                   <Td><span className="text-ink-muted">{TYPE_LABEL[o.type] ?? o.type}</span></Td>
                   <Td>
-                    <div>{o.planName}</div>
+                    <div style={{ textTransform: 'capitalize' }}>{o.storageModel.replace('_', ' ')}</div>
                     <div className="text-[12px] capitalize text-ink-faint">
                       {o.storageModel.replace('_', ' ')}
                     </div>
