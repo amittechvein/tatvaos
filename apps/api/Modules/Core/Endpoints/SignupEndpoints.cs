@@ -235,6 +235,27 @@ public static class SignupEndpoints
                 error = "Choose a password of at least 12 characters. A short phrase you will remember beats a short password you will not.",
             });
 
+        // Belt and braces on the email: StartAsync checks this too, but a
+        // retry after a partial failure must land on 409-sign-in, not a unique
+        // index violation dressed as a 500.
+        if (await db.Users.IgnoreQueryFilters().AnyAsync(u => u.Email == d.AdminEmail, ct))
+            return Results.Conflict(new
+            {
+                error = "That email address already has an account. Sign in instead.",
+                signIn = true,
+            });
+
+        // ------------------------------------------------------------------
+        //  One transaction for the whole account.
+        //
+        //  Without it, the tenant is saved first and everything else second —
+        //  so a failure in the second half leaves an orphan organisation with
+        //  no owner, invisible to sign-in but present in every count, and each
+        //  retry mints another one. All-or-nothing is the only shape that
+        //  retries cleanly.
+        // ------------------------------------------------------------------
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+
         var org = new Tenant
         {
             Name = d.OrgName,
@@ -251,6 +272,9 @@ public static class SignupEndpoints
         db.Tenants.Add(org);
         await db.SaveChangesAsync(ct);
 
+        // The transaction holds the connection open, so this is the case
+        // SyncTenantAsync exists for: the RLS-forced inserts below need
+        // app.tenant_id set on THIS session, not the next one from the pool.
         tenant.EnterPlatformScope(org.Id, Guid.Empty);
         await db.SyncTenantAsync(ct);
 
@@ -284,6 +308,7 @@ public static class SignupEndpoints
         d.CompletedAt = DateTimeOffset.UtcNow;
         d.ConvertedTenantId = org.Id;
         await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
 
         return Results.Ok(new
         {

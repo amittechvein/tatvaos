@@ -18,6 +18,21 @@ import { alpha } from '@mui/material/styles';
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? '/api';
 
+/**
+ * A 500 from ASP.NET has an empty body, and res.json() on an empty body
+ * throws "Unexpected end of JSON input" — which then replaces the real error
+ * with a JavaScript one. Parse defensively, always.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function readJson(res: Response): Promise<Record<string, any>> {
+  try { return await res.json(); } catch { return {}; }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function errOf(body: Record<string, any>, fallback: string): string {
+  return typeof body.error === 'string' ? body.error : fallback;
+}
+
 const STEPS = ['Organisation', 'You', 'Verify'];
 
 const ORG_TYPES = [
@@ -66,6 +81,9 @@ function Wizard() {
   const [codeErrors, setCodeErrors] = useState<string[]>([]);
 
   const [done, setDone] = useState<{ email: string } | null>(null);
+  // Set when arriving via a resume link: the original tab's state — including
+  // the chosen password — is gone, so the verify step must collect it again.
+  const [resumed, setResumed] = useState(false);
 
   // Resume from the emailed link — a signup abandoned on Friday must be
   // resumable on Monday, or saving the draft was pointless.
@@ -85,6 +103,7 @@ function Wizard() {
     setPhoneMasked(d.phoneMasked ?? '');
     setEmailOk(!!d.emailVerified);
     setPhoneOk(!!d.phoneVerified);
+    setResumed(true);
     setStep(2);
   }, []);
   useEffect(() => { if (resume) void loadDraft(resume); }, [resume, loadDraft]);
@@ -97,8 +116,8 @@ function Wizard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orgName, orgType, country, gstin, adminName, adminEmail, adminPhone }),
       });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? 'Could not continue.');
+      const body = await readJson(res);
+      if (!res.ok) throw new Error(errOf(body, 'Could not continue.'));
       setDraftId(body.draftId);
       setPhoneMasked(body.sentTo?.phone ?? '');
       setDevCodes({ email: body.devEmailCode, phone: body.devPhoneCode });
@@ -120,8 +139,8 @@ function Wizard() {
           phoneCode: phoneOk ? null : phoneCode.trim(),
         }),
       });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? 'Could not check the codes.');
+      const body = await readJson(res);
+      if (!res.ok) throw new Error(errOf(body, 'Could not check the codes.'));
       setEmailOk(body.emailVerified);
       setPhoneOk(body.phoneVerified);
       setCodeErrors(body.errors ?? []);
@@ -132,8 +151,8 @@ function Wizard() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ password }),
         });
-        const finBody = await fin.json();
-        if (!fin.ok) throw new Error(finBody.error ?? 'Could not create the account.');
+        const finBody = await readJson(fin);
+        if (!fin.ok) throw new Error(errOf(finBody, 'Could not create the account.'));
         setDone({ email: finBody.email });
       }
     } catch (e) {
@@ -146,8 +165,8 @@ function Wizard() {
     setBusy(true); setError(null);
     try {
       const res = await fetch(`${API}/signup/${draftId}/resend`, { method: 'POST' });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? 'Could not resend.');
+      const body = await readJson(res);
+      if (!res.ok) throw new Error(errOf(body, 'Could not resend.'));
       setDevCodes({ email: body.devEmailCode, phone: body.devPhoneCode });
       setCodeErrors([]);
     } catch (e) {
@@ -270,6 +289,20 @@ function Wizard() {
                          color={phoneOk ? 'success' : undefined} focused={phoneOk || undefined} />
             </Box>
 
+            {/* A resumed session arrives here with no password in memory —
+                state died with the old tab. Without this field, completing
+                would fail asking for a password there is no box for. Keyed on
+                `resumed`, not on the password being empty, or the field would
+                unmount under the cursor at the first keystroke. */}
+            {resumed && (
+              <TextField
+                fullWidth type="password" label="Choose a password" required
+                value={password} onChange={(e) => setPassword(e.target.value)}
+                sx={{ mt: 1, mb: 2 }}
+                helperText="At least 12 characters — you are back on a fresh session, so set it here."
+              />
+            )}
+
             {codeErrors.map((e) => (
               <Alert key={e} severity="warning" sx={{ mb: 1 }}>{e}</Alert>
             ))}
@@ -284,7 +317,9 @@ function Wizard() {
 
             <Nav onBack={() => setStep(1)} onNext={verifyCodes} busy={busy}
                  nextLabel="Verify and create account"
-                 nextDisabled={(!emailOk && emailCode.length !== 6) || (!phoneOk && phoneCode.length !== 6)} />
+                 nextDisabled={password.length < 12
+                   || (!emailOk && emailCode.length !== 6)
+                   || (!phoneOk && phoneCode.length !== 6)} />
           </Pane>
         )}
 

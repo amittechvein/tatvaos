@@ -177,6 +177,70 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             .HasOne(s => s.Plan).WithMany()
             .HasForeignKey(s => s.PlanId).OnDelete(DeleteBehavior.Restrict);
 
+        // ------------------------------------------------------------------
+        //  Every remaining foreign key, declared even though no navigation
+        //  property wants it.
+        //
+        //  EF orders INSERTs by the relationships it KNOWS about, not by the
+        //  constraints the database has. ProductAccess carried a UserId with
+        //  no configured relationship, so EF batched it BEFORE the user it
+        //  points at and signup died on product_access_user_id_fkey — while
+        //  the same save with the same data would have worked in a different
+        //  arbitrary order. Undeclared FKs make insert ordering a coin toss.
+        //
+        //  Delete behaviours mirror the SQL exactly; the database enforces
+        //  them regardless, this just keeps EF's view truthful.
+        // ------------------------------------------------------------------
+        b.Entity<ProductAccess>()
+            .HasOne<User>().WithMany()
+            .HasForeignKey(p => p.UserId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<ProductAccess>()
+            .HasOne<Tenant>().WithMany()
+            .HasForeignKey(p => p.TenantId).OnDelete(DeleteBehavior.Cascade);
+
+        b.Entity<StoragePool>()
+            .HasOne<Tenant>().WithMany()
+            .HasForeignKey(s => s.TenantId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<StorageAllocation>()
+            .HasOne<Tenant>().WithMany()
+            .HasForeignKey(s => s.TenantId).OnDelete(DeleteBehavior.Cascade);
+
+        b.Entity<RefreshToken>()
+            .HasOne<User>().WithMany()
+            .HasForeignKey(t => t.UserId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<RefreshToken>()
+            .HasOne<Tenant>().WithMany()
+            .HasForeignKey(t => t.TenantId).OnDelete(DeleteBehavior.Cascade);
+
+        b.Entity<MailboxPermission>()
+            .HasOne<Mailbox>().WithMany()
+            .HasForeignKey(p => p.MailboxId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<MailboxPermission>()
+            .HasOne<User>().WithMany()
+            .HasForeignKey(p => p.UserId).OnDelete(DeleteBehavior.Cascade);
+
+        b.Entity<Alias>()
+            .HasOne<Mailbox>().WithMany()
+            .HasForeignKey(a => a.TargetMailboxId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<Alias>()
+            .HasOne<Domain>().WithMany()
+            .HasForeignKey(a => a.DomainId).OnDelete(DeleteBehavior.Cascade);
+
+        b.Entity<Folder>()
+            .HasOne<Mailbox>().WithMany()
+            .HasForeignKey(f => f.MailboxId).OnDelete(DeleteBehavior.Cascade);
+
+        b.Entity<Message>()
+            .HasOne<Mailbox>().WithMany()
+            .HasForeignKey(m => m.MailboxId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<Message>()
+            .HasOne<Folder>().WithMany()
+            .HasForeignKey(m => m.FolderId).OnDelete(DeleteBehavior.Cascade);
+
+        b.Entity<Attachment>()
+            .HasOne<Message>().WithMany()
+            .HasForeignKey(a => a.MessageId).OnDelete(DeleteBehavior.Cascade);
+
         base.OnModelCreating(b);
 
         // ---- snake_case columns ---------------------------------------------
