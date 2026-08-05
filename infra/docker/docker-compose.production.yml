@@ -16,6 +16,12 @@
 
 services:
 
+  caddy:
+    # Adds the Mail front door. Staging does not mount this, so its import
+    # matches nothing and one host keeps serving everything.
+    volumes:
+      - ./conf.d:/etc/caddy/conf.d:ro
+
   postgres:
     # No ports section at all. Deliberate — the database is not on the network.
     deploy:
@@ -31,7 +37,11 @@ services:
         limits: { memory: 512M }
 
   postfix:
-    hostname: mail.tatvaos.com
+    # mx., NOT mail. — mail.tatvaos.com is the WEBMAIL host, and this name goes
+    # out in the SMTP HELO and in every Received header. Receiving servers
+    # check that it resolves and that the PTR for our IP matches it, so a
+    # mismatch here costs deliverability rather than throwing an error.
+    hostname: mx.tatvaos.com
     ports:
       - "25:25"      # inbound from the internet
       - "587:587"    # authenticated submission

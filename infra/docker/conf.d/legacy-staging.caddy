@@ -1,0 +1,19 @@
+# ============================================================================
+#  staging.tatvaos.com — redirect to Core
+# ============================================================================
+#
+#  This box WAS staging and is now production. The hostname still resolves to
+#  it, and there are bookmarks and links in our own docs pointing at it.
+#
+#  A permanent redirect rather than deletion, deliberately. If staging simply
+#  stopped answering, the failure would look like an outage — and the person
+#  hitting it would have no way to learn that the address moved. 308 preserves
+#  the method and body, so a bookmarked deep link still lands somewhere useful.
+#
+#  Delete this block once a real staging environment exists on its own box and
+#  needs the name back.
+# ============================================================================
+
+staging.tatvaos.com {
+    redir https://core.tatvaos.com{uri} permanent
+}

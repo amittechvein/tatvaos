@@ -37,7 +37,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<Domain> Domains => Set<Domain>();
     public DbSet<User> Users => Set<User>();
-    public DbSet<UserCategory> UserCategories => Set<UserCategory>();
+    public DbSet<Department> Departments => Set<Department>();
 
     // ---- core: commercial. RLS enabled and forced ----
     public DbSet<ProductAccess> ProductAccess => Set<ProductAccess>();
@@ -76,7 +76,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<Tenant>().ToTable("tenants", "core");
         b.Entity<Domain>().ToTable("domains", "core");
         b.Entity<User>().ToTable("users", "core");
-        b.Entity<UserCategory>().ToTable("user_categories", "core");
+        b.Entity<Department>().ToTable("departments", "core");
         b.Entity<ProductAccess>().ToTable("product_access", "core");
         b.Entity<Plan>().ToTable("plans", "core");
         b.Entity<Subscription>().ToTable("subscriptions", "core");
@@ -115,7 +115,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         // Products and Plans are platform-wide catalogue data.
         b.Entity<Domain>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<User>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
-        b.Entity<UserCategory>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<Department>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<ProductAccess>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Subscription>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<StoragePool>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
@@ -140,13 +140,13 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<Alias>().HasIndex(a => a.Address).IsUnique();
         b.Entity<User>().HasIndex(u => u.Email).IsUnique();
 
-        b.Entity<UserCategory>().HasIndex(c => new { c.TenantId, c.Name }).IsUnique();
+        b.Entity<Department>().HasIndex(c => new { c.TenantId, c.Name }).IsUnique();
         b.Entity<Folder>().HasIndex(f => new { f.MailboxId, f.Name }).IsUnique();
 
         // ---- Read paths that matter ---------------------------------------
         b.Entity<Message>().HasIndex(m => new { m.MailboxId, m.ReceivedAt });
         b.Entity<Message>().HasIndex(m => new { m.FolderId, m.ImapUid });
-        b.Entity<User>().HasIndex(u => new { u.TenantId, u.CategoryId });
+        b.Entity<User>().HasIndex(u => new { u.TenantId, u.DepartmentId });
         b.Entity<AuditLog>().HasIndex(a => new { a.TenantId, a.OccurredAt });
 
         // ---- Relationships --------------------------------------------------
@@ -155,8 +155,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             .HasForeignKey(d => d.TenantId).OnDelete(DeleteBehavior.Cascade);
 
         b.Entity<User>()
-            .HasOne(u => u.Category).WithMany()
-            .HasForeignKey(u => u.CategoryId).OnDelete(DeleteBehavior.SetNull);
+            .HasOne(u => u.Department).WithMany()
+            .HasForeignKey(u => u.DepartmentId).OnDelete(DeleteBehavior.SetNull);
 
         b.Entity<User>()
             .HasOne(u => u.Domain).WithMany()
@@ -240,6 +240,13 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<Attachment>()
             .HasOne<Message>().WithMany()
             .HasForeignKey(a => a.MessageId).OnDelete(DeleteBehavior.Cascade);
+
+        // Self-reference. Cascade matches the SQL: deleting Engineering takes
+        // Engineering > Backend with it, rather than orphaning the child to
+        // top level — which would silently grant it whatever the root permits.
+        b.Entity<Department>()
+            .HasOne<Department>().WithMany()
+            .HasForeignKey(d => d.ParentId).OnDelete(DeleteBehavior.Cascade);
 
         base.OnModelCreating(b);
 

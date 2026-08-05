@@ -1,6 +1,55 @@
 # Cloud Environments — Testing and Production
 
-**Decision:** the platform runs on Linode. Two environments, deployed the same way, differing only where they must.
+**Decision:** the platform runs on Linode.
+
+> **Current state — ONE box, and it is production.**
+>
+> `172.105.57.198` began as staging and has been promoted. `core.`, `mail.`,
+> `mx.` and `staging.` all resolve to it; `staging.` now 308-redirects to
+> `core.`. There is no separate testing environment, which means **there is no
+> longer anywhere to try a change before customers see it** — the local Docker
+> stack in `local/` is the only safety net, and it is a weaker one because it
+> does not exercise real DNS, real TLS or real SMTP.
+>
+> Restore the second environment before onboarding a customer who would notice
+> a bad deploy. Everything below describes the two-environment design and stays
+> accurate for the day the testing box comes back.
+
+Two environments, deployed the same way, differing only where they must.
+
+---
+
+## Production hostnames — one per product
+
+TatvaOS Core is the console; every product is a separate front door beneath the
+same identity. The naming follows Google's, because customers already know it:
+
+| | TatvaOS | Google equivalent |
+|---|---|---|
+| **Core** — the admin console | `core.tatvaos.com` | `admin.google.com` |
+| **Mail** — webmail | `mail.tatvaos.com` | `mail.google.com` |
+| Marketing site | `tatvaos.com` | — |
+| Staging (everything) | `staging.tatvaos.com` | — |
+| **Mail exchanger** | `mx.tatvaos.com` | `aspmx.l.google.com` |
+
+Three things follow from this that are easy to get wrong:
+
+1. **`mail.tatvaos.com` is the WEB app, not the MX host.** The mail exchanger is
+   `mx.tatvaos.com`. Customers publish `MX 10 mx.tatvaos.com` — never
+   `mail.tatvaos.com`. Keeping them separate means the webmail host can move to
+   a CDN or a different box without touching anyone's DNS.
+
+2. **`mail.tatvaos.com` currently resolves to Bluehost** (`162.214.80.55`), left
+   over from the old hosting. It has to be repointed at the Linode before
+   webmail can live there, and repointing it will break whatever mail service is
+   using it today. Check that first.
+
+3. **One cookie domain, several hosts.** Core and Mail share a session, so the
+   auth cookies are issued for `.tatvaos.com` in production rather than for a
+   single host. `SameSite=Strict` still holds — `core.` and `mail.` are the same
+   site — but the API must be reachable at the same registrable domain, so it
+   sits behind `core.tatvaos.com/api` rather than on a separate `api.` host with
+   its own cookie scope.
 
 ---
 
@@ -8,7 +57,7 @@
 
 | | **Testing** | **Production** |
 |---|---|---|
-| Domain | `staging.tatvaos.com` | `app.tatvaos.com` |
+| Domain | `staging.tatvaos.com` | `core.tatvaos.com` (see below) |
 | **Outbound mail** | **Captured — cannot leave the box** | **Reaches the real internet** |
 | Webmail for testers | Roundcube exposed | Not present |
 | Mail catcher | Mailpit exposed | Not present |

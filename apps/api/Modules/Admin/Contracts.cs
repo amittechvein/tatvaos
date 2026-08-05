@@ -35,14 +35,14 @@ public sealed record CreateUserRequest(
     string LocalPart,
     string DisplayName,
     Guid DomainId,
-    Guid? CategoryId,
+    Guid? DepartmentId,
     long? QuotaBytes,
     string? Password,
     string[]? Products = null);
 
 public sealed record BulkCreateUserRequest(
     Guid DomainId,
-    Guid? CategoryId,
+    Guid? DepartmentId,
     IReadOnlyList<BulkUserEntry> Users);
 
 public sealed record BulkUserEntry(string LocalPart, string DisplayName);
@@ -54,13 +54,13 @@ public sealed record BulkUserEntry(string LocalPart, string DisplayName);
 public sealed record UserResponse(
     Guid Id, string Email, string DisplayName,
     string? MailboxAddress,
-    Guid? CategoryId, string? CategoryName,
+    Guid? DepartmentId, string? DepartmentName,
     string Role, string Status,
     string[] Products,
     long QuotaBytes, long UsedBytes,
     bool MfaEnabled, DateTimeOffset? LastLoginAt, DateTimeOffset CreatedAt);
 
-public sealed record CreateCategoryRequest(
+public sealed record CreateDepartmentRequest(
     string Name, string? Description,
     long? DefaultQuotaBytes, string DefaultRole,
     bool CanSendExternal, string[]? AutoGroups, string? Colour,

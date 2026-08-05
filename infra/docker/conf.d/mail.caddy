@@ -1,0 +1,39 @@
+# ============================================================================
+#  TatvaOS Mail — mail.tatvaos.com
+# ============================================================================
+#
+#  Its own front door onto the same web container, so the product has the
+#  address customers expect (mail.google.com, not google.com/mail) without a
+#  second deployment to keep in step.
+#
+#  THIS IS NOT THE MAIL EXCHANGER. That is mx.tatvaos.com, and it is Postfix.
+#  An MX record pointing here would send customer mail to a web server, where
+#  it would be refused — every message bounced, and the cause not obvious.
+#
+#  Mounted by the PRODUCTION overlay only. Staging serves everything from one
+#  host, so this file is absent there and the import matches nothing.
+# ============================================================================
+
+{$MAIL_DOMAIN} {
+    encode zstd gzip
+
+    handle /api/* {
+        reverse_proxy api:8080
+    }
+
+    # Landing on the host should land in the inbox. Without this, mail.
+    # serves the Core dashboard and the separate address means nothing.
+    redir / /mail/f-inbox
+
+    handle {
+        reverse_proxy web:3000
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+}

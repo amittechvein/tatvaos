@@ -131,7 +131,7 @@ public class User
     [MaxLength(256)] public string? MfaSecretRef { get; set; }
     public bool MfaEnabled { get; set; }
 
-    public Guid? CategoryId { get; set; }
+    public Guid? DepartmentId { get; set; }
     [MaxLength(32)] public string Role { get; set; } = "employee";
     [MaxLength(32)] public string Status { get; set; } = "pending";
 
@@ -162,7 +162,7 @@ public class User
     /// </summary>
     public DateTimeOffset? EmailConfirmedAt { get; set; }
 
-    public UserCategory? Category { get; set; }
+    public Department? Department { get; set; }
     public Domain? Domain { get; set; }
 }
 
@@ -207,14 +207,32 @@ public class RefreshToken
 /// their storage, their role. Creating fifty identical accounts one at a time
 /// is what makes an admin abandon a platform.
 /// </summary>
-public class UserCategory
+public class Department
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
     [MaxLength(100)] public required string Name { get; set; }
     [MaxLength(500)] public string? Description { get; set; }
 
+    /// <summary>
+    /// The department this sits inside. NULL is top level.
+    ///
+    /// What Google calls an Organisational Unit — a named group carrying
+    /// policy that passes down to everything beneath it.
+    /// </summary>
+    public Guid? ParentId { get; set; }
+
     [MaxLength(32)] public string DefaultRole { get; set; } = "employee";
+
+    /// <summary>
+    /// NULL means INHERIT — take the parent's value, and its parent's if that
+    /// is NULL too, up to the tenant's storage pool.
+    ///
+    /// That is the point of the tree: set 30 GB on Engineering and every team
+    /// under it gets 30 GB; raise it to 50 and they all move with no per-team
+    /// edit. Copying the value down would look identical on day one and drift
+    /// apart by the end of the quarter.
+    /// </summary>
     public long? DefaultQuotaBytes { get; set; }
 
     /// <summary>Which products a new user in this category receives.</summary>

@@ -56,26 +56,218 @@ public static class AuthEndpoints
     //  ordinary API call, and SameSite=Strict because there is no legitimate
     //  cross-site request that should carry it.
     // ---------------------------------------------------------------------
-    private const string RefreshCookie = "tv_refresh";
+    private const string LegacyRefreshCookie = "tv_refresh";
 
-    private static void SetRefreshCookie(HttpContext http, string token) =>
-        http.Response.Cookies.Append(RefreshCookie, token, new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.Strict,
-            Path = "/api/auth",
-            Expires = DateTimeOffset.UtcNow.Add(TokenIssuer.RefreshTokenLifetime),
-        });
+    // =====================================================================
+    //  MULTIPLE ACCOUNTS IN ONE BROWSER
+    // =====================================================================
+    //
+    //  A person runs amit@techvein.com and hr@techvein.com, or an IT admin
+    //  holds an account in three of their customers. Forcing a sign-out
+    //  between them is the single most irritating thing a work account can
+    //  do, so each signed-in account gets its own SLOT.
+    //
+    //  Slot N owns three cookies:
+    //
+    //    tv_refresh_N   the refresh token.        httpOnly
+    //    tv_label_N     email | name | org.       httpOnly
+    //    tv_active      which slot is current.    httpOnly
+    //
+    //  ALL THREE ARE httpOnly, INCLUDING THE LABEL.
+    //
+    //  Google's chooser reads its account list from script-readable storage.
+    //  We do not, and the reason is worth keeping: an XSS bug on a page that
+    //  renders mail written by strangers would otherwise hand the attacker
+    //  every other identity this person holds — which customers they work
+    //  for, which organisations they administer. The roster is assembled
+    //  server-side and returned in the /refresh and /accounts responses, so
+    //  the switcher renders from a normal API result and script never has a
+    //  cookie to read.
+    //
+    //  The label is stored separately from the token ON PURPOSE. It outlives
+    //  the token, so an expired account still appears by name with a "Signed
+    //  out — Sign in / Remove" row rather than silently vanishing from the
+    //  list, which reads as data loss.
+    //
+    //  A label cookie is display text and nothing else. It grants no access:
+    //  switching validates the slot's actual refresh token against the
+    //  database, and the identity in the response comes from core.users. A
+    //  tampered label can mislead the chooser and cannot mislead the server.
+    // =====================================================================
 
-    private static void ClearRefreshCookie(HttpContext http) =>
-        http.Response.Cookies.Delete(RefreshCookie, new CookieOptions
+    /// <summary>Slots 0-5. Six is past what anyone juggles; the cap stops
+    /// cookie headers growing without bound.</summary>
+    private const int MaxAccounts = 6;
+
+    private const string ActiveCookie = "tv_active";
+    private static string RefreshCookie(int slot) => $"tv_refresh_{slot}";
+    private static string LabelCookie(int slot) => $"tv_label_{slot}";
+
+    // ---------------------------------------------------------------------
+    //  Cookie domain — the thing that makes ONE login cover every product.
+    //
+    //  Core is core.tatvaos.com and Mail is mail.tatvaos.com. A cookie with no
+    //  Domain attribute is host-only, so a session established on Core would
+    //  not be sent to Mail and the "one sign-in for everything" promise would
+    //  quietly become "one sign-in per product".
+    //
+    //  Setting Domain=.tatvaos.com fixes that, and is why the setting exists —
+    //  but it also means EVERY host under tatvaos.com receives the refresh
+    //  cookie. Never point a customer-controlled hostname at that domain, and
+    //  leave this unset anywhere the domain is shared with something we do not
+    //  run. It stays empty for local and staging, where one host serves
+    //  everything and the wider scope would buy nothing.
+    // ---------------------------------------------------------------------
+    private static string? _cookieDomain;
+
+    public static void ConfigureCookies(IConfiguration config) =>
+        _cookieDomain = config["Auth:CookieDomain"] is { Length: > 0 } d ? d : null;
+
+    private static CookieOptions CookieOpts(DateTimeOffset? expires = null) => new()
+    {
+        HttpOnly = true,
+        Secure = true,
+        // Strict, not Lax, and it still works across core./mail./tatvaos.com:
+        // SameSite is judged on the registrable domain, and those are the same
+        // site. It is cross-SITE requests that must never carry this.
+        SameSite = SameSiteMode.Strict,
+        Path = "/api/auth",
+        Domain = _cookieDomain,
+        Expires = expires,
+    };
+
+    private static void SetRefreshCookie(HttpContext http, int slot, string token)
+    {
+        http.Response.Cookies.Append(RefreshCookie(slot), token,
+            CookieOpts(DateTimeOffset.UtcNow.Add(TokenIssuer.RefreshTokenLifetime)));
+
+        // The active marker is a session cookie — no Expires. Closing the
+        // browser should not decide which of six accounts you land in.
+        http.Response.Cookies.Append(ActiveCookie, slot.ToString(), CookieOpts());
+    }
+
+    /// <summary>
+    /// Signs a slot out but leaves it listed. Deliberate: the account stays
+    /// visible as "Signed out" so signing back in is one click, which is the
+    /// behaviour the chooser exists to provide. Use Forget to remove it.
+    /// </summary>
+    private static void ClearRefreshCookie(HttpContext http, int slot) =>
+        http.Response.Cookies.Delete(RefreshCookie(slot), CookieOpts());
+
+    private static void ForgetSlot(HttpContext http, int slot)
+    {
+        http.Response.Cookies.Delete(RefreshCookie(slot), CookieOpts());
+        http.Response.Cookies.Delete(LabelCookie(slot), CookieOpts());
+    }
+
+    private static void SetLabel(HttpContext http, int slot, User user, string? org)
+    {
+        // Pipe-separated and percent-encoded. A display name containing a pipe
+        // would otherwise shift the org into the name field, and names contain
+        // whatever people type.
+        var value = string.Join('|',
+            Uri.EscapeDataString(user.Email),
+            Uri.EscapeDataString(user.DisplayName ?? ""),
+            Uri.EscapeDataString(org ?? ""));
+
+        // Outlives the token by design — a signed-out account keeps its name
+        // in the list for as long as the person might come back to it.
+        http.Response.Cookies.Append(LabelCookie(slot), value,
+            CookieOpts(DateTimeOffset.UtcNow.AddDays(90)));
+    }
+
+    private sealed record Label(string Email, string Name, string Org);
+
+    private static Label? ReadLabel(HttpContext http, int slot)
+    {
+        var raw = http.Request.Cookies[LabelCookie(slot)];
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+
+        var parts = raw.Split('|');
+        if (parts.Length < 1) return null;
+
+        try
         {
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.Strict,
-            Path = "/api/auth",
-        });
+            return new Label(
+                Uri.UnescapeDataString(parts[0]),
+                parts.Length > 1 ? Uri.UnescapeDataString(parts[1]) : "",
+                parts.Length > 2 ? Uri.UnescapeDataString(parts[2]) : "");
+        }
+        catch (UriFormatException)
+        {
+            // A malformed cookie is not worth a 500. Drop the row.
+            return null;
+        }
+    }
+
+    private static int ActiveSlot(HttpContext http) =>
+        int.TryParse(http.Request.Cookies[ActiveCookie], out var s)
+        && s is >= 0 and < MaxAccounts ? s : 0;
+
+    /// <summary>
+    /// Which slot this email should occupy.
+    ///
+    /// Signing in as someone already listed REPLACES that slot rather than
+    /// adding a second row, otherwise the chooser fills with duplicates of the
+    /// account you use most.
+    /// </summary>
+    private static int PickSlot(HttpContext http, string email)
+    {
+        for (var i = 0; i < MaxAccounts; i++)
+            if (string.Equals(ReadLabel(http, i)?.Email, email, StringComparison.OrdinalIgnoreCase))
+                return i;
+
+        for (var i = 0; i < MaxAccounts; i++)
+            if (ReadLabel(http, i) is null) return i;
+
+        // Full. Evict the last slot — arbitrary, but the alternative is
+        // refusing the sign-in the person just asked for, and that is worse
+        // than dropping the account they added least recently.
+        return MaxAccounts - 1;
+    }
+
+    /// <summary>
+    /// The account list for this browser.
+    ///
+    /// <paramref name="signedOut"/> and <paramref name="removed"/> carry slots
+    /// changed EARLIER IN THIS REQUEST. Request.Cookies is what the browser
+    /// sent and does not see what we have written to the response, so without
+    /// them /logout would hand back a roster still showing the account it just
+    /// signed out — the one screen where being wrong is most obvious.
+    /// </summary>
+    private static object BuildRoster(
+        HttpContext http, int active,
+        HashSet<int>? signedOut = null, HashSet<int>? removed = null)
+    {
+        var list = new List<object>();
+
+        for (var slot = 0; slot < MaxAccounts; slot++)
+        {
+            if (removed?.Contains(slot) == true) continue;
+
+            var label = ReadLabel(http, slot);
+            if (label is null) continue;
+
+            // Presence of the cookie, not a database check. This runs on an
+            // anonymous endpoint, so validating six tokens per call would put
+            // a free query amplifier on the open internet. Switching does the
+            // real check, and the UI corrects itself from that response.
+            var hasToken = signedOut?.Contains(slot) != true
+                && !string.IsNullOrWhiteSpace(http.Request.Cookies[RefreshCookie(slot)]);
+
+            list.Add(new
+            {
+                slot,
+                email = label.Email,
+                displayName = string.IsNullOrWhiteSpace(label.Name) ? label.Email : label.Name,
+                organisation = label.Org,
+                signedIn = hasToken,
+                active = slot == active && hasToken,
+            });
+        }
+
+        return list;
+    }
 
     public static void MapAuthEndpoints(this IEndpointRouteBuilder app)
     {
@@ -87,6 +279,15 @@ public static class AuthEndpoints
         g.MapGet("/me", MeAsync).RequireAuthorization("User");
         g.MapPost("/change-password", ChangePasswordAsync).RequireAuthorization("User");
         g.MapGet("/sessions", SessionsAsync).RequireAuthorization("User");
+
+        // ---- multi-account ----------------------------------------------
+        // All anonymous. The authority for every one of them is possession of
+        // the slot's httpOnly cookie, which is a stronger claim than an access
+        // token for a DIFFERENT account would be — requiring auth here would
+        // mean you must be signed into account A to touch account B.
+        g.MapGet("/accounts", AccountsAsync).AllowAnonymous();
+        g.MapPost("/switch", SwitchAsync).AllowAnonymous();
+        g.MapPost("/forget", ForgetAsync).AllowAnonymous();
     }
 
     // ------------------------------------------------------------------
@@ -156,14 +357,122 @@ public static class AuthEndpoints
         var (refresh, _) = await IssueRefreshAsync(db, user, Guid.NewGuid(), http, ct);
         var access = tokens.IssueAccessToken(user);
         await db.SaveChangesAsync(ct);
-        SetRefreshCookie(http, refresh);
+
+        // Take a slot rather than overwriting whoever was signed in. Somebody
+        // adding a second account should not be silently signed out of the
+        // first — that is the entire point of the chooser.
+        var slot = PickSlot(http, user.Email);
+        SetRefreshCookie(http, slot, refresh);
+        SetLabel(http, slot, user, org?.Name);
 
         return Results.Ok(new AuthResponse(
             AccessToken: access.Value,
             ExpiresAt: access.ExpiresAt,
             RefreshToken: refresh,
             MustChangePassword: user.MustChangePassword,
-            User: Describe(user)));
+            User: Describe(user),
+            Slot: slot,
+            Accounts: BuildRoster(http, slot)));
+    }
+
+    // ------------------------------------------------------------------
+    /// <summary>
+    /// The account chooser's list. Anonymous and cookie-only — the sign-in
+    /// page needs it before anyone is authenticated, which is exactly when
+    /// "pick which of your accounts" is most useful.
+    /// </summary>
+    private static IResult AccountsAsync(HttpContext http)
+    {
+        MigrateLegacyCookie(http);
+        return Results.Ok(new { accounts = BuildRoster(http, ActiveSlot(http)) });
+    }
+
+    // ------------------------------------------------------------------
+    /// <summary>
+    /// Switch to an account already signed in on this browser.
+    ///
+    /// No password: the slot's refresh token is the credential, and it is
+    /// checked against the database here with the same rotation and reuse
+    /// detection as any other refresh. A slot whose token has expired or been
+    /// revoked returns 401, and the chooser then shows it as signed out —
+    /// which is the honest outcome rather than a silent failure.
+    /// </summary>
+    private static async Task<IResult> SwitchAsync(
+        SwitchRequest req, AppDbContext db, TokenIssuer tokens,
+        TenantContext tenant, HttpContext http, CancellationToken ct)
+    {
+        if (req.Slot is < 0 or >= MaxAccounts)
+            return Results.BadRequest(new { error = "Unknown account." });
+
+        var presented = http.Request.Cookies[RefreshCookie(req.Slot)];
+        if (string.IsNullOrWhiteSpace(presented))
+            return Results.Json(new
+            {
+                error = "That account is signed out on this browser. Sign in again.",
+                slot = req.Slot,
+            }, statusCode: 401);
+
+        var outcome = await RotateAsync(presented, db, tokens, tenant, http, ct);
+
+        if (outcome.Error is not null)
+        {
+            // The token is gone but the label stays, so the account remains in
+            // the list as a one-click "Sign in" rather than disappearing.
+            ClearRefreshCookie(http, req.Slot);
+            return Results.Json(new
+            {
+                error = outcome.Error,
+                slot = req.Slot,
+                accounts = BuildRoster(http, -1, signedOut: [req.Slot]),
+            }, statusCode: outcome.Status);
+        }
+
+        var user = outcome.User!;
+        SetRefreshCookie(http, req.Slot, outcome.RefreshToken!);
+
+        // Refresh the label while we are here — a display name or organisation
+        // renamed since the last sign-in would otherwise stay wrong for 90 days.
+        var org = await db.Tenants.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.Id == user.TenantId, ct);
+        SetLabel(http, req.Slot, user, org?.Name);
+
+        return Results.Ok(new AuthResponse(
+            outcome.Access!.Value, outcome.Access.ExpiresAt, outcome.RefreshToken!,
+            user.MustChangePassword, Describe(user),
+            Slot: req.Slot,
+            Accounts: BuildRoster(http, req.Slot)));
+    }
+
+    // ------------------------------------------------------------------
+    /// <summary>
+    /// "Remove" in the chooser. Revokes the slot's session family and drops
+    /// its label, so the account leaves the list entirely.
+    ///
+    /// Anonymous because possession of the cookie is the authority. It also
+    /// has to work on an ALREADY signed-out slot, where by definition there is
+    /// no token to authenticate with — and being unable to tidy a stale entry
+    /// off a shared machine would be the worse failure.
+    /// </summary>
+    private static async Task<IResult> ForgetAsync(
+        SwitchRequest req, AppDbContext db, TenantContext tenant,
+        HttpContext http, CancellationToken ct)
+    {
+        if (req.Slot is < 0 or >= MaxAccounts)
+            return Results.BadRequest(new { error = "Unknown account." });
+
+        var presented = http.Request.Cookies[RefreshCookie(req.Slot)];
+        if (!string.IsNullOrWhiteSpace(presented))
+            await RevokeFamilyAsync(presented, db, tenant, "removed from this browser", ct);
+
+        ForgetSlot(http, req.Slot);
+
+        var active = ActiveSlot(http);
+        return Results.Ok(new
+        {
+            removed = true,
+            accounts = BuildRoster(http, active == req.Slot ? -1 : active,
+                                   removed: [req.Slot]),
+        });
     }
 
     // ------------------------------------------------------------------
@@ -171,14 +480,71 @@ public static class AuthEndpoints
         RefreshRequest req, AppDbContext db, TokenIssuer tokens,
         TenantContext tenant, HttpContext http, CancellationToken ct)
     {
+        MigrateLegacyCookie(http);
+
+        var slot = ActiveSlot(http);
+
         // Cookie first. A browser sends it automatically and never exposes it
         // to script; the body is the mobile path.
-        var presented = http.Request.Cookies[RefreshCookie];
+        var presented = http.Request.Cookies[RefreshCookie(slot)];
+
+        // The active slot may have been signed out while another account is
+        // still live — land on that one instead of demanding a fresh sign-in.
+        if (string.IsNullOrWhiteSpace(presented))
+            for (var i = 0; i < MaxAccounts; i++)
+            {
+                var candidate = http.Request.Cookies[RefreshCookie(i)];
+                if (!string.IsNullOrWhiteSpace(candidate)) { slot = i; presented = candidate; break; }
+            }
+
         if (string.IsNullOrWhiteSpace(presented)) presented = req.RefreshToken;
 
         if (string.IsNullOrWhiteSpace(presented))
-            return Results.BadRequest(new { error = "A refresh token is required." });
+            return Results.Json(new
+            {
+                error = "A refresh token is required.",
+                accounts = BuildRoster(http, -1),
+            }, statusCode: 401);
 
+        var outcome = await RotateAsync(presented, db, tokens, tenant, http, ct);
+
+        if (outcome.Error is not null)
+        {
+            ClearRefreshCookie(http, slot);
+            return Results.Json(new
+            {
+                error = outcome.Error,
+                accounts = BuildRoster(http, -1, signedOut: [slot]),
+            }, statusCode: outcome.Status);
+        }
+
+        var refreshed = outcome.User!;
+        SetRefreshCookie(http, slot, outcome.RefreshToken!);
+
+        var tenantRow = await db.Tenants.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.Id == refreshed.TenantId, ct);
+        SetLabel(http, slot, refreshed, tenantRow?.Name);
+
+        return Results.Ok(new AuthResponse(
+            outcome.Access!.Value, outcome.Access.ExpiresAt, outcome.RefreshToken!,
+            refreshed.MustChangePassword, Describe(refreshed),
+            Slot: slot,
+            Accounts: BuildRoster(http, slot)));
+    }
+
+    // ------------------------------------------------------------------
+    /// <summary>
+    /// Validate a refresh token, rotate it, and issue a new access token.
+    ///
+    /// Shared by /refresh and /switch. Written once because these two paths
+    /// must agree on reuse detection and the suspension check — a second copy
+    /// is how one of them ends up missing the check that makes suspension
+    /// mean anything.
+    /// </summary>
+    private static async Task<RotateOutcome> RotateAsync(
+        string presented, AppDbContext db, TokenIssuer tokens,
+        TenantContext tenant, HttpContext http, CancellationToken ct)
+    {
         var hash = TokenIssuer.HashRefreshToken(presented);
 
         // core.refresh_tokens is RLS-forced and we do not yet know the tenant,
@@ -192,7 +558,7 @@ public static class AuthEndpoints
         var resolved = await ResolveTokenAsync(db, hash, ct);
 
         if (resolved is null)
-            return Results.Json(new { error = "Session expired. Sign in again." }, statusCode: 401);
+            return RotateOutcome.Fail(401, "Session expired. Sign in again.");
 
         tenant.Set(resolved.TenantId, resolved.UserId, "employee");
         await db.SyncTenantAsync(ct);
@@ -209,10 +575,8 @@ public static class AuthEndpoints
                     .SetProperty(t => t.RevokedAt, (DateTimeOffset?)DateTimeOffset.UtcNow)
                     .SetProperty(t => t.RevokeReason, (string?)"reuse detected"), ct);
 
-            return Results.Json(new
-            {
-                error = "This session was already used elsewhere and has been ended. Sign in again.",
-            }, statusCode: 401);
+            return RotateOutcome.Fail(401,
+                "This session was already used elsewhere and has been ended. Sign in again.");
         }
 
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == resolved.UserId, ct);
@@ -231,7 +595,7 @@ public static class AuthEndpoints
                     .SetProperty(t => t.RevokedAt, (DateTimeOffset?)DateTimeOffset.UtcNow)
                     .SetProperty(t => t.RevokeReason, (string?)"account or organisation suspended"), ct);
 
-            return Results.Json(new { error = "This account is no longer active." }, statusCode: 401);
+            return RotateOutcome.Fail(401, "This account is no longer active.");
         }
 
         var old = await db.RefreshTokens.FirstAsync(t => t.Id == resolved.TokenId, ct);
@@ -243,37 +607,158 @@ public static class AuthEndpoints
 
         var access = tokens.IssueAccessToken(user);
         await db.SaveChangesAsync(ct);
-        SetRefreshCookie(http, newToken);
 
-        return Results.Ok(new AuthResponse(
-            access.Value, access.ExpiresAt, newToken, user.MustChangePassword, Describe(user)));
+        return new RotateOutcome(null, 200, user, newToken, access);
     }
 
     // ------------------------------------------------------------------
+    /// <summary>
+    /// Sign out of the CURRENT account only.
+    ///
+    /// The other accounts in this browser stay signed in — signing out of a
+    /// personal account should not evict you from the organisation you were
+    /// administering in the next tab. Pass all=true for the "sign out of
+    /// everything" case, which is what someone on a shared machine wants.
+    /// </summary>
     private static async Task<IResult> LogoutAsync(
-        RefreshRequest? req, AppDbContext db, TenantContext tenant,
+        LogoutRequest? req, AppDbContext db, TenantContext tenant,
         HttpContext http, CancellationToken ct)
     {
-        var presented = http.Request.Cookies[RefreshCookie] ?? req?.RefreshToken;
+        var all = req?.All == true;
+        var active = ActiveSlot(http);
 
-        // Revokes the whole family, so "sign out" means signed out — not
-        // "signed out until the refresh token is used again".
-        if (!string.IsNullOrWhiteSpace(presented))
+        var signedOut = new HashSet<int>();
+        var removed = new HashSet<int>();
+
+        for (var slot = 0; slot < MaxAccounts; slot++)
         {
-            var hash = TokenIssuer.HashRefreshToken(presented);
-            var row = await db.RefreshTokens.FirstOrDefaultAsync(t => t.TokenHash == hash, ct);
-            if (row is not null)
-            {
-                await db.RefreshTokens
-                    .Where(t => t.FamilyId == row.FamilyId && t.RevokedAt == null)
-                    .ExecuteUpdateAsync(s => s
-                        .SetProperty(t => t.RevokedAt, (DateTimeOffset?)DateTimeOffset.UtcNow)
-                        .SetProperty(t => t.RevokeReason, (string?)"signed out"), ct);
-            }
+            if (!all && slot != active) continue;
+
+            var presented = http.Request.Cookies[RefreshCookie(slot)];
+            if (string.IsNullOrWhiteSpace(presented)) continue;
+
+            await RevokeFamilyAsync(presented, db, tenant, "signed out", ct);
+
+            if (all) { ForgetSlot(http, slot); removed.Add(slot); }
+            // Label kept, so this account stays in the chooser as a one-click
+            // "Sign in" rather than vanishing the moment you sign out of it.
+            else { ClearRefreshCookie(http, slot); signedOut.Add(slot); }
         }
 
-        ClearRefreshCookie(http);
-        return Results.Ok(new { signedOut = true });
+        // Mobile clients send the token in the body and have no cookie jar.
+        var bodyToken = req?.RefreshToken;
+        if (!string.IsNullOrWhiteSpace(bodyToken))
+            await RevokeFamilyAsync(bodyToken, db, tenant, "signed out", ct);
+
+        if (all) http.Response.Cookies.Delete(ActiveCookie, CookieOpts());
+
+        // Land on whichever account is still signed in, so the browser does
+        // not sit on an empty session while a valid one exists.
+        var next = -1;
+        if (!all)
+            for (var slot = 0; slot < MaxAccounts; slot++)
+                if (slot != active
+                    && !string.IsNullOrWhiteSpace(http.Request.Cookies[RefreshCookie(slot)]))
+                { next = slot; break; }
+
+        if (next >= 0)
+            http.Response.Cookies.Append(ActiveCookie, next.ToString(), CookieOpts());
+
+        return Results.Ok(new
+        {
+            signedOut = true,
+            switchedTo = next < 0 ? (int?)null : next,
+            accounts = BuildRoster(http, next, signedOut, removed),
+        });
+    }
+
+    /// <summary>
+    /// Revokes every live token in the presented token's family, so "signed
+    /// out" means signed out rather than "signed out until the refresh token
+    /// is presented again".
+    /// </summary>
+    private static async Task RevokeFamilyAsync(
+        string presented, AppDbContext db, TenantContext tenant, string reason, CancellationToken ct)
+    {
+        var hash = TokenIssuer.HashRefreshToken(presented);
+
+        // Resolved through the SECURITY DEFINER function, not a direct query:
+        // core.refresh_tokens is RLS-forced and this can run with no tenant on
+        // the connection — signing out of a slot you are not currently in.
+        var resolved = await ResolveTokenAsync(db, hash, ct);
+        if (resolved is null) return;
+
+        tenant.Set(resolved.TenantId, resolved.UserId, "employee");
+        await db.SyncTenantAsync(ct);
+
+        await db.RefreshTokens
+            .Where(t => t.FamilyId == resolved.FamilyId && t.RevokedAt == null)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(t => t.RevokedAt, (DateTimeOffset?)DateTimeOffset.UtcNow)
+                .SetProperty(t => t.RevokeReason, (string?)reason), ct);
+    }
+
+    /// <summary>
+    /// Moves a pre-slot session into slot 0.
+    ///
+    /// Without this, deploying multi-account signs out everyone who was
+    /// already using the product — a self-inflicted incident on release day.
+    /// The old cookie is deleted so this runs once per browser.
+    /// </summary>
+    private static void MigrateLegacyCookie(HttpContext http)
+    {
+        var legacy = http.Request.Cookies[LegacyRefreshCookie];
+        if (string.IsNullOrWhiteSpace(legacy)) return;
+        if (!string.IsNullOrWhiteSpace(http.Request.Cookies[RefreshCookie(0)])) return;
+
+        http.Response.Cookies.Append(RefreshCookie(0), legacy,
+            CookieOpts(DateTimeOffset.UtcNow.Add(TokenIssuer.RefreshTokenLifetime)));
+        http.Response.Cookies.Append(ActiveCookie, "0", CookieOpts());
+        http.Response.Cookies.Delete(LegacyRefreshCookie, CookieOpts());
+
+        // Make it visible to the rest of THIS request too — the roster and the
+        // rotation below both read from Request.Cookies, which does not see
+        // what we just wrote to the response.
+        http.Request.Cookies = new MergedCookies(http.Request.Cookies,
+            new Dictionary<string, string> { [RefreshCookie(0)] = legacy, [ActiveCookie] = "0" });
+    }
+
+    /// <summary>Request cookies with a few values overlaid, for the one
+    /// request in which a legacy session is migrated.</summary>
+    private sealed class MergedCookies(IRequestCookieCollection inner,
+                                       Dictionary<string, string> overlay) : IRequestCookieCollection
+    {
+        public string? this[string key] =>
+            overlay.TryGetValue(key, out var v) ? v : inner[key];
+
+        public ICollection<string> Keys => [.. inner.Keys.Union(overlay.Keys)];
+        public int Count => Keys.Count;
+        public bool ContainsKey(string key) => overlay.ContainsKey(key) || inner.ContainsKey(key);
+
+        // The attribute matches IRequestCookieCollection's declaration. Without
+        // it the nullability contracts differ, and this project builds with
+        // warnings as errors.
+        public bool TryGetValue(
+            string key,
+            [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out string? value)
+        {
+            if (overlay.TryGetValue(key, out var v)) { value = v; return true; }
+            return inner.TryGetValue(key, out value);
+        }
+
+        public IEnumerator<KeyValuePair<string, string>> GetEnumerator() =>
+            inner.Where(kv => !overlay.ContainsKey(kv.Key)).Concat(overlay).GetEnumerator();
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() =>
+            GetEnumerator();
+    }
+
+    private sealed record RotateOutcome(
+        string? Error, int Status, User? User, string? RefreshToken,
+        TokenIssuer.AccessToken? Access)
+    {
+        public static RotateOutcome Fail(int status, string error) =>
+            new(error, status, null, null, null);
     }
 
     // ------------------------------------------------------------------
@@ -419,7 +904,7 @@ public static class AuthEndpoints
 
     private static object Describe(User u) => new
     {
-        u.Id, u.Email, u.DisplayName, u.Role, u.Status, u.MfaEnabled, u.CategoryId,
+        u.Id, u.Email, u.DisplayName, u.Role, u.Status, u.MfaEnabled, u.DepartmentId,
     };
 
     private static string? Truncate(string? s, int max) =>
@@ -439,6 +924,15 @@ public static class AuthEndpoints
 
 public sealed record LoginRequest(string? Email, string? Password);
 public sealed record RefreshRequest(string? RefreshToken);
+
+/// <summary>Which account slot to act on. See the multi-account block above.</summary>
+public sealed record SwitchRequest(int Slot);
+
+/// <summary>
+/// all=false (the default) signs out of the current account only and leaves the
+/// others in this browser alone. all=true is the shared-machine case.
+/// </summary>
+public sealed record LogoutRequest(bool All = false, string? RefreshToken = null);
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 
 public sealed record AuthResponse(
@@ -446,4 +940,11 @@ public sealed record AuthResponse(
     DateTimeOffset ExpiresAt,
     string RefreshToken,
     bool MustChangePassword,
-    object User);
+    object User,
+    // Which browser slot this session occupies.
+    int Slot = 0,
+    // Every account signed in on this browser, so the switcher can render
+    // without a second request. Assembled server-side from httpOnly cookies —
+    // see the multi-account block in AuthEndpoints for why it is not simply
+    // stored somewhere the client can read.
+    object? Accounts = null);

@@ -91,6 +91,10 @@ services:
       Jwt__SigningKey: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set}
       Jwt__Issuer: ${JWT_ISSUER}
       Jwt__Audience: tatvaos-mail
+      # Empty = host-only cookies, which is right when one host serves
+      # everything. ".tatvaos.com" in production so a session started in Core
+      # is carried to Mail. See the cookie-domain block in AuthEndpoints.
+      Auth__CookieDomain: ${AUTH_COOKIE_DOMAIN:-}
       # Creates the first super admin if none exists, then does nothing on
       # every later start. Blank is fine and normal once you have signed in
       # once - see apps/api/Shared/Auth/BootstrapAdmin.cs.
@@ -147,6 +151,9 @@ services:
     # loop with every other service healthy.
     environment:
       SITE_DOMAIN: ${SITE_DOMAIN:?SITE_DOMAIN must be set}
+      # Blank on staging, where one host serves everything. Caddy tolerates an
+      # empty site block; it simply matches nothing.
+      MAIL_DOMAIN: ${MAIL_DOMAIN:-}
     ports:
       - "80:80"
       - "443:443"

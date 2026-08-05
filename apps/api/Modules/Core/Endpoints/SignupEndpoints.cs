@@ -303,7 +303,7 @@ public static class SignupEndpoints
         });
 
         foreach (var c in DefaultCategories(d.OrgType, org.Id))
-            db.UserCategories.Add(c);
+            db.Departments.Add(c);
 
         d.CompletedAt = DateTimeOffset.UtcNow;
         d.ConvertedTenantId = org.Id;
@@ -379,7 +379,7 @@ public static class SignupEndpoints
     /// Starting categories by organisation type — an admin facing an empty
     /// screen has to invent structure before creating a single person.
     /// </summary>
-    private static IEnumerable<UserCategory> DefaultCategories(string orgType, Guid tenantId)
+    private static IEnumerable<Department> DefaultCategories(string orgType, Guid tenantId)
     {
         const long GB = 1024L * 1024 * 1024;
         string[] mail = ["mail"];
@@ -410,7 +410,7 @@ public static class SignupEndpoints
             ],
         };
 
-        return defs.Select(x => new UserCategory
+        return defs.Select(x => new Department
         {
             TenantId = tenantId,
             Name = x.Name,

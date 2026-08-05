@@ -108,7 +108,7 @@ export function organisationNav(): NavSection[] {
           icon: <Icon d={PATHS.users} />,
           children: [
             { href: '/org/users', label: 'All people' },
-            { href: '/org/categories', label: 'Categories' },
+            { href: '/org/departments', label: 'Departments' },
           ],
         },
         { href: '/org/domains', label: 'Domains', icon: <Icon d={PATHS.globe} /> },

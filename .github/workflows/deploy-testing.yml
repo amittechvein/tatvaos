@@ -21,11 +21,29 @@ name: Deploy testing
 #  because a workflow_run event's default ref is the default branch, not the
 #  commit that was tested.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+#  AUTOMATIC DEPLOY IS DISABLED WHILE THERE IS NO TESTING BOX.
+#
+#  172.105.57.198 was staging and is now production. This workflow used to
+#  fire on every green CI run on main and deploy the TESTING overlay to
+#  TESTING_HOST — and if that secret still holds the same address, an ordinary
+#  merge would push containment settings onto the production box: outbound
+#  mail rerouted to Mailpit, mail ports shifted off 25 and 587. Customers'
+#  mail would stop, quietly, with a green tick on the workflow.
+#
+#  deploy.sh's .environment marker refuses that, and the directory no longer
+#  exists either — so today it fails rather than damages. Both are accidents
+#  of the migration, not defences to rely on. The trigger stays off until a
+#  real testing environment exists on its own Linode.
+#
+#  To restore: provision the box, point TESTING_HOST at it, check
+#  `echo testing > .environment` in its checkout, then put workflow_run back.
+# ---------------------------------------------------------------------------
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
+  # workflow_run:
+  #   workflows: [CI]
+  #   types: [completed]
+  #   branches: [main]
   workflow_dispatch:
 
 concurrency:

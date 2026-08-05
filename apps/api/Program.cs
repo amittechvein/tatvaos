@@ -126,12 +126,18 @@ app.UseAuthentication();
 app.UseMiddleware<TenantMiddleware>();
 app.UseAuthorization();
 
+// Reads Auth:CookieDomain. Unset locally and on staging (one host serves
+// everything); ".tatvaos.com" in production, so a session started in Core is
+// carried to Mail. See the cookie-domain block in AuthEndpoints.
+TatvaOS.Api.Modules.Auth.Endpoints.AuthEndpoints.ConfigureCookies(app.Configuration);
+
 app.MapAuthEndpoints();
 app.MapOrganisationEndpoints();
 app.MapUserEndpoints();
 app.MapDomainEndpoints();
 app.MapSignupEndpoints();
 app.MapSettingsEndpoints();
+app.MapDepartmentEndpoints();
 
 // ---------------------------------------------------------------------------
 //  Bootstrap the first super admin

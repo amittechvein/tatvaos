@@ -1,456 +1,410 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { adminApi, formatBytes } from '@tatvaos/core';
-import type { Organisation, OrgUser, UserCategory } from '@tatvaos/types';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import Alert from '@mui/material/Alert';
+import Box from '@mui/material/Box';
+import Chip from '@mui/material/Chip';
+import CircularProgress from '@mui/material/CircularProgress';
+import Collapse from '@mui/material/Collapse';
+import Dialog from '@mui/material/Dialog';
+import DialogActions from '@mui/material/DialogActions';
+import DialogContent from '@mui/material/DialogContent';
+import DialogTitle from '@mui/material/DialogTitle';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import IconButton from '@mui/material/IconButton';
+import InputAdornment from '@mui/material/InputAdornment';
+import MenuItem from '@mui/material/MenuItem';
+import Switch from '@mui/material/Switch';
+import TextField from '@mui/material/TextField';
+import Tooltip from '@mui/material/Tooltip';
+import Typography from '@mui/material/Typography';
+import { alpha } from '@mui/material/styles';
+
 import { AdminShell } from '@/components/admin/AdminShell';
-import { StatusBadge } from '@/components/admin/StatusBadge';
+import { Badge, Button, Card, Empty, Meter, Table, Td, statusTone } from '@/components/ui/Kit';
+import { useAuth } from '@/lib/auth';
 
-const NAV = [
-  { href: '/org', label: 'Overview' },
-  { href: '/org/users', label: 'Users' },
-  { href: '/org/categories', label: 'Categories' },
-];
-
-const DEMO_TENANT = '22222222-2222-2222-2222-222222222222';
 const GB = 1024 ** 3;
 
-export default function OrgUsers() {
-  const [org, setOrg] = useState<Organisation | null>(null);
-  const [users, setUsers] = useState<OrgUser[]>([]);
-  const [cats, setCats] = useState<UserCategory[]>([]);
-  const [activeCat, setActiveCat] = useState<string>('all');
+interface Dept {
+  id: string; parentId: string | null; name: string;
+  effectiveQuotaBytes: number | null; canSendExternal: boolean;
+  defaultRole: string; defaultProducts: string[]; colour: string;
+  children: Dept[];
+}
+
+interface Person {
+  id: string; email: string; displayName: string;
+  mailboxAddress: string | null;
+  departmentId: string | null; departmentName?: string;
+  role: string; status: string; products: string[];
+  quotaBytes: number; usedBytes: number;
+  mfaEnabled: boolean; lastLoginAt: string | null;
+}
+
+interface DomainOpt { id: string; fqdn: string; isActive: boolean; ownershipVerified: boolean }
+
+/** Depth-first flatten, so a <select> can show the hierarchy with indentation. */
+function flatten(nodes: Dept[], depth = 0): { d: Dept; depth: number }[] {
+  return nodes.flatMap((d) => [{ d, depth }, ...flatten(d.children, depth + 1)]);
+}
+
+function fmt(bytes: number | null): string {
+  if (bytes === null) return '—';
+  if (bytes >= 1024 ** 4) return `${(bytes / 1024 ** 4).toFixed(1)} TB`;
+  if (bytes >= GB) return `${Math.round(bytes / GB)} GB`;
+  return `${Math.round(bytes / 1024 ** 2)} MB`;
+}
+
+export default function PeoplePage() {
+  const { authedFetch } = useAuth();
+
+  const [people, setPeople] = useState<Person[]>([]);
+  const [tree, setTree] = useState<Dept[]>([]);
+  const [domains, setDomains] = useState<DomainOpt[]>([]);
+  const [poolFloor, setPoolFloor] = useState<number>(15 * GB);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const [filterDept, setFilterDept] = useState('all');
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
 
-  useEffect(() => {
-    adminApi.getOrg(DEMO_TENANT).then(setOrg);
-    adminApi.getUsers(DEMO_TENANT).then(setUsers);
-    adminApi.getCategories(DEMO_TENANT).then(setCats);
-  }, []);
+  const load = useCallback(async () => {
+    try {
+      const [u, d, dom] = await Promise.all([
+        authedFetch('/org/users'),
+        authedFetch('/org/departments'),
+        authedFetch('/org/domains'),
+      ]);
+      if (u.ok) setPeople(await u.json());
+      if (d.ok) {
+        const body = await d.json();
+        setTree(body.tree ?? []);
+        setPoolFloor(body.storage?.perUserFloor ?? 15 * GB);
+      }
+      if (dom.ok) setDomains(await dom.json());
+      setError(null);
+    } catch {
+      setError('Could not load people.');
+    } finally {
+      setLoading(false);
+    }
+  }, [authedFetch]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const flat = useMemo(() => flatten(tree), [tree]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return users.filter((u) => {
-      const matchCat = activeCat === 'all' || u.categoryId === activeCat;
-      const matchQ =
-        !q || u.displayName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
-      return matchCat && matchQ;
+    return people.filter((p) => {
+      const matchDept = filterDept === 'all' || p.departmentId === filterDept;
+      const matchQ = !q
+        || p.displayName.toLowerCase().includes(q)
+        || p.email.toLowerCase().includes(q);
+      return matchDept && matchQ;
     });
-  }, [users, activeCat, query]);
+  }, [people, filterDept, query]);
 
-  const atLimit = org?.maxUsers !== null && org !== null && users.length >= (org.maxUsers ?? 0);
+  // Mailboxes can only be created on a domain that is verified AND routing
+  // here. Offering an unverified one produces an account whose mail silently
+  // goes nowhere, which looks like our bug rather than incomplete setup.
+  const usable = domains.filter((d) => d.ownershipVerified && d.isActive);
 
   return (
     <AdminShell
       scope="organisation"
-      title="Users"
-      subtitle={org ? `${org.name} · ${users.length} people` : undefined}
-      nav={NAV}
+      title="People"
+      subtitle={`${people.length} in this organisation`}
       actions={
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          disabled={atLimit}
-          className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-40"
-          title={atLimit ? 'User limit reached for this plan' : undefined}
-        >
-          Create user
-        </button>
+        <Button variant="primary" onClick={() => setCreating(true)} disabled={usable.length === 0}>
+          Add person
+        </Button>
       }
     >
-      {atLimit && (
-        <div className="mb-4 rounded-lg border border-warn/30 bg-warn/10 px-4 py-3 text-sm text-warn">
-          User limit reached ({org?.maxUsers}). Upgrade the plan or remove a user to add more.
-        </div>
+      {error && <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>{error}</Alert>}
+      {notice && <Alert severity="success" sx={{ mb: 3 }} onClose={() => setNotice(null)}>{notice}</Alert>}
+
+      {usable.length === 0 && !loading && (
+        <Alert severity="warning" sx={{ mb: 3 }}>
+          No verified domain yet, so mailboxes cannot be created. Add and verify one
+          under <strong>Domains</strong> first — people created on an unverified
+          domain would have addresses that receive nothing.
+        </Alert>
       )}
 
-      {/* Category filter — the primary way admins navigate a large organisation */}
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <FilterChip
-          label="All"
-          count={users.length}
-          active={activeCat === 'all'}
-          onClick={() => setActiveCat('all')}
-        />
-        {cats.map((c) => (
-          <FilterChip
-            key={c.id}
-            label={c.name}
-            count={users.filter((u) => u.categoryId === c.id).length}
-            colour={c.colour}
-            active={activeCat === c.id}
-            onClick={() => setActiveCat(c.id)}
+      <Box sx={{ display: 'flex', gap: 1.5, mb: 3, flexWrap: 'wrap', alignItems: 'center' }}>
+        <TextField select size="small" label="Department" value={filterDept}
+                   onChange={(e) => setFilterDept(e.target.value)} sx={{ minWidth: 240 }}>
+          <MenuItem value="all">All departments</MenuItem>
+          {flat.map(({ d, depth }) => (
+            <MenuItem key={d.id} value={d.id}>
+              {' '.repeat(depth * 3)}{depth > 0 ? '└ ' : ''}{d.name}
+            </MenuItem>
+          ))}
+        </TextField>
+
+        <TextField size="small" placeholder="Search name or address" value={query}
+                   onChange={(e) => setQuery(e.target.value)} sx={{ ml: 'auto', minWidth: 260 }} />
+      </Box>
+
+      <Card padded={false}>
+        {loading ? (
+          <Box sx={{ display: 'grid', placeItems: 'center', py: 8 }}><CircularProgress /></Box>
+        ) : filtered.length === 0 ? (
+          <Empty
+            title={people.length === 0 ? 'Nobody yet' : 'Nobody matches that filter'}
+            hint={people.length === 0
+              ? 'Add your colleagues. Each one gets a mailbox and inherits storage from their department.'
+              : undefined}
           />
-        ))}
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search name or address"
-          className="ml-auto w-full max-w-xs rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-brand-500"
-        />
-      </div>
-
-      <div className="overflow-hidden rounded-xl border border-line bg-surface">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="border-b border-line bg-canvas text-left text-xs uppercase tracking-wide text-ink-muted">
-              <tr>
-                <th className="px-4 py-3 font-medium">User</th>
-                <th className="px-4 py-3 font-medium">Category</th>
-                <th className="px-4 py-3 font-medium">Role</th>
-                <th className="px-4 py-3 font-medium">Storage</th>
-                <th className="px-4 py-3 font-medium">MFA</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {filtered.map((u) => {
-                const cat = cats.find((c) => c.id === u.categoryId);
-                // Guard the divide. A person with no mailbox has a zero quota,
-                // and NaN% renders as a blank bar that looks like a loading
-                // state rather than "this user has no mail account".
-                const pct = u.quotaBytes > 0
-                  ? Math.round((u.usedBytes / u.quotaBytes) * 100)
-                  : 0;
-                return (
-                  <tr key={u.id} className="hover:bg-canvas">
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-ink">{u.displayName}</div>
-                      <div className="text-xs text-ink-muted">{u.email}</div>
-                    </td>
-                    <td className="px-4 py-3">
-                      {cat && (
-                        <span className="inline-flex items-center gap-1.5 text-ink">
-                          <span
-                            className="h-2 w-2 rounded-full"
-                            style={{ backgroundColor: cat.colour }}
-                          />
-                          {cat.name}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 capitalize text-ink-muted">
-                      {u.role.replace(/_/g, ' ')}
-                    </td>
-                    <td className="px-4 py-3">
-                      {u.mailboxAddress ? (
-                        <>
-                          <div className="text-ink">
-                            {formatBytes(u.usedBytes)}
-                            <span className="text-ink-faint"> / {formatBytes(u.quotaBytes)}</span>
-                          </div>
-                          <div className="mt-1 h-1 w-24 overflow-hidden rounded-full bg-line">
-                            <div
-                              className={`h-full ${pct > 90 ? 'bg-danger' : pct > 75 ? 'bg-warn' : 'bg-brand-500'}`}
-                              style={{ width: `${Math.min(pct, 100)}%` }}
-                            />
-                          </div>
-                        </>
-                      ) : (
-                        <span className="text-xs text-ink-faint">No mailbox</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      {u.mfaEnabled ? (
-                        <span className="text-ok">On</span>
-                      ) : (
-                        <span className="text-ink-faint">Off</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <StatusBadge status={u.status} />
-                    </td>
-                  </tr>
-                );
-              })}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-ink-faint">
-                    No users match
-                  </td>
+        ) : (
+          <Table head={['Person', 'Department', 'Role', 'Storage', 'MFA', 'Status']}>
+            {filtered.map((p) => {
+              const dept = flat.find((f) => f.d.id === p.departmentId)?.d;
+              return (
+                <tr key={p.id}>
+                  <Td>
+                    <Typography variant="body2" sx={{ fontWeight: 600 }}>{p.displayName}</Typography>
+                    <Typography variant="caption" color="text.secondary">{p.email}</Typography>
+                  </Td>
+                  <Td>
+                    {dept ? (
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: dept.colour }} />
+                        <Typography variant="body2">{dept.name}</Typography>
+                      </Box>
+                    ) : (
+                      <Typography variant="caption" color="text.disabled">Unassigned</Typography>
+                    )}
+                  </Td>
+                  <Td>
+                    <Typography variant="body2" sx={{ textTransform: 'capitalize' }}>
+                      {p.role.replace(/_/g, ' ')}
+                    </Typography>
+                  </Td>
+                  <Td>
+                    {p.mailboxAddress ? (
+                      <>
+                        <Typography variant="caption">
+                          {fmt(p.usedBytes)} <Box component="span" sx={{ color: 'text.disabled' }}>
+                            / {fmt(p.quotaBytes)}
+                          </Box>
+                        </Typography>
+                        <Box sx={{ width: 110, mt: 0.5 }}>
+                          <Meter used={p.usedBytes} total={p.quotaBytes} />
+                        </Box>
+                      </>
+                    ) : (
+                      <Typography variant="caption" color="text.disabled">No mailbox</Typography>
+                    )}
+                  </Td>
+                  <Td>
+                    {p.mfaEnabled
+                      ? <Chip label="On" size="small" color="success" />
+                      : <Typography variant="caption" color="text.disabled">Off</Typography>}
+                  </Td>
+                  <Td><Badge tone={statusTone(p.status)}>{p.status}</Badge></Td>
                 </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+              );
+            })}
+          </Table>
+        )}
+      </Card>
 
-      <p className="mt-3 text-xs text-ink-muted">
-        An organisation admin can create users and reset passwords. They cannot read a user&apos;s
-        mail — administrative power over an account never implies access to its contents.
-      </p>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
+        You can create people and reset their passwords. You cannot read their mail —
+        administrative power over an account never implies access to its contents.
+      </Typography>
 
-      {creating && org && (
-        <CreateUserDialog
-          org={org}
-          categories={cats}
+      {creating && (
+        <AddPerson
+          departments={flat}
+          domains={usable}
+          poolFloor={poolFloor}
           onClose={() => setCreating(false)}
-          onCreate={(u) => {
-            setUsers((prev) => [u, ...prev]);
-            setCreating(false);
-          }}
+          onCreated={async (msg) => { setCreating(false); setNotice(msg); await load(); }}
+          onError={setError}
         />
       )}
     </AdminShell>
   );
 }
 
-function FilterChip({
-  label,
-  count,
-  colour,
-  active,
-  onClick,
-}: {
-  label: string;
-  count: number;
-  colour?: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition ${
-        active
-          ? 'border-brand-600 bg-brand-50 font-medium text-brand-800'
-          : 'border-line text-ink-muted hover:border-line'
-      }`}
-    >
-      {colour && <span className="h-2 w-2 rounded-full" style={{ backgroundColor: colour }} />}
-      {label}
-      <span className="text-xs text-ink-faint">{count}</span>
-    </button>
-  );
-}
-
-/**
- * Creating users one at a time with identical settings is the most tedious
- * part of onboarding an organisation. Picking a category fills in the quota,
- * role, groups and sending policy — that is the whole point of categories.
- */
-function CreateUserDialog({
-  org,
-  categories,
-  onClose,
-  onCreate,
-}: {
-  org: Organisation;
-  categories: UserCategory[];
+// ---------------------------------------------------------------------------
+function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onError }: {
+  departments: { d: Dept; depth: number }[];
+  domains: DomainOpt[];
+  poolFloor: number;
   onClose: () => void;
-  onCreate: (u: OrgUser) => void;
+  onCreated: (msg: string) => void;
+  onError: (m: string) => void;
 }) {
-  const [categoryId, setCategoryId] = useState(categories[0]?.id ?? '');
+  const { authedFetch } = useAuth();
+
   const [displayName, setDisplayName] = useState('');
   const [localPart, setLocalPart] = useState('');
-  const [quotaGb, setQuotaGb] = useState(
-    categories[0]?.defaultQuotaBytes ? Math.round(categories[0].defaultQuotaBytes / GB) : 5,
-  );
-  const [bulk, setBulk] = useState(false);
-  const [bulkText, setBulkText] = useState('');
+  const [domainId, setDomainId] = useState(domains[0]?.id ?? '');
+  const [departmentId, setDepartmentId] = useState('');
+  const [override, setOverride] = useState(false);
+  const [quotaGb, setQuotaGb] = useState(15);
+  const [busy, setBusy] = useState(false);
+  const [created, setCreated] = useState<{ email: string; password: string } | null>(null);
 
-  const cat = categories.find((c) => c.id === categoryId);
+  const dept = departments.find((f) => f.d.id === departmentId)?.d;
+  const inherited = dept?.effectiveQuotaBytes ?? poolFloor;
+  const domain = domains.find((d) => d.id === domainId);
 
-  function pickCategory(id: string) {
-    setCategoryId(id);
-    const c = categories.find((x) => x.id === id);
-    if (c?.defaultQuotaBytes) setQuotaGb(Math.round(c.defaultQuotaBytes / GB));
+  async function create() {
+    setBusy(true);
+    try {
+      const res = await authedFetch('/org/users', {
+        method: 'POST',
+        body: JSON.stringify({
+          displayName: displayName.trim(),
+          localPart: localPart.trim().toLowerCase(),
+          domainId,
+          departmentId: departmentId || null,
+          quotaBytes: override ? quotaGb * GB : null,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? 'Could not create this person.');
+
+      // Shown once, never stored recoverably. A retrievable password is a
+      // stored plaintext password.
+      setCreated({ email: body.email, password: body.temporaryPassword });
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Could not create this person.');
+      setBusy(false);
+    }
   }
 
-  function submit() {
-    if (!cat) return;
-    const address = `${localPart}@${org.primaryDomain}`;
-    const products = cat.defaultProducts ?? ['mail'];
-    const hasMailbox = products.includes('mail');
-
-    onCreate({
-      id: `u-${Date.now()}`,
-      email: address,
-      displayName,
-      mailboxAddress: hasMailbox ? address : null,
-      categoryId: cat.id,
-      categoryName: cat.name,
-      role: cat.defaultRole,
-      status: 'pending',
-      products,
-      quotaBytes: hasMailbox ? quotaGb * GB : 0,
-      usedBytes: 0,
-      mfaEnabled: false,
-      lastLoginAt: null,
-      createdAt: new Date().toISOString(),
-    });
+  if (created) {
+    return (
+      <Dialog open onClose={() => onCreated(`${created.email} created.`)} maxWidth="sm" fullWidth>
+        <DialogTitle>{created.email} is ready</DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 2.5 }}>
+            This password is shown once and cannot be retrieved later. Copy it now —
+            if it is lost, reset it rather than asking us for it.
+          </Alert>
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+            <Box sx={{ flex: 1, p: 1.5, borderRadius: 1.5, fontFamily: 'monospace',
+                       fontSize: 15, bgcolor: 'background.default' }}>
+              {created.password}
+            </Box>
+            <Tooltip title="Copy">
+              <IconButton onClick={() => void navigator.clipboard.writeText(created.password)}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     strokeWidth="1.8" strokeLinecap="round">
+                  <rect x="9" y="9" width="12" height="12" rx="2" />
+                  <path d="M5 15V5a2 2 0 012-2h10" />
+                </svg>
+              </IconButton>
+            </Tooltip>
+          </Box>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
+            They will be asked to change it when they first sign in.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button variant="primary" onClick={() => onCreated(`${created.email} created.`)}>
+            Done
+          </Button>
+        </DialogActions>
+      </Dialog>
+    );
   }
-
-  const bulkCount = bulkText.split('\n').filter((l) => l.trim()).length;
-  const valid = bulk ? bulkCount > 0 : displayName.trim() && localPart.trim();
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 p-4">
-      <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-surface shadow-2xl">
-        <header className="flex items-center justify-between border-b border-line px-5 py-4">
-          <h2 className="text-base font-semibold">Create user</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-ink-faint hover:text-ink"
-            aria-label="Close"
-          >
-            ✕
-          </button>
-        </header>
+    <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle sx={{ pb: 1 }}>
+        Add a person
+        <Typography variant="body2" color="text.secondary">
+          They get a sign-in and a mailbox, and inherit their department&apos;s settings.
+        </Typography>
+      </DialogTitle>
 
-        <div className="space-y-5 p-5">
-          <div>
-            <span className="mb-1.5 block text-sm font-medium text-ink">Category</span>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {categories.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => pickCategory(c.id)}
-                  className={`rounded-lg border px-3 py-2 text-left transition ${
-                    categoryId === c.id
-                      ? 'border-brand-600 bg-brand-50'
-                      : 'border-line hover:border-line'
-                  }`}
-                >
-                  <span className="flex items-center gap-2 text-sm font-medium text-ink">
-                    <span
-                      className="h-2 w-2 rounded-full"
-                      style={{ backgroundColor: c.colour }}
-                    />
-                    {c.name}
-                  </span>
-                  <span className="mt-0.5 block text-xs text-ink-muted">
-                    {c.defaultQuotaBytes ? `${formatBytes(c.defaultQuotaBytes)} · ` : ''}
-                    {c.defaultRole.replace(/_/g, ' ')}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
+      <DialogContent>
+        <TextField autoFocus fullWidth label="Full name" required value={displayName}
+                   onChange={(e) => setDisplayName(e.target.value)} sx={{ mt: 1, mb: 2.5 }} />
 
-          {cat && (
-            <div className="rounded-lg bg-canvas p-3 text-xs text-ink-muted">
-              <div className="mb-1 font-medium text-ink">Applied from this category</div>
-              <div>Role: {cat.defaultRole.replace(/_/g, ' ')}</div>
-              <div>External sending: {cat.canSendExternal ? 'allowed' : 'blocked'}</div>
-              {cat.autoGroups && cat.autoGroups.length > 0 && (
-                <div>Auto-added to: {cat.autoGroups.join(', ')}</div>
-              )}
-            </div>
-          )}
+        <Box sx={{ display: 'flex', gap: 1.5, mb: 2.5, alignItems: 'flex-start' }}>
+          <TextField label="Email address" required value={localPart}
+                     onChange={(e) => setLocalPart(e.target.value.replace(/[^a-zA-Z0-9._-]/g, ''))}
+                     sx={{ flex: 1 }}
+                     slotProps={{
+                       input: { endAdornment: <InputAdornment position="end">@</InputAdornment> },
+                       htmlInput: { autoCapitalize: 'none', spellCheck: false },
+                     }} />
+          <TextField select label="Domain" value={domainId} sx={{ minWidth: 200 }}
+                     onChange={(e) => setDomainId(e.target.value)}>
+            {domains.map((d) => (
+              <MenuItem key={d.id} value={d.id}>{d.fqdn}</MenuItem>
+            ))}
+          </TextField>
+        </Box>
 
-          <div className="flex gap-2 border-b border-line">
-            <button
-              type="button"
-              onClick={() => setBulk(false)}
-              className={`border-b-2 px-3 py-2 text-sm ${!bulk ? 'border-brand-600 font-medium text-brand-700' : 'border-transparent text-ink-muted'}`}
-            >
-              Single user
-            </button>
-            <button
-              type="button"
-              onClick={() => setBulk(true)}
-              className={`border-b-2 px-3 py-2 text-sm ${bulk ? 'border-brand-600 font-medium text-brand-700' : 'border-transparent text-ink-muted'}`}
-            >
-              Bulk
-            </button>
-          </div>
+        <TextField select fullWidth label="Department" value={departmentId} sx={{ mb: 2.5 }}
+                   onChange={(e) => { setDepartmentId(e.target.value); setOverride(false); }}
+                   helperText="Sets their role, storage and whether they can email outsiders">
+          <MenuItem value="">
+            <em>No department — organisation defaults</em>
+          </MenuItem>
+          {departments.map(({ d, depth }) => (
+            <MenuItem key={d.id} value={d.id}>
+              {' '.repeat(depth * 3)}{depth > 0 ? '└ ' : ''}{d.name}
+            </MenuItem>
+          ))}
+        </TextField>
 
-          {!bulk ? (
-            <>
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-ink">Full name</span>
-                <input
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="Anjali Desai"
-                  className="w-full rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-brand-500"
-                />
-              </label>
+        {/* Storage. The inherited value is shown BEFORE the override, so the
+            common case needs no decision at all — and the number is visible
+            rather than something the admin has to go and look up. */}
+        <Box sx={{ p: 2, borderRadius: 2, mb: 1,
+                   bgcolor: (t) => alpha(t.palette.primary.main, 0.05) }}>
+          <Typography variant="body2" sx={{ fontWeight: 600, mb: 1 }}>Storage</Typography>
 
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-ink">
-                  Email address
-                </span>
-                <div className="flex items-center rounded-lg border border-line focus-within:border-brand-500">
-                  <input
-                    value={localPart}
-                    onChange={(e) => setLocalPart(e.target.value.toLowerCase())}
-                    placeholder="a.desai"
-                    className="w-full rounded-l-lg border-0 px-3 py-2 text-sm outline-none"
-                  />
-                  <span className="shrink-0 border-l border-line bg-canvas px-3 py-2 text-sm text-ink-muted">
-                    @{org.primaryDomain}
-                  </span>
-                </div>
-              </label>
-            </>
-          ) : (
-            <label className="block">
-              <span className="mb-1.5 block text-sm font-medium text-ink">
-                One per line — name, local part
-              </span>
-              <textarea
-                value={bulkText}
-                onChange={(e) => setBulkText(e.target.value)}
-                rows={7}
-                placeholder={'Anjali Desai, a.desai\nVikram Menon, v.menon'}
-                className="w-full rounded-lg border border-line px-3 py-2 font-mono text-xs outline-none focus:border-brand-500"
-              />
-              <span className="mt-1 block text-xs text-ink-muted">
-                {bulkCount} user{bulkCount === 1 ? '' : 's'} · all get the {cat?.name} defaults. CSV
-                import arrives in Phase 3.
-              </span>
-            </label>
-          )}
+          <FormControlLabel
+            control={<Switch checked={!override} onChange={(e) => setOverride(!e.target.checked)} />}
+            label={
+              <Typography variant="body2">
+                Use <strong>{fmt(inherited)}</strong>
+                {dept ? ` from ${dept.name}` : ' from the organisation default'}
+              </Typography>
+            }
+          />
 
-          {org.storageModel === 'per_user' ? (
-            <label className="block">
-              <span className="mb-1.5 block text-sm font-medium text-ink">
-                Storage quota (GB)
-              </span>
-              <input
-                type="number"
-                min={1}
-                value={quotaGb}
-                onChange={(e) => setQuotaGb(Number(e.target.value))}
-                className="w-full rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-brand-500"
-              />
-              <span className="mt-1 block text-xs text-ink-muted">
-                Pre-filled from the category. Override for this user if needed.
-              </span>
-            </label>
-          ) : (
-            <div className="rounded-lg bg-canvas p-3 text-xs text-ink-muted">
-              This organisation uses <strong>pooled storage</strong>, so there is no per-user quota
-              to set. Mailboxes draw from the shared allocation.
-            </div>
-          )}
-        </div>
+          <Collapse in={override}>
+            <TextField type="number" label="Storage for this person" value={quotaGb}
+                       onChange={(e) => setQuotaGb(Math.max(1, Number(e.target.value)))}
+                       sx={{ mt: 1.5, width: 240 }}
+                       slotProps={{
+                         input: { endAdornment: <InputAdornment position="end">GB</InputAdornment> },
+                         htmlInput: { min: 1, max: 5000 },
+                       }}
+                       helperText="Applies to this person only" />
+          </Collapse>
+        </Box>
 
-        <footer className="flex items-center gap-3 border-t border-line px-5 py-4">
-          <button
-            type="button"
-            onClick={submit}
-            disabled={!valid}
-            className="rounded-lg bg-brand-600 px-5 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {bulk ? `Create ${bulkCount} users` : 'Create user'}
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg px-4 py-2 text-sm text-ink-muted hover:bg-canvas"
-          >
-            Cancel
-          </button>
-          <span className="ml-auto text-xs text-ink-faint">Wired to the API in Phase 1</span>
-        </footer>
-      </div>
-    </div>
+        {dept && !dept.canSendExternal && (
+          <Alert severity="info" sx={{ mt: 2 }}>
+            {dept.name} is internal-only, so this person will be able to email colleagues
+            but not the outside world.
+          </Alert>
+        )}
+      </DialogContent>
+
+      <DialogActions sx={{ px: 3, pb: 2.5 }}>
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button variant="primary" onClick={create}
+                disabled={busy || displayName.trim().length < 2 || localPart.length < 1 || !domain}>
+          {busy ? 'Creating…' : 'Create person'}
+        </Button>
+      </DialogActions>
+    </Dialog>
   );
 }

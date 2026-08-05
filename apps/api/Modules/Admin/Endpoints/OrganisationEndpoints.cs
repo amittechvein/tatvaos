@@ -280,7 +280,7 @@ public static class OrganisationEndpoints
         // an empty screen has to invent structure before they can create a
         // single user; these give them something to edit instead.
         foreach (var c in DefaultCategories(req.Type, org.Id))
-            db.UserCategories.Add(c);
+            db.Departments.Add(c);
 
         await db.SaveChangesAsync(ct);
 
@@ -410,7 +410,7 @@ public static class OrganisationEndpoints
             fqdn, @"^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$")
         && fqdn.Length <= 253;
 
-    private static IEnumerable<UserCategory> DefaultCategories(string orgType, Guid tenantId)
+    private static IEnumerable<Department> DefaultCategories(string orgType, Guid tenantId)
     {
         const long GB = 1024L * 1024 * 1024;
 
@@ -446,7 +446,7 @@ public static class OrganisationEndpoints
             ],
         };
 
-        return defs.Select(d => new UserCategory
+        return defs.Select(d => new Department
         {
             TenantId = tenantId,
             Name = d.Name,

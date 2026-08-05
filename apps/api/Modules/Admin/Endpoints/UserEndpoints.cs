@@ -6,7 +6,7 @@ using TatvaOS.Api.Shared.Tenancy;
 namespace TatvaOS.Api.Modules.Admin.Endpoints;
 
 /// <summary>
-/// Organisation administration — people and categories within one tenant.
+/// Organisation administration — people within one tenant.
 ///
 /// Every query here is scoped by the tenant on the authenticated principal.
 /// There is no route parameter for the tenant, deliberately: an id in the URL
@@ -45,24 +45,21 @@ public static class UserEndpoints
         users.MapPost("/{id:guid}/reset-password", ResetPasswordAsync);
         users.MapPost("/{id:guid}/reset-app-password", ResetAppPasswordAsync);
 
-        var cats = app.MapGroup("/api/org/categories")
-            .RequireAuthorization("OrgAdmin")
-            .WithTags("Organisation administration");
-
-        cats.MapGet("/", ListCategoriesAsync);
-        cats.MapPost("/", CreateCategoryAsync);
+        // Departments live in DepartmentEndpoints — they are a tree now, and
+        // two routes reaching the same table with different shapes is how the
+        // screen and the API start disagreeing about what a quota means.
     }
 
     private static async Task<IResult> ListAsync(
-        AppDbContext db, Guid? categoryId, string? q, CancellationToken ct)
+        AppDbContext db, Guid? departmentId, string? q, CancellationToken ct)
     {
         // No .Where(u => u.TenantId == ...) here — the global query filter and
         // RLS both apply it. Writing it by hand as well would suggest the
         // filter is optional, and someone would eventually "tidy it away".
         var query = db.Users.AsNoTracking();
 
-        if (categoryId is Guid cid)
-            query = query.Where(u => u.CategoryId == cid);
+        if (departmentId is Guid cid)
+            query = query.Where(u => u.DepartmentId == cid);
 
         if (!string.IsNullOrWhiteSpace(q))
         {
@@ -84,8 +81,8 @@ public static class UserEndpoints
             .OrderBy(u => u.Email)
             .Select(u => new
             {
-                u.Id, u.Email, u.DisplayName, u.CategoryId,
-                CategoryName = u.Category != null ? u.Category.Name : null,
+                u.Id, u.Email, u.DisplayName, u.DepartmentId,
+                DepartmentName = u.Department != null ? u.Department.Name : null,
                 u.Role, u.Status, u.MfaEnabled, u.LastLoginAt, u.CreatedAt,
             })
             .ToListAsync(ct);
@@ -112,7 +109,7 @@ public static class UserEndpoints
             return new UserResponse(
                 r.Id, r.Email, r.DisplayName,
                 box?.Address,
-                r.CategoryId, r.CategoryName,
+                r.DepartmentId, r.DepartmentName,
                 r.Role, r.Status,
                 productsByUser.TryGetValue(r.Id, out var p) ? p : [],
                 box?.QuotaBytes ?? 0,
@@ -151,8 +148,8 @@ public static class UserEndpoints
 
         var address = $"{localPart}@{domain.Fqdn}";
 
-        var category = req.CategoryId is Guid cid
-            ? await db.UserCategories.FirstOrDefaultAsync(c => c.Id == cid, ct)
+        var category = req.DepartmentId is Guid cid
+            ? await db.Departments.FirstOrDefaultAsync(c => c.Id == cid, ct)
             : null;
 
         var products = req.Products ?? category?.DefaultProducts ?? ["mail"];
@@ -178,7 +175,7 @@ public static class UserEndpoints
             DomainId = domain.Id,
             Email = address,
             DisplayName = req.DisplayName.Trim(),
-            CategoryId = category?.Id,
+            DepartmentId = category?.Id,
             Role = category?.DefaultRole ?? "employee",
             Status = "pending",
             PasswordHash = hasher.Hash(password),
@@ -201,7 +198,7 @@ public static class UserEndpoints
         if (wantsMailbox)
         {
             var quota = await storage.ResolveQuotaAsync(
-                tenant.TenantId, req.CategoryId, req.QuotaBytes, "mail", ct);
+                tenant.TenantId, req.DepartmentId, req.QuotaBytes, "mail", ct);
 
             mailbox = new Mailbox
             {
@@ -271,14 +268,14 @@ public static class UserEndpoints
         if (domain is null || domain.OwnershipVerifiedAt is null)
             return Results.BadRequest(new { error = "Domain is unknown or not verified." });
 
-        var category = req.CategoryId is Guid cid
-            ? await db.UserCategories.FirstOrDefaultAsync(c => c.Id == cid, ct)
+        var category = req.DepartmentId is Guid cid
+            ? await db.Departments.FirstOrDefaultAsync(c => c.Id == cid, ct)
             : null;
 
         var products = category?.DefaultProducts ?? ["mail"];
         var wantsMailbox = products.Contains("mail");
         var quota = await storage.ResolveQuotaAsync(
-            tenant.TenantId, req.CategoryId, null, "mail", ct);
+            tenant.TenantId, req.DepartmentId, null, "mail", ct);
 
         var created = new List<object>();
         var skipped = new List<object>();
@@ -309,7 +306,7 @@ public static class UserEndpoints
                 DomainId = domain.Id,
                 Email = address,
                 DisplayName = entry.DisplayName.Trim(),
-                CategoryId = category?.Id,
+                DepartmentId = category?.Id,
                 Role = category?.DefaultRole ?? "employee",
                 Status = "pending",
                 PasswordHash = hasher.Hash(password),
@@ -432,56 +429,6 @@ public static class UserEndpoints
             temporaryPassword = password,
             note = "Existing mail clients will stop working until reconfigured.",
         });
-    }
-
-    private static async Task<IResult> ListCategoriesAsync(AppDbContext db, CancellationToken ct)
-    {
-        var cats = await db.UserCategories.AsNoTracking()
-            .OrderBy(c => c.Name)
-            .Select(c => new
-            {
-                c.Id, c.Name, c.Description, c.DefaultQuotaBytes,
-                c.DefaultRole, c.DefaultProducts, c.CanSendExternal,
-                c.AutoGroups, c.Colour,
-                UserCount = db.Users.Count(u => u.CategoryId == c.Id),
-            })
-            .ToListAsync(ct);
-
-        return Results.Ok(cats);
-    }
-
-    private static async Task<IResult> CreateCategoryAsync(
-        CreateCategoryRequest req, AppDbContext db, TenantContext tenant,
-        AuditWriter audit, CancellationToken ct)
-    {
-        if (await db.UserCategories.AnyAsync(c => c.Name == req.Name, ct))
-            return Results.Conflict(new { error = $"A category named {req.Name} already exists." });
-
-        var known = await db.Products.Select(p => p.Code).ToListAsync(ct);
-        var products = req.DefaultProducts ?? ["mail"];
-        var unknown = products.Except(known).ToArray();
-        if (unknown.Length > 0)
-            return Results.BadRequest(new { error = $"Unknown product(s): {string.Join(", ", unknown)}" });
-
-        var cat = new UserCategory
-        {
-            TenantId = tenant.TenantId,
-            Name = req.Name.Trim(),
-            Description = req.Description,
-            DefaultQuotaBytes = req.DefaultQuotaBytes,
-            DefaultRole = req.DefaultRole,
-            DefaultProducts = products,
-            CanSendExternal = req.CanSendExternal,
-            AutoGroups = req.AutoGroups ?? [],
-            Colour = req.Colour ?? "#3563f0",
-        };
-
-        db.UserCategories.Add(cat);
-        await db.SaveChangesAsync(ct);
-        await audit.WriteAsync("category.created", "category", cat.Id.ToString(),
-            after: new { cat.Name, cat.DefaultQuotaBytes, cat.DefaultProducts }, ct: ct);
-
-        return Results.Created($"/api/org/categories/{cat.Id}", cat);
     }
 
     // ------------------------------------------------------------------

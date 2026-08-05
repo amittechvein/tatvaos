@@ -162,7 +162,7 @@ public sealed class StorageAllocator(AppDbContext db)
     /// allocation, not by itself.
     /// </summary>
     public async Task<long> ResolveQuotaAsync(
-        Guid tenantId, Guid? categoryId, long? explicitQuotaBytes,
+        Guid tenantId, Guid? departmentId, long? explicitQuotaBytes,
         string productCode = "mail", CancellationToken ct = default)
     {
         var pool = await db.StoragePools.AsNoTracking()
@@ -177,13 +177,17 @@ public sealed class StorageAllocator(AppDbContext db)
         if (explicitQuotaBytes is long q && q > 0)
             return q;
 
-        if (categoryId is Guid cid)
+        // Walks UP the department tree until it finds a value — a team with no
+        // quota of its own takes its parent's, and its parent's parent's after
+        // that. Resolved in SQL because the users list needs it per row, and a
+        // walk per person in C# is one query each on a screen built for four
+        // hundred people.
+        if (departmentId is Guid did)
         {
-            var catQuota = await db.UserCategories.AsNoTracking()
-                .Where(c => c.Id == cid)
-                .Select(c => c.DefaultQuotaBytes)
+            var inherited = await db.Database
+                .SqlQuery<long?>($"SELECT core.department_effective_quota({did}) AS \"Value\"")
                 .FirstOrDefaultAsync(ct);
-            if (catQuota is long cq && cq > 0) return cq;
+            if (inherited is long iq && iq > 0) return iq;
         }
 
         return pool?.PerUserQuotaBytes ?? DefaultPerUserQuota;

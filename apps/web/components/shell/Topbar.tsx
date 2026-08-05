@@ -5,16 +5,14 @@ import AppBar from '@mui/material/AppBar';
 import Avatar from '@mui/material/Avatar';
 import Box from '@mui/material/Box';
 import Chip from '@mui/material/Chip';
-import Divider from '@mui/material/Divider';
 import IconButton from '@mui/material/IconButton';
 import InputAdornment from '@mui/material/InputAdornment';
-import Menu from '@mui/material/Menu';
-import MenuItem from '@mui/material/MenuItem';
 import TextField from '@mui/material/TextField';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import { alpha } from '@mui/material/styles';
 import { useAuth } from '@/lib/auth';
+import { AccountMenu } from './AccountMenu';
 import { useTheme as useAppearance } from '@/lib/theme';
 import { Switcher } from './Switcher';
 
@@ -27,7 +25,7 @@ import { Switcher } from './Switcher';
  * and a transparent background; either alone looks like a mistake.
  */
 export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' }) {
-  const { user, signOut } = useAuth();
+  const { user } = useAuth();
   const { mode, setMode, toggleRail } = useAppearance();
   const [switcher, setSwitcher] = useState(false);
   const [anchor, setAnchor] = useState<null | HTMLElement>(null);
@@ -100,38 +98,7 @@ export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' 
               </Avatar>
             </IconButton>
 
-            <Menu
-              anchorEl={anchor}
-              open={!!anchor}
-              onClose={() => setAnchor(null)}
-              anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-              transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-              slotProps={{ paper: { sx: { minWidth: 220, mt: 0.5 } } }}
-            >
-              <Box sx={{ px: 2, py: 1 }}>
-                <Typography variant="body2" noWrap sx={{ fontWeight: 600 }}>
-                  {user?.displayName ?? 'Signed out'}
-                </Typography>
-                <Typography variant="caption" color="text.secondary" noWrap
-                            sx={{ display: 'block' }}>
-                  {user?.email}
-                </Typography>
-                <Typography variant="caption" color="primary.main"
-                            sx={{ textTransform: 'capitalize' }}>
-                  {user?.role.replace(/_/g, ' ')}
-                </Typography>
-              </Box>
-              <Divider sx={{ my: 0.5 }} />
-              <MenuItem component="a" href="/change-password" onClick={() => setAnchor(null)}>
-                Change password
-              </MenuItem>
-              <MenuItem
-                onClick={() => { setAnchor(null); void signOut(); }}
-                sx={{ color: 'error.main' }}
-              >
-                Sign out
-              </MenuItem>
-            </Menu>
+            <AccountMenu anchorEl={anchor} onClose={() => setAnchor(null)} />
           </Box>
         </Toolbar>
       </AppBar>

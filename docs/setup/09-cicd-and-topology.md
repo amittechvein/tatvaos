@@ -9,7 +9,7 @@ GitHub Actions — CI
    ↓  green
 Testing environment          app-test.tatvaos.com
    ↓  QA sign-off
-Production (manual)          app.tatvaos.com
+Production (manual)          core.tatvaos.com
 ```
 
 ---
@@ -62,7 +62,7 @@ Keep your layout, add a second IP:
 Linode VPS  (8 GB)
 │
 ├── Primary IP    172.105.57.198   PTR mail.tatvaos.com
-│   └── Production     app.tatvaos.com   api.tatvaos.com   db-prod   mail-prod
+│   └── Production     core.tatvaos.com  mail.tatvaos.com  mx.tatvaos.com  db-prod
 │
 └── Second IP     <assigned>       PTR mail-test.tatvaos.com
     └── Testing        app-test.tatvaos.com   api-test.tatvaos.com   db-test   mail-test
@@ -84,7 +84,9 @@ Not now. At the **Phase 3 gate**, before the first paying customer. On one box t
 
 | Record | Value | Purpose |
 |---|---|---|
-| `app.tatvaos.com` | A → VPS IP | Production web |
+| `core.tatvaos.com` | A → VPS IP | Production — TatvaOS Core console |
+| `mail.tatvaos.com` | A → VPS IP | Production — TatvaOS Mail webmail |
+| `mx.tatvaos.com` | A → VPS IP | Mail exchanger. **PTR must match this.** |
 | `api.tatvaos.com` | A → VPS IP | Production API |
 | `mail.tatvaos.com` | A → VPS IP | Production MX host |
 | `app-test.tatvaos.com` | A → VPS IP | Testing web |

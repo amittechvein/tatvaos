@@ -25,6 +25,24 @@ import {
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? '/api';
 
+/**
+ * One account signed in on this browser.
+ *
+ * Assembled by the server from httpOnly cookies and returned in the auth
+ * responses. There is deliberately no token here and no way to get one: the
+ * switcher renders names, and switching is a server call that validates the
+ * slot's actual refresh token.
+ */
+export interface AccountSlot {
+  slot: number;
+  email: string;
+  displayName: string;
+  organisation: string;
+  /** False once the slot's token has expired or been signed out. */
+  signedIn: boolean;
+  active: boolean;
+}
+
 export interface SignedInUser {
   id: string;
   email: string;
@@ -32,7 +50,7 @@ export interface SignedInUser {
   role: string;
   status: string;
   mfaEnabled: boolean;
-  categoryId: string | null;
+  departmentId: string | null;
 }
 
 interface AuthState {
@@ -40,8 +58,16 @@ interface AuthState {
   mustChangePassword: boolean;
   /** True until the initial refresh attempt settles. Render nothing until then. */
   loading: boolean;
+  /** Every account signed in on this browser, including signed-out ones. */
+  accounts: AccountSlot[];
   signIn: (email: string, password: string) => Promise<void>;
-  signOut: () => Promise<void>;
+  /** Signs out of the CURRENT account only; the others stay signed in. */
+  signOut: (all?: boolean) => Promise<void>;
+  /** Move to another account already signed in here. No password. */
+  switchTo: (slot: number) => Promise<void>;
+  /** "Remove" — revokes that account's session and drops it from the list. */
+  forget: (slot: number) => Promise<void>;
+  refreshAccounts: () => Promise<void>;
   changePassword: (current: string, next: string) => Promise<void>;
   /** fetch() that attaches the token and retries once after a silent refresh. */
   authedFetch: (path: string, init?: RequestInit) => Promise<Response>;
@@ -53,6 +79,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<SignedInUser | null>(null);
   const [mustChangePassword, setMustChange] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [accounts, setAccounts] = useState<AccountSlot[]>([]);
 
   // A ref, not state. Setting state schedules a re-render and the new value is
   // not visible to code already running — and the very next thing we do after
@@ -66,11 +93,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refreshing = useRef<Promise<boolean> | null>(null);
 
   const applyAuth = useCallback((data: {
-    accessToken: string; mustChangePassword: boolean; user: SignedInUser;
+    accessToken: string; mustChangePassword: boolean;
+    user: SignedInUser; accounts?: AccountSlot[] | null;
   }) => {
     accessToken.current = data.accessToken;
     setUser(data.user);
     setMustChange(data.mustChangePassword);
+    if (data.accounts) setAccounts(data.accounts);
   }, []);
 
   const doRefresh = useCallback(async (): Promise<boolean> => {
@@ -89,6 +118,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!res.ok) {
           accessToken.current = null;
           setUser(null);
+          // A 401 still carries the roster. Someone whose session expired
+          // should land on "pick an account", not on a blank sign-in form
+          // that has forgotten they have three accounts here.
+          const body = await res.json().catch(() => null);
+          if (body?.accounts) setAccounts(body.accounts);
           return false;
         }
         applyAuth(await res.json());
@@ -149,21 +183,102 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     applyAuth(await res.json());
   }, [applyAuth]);
 
-  const signOut = useCallback(async () => {
-    await fetch(`${API}/auth/logout`, {
+  /**
+   * Signs out of the account in use. The others stay signed in, and this one
+   * stays in the chooser as a one-click "Sign in" — pass all=true for the
+   * shared-machine case, which clears everything.
+   */
+  const signOut = useCallback(async (all = false) => {
+    const res = await fetch(`${API}/auth/logout`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(accessToken.current ? { Authorization: `Bearer ${accessToken.current}` } : {}),
       },
       credentials: 'include',
-      body: '{}',
-    }).catch(() => undefined);
+      body: JSON.stringify({ all }),
+    }).catch(() => null);
 
     accessToken.current = null;
     setUser(null);
     setMustChange(false);
+
+    const body = res && res.ok ? await res.json().catch(() => null) : null;
+    setAccounts(all ? [] : (body?.accounts ?? []));
+
+    // If another account is still signed in here, land on it rather than on a
+    // sign-in form — the person signed out of one account, not out of the
+    // browser.
+    if (!all && typeof body?.switchedTo === 'number') {
+      await switchToRef.current?.(body.switchedTo);
+    }
   }, []);
+
+  /**
+   * Switch to an account already signed in on this browser.
+   *
+   * Sends no credential. The slot's httpOnly refresh cookie is the credential,
+   * and the server rotates it with the same reuse detection as any refresh —
+   * so a stale slot fails here rather than handing back a session it should
+   * not have.
+   */
+  const switchTo = useCallback(async (slot: number) => {
+    const res = await fetch(`${API}/auth/switch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ slot }),
+    });
+
+    const body = await res.json().catch(() => null);
+
+    if (!res.ok) {
+      // That account's session ended while it sat in the list. Reflect it
+      // rather than pretending — the row becomes "Signed out / Sign in".
+      accessToken.current = null;
+      setUser(null);
+      await refreshAccountsRef.current?.();
+      throw new Error(body?.error ?? 'That account needs to sign in again.');
+    }
+
+    applyAuth(body);
+  }, [applyAuth]);
+
+  /** "Remove" in the chooser. Revokes that account's session, then forgets it. */
+  const forget = useCallback(async (slot: number) => {
+    const res = await fetch(`${API}/auth/forget`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ slot }),
+    }).catch(() => null);
+
+    const body = res && res.ok ? await res.json().catch(() => null) : null;
+    setAccounts(body?.accounts ?? []);
+
+    // Removing the account you are using signs you out of it, which is what
+    // "remove" has to mean.
+    if (user && !((body?.accounts ?? []) as AccountSlot[]).some((a) => a.active)) {
+      accessToken.current = null;
+      setUser(null);
+    }
+  }, [user]);
+
+  const refreshAccounts = useCallback(async () => {
+    const res = await fetch(`${API}/auth/accounts`, { credentials: 'include' })
+      .catch(() => null);
+    if (!res || !res.ok) return;
+    const body = await res.json().catch(() => null);
+    setAccounts(body?.accounts ?? []);
+  }, []);
+
+  // signOut is defined before switchTo but calls it, and refreshAccounts is
+  // defined after switchTo. Refs break the cycle without reordering the file
+  // into something that reads backwards.
+  const switchToRef = useRef<typeof switchTo | null>(null);
+  const refreshAccountsRef = useRef<typeof refreshAccounts | null>(null);
+  switchToRef.current = switchTo;
+  refreshAccountsRef.current = refreshAccounts;
 
   const changePassword = useCallback(async (current: string, next: string) => {
     const res = await authedFetch('/auth/change-password', {
@@ -185,8 +300,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [authedFetch]);
 
   const value = useMemo<AuthState>(() => ({
-    user, mustChangePassword, loading, signIn, signOut, changePassword, authedFetch,
-  }), [user, mustChangePassword, loading, signIn, signOut, changePassword, authedFetch]);
+    user, mustChangePassword, loading, accounts,
+    signIn, signOut, switchTo, forget, refreshAccounts, changePassword, authedFetch,
+  }), [user, mustChangePassword, loading, accounts,
+       signIn, signOut, switchTo, forget, refreshAccounts, changePassword, authedFetch]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

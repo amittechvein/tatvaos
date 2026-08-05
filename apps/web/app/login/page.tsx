@@ -69,7 +69,12 @@ function SignInForm() {
   const router = useRouter();
   const params = useSearchParams();
 
-  const [email, setEmail] = useState('');
+  // "Add account" arrives here with a live session on purpose, so the
+  // already-signed-in redirect below has to stand down — otherwise the person
+  // clicks Add account and gets bounced straight back to the dashboard.
+  const adding = params.get('add') === '1';
+
+  const [email, setEmail] = useState(params.get('email') ?? '');
   const [password, setPassword] = useState('');
   const [reveal, setReveal] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -77,11 +82,11 @@ function SignInForm() {
 
   // Already signed in — usually a bookmarked /login or a back button.
   useEffect(() => {
-    if (loading || !user) return;
+    if (loading || !user || adding) return;
     router.replace(mustChangePassword
       ? '/change-password'
       : params.get('next') ?? destinationFor(user.role));
-  }, [loading, user, mustChangePassword, router, params]);
+  }, [loading, user, mustChangePassword, router, params, adding]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();

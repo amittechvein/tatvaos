@@ -48,7 +48,7 @@ jobs:
     # A typed string is a speed bump; an approval is a second person.
     environment:
       name: production
-      url: https://app.tatvaos.com
+      url: https://core.tatvaos.com
 
     steps:
       - uses: actions/checkout@v4
@@ -72,24 +72,40 @@ jobs:
             # to continue if that fails.
             CI=1 ./infra/scripts/deploy.sh production
 
+      # There is no api.tatvaos.com. The API sits behind core.tatvaos.com/api,
+      # so that both share a registrable domain and one auth cookie covers
+      # Core and Mail. An earlier version of this step polled a hostname that
+      # has never existed, which would have failed every production deploy at
+      # the final gate.
       - name: Smoke test
         run: |
           set -euo pipefail
           for i in $(seq 1 20); do
-            code=$(curl -sk -o /dev/null -w '%{http_code}' https://api.tatvaos.com/health || true)
+            code=$(curl -sk -o /dev/null -w '%{http_code}' https://core.tatvaos.com/health || true)
             [ "$code" = "200" ] && { echo "healthy"; exit 0; }
             sleep 6
           done
           echo "Production did not become healthy — investigate immediately"
           exit 1
 
-      - name: Mail flow still works
+      - name: Database reachable
         run: |
           # A web app that responds while mail is silently broken is the worst
           # failure mode this product has, because nobody notices for hours.
-          code=$(curl -sk -o /dev/null -w '%{http_code}' https://api.tatvaos.com/health/db || true)
+          code=$(curl -sk -o /dev/null -w '%{http_code}' https://core.tatvaos.com/health/db || true)
           [ "$code" = "200" ] || { echo "Database unreachable from the API"; exit 1; }
           echo "database reachable"
+
+      - name: Mail front door reachable
+        run: |
+          # mail.tatvaos.com is served by the same box through its own Caddy
+          # site block. If the conf.d fragment failed to mount, this is the
+          # only place it would show up before a customer found it.
+          code=$(curl -sk -o /dev/null -w '%{http_code}' https://mail.tatvaos.com/ || true)
+          case "$code" in
+            200|301|302|307|308) echo "mail front door responding ($code)" ;;
+            *) echo "mail.tatvaos.com returned $code — check the conf.d mount"; exit 1 ;;
+          esac
 
       - name: If this failed
         if: failure()

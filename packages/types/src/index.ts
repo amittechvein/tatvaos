@@ -192,22 +192,28 @@ export interface Organisation {
 }
 
 /**
- * A category groups users and carries defaults — Teachers, Students, Doctors,
- * Reception. Creating fifty accounts one at a time with the same settings is
- * the single most tedious part of onboarding an organisation, and categories
- * are what remove it.
+ * A department — what Google calls an Organisational Unit.
+ *
+ * Hierarchical: parentId nests it, and a null defaultQuotaBytes means INHERIT
+ * from the parent rather than "unset". That distinction is the whole point of
+ * the tree, so it must survive into the client types.
  */
-export interface UserCategory {
+export interface Department {
   id: Uuid;
   tenantId: Uuid;
   name: string;
   description?: string;
-  /** Applied to new users in this category. Ignored when storage is pooled. */
+  /**
+   * Applied to new users here. NULL/undefined means INHERIT from the parent,
+   * not "unset" — that distinction is the point of the tree.
+   */
   defaultQuotaBytes?: number;
   defaultRole: Role;
+  /** null for a top-level department. */
+  parentId: string | null;
   /**
-   * Which products a new user in this category receives. A school buys Drive
-   * for its staff and not for its 400 students, so this belongs here rather
+   * Which products a new user here receives. A school buys Drive for its staff
+   * and not for its 400 students, so this belongs on the department rather
    * than on the organisation.
    */
   defaultProducts: string[];
@@ -238,8 +244,8 @@ export interface OrgUser {
   displayName: string;
   /** Null when the person has no mailbox. */
   mailboxAddress: string | null;
-  categoryId: Uuid | null;
-  categoryName?: string;
+  departmentId: Uuid | null;
+  departmentName?: string;
   role: Role;
   status: 'active' | 'suspended' | 'pending' | 'deleted';
   /** Product codes this person can use: 'mail', 'drive', 'payroll', … */
