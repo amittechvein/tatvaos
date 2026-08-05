@@ -70,6 +70,16 @@ export function Sidebar({ sections, brand }: { sections: NavSection[]; brand: st
   const { railMode } = useAppearance();
   const [open, setOpen] = useState<string | null>(null);
 
+  // LONGEST match wins, across the whole panel. "/org" is a prefix of every
+  // page in the console, so prefix-matching each item independently lit the
+  // Dashboard pill on all of them — two glowing pills on every screen, seen
+  // the first time the new shell was actually looked at rather than built.
+  const activeHref = sections
+    .flatMap((sec) => sec.items)
+    .flatMap((i) => [i.href, ...(i.children?.map((c) => c.href) ?? [])])
+    .filter((h) => h && (pathname === h || pathname.startsWith(`${h}/`)))
+    .sort((a, b) => b.length - a.length)[0];
+
   if (railMode === 'hidden') return null;
 
   const current = activeProduct(pathname);
@@ -187,9 +197,8 @@ export function Sidebar({ sections, brand }: { sections: NavSection[]; brand: st
 
                 {section.items.map((item) => {
                   const active =
-                    pathname === item.href ||
-                    pathname.startsWith(`${item.href}/`) ||
-                    item.children?.some((c) => pathname === c.href);
+                    item.href === activeHref ||
+                    item.children?.some((c) => c.href === activeHref);
                   const expanded = open === item.href;
 
                   return (
