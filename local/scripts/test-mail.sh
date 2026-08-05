@@ -147,6 +147,139 @@ else
     printf '         %s\n' "$(printf '%s' "$wrong_out" | head -3)"
 fi
 
+# ===========================================================================
+#  THE OUTBOUND GATE
+# ===========================================================================
+#
+#  This is the abuse control the Linode SMTP unblock request rests on: a
+#  tenant that has not verified a domain of its own cannot email the outside
+#  world. Until now nothing asserted it — and a gate nobody tested is a gate
+#  that might be off.
+#
+#  It only applies to the SUBMISSION port (5870 here, 587 in production).
+#  Everything above sends through 2525, which is inbound and never consults
+#  it — which is exactly why it went untested for so long.
+#
+#  The fixture is created here rather than in the seed so this file is
+#  self-contained and so an unverified tenant does not sit in the demo data
+#  looking like a real customer.
+# ===========================================================================
+hdr "Outbound gate (submission)"
+
+SUB_PORT=${SUB_PORT:-5870}
+GATE_TENANT='cccccccc-cccc-cccc-cccc-cccccccccccc'
+
+psql_root() { docker exec -i tv-postgres psql -U postgres -d tatvaos_mail -tAc "$1" 2>&1; }
+
+gate_teardown() {
+    psql_root "DELETE FROM mail.mailboxes WHERE tenant_id = '$GATE_TENANT';
+               DELETE FROM core.domains   WHERE tenant_id = '$GATE_TENANT';
+               DELETE FROM core.storage_pools WHERE tenant_id = '$GATE_TENANT';
+               DELETE FROM core.tenants   WHERE id = '$GATE_TENANT';" >/dev/null 2>&1
+}
+trap gate_teardown EXIT
+
+gate_teardown   # in case a previous run died before its trap fired
+
+setup_out=$(psql_root "
+    INSERT INTO core.tenants (id, name, type, status, admin_name, admin_email, country)
+    VALUES ('$GATE_TENANT', 'Unverified Co', 'business', 'trial',
+            'Nobody', 'nobody@unverified.local', 'IN');
+
+    INSERT INTO core.storage_pools (tenant_id, storage_model, total_bytes, per_user_quota_bytes)
+    VALUES ('$GATE_TENANT', 'per_user', 1073741824, 1073741824);
+
+    -- The whole point: is_active so mail routes to us, but ownership and MX
+    -- both NULL, so the tenant has proved nothing.
+    INSERT INTO core.domains (tenant_id, fqdn, type, is_active,
+                              ownership_verified_at, mx_verified_at)
+    VALUES ('$GATE_TENANT', 'unverified.local', 'primary', true, NULL, NULL);
+
+    INSERT INTO mail.mailboxes (tenant_id, domain_id, address, local_part, type,
+                                imap_password_hash, quota_bytes)
+    SELECT '$GATE_TENANT', d.id, 'spammer@unverified.local', 'spammer', 'user',
+           '{PLAIN}devpass123', 1073741824
+      FROM core.domains d WHERE d.fqdn = 'unverified.local';
+")
+
+if psql_root "SELECT count(*) FROM mail.mailboxes WHERE address = 'spammer@unverified.local'" \
+   | grep -qx 1; then
+    pass "fixture created (unverified tenant, no ownership, no MX)"
+else
+    fail "could not create the gate fixture — the rest of this section proves nothing"
+    printf '         %s\n' "$(printf '%s' "$setup_out" | tail -3)"
+fi
+
+# The view is the gate's source of truth. If this is wrong, everything below
+# is testing Postfix against a lie.
+if psql_root "SELECT count(*) FROM mail.senders_allowed_external
+               WHERE address = 'spammer@unverified.local'" | grep -qx 0; then
+    pass "senders_allowed_external excludes the unverified sender"
+else
+    fail "senders_allowed_external INCLUDES an unverified sender — the view is broken"
+fi
+
+if psql_root "SELECT count(*) FROM mail.senders_allowed_external
+               WHERE address = 'amit@techvein.local'" | grep -qx 1; then
+    pass "senders_allowed_external includes a fully verified sender"
+else
+    fail "a verified sender is NOT in the view — the gate would block real customers"
+fi
+
+submit() {
+    swaks --server "$SMTP_HOST:$SUB_PORT" \
+          --from "$1" --to "$2" \
+          --header "Subject: gate test $(date +%s)" --body "x" \
+          --hide-all --silent 3 >/dev/null 2>&1
+}
+
+# THE assertion. If this passes when it should fail, we have an open spam
+# relay and the answer we gave Linode is untrue.
+if submit "spammer@unverified.local" "victim@gmail.com"; then
+    fail "UNVERIFIED TENANT SENT TO THE OUTSIDE WORLD — the outbound gate is OFF"
+    info "This is the control the Linode SMTP unblock rests on. Do not deploy."
+else
+    pass "unverified tenant rejected when sending off-platform"
+fi
+
+# The gate must not be a blanket ban, or a new customer cannot email their own
+# colleagues while they set DNS up — which is the first hour of every signup.
+if submit "spammer@unverified.local" "spammer@unverified.local"; then
+    pass "unverified tenant can still send within the platform"
+else
+    fail "unverified tenant cannot send internally either — the gate is too broad"
+fi
+
+# A paying, verified customer must be unaffected.
+if submit "amit@techvein.local" "someone@gmail.com"; then
+    pass "verified tenant sends off-platform normally"
+else
+    fail "VERIFIED tenant blocked from sending out — the gate is rejecting customers"
+fi
+
+# ---------------------------------------------------------------------------
+#  KNOWN GAP, asserted deliberately so it cannot change without someone
+#  noticing.
+#
+#  'internal_only' permits any domain THE PLATFORM hosts, not any domain THE
+#  TENANT owns. So an unverified signup can email every other TatvaOS
+#  customer — while the rejection message says "outside your organisation".
+#
+#  Low impact at four customers, and it grows with every one. Fixing it needs
+#  a recipient check scoped to the sender's tenant. Recorded here rather than
+#  changed on the eve of a production promotion.
+# ---------------------------------------------------------------------------
+if submit "spammer@unverified.local" "amit@techvein.local"; then
+    info "KNOWN GAP: unverified tenant can email OTHER tenants on the platform"
+    info "  the gate is platform-internal, not organisation-internal"
+else
+    pass "gate is organisation-scoped (better than documented — update the docs)"
+fi
+
+gate_teardown
+trap - EXIT
+pass "fixture removed"
+
 # ---------------------------------------------------------------------------
 hdr "Outbound containment"
 info "Every outbound message relays to Mailpit. Nothing reaches the internet."

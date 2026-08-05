@@ -100,9 +100,16 @@ services:
       - "2525:25"        # inbound  - swaks --server localhost:2525
       - "5870:587"       # submission
     volumes:
-      - ./postfix/main.cf:/etc/postfix/main.cf:ro
+      # .tmpl: the entrypoint renders myhostname and relayhost into the real
+      # file. Locally both keep their defaults, so nothing changes here — but
+      # the SAME code path runs, which is the point. A render that only ever
+      # executes on a server is a render nobody has tested.
+      - ./postfix/main.cf:/etc/postfix/main.cf.tmpl:ro
       - ./postfix/master.cf:/etc/postfix/master.cf:ro
-      - ./postfix/sql:/etc/postfix/sql:ro
+      # -src: the entrypoint renders /etc/postfix/sql from these. Same
+      # mechanism as the cloud stack — one code path, so a change here
+      # is exercised locally before it reaches a server.
+      - ./postfix/sql:/etc/postfix/sql-src:ro
       - maillogs:/var/log
     networks: [mailnet]
 
@@ -122,7 +129,7 @@ services:
       - "1143:143"       # IMAP - point Thunderbird here
     volumes:
       - ./dovecot/dovecot.conf:/etc/dovecot/dovecot.conf:ro
-      - ./dovecot/dovecot-sql.conf.ext:/etc/dovecot/dovecot-sql.conf.ext:ro
+      - ./dovecot/dovecot-sql.conf.ext:/etc/dovecot/dovecot-sql.conf.ext.tmpl:ro
       - vmail:/var/mail/vhosts
     networks: [mailnet]
 

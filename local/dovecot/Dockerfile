@@ -20,6 +20,11 @@ RUN groupadd -g 5000 vmail \
  && mkdir -p /var/mail/vhosts \
  && chown -R vmail:vmail /var/mail/vhosts
 
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 EXPOSE 143 24
 
-CMD ["dovecot", "-F"]
+# The entrypoint renders dovecot-sql.conf.ext from a template so the mail-edge
+# database password comes from the environment rather than from source control.
+ENTRYPOINT ["/entrypoint.sh"]

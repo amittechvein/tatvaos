@@ -2,7 +2,7 @@
 #  Postfix main.cf  -  TatvaOS Mail local development
 # ============================================================================
 #  Mirrors the production shape: fully virtual, Postgres-backed, LMTP handoff
-#  to Dovecot. The only local concessions are no TLS and a relayhost pointing
+#  to Dovecot. Locally the concessions are no TLS and a relayhost pointing
 #  at Mailpit so nothing can escape.
 # ============================================================================
 
@@ -71,11 +71,15 @@ smtpd_helo_required = yes
 #  organisation has verified a domain of its OWN - ownership AND MX - its
 #  mailboxes may email domains we host and nothing else.
 #
-#  This is duplicated from infra/postfix/main.cf, and that duplication is a
-#  known problem tracked separately. It is here because the CI mail-stack job
-#  builds THIS config, and a gate that only exists in the deployed copy is a
-#  gate nobody has ever started. Shipping an untested abuse control to
-#  production is how the answer we gave Linode becomes untrue by accident.
+#  There is no longer a second copy. infra/postfix/main.cf used to exist and
+#  had drifted badly — pre-restructure table names in its lookups, and a
+#  hardcoded relayhost pointing at a Mailpit container that does not run
+#  outside development. CI only ever built THIS file, so nothing caught it.
+#
+#  This file is now the only one, for every environment. The three values that
+#  legitimately differ — myhostname, mydomain, relayhost — are rewritten at
+#  container start from MAIL_HOSTNAME and RELAY_TO_MAILPIT. See
+#  local/postfix/entrypoint.sh.
 #
 #  Order inside the class matters. check_recipient_access returns OK for a
 #  domain we host, which permits and stops. Anything else falls through to the

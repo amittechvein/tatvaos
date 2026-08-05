@@ -30,6 +30,10 @@ services:
       # generated secret from .env against a role that still has 'dev_app_pw',
       # and every query fails while the container reports itself Up.
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:?APP_DB_PASSWORD must be set}
+      # Same story for the mail edge. Postfix and Dovecot render their config
+      # from this at start; 03-role-passwords.sql rotates the role from it.
+      # Both halves must move together or mail delivery stops.
+      MAILEDGE_DB_PASSWORD: ${MAILEDGE_DB_PASSWORD:?MAILEDGE_DB_PASSWORD must be set}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ../../local/postgres/init:/docker-entrypoint-initdb.d:ro
@@ -60,10 +64,36 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       dovecot:  { condition: service_started }
+    environment:
+      # The .cf files in source control say 'dev_mail_pw'. The entrypoint
+      # renders real ones from sql-src at start, so the password never sits in
+      # the repo or in an image layer. Unset is fatal unless TATVAOS_ENV=local.
+      MAILEDGE_DB_PASSWORD: ${MAILEDGE_DB_PASSWORD:?MAILEDGE_DB_PASSWORD must be set}
+      TATVAOS_ENV: ${TATVAOS_ENV:-local}
+      # What Postfix announces in HELO. Receivers check it against our PTR, so
+      # this and the reverse DNS record must be the same name.
+      MAIL_HOSTNAME: ${MAIL_HOSTNAME:-mail.techvein.local}
+      # Defaults to CONTAINED. Getting this wrong in the safe direction means
+      # test mail piles up in Mailpit; wrong in the other direction means test
+      # mail reaches real people, which cannot be undone.
+      RELAY_TO_MAILPIT: ${RELAY_TO_MAILPIT:-true}
+      RELAY_HOST: ${RELAY_HOST:-}
     volumes:
-      - ../postfix/main.cf:/etc/postfix/main.cf:ro
-      - ../postfix/master.cf:/etc/postfix/master.cf:ro
-      - ../postfix/sql:/etc/postfix/sql:ro
+      # ONE source of truth, shared with the local stack and CI.
+      #
+      # These used to be separate copies under infra/. They drifted: the
+      # deployed ones still queried pre-restructure table names (domains,
+      # mailboxes) that have lived in core.* and mail.* for some time, so
+      # every recipient lookup on a server would have failed. CI only ever
+      # built the local/ copies, so nothing caught it.
+      #
+      # The build context is already ../../local/postfix. Config now follows
+      # it, and the environment-specific values are rendered by the entrypoint
+      # from MAIL_HOSTNAME / RELAY_TO_MAILPIT rather than by keeping a second
+      # file.
+      - ../../local/postfix/main.cf:/etc/postfix/main.cf.tmpl:ro
+      - ../../local/postfix/master.cf:/etc/postfix/master.cf:ro
+      - ../../local/postfix/sql:/etc/postfix/sql-src:ro
       - maillogs:/var/log
     networks: [mailnet]
 
@@ -73,9 +103,19 @@ services:
     restart: unless-stopped
     depends_on:
       postgres: { condition: service_healthy }
+    environment:
+      MAILEDGE_DB_PASSWORD: ${MAILEDGE_DB_PASSWORD:?MAILEDGE_DB_PASSWORD must be set}
+      TATVAOS_ENV: ${TATVAOS_ENV:-local}
     volumes:
-      - ../dovecot/dovecot.conf:/etc/dovecot/dovecot.conf:ro
-      - ../dovecot/dovecot-sql.conf.ext:/etc/dovecot/dovecot-sql.conf.ext:ro
+      # Same single source as Postfix. The infra/ copy was stale in a way that
+      # mattered: it selected m.password_hash (renamed to imap_password_hash)
+      # and omitted the suspended-user check, so a person suspended in Core
+      # could still have authenticated to IMAP.
+      - ../../local/dovecot/dovecot.conf:/etc/dovecot/dovecot.conf:ro
+      # As a template. The entrypoint renders the real file, because Dovecot
+      # refuses to read a config holding a password that is group-readable —
+      # and a read-only bind mount cannot be chmod-ed.
+      - ../../local/dovecot/dovecot-sql.conf.ext:/etc/dovecot/dovecot-sql.conf.ext.tmpl:ro
       - vmail:/var/mail/vhosts
     networks: [mailnet]
 

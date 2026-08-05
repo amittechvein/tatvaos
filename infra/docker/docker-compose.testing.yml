@@ -37,6 +37,7 @@ services:
     environment:
       # THE containment line. Removing it lets test mail reach real inboxes.
       RELAY_TO_MAILPIT: "true"
+      MAIL_HOSTNAME: ${MAIL_HOSTNAME:-mail.staging.tatvaos.com}
 
   dovecot:
     hostname: mail.staging.tatvaos.com

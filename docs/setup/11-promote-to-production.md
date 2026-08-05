@@ -148,9 +148,10 @@ chmod 600 ~/tv2026a.key.backup
 
 ## 5 · Move the checkout
 
-The Compose project name comes from the directory name, and volumes are named
-after the project. Renaming the directory therefore points the stack at a new,
-empty set of volumes — which is why the dump above exists.
+Safe to rename. `docker-compose.base.yml` pins `name: tatvaos`, so the Compose
+project — and therefore the volume names — do not follow the directory. The
+database and the mail store survive the move. (Take the dump anyway; it is the
+only backup, and it is the first time this path has been exercised.)
 
 ```bash
 cd /srv/tatvaos-testing
@@ -204,6 +205,21 @@ What must be right:
 | `AUTH_COOKIE_DOMAIN` | `.tatvaos.com` |
 | `BOOTSTRAP_ADMIN_EMAIL` | `amit@techvein.com` |
 | `BOOTSTRAP_ADMIN_PASSWORD` | a long one, used once, then changed |
+| `TATVAOS_ENV` | `production` |
+| `MAILEDGE_DB_PASSWORD` | a fresh `openssl rand -base64 32` |
+| `MAIL_HOSTNAME` | `mx.tatvaos.com` — must equal the PTR |
+| `RELAY_HOST` | empty, unless warming up through a smart host |
+
+`MAILEDGE_DB_PASSWORD` is new. Postfix and Dovecot used to read `dev_mail_pw`
+out of files committed to the repo; they now render their config from this
+variable at container start, and the schema rotates the `tatvaos_mailedge` role
+from the same value so both halves move together. Leave it unset and those two
+containers refuse to start — deliberately, because starting on a published
+password while reporting healthy is the worse outcome.
+
+`TATVAOS_ENV=production` is what arms that refusal. With it set to `local` (the
+default) they fall back to the development password, which is right on a laptop
+and wrong everywhere else.
 
 `AUTH_COOKIE_DOMAIN` is what makes one sign-in cover both hosts. Without it the
 session cookie is host-only, you sign into Core, and Mail asks you to sign in
@@ -252,6 +268,14 @@ docker compose -f infra/docker/docker-compose.base.yml \
                --env-file infra/docker/.env \
                exec postfix postconf myhostname
 
+# The mail edge must NOT be using the development password.
+docker compose -f infra/docker/docker-compose.base.yml \
+               -f infra/docker/docker-compose.production.yml \
+               --env-file infra/docker/.env \
+               exec postfix grep -c dev_mail_pw /etc/postfix/sql/virtual-domains.cf
+# Expect 0. A 1 means the render did not happen and the role rotation did,
+# so every recipient lookup is about to fail.
+
 # And the containment relay must be GONE. Any output here is a problem.
 docker compose -f infra/docker/docker-compose.base.yml \
                -f infra/docker/docker-compose.production.yml \
@@ -287,13 +311,50 @@ we gave Linode untrue, which is a much worse problem than a blocked port.
 
 ---
 
+## What was found while preparing this
+
+Three things in the deployed mail config would have broken production. All are
+fixed; recorded because the shape of the mistake will recur.
+
+**The deployed config was a second copy, and it had drifted.** `infra/postfix/`
+and `infra/dovecot/` held their own versions of the SQL lookup files. Those
+still queried `domains`, `mailboxes`, `tenants` — the pre-restructure names.
+Everything has lived in `core.*` and `mail.*` for a while, and no `search_path`
+is set for `tatvaos_mailedge`, so every recipient lookup on a server would have
+failed with "relation does not exist" and all inbound mail would have been
+rejected. CI builds `local/`, so it passed 17/17 the whole time.
+
+**Dovecot's deployed query had a security hole.** It selected
+`m.password_hash`, a column renamed to `imap_password_hash`, and it omitted the
+`u.status = 'active'` check entirely. A person suspended in Core would still
+have authenticated to IMAP — which is precisely the promise that putting
+identity in Core is supposed to buy.
+
+**`RELAY_TO_MAILPIT` was connected to nothing.** Both copies of `main.cf`
+hardcoded `relayhost = [mailpit]:1025` and `myhostname = mail.techvein.local`.
+The production overlay set `RELAY_TO_MAILPIT: "false"`, no code read it, and
+production would have announced itself as a `.local` host and deferred every
+message to a container that does not exist there.
+
+There is now one `main.cf`, one `master.cf`, one set of lookup files and one
+Dovecot config, all under `local/`, all built and exercised by CI. The values
+that legitimately differ per environment are rewritten at container start.
+Postfix refuses to start if `myhostname` is still a `.local` name outside
+development, and refuses to start if the mail-edge password is missing.
+
+**The lesson, for the fourth time:** two copies of one thing, the fix lands in
+one, and the tested one is the other. It has now happened with the isolation
+scripts, the theme accent, the Postfix configs and the Dovecot query. When
+something must differ per environment, template the difference — do not fork
+the file.
+
+---
+
 ## Still open
 
 - The outbound gate has **never been asserted in a test**. It is the control
   the SMTP ticket rests on, and a gate nobody tested is a gate that might be
   off. Write the test before the first customer sends.
-- `dev_mail_pw` is still in the mail-edge `.cf` files and must be replaced with
-  the real `APP_DB_PASSWORD` before production traffic.
 - `dmarc@tatvaos.com` receives the DMARC aggregate reports. It needs to be a
   real mailbox or the reports bounce and the monitoring is decorative.
 - DMARC is `p=none`, which observes and enforces nothing. Move to

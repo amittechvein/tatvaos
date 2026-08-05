@@ -9,7 +9,6 @@ import IconButton from '@mui/material/IconButton';
 import InputAdornment from '@mui/material/InputAdornment';
 import TextField from '@mui/material/TextField';
 import Toolbar from '@mui/material/Toolbar';
-import Typography from '@mui/material/Typography';
 import { alpha } from '@mui/material/styles';
 import { useAuth } from '@/lib/auth';
 import { AccountMenu } from './AccountMenu';

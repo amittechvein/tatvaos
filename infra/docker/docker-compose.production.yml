@@ -46,8 +46,15 @@ services:
       - "25:25"      # inbound from the internet
       - "587:587"    # authenticated submission
     environment:
+      # Read by the entrypoint, which renders relayhost in main.cf from it.
+      # It used to be set here and read by nothing — main.cf hardcoded
+      # relayhost = [mailpit]:1025 in BOTH environments, so this switch was
+      # decorative and production would have deferred every message forever.
       RELAY_TO_MAILPIT: "false"
       RELAY_HOST: ${RELAY_HOST:-}
+      # Must match the PTR for this IP. The entrypoint refuses to start on a
+      # .local name outside local development.
+      MAIL_HOSTNAME: ${MAIL_HOSTNAME:-mx.tatvaos.com}
     logging:
       driver: json-file
       options: { max-size: "100m", max-file: "10" }

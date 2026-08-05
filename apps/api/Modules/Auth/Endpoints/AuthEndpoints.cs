@@ -237,7 +237,8 @@ public static class AuthEndpoints
     /// </summary>
     private static object BuildRoster(
         HttpContext http, int active,
-        HashSet<int>? signedOut = null, HashSet<int>? removed = null)
+        HashSet<int>? signedOut = null, HashSet<int>? removed = null,
+        HashSet<int>? signedIn = null)
     {
         var list = new List<object>();
 
@@ -253,7 +254,8 @@ public static class AuthEndpoints
             // a free query amplifier on the open internet. Switching does the
             // real check, and the UI corrects itself from that response.
             var hasToken = signedOut?.Contains(slot) != true
-                && !string.IsNullOrWhiteSpace(http.Request.Cookies[RefreshCookie(slot)]);
+                && (signedIn?.Contains(slot) == true
+                    || !string.IsNullOrWhiteSpace(http.Request.Cookies[RefreshCookie(slot)]));
 
             list.Add(new
             {
@@ -383,8 +385,14 @@ public static class AuthEndpoints
     /// </summary>
     private static IResult AccountsAsync(HttpContext http)
     {
-        MigrateLegacyCookie(http);
-        return Results.Ok(new { accounts = BuildRoster(http, ActiveSlot(http)) });
+        var migrated = MigrateLegacyCookie(http);
+        var active = migrated is null ? ActiveSlot(http) : 0;
+
+        return Results.Ok(new
+        {
+            accounts = BuildRoster(http, active,
+                signedIn: migrated is null ? null : [0]),
+        });
     }
 
     // ------------------------------------------------------------------
@@ -480,13 +488,16 @@ public static class AuthEndpoints
         RefreshRequest req, AppDbContext db, TokenIssuer tokens,
         TenantContext tenant, HttpContext http, CancellationToken ct)
     {
-        MigrateLegacyCookie(http);
+        // A session from before slots existed becomes slot 0. The token comes
+        // back from the call because the cookie we just wrote is on the
+        // response, and Request.Cookies only holds what the browser sent.
+        var migrated = MigrateLegacyCookie(http);
 
-        var slot = ActiveSlot(http);
+        var slot = migrated is null ? ActiveSlot(http) : 0;
 
         // Cookie first. A browser sends it automatically and never exposes it
         // to script; the body is the mobile path.
-        var presented = http.Request.Cookies[RefreshCookie(slot)];
+        var presented = migrated ?? http.Request.Cookies[RefreshCookie(slot)];
 
         // The active slot may have been signed out while another account is
         // still live — land on that one instead of demanding a fresh sign-in.
@@ -699,58 +710,31 @@ public static class AuthEndpoints
     }
 
     /// <summary>
-    /// Moves a pre-slot session into slot 0.
+    /// Moves a pre-slot session into slot 0, and hands the token back.
     ///
-    /// Without this, deploying multi-account signs out everyone who was
-    /// already using the product — a self-inflicted incident on release day.
-    /// The old cookie is deleted so this runs once per browser.
+    /// Without this, deploying multi-account signs out everyone who was already
+    /// using the product — a self-inflicted incident on release day. The old
+    /// cookie is deleted so it runs once per browser.
+    ///
+    /// It RETURNS the token rather than making it readable from
+    /// Request.Cookies, because Request.Cookies is what the browser sent and
+    /// cannot see what we have just written to the response. An earlier version
+    /// swapped in a custom IRequestCookieCollection to fake that, which is a lot
+    /// of surface area — and an exact nullability match against a BCL interface
+    /// — for one migration that runs once. A return value says the same thing.
     /// </summary>
-    private static void MigrateLegacyCookie(HttpContext http)
+    private static string? MigrateLegacyCookie(HttpContext http)
     {
         var legacy = http.Request.Cookies[LegacyRefreshCookie];
-        if (string.IsNullOrWhiteSpace(legacy)) return;
-        if (!string.IsNullOrWhiteSpace(http.Request.Cookies[RefreshCookie(0)])) return;
+        if (string.IsNullOrWhiteSpace(legacy)) return null;
+        if (!string.IsNullOrWhiteSpace(http.Request.Cookies[RefreshCookie(0)])) return null;
 
         http.Response.Cookies.Append(RefreshCookie(0), legacy,
             CookieOpts(DateTimeOffset.UtcNow.Add(TokenIssuer.RefreshTokenLifetime)));
         http.Response.Cookies.Append(ActiveCookie, "0", CookieOpts());
         http.Response.Cookies.Delete(LegacyRefreshCookie, CookieOpts());
 
-        // Make it visible to the rest of THIS request too — the roster and the
-        // rotation below both read from Request.Cookies, which does not see
-        // what we just wrote to the response.
-        http.Request.Cookies = new MergedCookies(http.Request.Cookies,
-            new Dictionary<string, string> { [RefreshCookie(0)] = legacy, [ActiveCookie] = "0" });
-    }
-
-    /// <summary>Request cookies with a few values overlaid, for the one
-    /// request in which a legacy session is migrated.</summary>
-    private sealed class MergedCookies(IRequestCookieCollection inner,
-                                       Dictionary<string, string> overlay) : IRequestCookieCollection
-    {
-        public string? this[string key] =>
-            overlay.TryGetValue(key, out var v) ? v : inner[key];
-
-        public ICollection<string> Keys => [.. inner.Keys.Union(overlay.Keys)];
-        public int Count => Keys.Count;
-        public bool ContainsKey(string key) => overlay.ContainsKey(key) || inner.ContainsKey(key);
-
-        // The attribute matches IRequestCookieCollection's declaration. Without
-        // it the nullability contracts differ, and this project builds with
-        // warnings as errors.
-        public bool TryGetValue(
-            string key,
-            [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out string? value)
-        {
-            if (overlay.TryGetValue(key, out var v)) { value = v; return true; }
-            return inner.TryGetValue(key, out value);
-        }
-
-        public IEnumerator<KeyValuePair<string, string>> GetEnumerator() =>
-            inner.Where(kv => !overlay.ContainsKey(kv.Key)).Concat(overlay).GetEnumerator();
-
-        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() =>
-            GetEnumerator();
+        return legacy;
     }
 
     private sealed record RotateOutcome(
