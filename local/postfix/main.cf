@@ -64,6 +64,36 @@ smtpd_recipient_restrictions =
 
 smtpd_helo_required = yes
 
+# ----------------------------------------------------------------------------
+#  THE OUTBOUND GATE
+# ----------------------------------------------------------------------------
+#  Signup is self-service, so anyone can create an organisation. Until that
+#  organisation has verified a domain of its OWN - ownership AND MX - its
+#  mailboxes may email domains we host and nothing else.
+#
+#  This is duplicated from infra/postfix/main.cf, and that duplication is a
+#  known problem tracked separately. It is here because the CI mail-stack job
+#  builds THIS config, and a gate that only exists in the deployed copy is a
+#  gate nobody has ever started. Shipping an untested abuse control to
+#  production is how the answer we gave Linode becomes untrue by accident.
+#
+#  Order inside the class matters. check_recipient_access returns OK for a
+#  domain we host, which permits and stops. Anything else falls through to the
+#  static REJECT. Putting the reject first would refuse internal mail too, and
+#  the failure would look like a broken database lookup.
+# ----------------------------------------------------------------------------
+smtpd_restriction_classes = internal_only
+
+internal_only =
+    check_recipient_access pgsql:/etc/postfix/sql/local-recipient-domains.cf
+    check_recipient_access static:"REJECT Sending outside your organisation requires a verified domain. Add and verify yours under Domains in your TatvaOS console."
+
+# Named here and referenced from master.cf: -o values there cannot contain
+# spaces, so "check_sender_access pgsql:..." cannot be written inline - a comma
+# would make Postfix read the map as a second, invalid restriction.
+submission_sender_restrictions =
+    check_sender_access pgsql:/etc/postfix/sql/sender-external-gate.cf
+
 #  Consulted ONLY by the submission service in master.cf, never by port 25.
 #  Broad here because the Docker bridge address varies between machines.
 #

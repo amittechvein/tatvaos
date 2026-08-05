@@ -31,6 +31,7 @@ const PATHS = {
   globe:     'M12 21a9 9 0 100-18 9 9 0 000 18zM3.6 9h16.8M3.6 15h16.8M12 3a15 15 0 010 18a15 15 0 010-18',
   database:  'M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3',
   card:      'M3 7h18v10H3zM3 11h18M7 15h3',
+  inbox:     'M4 13h4l2 3h4l2-3h4M4 13l2-8h12l2 8v6H4v-6z',
   mail:      'M3 7l9 6 9-6M3 7h18v10H3z',
   drive:     'M12 3l8 14H4L12 3zM9 17l-3 4M15 17l3 4',
   people:    'M12 12a4 4 0 100-8 4 4 0 000 8zM4 21v-1a6 6 0 016-6h4a6 6 0 016 6v1',
@@ -80,6 +81,10 @@ export function platformNav(): NavSection[] {
             { href: '/admin/organisations/new', label: 'Onboard new' },
           ],
         },
+        // High in the list on purpose. A sales queue buried under settings is a
+        // sales queue nobody opens, and this one is what makes gating access on
+        // domain verification defensible.
+        { href: '/admin/drafts', label: 'Signups in progress', icon: <Icon d={PATHS.inbox} /> },
         { href: '/admin/plans', label: 'Plans', icon: <Icon d={PATHS.card} /> },
         { href: '/admin/storage', label: 'Storage', icon: <Icon d={PATHS.database} /> },
       ],

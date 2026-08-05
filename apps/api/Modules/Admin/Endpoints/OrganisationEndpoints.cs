@@ -23,11 +23,70 @@ public static class OrganisationEndpoints
             .RequireAuthorization("SuperAdmin")
             .WithTags("Platform administration");
 
+        // The sales queue. Not a report — a work list.
+        g.MapGet("/drafts", DraftsAsync);
         g.MapGet("/", ListAsync);
         g.MapGet("/{id:guid}", GetAsync);
         g.MapPost("/", CreateAsync);
         g.MapPost("/{id:guid}/suspend", SuspendAsync);
         g.MapPost("/{id:guid}/activate", ActivateAsync);
+    }
+
+    /// <summary>
+    /// Signups that started and did not finish.
+    ///
+    /// ─────────────────────────────────────────────────────────────────────
+    ///  This endpoint is the reason gating access on domain verification is
+    ///  acceptable. Requiring DNS before console access genuinely loses
+    ///  customers — the office manager trialling this at a school often cannot
+    ///  reach whoever manages their DNS. What makes it survivable is that they
+    ///  are captured with a phone number and called.
+    ///
+    ///  If nobody works this queue, the design is strictly worse than letting
+    ///  people straight in on a free subdomain.
+    /// ─────────────────────────────────────────────────────────────────────
+    ///
+    /// Not tenant-scoped, because a draft has no tenant — that is the point.
+    /// SuperAdmin only.
+    /// </summary>
+    private static async Task<IResult> DraftsAsync(AppDbContext db, CancellationToken ct)
+    {
+        var drafts = await db.SignupDrafts.AsNoTracking()
+            .Where(d => d.CompletedAt == null)
+            // Furthest-along first. Someone who reached verification and failed
+            // is a call worth making today; someone who typed a name and left
+            // is not, and sorting purely by date buries the former under the
+            // latter.
+            .OrderByDescending(d => d.ReachedStep)
+            .ThenByDescending(d => d.UpdatedAt)
+            .Select(d => new
+            {
+                d.Id, d.OrgName, d.OrgType, d.Country,
+                d.AdminName, d.AdminEmail, d.AdminPhone,
+                d.Fqdn, d.VerificationMethod, d.Attempts,
+                d.ReachedStep, d.LastAttemptError, d.LastAttemptAt,
+                d.CreatedAt, d.UpdatedAt,
+                // Pre-computed so the screen does not re-derive the one thing
+                // that decides whether to pick up the phone.
+                stalledAtVerification = d.ReachedStep == 4 && d.Attempts > 0,
+                resumeUrl = "/signup?draft=" + d.Id,
+            })
+            .ToListAsync(ct);
+
+        var converted = await db.SignupDrafts.CountAsync(d => d.CompletedAt != null, ct);
+
+        return Results.Ok(new
+        {
+            drafts,
+            // Conversion, stated plainly. A queue with no denominator is a queue
+            // nobody can tell is getting better or worse.
+            funnel = new
+            {
+                open = drafts.Count,
+                converted,
+                stalledAtVerification = drafts.Count(d => d.stalledAtVerification),
+            },
+        });
     }
 
     private static async Task<IResult> ListAsync(
