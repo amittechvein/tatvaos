@@ -52,10 +52,25 @@ if [ -f "$TMPL" ]; then
         print out line
     }' "$TMPL" > "$OUT"
 
-    # Dovecot refuses to start if this is group- or world-readable, and it is
-    # right to. It holds a database password.
-    chmod 600 "$OUT"
-    chown root:root "$OUT" 2>/dev/null || true
+    # The SQL lookups run in Dovecot's auth-worker, which drops to the
+    # unprivileged internal user (dovecot) — and THAT user must be able to read
+    # this file, or the connect string comes back empty and Postgres answers
+    # every lookup with "fe_sendauth: no password supplied".
+    #
+    # 600 root:root — the obvious "it holds a password" choice, and what this
+    # file shipped with — is exactly what silently broke LMTP delivery in
+    # production: the domain resolved, Postfix handed the message to Dovecot,
+    # and Dovecot deferred it with a 451 internal error because its own auth
+    # worker could not read the password to look the recipient up. Nothing
+    # caught it because nothing had ever delivered a message until the first
+    # real one arrived.
+    #
+    # 640, owner root, group = the internal user's group. Out of the world's
+    # reach, readable by the one process that needs it. This is the permission
+    # Dovecot's own documentation recommends for this file.
+    DOVE_GROUP=$(id -gn "$(doveconf -h default_internal_user 2>/dev/null || echo dovecot)" 2>/dev/null || echo dovecot)
+    chown "root:${DOVE_GROUP}" "$OUT" 2>/dev/null || true
+    chmod 640 "$OUT"
 
     if grep -qs 'dev_mail_pw' "$OUT" && [ "${TATVAOS_ENV:-local}" != "local" ]; then
         echo "[dovecot] FATAL: the rendered config still contains dev_mail_pw"

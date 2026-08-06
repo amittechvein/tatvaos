@@ -30,6 +30,82 @@ public static class OrganisationEndpoints
         g.MapPost("/", CreateAsync);
         g.MapPost("/{id:guid}/suspend", SuspendAsync);
         g.MapPost("/{id:guid}/activate", ActivateAsync);
+        g.MapPut("/{id:guid}/plan", ChangePlanAsync);
+
+        // Plans are platform-wide reference data, not tenant data — no RLS,
+        // no scope switch, just the catalogue the change-plan dialog offers.
+        app.MapGet("/api/admin/plans", PlansAsync)
+            .RequireAuthorization("SuperAdmin")
+            .WithTags("Platform administration");
+    }
+
+    private static async Task<IResult> PlansAsync(AppDbContext db, CancellationToken ct)
+    {
+        var plans = await db.Plans.AsNoTracking()
+            .OrderBy(p => p.PricePerUserMonthly ?? p.PriceMonthly ?? 0)
+            .Select(p => new
+            {
+                p.Id, p.Name, p.MaxUsers, p.StorageModel,
+                p.PerUserQuotaBytes, p.PooledStorageBytes, p.MaxDomains,
+                p.IncludedProducts, p.PricePerUserMonthly, p.PriceMonthly,
+            })
+            .ToListAsync(ct);
+        return Results.Ok(plans);
+    }
+
+    /// <summary>
+    /// Move an organisation to a different plan.
+    ///
+    /// Changes the subscription row only. Deliberately does NOT touch the
+    /// storage pool or per-user quotas: shrinking storage under a live
+    /// organisation is a destructive act that deserves its own screen with its
+    /// own warnings, not a side effect of a dropdown. The new plan's limits
+    /// apply to growth (new users, new domains) immediately.
+    /// </summary>
+    private static async Task<IResult> ChangePlanAsync(
+        Guid id, ChangePlanRequest req,
+        AppDbContext db, TenantContext tenant, AuditWriter audit,
+        HttpContext http, CancellationToken ct)
+    {
+        var org = await db.Tenants.FirstOrDefaultAsync(t => t.Id == id, ct);
+        if (org is null) return Results.NotFound();
+
+        var plan = await db.Plans.AsNoTracking().FirstOrDefaultAsync(p => p.Id == req.PlanId, ct);
+        if (plan is null) return Results.BadRequest(new { error = "Unknown plan." });
+
+        tenant.EnterPlatformScope(org.Id, CurrentUserId(http));
+        await db.SyncTenantAsync(ct);
+
+        var sub = await db.Subscriptions.OrderByDescending(s => s.StartedAt).FirstOrDefaultAsync(ct);
+        object before;
+        if (sub is null)
+        {
+            // Early manually-created organisations have no subscription row.
+            // Creating one here makes the dropdown work for them too instead
+            // of telling the operator to go run SQL.
+            before = new { planId = (Guid?)null };
+            sub = new Subscription
+            {
+                TenantId = org.Id,
+                PlanId = plan.Id,
+                Status = org.Status == "active" ? "active" : "trial",
+                Seats = req.Seats ?? plan.MaxUsers ?? 0,
+                RenewsAt = DateTimeOffset.UtcNow.AddDays(30),
+            };
+            db.Subscriptions.Add(sub);
+        }
+        else
+        {
+            before = new { planId = sub.PlanId, sub.Seats };
+            sub.PlanId = plan.Id;
+            if (req.Seats is int seats && seats > 0) sub.Seats = seats;
+        }
+
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync("organisation.plan_changed", "tenant", org.Id.ToString(),
+            before, new { planId = plan.Id, planName = plan.Name, sub.Seats }, ct);
+
+        return Results.Ok(new { org.Id, planId = plan.Id, planName = plan.Name, sub.Seats, sub.Status });
     }
 
     /// <summary>
@@ -104,6 +180,11 @@ public static class OrganisationEndpoints
         var actor = CurrentUserId(http);
         var results = new List<OrganisationResponse>(orgs.Count);
 
+        // One read of the whole catalogue up front — plans carry no RLS, and
+        // resolving a name per organisation would be a query per row.
+        var planNames = await db.Plans.AsNoTracking()
+            .ToDictionaryAsync(p => p.Id, p => p.Name, ct);
+
         foreach (var org in orgs)
         {
             // Scope to each organisation in turn. The alternative — one query
@@ -117,12 +198,19 @@ public static class OrganisationEndpoints
                 .Select(d => d.Fqdn)
                 .FirstOrDefaultAsync(ct);
             var domainCount = await db.Domains.CountAsync(ct);
+            var sub = await db.Subscriptions.AsNoTracking()
+                .OrderByDescending(s => s.StartedAt)
+                .Select(s => new { s.PlanId, s.Status, s.Seats })
+                .FirstOrDefaultAsync(ct);
 
             results.Add(new OrganisationResponse(
                 org.Id, org.Name, org.Type, org.Status,
                 domain ?? "—", cap.StorageModel, cap.MaxUsers,
                 cap.UserCount, cap.TotalBytes, cap.UsedBytes,
-                domainCount, org.AdminEmail, org.CreatedAt, org.TrialEndsAt));
+                domainCount, org.AdminEmail, org.CreatedAt, org.TrialEndsAt,
+                sub?.PlanId,
+                sub is null ? null : planNames.GetValueOrDefault(sub.PlanId),
+                sub?.Status, sub?.Seats));
         }
 
         return Results.Ok(results);
@@ -141,12 +229,17 @@ public static class OrganisationEndpoints
         var cap = await storage.GetCapacityAsync(org.Id, "mail", ct);
         var domain = await db.Domains.AsNoTracking()
             .Where(d => d.Type == "primary").Select(d => d.Fqdn).FirstOrDefaultAsync(ct);
+        var sub = await db.Subscriptions.AsNoTracking()
+            .OrderByDescending(s => s.StartedAt)
+            .Select(s => new { s.PlanId, s.Status, s.Seats, PlanName = s.Plan!.Name })
+            .FirstOrDefaultAsync(ct);
 
         return Results.Ok(new OrganisationResponse(
             org.Id, org.Name, org.Type, org.Status, domain ?? "—",
             cap.StorageModel, cap.MaxUsers, cap.UserCount,
             cap.TotalBytes, cap.UsedBytes,
-            await db.Domains.CountAsync(ct), org.AdminEmail, org.CreatedAt, org.TrialEndsAt));
+            await db.Domains.CountAsync(ct), org.AdminEmail, org.CreatedAt, org.TrialEndsAt,
+            sub?.PlanId, sub?.PlanName, sub?.Status, sub?.Seats));
     }
 
     /// <summary>

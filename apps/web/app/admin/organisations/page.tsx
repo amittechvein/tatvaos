@@ -1,9 +1,17 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import Alert from '@mui/material/Alert';
+import Dialog from '@mui/material/Dialog';
+import DialogActions from '@mui/material/DialogActions';
+import DialogContent from '@mui/material/DialogContent';
+import DialogTitle from '@mui/material/DialogTitle';
+import MenuItem from '@mui/material/MenuItem';
+import TextField from '@mui/material/TextField';
+import Typography from '@mui/material/Typography';
 import { formatBytes } from '@tatvaos/core';
-import { fetchOrganisations, type OrgRow } from '@/lib/adminData';
+import { fetchOrganisations, fetchPlans, type OrgRow, type PlanRow } from '@/lib/adminData';
 import { useAuth } from '@/lib/auth';
 import { AdminShell } from '@/components/admin/AdminShell';
 import { StatusBadge } from '@/components/admin/StatusBadge';
@@ -26,16 +34,23 @@ const STATUSES = ['all', 'active', 'trial', 'suspended', 'pending'] as const;
 export default function AdminOrganisations() {
   const { authedFetch } = useAuth();
   const [orgs, setOrgs] = useState<OrgRow[]>([]);
+  const [plans, setPlans] = useState<PlanRow[]>([]);
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<string>('all');
   const [loading, setLoading] = useState(true);
+  const [changing, setChanging] = useState<OrgRow | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     fetchOrganisations(authedFetch)
       .then(setOrgs)
       .catch(() => setOrgs([]))
       .finally(() => setLoading(false));
   }, [authedFetch]);
+
+  useEffect(() => {
+    load();
+    fetchPlans(authedFetch).then(setPlans).catch(() => setPlans([]));
+  }, [authedFetch, load]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -110,17 +125,21 @@ export default function AdminOrganisations() {
               return (
                 <tr key={o.id} className="hover:bg-canvas">
                   <Td>
-                    <Link href={`/admin/organisations/${o.id}`} className="font-medium text-brand-600 hover:underline">
+                    {/* Opens the manage dialog. This used to link to a detail
+                        page that never existed — a dead click for every name. */}
+                    <button onClick={() => setChanging(o)}
+                            className="font-medium text-brand-600 hover:underline">
                       {o.name}
-                    </Link>
+                    </button>
                     <div className="text-[12px] text-ink-muted">{o.primaryDomain}</div>
                   </Td>
                   <Td><span className="text-ink-muted">{TYPE_LABEL[o.type] ?? o.type}</span></Td>
                   <Td>
-                    <div style={{ textTransform: 'capitalize' }}>{o.storageModel.replace('_', ' ')}</div>
-                    <div className="text-[12px] capitalize text-ink-faint">
-                      {o.storageModel.replace('_', ' ')}
-                    </div>
+                    <div>{o.planName ?? '—'}</div>
+                    <button onClick={() => setChanging(o)}
+                            className="text-[12px] text-brand-600 hover:underline">
+                      Change plan
+                    </button>
                   </Td>
                   <Td>
                     {o.userCount}
@@ -148,6 +167,95 @@ export default function AdminOrganisations() {
         with row-level security disabled. There is deliberately no &ldquo;see
         everything&rdquo; mode — a bug in one would be unbounded.
       </p>
+
+      {changing && (
+        <ChangePlan org={changing} plans={plans}
+                    onClose={() => setChanging(null)}
+                    onChanged={() => { setChanging(null); load(); }} />
+      )}
     </AdminShell>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function ChangePlan({ org, plans, onClose, onChanged }: {
+  org: OrgRow;
+  plans: PlanRow[];
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const { authedFetch } = useAuth();
+  const [planId, setPlanId] = useState(org.planId ?? '');
+  const [seats, setSeats] = useState(org.seats && org.seats > 0 ? String(org.seats) : '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const chosen = plans.find((p) => p.id === planId);
+
+  async function save() {
+    setBusy(true); setError(null);
+    try {
+      const res = await authedFetch(`/admin/organisations/${org.id}/plan`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          planId,
+          seats: seats.trim() === '' ? null : Number(seats),
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? 'Could not change the plan.');
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not change the plan.');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle sx={{ pb: 1 }}>
+        Change plan — {org.name}
+        <Typography variant="body2" color="text.secondary">
+          Currently on {org.planName ?? 'no plan'}
+          {org.subscriptionStatus ? ` (${org.subscriptionStatus})` : ''}
+        </Typography>
+      </DialogTitle>
+
+      <DialogContent>
+        {error && <Alert severity="error" sx={{ mb: 2.5 }}>{error}</Alert>}
+
+        <TextField select fullWidth label="Plan" value={planId} sx={{ mt: 1, mb: 2.5 }}
+                   onChange={(e) => setPlanId(e.target.value)}>
+          {plans.map((p) => (
+            <MenuItem key={p.id} value={p.id}>
+              {p.name}
+              {p.maxUsers ? ` — up to ${p.maxUsers} people` : ' — unlimited people'}
+              {p.pricePerUserMonthly ? `, ₹${p.pricePerUserMonthly}/user/mo`
+                : p.priceMonthly ? `, ₹${p.priceMonthly}/mo` : ''}
+            </MenuItem>
+          ))}
+        </TextField>
+
+        <TextField fullWidth label="Seats (optional)" value={seats}
+                   onChange={(e) => setSeats(e.target.value.replace(/\D/g, ''))}
+                   helperText={chosen?.maxUsers
+                     ? `Billable seats. Leave empty to keep the current value; the plan caps people at ${chosen.maxUsers}.`
+                     : 'Billable seats. Leave empty to keep the current value.'} />
+
+        <Alert severity="info" sx={{ mt: 2.5 }}>
+          The new plan&apos;s seat and domain limits apply immediately to new
+          growth. Storage already provisioned is untouched — shrinking a live
+          organisation&apos;s storage is a separate, deliberate action.
+        </Alert>
+      </DialogContent>
+
+      <DialogActions sx={{ px: 3, pb: 2.5 }}>
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button variant="primary" onClick={save} disabled={busy || !planId}>
+          {busy ? 'Saving…' : 'Change plan'}
+        </Button>
+      </DialogActions>
+    </Dialog>
   );
 }

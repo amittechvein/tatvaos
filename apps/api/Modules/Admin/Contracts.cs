@@ -24,7 +24,14 @@ public sealed record OrganisationResponse(
     int? MaxUsers, int UserCount,
     long StorageTotalBytes, long StorageUsedBytes,
     int DomainCount, string? AdminEmail,
-    DateTimeOffset CreatedAt, DateTimeOffset? TrialEndsAt);
+    DateTimeOffset CreatedAt, DateTimeOffset? TrialEndsAt,
+    // The commercial half. Nullable with defaults because an organisation can
+    // exist without a subscription row (early manual creations did).
+    Guid? PlanId = null, string? PlanName = null,
+    string? SubscriptionStatus = null, int? Seats = null);
+
+/// <summary>Change which package an organisation is on.</summary>
+public sealed record ChangePlanRequest(Guid PlanId, int? Seats);
 
 /// <param name="Products">
 /// Which products to grant. Null falls back to the category's defaults, and
