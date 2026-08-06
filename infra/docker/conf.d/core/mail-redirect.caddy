@@ -1,0 +1,10 @@
+# Imported INSIDE the {$SITE_DOMAIN} site block, production only.
+#
+# Mail lives at mail.tatvaos.com and nowhere else. Both hostnames are front
+# doors onto the same web container, so without this rule every product
+# answers on every host — core.tatvaos.com/mail/inbox served a full inbox,
+# which blurs the one thing the separate domain exists to say. The redirect
+# keeps the path, so a deep link to a message survives the hop, and the auth
+# cookie has Domain=.tatvaos.com so the session survives it too.
+@mailpaths path /mail /mail/*
+redir @mailpaths https://{$MAIL_DOMAIN}{uri}

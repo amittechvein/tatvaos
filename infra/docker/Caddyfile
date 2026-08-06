@@ -8,6 +8,13 @@
 {$SITE_DOMAIN} {
     encode zstd gzip
 
+    # Host discipline, production only. The conf.d directory is mounted by the
+    # production overlay; on staging this import matches nothing and one host
+    # keeps serving everything. The subdirectory matters: the TOP-level import
+    # below loads whole site blocks, and this file is a fragment that belongs
+    # INSIDE this one.
+    import /etc/caddy/conf.d/core/*.caddy
+
     handle /api/* {
         reverse_proxy api:8080
     }

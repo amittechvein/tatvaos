@@ -25,6 +25,12 @@
     # serves the Core dashboard and the separate address means nothing.
     redir / /mail/inbox
 
+    # The mirror of core's /mail redirect: administration lives on Core and
+    # nowhere else. Sign-in and /account stay valid on both hosts — a person
+    # signing in ON mail should not be bounced through another domain first.
+    @consolepaths path /org /org/* /admin /admin/* /signup /signup/*
+    redir @consolepaths https://{$SITE_DOMAIN}{uri}
+
     handle {
         reverse_proxy web:3000
     }
