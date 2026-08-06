@@ -131,15 +131,17 @@ ls -lh ~/staging-final-*.sql
 Do not continue until that file has a sensible size. It is the only copy of
 the verified `trineetra.com` domain and the tenants created during testing.
 
-**The DKIM private key is in this checkout** at `infra/dkim/tv2026a.key`, and
-it is gitignored — it exists nowhere else. The public half is already published
-in DNS as `tv2026a._domainkey`. Losing it means every signature fails until a
-new key is generated and published.
+**DKIM key: nothing to back up here.** The original `tv2026a.key` was
+generated on the Windows machine and gitignored, so it never reached this
+server — `cp` will say "No such file", and that is fine.
 
-```bash
-cp infra/dkim/tv2026a.key ~/tv2026a.key.backup
-chmod 600 ~/tv2026a.key.backup
-```
+It is also no longer the plan. The API now generates a key PER DOMAIN when a
+domain is added, stores it in `core.dkim_keys`, and shows the TXT record in
+the console. After the deploy, adding `tatvaos.com` as a domain produces a
+fresh key — then REPLACE the existing `tv2026a._domainkey` TXT value in
+Linode DNS with the one the console shows. No message has ever been signed
+with the old key (port 25 has never been open), so rotating the published
+record costs nothing.
 
 ---
 
@@ -255,6 +257,11 @@ is one click now that every DNS record is already published.
 
 ```bash
 curl -s https://core.tatvaos.com/health          # {"status":"ok"}
+#
+# Then, in the console: sign in, add tatvaos.com as a domain, and copy the
+# DKIM TXT record it shows into Linode DNS, REPLACING the old
+# tv2026a._domainkey value — the old published key matches nothing on this
+# server. Verification in the console goes green once DNS serves the new one.
 curl -s https://core.tatvaos.com/health/db       # 200
 curl -sI https://mail.tatvaos.com/ | head -1     # 308 to /mail/f-inbox
 curl -sI https://staging.tatvaos.com/ | head -1  # 308 to core

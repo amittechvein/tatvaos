@@ -19,6 +19,21 @@
 
 ALTER TABLE IF EXISTS core.user_categories RENAME TO departments;
 
+-- The COLUMN rename that the first version of this file forgot. The table
+-- was renamed, the C# entity said DepartmentId, and users.category_id kept
+-- its old name — which no environment noticed until production, because CI's
+-- mail job does not run the API and the dev web app pointed at a server still
+-- running old code. Every EF query touching users then failed with 42703.
+-- Guarded so it is idempotent like everything else in this directory.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'core' AND table_name = 'users'
+                  AND column_name = 'category_id') THEN
+        ALTER TABLE core.users RENAME COLUMN category_id TO department_id;
+    END IF;
+END $$;
+
 -- Self-reference. NULL parent = top level.
 --
 -- ON DELETE CASCADE, deliberately: deleting Engineering deletes Engineering >
