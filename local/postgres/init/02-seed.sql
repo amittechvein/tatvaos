@@ -53,7 +53,7 @@ INSERT INTO core.storage_pools (tenant_id, storage_model, total_bytes, per_user_
     ('11111111-1111-1111-1111-111111111111', 'per_user', 0, 32212254720)  -- 30 GB each
 ON CONFLICT (tenant_id) DO NOTHING;
 
-INSERT INTO core.user_categories (id, tenant_id, name, description,
+INSERT INTO core.departments (id, tenant_id, name, description,
                                   default_role, default_quota_bytes,
                                   default_products, can_send_external, colour) VALUES
     ('c1111111-1111-1111-1111-111111111111',
@@ -70,7 +70,7 @@ ON CONFLICT (tenant_id, name) DO NOTHING;
 -- ----------------------------------------------------------------------------
 
 INSERT INTO core.users (id, tenant_id, domain_id, email, display_name,
-                        category_id, role, status) VALUES
+                        department_id, role, status) VALUES
     ('d1111111-1111-1111-1111-111111111111',
      '11111111-1111-1111-1111-111111111111',
      'a1111111-1111-1111-1111-111111111111',
@@ -181,7 +181,7 @@ ON CONFLICT (tenant_id, product_code) DO NOTHING;
 
 -- Two categories, because this is the case that sells the product: a school
 -- creates 400 students with identical settings in one action.
-INSERT INTO core.user_categories (id, tenant_id, name, description,
+INSERT INTO core.departments (id, tenant_id, name, description,
                                   default_role, default_quota_bytes,
                                   default_products, can_send_external, colour) VALUES
     ('c2222222-2222-2222-2222-222222222221',
@@ -196,7 +196,7 @@ INSERT INTO core.user_categories (id, tenant_id, name, description,
 ON CONFLICT (tenant_id, name) DO NOTHING;
 
 INSERT INTO core.users (id, tenant_id, domain_id, email, display_name,
-                        category_id, role, status) VALUES
+                        department_id, role, status) VALUES
     ('d2222222-2222-2222-2222-222222222222',
      '22222222-2222-2222-2222-222222222222',
      'b2222222-2222-2222-2222-222222222222',

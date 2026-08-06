@@ -162,7 +162,7 @@ CREATE TABLE IF NOT EXISTS core.users (
     mfa_secret_ref text,
     mfa_enabled   boolean NOT NULL DEFAULT false,
 
-    category_id uuid,
+    department_id uuid,
     role        text NOT NULL DEFAULT 'employee',
     status      text NOT NULL DEFAULT 'pending'
                 CHECK (status IN ('pending','active','suspended','deleted')),
@@ -171,43 +171,58 @@ CREATE TABLE IF NOT EXISTS core.users (
     created_at    timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_core_users_tenant   ON core.users(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_core_users_category ON core.users(tenant_id, category_id);
+
+-- The department index, foreign key and mail-edge grant live in
+-- 09-departments.sql, AFTER the renames that file performs. Creating them
+-- here broke every deploy against a database born before the rename: this
+-- file said category_id, production said department_id, and the deploy log
+-- said [FAIL] under enough NOTICE noise that nobody read it. One file owns
+-- the rename; the same file owns everything that depends on its outcome.
+DROP INDEX IF EXISTS core.idx_core_users_category;
 
 -- ============================================================================
---  CATEGORIES
+--  DEPARTMENTS
 -- ============================================================================
 --
 --  Teachers, Students, Doctors, Engineering. Carries defaults for new users
 --  ACROSS products — which products they get, their storage, their role.
 --  Creating fifty accounts with identical settings one at a time is what makes
---  an admin abandon a platform.
+--  an admin abandon a platform. 09-departments.sql turns this into a tree.
+--
+--  Guarded: on a database old enough to still have core.user_categories, this
+--  must NOT create core.departments — 09's RENAME would then collide with it.
+--  On such a database the rename in 09 produces this exact table instead.
 -- ============================================================================
 
-CREATE TABLE IF NOT EXISTS core.user_categories (
-    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id   uuid NOT NULL REFERENCES core.tenants(id) ON DELETE CASCADE,
-    name        text NOT NULL,
-    description text,
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables
+                    WHERE table_schema = 'core' AND table_name = 'user_categories') THEN
+        CREATE TABLE IF NOT EXISTS core.departments (
+            id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            tenant_id   uuid NOT NULL REFERENCES core.tenants(id) ON DELETE CASCADE,
+            name        text NOT NULL,
+            description text,
 
-    default_role      text NOT NULL DEFAULT 'employee',
-    default_quota_bytes bigint,
-    -- Which products a new user in this category receives. Students might get
-    -- mail and drive but not payroll.
-    default_products  text[] NOT NULL DEFAULT ARRAY['mail'],
-    -- False for students: a school requirement and a real abuse control.
-    can_send_external boolean NOT NULL DEFAULT true,
+            default_role      text NOT NULL DEFAULT 'employee',
+            default_quota_bytes bigint,
+            -- Which products a new user in this department receives. Students
+            -- might get mail and drive but not payroll.
+            default_products  text[] NOT NULL DEFAULT ARRAY['mail'],
+            -- False for students: a school requirement and a real abuse control.
+            can_send_external boolean NOT NULL DEFAULT true,
 
-    auto_groups text[] NOT NULL DEFAULT '{}',
-    colour      text NOT NULL DEFAULT '#3563f0',
-    created_at  timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (tenant_id, name)
-);
+            auto_groups text[] NOT NULL DEFAULT '{}',
+            colour      text NOT NULL DEFAULT '#3563f0',
+            created_at  timestamptz NOT NULL DEFAULT now(),
+            UNIQUE (tenant_id, name)
+        );
+    END IF;
+END $$;
 
-ALTER TABLE core.users
-    DROP CONSTRAINT IF EXISTS core_users_category_fk;
-ALTER TABLE core.users
-    ADD CONSTRAINT core_users_category_fk
-    FOREIGN KEY (category_id) REFERENCES core.user_categories(id) ON DELETE SET NULL;
+-- The old constraint, under either historical name. The current one is added
+-- in 09-departments.sql once the rename has definitely happened.
+ALTER TABLE core.users DROP CONSTRAINT IF EXISTS core_users_category_fk;
 
 -- ============================================================================
 --  PRODUCT ACCESS
@@ -376,8 +391,10 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES    IN SCHEMA core TO tatvaos_
 GRANT USAGE, SELECT                  ON ALL SEQUENCES IN SCHEMA core TO tatvaos_app;
 
 -- The mail edge: routing lookups only. No billing, no audit, no product access.
+-- The departments grant is in 09-departments.sql — the table may still be
+-- called user_categories when this file runs.
 GRANT USAGE  ON SCHEMA core TO tatvaos_mailedge;
-GRANT SELECT ON core.tenants, core.domains, core.users, core.user_categories
+GRANT SELECT ON core.tenants, core.domains, core.users
       TO tatvaos_mailedge;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA core

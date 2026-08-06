@@ -34,6 +34,38 @@ BEGIN
     END IF;
 END $$;
 
+-- ----------------------------------------------------------------------------
+--  Everything that depends on the renames above lives HERE, not in 00.
+--
+--  00-core-schema.sql once created the index and foreign key under their old
+--  names against the old column. On a database where the renames had already
+--  run, that failed on every deploy — and because services start before the
+--  schema step, the products kept working and the [FAIL] scrolled past unread.
+--  The rule that prevents a repeat: the file that renames a thing owns every
+--  object that references the thing.
+-- ----------------------------------------------------------------------------
+
+CREATE INDEX IF NOT EXISTS idx_core_users_department
+    ON core.users(tenant_id, department_id);
+
+-- The production restore-and-drop episode left department ids on users that
+-- point at rows which no longer exist. NULL is the honest value — it means
+-- "organisation defaults", which is how those users have been behaving anyway.
+-- Without this sweep the FK below refuses to attach.
+UPDATE core.users u
+   SET department_id = NULL
+ WHERE department_id IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM core.departments d WHERE d.id = u.department_id);
+
+ALTER TABLE core.users DROP CONSTRAINT IF EXISTS core_users_department_fk;
+ALTER TABLE core.users
+    ADD CONSTRAINT core_users_department_fk
+    FOREIGN KEY (department_id) REFERENCES core.departments(id) ON DELETE SET NULL;
+
+-- Routing lookups may read department policy (can_send_external drives the
+-- outbound gate). Same read-only scope the mail edge has on core.users.
+GRANT SELECT ON core.departments TO tatvaos_mailedge;
+
 -- Self-reference. NULL parent = top level.
 --
 -- ON DELETE CASCADE, deliberately: deleting Engineering deletes Engineering >
