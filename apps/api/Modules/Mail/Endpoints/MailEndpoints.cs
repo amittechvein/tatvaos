@@ -381,8 +381,13 @@ public static class MailEndpoints
         var parts = MailContent.AttachmentParts(MailContent.Parse(m.RawBody));
         if (index < 0 || index >= parts.Count) return Results.NotFound();
 
+        // A declared attachment with no body content is malformed MIME, not
+        // impossible MIME. 404 beats a 500 on somebody else's bad message.
+        var part = parts[index];
+        if (part.Content is null) return Results.NotFound();
+
         using var buffer = new MemoryStream();
-        await parts[index].Content.DecodeToAsync(buffer, ct);
+        await part.Content.DecodeToAsync(buffer, ct);
 
         // application/octet-stream regardless of the declared type: the bytes
         // are sender-controlled, and serving text/html here would hand any

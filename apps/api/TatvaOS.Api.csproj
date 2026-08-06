@@ -46,8 +46,16 @@
       deprecated by Microsoft's own docs and cannot produce a message we could
       also store as the canonical raw copy.
     -->
-    <PackageReference Include="MimeKit" Version="4.9.0" />
-    <PackageReference Include="MailKit" Version="4.9.0" />
+    <!--
+      4.17.0 minimum. NuGet audit (correctly) fails the build below that:
+      MimeKit ≤ 4.15.0 has a CRLF injection via quoted local-parts
+      (GHSA-g7hc-96xr-gvvx) — SMTP command injection through a crafted
+      address, which for a mail product is the whole ballgame — and
+      MailKit ≤ 4.12.0 has STARTTLS response injection (GHSA-9j88-vvj5-vhgr).
+      Fixed in MimeKit 4.15.1 and MailKit 4.16.0 respectively.
+    -->
+    <PackageReference Include="MimeKit" Version="4.17.0" />
+    <PackageReference Include="MailKit" Version="4.17.0" />
   </ItemGroup>
 
 </Project>

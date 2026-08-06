@@ -242,6 +242,9 @@ public sealed class MaildirIngestWorker(
     {
         try
         {
+            // Content is null for a part that declares an attachment but
+            // carries no body — malformed, but mail is full of malformed.
+            if (part.Content is null) return 0;
             using var counter = new CountingStream();
             part.Content.DecodeTo(counter);
             return counter.Length;
