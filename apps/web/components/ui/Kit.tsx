@@ -127,7 +127,9 @@ export function Stat({
               {caption}
             </Typography>
           )}
-          <Typography variant="h4" sx={{ mt: 1 }}>{value}</Typography>
+          <Typography variant="h3" sx={{ mt: 1, fontWeight: 700, lineHeight: 1.1 }}>
+            {value}
+          </Typography>
           {delta && (
             <Typography variant="caption"
                         sx={{ display: 'block', mt: 0.5, color: positive ? 'success.main' : 'error.main' }}>
@@ -139,9 +141,10 @@ export function Stat({
           )}
         </Box>
         {icon && (
-          <Box sx={{ width: 44, height: 44, borderRadius: 2, display: 'grid', placeItems: 'center',
+          <Box sx={{ width: 46, height: 46, borderRadius: 2.5, display: 'grid', placeItems: 'center',
                      flexShrink: 0, color: 'primary.main',
-                     bgcolor: (t) => alpha(t.palette.primary.main, 0.12) }}>
+                     bgcolor: (t) => alpha(t.palette.primary.main, 0.14),
+                     boxShadow: (t) => `inset 0 0 0 1px ${alpha(t.palette.primary.main, 0.16)}` }}>
             {icon}
           </Box>
         )}

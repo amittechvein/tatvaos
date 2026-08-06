@@ -93,12 +93,23 @@ export default function PlatformDashboard() {
         </Link>
       }
     >
-      {/* Greeting band */}
-      <div className="mb-5 overflow-hidden rounded-card bg-brand-600 px-6 py-6 text-white sm:px-8">
-        <h2 className="text-lg font-semibold sm:text-xl">
+      {/* Greeting band — a lit gradient hero rather than a flat fill, with a
+          soft glow disc for depth. Premium consoles open with presence. */}
+      <div
+        className="relative mb-5 overflow-hidden rounded-card px-6 py-7 text-white shadow-lg sm:px-8"
+        style={{
+          background:
+            'linear-gradient(120deg, rgb(var(--brand-700)) 0%, rgb(var(--brand-500)) 55%, rgb(var(--brand-400)) 100%)',
+        }}
+      >
+        <div
+          className="pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full opacity-30"
+          style={{ background: 'radial-gradient(circle, #fff 0%, transparent 70%)' }}
+        />
+        <h2 className="relative text-xl font-bold tracking-tight sm:text-2xl">
           Welcome back{user?.displayName ? `, ${user.displayName.split(' ')[0]}` : ''}
         </h2>
-        <p className="mt-1 max-w-2xl text-[13px] text-white/80">
+        <p className="relative mt-1.5 max-w-2xl text-[13.5px] text-white/85">
           {totals.orgs === 0
             ? 'No organisations yet. Onboarding the first one takes about two minutes.'
             : `${totals.orgs} organisation${totals.orgs === 1 ? '' : 's'} on the platform, ${totals.users} people across them.`}

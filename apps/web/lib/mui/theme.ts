@@ -1,4 +1,4 @@
-import { createTheme, type Theme } from '@mui/material/styles';
+import { alpha, createTheme, type Theme } from '@mui/material/styles';
 
 // ============================================================================
 //  MUI theme
@@ -96,7 +96,10 @@ export function buildTheme(primary: string = DEFAULT_PRIMARY): Theme {
       },
     },
 
-    shape: { borderRadius: 6 },
+    // Squarer than Materio's soft 6px. An enterprise/banking console reads as
+    // precise, not playful — defined edges, not pillows. 8px is the compromise
+    // that still lets the edge-bleed nav pill and chips look intentional.
+    shape: { borderRadius: 8 },
 
     typography: {
       // var(--font-inter) is set by next/font in the root layout. The literal
@@ -106,31 +109,40 @@ export function buildTheme(primary: string = DEFAULT_PRIMARY): Theme {
         'var(--font-inter)', 'Inter', 'ui-sans-serif', 'system-ui',
         'Segoe UI', 'Roboto', 'Arial', 'sans-serif',
       ].join(','),
-      h1: { fontSize: '2.375rem', fontWeight: 500, letterSpacing: '-0.02em' },
-      h2: { fontSize: '2rem', fontWeight: 500, letterSpacing: '-0.02em' },
-      h3: { fontSize: '1.5rem', fontWeight: 500 },
-      h4: { fontSize: '1.3125rem', fontWeight: 500 },
-      h5: { fontSize: '1.125rem', fontWeight: 500 },
-      h6: { fontSize: '1rem', fontWeight: 500 },
+      // Heavier headings than Materio's 500. Bold type is the cheapest way a
+      // dense data console reads as authoritative rather than sketchy.
+      h1: { fontSize: '2.375rem', fontWeight: 700, letterSpacing: '-0.022em' },
+      h2: { fontSize: '2rem', fontWeight: 700, letterSpacing: '-0.022em' },
+      h3: { fontSize: '1.5rem', fontWeight: 700, letterSpacing: '-0.015em' },
+      h4: { fontSize: '1.3125rem', fontWeight: 700, letterSpacing: '-0.01em' },
+      h5: { fontSize: '1.125rem', fontWeight: 700, letterSpacing: '-0.01em' },
+      h6: { fontSize: '1rem', fontWeight: 700, letterSpacing: '-0.005em' },
+      subtitle1: { fontWeight: 600 },
+      subtitle2: { fontWeight: 600 },
       body1: { fontSize: '0.9375rem' },
       body2: { fontSize: '0.875rem' },
-      button: { textTransform: 'none', fontWeight: 500 },
+      button: { textTransform: 'none', fontWeight: 600 },
     },
 
     components: {
       MuiCard: {
         defaultProps: { elevation: 0 },
         styleOverrides: {
-          root: {
+          root: ({ theme }) => ({
             borderRadius: 12,
-            // Softer and wider than the default — depth rather than outline.
-            boxShadow: shadow(3, 14, 0.08),
-            // No border. Materio separates cards with shadow alone; adding a
-            // border as well makes a dense screen look like a spreadsheet.
+            // A DEFINED edge now, not shadow alone. Banking and admin consoles
+            // read as precise because their cards have crisp borders; a pure
+            // drop-shadow card floats and looks consumer. Hairline border +
+            // a tight shadow gives depth AND definition.
+            border: `1px solid ${theme.palette.divider}`,
+            boxShadow: shadow(2, 8, 0.06),
             backgroundImage: 'none',
-            transition: 'box-shadow 0.2s',
-            '&:hover': { boxShadow: shadow(5, 20, 0.12) },
-          },
+            transition: 'box-shadow 0.2s, border-color 0.2s',
+            '&:hover': {
+              boxShadow: shadow(4, 16, 0.10),
+              borderColor: alpha(theme.palette.primary.main, 0.28),
+            },
+          }),
         },
       },
 
@@ -143,32 +155,48 @@ export function buildTheme(primary: string = DEFAULT_PRIMARY): Theme {
             subheader: { variant: 'body2' },
           },
         },
-        styleOverrides: { root: { padding: '22px 24px 12px' } },
+        // A ruled header. The divider under the title is what separates a
+        // "section of a report" from "some text above some other text".
+        styleOverrides: {
+          root: ({ theme }) => ({
+            padding: '18px 22px',
+            borderBottom: `1px solid ${theme.palette.divider}`,
+          }),
+        },
       },
 
       MuiCardContent: {
         styleOverrides: {
-          root: { padding: '24px', '&:last-child': { paddingBottom: '24px' } },
+          root: { padding: '22px', '&:last-child': { paddingBottom: '22px' } },
         },
       },
 
       MuiButton: {
         defaultProps: { disableElevation: true },
         styleOverrides: {
-          root: { borderRadius: 6, padding: '8px 20px' },
+          root: { borderRadius: 8, padding: '8px 18px', fontWeight: 600 },
+          sizeLarge: { padding: '11px 24px', fontSize: '0.95rem' },
         },
         // Materio's raised buttons carry a coloured glow rather than a grey
-        // shadow, which is what makes the primary action feel lit.
-        //
-        // A variant rather than the old containedPrimary override key: v9
-        // dropped the per-colour class names, and matching on props is more
-        // honest anyway — it says which button, not which generated class.
+        // shadow, which is what makes the primary action feel lit. Stronger
+        // here — the primary action on a bank screen should be unmissable.
         variants: [
           {
             props: { variant: 'contained', color: 'primary' },
             style: ({ theme }) => ({
-              boxShadow: `0 2px 6px 0 ${theme.palette.primary.main}66`,
-              '&:hover': { boxShadow: `0 4px 12px 0 ${theme.palette.primary.main}80` },
+              boxShadow: `0 3px 10px 0 ${theme.palette.primary.main}59`,
+              '&:hover': { boxShadow: `0 6px 18px 0 ${theme.palette.primary.main}73` },
+            }),
+          },
+          {
+            props: { variant: 'outlined', color: 'inherit' },
+            style: ({ theme }) => ({
+              borderColor: theme.palette.divider,
+              color: theme.palette.text.primary,
+              '&:hover': {
+                borderColor: alpha(theme.palette.primary.main, 0.5),
+                backgroundColor: alpha(theme.palette.primary.main, 0.04),
+              },
             }),
           },
         ],
@@ -176,27 +204,99 @@ export function buildTheme(primary: string = DEFAULT_PRIMARY): Theme {
 
       MuiChip: {
         styleOverrides: {
-          root: { fontWeight: 500, borderRadius: 4 },
-          sizeSmall: { height: 22, fontSize: '0.75rem' },
+          // Filled status chips read stronger than Materio's tint because the
+          // palette gives success/warning/error contrastText #fff — a status a
+          // bank operator scans a column for must not be a pastel whisper.
+          root: { fontWeight: 600, borderRadius: 6 },
+          sizeSmall: { height: 22, fontSize: '0.75rem', letterSpacing: '0.01em' },
+        },
+      },
+
+      // Ruled, tinted, hoverable tables — the single biggest "bank-grade"
+      // signal. A data table with a fill behind the header and lines between
+      // rows reads as a ledger; borderless rows read as a marketing list.
+      MuiTableContainer: {
+        styleOverrides: { root: { borderRadius: 0 } },
+      },
+
+      MuiTableHead: {
+        styleOverrides: {
+          root: ({ theme }) => ({
+            backgroundColor: theme.palette.mode === 'dark'
+              ? alpha(theme.palette.common.white, 0.03)
+              : alpha(theme.palette.text.primary, 0.025),
+          }),
+        },
+      },
+
+      MuiTableRow: {
+        styleOverrides: {
+          root: ({ theme }) => ({
+            transition: 'background-color 0.12s',
+            '&:hover': {
+              backgroundColor: alpha(theme.palette.primary.main, 0.045),
+            },
+            '&:last-of-type td': { borderBottom: 'none' },
+          }),
+          head: { '&:hover': { backgroundColor: 'transparent' } },
         },
       },
 
       MuiTableCell: {
         styleOverrides: {
-          head: {
-            fontSize: '0.8125rem',
-            fontWeight: 600,
-            letterSpacing: '0.06em',
+          root: ({ theme }) => ({
+            borderBottom: `1px solid ${theme.palette.divider}`,
+            padding: '12px 20px',
+          }),
+          head: ({ theme }) => ({
+            fontSize: '0.75rem',
+            fontWeight: 700,
+            letterSpacing: '0.07em',
             textTransform: 'uppercase',
-          },
+            color: theme.palette.text.secondary,
+            borderBottom: `2px solid ${theme.palette.divider}`,
+            paddingTop: '13px',
+            paddingBottom: '13px',
+          }),
         },
       },
 
       MuiLinearProgress: {
-        styleOverrides: { root: { height: 6, borderRadius: 3 } },
+        styleOverrides: {
+          root: ({ theme }) => ({
+            height: 7,
+            borderRadius: 4,
+            backgroundColor: alpha(theme.palette.text.primary, 0.08),
+          }),
+        },
       },
 
       MuiTextField: { defaultProps: { size: 'small' } },
+
+      MuiOutlinedInput: {
+        styleOverrides: {
+          root: ({ theme }) => ({
+            borderRadius: 8,
+            '&:hover .MuiOutlinedInput-notchedOutline': {
+              borderColor: alpha(theme.palette.primary.main, 0.5),
+            },
+          }),
+        },
+      },
+
+      MuiDialog: {
+        styleOverrides: {
+          paper: ({ theme }) => ({
+            borderRadius: 14,
+            border: `1px solid ${theme.palette.divider}`,
+            boxShadow: shadow(12, 48, 0.20),
+          }),
+        },
+      },
+
+      MuiDialogTitle: {
+        styleOverrides: { root: { fontWeight: 700, fontSize: '1.15rem' } },
+      },
 
       MuiPaper: { styleOverrides: { root: { backgroundImage: 'none' } } },
 

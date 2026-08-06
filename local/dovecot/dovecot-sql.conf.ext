@@ -7,7 +7,25 @@ driver = pgsql
 # Connects as tatvaos_mailedge: SELECT on routing tables only.
 # It has no grant on messages, folders, attachments or audit_logs, so a
 # compromise of this container exposes addresses and hashes - not mail.
-connect = host=postgres dbname=tatvaos_mail user=tatvaos_mailedge password=dev_mail_pw
+#
+# ---------------------------------------------------------------------------
+# The WHOLE value is double-quoted, and that is not cosmetic.
+#
+# Dovecot's config parser treats an unquoted '#' as the start of a comment,
+# even mid-token. The mail-edge password is substituted in place of
+# dev_mail_pw at container start, and a password containing '#' (or a base64
+# password is fine, but a hand-set one may not be) would be TRUNCATED at the
+# '#': the connect string silently loses everything from there on, Postgres
+# answers "fe_sendauth: no password supplied", the auth service crashes, and
+# every inbound LMTP delivery fails with a 451 internal error.
+#
+# This cost hours in production: mail SENT fine (Postfix's pgsql parser takes
+# everything after '=' literally, '#' included) while every inbound message
+# was refused. Wrapping the value in double quotes makes Dovecot treat '#'
+# and every other special character as a literal part of the string, so the
+# connect line survives whatever the password happens to be. Keep the quotes.
+# ---------------------------------------------------------------------------
+connect = "host=postgres dbname=tatvaos_mail user=tatvaos_mailedge password=dev_mail_pw"
 
 # Fallback only. Each stored hash carries its own {SCHEME} prefix, which wins.
 # Local dev uses SHA512-CRYPT; PRODUCTION USES ARGON2ID.
