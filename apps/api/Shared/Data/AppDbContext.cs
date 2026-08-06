@@ -230,6 +230,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<RefreshToken>()
             .HasOne<Tenant>().WithMany()
             .HasForeignKey(t => t.TenantId).OnDelete(DeleteBehavior.Cascade);
+        // The rotation self-reference. Without this declared, EF does not know
+        // the UPDATE that stamps old.replaced_by depends on the INSERT of the
+        // new row, orders them wrong inside one SaveChanges, and the database
+        // rejects every token rotation with a 23503 — which presents as "F5
+        // logs me out". Same lesson as department_id and DkimKeys: EF orders
+        // writes by DECLARED relationships, and only migrations it generates
+        // would have caught the omission. Ours come from SQL files.
+        b.Entity<RefreshToken>()
+            .HasOne<RefreshToken>().WithMany()
+            .HasForeignKey(t => t.ReplacedBy).OnDelete(DeleteBehavior.SetNull);
 
         b.Entity<MailboxPermission>()
             .HasOne<Mailbox>().WithMany()
