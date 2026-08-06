@@ -39,6 +39,10 @@ export const ACCENTS: { name: string; hex: string }[] = [
   { name: 'Blue',    hex: '#3563f0' },
   { name: 'Teal',    hex: '#0ca5a5' },
   { name: 'Magenta', hex: '#a855f7' },
+  // The saturated orange of Indian banking UIs. A preset rather than the
+  // default: the whole theme recolours from one hex, so trying the product
+  // in this palette is one click in the appearance panel, not a rebuild.
+  { name: 'Orange',  hex: '#f06321' },
   { name: 'Green',   hex: '#22a35b' },
   { name: 'Coral',   hex: '#ef5455' },
 ];

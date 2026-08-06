@@ -276,6 +276,10 @@ public static class AuthEndpoints
         var g = app.MapGroup("/api/auth").WithTags("Authentication");
 
         g.MapPost("/login", LoginAsync).AllowAnonymous();
+        // Sign-in by mobile OTP — the second tab on the login screen. Same
+        // session issuance as the password path, different credential.
+        g.MapPost("/otp/request", OtpRequestAsync).AllowAnonymous();
+        g.MapPost("/otp/verify", OtpVerifyAsync).AllowAnonymous();
         g.MapPost("/refresh", RefreshAsync).AllowAnonymous();
         g.MapPost("/logout", LogoutAsync).RequireAuthorization("User");
         g.MapGet("/me", MeAsync).RequireAuthorization("User");
@@ -351,6 +355,176 @@ public static class AuthEndpoints
         if (user.Status is "suspended" or "deleted" || org?.Status is "suspended" or "deleted")
             return Results.Json(new { error = GenericFailure }, statusCode: 401);
 
+        return await CompleteSignInAsync(user, org, db, tokens, http, ct);
+    }
+
+    // =====================================================================
+    //  SIGN-IN BY MOBILE OTP
+    // =====================================================================
+    //
+    //  Every bank in India signs its customers in this way, so the flow needs
+    //  no explanation to the people this product is for. Mechanically it is
+    //  the signup OTP applied to login: six digits, SHA-256 over (user id,
+    //  code), five-minute expiry, five attempts, sixty-second resend gap.
+    //
+    //  THE RESPONSE NEVER SAYS WHETHER A NUMBER EXISTS. "If this number is
+    //  registered, a code has been sent" is the answer for a real number, an
+    //  unknown one, and one shared by two accounts alike — a login form that
+    //  confirms which mobile numbers are on the platform is a lookup service
+    //  for anyone with a list of numbers.
+    //
+    //  A number shared by TWO users gets no code at all (same generic reply).
+    //  Ambiguity has to fail closed: sending a code that signs in "whichever
+    //  account matched first" hands one person another person's mailbox.
+    // =====================================================================
+
+    private const string OtpGenericReply =
+        "If this number is registered, a code has been sent to it.";
+
+    private static readonly TimeSpan OtpLifetime = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan OtpResendGap = TimeSpan.FromSeconds(60);
+    private const int OtpMaxAttempts = 5;
+
+    private static string OtpHash(Guid userId, string code)
+    {
+        var bytes = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes($"{userId:N}:{code}"));
+        return Convert.ToHexString(bytes);
+    }
+
+    private static async Task<IResult> OtpRequestAsync(
+        OtpRequest req, AppDbContext db, TenantContext tenant,
+        Shared.Notify.ISmsSender sms, Shared.Settings.SettingsReader settings,
+        HttpContext http, CancellationToken ct)
+    {
+        var phone = Shared.PhoneNumber.Normalise(req.Phone);
+        if (phone is null)
+            return Results.BadRequest(new
+            {
+                error = "Enter the mobile number with its country code, like +91 98765 43210.",
+            });
+
+        // Cross-tenant on purpose, like the email login — the tenant cannot be
+        // known until the user is found. Exactly one live match may proceed.
+        var matches = await db.Users.IgnoreQueryFilters()
+            .Where(u => u.Phone == phone && u.Status != "deleted" && u.Status != "suspended")
+            .Take(2)
+            .ToListAsync(ct);
+
+        if (matches.Count != 1)
+            return Results.Ok(new { sent = true, message = OtpGenericReply });
+
+        var user = matches[0];
+
+        // The password lockout applies here too. OTP must not be the side door
+        // around a lockout the password path just imposed.
+        if (user.LockedUntil is DateTimeOffset until && until > DateTimeOffset.UtcNow)
+            return Results.Ok(new { sent = true, message = OtpGenericReply });
+
+        // Resend throttle. Same generic reply — a different answer inside the
+        // gap would itself confirm the number exists.
+        if (user.LoginOtpSentAt is DateTimeOffset last
+            && DateTimeOffset.UtcNow - last < OtpResendGap)
+            return Results.Ok(new { sent = true, message = OtpGenericReply });
+
+        tenant.Set(user.TenantId, user.Id, user.Role);
+        await db.SyncTenantAsync(ct);
+
+        var code = System.Security.Cryptography.RandomNumberGenerator
+            .GetInt32(0, 1_000_000).ToString("D6");
+
+        user.LoginOtpHash = OtpHash(user.Id, code);
+        user.LoginOtpSentAt = DateTimeOffset.UtcNow;
+        user.LoginOtpAttempts = 0;
+        await db.SaveChangesAsync(ct);
+
+        var result = await sms.SendOtpAsync(phone, code, ct);
+
+        // Echoed on screen ONLY when the real send failed AND the testing-mode
+        // setting is on — the same self-securing rule as the signup OTP. With
+        // SMS working, the echo stops by itself.
+        var showOtp = await settings.FlagAsync(
+            Shared.Settings.SettingKeys.ShowOtpOnScreen, fallback: false, ct);
+
+        return Results.Ok(new
+        {
+            sent = true,
+            message = OtpGenericReply,
+            devCode = showOtp && !result.Sent ? code : null,
+        });
+    }
+
+    private static async Task<IResult> OtpVerifyAsync(
+        OtpVerifyRequest req, AppDbContext db, TokenIssuer tokens,
+        TenantContext tenant, HttpContext http, CancellationToken ct)
+    {
+        var phone = Shared.PhoneNumber.Normalise(req.Phone);
+        var code = req.Code?.Trim() ?? "";
+
+        if (phone is null || code.Length != 6)
+            return Results.Json(new { error = GenericFailure }, statusCode: 401);
+
+        var matches = await db.Users.IgnoreQueryFilters()
+            .Where(u => u.Phone == phone && u.Status != "deleted" && u.Status != "suspended")
+            .Take(2)
+            .ToListAsync(ct);
+
+        if (matches.Count != 1)
+            return Results.Json(new { error = GenericFailure }, statusCode: 401);
+
+        var user = matches[0];
+
+        tenant.Set(user.TenantId, user.Id, user.Role);
+        await db.SyncTenantAsync(ct);
+
+        var expired = user.LoginOtpSentAt is null
+            || DateTimeOffset.UtcNow - user.LoginOtpSentAt > OtpLifetime;
+
+        if (user.LoginOtpHash is null || expired
+            || user.LoginOtpAttempts >= OtpMaxAttempts
+            || OtpHash(user.Id, code) != user.LoginOtpHash)
+        {
+            user.LoginOtpAttempts++;
+            if (user.LoginOtpAttempts >= OtpMaxAttempts)
+            {
+                // Burn the code. Five guesses at six digits is nothing; five
+                // guesses per code with unlimited codes would add up.
+                user.LoginOtpHash = null;
+            }
+            await db.SaveChangesAsync(ct);
+            return Results.Json(new { error = GenericFailure }, statusCode: 401);
+        }
+
+        // Single use, before anything else can fail.
+        user.LoginOtpHash = null;
+        user.LoginOtpSentAt = null;
+        user.LoginOtpAttempts = 0;
+
+        // Organisation checked after the credential, same as the password
+        // path and for the same reason.
+        var org = await db.Tenants.FirstOrDefaultAsync(t => t.Id == user.TenantId, ct);
+        if (org?.Status is "suspended" or "deleted")
+        {
+            await db.SaveChangesAsync(ct);
+            return Results.Json(new { error = GenericFailure }, statusCode: 401);
+        }
+
+        return await CompleteSignInAsync(user, org, db, tokens, http, ct);
+    }
+
+    /// <summary>
+    /// Everything that happens once a credential — ANY credential — has been
+    /// accepted: counters reset, session issued, slot taken, roster returned.
+    ///
+    /// Shared by the password login and the OTP login so the two cannot drift.
+    /// A second copy of this tail is how one path ends up skipping the
+    /// pending→active promotion or the slot pick, and the symptom would be a
+    /// user who exists differently depending on how they signed in.
+    /// </summary>
+    private static async Task<IResult> CompleteSignInAsync(
+        User user, Tenant? org, AppDbContext db, TokenIssuer tokens,
+        HttpContext http, CancellationToken ct)
+    {
         user.FailedLoginCount = 0;
         user.LockedUntil = null;
         user.LastLoginAt = DateTimeOffset.UtcNow;
@@ -907,6 +1081,8 @@ public static class AuthEndpoints
 }
 
 public sealed record LoginRequest(string? Email, string? Password);
+public sealed record OtpRequest(string? Phone);
+public sealed record OtpVerifyRequest(string? Phone, string? Code);
 public sealed record RefreshRequest(string? RefreshToken);
 
 /// <summary>Which account slot to act on. See the multi-account block above.</summary>

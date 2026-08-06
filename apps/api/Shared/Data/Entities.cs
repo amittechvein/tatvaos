@@ -144,6 +144,20 @@ public class User
     /// necessity — a Payroll-only user needs a login and no mailbox.
     /// </summary>
     [MaxLength(320)] public required string Email { get; set; }
+
+    /// <summary>
+    /// The mobile number this person can SIGN IN with — verified by SMS at
+    /// signup for the admin, settable per user later. Distinct from
+    /// Tenant.Phone, which is the organisation's contact number: a tenant is
+    /// not a person, and OTP login authenticates a person.
+    /// </summary>
+    [MaxLength(32)] public string? Phone { get; set; }
+
+    // ---- Sign-in by mobile OTP (11-login-otp.sql) -----------------------
+    // The code is never stored; this is SHA-256 over (user id, code).
+    [MaxLength(64)] public string? LoginOtpHash { get; set; }
+    public DateTimeOffset? LoginOtpSentAt { get; set; }
+    public int LoginOtpAttempts { get; set; }
     [MaxLength(200)] public required string DisplayName { get; set; }
 
     /// <summary>Argon2id. Never any other scheme in production.</summary>

@@ -61,6 +61,11 @@ interface AuthState {
   /** Every account signed in on this browser, including signed-out ones. */
   accounts: AccountSlot[];
   signIn: (email: string, password: string) => Promise<void>;
+  /** Request a sign-in code by SMS. Resolves with a dev code when the
+   *  platform is in testing mode and the real send failed. */
+  requestOtp: (phone: string) => Promise<{ devCode: string | null }>;
+  /** Sign in with the SMS code. Same session as a password sign-in. */
+  signInWithOtp: (phone: string, code: string) => Promise<void>;
   /** Signs out of the CURRENT account only; the others stay signed in. */
   signOut: (all?: boolean) => Promise<void>;
   /** Move to another account already signed in here. No password. */
@@ -183,6 +188,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     applyAuth(await res.json());
   }, [applyAuth]);
 
+  const requestOtp = useCallback(async (phone: string) => {
+    const res = await fetch(`${API}/auth/otp/request`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ phone }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error ?? 'Could not send the code.');
+    return { devCode: body.devCode ?? null };
+  }, []);
+
+  const signInWithOtp = useCallback(async (phone: string, code: string) => {
+    const res = await fetch(`${API}/auth/otp/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ phone, code }),
+    });
+    const body = await res.json().catch(() => ({}));
+    // The server sends ONE message for wrong code, unknown number and
+    // suspended account. Passed through untouched for the same reason the
+    // password path does it.
+    if (!res.ok) throw new Error(body.error ?? 'Sign-in failed.');
+    applyAuth(body);
+  }, [applyAuth]);
+
   /**
    * Signs out of the account in use. The others stay signed in, and this one
    * stays in the chooser as a one-click "Sign in" — pass all=true for the
@@ -301,9 +333,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<AuthState>(() => ({
     user, mustChangePassword, loading, accounts,
-    signIn, signOut, switchTo, forget, refreshAccounts, changePassword, authedFetch,
+    signIn, requestOtp, signInWithOtp,
+    signOut, switchTo, forget, refreshAccounts, changePassword, authedFetch,
   }), [user, mustChangePassword, loading, accounts,
-       signIn, signOut, switchTo, forget, refreshAccounts, changePassword, authedFetch]);
+       signIn, requestOtp, signInWithOtp,
+       signOut, switchTo, forget, refreshAccounts, changePassword, authedFetch]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

@@ -54,7 +54,7 @@ public static class SignupEndpoints
         SettingsReader settings, CancellationToken ct)
     {
         var email = req.AdminEmail?.Trim().ToLowerInvariant() ?? "";
-        var phone = NormalisePhone(req.AdminPhone);
+        var phone = TatvaOS.Api.Shared.PhoneNumber.Normalise(req.AdminPhone);
 
         if (string.IsNullOrWhiteSpace(req.OrgName) || req.OrgName.Trim().Length < 2)
             return Results.BadRequest(new { error = "An organisation name is required." });
@@ -287,6 +287,10 @@ public static class SignupEndpoints
             Status = "active",
             PasswordHash = hasher.Hash(req.Password),
             EmailConfirmedAt = d.EmailVerifiedAt,
+            // The number was verified by SMS two steps ago, so it lands on
+            // the PERSON — this is what makes the "Mobile OTP" tab on the
+            // login screen work for them from day one.
+            Phone = d.PhoneVerifiedAt is not null ? d.AdminPhone : null,
             MustChangePassword = false,
         };
         db.Users.Add(owner);
@@ -363,17 +367,10 @@ public static class SignupEndpoints
     private static bool Expired(DateTimeOffset? sentAt, DateTimeOffset now) =>
         sentAt is null || now - sentAt > CodeLifetime;
 
-    private static string? NormalisePhone(string? raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw)) return null;
-        var p = Regex.Replace(raw, @"[\s\-()]", "");
-        return Regex.IsMatch(p, @"^\+?[0-9]{8,15}$") ? p : null;
-    }
-
-    private static string? Mask(string? phone) =>
-        string.IsNullOrEmpty(phone) || phone.Length < 4
-            ? phone
-            : new string('•', phone.Length - 4) + phone[^4..];
+    // Normalise and Mask moved to Shared/PhoneNumber.cs — the OTP login uses
+    // the same number as its lookup key, and two normalisers that disagree by
+    // one character mean a person who can sign up but never sign in.
+    private static string? Mask(string? phone) => TatvaOS.Api.Shared.PhoneNumber.Mask(phone);
 
     /// <summary>
     /// Starting categories by organisation type — an admin facing an empty

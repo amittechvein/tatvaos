@@ -5,7 +5,12 @@ import { Suspense, useEffect, useState } from 'react';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import Checkbox from '@mui/material/Checkbox';
 import Chip from '@mui/material/Chip';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import MenuItem from '@mui/material/MenuItem';
+import Tab from '@mui/material/Tab';
+import Tabs from '@mui/material/Tabs';
 import IconButton from '@mui/material/IconButton';
 import InputAdornment from '@mui/material/InputAdornment';
 import Stack from '@mui/material/Stack';
@@ -65,7 +70,7 @@ const ROADMAP = [
 ];
 
 function SignInForm() {
-  const { signIn, user, mustChangePassword, loading } = useAuth();
+  const { signIn, requestOtp, signInWithOtp, user, mustChangePassword, loading } = useAuth();
   const router = useRouter();
   const params = useSearchParams();
 
@@ -74,31 +79,102 @@ function SignInForm() {
   // clicks Add account and gets bounced straight back to the dashboard.
   const adding = params.get('add') === '1';
 
+  // The remembered EMAIL, never the password. An email is an identifier the
+  // person types in front of colleagues; a password is a credential. Banks
+  // offer exactly this split ("Remember User ID") for the same reason.
   const [email, setEmail] = useState(params.get('email') ?? '');
+  const [remember, setRemember] = useState(false);
   const [password, setPassword] = useState('');
   const [reveal, setReveal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Tabs: password, mobile OTP, QR. QR needs the mobile app to scan with,
+  // and there is no mobile app yet — shown disabled rather than hidden, so
+  // the login screen states the roadmap the same way the launcher does.
+  const [tab, setTab] = useState<'email' | 'otp' | 'qr'>('email');
+
+  // Mobile OTP flow state.
+  const [phone, setPhone] = useState('');
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpCode, setOtpCode] = useState('');
+  const [devCode, setDevCode] = useState<string | null>(null);
+  const [resendIn, setResendIn] = useState(0);
+
+  // Where to land after sign-in. Persisted, because someone who lives in
+  // their inbox should not pass through a dashboard every morning.
+  const [startIn, setStartIn] = useState<'default' | 'mail'>('default');
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('tv_login_email');
+      if (saved && !params.get('email')) { setEmail(saved); setRemember(true); }
+      const s = localStorage.getItem('tv_start_in');
+      if (s === 'mail') setStartIn('mail');
+    } catch { /* private browsing */ }
+    // Run once on mount, deliberately.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const t = setInterval(() => setResendIn((v) => v - 1), 1000);
+    return () => clearInterval(t);
+  }, [resendIn]);
 
   // Already signed in — usually a bookmarked /login or a back button.
   useEffect(() => {
     if (loading || !user || adding) return;
     router.replace(mustChangePassword
       ? '/change-password'
-      : params.get('next') ?? destinationFor(user.role));
-  }, [loading, user, mustChangePassword, router, params, adding]);
+      : params.get('next')
+        ?? (startIn === 'mail' ? '/mail/f-inbox' : destinationFor(user.role)));
+  }, [loading, user, mustChangePassword, router, params, adding, startIn]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setBusy(true);
     try {
+      try {
+        if (remember) localStorage.setItem('tv_login_email', email.trim());
+        else localStorage.removeItem('tv_login_email');
+        localStorage.setItem('tv_start_in', startIn);
+      } catch { /* private browsing */ }
       await signIn(email.trim(), password);
     } catch (err) {
       // The server returns one message for wrong password, unknown address and
       // suspended account, on purpose. Passing it straight through keeps that
       // property — inventing a friendlier client-side message would leak the
       // difference the server worked to hide.
+      setError(err instanceof Error ? err.message : 'Sign-in failed.');
+      setBusy(false);
+    }
+  }
+
+  async function sendOtp() {
+    setError(null);
+    setBusy(true);
+    try {
+      const { devCode: dc } = await requestOtp(phone.trim());
+      setOtpSent(true);
+      setDevCode(dc);
+      setResendIn(60);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not send the code.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitOtp(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      try { localStorage.setItem('tv_start_in', startIn); } catch { /* private */ }
+      await signInWithOtp(phone.trim(), otpCode.trim());
+    } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign-in failed.');
       setBusy(false);
     }
@@ -237,13 +313,84 @@ function SignInForm() {
           </Box>
 
           <Typography variant="h4" sx={{ mb: 0.75 }}>Welcome back</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2.5 }}>
             Sign in to administer your organisation.
           </Typography>
 
-          <Box component="form" onSubmit={submit} noValidate>
-            {error && <Alert severity="error" sx={{ mb: 2.5 }}>{error}</Alert>}
+          {/* Three ways in, the way every Indian bank lays them out — the
+              audience already knows this screen by heart. QR needs the mobile
+              app to scan with; until that ships it is visibly coming rather
+              than quietly missing. */}
+          <Tabs value={tab} onChange={(_, v) => { setTab(v); setError(null); }}
+                sx={{ mb: 3, minHeight: 40,
+                      '& .MuiTab-root': { minHeight: 40, textTransform: 'none',
+                                          fontWeight: 600, fontSize: 14 } }}>
+            <Tab value="email" label="Email" />
+            <Tab value="otp" label="Mobile OTP" />
+            <Tab value="qr" label="QR code" disabled />
+          </Tabs>
 
+          {error && <Alert severity="error" sx={{ mb: 2.5 }}>{error}</Alert>}
+
+          {tab === 'otp' && (
+          <Box component="form" onSubmit={submitOtp} noValidate>
+            <TextField
+              fullWidth
+              label="Mobile number"
+              type="tel"
+              autoComplete="tel"
+              required
+              placeholder="+91 98765 43210"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              disabled={otpSent}
+              sx={{ mb: 2.5 }}
+            />
+
+            {!otpSent ? (
+              <Button fullWidth variant="contained" size="large"
+                      disabled={busy || phone.trim().length < 8}
+                      onClick={() => void sendOtp()}>
+                {busy ? 'Sending…' : 'Send code'}
+              </Button>
+            ) : (
+              <>
+                <Alert severity="info" sx={{ mb: 2.5 }}>
+                  If this number is registered, a 6-digit code is on its way.
+                  It works for 5 minutes.
+                </Alert>
+                {devCode && (
+                  <Alert severity="warning" sx={{ mb: 2.5 }}>
+                    Testing mode — SMS is not configured, so the code is shown
+                    here: <strong>{devCode}</strong>
+                  </Alert>
+                )}
+                <TextField
+                  fullWidth
+                  label="6-digit code"
+                  required
+                  autoFocus
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  slotProps={{ htmlInput: { inputMode: 'numeric', maxLength: 6 } }}
+                  sx={{ mb: 2.5 }}
+                />
+                <Button type="submit" fullWidth variant="contained" size="large"
+                        disabled={busy || otpCode.length !== 6}>
+                  {busy ? 'Signing in…' : 'Sign in'}
+                </Button>
+                <Button fullWidth variant="text" size="small" sx={{ mt: 1.5 }}
+                        disabled={busy || resendIn > 0}
+                        onClick={() => void sendOtp()}>
+                  {resendIn > 0 ? `Resend in ${resendIn}s` : 'Resend code'}
+                </Button>
+              </>
+            )}
+          </Box>
+          )}
+
+          {tab === 'email' && (
+          <Box component="form" onSubmit={submit} noValidate>
             <TextField
               fullWidth
               label="Email address"
@@ -288,17 +435,36 @@ function SignInForm() {
               }}
             />
 
+            <FormControlLabel
+              sx={{ mt: 1 }}
+              control={<Checkbox size="small" checked={remember}
+                                onChange={(e) => setRemember(e.target.checked)} />}
+              label={<Typography variant="body2">Remember my email on this device</Typography>}
+            />
+
             <Button
               type="submit"
               fullWidth
               variant="contained"
               size="large"
               disabled={busy || !email || !password}
-              sx={{ mt: 3.5 }}
+              sx={{ mt: 2.5 }}
             >
               {busy ? 'Signing in…' : 'Sign in'}
             </Button>
           </Box>
+          )}
+
+          {/* Outside the tabs: applies to whichever way you sign in. */}
+          <TextField
+            select fullWidth size="small" label="Start in" value={startIn}
+            onChange={(e) => setStartIn(e.target.value as 'default' | 'mail')}
+            sx={{ mt: 3 }}
+            helperText="Where you land after signing in"
+          >
+            <MenuItem value="default">Dashboard</MenuItem>
+            <MenuItem value="mail">Mail inbox</MenuItem>
+          </TextField>
 
           <Typography variant="caption" color="text.disabled"
                       sx={{ display: 'block', mt: 4, lineHeight: 1.7 }}>
