@@ -19,6 +19,7 @@ import Typography from '@mui/material/Typography';
 import { alpha } from '@mui/material/styles';
 
 import { useAuth } from '@/lib/auth';
+import { homeFor } from '@/components/RequireAuth';
 
 // ============================================================================
 //  Sign-in
@@ -128,7 +129,7 @@ function SignInForm() {
     router.replace(mustChangePassword
       ? '/change-password'
       : params.get('next')
-        ?? (startIn === 'mail' ? '/mail/f-inbox' : destinationFor(user.role)));
+        ?? (startIn === 'mail' ? '/mail/f-inbox' : homeFor(user.role)));
   }, [loading, user, mustChangePassword, router, params, adding, startIn]);
 
   async function submit(e: React.FormEvent) {
@@ -476,13 +477,6 @@ function SignInForm() {
       </Box>
     </Box>
   );
-}
-
-/** Super admins run the platform; everyone else lands in their own product. */
-function destinationFor(role: string): string {
-  if (role === 'super_admin') return '/admin';
-  if (role === 'org_owner' || role === 'org_admin') return '/org/users';
-  return '/mail/f-inbox';
 }
 
 export default function LoginPage() {

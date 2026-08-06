@@ -19,6 +19,25 @@ import { useAuth } from '@/lib/auth';
  *  the check belongs on the server instead.
  * ─────────────────────────────────────────────────────────────────────────
  */
+/**
+ * The page a signed-in person belongs on, by role.
+ *
+ * This exists because "send them to /" is how the console once got stuck in a
+ * loop: the landing page sent every signed-in user to /org, /org bounced
+ * anyone who was not an admin back to /, and an ordinary employee's screen
+ * blinked between the two forever. Every redirect-on-role must resolve to a
+ * page the role can actually stay on.
+ */
+export function homeFor(role: string): string {
+  switch (role) {
+    case 'super_admin': return '/admin';
+    case 'org_owner':
+    case 'org_admin': return '/org';
+    // Straight to the inbox: /mail has no index page of its own.
+    default: return '/mail/f-inbox';
+  }
+}
+
 export function RequireAuth({
   children,
   roles,
@@ -46,7 +65,11 @@ export function RequireAuth({
       return;
     }
 
-    if (roles && !roles.includes(user.role)) router.replace('/');
+    // Their own home, never '/'. The landing page forwards signed-in users
+    // by role, so bouncing to '/' from a page their role cannot see would
+    // ping-pong forever if their home were also denied — homeFor guarantees
+    // it is not.
+    if (roles && !roles.includes(user.role)) router.replace(homeFor(user.role));
   }, [loading, user, mustChangePassword, roles, router, pathname]);
 
   // Render nothing rather than a spinner while the initial refresh settles.

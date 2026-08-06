@@ -16,6 +16,7 @@ import Typography from '@mui/material/Typography';
 import { alpha } from '@mui/material/styles';
 
 import { useAuth } from '@/lib/auth';
+import { homeFor } from '@/components/RequireAuth';
 
 // ============================================================================
 //  The front door
@@ -68,7 +69,7 @@ export default function Landing() {
   // Someone already signed in has no use for a sales page.
   useEffect(() => {
     if (loading || !user) return;
-    router.replace(user.role === 'super_admin' ? '/admin' : '/org');
+    router.replace(homeFor(user.role));
   }, [loading, user, router]);
 
   return (
