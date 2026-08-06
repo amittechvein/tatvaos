@@ -12,14 +12,15 @@ namespace TatvaOS.Api.Shared.Settings;
 /// </summary>
 public static class SettingKeys
 {
-    // SMS — Infobip primary (Techvein already holds an account and a
-    // DLT-registered template), MSG91 fields stored for later.
+    // SMS — both providers implemented; sms.provider picks the primary.
+    public const string SmsProvider = "sms.provider";
     public const string InfobipBaseUrl = "sms.infobip.base_url";
     public const string InfobipUsername = "sms.infobip.username";
     public const string InfobipPassword = "sms.infobip.password";
     public const string InfobipSenderId = "sms.infobip.sender_id";
     public const string Msg91AuthKey = "sms.msg91.auth_key";
     public const string Msg91SenderId = "sms.msg91.sender_id";
+    public const string Msg91DltTemplateId = "sms.msg91.dlt_template_id";
     public const string OtpTemplate = "sms.otp_template";
     public const string CountryPrefix = "sms.country_prefix";
     public const string ShowOtpOnScreen = "sms.show_otp_on_screen";
@@ -40,6 +41,10 @@ public static class SettingKeys
     /// <summary>What the settings screen renders, in order.</summary>
     public static readonly IReadOnlyList<Def> All =
     [
+        new(SmsProvider, "sms", "Primary SMS provider", false,
+            "Which provider sends OTPs. Auto prefers Infobip when its credentials are set, "
+            + "otherwise MSG91. Choosing one explicitly makes failures loud: if its "
+            + "credentials are missing, sends fail instead of quietly using the other."),
         new(InfobipBaseUrl, "sms", "Infobip base URL", false,
             "Usually https://api.infobip.com, or the regional URL from your Infobip dashboard."),
         new(InfobipUsername, "sms", "Infobip username", false,
@@ -51,9 +56,13 @@ public static class SettingKeys
             "Prepended to 10-digit numbers. 91 for India."),
         new(OtpTemplate, "sms", "OTP SMS template (DLT)", false,
             "Must match your DLT-registered template exactly — {{otp}} is replaced with the code. A mismatch is silently dropped by the carrier, not bounced."),
-        new(Msg91AuthKey, "sms", "MSG91 auth key (alternative)", true,
-            "Stored for later. Sending via MSG91 is not implemented yet — Infobip is."),
-        new(Msg91SenderId, "sms", "MSG91 sender ID", false, ""),
+        new(Msg91AuthKey, "sms", "MSG91 auth key", true,
+            "Used when MSG91 is the primary provider, or as the automatic fallback."),
+        new(Msg91SenderId, "sms", "MSG91 sender ID", false,
+            "The DLT-registered header for MSG91, e.g. TCVEIN. Falls back to the Infobip sender ID if empty."),
+        new(Msg91DltTemplateId, "sms", "MSG91 DLT template ID", false,
+            "The DLT_TE_ID from your MSG91 dashboard for the OTP template. MSG91 routes "
+            + "the message under this registration; without it carriers may drop silently."),
         new(ShowOtpOnScreen, "sms", "Show OTP on screen (testing mode)", false,
             "ON shows signup codes in the browser so the flow works before SMS is configured. Turn OFF before going live — with it on, the phone check proves nothing."),
 

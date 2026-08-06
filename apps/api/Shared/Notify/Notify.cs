@@ -83,9 +83,32 @@ public sealed class SmsSender(
 
         var user = s.GetValueOrDefault(SettingKeys.InfobipUsername, "");
         var pass = s.GetValueOrDefault(SettingKeys.InfobipPassword, "");
+        var msg91Key = s.GetValueOrDefault(SettingKeys.Msg91AuthKey, "");
 
-        if (!string.IsNullOrWhiteSpace(user) && !string.IsNullOrWhiteSpace(pass))
-            return await SendInfobipAsync(s, user, pass, to, text, ct);
+        var hasInfobip = !string.IsNullOrWhiteSpace(user) && !string.IsNullOrWhiteSpace(pass);
+        var hasMsg91 = !string.IsNullOrWhiteSpace(msg91Key);
+
+        // An EXPLICIT choice fails loudly when its credentials are missing,
+        // rather than quietly using the other provider. An admin who picked
+        // MSG91 and sees "sent via infobip" on the test button has been lied
+        // to about which account is being billed and which template applies.
+        switch (s.GetValueOrDefault(SettingKeys.SmsProvider, "auto").Trim().ToLowerInvariant())
+        {
+            case "infobip":
+                return hasInfobip
+                    ? await SendInfobipAsync(s, user, pass, to, text, ct)
+                    : new SmsResult(false, "infobip",
+                        "Infobip is the primary provider but its username or password is not set.");
+            case "msg91":
+                return hasMsg91
+                    ? await SendMsg91Async(s, msg91Key, to, text, ct)
+                    : new SmsResult(false, "msg91",
+                        "MSG91 is the primary provider but its auth key is not set.");
+        }
+
+        // Auto: Infobip first (the longer-standing account), MSG91 second.
+        if (hasInfobip) return await SendInfobipAsync(s, user, pass, to, text, ct);
+        if (hasMsg91) return await SendMsg91Async(s, msg91Key, to, text, ct);
 
         // No provider configured. Logged, not pretended — the endpoint decides
         // whether to surface the code on screen instead.
@@ -132,6 +155,59 @@ public sealed class SmsSender(
         {
             log.LogWarning(ex, "Infobip send to {To} failed", to);
             return new SmsResult(false, "infobip", ex.Message);
+        }
+    }
+
+    private async Task<SmsResult> SendMsg91Async(
+        Dictionary<string, string> s, string authKey,
+        string to, string text, CancellationToken ct)
+    {
+        // Falls back to the Infobip sender: the DLT header (e.g. TCVEIN) is
+        // registered to the COMPANY, not to a provider, so reusing it is
+        // usually correct and an empty box should not break sending.
+        var sender = s.GetValueOrDefault(SettingKeys.Msg91SenderId, "");
+        if (string.IsNullOrWhiteSpace(sender))
+            sender = s.GetValueOrDefault(SettingKeys.InfobipSenderId, "TATVAOS");
+        var dltId = s.GetValueOrDefault(SettingKeys.Msg91DltTemplateId, "");
+
+        try
+        {
+            var client = httpFactory.CreateClient("msg91");
+
+            // The sendhttp API, with route=4 (transactional — OTPs must not
+            // queue behind promotional traffic) and country=0 because the
+            // number is already in full international form from Normalise.
+            var query = new List<KeyValuePair<string, string>>
+            {
+                new("authkey", authKey),
+                new("mobiles", to),
+                new("message", text),
+                new("sender", sender),
+                new("route", "4"),
+                new("country", "0"),
+                new("response", "json"),
+            };
+            if (!string.IsNullOrWhiteSpace(dltId)) query.Add(new("DLT_TE_ID", dltId));
+
+            var url = "https://control.msg91.com/api/sendhttp.php?" +
+                string.Join("&", query.Select(kv => $"{kv.Key}={Uri.EscapeDataString(kv.Value)}"));
+
+            using var res = await client.GetAsync(url, ct);
+            var body = await res.Content.ReadAsStringAsync(ct);
+
+            // MSG91 answers 200 even for failures; the JSON "type" field is
+            // the real verdict.
+            if (res.IsSuccessStatusCode &&
+                body.Contains("\"type\":\"success\"", StringComparison.OrdinalIgnoreCase))
+                return new SmsResult(true, "msg91");
+
+            log.LogWarning("MSG91 rejected send to {To}: {Status} {Body}", to, (int)res.StatusCode, body);
+            return new SmsResult(false, "msg91", $"MSG91 returned {(int)res.StatusCode}: {Truncate(body)}");
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "MSG91 send to {To} failed", to);
+            return new SmsResult(false, "msg91", ex.Message);
         }
     }
 

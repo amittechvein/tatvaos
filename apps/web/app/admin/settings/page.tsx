@@ -40,9 +40,9 @@ const SECTIONS: { id: string; title: string; blurb: string }[] = [
   {
     id: 'sms',
     title: 'SMS (OTP)',
-    blurb: 'Signup codes send through Infobip once username and password are set. '
-      + 'The OTP template must exactly match your DLT-registered template — a mismatch '
-      + 'is silently dropped by the carrier, not bounced.',
+    blurb: 'Signup and sign-in codes send through the primary provider below — Infobip '
+      + 'and MSG91 are both supported. The OTP template must exactly match your '
+      + 'DLT-registered template — a mismatch is silently dropped by the carrier, not bounced.',
   },
   {
     id: 'sso',
@@ -179,7 +179,17 @@ export default function SettingsPage() {
                          gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
                 {fields.map((s) => (
                   <Box key={s.key}>
-                    {s.key === 'sms.show_otp_on_screen' ? (
+                    {s.key === 'sms.provider' ? (
+                      <TextField
+                        select fullWidth label={s.label} value={val(s) || 'auto'}
+                        onChange={(e) => setEdits((p) => ({ ...p, [s.key]: e.target.value }))}
+                        helperText={s.help}
+                      >
+                        <MenuItem value="auto">Auto — Infobip if configured, else MSG91</MenuItem>
+                        <MenuItem value="infobip">Infobip</MenuItem>
+                        <MenuItem value="msg91">MSG91</MenuItem>
+                      </TextField>
+                    ) : s.key === 'sms.show_otp_on_screen' ? (
                       <TextField
                         select fullWidth label={s.label} value={val(s) || 'false'}
                         onChange={(e) => setEdits((p) => ({ ...p, [s.key]: e.target.value }))}
