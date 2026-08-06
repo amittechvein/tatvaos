@@ -194,7 +194,11 @@ public sealed class MaildirIngestWorker(
                     CcAddrs = mime.Cc.Count > 0 ? MailContent.Addresses(mime.Cc) : null,
                     Subject = Truncate(mime.Subject, 1000),
                     Snippet = MailContent.Snippet(mime),
-                    SentAt = mime.Date == DateTimeOffset.MinValue ? null : mime.Date,
+                    // .ToUniversalTime() is not optional: an email's Date
+                    // header carries the sender's offset (+05:30 for IST), and
+                    // Npgsql refuses to write a non-UTC DateTimeOffset to a
+                    // timestamptz column — it fails the whole insert batch.
+                    SentAt = mime.Date == DateTimeOffset.MinValue ? null : mime.Date.ToUniversalTime(),
                     ReceivedAt = info.LastWriteTimeUtc,
                     SizeBytes = info.Length,
                     IsRead = false,
