@@ -9,8 +9,14 @@ user     = tatvaos_mailedge
 password = dev_mail_pw
 dbname   = tatvaos_mail
 
+# 'trial' receives mail like anyone else — a trial of a mail product that
+# cannot receive mail is dead on arrival, and the very first tenant proved it
+# in production: Gmail got "Relay access denied" because this line said
+# = 'active'. Suspension is what cuts service, never the trial state.
+# local-recipient-domains.cf already said IN ('active','trial'); these four
+# lookups had drifted from it.
 query = SELECT 1 FROM core.domains d
         JOIN core.tenants t ON t.id = d.tenant_id
         WHERE d.fqdn = '%s'
           AND d.is_active = true
-          AND t.status = 'active'
+          AND t.status IN ('active', 'trial')

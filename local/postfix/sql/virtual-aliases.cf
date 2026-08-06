@@ -12,4 +12,4 @@ query = SELECT m.address FROM mail.aliases a
         WHERE a.address = '%s'
           AND a.is_active = true
           AND m.is_active = true
-          AND t.status = 'active'
+          AND t.status IN ('active', 'trial')

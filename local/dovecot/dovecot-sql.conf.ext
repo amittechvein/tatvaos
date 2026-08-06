@@ -33,5 +33,5 @@ password_query = \
     LEFT   JOIN core.users u ON u.id = m.user_id \
     WHERE  m.address = '%u' \
       AND  m.is_active = true \
-      AND  t.status = 'active' \
+      AND  t.status IN ('active', 'trial') \
       AND  (u.id IS NULL OR u.status = 'active')
