@@ -101,6 +101,9 @@ export default {
       },
 
       spacing: {
+        // 18px icons — the mail list uses h-4.5 in several places, and
+        // without this token Tailwind generates nothing for that class.
+        '4.5': '1.125rem',
         rail: '240px',
         'rail-sm': '70px',
         topbar: '64px',

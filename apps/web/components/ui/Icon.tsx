@@ -3,7 +3,8 @@
 type IconName =
   | 'inbox' | 'send' | 'draft' | 'junk' | 'trash' | 'star' | 'star-filled'
   | 'search' | 'compose' | 'back' | 'attach' | 'archive' | 'menu' | 'reply'
-  | 'reply-all' | 'forward' | 'more' | 'close';
+  | 'reply-all' | 'forward' | 'more' | 'close'
+  | 'refresh' | 'envelope' | 'envelope-open' | 'chevron-left' | 'chevron-right';
 
 const PATHS: Record<IconName, string> = {
   inbox: 'M4 13h4l2 3h4l2-3h4M4 13l2-8h12l2 8M4 13v6h16v-6',
@@ -24,6 +25,11 @@ const PATHS: Record<IconName, string> = {
   forward: 'M15 7l5 5-5 5M20 12h-9a5 5 0 00-5 5v1',
   more: 'M12 6h.01M12 12h.01M12 18h.01',
   close: 'M6 6l12 12M18 6L6 18',
+  refresh: 'M20 11a8 8 0 10.3 4M20 5v6h-6',
+  envelope: 'M4 6h16v12H4V6zm0 1l8 6 8-6',
+  'envelope-open': 'M4 10l8-6 8 6v10H4V10zm0 1l8 6 8-6',
+  'chevron-left': 'M14 6l-6 6 6 6',
+  'chevron-right': 'M10 6l6 6-6 6',
 };
 
 export function Icon({

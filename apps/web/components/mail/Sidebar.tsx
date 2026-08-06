@@ -15,16 +15,19 @@ const FOLDER_ICONS: Record<string, 'inbox' | 'send' | 'draft' | 'junk' | 'trash'
   '\\Trash': 'trash',
 };
 
+/**
+ * The Gmail-shaped nav: a floating Compose pill, folders as rounded-right
+ * rows with the active one filled, counts as bare numbers rather than badges.
+ * Brand stays ours — the accent comes from the theme, not from Google.
+ */
 export function Sidebar({
   folders,
   mailbox,
-  orgName,
   onCompose,
   onNavigate,
 }: {
   folders: Folder[];
   mailbox: MailMailbox;
-  orgName?: string;
   onCompose: () => void;
   onNavigate?: () => void;
 }) {
@@ -32,29 +35,19 @@ export function Sidebar({
   const pct = quotaPercent(mailbox.usedBytes, mailbox.quotaBytes);
 
   return (
-    <nav className="flex h-full w-64 shrink-0 flex-col border-r border-line bg-surface">
-      <div className="flex items-center gap-2 px-4 py-4">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-sm font-bold text-white">
-          T
-        </div>
-        <div className="min-w-0">
-          <div className="truncate text-sm font-semibold">TatvaOS Mail</div>
-          {orgName && <div className="truncate text-xs text-ink-muted">{orgName}</div>}
-        </div>
-      </div>
-
-      <div className="px-3 pb-3">
+    <nav className="flex h-full w-64 shrink-0 flex-col bg-canvas">
+      <div className="px-3 pb-4 pt-3">
         <button
           type="button"
           onClick={onCompose}
-          className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-brand-700"
+          className="flex items-center gap-3 rounded-2xl bg-surface px-6 py-3.5 text-sm font-medium text-ink shadow-raised transition hover:shadow-lg"
         >
-          <Icon name="compose" className="h-4 w-4" />
+          <Icon name="compose" className="h-5 w-5 text-brand-600" />
           Compose
         </button>
       </div>
 
-      <ul className="scroll-thin flex-1 space-y-0.5 overflow-y-auto px-2">
+      <ul className="scroll-thin flex-1 overflow-y-auto pr-3">
         {folders.map((f) => {
           const href = folderPath(f);
           const active = pathname === href;
@@ -63,16 +56,16 @@ export function Sidebar({
               <Link
                 href={href}
                 onClick={onNavigate}
-                className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition ${
+                className={`flex items-center gap-4 rounded-r-full py-1.5 pl-6 pr-4 text-sm transition ${
                   active
-                    ? 'bg-brand-50 font-semibold text-brand-800'
-                    : 'text-ink hover:bg-canvas'
+                    ? 'bg-brand-100 font-semibold text-brand-800 dark:bg-brand-600/25 dark:text-brand-200'
+                    : 'text-ink hover:bg-surface'
                 }`}
               >
                 <Icon name={FOLDER_ICONS[f.specialUse ?? ''] ?? 'inbox'} className="h-4.5 w-4.5" />
                 <span className="flex-1 truncate">{f.name}</span>
                 {f.unreadCount > 0 && (
-                  <span className="rounded-full bg-brand-600 px-1.5 py-0.5 text-[11px] font-semibold text-white">
+                  <span className={`text-xs ${active ? 'font-bold' : 'font-semibold text-ink-muted'}`}>
                     {f.unreadCount}
                   </span>
                 )}
@@ -82,12 +75,12 @@ export function Sidebar({
         })}
       </ul>
 
-      <div className="border-t border-line p-4">
+      <div className="px-6 py-4">
         <div className="mb-1.5 flex justify-between text-xs text-ink-muted">
           <span>Storage</span>
           <span>{pct}%</span>
         </div>
-        <div className="h-1.5 w-full overflow-hidden rounded-full bg-line">
+        <div className="h-1 w-full overflow-hidden rounded-full bg-line">
           <div
             className={`h-full rounded-full transition-all ${
               pct > 90 ? 'bg-danger' : pct > 75 ? 'bg-warn' : 'bg-brand-500'
@@ -97,11 +90,6 @@ export function Sidebar({
         </div>
         <div className="mt-1.5 text-xs text-ink-muted">
           {formatBytes(mailbox.usedBytes)} of {formatBytes(mailbox.quotaBytes)}
-        </div>
-
-        <div className="mt-4 border-t border-line pt-3">
-          <div className="truncate text-sm font-medium">{mailbox.displayName}</div>
-          <div className="truncate text-xs text-ink-muted">{mailbox.address}</div>
         </div>
       </div>
     </nav>

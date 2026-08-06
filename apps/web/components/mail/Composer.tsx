@@ -12,6 +12,10 @@ function splitAddresses(raw: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * Gmail-shaped composer: a card docked to the bottom-right on desktop — mail
+ * keeps being readable behind it — and full-screen on phones.
+ */
 export function Composer({
   replyTo,
   fromAddress,
@@ -53,33 +57,35 @@ export function Composer({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/20 p-0 sm:items-center sm:p-6">
-      <div className="flex h-full w-full flex-col rounded-none bg-surface shadow-2xl sm:h-auto sm:max-h-[85vh] sm:max-w-2xl sm:rounded-xl">
-        <header className="flex items-center justify-between border-b border-line px-4 py-3">
-          <h2 className="text-sm font-semibold">{replyTo ? 'Reply' : 'New message'}</h2>
+    <div className="fixed inset-0 z-50 sm:inset-auto sm:bottom-0 sm:right-8">
+      <div className="flex h-full w-full flex-col bg-surface shadow-raised sm:h-auto sm:max-h-[80vh] sm:w-[540px] sm:rounded-t-xl sm:border sm:border-b-0 sm:border-line">
+        <header className="flex items-center justify-between rounded-t-none bg-rail px-4 py-2.5 sm:rounded-t-xl">
+          <h2 className="text-sm font-medium text-white">
+            {replyTo ? 'Reply' : 'New message'}
+          </h2>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="rounded p-1 text-ink-faint hover:bg-canvas hover:text-ink"
+            className="rounded p-1 text-rail-text hover:text-white"
           >
-            <Icon name="close" className="h-5 w-5" />
+            <Icon name="close" className="h-4.5 w-4.5" />
           </button>
         </header>
 
         <div className="flex-1 overflow-y-auto">
-          <div className="flex items-center gap-3 border-b border-line px-4 py-2.5">
-            <span className="w-14 shrink-0 text-sm text-ink-muted">From</span>
-            <span className="truncate text-sm text-ink">{fromAddress}</span>
+          <div className="flex items-center gap-2 border-b border-line px-4 py-2 text-sm">
+            <span className="shrink-0 text-ink-muted">From</span>
+            <span className="truncate text-ink">{fromAddress}</span>
           </div>
 
-          <label className="flex items-center gap-3 border-b border-line px-4 py-2.5">
-            <span className="w-14 shrink-0 text-sm text-ink-muted">To</span>
+          <label className="flex items-center gap-2 border-b border-line px-4 py-2 text-sm">
+            <span className="shrink-0 text-ink-muted">To</span>
             <input
               value={to}
               onChange={(e) => setTo(e.target.value)}
-              placeholder="name@example.com — commas for several"
-              className="w-full border-0 p-0 text-sm outline-none placeholder:text-ink-faint"
+              placeholder="Recipients — commas for several"
+              className="w-full border-0 bg-transparent p-0 text-sm text-ink outline-none placeholder:text-ink-faint"
             />
             {!showCc && (
               <button
@@ -93,24 +99,23 @@ export function Composer({
           </label>
 
           {showCc && (
-            <label className="flex items-center gap-3 border-b border-line px-4 py-2.5">
-              <span className="w-14 shrink-0 text-sm text-ink-muted">Cc</span>
+            <label className="flex items-center gap-2 border-b border-line px-4 py-2 text-sm">
+              <span className="shrink-0 text-ink-muted">Cc</span>
               <input
                 value={cc}
                 onChange={(e) => setCc(e.target.value)}
                 placeholder="name@example.com"
-                className="w-full border-0 p-0 text-sm outline-none placeholder:text-ink-faint"
+                className="w-full border-0 bg-transparent p-0 text-sm text-ink outline-none placeholder:text-ink-faint"
               />
             </label>
           )}
 
-          <label className="flex items-center gap-3 border-b border-line px-4 py-2.5">
-            <span className="w-14 shrink-0 text-sm text-ink-muted">Subject</span>
+          <label className="flex items-center gap-2 border-b border-line px-4 py-2 text-sm">
             <input
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
               placeholder="Subject"
-              className="w-full border-0 p-0 text-sm outline-none placeholder:text-ink-faint"
+              className="w-full border-0 bg-transparent p-0 text-sm text-ink outline-none placeholder:text-ink-faint"
             />
           </label>
 
@@ -118,8 +123,8 @@ export function Composer({
             value={body}
             onChange={(e) => setBody(e.target.value)}
             placeholder="Write your message"
-            rows={14}
-            className="w-full resize-none border-0 px-4 py-3 text-sm outline-none placeholder:text-ink-faint"
+            rows={12}
+            className="w-full resize-none border-0 bg-transparent px-4 py-3 text-sm text-ink outline-none placeholder:text-ink-faint"
           />
         </div>
 
@@ -134,7 +139,7 @@ export function Composer({
             type="button"
             onClick={handleSend}
             disabled={sending || !to.trim()}
-            className="rounded-lg bg-brand-600 px-5 py-2 text-sm font-medium text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-full bg-brand-600 px-6 py-2 text-sm font-medium text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {sending ? 'Sending…' : 'Send'}
           </button>

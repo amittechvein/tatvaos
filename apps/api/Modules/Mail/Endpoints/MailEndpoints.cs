@@ -189,6 +189,17 @@ public static class MailEndpoints
             })
             .ToListAsync(ct);
 
+        // Attachment names ride along with the list — the client renders them
+        // as chips on the row, the way every mail client's list does. One
+        // query for the whole page, not one per message.
+        var pageIds = rows.Select(r => r.Id).ToList();
+        var chips = (await db.Attachments.AsNoTracking()
+                .Where(a => pageIds.Contains(a.MessageId))
+                .OrderBy(a => a.PartIndex)
+                .Select(a => new { a.MessageId, a.Id, a.Filename, a.ContentType, a.SizeBytes })
+                .ToListAsync(ct))
+            .ToLookup(a => a.MessageId);
+
         var messages = rows.Select(m => new
         {
             id = m.Id,
@@ -204,6 +215,14 @@ public static class MailEndpoints
             isRead = m.IsRead,
             isFlagged = m.IsFlagged,
             hasAttachments = m.HasAttachments,
+            attachments = chips[m.Id].Select(a => new
+            {
+                id = a.Id,
+                filename = a.Filename,
+                contentType = a.ContentType ?? "application/octet-stream",
+                sizeBytes = a.SizeBytes,
+                isInline = false,
+            }).ToArray(),
         });
 
         return Results.Ok(new { total, messages });
