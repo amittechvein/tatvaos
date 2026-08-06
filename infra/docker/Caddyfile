@@ -45,13 +45,11 @@
 # matches no files is simply a no-op.
 import /etc/caddy/conf.d/*.caddy
 
-# Testing only. In production these blocks are unreachable because the
-# hostnames do not resolve — but keep an eye on that, because a wildcard DNS
-# record would silently expose them.
-mail-catcher.{$SITE_DOMAIN} {
-    reverse_proxy mailpit:8025
-}
-
-webmail.{$SITE_DOMAIN} {
-    reverse_proxy roundcube:80
-}
+# The mail-catcher.* and webmail.* blocks that used to sit here are GONE, and
+# should not come back in this file. They were testing-only, "unreachable in
+# production because the hostnames do not resolve" — except a wildcard DNS
+# record on the apex made every subdomain resolve, at which point production
+# Caddy was obtaining real TLS certificates for two dead doors and internet
+# scanners were probing them around the clock. A future staging box that wants
+# them should carry them in its own conf.d fragment, mounted by its own
+# overlay, where production can never see them.
