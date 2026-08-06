@@ -208,6 +208,25 @@ done
 }
 
 # ---------------------------------------------------------------------------
+step "Reloading the reverse proxy"
+
+# `docker compose up -d` only RECREATES a container when its definition changes
+# — image, env, ports, the mount SET. Editing the CONTENTS of a bind-mounted
+# file changes none of those, so Caddy keeps serving whatever config it loaded
+# at boot. Every Caddyfile edit before this line silently did nothing until the
+# container happened to restart for another reason — which is how mail.
+# tatvaos.com kept serving the admin console after the redirect was "deployed".
+# `caddy reload` re-reads the mounted Caddyfile in place, no downtime.
+if $COMPOSE exec -T caddy caddy reload --config /etc/caddy/Caddyfile 2>&1 | sed 's/^/   /'; then
+    ok "caddy reloaded from the mounted Caddyfile"
+else
+    # Non-fatal: a reload failure usually means a config typo, and the OLD
+    # config is still serving. Say so loudly rather than failing the deploy and
+    # leaving the operator unsure whether the site is down.
+    bad "caddy reload failed — the previous config is still live; check the Caddyfile"
+fi
+
+# ---------------------------------------------------------------------------
 step "Health"
 settled=0
 for i in $(seq 1 30); do

@@ -192,16 +192,30 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
   const [error, setError] = useState<string | null>(null);
 
   const chosen = plans.find((p) => p.id === planId);
+  const onTrial = org.status === 'trial';
+  const suspended = org.status === 'suspended';
+  const active = org.status === 'active';
 
-  async function save() {
+  async function post(path: string, method: string, ok: () => void) {
+    setBusy(true); setError(null);
+    try {
+      const res = await authedFetch(`/admin/organisations/${org.id}${path}`, { method });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? 'That did not work.');
+      ok();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'That did not work.');
+      setBusy(false);
+    }
+  }
+
+  // The plan PUT carries a body, so it can't share the bare-POST helper above.
+  async function changePlan() {
     setBusy(true); setError(null);
     try {
       const res = await authedFetch(`/admin/organisations/${org.id}/plan`, {
         method: 'PUT',
-        body: JSON.stringify({
-          planId,
-          seats: seats.trim() === '' ? null : Number(seats),
-        }),
+        body: JSON.stringify({ planId, seats: seats.trim() === '' ? null : Number(seats) }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? 'Could not change the plan.');
@@ -215,17 +229,44 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
   return (
     <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle sx={{ pb: 1 }}>
-        Change plan — {org.name}
+        Manage — {org.name}
         <Typography variant="body2" color="text.secondary">
-          Currently on {org.planName ?? 'no plan'}
-          {org.subscriptionStatus ? ` (${org.subscriptionStatus})` : ''}
+          {org.planName ?? 'No plan'}
+          {' · '}
+          <Box component="span" sx={{ textTransform: 'capitalize' }}>{org.status}</Box>
         </Typography>
       </DialogTitle>
 
       <DialogContent>
         {error && <Alert severity="error" sx={{ mb: 2.5 }}>{error}</Alert>}
 
-        <TextField select fullWidth label="Plan" value={planId} sx={{ mt: 1, mb: 2.5 }}
+        {/* ---- Lifecycle: the "still trial" fix ----------------------- */}
+        <Typography variant="body2" sx={{ fontWeight: 600, mb: 1 }}>Status</Typography>
+        <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', mb: 1 }}>
+          {(onTrial || suspended) && (
+            <Button variant="primary" disabled={busy}
+                    onClick={() => post('/activate', 'POST', onChanged)}>
+              {onTrial ? 'End trial — activate' : 'Reactivate'}
+            </Button>
+          )}
+          {active && (
+            <Button variant="ghost" disabled={busy}
+                    onClick={() => post('/suspend', 'POST', onChanged)}>
+              Suspend
+            </Button>
+          )}
+        </Box>
+        <Typography variant="caption" color="text.secondary">
+          {onTrial && 'Activating ends the trial and marks the organisation a paying customer. It keeps signing in and receiving mail throughout.'}
+          {active && 'Suspending stops sign-in and mail delivery immediately. Nothing is deleted — data is retained for the grace period.'}
+          {suspended && 'Reactivating restores sign-in and delivery.'}
+        </Typography>
+
+        <Box sx={{ my: 3, borderTop: '1px solid', borderColor: 'divider' }} />
+
+        {/* ---- Plan --------------------------------------------------- */}
+        <Typography variant="body2" sx={{ fontWeight: 600, mb: 1.5 }}>Plan</Typography>
+        <TextField select fullWidth label="Plan" value={planId} sx={{ mb: 2.5 }}
                    onChange={(e) => setPlanId(e.target.value)}>
           {plans.map((p) => (
             <MenuItem key={p.id} value={p.id}>
@@ -251,8 +292,9 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
       </DialogContent>
 
       <DialogActions sx={{ px: 3, pb: 2.5 }}>
-        <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button variant="primary" onClick={save} disabled={busy || !planId}>
+        <Button variant="ghost" onClick={onClose}>Close</Button>
+        <Button variant="primary" onClick={changePlan}
+                disabled={busy || !planId || planId === org.planId}>
           {busy ? 'Saving…' : 'Change plan'}
         </Button>
       </DialogActions>
