@@ -39,6 +39,7 @@ public static class UserEndpoints
 
         users.MapGet("/", ListAsync);
         users.MapPost("/", CreateAsync);
+        users.MapPut("/{id:guid}", UpdateAsync);
         users.MapPost("/bulk", BulkCreateAsync);
         users.MapPost("/{id:guid}/suspend", SuspendAsync);
         users.MapPost("/{id:guid}/reactivate", ReactivateAsync);
@@ -237,6 +238,106 @@ public static class UserEndpoints
             products,
             temporaryPassword = req.Password is null ? password : null,
             note = "The user must change this on first sign-in.",
+        });
+    }
+
+    /// <summary>
+    /// Edit a person: name, department, role, mailbox quota.
+    ///
+    /// Email is deliberately NOT editable here. It is the sign-in identity and
+    /// usually the mailbox address; renaming it is an aliasing operation with
+    /// mail-routing consequences, not a form field. That gets its own flow.
+    /// </summary>
+    private static async Task<IResult> UpdateAsync(
+        Guid id, UpdateUserRequest req,
+        AppDbContext db, StorageAllocator storage, TenantContext tenant,
+        AuditWriter audit, CancellationToken ct)
+    {
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id, ct);
+        if (user is null) return Results.NotFound();
+
+        var before = new { user.DisplayName, user.DepartmentId, user.Role };
+
+        if (!string.IsNullOrWhiteSpace(req.DisplayName))
+            user.DisplayName = req.DisplayName.Trim();
+
+        if (req.DepartmentId is Guid did)
+        {
+            if (did == Guid.Empty)
+            {
+                user.DepartmentId = null;
+            }
+            else
+            {
+                // Validated inside the tenant — the global filter scopes this
+                // query, so another tenant's department id lands here as null.
+                var dept = await db.Departments.FirstOrDefaultAsync(d => d.Id == did, ct);
+                if (dept is null)
+                    return Results.BadRequest(new { error = "Unknown department." });
+                user.DepartmentId = dept.Id;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(req.Role))
+        {
+            // Nobody edits their own role — not even to something lower. The
+            // UI disables the field, but the SERVER is the rule: without this
+            // line an org_admin promotes themselves to owner with one curl.
+            if (user.Id == tenant.UserId)
+                return Results.BadRequest(new
+                {
+                    error = "You cannot change your own role. Ask another owner or admin.",
+                });
+
+            var role = req.Role.Trim().ToLowerInvariant();
+            string[] allowed = ["org_owner", "org_admin", "it_admin", "manager", "employee", "auditor"];
+            if (!allowed.Contains(role))
+                return Results.BadRequest(new { error = "Unknown role." });
+
+            // An organisation must always have at least one owner. Without
+            // this, demoting the last one locks the whole tenant out of its
+            // own administration — recoverable only by a support ticket.
+            if (user.Role == "org_owner" && role != "org_owner")
+            {
+                var otherOwners = await db.Users.CountAsync(
+                    u => u.Role == "org_owner" && u.Id != user.Id && u.Status != "deleted", ct);
+                if (otherOwners == 0)
+                    return Results.BadRequest(new
+                    {
+                        error = "This is the organisation's only owner. Make someone else " +
+                                "an owner first, then change this role.",
+                    });
+            }
+
+            user.Role = role;
+        }
+
+        // Quota applies to the mailbox, not the person — a Payroll-only user
+        // has no mailbox and this is quietly a no-op for them.
+        long? newQuota = null;
+        if (req.QuotaBytes is long q && q > 0)
+        {
+            var mailboxes = await db.Mailboxes.Where(m => m.UserId == id).ToListAsync(ct);
+            foreach (var mb in mailboxes)
+            {
+                // Never shrink below what is already stored. A quota under
+                // current usage makes the mailbox reject all incoming mail
+                // immediately, which the admin almost never intends.
+                mb.QuotaBytes = Math.Max(q, mb.UsedBytes);
+                newQuota = mb.QuotaBytes;
+            }
+        }
+
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync("user.updated", "user", user.Id.ToString(),
+            before: before,
+            after: new { user.DisplayName, user.DepartmentId, user.Role, quotaBytes = newQuota },
+            ct: ct);
+
+        return Results.Ok(new
+        {
+            user.Id, user.Email, user.DisplayName, user.DepartmentId, user.Role,
+            quotaBytes = newQuota,
         });
     }
 

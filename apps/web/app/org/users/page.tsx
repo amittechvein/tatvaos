@@ -70,6 +70,7 @@ export default function PeoplePage() {
   const [filterDept, setFilterDept] = useState('all');
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<Person | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -165,7 +166,9 @@ export default function PeoplePage() {
             {filtered.map((p) => {
               const dept = flat.find((f) => f.d.id === p.departmentId)?.d;
               return (
-                <tr key={p.id}>
+                <tr key={p.id} style={{ cursor: 'pointer' }}
+                    onClick={() => setEditing(p)}
+                    title="Edit this person">
                   <Td>
                     <Typography variant="body2" sx={{ fontWeight: 600 }}>{p.displayName}</Typography>
                     <Typography variant="caption" color="text.secondary">{p.email}</Typography>
@@ -218,6 +221,16 @@ export default function PeoplePage() {
         You can create people and reset their passwords. You cannot read their mail —
         administrative power over an account never implies access to its contents.
       </Typography>
+
+      {editing && (
+        <EditPerson
+          person={editing}
+          departments={flat}
+          onClose={() => setEditing(null)}
+          onSaved={async (msg) => { setEditing(null); setNotice(msg); await load(); }}
+          onError={setError}
+        />
+      )}
 
       {creating && (
         <AddPerson
@@ -403,6 +416,112 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
         <Button variant="primary" onClick={create}
                 disabled={busy || displayName.trim().length < 2 || localPart.length < 1 || !domain}>
           {busy ? 'Creating…' : 'Create person'}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+function EditPerson({ person, departments, onClose, onSaved, onError }: {
+  person: Person;
+  departments: { d: Dept; depth: number }[];
+  onClose: () => void;
+  onSaved: (msg: string) => void;
+  onError: (m: string) => void;
+}) {
+  const { authedFetch, user: me } = useAuth();
+
+  const [displayName, setDisplayName] = useState(person.displayName);
+  const [departmentId, setDepartmentId] = useState(person.departmentId ?? '');
+  const [role, setRole] = useState(person.role);
+  const [quotaGb, setQuotaGb] = useState(Math.max(1, Math.round(person.quotaBytes / GB)));
+  const [busy, setBusy] = useState(false);
+
+  const editingSelf = me?.id === person.id;
+
+  async function save() {
+    setBusy(true);
+    try {
+      const res = await authedFetch(`/org/users/${person.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          // Only what changed. The API treats null as "leave alone", so a
+          // field this form never touched can never be blanked by it.
+          displayName: displayName.trim() !== person.displayName ? displayName.trim() : null,
+          departmentId: departmentId !== (person.departmentId ?? '')
+            // '' means "no department" — the API's Guid.Empty sentinel.
+            ? (departmentId === '' ? '00000000-0000-0000-0000-000000000000' : departmentId)
+            : null,
+          role: role !== person.role ? role : null,
+          quotaBytes: person.mailboxAddress && quotaGb * GB !== person.quotaBytes
+            ? quotaGb * GB : null,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? 'Could not save the changes.');
+      onSaved(`${displayName.trim()} updated.`);
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Could not save the changes.');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle sx={{ pb: 1 }}>
+        Edit {person.displayName}
+        <Typography variant="body2" color="text.secondary">{person.email}</Typography>
+      </DialogTitle>
+
+      <DialogContent>
+        <TextField autoFocus fullWidth label="Full name" required value={displayName}
+                   onChange={(e) => setDisplayName(e.target.value)} sx={{ mt: 1, mb: 2.5 }} />
+
+        <TextField select fullWidth label="Department" value={departmentId} sx={{ mb: 2.5 }}
+                   onChange={(e) => setDepartmentId(e.target.value)}>
+          <MenuItem value="">
+            <em>No department — organisation defaults</em>
+          </MenuItem>
+          {departments.map(({ d, depth }) => (
+            <MenuItem key={d.id} value={d.id}>
+              {'\u00A0'.repeat(depth * 3)}{depth > 0 ? '└ ' : ''}{d.name}
+            </MenuItem>
+          ))}
+        </TextField>
+
+        <TextField select fullWidth label="Role" value={role} sx={{ mb: 2.5 }}
+                   onChange={(e) => setRole(e.target.value)}
+                   disabled={editingSelf}
+                   helperText={editingSelf
+                     ? 'You cannot change your own role — ask another owner.'
+                     : 'What they can administer. Mail access is unaffected.'}>
+          <MenuItem value="org_owner">Owner</MenuItem>
+          <MenuItem value="org_admin">Admin</MenuItem>
+          <MenuItem value="it_admin">IT admin</MenuItem>
+          <MenuItem value="manager">Manager</MenuItem>
+          <MenuItem value="employee">Employee</MenuItem>
+          <MenuItem value="auditor">Auditor</MenuItem>
+        </TextField>
+
+        {person.mailboxAddress ? (
+          <TextField type="number" fullWidth label="Mailbox storage" value={quotaGb}
+                     onChange={(e) => setQuotaGb(Math.max(1, Number(e.target.value)))}
+                     slotProps={{
+                       input: { endAdornment: <InputAdornment position="end">GB</InputAdornment> },
+                       htmlInput: { min: 1, max: 5000 },
+                     }}
+                     helperText={`Currently using ${fmt(person.usedBytes)} — the quota will not shrink below that.`} />
+        ) : (
+          <Alert severity="info">No mailbox — storage does not apply to this person.</Alert>
+        )}
+      </DialogContent>
+
+      <DialogActions sx={{ px: 3, pb: 2.5 }}>
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button variant="primary" onClick={save}
+                disabled={busy || displayName.trim().length < 2}>
+          {busy ? 'Saving…' : 'Save changes'}
         </Button>
       </DialogActions>
     </Dialog>

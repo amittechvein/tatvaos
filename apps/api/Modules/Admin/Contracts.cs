@@ -40,6 +40,19 @@ public sealed record CreateUserRequest(
     string? Password,
     string[]? Products = null);
 
+/// <summary>
+/// Editing a person. Every field is optional — null means "leave it alone",
+/// so the client sends only what changed and a stale form cannot blank a
+/// field it never displayed.
+/// </summary>
+public sealed record UpdateUserRequest(
+    string? DisplayName,
+    // Guid.Empty means "remove from their department"; null means unchanged.
+    // Two meanings need two values, and null is already taken.
+    Guid? DepartmentId,
+    string? Role,
+    long? QuotaBytes);
+
 public sealed record BulkCreateUserRequest(
     Guid DomainId,
     Guid? DepartmentId,
