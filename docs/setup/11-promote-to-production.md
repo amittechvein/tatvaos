@@ -62,20 +62,17 @@ the loop. It now does.
 
 ---
 
-## 1 · Check Bluehost before anything else
+## 1 · Bluehost — resolved, no action
 
-`tatvaos.com`'s MX has always been `10 mail.tatvaos.com`. Repointing that A
-record from Bluehost to Linode moved mail delivery **without changing the MX
-record** — so if mailboxes existed there, mail to `@tatvaos.com` is bouncing
-right now and has been since the change.
+An earlier version of this runbook asked for a Bluehost mailbox check before
+continuing, on the theory that repointing `mail.tatvaos.com` might have cut
+off a live inbox.
 
-Log into Bluehost cPanel → **Email Accounts**. If any account has messages in
-it, stop and put `mail.tatvaos.com` back to `162.214.80.55` until TatvaOS Mail
-is actually accepting mail on port 25, then cut over deliberately.
-
-If the list is empty, nothing was lost. Continue.
-
----
+Not applicable: `tatvaos.com`'s nameservers are Linode's, and Bluehost never
+hosted mail for this domain — the old `162.214.80.55` A record was a leftover
+pointing, not a service. Nothing was receiving mail at `@tatvaos.com` before
+this platform, so nothing was lost and there is nothing to migrate. The domain
+starts clean on TatvaOS Mail.
 
 ## 2 · Linode Cloud Manager — done
 
