@@ -110,8 +110,11 @@ function SignInForm() {
     try {
       const saved = localStorage.getItem('tv_login_email');
       if (saved && !params.get('email')) { setEmail(saved); setRemember(true); }
-      const s = localStorage.getItem('tv_start_in');
-      if (s === 'mail') setStartIn('mail');
+      // "Start in" is deliberately NOT restored from storage while Mail is
+      // still the mock. A remembered 'mail' made the site auto-open the fake
+      // inbox on every visit — including a mere visit to /login while signed
+      // in. When the real client ships, restore it here so people who live
+      // in their inbox skip the dashboard: tv_start_in.
     } catch { /* private browsing */ }
     // Run once on mount, deliberately.
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -33,8 +33,11 @@ export function homeFor(role: string): string {
     case 'super_admin': return '/admin';
     case 'org_owner':
     case 'org_admin': return '/org';
-    // Straight to the inbox: /mail has no index page of its own.
-    default: return '/mail/f-inbox';
+    // INTERIM until the real Mail client ships: /mail/f-inbox is mock data,
+    // and auto-landing anyone in a fake inbox reads as a broken product.
+    // The account page is real — profile, sessions, password. When Mail is
+    // live at mail.tatvaos.com, this becomes the inbox again.
+    default: return '/account';
   }
 }
 
