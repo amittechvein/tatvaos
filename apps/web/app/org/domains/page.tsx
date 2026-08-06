@@ -12,7 +12,6 @@ import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
-import Divider from '@mui/material/Divider';
 import IconButton from '@mui/material/IconButton';
 import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
@@ -52,6 +51,49 @@ interface DomainRow {
   ownershipVerified: boolean;
   lastCheckedAt: string | null;
   lastCheckResult: string | null;
+}
+
+/** Which verification check a DNS record belongs to. The API returns them as
+ *  two lists with different keys, so the pairing is by shape — stable because
+ *  both lists are built from the same DomainVerifier. */
+function checkFor(checks: Check[], r: DnsRecord, index: number): Check | undefined {
+  const byId = (id: string) => checks.find((c) => c.id === id);
+  if (r.type === 'MX') return byId('mx');
+  if (r.host.includes('_dmarc')) return byId('dmarc');
+  if (r.host.includes('_domainkey')) return byId('dkim');
+  if (r.value.startsWith('v=spf1')) return byId('spf');
+  if (r.value.startsWith('tatvaos-verification=')) return byId('ownership');
+  return checks[index];
+}
+
+/** A labelled monospace value with a copy button — the unit DNS admins want. */
+function CopyField({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <Box>
+      <Typography variant="caption" color="text.disabled"
+                  sx={{ display: 'block', mb: 0.25, fontWeight: 600,
+                        letterSpacing: '0.04em', textTransform: 'uppercase', fontSize: 10 }}>
+        {label}
+      </Typography>
+      <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'stretch' }}>
+        <Box sx={{ flex: 1, p: 1, borderRadius: 1.5, minWidth: 0,
+                   fontFamily: mono ? 'monospace' : undefined, fontSize: 13,
+                   wordBreak: 'break-all', bgcolor: 'background.default',
+                   display: 'flex', alignItems: 'center' }}>
+          {value}
+        </Box>
+        <Tooltip title="Copy">
+          <IconButton size="small" onClick={() => void navigator.clipboard.writeText(value)}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+              <rect x="9" y="9" width="12" height="12" rx="2" />
+              <path d="M5 15V5a2 2 0 012-2h10" />
+            </svg>
+          </IconButton>
+        </Tooltip>
+      </Box>
+    </Box>
+  );
 }
 
 export default function DomainsPage() {
@@ -244,77 +286,82 @@ export default function DomainsPage() {
             </Alert>
           )}
 
-          {checks.length > 0 && (
-            <Stack spacing={1} sx={{ mb: 3 }}>
-              {checks.map((c) => (
-                <Box key={c.id} sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start',
-                                      p: 1.5, borderRadius: 1.5,
-                                      bgcolor: (t) => alpha(
-                                        c.passed ? t.palette.success.main
-                                          : c.required ? t.palette.error.main
-                                            : t.palette.warning.main, 0.08) }}>
-                  <Box sx={{ mt: 0.25, color: c.passed ? 'success.main'
-                                          : c.required ? 'error.main' : 'warning.main' }}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-                         stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"
-                         strokeLinejoin="round">
-                      {c.passed ? <path d="M20 6L9 17l-5-5" /> : <path d="M12 8v5m0 3.5h.01" />}
-                    </svg>
-                  </Box>
-                  <Box sx={{ minWidth: 0 }}>
-                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                      {c.label}
-                      {!c.required && !c.passed && (
-                        <Chip label="optional" size="small" sx={{ ml: 1, height: 18, fontSize: 10 }} />
-                      )}
-                    </Typography>
-                    {/* The server's own words. "NXDOMAIN looking up TXT" tells
-                        whoever manages their DNS far more than a friendlier
-                        rewrite would. */}
-                    <Typography variant="body2" color="text.secondary">{c.detail}</Typography>
-                  </Box>
-                </Box>
-              ))}
-            </Stack>
-          )}
+          {/* ------------------------------------------------------------
+              One CARD per concern, pairing the check with its record.
 
-          <Divider sx={{ mb: 2 }} />
-
+              The previous layout was two lists — statuses at the top,
+              records at the bottom — which made the reader match "Signing
+              key: no key found" to the right record by eye, scrolling
+              between them. Anyone relaying this to whoever manages their
+              DNS wants one self-contained block per record: what it is,
+              whether it passes, and exactly what to paste where.
+             ------------------------------------------------------------ */}
           <Stack spacing={2}>
-            {records.map((r, i) => (
-              <Box key={`${r.type}-${r.host}-${i}`}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.75 }}>
-                  <Chip label={r.type} size="small" />
-                  <Typography variant="body2" sx={{ fontWeight: 600 }}>{r.host}</Typography>
-                  {r.required
-                    ? <Chip label="required" size="small" color="error" variant="outlined" />
-                    : <Chip label="optional" size="small" variant="outlined" />}
-                </Box>
+            {records.map((r, i) => {
+              const check = checkFor(checks, r, i);
+              const state: 'passed' | 'required' | 'optional' =
+                check?.passed ? 'passed' : r.required ? 'required' : 'optional';
 
-                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                  <Box sx={{ flex: 1, p: 1.25, borderRadius: 1.5, fontFamily: 'monospace',
-                             fontSize: 13, wordBreak: 'break-all',
-                             bgcolor: 'background.default' }}>
-                    {r.value}
-                  </Box>
-                  <Tooltip title="Copy">
-                    <IconButton size="small"
-                                onClick={() => void navigator.clipboard.writeText(r.value)}>
-                      <svg width="17" height="17" viewBox="0 0 24 24" fill="none"
-                           stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                        <rect x="9" y="9" width="12" height="12" rx="2" />
-                        <path d="M5 15V5a2 2 0 012-2h10" />
-                      </svg>
-                    </IconButton>
-                  </Tooltip>
-                </Box>
+              return (
+                <Card key={`${r.type}-${r.host}-${i}`} variant="outlined"
+                      sx={{
+                        boxShadow: 'none',
+                        borderColor: (t) =>
+                          state === 'passed' ? alpha(t.palette.success.main, 0.4)
+                            : state === 'required' ? alpha(t.palette.error.main, 0.4)
+                              : t.palette.divider,
+                        borderLeft: '4px solid',
+                        borderLeftColor: state === 'passed' ? 'success.main'
+                          : state === 'required' ? 'error.main' : 'warning.main',
+                      }}>
+                  <CardContent sx={{ '&:last-child': { pb: 2 } }}>
+                    {/* Header: status + name + badges */}
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, mb: 0.75 }}>
+                      <Box sx={{ display: 'grid', placeItems: 'center', width: 26, height: 26,
+                                 borderRadius: '50%', flexShrink: 0, color: '#fff',
+                                 bgcolor: state === 'passed' ? 'success.main'
+                                   : state === 'required' ? 'error.main' : 'warning.main' }}>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                             stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"
+                             strokeLinejoin="round">
+                          {state === 'passed'
+                            ? <path d="M20 6L9 17l-5-5" />
+                            : <path d="M12 7v6m0 4h.01" />}
+                        </svg>
+                      </Box>
 
-                <Typography variant="caption" color="text.secondary"
-                            sx={{ display: 'block', mt: 0.5 }}>
-                  {r.purpose}
-                </Typography>
-              </Box>
-            ))}
+                      <Typography variant="subtitle2" sx={{ fontWeight: 700, flex: 1 }} noWrap>
+                        {check?.label ?? r.purpose.split('.')[0]}
+                      </Typography>
+
+                      <Chip label={r.type} size="small" sx={{ fontFamily: 'monospace' }} />
+                      {check?.passed
+                        ? <Chip label="verified" size="small" color="success" />
+                        : r.required
+                          ? <Chip label="required" size="small" color="error" variant="outlined" />
+                          : <Chip label="optional" size="small" variant="outlined" />}
+                    </Box>
+
+                    {/* The server's own words when a check ran; the record's
+                        purpose otherwise. "NXDOMAIN looking up TXT" tells a
+                        DNS admin far more than a friendlier rewrite would. */}
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                      {check && !check.passed ? check.detail : r.purpose}
+                    </Typography>
+
+                    {/* The record itself — verified ones collapse it, since a
+                        record already found in DNS needs no copying. */}
+                    {!check?.passed && (
+                      <Box sx={{ display: 'grid', gap: 1,
+                                 gridTemplateColumns: { xs: '1fr', sm: '160px 1fr' } }}>
+                        <CopyField label="Host / Name" value={r.host} mono />
+                        <CopyField label="Value" value={r.value} mono />
+                      </Box>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
           </Stack>
 
           <Typography variant="caption" color="text.disabled"
