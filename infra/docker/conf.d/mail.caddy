@@ -23,7 +23,7 @@
 
     # Landing on the host should land in the inbox. Without this, mail.
     # serves the Core dashboard and the separate address means nothing.
-    redir / /mail/f-inbox
+    redir / /mail/inbox
 
     handle {
         reverse_proxy web:3000

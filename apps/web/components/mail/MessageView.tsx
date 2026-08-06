@@ -1,19 +1,26 @@
 'use client';
 
 import { displayName, formatBytes, formatRecipients } from '@tatvaos/core';
-import type { Message } from '@tatvaos/types';
+import type { Attachment, Message } from '@tatvaos/types';
 import { Avatar } from '../ui/Avatar';
 import { Icon } from '../ui/Icon';
 import { SafeHtml } from './SafeHtml';
 
 export function MessageView({
   message,
+  bodyLoading = false,
   onBack,
   onReply,
+  onDelete,
+  onDownloadAttachment,
 }: {
   message: Message | null;
+  /** True while the full body is still on its way; the header renders from the summary. */
+  bodyLoading?: boolean;
   onBack?: () => void;
   onReply: (m: Message) => void;
+  onDelete?: (m: Message) => void;
+  onDownloadAttachment?: (m: Message, a: Attachment) => void;
 }) {
   if (!message) {
     return (
@@ -50,6 +57,9 @@ export function MessageView({
               <span className="text-sm text-ink-muted">&lt;{message.from.email}&gt;</span>
             </div>
             <div className="text-sm text-ink-muted">to {formatRecipients(message.to)}</div>
+            {message.cc && message.cc.length > 0 && (
+              <div className="text-sm text-ink-muted">cc {formatRecipients(message.cc)}</div>
+            )}
           </div>
           <time className="shrink-0 text-sm text-ink-muted">
             {new Date(message.sentAt).toLocaleString(undefined, {
@@ -66,24 +76,23 @@ export function MessageView({
           >
             <Icon name="reply" className="h-4 w-4" /> Reply
           </button>
-          <button
-            type="button"
-            className="flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-sm font-medium text-ink transition hover:bg-canvas"
-          >
-            <Icon name="reply-all" className="h-4 w-4" /> Reply all
-          </button>
-          <button
-            type="button"
-            className="flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-sm font-medium text-ink transition hover:bg-canvas"
-          >
-            <Icon name="forward" className="h-4 w-4" /> Forward
-          </button>
+          {onDelete && (
+            <button
+              type="button"
+              onClick={() => onDelete(message)}
+              className="ml-auto flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-sm font-medium text-danger transition hover:bg-canvas"
+            >
+              <Icon name="trash" className="h-4 w-4" /> Delete
+            </button>
+          )}
         </div>
       </header>
 
       <div className="flex-1 px-6 py-5">
         {message.bodyHtml ? (
           <SafeHtml html={message.bodyHtml} />
+        ) : bodyLoading ? (
+          <p className="text-sm text-ink-faint">Loading…</p>
         ) : (
           <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-ink">
             {message.bodyText ?? message.snippet}
@@ -99,18 +108,23 @@ export function MessageView({
           </div>
           <ul className="flex flex-wrap gap-2">
             {message.attachments.map((a) => (
-              <li
-                key={a.id}
-                className="flex items-center gap-2 rounded-lg border border-line px-3 py-2 text-sm"
-              >
-                <Icon name="attach" className="h-4 w-4 text-ink-faint" />
-                <span className="max-w-[16rem] truncate">{a.filename}</span>
-                <span className="text-xs text-ink-muted">{formatBytes(a.sizeBytes)}</span>
+              <li key={a.id}>
+                <button
+                  type="button"
+                  onClick={() => onDownloadAttachment?.(message, a)}
+                  className="flex items-center gap-2 rounded-lg border border-line px-3 py-2 text-sm transition hover:bg-canvas"
+                  title={`Download ${a.filename}`}
+                >
+                  <Icon name="attach" className="h-4 w-4 text-ink-faint" />
+                  <span className="max-w-[16rem] truncate">{a.filename}</span>
+                  <span className="text-xs text-ink-muted">{formatBytes(a.sizeBytes)}</span>
+                </button>
               </li>
             ))}
           </ul>
-          {/* Attachments are never auto-opened. Blocked extensions are refused
-              server-side; the client must not be the only check. */}
+          {/* Attachments are never auto-opened, and the server serves them as
+              octet-stream regardless of declared type — a text/html attachment
+              rendered on our origin would be stored XSS. */}
         </footer>
       )}
     </article>

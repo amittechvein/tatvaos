@@ -4,27 +4,52 @@ import { useState } from 'react';
 import type { Message } from '@tatvaos/types';
 import { Icon } from '../ui/Icon';
 
+/** Comma- or semicolon-separated addresses → a clean list. */
+function splitAddresses(raw: string): string[] {
+  return raw
+    .split(/[,;]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 export function Composer({
   replyTo,
+  fromAddress,
   onClose,
+  onSend,
 }: {
   replyTo?: Message | null;
+  fromAddress: string;
   onClose: () => void;
+  onSend: (draft: { to: string[]; cc?: string[]; subject: string; bodyText: string }) => Promise<unknown>;
 }) {
   const [to, setTo] = useState(replyTo ? replyTo.from.email : '');
+  const [cc, setCc] = useState('');
+  const [showCc, setShowCc] = useState(false);
   const [subject, setSubject] = useState(
     replyTo ? (replyTo.subject.match(/^re:/i) ? replyTo.subject : `Re: ${replyTo.subject}`) : '',
   );
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function handleSend() {
     setSending(true);
-    // Phase 1 wires this to POST /messages. Until then it is deliberately inert
-    // rather than pretending to succeed.
-    await new Promise((r) => setTimeout(r, 600));
-    setSending(false);
-    onClose();
+    setError(null);
+    try {
+      await onSend({
+        to: splitAddresses(to),
+        cc: showCc ? splitAddresses(cc) : undefined,
+        subject,
+        bodyText: body,
+      });
+      onClose();
+    } catch (err) {
+      // The server's words, verbatim — most usefully the outbound gate's
+      // "verify your domain first", which the sender can actually act on.
+      setError(err instanceof Error ? err.message : 'The message could not be sent.');
+      setSending(false);
+    }
   }
 
   return (
@@ -43,15 +68,41 @@ export function Composer({
         </header>
 
         <div className="flex-1 overflow-y-auto">
+          <div className="flex items-center gap-3 border-b border-line px-4 py-2.5">
+            <span className="w-14 shrink-0 text-sm text-ink-muted">From</span>
+            <span className="truncate text-sm text-ink">{fromAddress}</span>
+          </div>
+
           <label className="flex items-center gap-3 border-b border-line px-4 py-2.5">
             <span className="w-14 shrink-0 text-sm text-ink-muted">To</span>
             <input
               value={to}
               onChange={(e) => setTo(e.target.value)}
-              placeholder="name@example.com"
+              placeholder="name@example.com — commas for several"
               className="w-full border-0 p-0 text-sm outline-none placeholder:text-ink-faint"
             />
+            {!showCc && (
+              <button
+                type="button"
+                onClick={() => setShowCc(true)}
+                className="shrink-0 text-xs font-medium text-ink-muted hover:text-ink"
+              >
+                Cc
+              </button>
+            )}
           </label>
+
+          {showCc && (
+            <label className="flex items-center gap-3 border-b border-line px-4 py-2.5">
+              <span className="w-14 shrink-0 text-sm text-ink-muted">Cc</span>
+              <input
+                value={cc}
+                onChange={(e) => setCc(e.target.value)}
+                placeholder="name@example.com"
+                className="w-full border-0 p-0 text-sm outline-none placeholder:text-ink-faint"
+              />
+            </label>
+          )}
 
           <label className="flex items-center gap-3 border-b border-line px-4 py-2.5">
             <span className="w-14 shrink-0 text-sm text-ink-muted">Subject</span>
@@ -72,6 +123,12 @@ export function Composer({
           />
         </div>
 
+        {error && (
+          <div className="border-t border-line bg-danger/5 px-4 py-2.5 text-sm text-danger">
+            {error}
+          </div>
+        )}
+
         <footer className="flex items-center gap-3 border-t border-line px-4 py-3">
           <button
             type="button"
@@ -81,13 +138,9 @@ export function Composer({
           >
             {sending ? 'Sending…' : 'Send'}
           </button>
-          <button
-            type="button"
-            className="flex items-center gap-1.5 rounded-lg px-2 py-2 text-sm text-ink-muted hover:bg-canvas"
-          >
-            <Icon name="attach" className="h-4 w-4" /> Attach
-          </button>
-          <span className="ml-auto text-xs text-ink-faint">Sending arrives in Phase 1</span>
+          <span className="ml-auto text-xs text-ink-faint">
+            Attachments arrive in the next update
+          </span>
         </footer>
       </div>
     </div>

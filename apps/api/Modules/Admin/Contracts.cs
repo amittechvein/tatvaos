@@ -38,7 +38,10 @@ public sealed record CreateUserRequest(
     Guid? DepartmentId,
     long? QuotaBytes,
     string? Password,
-    string[]? Products = null);
+    string[]? Products = null,
+    // Null falls back to the department's default role, then to employee.
+    // org_owner is only grantable by an org_owner — enforced server-side.
+    string? Role = null);
 
 /// <summary>
 /// Editing a person. Every field is optional — null means "leave it alone",

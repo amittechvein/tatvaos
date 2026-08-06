@@ -33,11 +33,10 @@ export function homeFor(role: string): string {
     case 'super_admin': return '/admin';
     case 'org_owner':
     case 'org_admin': return '/org';
-    // INTERIM until the real Mail client ships: /mail/f-inbox is mock data,
-    // and auto-landing anyone in a fake inbox reads as a broken product.
-    // The account page is real — profile, sessions, password. When Mail is
-    // live at mail.tatvaos.com, this becomes the inbox again.
-    default: return '/account';
+    // The inbox. Mail is live — /mail/inbox is the real mailbox, and the
+    // page renders a proper no-mailbox state for accounts without the mail
+    // product, so this is safe for every role that lands here.
+    default: return '/mail/inbox';
   }
 }
 

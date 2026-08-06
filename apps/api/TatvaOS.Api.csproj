@@ -38,6 +38,16 @@
     <PackageReference Include="DnsClient" Version="1.8.0" />
     <PackageReference Include="FluentValidation.AspNetCore" Version="11.3.0" />
     <PackageReference Include="Serilog.AspNetCore" Version="8.0.3" />
+    <!--
+      MIME parsing and composition. MimeKit reads what Dovecot stored so the
+      ingest worker can index it; MailKit submits what the webmail composes
+      through our own Postfix :587, where the verified-domain outbound gate
+      applies. System.Net.Mail.SmtpClient is not used for user mail — it is
+      deprecated by Microsoft's own docs and cannot produce a message we could
+      also store as the canonical raw copy.
+    -->
+    <PackageReference Include="MimeKit" Version="4.9.0" />
+    <PackageReference Include="MailKit" Version="4.9.0" />
   </ItemGroup>
 
 </Project>

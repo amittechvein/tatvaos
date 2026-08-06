@@ -45,11 +45,56 @@ public static class UserEndpoints
         users.MapPost("/{id:guid}/reactivate", ReactivateAsync);
         users.MapPost("/{id:guid}/reset-password", ResetPasswordAsync);
         users.MapPost("/{id:guid}/reset-app-password", ResetAppPasswordAsync);
+        users.MapDelete("/{id:guid}", DeleteAsync);
 
         // Departments live in DepartmentEndpoints — they are a tree now, and
         // two routes reaching the same table with different shapes is how the
         // screen and the API start disagreeing about what a quota means.
     }
+
+    // ------------------------------------------------------------------
+    //  The role hierarchy, in one place.
+    //
+    //  An org_admin must not be able to act ON an org_owner — suspend them,
+    //  delete them, or reset their password. Any of those is a takeover: reset
+    //  the owner's password, sign in as them, and the organisation has a new
+    //  owner in every way that matters. Only an owner (or the platform) may
+    //  touch an owner, and only an owner may MAKE an owner for the same
+    //  reason in reverse.
+    // ------------------------------------------------------------------
+    private static bool IsOwnerScope(TenantContext tenant) =>
+        tenant.Role is "org_owner" or "super_admin";
+
+    private static IResult? GuardActOn(TenantContext tenant, User target) =>
+        target.Role == "org_owner" && !IsOwnerScope(tenant)
+            ? Results.Json(new
+              {
+                  error = "Only an organisation owner can manage another owner's account.",
+              }, statusCode: 403)
+            : null;
+
+    private static readonly string[] AssignableRoles =
+        ["org_owner", "org_admin", "it_admin", "manager", "employee", "auditor"];
+
+    /// <summary>
+    /// Ends every live session the person has, immediately. Suspension and
+    /// password resets that leave refresh tokens alive only take effect when
+    /// the access token expires — up to fifteen minutes in which a suspended
+    /// account keeps working, which reads as the button not working.
+    /// </summary>
+    private static Task RevokeSessionsAsync(
+        AppDbContext db, Guid userId, string reason, CancellationToken ct) =>
+        db.RefreshTokens
+            .Where(t => t.UserId == userId && t.RevokedAt == null)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(t => t.RevokedAt, (DateTimeOffset?)DateTimeOffset.UtcNow)
+                .SetProperty(t => t.RevokeReason, (string?)reason), ct);
+
+    private static async Task<bool> WouldRemoveLastOwnerAsync(
+        AppDbContext db, User target, CancellationToken ct) =>
+        target.Role == "org_owner" &&
+        await db.Users.CountAsync(
+            u => u.Role == "org_owner" && u.Id != target.Id && u.Status == "active", ct) == 0;
 
     private static async Task<IResult> ListAsync(
         AppDbContext db, Guid? departmentId, string? q, CancellationToken ct)
@@ -169,6 +214,27 @@ public static class UserEndpoints
 
         var password = req.Password ?? PasswordGenerator.Generate();
 
+        // Explicit role wins over the department default. Owners making
+        // owners is the succession path — without it the first owner is the
+        // only owner forever, and the last-owner protections elsewhere mean
+        // they can never even leave.
+        string role;
+        if (!string.IsNullOrWhiteSpace(req.Role))
+        {
+            role = req.Role.Trim().ToLowerInvariant();
+            if (!AssignableRoles.Contains(role))
+                return Results.BadRequest(new { error = "Unknown role." });
+            if (role == "org_owner" && !IsOwnerScope(tenant))
+                return Results.Json(new
+                {
+                    error = "Only an organisation owner can create another owner.",
+                }, statusCode: 403);
+        }
+        else
+        {
+            role = category?.DefaultRole ?? "employee";
+        }
+
         // ---- Core: the person -------------------------------------------
         var user = new User
         {
@@ -177,7 +243,7 @@ public static class UserEndpoints
             Email = address,
             DisplayName = req.DisplayName.Trim(),
             DepartmentId = category?.Id,
-            Role = category?.DefaultRole ?? "employee",
+            Role = role,
             Status = "pending",
             PasswordHash = hasher.Hash(password),
             // An admin generated this and will send it over chat or read it
@@ -256,6 +322,8 @@ public static class UserEndpoints
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id, ct);
         if (user is null) return Results.NotFound();
 
+        if (GuardActOn(tenant, user) is IResult denied) return denied;
+
         var before = new { user.DisplayName, user.DepartmentId, user.Role };
 
         if (!string.IsNullOrWhiteSpace(req.DisplayName))
@@ -290,9 +358,16 @@ public static class UserEndpoints
                 });
 
             var role = req.Role.Trim().ToLowerInvariant();
-            string[] allowed = ["org_owner", "org_admin", "it_admin", "manager", "employee", "auditor"];
-            if (!allowed.Contains(role))
+            if (!AssignableRoles.Contains(role))
                 return Results.BadRequest(new { error = "Unknown role." });
+
+            // Making an owner is the one promotion an admin cannot perform —
+            // it is the same power as being one.
+            if (role == "org_owner" && user.Role != "org_owner" && !IsOwnerScope(tenant))
+                return Results.Json(new
+                {
+                    error = "Only an organisation owner can promote someone to owner.",
+                }, statusCode: 403);
 
             // An organisation must always have at least one owner. Without
             // this, demoting the last one locks the whole tenant out of its
@@ -455,10 +530,25 @@ public static class UserEndpoints
     /// mail is retained for whatever legal window applies.
     /// </summary>
     private static async Task<IResult> SuspendAsync(
-        Guid id, AppDbContext db, AuditWriter audit, CancellationToken ct)
+        Guid id, AppDbContext db, TenantContext tenant, AuditWriter audit, CancellationToken ct)
     {
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id, ct);
         if (user is null) return Results.NotFound();
+
+        // Suspending yourself ends with nobody signed in and an account only
+        // someone else can revive. If it is ever the right move, it is a move
+        // for a colleague to make.
+        if (user.Id == tenant.UserId)
+            return Results.BadRequest(new { error = "You cannot suspend your own account." });
+
+        if (GuardActOn(tenant, user) is IResult denied) return denied;
+
+        if (await WouldRemoveLastOwnerAsync(db, user, ct))
+            return Results.BadRequest(new
+            {
+                error = "This is the organisation's only active owner. " +
+                        "Make someone else an owner first.",
+            });
 
         user.Status = "suspended";
 
@@ -466,6 +556,7 @@ public static class UserEndpoints
         foreach (var mb in mailboxes) mb.IsActive = false;
 
         await db.SaveChangesAsync(ct);
+        await RevokeSessionsAsync(db, id, "account suspended", ct);
         await audit.WriteAsync("user.suspended", "user", id.ToString(),
             after: new { mailboxesDeactivated = mailboxes.Count }, ct: ct);
 
@@ -473,10 +564,18 @@ public static class UserEndpoints
     }
 
     private static async Task<IResult> ReactivateAsync(
-        Guid id, AppDbContext db, AuditWriter audit, CancellationToken ct)
+        Guid id, AppDbContext db, TenantContext tenant, AuditWriter audit, CancellationToken ct)
     {
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id, ct);
         if (user is null) return Results.NotFound();
+
+        if (GuardActOn(tenant, user) is IResult denied) return denied;
+
+        if (user.Status == "deleted")
+            return Results.BadRequest(new
+            {
+                error = "This account was deleted. Create the person again instead.",
+            });
 
         user.Status = "active";
         var mailboxes = await db.Mailboxes.Where(m => m.UserId == id).ToListAsync(ct);
@@ -489,6 +588,53 @@ public static class UserEndpoints
     }
 
     /// <summary>
+    /// Soft delete. The row keeps its id and its audit history; the mailbox is
+    /// deactivated but its stored mail is retained — the legal-retention
+    /// window belongs to the organisation, not to the person who left. What
+    /// deletion means here is: cannot sign in, receives no mail, occupies no
+    /// seat, and the address shows as deleted rather than vanishing from the
+    /// admin's view of history.
+    /// </summary>
+    private static async Task<IResult> DeleteAsync(
+        Guid id, AppDbContext db, TenantContext tenant, AuditWriter audit, CancellationToken ct)
+    {
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id, ct);
+        if (user is null) return Results.NotFound();
+
+        if (user.Id == tenant.UserId)
+            return Results.BadRequest(new { error = "You cannot delete your own account." });
+
+        if (GuardActOn(tenant, user) is IResult denied) return denied;
+
+        if (await WouldRemoveLastOwnerAsync(db, user, ct))
+            return Results.BadRequest(new
+            {
+                error = "This is the organisation's only active owner. " +
+                        "Make someone else an owner first.",
+            });
+
+        user.Status = "deleted";
+
+        var mailboxes = await db.Mailboxes.Where(m => m.UserId == id).ToListAsync(ct);
+        foreach (var mb in mailboxes) mb.IsActive = false;
+
+        // Product access is revoked rather than deleted, for the same reason
+        // the user row survives: "who could reach what, when" must remain
+        // answerable after the person is gone.
+        await db.ProductAccess
+            .Where(p => p.UserId == id && p.RevokedAt == null)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(p => p.RevokedAt, (DateTimeOffset?)DateTimeOffset.UtcNow), ct);
+
+        await db.SaveChangesAsync(ct);
+        await RevokeSessionsAsync(db, id, "account deleted", ct);
+        await audit.WriteAsync("user.deleted", "user", id.ToString(),
+            before: new { user.Email, user.Role }, ct: ct);
+
+        return Results.Ok(new { user.Id, user.Status });
+    }
+
+    /// <summary>
     /// Resets the CORE password — the one sign-in that covers every product.
     ///
     /// Deliberately does not touch the mailbox app password. Those are separate
@@ -496,20 +642,45 @@ public static class UserEndpoints
     /// Payroll, and the reverse. Use reset-app-password for that.
     /// </summary>
     private static async Task<IResult> ResetPasswordAsync(
-        Guid id, AppDbContext db, AuditWriter audit, IPasswordHasher hasher, CancellationToken ct)
+        Guid id, AppDbContext db, TenantContext tenant, AuditWriter audit,
+        IPasswordHasher hasher, CancellationToken ct)
     {
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id, ct);
         if (user is null) return Results.NotFound();
 
+        // Your own password changes through /auth/change-password, which
+        // demands the current one. An admin resetting THEMSELVES through this
+        // endpoint would be a way to skip that check.
+        if (user.Id == tenant.UserId)
+            return Results.BadRequest(new
+            {
+                error = "Change your own password from your account page.",
+            });
+
+        // The takeover guard. Reset a password, sign in as its owner: those
+        // are the same power, so it follows the same hierarchy as suspension.
+        if (GuardActOn(tenant, user) is IResult denied) return denied;
+
         var password = PasswordGenerator.Generate();
         user.PasswordHash = hasher.Hash(password);
+        // A password the admin has seen is a handover credential, exactly as
+        // at creation — it must not survive first sign-in.
+        user.MustChangePassword = true;
         await db.SaveChangesAsync(ct);
+
+        // Whoever held the old password may hold a session. End them all.
+        await RevokeSessionsAsync(db, id, "password reset by admin", ct);
 
         // Audited because it is a common step in an account takeover. The
         // record is what makes that detectable afterwards.
         await audit.WriteAsync("user.password_reset", "user", id.ToString(), ct: ct);
 
-        return Results.Ok(new { user.Id, temporaryPassword = password });
+        return Results.Ok(new
+        {
+            user.Id,
+            temporaryPassword = password,
+            note = "They must change it on first sign-in. All their sessions have been signed out.",
+        });
     }
 
     private static async Task<IResult> ResetAppPasswordAsync(

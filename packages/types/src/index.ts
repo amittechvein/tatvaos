@@ -43,9 +43,15 @@ export type SpecialUse = '\\Inbox' | '\\Sent' | '\\Drafts' | '\\Junk' | '\\Trash
 
 export interface Folder {
   id: Uuid;
-  mailboxId: Uuid;
   name: string;
   specialUse: SpecialUse;
+  /**
+   * Stable route name for special folders — 'inbox', 'sent', 'drafts',
+   * 'junk', 'trash'. The inbox is /mail/inbox for everyone, rather than a
+   * GUID that differs per mailbox. Null for custom folders, which are
+   * addressed by id.
+   */
+  slug: string | null;
   unreadCount: number;
   totalCount: number;
 }
@@ -66,8 +72,6 @@ export interface Attachment {
 
 export interface Message {
   id: Uuid;
-  tenantId: Uuid;
-  mailboxId: Uuid;
   folderId: Uuid;
   threadId: Uuid | null;
   from: Address;

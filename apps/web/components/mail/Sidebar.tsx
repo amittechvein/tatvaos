@@ -3,7 +3,8 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { formatBytes, quotaPercent } from '@tatvaos/core';
-import type { Folder, Session } from '@tatvaos/types';
+import type { Folder } from '@tatvaos/types';
+import { folderPath, type MailMailbox } from '@/lib/mail';
 import { Icon } from '../ui/Icon';
 
 const FOLDER_ICONS: Record<string, 'inbox' | 'send' | 'draft' | 'junk' | 'trash'> = {
@@ -16,17 +17,19 @@ const FOLDER_ICONS: Record<string, 'inbox' | 'send' | 'draft' | 'junk' | 'trash'
 
 export function Sidebar({
   folders,
-  session,
+  mailbox,
+  orgName,
   onCompose,
   onNavigate,
 }: {
   folders: Folder[];
-  session: Session;
+  mailbox: MailMailbox;
+  orgName?: string;
   onCompose: () => void;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
-  const pct = quotaPercent(session.mailbox.usedBytes, session.mailbox.quotaBytes);
+  const pct = quotaPercent(mailbox.usedBytes, mailbox.quotaBytes);
 
   return (
     <nav className="flex h-full w-64 shrink-0 flex-col border-r border-line bg-surface">
@@ -36,7 +39,7 @@ export function Sidebar({
         </div>
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold">TatvaOS Mail</div>
-          <div className="truncate text-xs text-ink-muted">{session.tenantName}</div>
+          {orgName && <div className="truncate text-xs text-ink-muted">{orgName}</div>}
         </div>
       </div>
 
@@ -53,7 +56,7 @@ export function Sidebar({
 
       <ul className="scroll-thin flex-1 space-y-0.5 overflow-y-auto px-2">
         {folders.map((f) => {
-          const href = `/mail/${f.id}`;
+          const href = folderPath(f);
           const active = pathname === href;
           return (
             <li key={f.id}>
@@ -93,12 +96,12 @@ export function Sidebar({
           />
         </div>
         <div className="mt-1.5 text-xs text-ink-muted">
-          {formatBytes(session.mailbox.usedBytes)} of {formatBytes(session.mailbox.quotaBytes)}
+          {formatBytes(mailbox.usedBytes)} of {formatBytes(mailbox.quotaBytes)}
         </div>
 
         <div className="mt-4 border-t border-line pt-3">
-          <div className="truncate text-sm font-medium">{session.mailbox.displayName}</div>
-          <div className="truncate text-xs text-ink-muted">{session.mailbox.address}</div>
+          <div className="truncate text-sm font-medium">{mailbox.displayName}</div>
+          <div className="truncate text-xs text-ink-muted">{mailbox.address}</div>
         </div>
       </div>
     </nav>

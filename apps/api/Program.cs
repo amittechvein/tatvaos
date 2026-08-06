@@ -7,6 +7,8 @@ using TatvaOS.Api.Modules.Admin.Endpoints;
 using TatvaOS.Api.Modules.Auth.Endpoints;
 using TatvaOS.Api.Modules.Core;
 using TatvaOS.Api.Modules.Core.Endpoints;
+using TatvaOS.Api.Modules.Mail.Endpoints;
+using TatvaOS.Api.Workers;
 using TatvaOS.Api.Shared.Notify;
 using TatvaOS.Api.Shared.Settings;
 using TatvaOS.Api.Shared.Auth;
@@ -100,6 +102,11 @@ builder.Services.AddScoped<SettingsReader>();
 builder.Services.AddScoped<SystemMailer>();
 builder.Services.AddScoped<ISmsSender, SmsSender>();
 
+// Indexes delivered mail from the Dovecot maildir into mail.messages so the
+// webmail can read it. Hosted service, not scoped — it creates its own scope
+// per mailbox because tenant context must change between mailboxes.
+builder.Services.AddHostedService<MaildirIngestWorker>();
+
 builder.Services.AddOpenApi();
 
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
@@ -143,6 +150,7 @@ app.MapDomainEndpoints();
 app.MapSignupEndpoints();
 app.MapSettingsEndpoints();
 app.MapDepartmentEndpoints();
+app.MapMailEndpoints();
 
 // ---------------------------------------------------------------------------
 //  Bootstrap the first super admin

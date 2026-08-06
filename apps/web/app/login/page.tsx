@@ -132,7 +132,7 @@ function SignInForm() {
     router.replace(mustChangePassword
       ? '/change-password'
       : params.get('next')
-        ?? (startIn === 'mail' ? '/mail/f-inbox' : homeFor(user.role)));
+        ?? (startIn === 'mail' ? '/mail/inbox' : homeFor(user.role)));
   }, [loading, user, mustChangePassword, router, params, adding, startIn]);
 
   async function submit(e: React.FormEvent) {

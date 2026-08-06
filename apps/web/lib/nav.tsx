@@ -71,7 +71,7 @@ export interface RailProduct {
 export const RAIL_PRODUCTS: RailProduct[] = [
   { code: 'core', label: 'Core', href: '/org', icon: <Icon d={PATHS.building} />,
     live: true, colour: '#7367f0', match: ['/org', '/account'] },
-  { code: 'mail', label: 'Mail', href: '/mail/f-inbox', icon: <Icon d={PATHS.mail} />,
+  { code: 'mail', label: 'Mail', href: '/mail/inbox', icon: <Icon d={PATHS.mail} />,
     live: true, colour: '#ff4c51', match: ['/mail'] },
   { code: 'drive', label: 'Drive', href: '/drive', icon: <Icon d={PATHS.drive} />,
     live: false, colour: '#28c76f', match: ['/drive'] },

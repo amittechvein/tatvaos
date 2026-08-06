@@ -141,6 +141,10 @@ services:
       postgres: { condition: service_healthy }
     volumes:
       - dkimkeys:/dkim
+      # READ-ONLY. The ingest worker indexes what Dovecot delivered into
+      # mail.messages; it must never be able to write the maildir — one
+      # writer per store, and Dovecot is the maildir's.
+      - vmail:/var/mail/vhosts:ro
     environment:
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-tatvaos_mail};Username=tatvaos_app;Password=${APP_DB_PASSWORD:?APP_DB_PASSWORD must be set};Pooling=true"
       Jwt__SigningKey: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set}

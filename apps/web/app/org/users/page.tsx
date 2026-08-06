@@ -7,6 +7,7 @@ import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
 import Collapse from '@mui/material/Collapse';
 import Dialog from '@mui/material/Dialog';
+import Divider from '@mui/material/Divider';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
@@ -47,6 +48,22 @@ interface DomainOpt { id: string; fqdn: string; isActive: boolean; ownershipVeri
 /** Depth-first flatten, so a <select> can show the hierarchy with indentation. */
 function flatten(nodes: Dept[], depth = 0): { d: Dept; depth: number }[] {
   return nodes.flatMap((d) => [{ d, depth }, ...flatten(d.children, depth + 1)]);
+}
+
+/**
+ * Role choices, shared by both dialogs so they cannot drift apart.
+ *
+ * "Owner" appears only for someone who IS an owner — the server enforces the
+ * same rule, this just avoids offering a choice that will be refused. An
+ * admin editing an existing owner still sees the role, read-only.
+ */
+function roleOptions(canMakeOwner: boolean, currentRole?: string) {
+  const roles: [string, string][] = [
+    ['org_admin', 'Admin'], ['it_admin', 'IT admin'], ['manager', 'Manager'],
+    ['employee', 'Employee'], ['auditor', 'Auditor'],
+  ];
+  if (canMakeOwner || currentRole === 'org_owner') roles.unshift(['org_owner', 'Owner']);
+  return roles;
 }
 
 function fmt(bytes: number | null): string {
@@ -255,12 +272,13 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
   onCreated: (msg: string) => void;
   onError: (m: string) => void;
 }) {
-  const { authedFetch } = useAuth();
+  const { authedFetch, user: me } = useAuth();
 
   const [displayName, setDisplayName] = useState('');
   const [localPart, setLocalPart] = useState('');
   const [domainId, setDomainId] = useState(domains[0]?.id ?? '');
   const [departmentId, setDepartmentId] = useState('');
+  const [role, setRole] = useState('');    // '' = the department's default
   const [override, setOverride] = useState(false);
   const [quotaGb, setQuotaGb] = useState(15);
   const [busy, setBusy] = useState(false);
@@ -280,6 +298,7 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
           localPart: localPart.trim().toLowerCase(),
           domainId,
           departmentId: departmentId || null,
+          role: role || null,
           quotaBytes: override ? quotaGb * GB : null,
         }),
       });
@@ -374,6 +393,17 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
           ))}
         </TextField>
 
+        <TextField select fullWidth label="Role" value={role} sx={{ mb: 2.5 }}
+                   onChange={(e) => setRole(e.target.value)}
+                   helperText="What they can administer. Leave on the default unless this person runs things.">
+          <MenuItem value="">
+            <em>{dept ? `Department default (${dept.defaultRole.replace(/_/g, ' ')})` : 'Default (employee)'}</em>
+          </MenuItem>
+          {roleOptions(me?.role === 'org_owner' || me?.role === 'super_admin').map(([v, label]) => (
+            <MenuItem key={v} value={v}>{label}</MenuItem>
+          ))}
+        </TextField>
+
         {/* Storage. The inherited value is shown BEFORE the override, so the
             common case needs no decision at all — and the number is visible
             rather than something the admin has to go and look up. */}
@@ -437,8 +467,27 @@ function EditPerson({ person, departments, onClose, onSaved, onError }: {
   const [role, setRole] = useState(person.role);
   const [quotaGb, setQuotaGb] = useState(Math.max(1, Math.round(person.quotaBytes / GB)));
   const [busy, setBusy] = useState(false);
+  const [tempPassword, setTempPassword] = useState<string | null>(null);
+  const [armDelete, setArmDelete] = useState(false);
 
   const editingSelf = me?.id === person.id;
+  const canMakeOwner = me?.role === 'org_owner' || me?.role === 'super_admin';
+  // The server refuses an admin acting on an owner; don't offer the buttons.
+  const targetLocked = person.role === 'org_owner' && !canMakeOwner;
+
+  /** Suspend / reactivate / delete / reset — small POSTs sharing one shape. */
+  async function act(path: string, method: string, done: (body: Record<string, unknown>) => void) {
+    setBusy(true);
+    try {
+      const res = await authedFetch(`/org/users/${person.id}${path}`, { method });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof body.error === 'string' ? body.error : 'That did not work.');
+      done(body);
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'That did not work.');
+      setBusy(false);
+    }
+  }
 
   async function save() {
     setBusy(true);
@@ -467,6 +516,44 @@ function EditPerson({ person, departments, onClose, onSaved, onError }: {
     }
   }
 
+  // The one-time password view. Same contract as at creation: shown once,
+  // never retrievable, and closing the dialog is an explicit "I have copied
+  // it" step rather than something a stray click can do.
+  if (tempPassword) {
+    return (
+      <Dialog open maxWidth="sm" fullWidth>
+        <DialogTitle>New password for {person.displayName}</DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 2.5 }}>
+            Shown once — copy it now and pass it to them directly. They must
+            change it at first sign-in, and every session they had is already
+            signed out.
+          </Alert>
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+            <Box sx={{ flex: 1, p: 1.5, borderRadius: 1.5, fontFamily: 'monospace',
+                       fontSize: 15, bgcolor: 'background.default' }}>
+              {tempPassword}
+            </Box>
+            <Tooltip title="Copy">
+              <IconButton onClick={() => void navigator.clipboard.writeText(tempPassword)}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     strokeWidth="1.8" strokeLinecap="round">
+                  <rect x="9" y="9" width="12" height="12" rx="2" />
+                  <path d="M5 15V5a2 2 0 012-2h10" />
+                </svg>
+              </IconButton>
+            </Tooltip>
+          </Box>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button variant="primary" onClick={() => onSaved(`Password reset for ${person.email}.`)}>
+            Done
+          </Button>
+        </DialogActions>
+      </Dialog>
+    );
+  }
+
   return (
     <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle sx={{ pb: 1 }}>
@@ -492,16 +579,15 @@ function EditPerson({ person, departments, onClose, onSaved, onError }: {
 
         <TextField select fullWidth label="Role" value={role} sx={{ mb: 2.5 }}
                    onChange={(e) => setRole(e.target.value)}
-                   disabled={editingSelf}
+                   disabled={editingSelf || targetLocked}
                    helperText={editingSelf
                      ? 'You cannot change your own role — ask another owner.'
-                     : 'What they can administer. Mail access is unaffected.'}>
-          <MenuItem value="org_owner">Owner</MenuItem>
-          <MenuItem value="org_admin">Admin</MenuItem>
-          <MenuItem value="it_admin">IT admin</MenuItem>
-          <MenuItem value="manager">Manager</MenuItem>
-          <MenuItem value="employee">Employee</MenuItem>
-          <MenuItem value="auditor">Auditor</MenuItem>
+                     : targetLocked
+                       ? 'Only an organisation owner can manage an owner.'
+                       : 'What they can administer. Mail access is unaffected.'}>
+          {roleOptions(canMakeOwner, person.role).map(([v, label]) => (
+            <MenuItem key={v} value={v}>{label}</MenuItem>
+          ))}
         </TextField>
 
         {person.mailboxAddress ? (
@@ -515,12 +601,68 @@ function EditPerson({ person, departments, onClose, onSaved, onError }: {
         ) : (
           <Alert severity="info">No mailbox — storage does not apply to this person.</Alert>
         )}
+
+        {/* ------------------------------------------------------------
+            Account actions. Not offered against yourself — suspending or
+            deleting the account you are signed in with is a support ticket
+            in the making, and the server refuses it anyway. */}
+        {!editingSelf && !targetLocked && (
+          <>
+            <Divider sx={{ my: 3 }} />
+            <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>Account</Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+              Status: <strong>{person.status}</strong>
+              {person.status === 'suspended' &&
+                ' — cannot sign in, mailbox rejecting mail, data retained'}
+              {person.status === 'deleted' &&
+                ' — this account is closed. Create the person again if they return.'}
+            </Typography>
+
+            {person.status !== 'deleted' && (
+            <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
+              {person.status === 'suspended' ? (
+                <Button variant="ghost" disabled={busy}
+                        onClick={() => void act('/reactivate', 'POST',
+                          () => onSaved(`${person.displayName} is active again.`))}>
+                  Reactivate
+                </Button>
+              ) : (
+                <Button variant="ghost" disabled={busy}
+                        onClick={() => void act('/suspend', 'POST',
+                          () => onSaved(`${person.displayName} deactivated. Their mail is retained.`))}>
+                  Deactivate
+                </Button>
+              )}
+
+              <Button variant="ghost" disabled={busy}
+                      onClick={() => void act('/reset-password', 'POST',
+                        (body) => { setTempPassword(String(body.temporaryPassword)); setBusy(false); })}>
+                Reset password
+              </Button>
+
+              {/* Two clicks, both on the same button, second one labelled in
+                  plain words. A nested confirm dialog gets clicked through;
+                  a button that changes its mind out loud does not. */}
+              <Button variant="ghost" disabled={busy}
+                      onClick={() => {
+                        if (!armDelete) { setArmDelete(true); return; }
+                        void act('', 'DELETE',
+                          () => onSaved(`${person.email} deleted. Sign-in and mail are closed; stored mail is retained.`));
+                      }}>
+                <Box component="span" sx={{ color: 'error.main', fontWeight: armDelete ? 700 : 500 }}>
+                  {armDelete ? 'Click again — this deletes their account' : 'Delete person'}
+                </Box>
+              </Button>
+            </Box>
+            )}
+          </>
+        )}
       </DialogContent>
 
       <DialogActions sx={{ px: 3, pb: 2.5 }}>
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
         <Button variant="primary" onClick={save}
-                disabled={busy || displayName.trim().length < 2}>
+                disabled={busy || targetLocked || displayName.trim().length < 2}>
           {busy ? 'Saving…' : 'Save changes'}
         </Button>
       </DialogActions>

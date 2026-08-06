@@ -528,7 +528,10 @@ public class Message
 
     [MaxLength(512)] public string? MessageIdHeader { get; set; }
     [MaxLength(320)] public string? FromAddr { get; set; }
+    /// <summary>The sender's display name as it appeared on the wire.</summary>
+    [MaxLength(320)] public string? FromName { get; set; }
     public string[] ToAddrs { get; set; } = [];
+    public string[]? CcAddrs { get; set; }
     [MaxLength(1000)] public string? Subject { get; set; }
 
     public DateTimeOffset? SentAt { get; set; }
@@ -538,8 +541,30 @@ public class Message
     public bool IsFlagged { get; set; }
     public float? SpamScore { get; set; }
 
-    /// <summary>Object storage key. Bodies do NOT live in Postgres.</summary>
+    /// <summary>
+    /// Plain-text preview, computed once at ingest. The list view renders
+    /// hundreds of rows; parsing hundreds of MIME messages per page load is
+    /// not an option, so the preview is paid for once, at delivery.
+    /// </summary>
+    [MaxLength(500)] public string? Snippet { get; set; }
+    public bool HasAttachments { get; set; }
+
+    /// <summary>
+    /// Where the maildir file lives, relative to the vmail root, with the
+    /// Dovecot flags suffix stripped (the base name is stable; the flags
+    /// change every time someone touches the message over IMAP). Doubles as
+    /// the ingest dedupe key. NULL for webmail-composed mail, which has no
+    /// maildir file. Becomes an object-storage key when blobs move out.
+    /// </summary>
     [MaxLength(512)] public string? BlobKey { get; set; }
+
+    /// <summary>
+    /// The full raw MIME message. In Postgres FOR NOW — at 25 MB max it fits
+    /// comfortably under TOAST, and one copy in one store beats a second
+    /// system to operate. The read path goes through this so swapping in
+    /// object storage later is a change to two methods, not to the client.
+    /// </summary>
+    public string? RawBody { get; set; }
 }
 
 public class Attachment
@@ -553,4 +578,12 @@ public class Attachment
     [MaxLength(64)]  public string? Sha256 { get; set; }
     [MaxLength(512)] public string? BlobKey { get; set; }
     [MaxLength(16)]  public string ScanStatus { get; set; } = "pending";
+
+    /// <summary>
+    /// This attachment's position among the message's MIME attachment parts,
+    /// in document order. The download endpoint re-parses the stored raw
+    /// message and picks the part at this index — the bytes are never stored
+    /// twice.
+    /// </summary>
+    public int? PartIndex { get; set; }
 }
