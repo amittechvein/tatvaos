@@ -76,6 +76,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<Product>().ToTable("products", "core");
         b.Entity<Tenant>().ToTable("tenants", "core");
         b.Entity<Domain>().ToTable("domains", "core");
+        // Missed when DkimKey was added, and EF then invented "DkimKeys" with
+        // no schema — found in production, on the first click of "DNS records".
+        // Every entity gets its ToTable line the moment its DbSet is added.
+        b.Entity<DkimKey>().ToTable("dkim_keys", "core");
         b.Entity<User>().ToTable("users", "core");
         b.Entity<Department>().ToTable("departments", "core");
         b.Entity<ProductAccess>().ToTable("product_access", "core");
