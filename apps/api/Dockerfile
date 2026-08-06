@@ -37,9 +37,18 @@ COPY --from=build /app .
 #  0700: the API is the sole writer. OpenDKIM reads through its own container,
 #  where the entrypoint runs as root before dropping privilege.
 # ---------------------------------------------------------------------------
-RUN mkdir -p /dkim && chown $APP_UID:$APP_UID /dkim && chmod 700 /dkim
+#  Owned by 5000 (vmail), NOT $APP_UID. The container runs as vmail so the
+#  ingest worker can read Dovecot's private maildir (see the `user:` note in
+#  docker-compose.base.yml). /dkim must therefore be writable by 5000 too, or
+#  DKIM key generation on a new domain fails with EACCES and outbound mail is
+#  never signed. On a FRESH deploy Docker seeds the dkim volume from this
+#  directory's ownership; an EXISTING volume keeps its old ownership, so a
+#  one-time `chown 5000:5000` of the dkimkeys volume is needed when migrating.
+RUN mkdir -p /dkim && chown 5000:5000 /dkim && chmod 700 /dkim
 
-USER $APP_UID
+# vmail — uid/gid 5000, matching Dovecot's mail user. Numeric on purpose: the
+# slim runtime image has no such named account, and Docker does not need one.
+USER 5000:5000
 
 ENV ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080

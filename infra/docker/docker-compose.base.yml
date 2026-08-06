@@ -137,6 +137,13 @@ services:
       context: ../../apps/api
       dockerfile: Dockerfile
     restart: unless-stopped
+    # Runs as vmail (uid/gid 5000) — the SAME user Dovecot writes the maildir
+    # as. Dovecot makes every maildir private (0700, owner vmail), so the
+    # ingest worker can only read inbound mail if it IS that user. Non-root
+    # (a container escape still lands on an unprivileged account), and the
+    # maildir stays mounted read-only below so the API still cannot write it.
+    # The image's /dkim is chowned to 5000 to match — see apps/api/Dockerfile.
+    user: "5000:5000"
     depends_on:
       postgres: { condition: service_healthy }
     volumes:
