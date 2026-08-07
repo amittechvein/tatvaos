@@ -1,28 +1,17 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import Alert from '@mui/material/Alert';
-import Box from '@mui/material/Box';
-import Chip from '@mui/material/Chip';
-import CircularProgress from '@mui/material/CircularProgress';
-import MenuItem from '@mui/material/MenuItem';
-import TextField from '@mui/material/TextField';
-import Typography from '@mui/material/Typography';
 
 import { AdminShell } from '@/components/admin/AdminShell';
-import { Button, Card } from '@/components/ui/Kit';
+import { Button } from '@/components/ui/Kit';
 import { useAuth } from '@/lib/auth';
 
 // ============================================================================
-//  Platform settings
+//  Platform settings — YZEN Bootstrap, no MUI
 // ============================================================================
 //
-//  Provider credentials, managed from the console because the person rotating
-//  an Infobip password is an administrator with a browser, not an operator
-//  with SSH.
-//
 //  Secrets are write-only: the API says whether one is set and never returns
-//  it, so this form shows a "set" chip and an empty box. Leaving the box empty
+//  it, so this form shows a "set" badge and an empty box. Leaving the box empty
 //  keeps the stored value — typing replaces it.
 // ============================================================================
 
@@ -70,7 +59,7 @@ export default function SettingsPage() {
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
+  const [notice, setNotice] = useState<{ kind: 'success' | 'danger'; text: string } | null>(null);
 
   const [testPhone, setTestPhone] = useState('');
   const [testResult, setTestResult] = useState<string | null>(null);
@@ -84,7 +73,7 @@ export default function SettingsPage() {
       setItems(await res.json());
       setEdits({});
     } catch {
-      setNotice({ kind: 'error', text: 'Could not load settings.' });
+      setNotice({ kind: 'danger', text: 'Could not load settings.' });
     } finally {
       setLoading(false);
     }
@@ -95,10 +84,7 @@ export default function SettingsPage() {
   async function save() {
     setBusy(true); setNotice(null);
     try {
-      const res = await authedFetch('/admin/settings', {
-        method: 'PUT',
-        body: JSON.stringify(edits),
-      });
+      const res = await authedFetch('/admin/settings', { method: 'PUT', body: JSON.stringify(edits) });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? 'Could not save.');
       setNotice({
@@ -107,7 +93,7 @@ export default function SettingsPage() {
       });
       await load();
     } catch (e) {
-      setNotice({ kind: 'error', text: e instanceof Error ? e.message : 'Could not save.' });
+      setNotice({ kind: 'danger', text: e instanceof Error ? e.message : 'Could not save.' });
     } finally {
       setBusy(false);
     }
@@ -117,15 +103,11 @@ export default function SettingsPage() {
     setTesting(true); setTestResult(null);
     try {
       const res = await authedFetch('/admin/settings/test-sms', {
-        method: 'POST',
-        body: JSON.stringify({ phone: testPhone }),
+        method: 'POST', body: JSON.stringify({ phone: testPhone }),
       });
       const body = await res.json();
       setTestResult(body.sent
         ? `Sent via ${body.provider}. ${body.detail ?? ''}`
-        // The provider's own words. Wrong sender ID, template mismatch and
-        // out-of-credit look identical from outside — naming which is the
-        // entire value of this button.
         : `Not sent — ${body.detail ?? body.error ?? 'unknown reason'}`);
     } catch {
       setTestResult('Not sent — the request itself failed.');
@@ -152,109 +134,101 @@ export default function SettingsPage() {
       }
     >
       {notice && (
-        <Alert severity={notice.kind} sx={{ mb: 3 }} onClose={() => setNotice(null)}>
-          {notice.text}
-        </Alert>
+        <div className={`alert alert-${notice.kind} d-flex justify-content-between align-items-center`} role="alert">
+          <span>{notice.text}</span>
+          <button type="button" className="btn-close" aria-label="Close" onClick={() => setNotice(null)} />
+        </div>
       )}
 
       {showOtpOn && (
-        <Alert severity="warning" sx={{ mb: 3 }}>
-          <strong>Testing mode is on.</strong> When an SMS fails to send, the code is
-          shown in the signup screen instead. Turn this off before going live —
-          with it on, the phone check proves nothing.
-        </Alert>
+        <div className="alert alert-warning" role="alert">
+          <strong>Testing mode is on.</strong> When an SMS fails to send, the code is shown in the
+          signup screen instead. Turn this off before going live — with it on, the phone check
+          proves nothing.
+        </div>
       )}
 
       {loading ? (
-        <Box sx={{ display: 'grid', placeItems: 'center', py: 8 }}><CircularProgress /></Box>
+        <div className="card custom-card"><div className="card-body text-center py-5">
+          <div className="spinner-border text-primary" role="status"><span className="visually-hidden">Loading…</span></div>
+        </div></div>
       ) : (
         SECTIONS.map((section) => {
           const fields = items.filter((i) => i.section === section.id);
           if (fields.length === 0) return null;
 
           return (
-            <Box key={section.id} sx={{ mb: 3 }}>
-            <Card title={section.title} subtitle={section.blurb}>
-              <Box sx={{ display: 'grid', gap: 2.5, mb: 1,
-                         gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
-                {fields.map((s) => (
-                  <Box key={s.key}>
-                    {s.key === 'sms.provider' ? (
-                      <TextField
-                        select fullWidth label={s.label} value={val(s) || 'auto'}
-                        onChange={(e) => setEdits((p) => ({ ...p, [s.key]: e.target.value }))}
-                        helperText={s.help}
-                      >
-                        <MenuItem value="auto">Auto — Infobip if configured, else MSG91</MenuItem>
-                        <MenuItem value="infobip">Infobip</MenuItem>
-                        <MenuItem value="msg91">MSG91</MenuItem>
-                      </TextField>
-                    ) : s.key === 'sms.show_otp_on_screen' ? (
-                      <TextField
-                        select fullWidth label={s.label} value={val(s) || 'false'}
-                        onChange={(e) => setEdits((p) => ({ ...p, [s.key]: e.target.value }))}
-                        helperText={s.help}
-                      >
-                        <MenuItem value="false">OFF — send by SMS only (production)</MenuItem>
-                        <MenuItem value="true">ON — show code on screen when SMS fails</MenuItem>
-                      </TextField>
-                    ) : (
-                      <TextField
-                        fullWidth
-                        label={s.label}
-                        type={s.isSecret ? 'password' : 'text'}
-                        value={s.isSecret ? (edits[s.key] ?? '') : val(s)}
-                        placeholder={s.isSecret && s.hasValue ? '••••••••  (unchanged)' : undefined}
-                        onChange={(e) => setEdits((p) => ({ ...p, [s.key]: e.target.value }))}
-                        helperText={s.help || ' '}
-                        slotProps={{
-                          input: {
-                            endAdornment: s.isSecret && s.hasValue ? (
-                              <Chip label="set" size="small" color="success"
-                                    variant="outlined" sx={{ mr: 0.5 }} />
-                            ) : undefined,
-                          },
-                          htmlInput: { autoComplete: 'off', spellCheck: false },
-                        }}
-                      />
-                    )}
-                  </Box>
-                ))}
-              </Box>
+            <div className="card custom-card" key={section.id}>
+              <div className="card-header">
+                <div className="card-title">
+                  {section.title}
+                  <span className="d-block fs-12 fw-normal text-muted mt-1">{section.blurb}</span>
+                </div>
+              </div>
+              <div className="card-body">
+                <div className="row">
+                  {fields.map((s) => (
+                    <div className="col-md-6 mb-3" key={s.key}>
+                      <label className="form-label d-flex align-items-center gap-2">
+                        {s.label}
+                        {s.isSecret && s.hasValue && <span className="badge bg-success-transparent">set</span>}
+                      </label>
 
-              {section.id === 'sms' && (
-                <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
-                  <Typography variant="body2" sx={{ fontWeight: 600, mb: 1.5 }}>
-                    Send a test SMS
-                  </Typography>
-                  <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-                    <TextField
-                      label="Mobile number" size="small" value={testPhone}
-                      onChange={(e) => setTestPhone(e.target.value)}
-                      placeholder="+91 98765 43210" sx={{ minWidth: 240 }}
-                    />
-                    <Button variant="secondary" onClick={testSms}
-                            disabled={testing || testPhone.replace(/\D/g, '').length < 8}>
-                      {testing ? 'Sending…' : 'Send test SMS'}
-                    </Button>
-                  </Box>
-                  {/* Tests use whatever is SAVED, not what is typed above —
-                      otherwise a test can pass with credentials that were
-                      never stored, which is a lie that surfaces at 2am. */}
-                  {dirty && (
-                    <Typography variant="caption" color="warning.main" sx={{ display: 'block', mt: 1 }}>
-                      You have unsaved changes — the test uses the saved values. Save first.
-                    </Typography>
-                  )}
-                  {testResult && (
-                    <Alert severity={testResult.startsWith('Sent') ? 'success' : 'warning'} sx={{ mt: 2 }}>
-                      {testResult}
-                    </Alert>
-                  )}
-                </Box>
-              )}
-            </Card>
-            </Box>
+                      {s.key === 'sms.provider' ? (
+                        <select className="form-select" value={val(s) || 'auto'}
+                                onChange={(e) => setEdits((p) => ({ ...p, [s.key]: e.target.value }))}>
+                          <option value="auto">Auto — Infobip if configured, else MSG91</option>
+                          <option value="infobip">Infobip</option>
+                          <option value="msg91">MSG91</option>
+                        </select>
+                      ) : s.key === 'sms.show_otp_on_screen' ? (
+                        <select className="form-select" value={val(s) || 'false'}
+                                onChange={(e) => setEdits((p) => ({ ...p, [s.key]: e.target.value }))}>
+                          <option value="false">OFF — send by SMS only (production)</option>
+                          <option value="true">ON — show code on screen when SMS fails</option>
+                        </select>
+                      ) : (
+                        <input
+                          className="form-control"
+                          type={s.isSecret ? 'password' : 'text'}
+                          value={s.isSecret ? (edits[s.key] ?? '') : val(s)}
+                          placeholder={s.isSecret && s.hasValue ? '••••••••  (unchanged)' : undefined}
+                          autoComplete="off" spellCheck={false}
+                          onChange={(e) => setEdits((p) => ({ ...p, [s.key]: e.target.value }))}
+                        />
+                      )}
+
+                      {s.help && <div className="form-text">{s.help}</div>}
+                    </div>
+                  ))}
+                </div>
+
+                {section.id === 'sms' && (
+                  <div className="mt-2 pt-3 border-top">
+                    <div className="fw-semibold mb-2">Send a test SMS</div>
+                    <div className="d-flex gap-2 flex-wrap align-items-start">
+                      <input className="form-control" style={{ maxWidth: 240 }}
+                             placeholder="+91 98765 43210" value={testPhone}
+                             onChange={(e) => setTestPhone(e.target.value)} />
+                      <button className="btn btn-outline-light" onClick={testSms}
+                              disabled={testing || testPhone.replace(/\D/g, '').length < 8}>
+                        {testing ? 'Sending…' : 'Send test SMS'}
+                      </button>
+                    </div>
+                    {dirty && (
+                      <div className="text-warning fs-12 mt-2">
+                        You have unsaved changes — the test uses the saved values. Save first.
+                      </div>
+                    )}
+                    {testResult && (
+                      <div className={`alert ${testResult.startsWith('Sent') ? 'alert-success' : 'alert-warning'} mt-2 mb-0`}>
+                        {testResult}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
           );
         })
       )}

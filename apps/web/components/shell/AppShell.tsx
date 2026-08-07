@@ -44,15 +44,18 @@ export function AppShell({
                 {title && <h1 className="page-title fw-semibold fs-20 mb-1">{title}</h1>}
                 {breadcrumb && (
                   <ol className="breadcrumb mb-0">
-                    {breadcrumb.map((b, i) => (
-                      <li
-                        key={b.label}
-                        className={`breadcrumb-item${i === breadcrumb.length - 1 ? ' active' : ''}`}
-                        {...(i === breadcrumb.length - 1 ? { 'aria-current': 'page' } : {})}
-                      >
-                        {b.href ? <a href={b.href}>{b.label}</a> : b.label}
-                      </li>
-                    ))}
+                    {breadcrumb.map((b, i) => {
+                      const last = i === breadcrumb.length - 1;
+                      return (
+                        <li
+                          key={b.label}
+                          className={`breadcrumb-item${last ? ' active' : ''}`}
+                          aria-current={last ? 'page' : undefined}
+                        >
+                          {b.href ? <a href={b.href}>{b.label}</a> : b.label}
+                        </li>
+                      );
+                    })}
                   </ol>
                 )}
               </div>

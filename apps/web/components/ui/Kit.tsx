@@ -1,91 +1,88 @@
 'use client';
 
 // ============================================================================
-//  The primitives every screen is built from — now MUI underneath.
+//  The primitives every screen is built from — now YZEN Bootstrap markup.
 //
-//  The API is unchanged from the Tailwind version on purpose. Every page
-//  imports Card, Button, Stat, Table and the rest from here, so keeping the
-//  props identical meant the styling library could be swapped without editing
-//  twenty pages in the same commit. That is the whole reason this file exists
-//  rather than pages importing MUI directly.
-//
-//  New screens may use MUI directly. These stay because they encode decisions
-//  that should not be re-made per page — which red means danger, where the
-//  storage thresholds sit, what a card header looks like.
+//  These were MUI wrappers, which broke the moment YZEN's Bootstrap CSS was
+//  loaded globally (two styling systems fighting over the same elements — the
+//  empty stat cards and orange buttons were exactly that). Rewritten to emit
+//  YZEN's own classes (.card.custom-card, .btn, .avatar, .table, .badge), so
+//  their real stylesheet styles them pixel-for-pixel and every page that
+//  imports these follows without change.
 // ============================================================================
 
-import MuiCard from '@mui/material/Card';
-import MuiCardContent from '@mui/material/CardContent';
-import CardHeader from '@mui/material/CardHeader';
-import MuiButton, { type ButtonProps } from '@mui/material/Button';
-import Chip from '@mui/material/Chip';
-import Box from '@mui/material/Box';
-import LinearProgress from '@mui/material/LinearProgress';
-import MuiTable from '@mui/material/Table';
-import TableBody from '@mui/material/TableBody';
-import TableCell from '@mui/material/TableCell';
-import TableContainer from '@mui/material/TableContainer';
-import TableHead from '@mui/material/TableHead';
-import TableRow from '@mui/material/TableRow';
-import Typography from '@mui/material/Typography';
+import Link from 'next/link';
 
 // ---------------------------------------------------------------------------
 export function Card({
-  title, subtitle, actions, children, className, padded = true,
+  title, subtitle, actions, children, className = '', padded = true,
 }: {
   title?: string;
   subtitle?: string;
   actions?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
-  /** Off for tables, which manage their own edge-to-edge padding. */
   padded?: boolean;
 }) {
   return (
-    <MuiCard className={className}>
+    <div className={`card custom-card ${className}`.trim()}>
       {(title || actions) && (
-        <CardHeader title={title} subheader={subtitle} action={actions} />
+        <div className="card-header justify-content-between align-items-center">
+          <div className="card-title">
+            {title}
+            {subtitle && (
+              <span className="d-block fs-12 fw-normal text-muted mt-1">{subtitle}</span>
+            )}
+          </div>
+          {actions && <div className="d-flex gap-2 flex-wrap">{actions}</div>}
+        </div>
       )}
-      {padded ? <MuiCardContent>{children}</MuiCardContent> : children}
-    </MuiCard>
+      {padded ? <div className="card-body">{children}</div> : children}
+    </div>
   );
 }
 
 // ---------------------------------------------------------------------------
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 
-const MAP: Record<Variant, Pick<ButtonProps, 'variant' | 'color'>> = {
-  primary:   { variant: 'contained', color: 'primary' },
-  secondary: { variant: 'outlined',  color: 'inherit' },
-  ghost:     { variant: 'text',      color: 'inherit' },
-  // Destructive actions are red everywhere, and red is not themeable. A
-  // customer picking a green accent must not end up with a green Delete.
-  danger:    { variant: 'contained', color: 'error' },
+const BTN: Record<Variant, string> = {
+  primary: 'btn-primary',
+  secondary: 'btn-outline-light',
+  ghost: 'btn-light',
+  danger: 'btn-danger',
 };
 
 export function Button({
-  variant = 'secondary', children, ...rest
-}: Omit<ButtonProps, 'variant' | 'color'> & { variant?: Variant }) {
-  return <MuiButton {...MAP[variant]} {...rest}>{children}</MuiButton>;
+  variant = 'secondary', className = '', href, children, ...rest
+}: {
+  variant?: Variant;
+  className?: string;
+  href?: string;
+  children?: React.ReactNode;
+} & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  const cls = `btn ${BTN[variant]} ${className}`.trim();
+  if (href) {
+    // Only onClick is forwarded to link-buttons; spreading button attributes
+    // onto a Next Link is a type mismatch and none of the others apply here.
+    return (
+      <Link href={href} className={cls}
+            onClick={rest.onClick as unknown as React.MouseEventHandler<HTMLAnchorElement>}>
+        {children}
+      </Link>
+    );
+  }
+  return <button type="button" className={cls} {...rest}>{children}</button>;
 }
 
 // ---------------------------------------------------------------------------
 type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral';
 
-const TONE: Record<Tone, 'success' | 'warning' | 'error' | 'info' | 'default'> = {
-  ok: 'success', warn: 'warning', danger: 'error', info: 'info', neutral: 'default',
+const TONE_BADGE: Record<Tone, string> = {
+  ok: 'success', warn: 'warning', danger: 'danger', info: 'info', neutral: 'secondary',
 };
 
 export function Badge({ tone = 'neutral', children }: { tone?: Tone; children: React.ReactNode }) {
-  return (
-    <Chip
-      size="small"
-      color={TONE[tone]}
-      label={children}
-      sx={{ textTransform: 'capitalize' }}
-      variant="filled"
-    />
-  );
+  return <span className={`badge bg-${TONE_BADGE[tone]}-transparent`}>{children}</span>;
 }
 
 /** Maps a status string to a tone in one place, so every screen agrees. */
@@ -99,15 +96,10 @@ export function statusTone(status: string): Tone {
 }
 
 // ---------------------------------------------------------------------------
-/**
- * A stat tile in YZEN's exact anatomy: a solid, near-square coloured icon
- * chip on the LEFT (their `.avatar.avatar-md`, ~42px, 6px radius, white glyph),
- * and label → value → delta stacked to its right. The delta is a coloured
- * trend chip — green up, red down — followed by muted context ("this month").
- *
- * `tone` colours the icon chip so a row of four cards is not four identical
- * green squares — YZEN cycles primary / info / success / warning across them.
- */
+const TONE_BG: Record<string, string> = {
+  primary: 'primary', info: 'info', success: 'success', warning: 'warning', error: 'danger',
+};
+
 export function Stat({
   label, value, caption, delta, icon, tone = 'primary',
 }: {
@@ -119,99 +111,81 @@ export function Stat({
   tone?: 'primary' | 'info' | 'success' | 'warning' | 'error';
 }) {
   const positive = delta ? (delta.good ?? delta.direction === 'up') : false;
-
   return (
-    <MuiCard>
-      <MuiCardContent sx={{ display: 'flex', gap: 1.75, alignItems: 'center' }}>
-        {icon && (
-          <Box sx={{ width: 44, height: 44, borderRadius: 1.5, flexShrink: 0,
-                     display: 'grid', placeItems: 'center', color: '#fff',
-                     bgcolor: `${tone}.main`,
-                     '& svg': { width: 22, height: 22 } }}>
-            {icon}
-          </Box>
-        )}
-        <Box sx={{ minWidth: 0, flex: 1 }}>
-          <Typography sx={{ fontWeight: 500, fontSize: 13, color: 'text.secondary' }} noWrap>
-            {label}
-          </Typography>
-          <Typography sx={{ fontSize: 22, fontWeight: 700, lineHeight: 1.25 }}>
-            {value}
-          </Typography>
-          {delta ? (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.25, fontSize: 12 }}>
-              <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.25,
-                                          fontWeight: 600, color: positive ? 'success.main' : 'error.main' }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                     strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  {positive ? <path d="M3 17l6-6 4 4 8-8M21 7v6M21 7h-6" />
-                            : <path d="M3 7l6 6 4-4 8 8M21 17v-6M21 17h-6" />}
-                </svg>
-                {delta.value}
-              </Box>
-              {caption && <Box component="span" sx={{ color: 'text.disabled' }}>{caption}</Box>}
-            </Box>
-          ) : caption && (
-            <Typography sx={{ display: 'block', mt: 0.25, fontSize: 12, color: 'text.disabled' }}>
-              {caption}
-            </Typography>
+    <div className="card custom-card">
+      <div className="card-body">
+        <div className="d-flex align-items-center gap-3">
+          {icon && (
+            <div className={`avatar avatar-md bg-${TONE_BG[tone] ?? 'primary'}`}>
+              {icon}
+            </div>
           )}
-        </Box>
-      </MuiCardContent>
-    </MuiCard>
+          <div className="flex-fill">
+            <div className="fw-medium fs-13 mb-1 text-muted">{label}</div>
+            <div className="fs-22 fw-semibold lh-1">{value}</div>
+            {delta ? (
+              <div className="d-flex align-items-center fs-12 mt-1">
+                <span className={`fw-semibold me-1 ${positive ? 'text-success' : 'text-danger'}`}>
+                  {positive ? '↑' : '↓'} {delta.value}
+                </span>
+                {caption && <span className="text-muted">{caption}</span>}
+              </div>
+            ) : caption ? (
+              <div className="fs-12 text-muted mt-1">{caption}</div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
 // ---------------------------------------------------------------------------
 export function Table({ head, children }: { head: string[]; children: React.ReactNode }) {
   return (
-    <TableContainer>
-      <MuiTable size="small">
-        <TableHead>
-          <TableRow>
+    <div className="table-responsive">
+      <table className="table text-nowrap table-hover">
+        <thead>
+          <tr>
             {head.map((h, i) => (
-              // Blank column headings are legitimate — an actions column has no
-              // name — so the index disambiguates rather than the label.
-              <TableCell key={`${h}-${i}`}>{h}</TableCell>
+              <th key={`${h}-${i}`} scope="col">{h}</th>
             ))}
-          </TableRow>
-        </TableHead>
-        <TableBody>{children}</TableBody>
-      </MuiTable>
-    </TableContainer>
+          </tr>
+        </thead>
+        <tbody>{children}</tbody>
+      </table>
+    </div>
   );
 }
 
-export function Td({ children, className }: { children?: React.ReactNode; className?: string }) {
-  return <TableCell className={className}>{children}</TableCell>;
+export function Td({ children, className = '' }: { children?: React.ReactNode; className?: string }) {
+  return <td className={className}>{children}</td>;
 }
 
 // ---------------------------------------------------------------------------
 /**
- * A progress bar that changes colour as it fills.
- *
- * The thresholds are the same ones StorageAllocator enforces on the server:
- * 80% warns, 95% blocks new users. Showing amber where the backend starts
- * warning means the screen and the API tell the same story.
+ * A progress bar that changes colour as it fills. Thresholds match
+ * StorageAllocator: 80% warns, 95% blocks.
  */
 export function Meter({ used, total }: { used: number; total: number }) {
   const pct = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0;
-  const colour = pct >= 95 ? 'error' : pct >= 80 ? 'warning' : 'primary';
-
-  return <LinearProgress variant="determinate" value={pct} color={colour} />;
+  const colour = pct >= 95 ? 'danger' : pct >= 80 ? 'warning' : 'primary';
+  return (
+    <div className="progress progress-sm" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+      <div className={`progress-bar bg-${colour}`} style={{ width: `${pct}%` }} />
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
 export function Empty({ title, hint, action }: { title: string; hint?: string; action?: React.ReactNode }) {
   return (
-    <Box sx={{ px: 3, py: 7, textAlign: 'center' }}>
-      <Typography variant="body1" sx={{ fontWeight: 500 }}>{title}</Typography>
+    <div className="text-center py-5 px-3">
+      <div className="fw-semibold fs-15">{title}</div>
       {hint && (
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mx: 'auto', maxWidth: 420 }}>
-          {hint}
-        </Typography>
+        <div className="text-muted fs-13 mt-1 mx-auto" style={{ maxWidth: 420 }}>{hint}</div>
       )}
-      {action && <Box sx={{ mt: 3 }}>{action}</Box>}
-    </Box>
+      {action && <div className="mt-3">{action}</div>}
+    </div>
   );
 }
