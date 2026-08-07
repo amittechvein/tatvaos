@@ -48,6 +48,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       // YZEN reads these to activate its layout: a dark vertical menu over a
       // light page and light header — the default from their index.html.
       data-nav-layout="vertical"
+      data-vertical-style="overlay"
       data-theme-mode="light"
       data-header-styles="light"
       data-menu-styles="dark"
