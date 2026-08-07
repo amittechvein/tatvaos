@@ -22,6 +22,7 @@ export function AppShell({
   breadcrumb,
   actions,
   children,
+  bleed = false,
 }: {
   scope: 'platform' | 'organisation' | 'mail';
   brand: string;
@@ -30,41 +31,48 @@ export function AppShell({
   breadcrumb?: { label: string; href?: string }[];
   actions?: React.ReactNode;
   children: React.ReactNode;
+  /** App-style screens (Mail) fill the shell body and scroll internally
+   *  instead of flowing in the padded container. */
+  bleed?: boolean;
 }) {
   return (
     <div className="page">
       <Topbar scope={scope} />
       <Sidebar sections={sections} brand={brand} scope={scope} />
 
-      <div className="main-content app-content">
-        <div className="container-fluid">
-          {(title || breadcrumb || actions) && (
-            <div className="page-header-breadcrumb d-flex align-items-center justify-content-between flex-wrap gap-2 my-3">
-              <div>
-                {title && <h1 className="page-title fw-semibold fs-20 mb-1">{title}</h1>}
-                {breadcrumb && (
-                  <ol className="breadcrumb mb-0">
-                    {breadcrumb.map((b, i) => {
-                      const last = i === breadcrumb.length - 1;
-                      return (
-                        <li
-                          key={b.label}
-                          className={`breadcrumb-item${last ? ' active' : ''}`}
-                          aria-current={last ? 'page' : undefined}
-                        >
-                          {b.href ? <a href={b.href}>{b.label}</a> : b.label}
-                        </li>
-                      );
-                    })}
-                  </ol>
-                )}
+      <div className={`main-content app-content${bleed ? ' app-content--bleed' : ''}`}>
+        {bleed ? (
+          children
+        ) : (
+          <div className="container-fluid">
+            {(title || breadcrumb || actions) && (
+              <div className="page-header-breadcrumb d-flex align-items-center justify-content-between flex-wrap gap-2 my-3">
+                <div>
+                  {title && <h1 className="page-title fw-semibold fs-20 mb-1">{title}</h1>}
+                  {breadcrumb && (
+                    <ol className="breadcrumb mb-0">
+                      {breadcrumb.map((b, i) => {
+                        const last = i === breadcrumb.length - 1;
+                        return (
+                          <li
+                            key={b.label}
+                            className={`breadcrumb-item${last ? ' active' : ''}`}
+                            aria-current={last ? 'page' : undefined}
+                          >
+                            {b.href ? <a href={b.href}>{b.label}</a> : b.label}
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  )}
+                </div>
+                {actions && <div className="d-flex gap-2 flex-wrap">{actions}</div>}
               </div>
-              {actions && <div className="d-flex gap-2 flex-wrap">{actions}</div>}
-            </div>
-          )}
+            )}
 
-          {children}
-        </div>
+            {children}
+          </div>
+        )}
       </div>
     </div>
   );

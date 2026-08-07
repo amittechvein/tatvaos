@@ -67,3 +67,20 @@
     display: none;
   }
 }
+
+/* ============================================================================
+   App-bleed content — full-height, edge-to-edge shell body (Mail)
+   ----------------------------------------------------------------------------
+   App-style screens (the Mail client) fill the shell body and manage their own
+   internal scrolling, instead of flowing inside the padded .container-fluid the
+   console pages use. AppShell renders those with .app-content--bleed: the
+   4.25rem top pad that clears the fixed header is inherited from .main-content;
+   here we drop the horizontal container padding, pin the body to the viewport
+   height, and hide overflow so only the app's inner panes scroll.
+   ============================================================================ */
+.main-content.app-content--bleed {
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  padding-inline: 0;
+}
