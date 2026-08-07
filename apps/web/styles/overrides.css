@@ -84,3 +84,16 @@
   overflow: hidden;
   padding-inline: 0;
 }
+
+/* ============================================================================
+   Mail: single dark rail — Mail's own sidebar is the rail
+   ----------------------------------------------------------------------------
+   The Core icon rail is not rendered over Mail (AppShell skips it for scope
+   "mail"); Mail's own dark navy sidebar is the sole rail. Cancel the rail
+   offsets YZEN still applies to the header and content from the html
+   data-toggled state, and size the Mail wordmark shown at the header's left in
+   place of the sidebar toggle.
+   ============================================================================ */
+.app-content--norail { margin-inline-start: 0 !important; }
+.app-header--norail { padding-inline-start: 0 !important; }
+.app-header .header-brand-logo { height: 26px; width: auto; display: block; }

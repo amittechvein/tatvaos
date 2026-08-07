@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { AccountMenu } from './AccountMenu';
@@ -42,15 +43,24 @@ export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' 
 
   return (
     <>
-      <header className="app-header sticky" id="header">
+      <header className={`app-header sticky${scope === 'mail' ? ' app-header--norail' : ''}`} id="header">
         <div className="main-header-container container-fluid">
           <div className="header-content-left">
-            <div className="header-element mx-lg-0 mx-2">
-              <a aria-label="Toggle sidebar" className="sidemenu-toggle header-link"
-                 href="javascript:void(0);" onClick={toggleSidebar}>
-                <i className="ri-menu-2-line fs-20" />
-              </a>
-            </div>
+            {scope === 'mail' ? (
+              <div className="header-element d-flex align-items-center">
+                <Link href="/mail/inbox" aria-label="TatvaOS Mail" className="d-flex align-items-center">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img className="header-brand-logo" src="/brand/mail-name.png" alt="TatvaOS Mail" />
+                </Link>
+              </div>
+            ) : (
+              <div className="header-element mx-lg-0 mx-2">
+                <a aria-label="Toggle sidebar" className="sidemenu-toggle header-link"
+                   href="javascript:void(0);" onClick={toggleSidebar}>
+                  <i className="ri-menu-2-line fs-20" />
+                </a>
+              </div>
+            )}
 
             <div className="header-element header-search d-md-block d-none my-auto">
               <input type="text" className="header-search-bar form-control"

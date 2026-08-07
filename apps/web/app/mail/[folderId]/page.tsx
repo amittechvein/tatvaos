@@ -313,7 +313,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   const allSelected = selectedIds.size > 0 && selectedIds.size === filtered.length;
 
   return (
-    <div className="flex h-full gap-3 bg-canvas p-3">
+    <div className="flex h-full bg-canvas">
       {/* ---- Rail ---- */}
       <div
         className={`fixed inset-y-0 left-0 z-40 p-3 transition-transform lg:static lg:z-auto lg:translate-x-0 lg:p-0 ${
@@ -339,6 +339,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
         />
       )}
 
+      <div className="flex min-w-0 flex-1 gap-3 p-3">
       {/* ---- List ---- */}
       <section
         className={`flex min-w-0 flex-col overflow-hidden rounded-card border border-line bg-surface lg:w-[420px] lg:shrink-0 ${
@@ -487,6 +488,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
           </div>
         )}
       </section>
+      </div>
 
       {composing && (
         <Composer

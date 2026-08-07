@@ -38,9 +38,9 @@ export function AppShell({
   return (
     <div className="page">
       <Topbar scope={scope} />
-      <Sidebar sections={sections} brand={brand} scope={scope} />
+      {scope !== 'mail' && <Sidebar sections={sections} brand={brand} scope={scope} />}
 
-      <div className={`main-content app-content${bleed ? ' app-content--bleed' : ''}`}>
+      <div className={`main-content app-content${bleed ? ' app-content--bleed' : ''}${scope === 'mail' ? ' app-content--norail' : ''}`}>
         {bleed ? (
           children
         ) : (
