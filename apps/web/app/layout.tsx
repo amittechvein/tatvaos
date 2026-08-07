@@ -3,7 +3,13 @@ import { Plus_Jakarta_Sans } from 'next/font/google';
 import { AuthProvider } from '@/lib/auth';
 import { ThemeProvider } from '@/lib/theme';
 import { MuiRegistry } from '@/lib/mui/ThemeRegistry';
+// YZEN's real stylesheet (licensed to Techvein) drives the console look. Order
+// matters: our Tailwind/globals baseline first, then Bootstrap, then YZEN's
+// styles.css last so its component rules win. Icon fonts (Tabler, RemixIcon)
+// are free/open-source and loaded from their own CDNs in <head> below.
 import '../styles/globals.css';
+import '../styles/yzen/bootstrap.min.css';
+import '../styles/yzen/styles.css';
 
 // ---------------------------------------------------------------------------
 //  Plus Jakarta Sans — the typeface the console's visual language is tuned
@@ -36,7 +42,28 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html
+      lang="en"
+      dir="ltr"
+      // YZEN reads these to activate its layout: a dark vertical menu over a
+      // light page and light header — the default from their index.html.
+      data-nav-layout="vertical"
+      data-theme-mode="light"
+      data-header-styles="light"
+      data-menu-styles="dark"
+      data-width="fullwidth"
+      data-toggled="close"
+      suppressHydrationWarning
+    >
+      <head>
+        {/* Free icon fonts YZEN's markup uses (ti = Tabler, ri = RemixIcon).
+            Loaded from their own open-source CDNs, not from the theme. */}
+        {/* eslint-disable-next-line @next/next/no-page-custom-font */}
+        <link rel="stylesheet"
+          href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.11.0/dist/tabler-icons.min.css" />
+        <link rel="stylesheet"
+          href="https://cdn.jsdelivr.net/npm/remixicon@4.3.0/fonts/remixicon.css" />
+      </head>
       {/*
         AuthProvider wraps everything so the access token lives in one place,
         in memory, for the lifetime of the tab. Putting it lower down would

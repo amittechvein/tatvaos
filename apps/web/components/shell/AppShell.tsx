@@ -1,21 +1,19 @@
 'use client';
 
-import Box from '@mui/material/Box';
-import Breadcrumbs from '@mui/material/Breadcrumbs';
-import Link from '@mui/material/Link';
-import Typography from '@mui/material/Typography';
-import { PANEL_WIDTH, PANEL_WIDTH_ICONS, Sidebar, type NavSection } from './Sidebar';
-import { useTheme as useAppearance } from '@/lib/theme';
+import { Sidebar, type NavSection } from './Sidebar';
 import { Topbar } from './Topbar';
 
-/**
- * Rail, topbar, content.
- *
- * One shell for the platform console, the customer console and the mail
- * client. They differ in navigation and in one chip — not in layout. Three
- * shells would drift, and the day they drift is the day someone mistakes the
- * platform console for a customer's.
- */
+// ============================================================================
+//  Shell — YZEN's .page / .app-content structure
+// ============================================================================
+//
+//  YZEN positions the rail and offsets the content entirely in CSS (.app-
+//  sidebar is fixed, .app-content carries the margin), so this wrapper just
+//  emits their DOM and lets styles.css do the layout. No manual width offset,
+//  no MUI Box — the previous hand-rolled column is what made our shell only
+//  approximately match.
+// ============================================================================
+
 export function AppShell({
   scope,
   brand,
@@ -33,65 +31,38 @@ export function AppShell({
   actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
-  const { railMode } = useAppearance();
-
-  // The rail and panel are position:fixed so navigation never scrolls away
-  // under a long thread. Fixed elements are out of flow, so the content column
-  // has to be offset by hand — this is the price of the sticky rail, and it is
-  // one number rather than a scroll listener.
-  const offset =
-    railMode === 'hidden'  ? 0
-    : railMode === 'icons' ? PANEL_WIDTH_ICONS
-    : PANEL_WIDTH;
-
   return (
-    <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: 'background.default' }}>
+    <div className="page">
+      <Topbar scope={scope} />
       <Sidebar sections={sections} brand={brand} />
 
-      {/* minWidth:0 is load-bearing. A flex child defaults to min-width:auto,
-          so one wide table would push the whole column past the viewport
-          instead of scrolling inside its own container. */}
-      <Box sx={{
-        flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column',
-        ml: `${offset}px`,
-        transition: (t) => t.transitions.create('margin-left', { duration: 200 }),
-      }}>
-        <Topbar scope={scope} />
-
-        <Box component="main" sx={{ flex: 1, p: { xs: 2, sm: 3 } }}>
+      <div className="main-content app-content">
+        <div className="container-fluid">
           {(title || breadcrumb || actions) && (
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'flex-start', mb: 3 }}>
-              <Box sx={{ minWidth: 0 }}>
-                {title && <Typography variant="h4">{title}</Typography>}
+            <div className="page-header-breadcrumb d-flex align-items-center justify-content-between flex-wrap gap-2 my-3">
+              <div>
+                {title && <h1 className="page-title fw-semibold fs-20 mb-1">{title}</h1>}
                 {breadcrumb && (
-                  <Breadcrumbs sx={{ mt: 0.5, fontSize: 13 }}>
-                    {breadcrumb.map((b) =>
-                      b.href ? (
-                        <Link key={b.label} href={b.href} underline="hover" color="primary">
-                          {b.label}
-                        </Link>
-                      ) : (
-                        // sx, not fontSize as a prop. MUI v9 removed the
-                        // system shorthands from Typography — they made every
-                        // component's prop surface enormous and ambiguous
-                        // against real HTML attributes.
-                        <Typography key={b.label} sx={{ color: 'text.secondary', fontSize: 13 }}>
-                          {b.label}
-                        </Typography>
-                      ),
-                    )}
-                  </Breadcrumbs>
+                  <ol className="breadcrumb mb-0">
+                    {breadcrumb.map((b, i) => (
+                      <li
+                        key={b.label}
+                        className={`breadcrumb-item${i === breadcrumb.length - 1 ? ' active' : ''}`}
+                        {...(i === breadcrumb.length - 1 ? { 'aria-current': 'page' } : {})}
+                      >
+                        {b.href ? <a href={b.href}>{b.label}</a> : b.label}
+                      </li>
+                    ))}
+                  </ol>
                 )}
-              </Box>
-              {actions && (
-                <Box sx={{ ml: 'auto', display: 'flex', gap: 1, flexWrap: 'wrap' }}>{actions}</Box>
-              )}
-            </Box>
+              </div>
+              {actions && <div className="d-flex gap-2 flex-wrap">{actions}</div>}
+            </div>
           )}
 
           {children}
-        </Box>
-      </Box>
-    </Box>
+        </div>
+      </div>
+    </div>
   );
 }
