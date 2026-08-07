@@ -78,6 +78,34 @@
     /* Colour changes should feel like the product responding, not repainting */
     transition: background-color 150ms ease, color 150ms ease;
   }
+
+  /* ------------------------------------------------------------------------
+     Button & form baseline for the Tailwind-built surfaces (the Mail client).
+
+     Tailwind's preflight is DISABLED in this project (tailwind.config
+     corePlugins.preflight = false), because MUI's CssBaseline owns the reset
+     for the Core/Admin console. But the Mail client is pure Tailwind — so its
+     native <button>/<input> elements had no reset and fell back to the
+     browser's default chrome: the grey boxes and 1px borders that showed on
+     every toolbar icon and made the composer look broken.
+
+     This restores just the button/form baseline that preflight would have.
+     It is an element-level selector (specificity 0-0-1), so BOTH Tailwind
+     utility classes (bg-brand-600, border-line, …) AND MUI's own component
+     styles (.MuiButtonBase-root, 0-1-0) override it cleanly — the reset only
+     wins where a button was otherwise unstyled, which is exactly the bug.
+     ------------------------------------------------------------------------ */
+  button {
+    background-color: transparent;
+    border: 0 solid transparent;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    text-align: inherit;
+  }
+  button:disabled { cursor: default; }
+  input, textarea, select { font: inherit; }
 }
 
 @layer utilities {
