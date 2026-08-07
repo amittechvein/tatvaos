@@ -119,28 +119,43 @@ export default function AdminOrganisations() {
             ) : undefined}
           />
         ) : (
-          <Table head={['Organisation', 'Type', 'Plan', 'People', 'Storage', 'Status']}>
+          <Table head={['Organisation', 'Owner', 'Plan', 'People', 'Storage', 'Status', '']}>
             {filtered.map((o) => {
               const cap = o.storageTotalBytes;
+              const hasDomain = o.primaryDomain && o.primaryDomain !== '—';
+              const initial = (o.name || '?').charAt(0).toUpperCase();
 
               return (
                 <tr key={o.id} className="hover:bg-canvas">
+                  {/* Organisation: an avatar tile + name + real domain (never a
+                      stray em-dash for orgs that have not added one yet). */}
                   <Td>
-                    {/* Opens the manage dialog. This used to link to a detail
-                        page that never existed — a dead click for every name. */}
-                    <button onClick={() => setChanging(o)}
-                            className="font-medium text-brand-600 hover:underline">
-                      {o.name}
-                    </button>
-                    <div className="text-[12px] text-ink-muted">{o.primaryDomain}</div>
+                    <div className="flex items-center gap-2.5">
+                      <div className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-lg bg-brand-500 text-[13px] font-bold text-white">
+                        {initial}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="truncate font-semibold text-ink">{o.name}</div>
+                        <div className="truncate text-[12px] text-ink-muted">
+                          {hasDomain ? o.primaryDomain : `${TYPE_LABEL[o.type] ?? o.type}`}
+                        </div>
+                      </div>
+                    </div>
                   </Td>
-                  <Td><span className="text-ink-muted">{TYPE_LABEL[o.type] ?? o.type}</span></Td>
+                  {/* Owner: WHO runs this org — the thing that was missing. */}
                   <Td>
-                    <div>{o.planName ?? '—'}</div>
-                    <button onClick={() => setChanging(o)}
-                            className="text-[12px] text-brand-600 hover:underline">
-                      Change plan
-                    </button>
+                    {o.adminName || o.adminEmail ? (
+                      <div className="min-w-0">
+                        {o.adminName && <div className="truncate font-medium text-ink">{o.adminName}</div>}
+                        <div className="truncate text-[12px] text-ink-muted">{o.adminEmail ?? '—'}</div>
+                      </div>
+                    ) : (
+                      <span className="text-ink-faint">—</span>
+                    )}
+                  </Td>
+                  <Td>
+                    <div className="font-medium">{o.planName ?? <span className="text-ink-faint">No plan</span>}</div>
+                    {o.seats ? <div className="text-[12px] text-ink-muted">{o.seats} seats</div> : null}
                   </Td>
                   <Td>
                     {o.userCount}
@@ -156,6 +171,11 @@ export default function AdminOrganisations() {
                     <div className="mt-1.5 w-28"><Meter used={o.storageUsedBytes} total={cap} /></div>
                   </Td>
                   <Td><StatusBadge status={o.status} /></Td>
+                  <Td>
+                    <div className="flex justify-end">
+                      <Button variant="secondary" onClick={() => setChanging(o)}>Manage</Button>
+                    </div>
+                  </Td>
                 </tr>
               );
             })}
@@ -192,6 +212,14 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Identity + owner contact — the "edit all the things" fields.
+  const [name, setName] = useState(org.name);
+  const [type, setType] = useState(org.type);
+  const [adminName, setAdminName] = useState(org.adminName ?? '');
+  const [adminEmail, setAdminEmail] = useState(org.adminEmail ?? '');
+  const [phone, setPhone] = useState(org.phone ?? '');
+  const [gstin, setGstin] = useState(org.gstin ?? '');
+
   const chosen = plans.find((p) => p.id === planId);
   const onTrial = org.status === 'trial';
   const suspended = org.status === 'suspended';
@@ -227,6 +255,27 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
     }
   }
 
+  async function saveDetails() {
+    setBusy(true); setError(null);
+    try {
+      const res = await authedFetch(`/admin/organisations/${org.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ name, type, adminName, adminEmail, phone, gstin }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? 'Could not save the details.');
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save the details.');
+      setBusy(false);
+    }
+  }
+
+  const detailsDirty =
+    name.trim() !== org.name || type !== org.type ||
+    adminName !== (org.adminName ?? '') || adminEmail !== (org.adminEmail ?? '') ||
+    phone !== (org.phone ?? '') || gstin !== (org.gstin ?? '');
+
   return (
     <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle sx={{ pb: 1 }}>
@@ -240,6 +289,38 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
 
       <DialogContent>
         {error && <Alert severity="error" sx={{ mb: 2.5 }}>{error}</Alert>}
+
+        {/* ---- Details: name, type, owner ---------------------------- */}
+        <Typography variant="body2" sx={{ fontWeight: 600, mb: 1.5 }}>Details</Typography>
+        <TextField fullWidth label="Organisation name" value={name} sx={{ mb: 2 }}
+                   onChange={(e) => setName(e.target.value)} />
+        <TextField select fullWidth label="Type" value={type} sx={{ mb: 2 }}
+                   onChange={(e) => setType(e.target.value)}>
+          {Object.entries(TYPE_LABEL).map(([v, label]) => (
+            <MenuItem key={v} value={v}>{label}</MenuItem>
+          ))}
+        </TextField>
+        <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, mb: 2 }}>
+          <TextField fullWidth label="Owner name" value={adminName}
+                     onChange={(e) => setAdminName(e.target.value)} />
+          <TextField fullWidth label="Owner email" value={adminEmail}
+                     onChange={(e) => setAdminEmail(e.target.value)} />
+          <TextField fullWidth label="Phone" value={phone}
+                     onChange={(e) => setPhone(e.target.value)} />
+          <TextField fullWidth label="GSTIN" value={gstin}
+                     onChange={(e) => setGstin(e.target.value)} />
+        </Box>
+        <Typography variant="caption" color="text.secondary">
+          The owner contact is who this organisation is billed to and called
+          about — editing it here does not change any user&apos;s sign-in.
+        </Typography>
+        <Box sx={{ mt: 1.5 }}>
+          <Button variant="primary" onClick={saveDetails} disabled={busy || !detailsDirty || name.trim().length < 2}>
+            {busy ? 'Saving…' : 'Save details'}
+          </Button>
+        </Box>
+
+        <Box sx={{ my: 3, borderTop: '1px solid', borderColor: 'divider' }} />
 
         {/* ---- Lifecycle: the "still trial" fix ----------------------- */}
         <Typography variant="body2" sx={{ fontWeight: 600, mb: 1 }}>Status</Typography>

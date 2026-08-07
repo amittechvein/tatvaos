@@ -26,6 +26,9 @@ export interface OrgRow {
   planName: string | null;
   subscriptionStatus: string | null;
   seats: number | null;
+  adminName: string | null;
+  phone: string | null;
+  gstin: string | null;
 }
 
 export interface PlanRow {

@@ -1,91 +1,219 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { formatBytes } from '@tatvaos/core';
 import type { Message } from '@tatvaos/types';
 import { Icon } from '../ui/Icon';
 
 /** Comma- or semicolon-separated addresses → a clean list. */
 function splitAddresses(raw: string): string[] {
-  return raw
-    .split(/[,;]/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  return raw.split(/[,;]/).map((s) => s.trim()).filter(Boolean);
 }
 
+const MAX_TOTAL = 26_214_400; // 25 MB, matches the server gate
+const EMOJI = ['😀', '😊', '👍', '🙏', '🎉', '✅', '❤️', '🔥', '😅', '🤝', '📎', '📅', '💡', '⚠️', '🚀', '👀'];
+
 /**
- * Gmail-shaped composer: a card docked to the bottom-right on desktop — mail
- * keeps being readable behind it — and full-screen on phones.
+ * The composer.
+ *
+ * A contenteditable surface produces the HTML body; a plain-text toggle sends
+ * innerText instead. Formatting is applied with document.execCommand — long
+ * deprecated on paper, still the only thing every current browser implements
+ * for rich-text editing, and correct for a mail body where the output is HTML
+ * a receiver renders rather than a document model we persist.
+ *
+ * The action buttons that have no backend yet (Drive, schedule, confidential,
+ * read receipt, label, templates) are shown DISABLED with a reason in the
+ * tooltip rather than omitted — so the surface reads as "these are coming"
+ * instead of "this client is missing things", and nothing pretends to work.
  */
+export type ComposeMode = 'new' | 'reply' | 'replyAll' | 'forward';
+
+/** Recipients of the original, minus the current mailbox, for reply-all. */
+function replyAllCc(original: Message | null | undefined, self: string): string {
+  if (!original) return '';
+  const others = [...(original.to ?? []), ...(original.cc ?? [])]
+    .map((a) => a.email)
+    .filter((e) => e && e.toLowerCase() !== self.toLowerCase() && e.toLowerCase() !== original.from.email.toLowerCase());
+  return [...new Set(others)].join(', ');
+}
+
+function quotedHtml(m: Message): string {
+  const when = new Date(m.sentAt).toLocaleString();
+  const inner = m.bodyHtml ?? (m.bodyText ?? m.snippet).replace(/\n/g, '<br>');
+  return `<br><br><div style="border-left:2px solid #ccc;padding-left:12px;color:#666">`
+    + `On ${when}, ${m.from.name ?? m.from.email} &lt;${m.from.email}&gt; wrote:<br>${inner}</div>`;
+}
+
 export function Composer({
   replyTo,
+  mode = 'new',
+  selfAddress = '',
   fromAddress,
   onClose,
   onSend,
 }: {
   replyTo?: Message | null;
+  mode?: ComposeMode;
+  /** The current mailbox address, so reply-all does not Cc yourself. */
+  selfAddress?: string;
   fromAddress: string;
   onClose: () => void;
-  onSend: (draft: { to: string[]; cc?: string[]; subject: string; bodyText: string }) => Promise<unknown>;
+  onSend: (draft: {
+    to: string[];
+    cc?: string[];
+    subject: string;
+    bodyText: string;
+    bodyHtml?: string;
+    files?: File[];
+  }) => Promise<unknown>;
 }) {
-  const [to, setTo] = useState(replyTo ? replyTo.from.email : '');
-  const [cc, setCc] = useState('');
-  const [showCc, setShowCc] = useState(false);
-  const [subject, setSubject] = useState(
-    replyTo ? (replyTo.subject.match(/^re:/i) ? replyTo.subject : `Re: ${replyTo.subject}`) : '',
-  );
-  const [body, setBody] = useState('');
+  const editorRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const seeded = useRef(false);
+
+  const [to, setTo] = useState(mode === 'forward' ? '' : replyTo ? replyTo.from.email : '');
+  const initialCc = mode === 'replyAll' ? replyAllCc(replyTo, selfAddress) : '';
+  const [cc, setCc] = useState(initialCc);
+  const [showCc, setShowCc] = useState(initialCc.length > 0);
+  const [subject, setSubject] = useState(() => {
+    if (!replyTo) return '';
+    const base = replyTo.subject;
+    if (mode === 'forward') return base.match(/^fwd:/i) ? base : `Fwd: ${base}`;
+    return base.match(/^re:/i) ? base : `Re: ${base}`;
+  });
+  const [files, setFiles] = useState<File[]>([]);
+  const [full, setFull] = useState(false);
+  const [plain, setPlain] = useState(false);
+  const [spell, setSpell] = useState(true);
+  const [more, setMore] = useState(false);
+  const [emoji, setEmoji] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [plainBody, setPlainBody] = useState('');
+
+  // Rich formatting command on the editor.
+  function cmd(command: string, value?: string) {
+    editorRef.current?.focus();
+    document.execCommand(command, false, value);
+  }
+
+  function insertEmoji(e: string) {
+    if (plain) {
+      setPlainBody((b) => b + e);
+    } else {
+      editorRef.current?.focus();
+      document.execCommand('insertText', false, e);
+    }
+    setEmoji(false);
+  }
+
+  function addLink() {
+    const url = window.prompt('Link URL', 'https://');
+    if (url) cmd('createLink', url);
+  }
+
+  function onPickFiles(list: FileList | null) {
+    if (!list) return;
+    const next = [...files, ...Array.from(list)];
+    const total = next.reduce((n, f) => n + f.size, 0);
+    if (total > MAX_TOTAL) {
+      setError('Attachments would push the message over the 25 MB limit.');
+      return;
+    }
+    setError(null);
+    setFiles(next);
+  }
 
   async function handleSend() {
     setSending(true);
     setError(null);
     try {
+      const bodyText = plain ? plainBody : (editorRef.current?.innerText ?? '');
+      const bodyHtml = plain ? undefined : (editorRef.current?.innerHTML || undefined);
       await onSend({
         to: splitAddresses(to),
         cc: showCc ? splitAddresses(cc) : undefined,
         subject,
-        bodyText: body,
+        bodyText,
+        bodyHtml,
+        files,
       });
       onClose();
     } catch (err) {
-      // The server's words, verbatim — most usefully the outbound gate's
-      // "verify your domain first", which the sender can actually act on.
       setError(err instanceof Error ? err.message : 'The message could not be sent.');
       setSending(false);
     }
   }
 
+  // Close the popovers on Escape.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setMore(false);
+        setEmoji(false);
+      }
+    }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
+  // A forward starts with the original quoted into the body. Seed the editor
+  // once, after it mounts, and only when there is something to quote.
+  useEffect(() => {
+    if (seeded.current || plain) return;
+    if (mode === 'forward' && replyTo && editorRef.current) {
+      editorRef.current.innerHTML = quotedHtml(replyTo);
+      seeded.current = true;
+    }
+  }, [mode, replyTo, plain]);
+
+  const totalSize = files.reduce((n, f) => n + f.size, 0);
+
   return (
-    <div className="fixed inset-0 z-50 sm:inset-auto sm:bottom-0 sm:right-8">
-      <div className="flex h-full w-full flex-col bg-surface shadow-raised sm:h-auto sm:max-h-[80vh] sm:w-[540px] sm:rounded-t-xl sm:border sm:border-b-0 sm:border-line">
-        <header className="flex items-center justify-between rounded-t-none bg-rail px-4 py-2.5 sm:rounded-t-xl">
-          <h2 className="text-sm font-medium text-white">
-            {replyTo ? 'Reply' : 'New message'}
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="rounded p-1 text-rail-text hover:text-white"
-          >
-            <Icon name="close" className="h-4.5 w-4.5" />
-          </button>
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-6">
+      <div
+        className={`flex h-full w-full flex-col overflow-hidden bg-surface shadow-raised sm:h-auto sm:max-h-[88vh] sm:rounded-card ${
+          full ? 'sm:max-w-5xl' : 'sm:max-w-2xl'
+        }`}
+      >
+        {/* Title bar */}
+        <header className="flex items-center justify-between bg-rail px-4 py-2.5 text-white">
+          <span className="text-sm font-medium">{replyTo ? 'Reply' : 'New message'}</span>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setFull((v) => !v)}
+              aria-label={full ? 'Exit full screen' : 'Full screen'}
+              title={full ? 'Exit full screen' : 'Full screen'}
+              className="rounded p-1 text-rail-text hover:text-white"
+            >
+              <Icon name={full ? 'collapse' : 'expand'} className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className="rounded p-1 text-rail-text hover:text-white"
+            >
+              <Icon name="close" className="h-4 w-4" />
+            </button>
+          </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto">
-          <div className="flex items-center gap-2 border-b border-line px-4 py-2 text-sm">
-            <span className="shrink-0 text-ink-muted">From</span>
+        {/* Recipients */}
+        <div className="px-4">
+          <div className="flex items-center gap-2 border-b border-line py-2 text-sm">
+            <span className="w-12 shrink-0 text-ink-muted">From</span>
             <span className="truncate text-ink">{fromAddress}</span>
           </div>
-
-          <label className="flex items-center gap-2 border-b border-line px-4 py-2 text-sm">
-            <span className="shrink-0 text-ink-muted">To</span>
+          <label className="flex items-center gap-2 border-b border-line py-2 text-sm">
+            <span className="w-12 shrink-0 text-ink-muted">To</span>
             <input
               value={to}
               onChange={(e) => setTo(e.target.value)}
               placeholder="Recipients — commas for several"
-              className="w-full border-0 bg-transparent p-0 text-sm text-ink outline-none placeholder:text-ink-faint"
+              className="w-full bg-transparent text-ink outline-none placeholder:text-ink-faint"
             />
             {!showCc && (
               <button
@@ -97,57 +225,204 @@ export function Composer({
               </button>
             )}
           </label>
-
           {showCc && (
-            <label className="flex items-center gap-2 border-b border-line px-4 py-2 text-sm">
-              <span className="shrink-0 text-ink-muted">Cc</span>
+            <label className="flex items-center gap-2 border-b border-line py-2 text-sm">
+              <span className="w-12 shrink-0 text-ink-muted">Cc</span>
               <input
                 value={cc}
                 onChange={(e) => setCc(e.target.value)}
                 placeholder="name@example.com"
-                className="w-full border-0 bg-transparent p-0 text-sm text-ink outline-none placeholder:text-ink-faint"
+                className="w-full bg-transparent text-ink outline-none placeholder:text-ink-faint"
               />
             </label>
           )}
-
-          <label className="flex items-center gap-2 border-b border-line px-4 py-2 text-sm">
+          <label className="flex items-center gap-2 border-b border-line py-2 text-sm">
             <input
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
               placeholder="Subject"
-              className="w-full border-0 bg-transparent p-0 text-sm text-ink outline-none placeholder:text-ink-faint"
+              className="w-full bg-transparent text-ink outline-none placeholder:text-ink-faint"
             />
           </label>
-
-          <textarea
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            placeholder="Write your message"
-            rows={12}
-            className="w-full resize-none border-0 bg-transparent px-4 py-3 text-sm text-ink outline-none placeholder:text-ink-faint"
-          />
         </div>
 
-        {error && (
-          <div className="border-t border-line bg-danger/5 px-4 py-2.5 text-sm text-danger">
-            {error}
+        {/* Body */}
+        {plain ? (
+          <textarea
+            value={plainBody}
+            onChange={(e) => setPlainBody(e.target.value)}
+            spellCheck={spell}
+            placeholder="Write your message"
+            className="scroll-thin min-h-[220px] flex-1 resize-none bg-transparent px-4 py-3 font-mono text-sm text-ink outline-none placeholder:text-ink-faint"
+          />
+        ) : (
+          <div
+            ref={editorRef}
+            contentEditable
+            suppressContentEditableWarning
+            spellCheck={spell}
+            data-placeholder="Write your message"
+            className="composer-body scroll-thin min-h-[220px] flex-1 overflow-y-auto px-4 py-3 text-sm leading-relaxed text-ink outline-none"
+          />
+        )}
+
+        {/* Attachment chips */}
+        {files.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 px-4 pb-1 pt-2">
+            {files.map((f, i) => (
+              <span
+                key={`${f.name}-${i}`}
+                className="flex items-center gap-2 rounded-lg border border-line px-2.5 py-1.5 text-xs"
+              >
+                <Icon name="attach" className="h-3.5 w-3.5 text-ink-faint" />
+                <span className="max-w-[12rem] truncate">{f.name}</span>
+                <span className="text-ink-muted">{formatBytes(f.size)}</span>
+                <button
+                  type="button"
+                  onClick={() => setFiles((prev) => prev.filter((_, j) => j !== i))}
+                  aria-label={`Remove ${f.name}`}
+                  className="text-ink-faint hover:text-danger"
+                >
+                  <Icon name="close" className="h-3.5 w-3.5" />
+                </button>
+              </span>
+            ))}
+            <span className="text-[11px] text-ink-faint">{formatBytes(totalSize)} total</span>
           </div>
         )}
 
-        <footer className="flex items-center gap-3 border-t border-line px-4 py-3">
+        {error && (
+          <div className="border-t border-line bg-danger/5 px-4 py-2 text-sm text-danger">{error}</div>
+        )}
+
+        {/* Toolbar */}
+        <div className="relative flex items-center gap-0.5 border-t border-line px-3 py-2.5">
           <button
             type="button"
             onClick={handleSend}
             disabled={sending || !to.trim()}
-            className="rounded-full bg-brand-600 px-6 py-2 text-sm font-medium text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="mr-1 flex items-center gap-2 rounded-full bg-brand-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {sending ? 'Sending…' : 'Send'}
+            {!sending && <Icon name="send" className="h-4 w-4" />}
           </button>
-          <span className="ml-auto text-xs text-ink-faint">
-            Attachments arrive in the next update
-          </span>
-        </footer>
+
+          {!plain && (
+            <>
+              <ToolBtn label="Bold" onClick={() => cmd('bold')}><span className="text-[15px] font-bold">B</span></ToolBtn>
+              <ToolBtn label="Italic" onClick={() => cmd('italic')}><span className="text-[15px] italic">I</span></ToolBtn>
+              <ToolBtn label="Underline" onClick={() => cmd('underline')}><span className="text-[15px] underline">U</span></ToolBtn>
+              <ToolBtn label="Bullet list" onClick={() => cmd('insertUnorderedList')}><Icon name="list-ul" className="h-4 w-4" /></ToolBtn>
+              <ToolBtn label="Numbered list" onClick={() => cmd('insertOrderedList')}><Icon name="list-ol" className="h-4 w-4" /></ToolBtn>
+              <ToolBtn label="Insert link" onClick={addLink}><Icon name="link" className="h-4 w-4" /></ToolBtn>
+            </>
+          )}
+          <ToolBtn label="Attach files" onClick={() => fileRef.current?.click()}><Icon name="attach" className="h-4 w-4" /></ToolBtn>
+          <ToolBtn label="Emoji" onClick={() => setEmoji((v) => !v)}><Icon name="emoji" className="h-4 w-4" /></ToolBtn>
+
+          {/* Not yet backed by a product — disabled, with the reason on hover. */}
+          <ToolBtn label="Insert from Drive — needs the Drive product" disabled><Icon name="drive" className="h-4 w-4" /></ToolBtn>
+          <ToolBtn label="Schedule send — needs a server-side queue" disabled><Icon name="clock" className="h-4 w-4" /></ToolBtn>
+          <ToolBtn label="Confidential mode — needs expiry/passcode support" disabled><Icon name="lock" className="h-4 w-4" /></ToolBtn>
+
+          <div className="relative ml-auto">
+            <ToolBtn label="More options" onClick={() => setMore((v) => !v)}><Icon name="more" className="h-4.5 w-4.5" /></ToolBtn>
+            {more && (
+              <div className="absolute bottom-11 right-0 z-10 w-64 rounded-xl border border-line bg-surface py-2 text-sm shadow-raised">
+                <MenuItem icon="expand" label={full ? 'Exit full screen' : 'Default to full screen'} onClick={() => { setFull((v) => !v); setMore(false); }} />
+                <MenuItem icon="draft" label="Plain text mode" trailing={plain ? 'on' : undefined} onClick={() => { setPlain((v) => !v); setMore(false); }} />
+                <MenuItem icon="print" label="Print" onClick={() => { window.print(); setMore(false); }} />
+                <MenuItem icon="spellcheck" label="Spell check" trailing={spell ? 'on' : 'off'} onClick={() => { setSpell((v) => !v); setMore(false); }} />
+                <div className="my-1 border-t border-line" />
+                <MenuItem icon="envelope" label="Request read receipt" soon />
+                <MenuItem icon="bookmark" label="Label" soon />
+                <MenuItem icon="draft" label="Templates" soon />
+              </div>
+            )}
+          </div>
+
+          <ToolBtn label="Discard" onClick={onClose}><Icon name="trash" className="h-4 w-4" /></ToolBtn>
+
+          {emoji && (
+            <div className="absolute bottom-12 left-3 z-10 flex w-64 flex-wrap gap-1 rounded-xl border border-line bg-surface p-2 text-xl shadow-raised">
+              {EMOJI.map((e) => (
+                <button key={e} type="button" onClick={() => insertEmoji(e)} className="rounded p-1 hover:bg-canvas">
+                  {e}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <input
+          ref={fileRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            onPickFiles(e.target.files);
+            e.target.value = '';
+          }}
+        />
       </div>
     </div>
+  );
+}
+
+function ToolBtn({
+  label,
+  onClick,
+  disabled,
+  children,
+}: {
+  label: string;
+  onClick?: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={label}
+      aria-label={label}
+      className={`flex h-8 w-8 items-center justify-center rounded-lg text-ink-muted transition ${
+        disabled ? 'cursor-not-allowed opacity-40' : 'hover:bg-canvas hover:text-ink'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function MenuItem({
+  icon,
+  label,
+  trailing,
+  soon,
+  onClick,
+}: {
+  icon: React.ComponentProps<typeof Icon>['name'];
+  label: string;
+  trailing?: string;
+  soon?: boolean;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={soon}
+      title={soon ? 'Coming with a later update' : undefined}
+      className={`flex w-full items-center gap-3 px-4 py-2 text-left ${
+        soon ? 'cursor-not-allowed text-ink-faint' : 'text-ink hover:bg-canvas'
+      }`}
+    >
+      <Icon name={icon} className="h-4 w-4 text-ink-muted" />
+      <span className="flex-1">{label}</span>
+      {trailing && <span className="text-[11px] font-medium text-brand-600">{trailing}</span>}
+      {soon && <span className="text-[10px] uppercase tracking-wide">soon</span>}
+    </button>
   );
 }

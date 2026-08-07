@@ -78,9 +78,30 @@ export const mailApi = {
 
   send: (
     f: AuthedFetch,
-    payload: { to: string[]; cc?: string[]; subject: string; bodyText: string; inReplyToId?: string },
-  ) => f('/mail/send', { method: 'POST', body: JSON.stringify(payload) })
-    .then((r) => json<{ id: string | null }>(r, 'The message could not be sent.')),
+    payload: {
+      to: string[];
+      cc?: string[];
+      subject: string;
+      bodyText: string;
+      /** Rich body. When present the message goes out as multipart/alternative. */
+      bodyHtml?: string;
+      inReplyToId?: string;
+      files?: File[];
+    },
+  ) => {
+    // Multipart, not JSON — the send endpoint now carries file attachments.
+    const fd = new FormData();
+    fd.append('to', payload.to.join(', '));
+    if (payload.cc?.length) fd.append('cc', payload.cc.join(', '));
+    fd.append('subject', payload.subject);
+    fd.append('bodyText', payload.bodyText);
+    if (payload.bodyHtml) fd.append('bodyHtml', payload.bodyHtml);
+    if (payload.inReplyToId) fd.append('inReplyToId', payload.inReplyToId);
+    for (const file of payload.files ?? []) fd.append('files', file, file.name);
+    return f('/mail/send', { method: 'POST', body: fd }).then((r) =>
+      json<{ id: string | null }>(r, 'The message could not be sent.'),
+    );
+  },
 
   /**
    * Attachment download. fetch + blob rather than a plain <a href>, because

@@ -31,6 +31,7 @@ public static class OrganisationEndpoints
         g.MapPost("/{id:guid}/suspend", SuspendAsync);
         g.MapPost("/{id:guid}/activate", ActivateAsync);
         g.MapPut("/{id:guid}/plan", ChangePlanAsync);
+        g.MapPut("/{id:guid}", UpdateAsync);
 
         // Plans are platform-wide reference data, not tenant data — no RLS,
         // no scope switch, just the catalogue the change-plan dialog offers.
@@ -210,7 +211,8 @@ public static class OrganisationEndpoints
                 domainCount, org.AdminEmail, org.CreatedAt, org.TrialEndsAt,
                 sub?.PlanId,
                 sub is null ? null : planNames.GetValueOrDefault(sub.PlanId),
-                sub?.Status, sub?.Seats));
+                sub?.Status, sub?.Seats,
+                org.AdminName, org.Phone, org.Gstin));
         }
 
         return Results.Ok(results);
@@ -239,7 +241,8 @@ public static class OrganisationEndpoints
             cap.StorageModel, cap.MaxUsers, cap.UserCount,
             cap.TotalBytes, cap.UsedBytes,
             await db.Domains.CountAsync(ct), org.AdminEmail, org.CreatedAt, org.TrialEndsAt,
-            sub?.PlanId, sub?.PlanName, sub?.Status, sub?.Seats));
+            sub?.PlanId, sub?.PlanName, sub?.Status, sub?.Seats,
+            org.AdminName, org.Phone, org.Gstin));
     }
 
     /// <summary>
@@ -406,6 +409,53 @@ public static class OrganisationEndpoints
                 },
             },
         });
+    }
+
+    /// <summary>
+    /// Edit an organisation's identity and owner contact.
+    ///
+    /// The tenant row is name-and-contact only; commercial terms live in the
+    /// subscription and are changed through /plan. Renaming here does NOT touch
+    /// the primary domain or any user — a company changing its display name is
+    /// not the same as changing where its mail is delivered.
+    /// </summary>
+    private static async Task<IResult> UpdateAsync(
+        Guid id, UpdateOrganisationRequest req,
+        AppDbContext db, TenantContext tenant, AuditWriter audit,
+        HttpContext http, CancellationToken ct)
+    {
+        var org = await db.Tenants.FirstOrDefaultAsync(t => t.Id == id, ct);
+        if (org is null) return Results.NotFound();
+
+        var before = new { org.Name, org.Type, org.AdminName, org.AdminEmail, org.Phone, org.Gstin };
+
+        if (!string.IsNullOrWhiteSpace(req.Name)) org.Name = req.Name.Trim();
+        if (!string.IsNullOrWhiteSpace(req.Type))
+        {
+            var type = req.Type.Trim().ToLowerInvariant();
+            string[] allowed = ["business", "school", "hospital", "nonprofit", "government", "other"];
+            if (!allowed.Contains(type))
+                return Results.BadRequest(new { error = "Unknown organisation type." });
+            org.Type = type;
+        }
+        if (req.AdminName is not null) org.AdminName = req.AdminName.Trim();
+        if (req.AdminEmail is not null)
+        {
+            var email = req.AdminEmail.Trim();
+            if (email.Length > 0 && !email.Contains('@'))
+                return Results.BadRequest(new { error = "That does not look like an email address." });
+            org.AdminEmail = email.Length == 0 ? null : email;
+        }
+        if (req.Phone is not null) org.Phone = req.Phone.Trim();
+        if (req.Gstin is not null) org.Gstin = req.Gstin.Trim();
+
+        await db.SaveChangesAsync(ct);
+        tenant.EnterPlatformScope(org.Id, CurrentUserId(http));
+        await db.SyncTenantAsync(ct);
+        await audit.WriteAsync("organisation.updated", "tenant", org.Id.ToString(),
+            before, new { org.Name, org.Type, org.AdminName, org.AdminEmail, org.Phone, org.Gstin }, ct);
+
+        return Results.Ok(new { org.Id, org.Name, org.Type, org.AdminName, org.AdminEmail });
     }
 
     private static async Task<IResult> SuspendAsync(

@@ -28,10 +28,26 @@ public sealed record OrganisationResponse(
     // The commercial half. Nullable with defaults because an organisation can
     // exist without a subscription row (early manual creations did).
     Guid? PlanId = null, string? PlanName = null,
-    string? SubscriptionStatus = null, int? Seats = null);
+    string? SubscriptionStatus = null, int? Seats = null,
+    // The owner's name, so the list can say WHO runs each org, not just an
+    // email — the thing an operator scans for first.
+    string? AdminName = null, string? Phone = null, string? Gstin = null);
 
 /// <summary>Change which package an organisation is on.</summary>
 public sealed record ChangePlanRequest(Guid PlanId, int? Seats);
+
+/// <summary>
+/// Edit an organisation's identity and owner contact. Every field optional —
+/// null leaves it unchanged, so the dialog sends only what the operator
+/// touched.
+/// </summary>
+public sealed record UpdateOrganisationRequest(
+    string? Name,
+    string? Type,
+    string? AdminName,
+    string? AdminEmail,
+    string? Phone,
+    string? Gstin);
 
 /// <param name="Products">
 /// Which products to grant. Null falls back to the category's defaults, and

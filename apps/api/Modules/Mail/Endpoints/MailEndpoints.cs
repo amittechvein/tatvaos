@@ -2,7 +2,6 @@ using MailKit.Net.Smtp;
 using MailKit.Security;
 using Microsoft.EntityFrameworkCore;
 using MimeKit;
-using MimeKit.Text;
 using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Tenancy;
 
@@ -416,14 +415,28 @@ public static class MailEndpoints
     }
 
     // ------------------------------------------------------------------
-    public sealed record SendRequest(
-        string[]? To, string[]? Cc, string? Subject, string? BodyText, Guid? InReplyToId);
+    //  Send accepts multipart/form-data, not JSON — because it now carries
+    //  file attachments as well as a rich HTML body. Fields: to, cc, subject,
+    //  bodyText, bodyHtml, inReplyToId; files under the "files" part.
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// The whole message, attachments included, may not exceed this. Matches
+    /// Postfix's message_size_limit (25 MB, the same ceiling Gmail enforces) —
+    /// gating here means an over-size message is refused with a clear reason
+    /// instead of accepted and then bounced by Postfix minutes later.
+    /// </summary>
+    private const long MaxMessageBytes = 26_214_400;
 
     private static async Task<IResult> SendAsync(
-        SendRequest req, AppDbContext db, TenantContext tenant, IConfiguration config,
+        HttpRequest request, AppDbContext db, TenantContext tenant, IConfiguration config,
         ILoggerFactory logFactory, CancellationToken ct)
     {
         var log = logFactory.CreateLogger("MailSend");
+
+        if (!request.HasFormContentType)
+            return Results.BadRequest(new { error = "Send expects a multipart form." });
+        var form = await request.ReadFormAsync(ct);
 
         var box = await OwnMailboxAsync(db, tenant, ct);
         if (box is null)
@@ -433,24 +446,56 @@ public static class MailEndpoints
             .FirstOrDefaultAsync(u => u.Id == tenant.UserId, ct);
 
         // ---- Recipients -------------------------------------------------
-        var to = ParseAddresses(req.To);
-        var cc = ParseAddresses(req.Cc);
+        var to = ParseAddressLine(form["to"]);
+        var cc = ParseAddressLine(form["cc"]);
         if (to is null || cc is null)
             return Results.BadRequest(new { error = "One of the addresses is not valid." });
         if (to.Count == 0)
             return Results.BadRequest(new { error = "At least one recipient is required." });
 
-        // ---- Compose ----------------------------------------------------
+        var subject = form["subject"].ToString().Trim();
+        var bodyText = form["bodyText"].ToString();
+        var bodyHtml = form["bodyHtml"].ToString();
+        var files = request.Form.Files;
+
+        // ---- Size gate BEFORE reading any file into memory --------------
+        long total = bodyText.Length + bodyHtml.Length;
+        foreach (var f in files) total += f.Length;
+        if (total > MaxMessageBytes)
+            return Results.BadRequest(new
+            {
+                error = "This message is over the 25 MB limit. Remove an attachment and try again.",
+            });
+
+        // ---- Compose with a body builder --------------------------------
+        //  HtmlBody + TextBody makes a multipart/alternative the receiver's
+        //  client picks from; attachments make it multipart/mixed around that.
+        //  MimeKit assembles the right structure from what we set here.
+        var builder = new BodyBuilder();
+        if (!string.IsNullOrWhiteSpace(bodyHtml)) builder.HtmlBody = bodyHtml;
+        if (!string.IsNullOrWhiteSpace(bodyText)) builder.TextBody = bodyText;
+        else if (string.IsNullOrWhiteSpace(bodyHtml)) builder.TextBody = "";
+
+        foreach (var file in files)
+        {
+            await using var stream = file.OpenReadStream();
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms, ct);
+            var contentType = ContentType.Parse(
+                string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType);
+            builder.Attachments.Add(file.FileName, ms.ToArray(), contentType);
+        }
+
         var mime = new MimeMessage();
         mime.From.Add(new MailboxAddress(user?.DisplayName ?? box.LocalPart, box.Address));
         foreach (var a in to) mime.To.Add(a);
         foreach (var a in cc) mime.Cc.Add(a);
-        mime.Subject = req.Subject?.Trim() ?? "";
-        mime.Body = new TextPart(TextFormat.Plain) { Text = req.BodyText ?? "" };
+        mime.Subject = subject;
+        mime.Body = builder.ToMessageBody();
 
         // Threading headers, so replies land in the same conversation in
         // every client that receives them — including ours, later.
-        if (req.InReplyToId is Guid replyId)
+        if (Guid.TryParse(form["inReplyToId"], out var replyId))
         {
             var original = await db.Messages.AsNoTracking()
                 .FirstOrDefaultAsync(x => x.Id == replyId && x.MailboxId == box.Id, ct);
@@ -506,6 +551,7 @@ public static class MailEndpoints
         }
 
         var raw = mime.ToString();
+        var attParts = MailContent.AttachmentParts(mime);
         var message = new Message
         {
             TenantId = box.TenantId,
@@ -522,24 +568,46 @@ public static class MailEndpoints
             ReceivedAt = DateTimeOffset.UtcNow,
             SizeBytes = raw.Length,
             IsRead = true,
+            HasAttachments = attParts.Count > 0,
             RawBody = raw,
         };
-
         db.Messages.Add(message);
+
+        // Index the Sent copy's attachments so they show as chips and download
+        // through the same part-index path as received mail.
+        for (var i = 0; i < attParts.Count; i++)
+        {
+            var part = attParts[i];
+            db.Attachments.Add(new Attachment
+            {
+                TenantId = box.TenantId,
+                MessageId = message.Id,
+                Filename = part.FileName ?? $"attachment-{i + 1}",
+                ContentType = part.ContentType?.MimeType,
+                SizeBytes = files.ElementAtOrDefault(i)?.Length ?? 0,
+                PartIndex = i,
+                ScanStatus = "clean",
+            });
+        }
+
         box.UsedBytes += message.SizeBytes;
         await db.SaveChangesAsync(ct);
 
         return Results.Ok(new { id = message.Id, folderId = message.FolderId });
     }
 
-    private static List<MailboxAddress>? ParseAddresses(string[]? raw)
+    /// <summary>
+    /// Parses a "a@x, b@y; c@z" recipient line. Returns null if any address is
+    /// malformed (the caller turns that into a 400), an empty list for a blank
+    /// line (a valid empty Cc).
+    /// </summary>
+    private static List<MailboxAddress>? ParseAddressLine(string? line)
     {
         var result = new List<MailboxAddress>();
-        foreach (var s in raw ?? [])
+        if (string.IsNullOrWhiteSpace(line)) return result;
+        foreach (var s in line.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            var trimmed = s.Trim();
-            if (trimmed.Length == 0) continue;
-            if (!MailboxAddress.TryParse(trimmed, out var parsed)) return null;
+            if (!MailboxAddress.TryParse(s, out var parsed)) return null;
             result.Add(parsed);
         }
         return result;

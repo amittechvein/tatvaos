@@ -149,11 +149,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [doRefresh]);
 
   const authedFetch = useCallback(async (path: string, init: RequestInit = {}) => {
+    // FormData sets its own multipart Content-Type WITH a boundary; forcing
+    // application/json here would strip the boundary and the server would fail
+    // to parse the upload. Only default to JSON for non-form bodies.
+    const isForm = typeof FormData !== 'undefined' && init.body instanceof FormData;
     const call = () => fetch(`${API}${path}`, {
       ...init,
       credentials: 'include',
       headers: {
-        'Content-Type': 'application/json',
+        ...(isForm ? {} : { 'Content-Type': 'application/json' }),
         ...(init.headers ?? {}),
         ...(accessToken.current ? { Authorization: `Bearer ${accessToken.current}` } : {}),
       },
