@@ -35,9 +35,13 @@ public static class OrganisationEndpoints
 
         // Plans are platform-wide reference data, not tenant data — no RLS,
         // no scope switch, just the catalogue the change-plan dialog offers.
-        app.MapGet("/api/admin/plans", PlansAsync)
+        var plans = app.MapGroup("/api/admin/plans")
             .RequireAuthorization("SuperAdmin")
             .WithTags("Platform administration");
+        plans.MapGet("/", PlansAsync);
+        plans.MapPost("/", CreatePlanAsync);
+        plans.MapPut("/{id:guid}", UpdatePlanAsync);
+        plans.MapDelete("/{id:guid}", DeletePlanAsync);
     }
 
     private static async Task<IResult> PlansAsync(AppDbContext db, CancellationToken ct)
@@ -52,6 +56,94 @@ public static class OrganisationEndpoints
             })
             .ToListAsync(ct);
         return Results.Ok(plans);
+    }
+
+    private static string? ValidatePlan(UpsertPlanRequest req)
+    {
+        if (string.IsNullOrWhiteSpace(req.Name)) return "Plan name is required.";
+        if (req.StorageModel is not ("per_user" or "pooled"))
+            return "Storage model must be 'per_user' or 'pooled'.";
+        if (req.StorageModel == "per_user" && req.PerUserQuotaBytes is null or <= 0)
+            return "A per-user plan needs a per-user storage quota.";
+        if (req.StorageModel == "pooled" && req.PooledStorageBytes is null or <= 0)
+            return "A pooled plan needs a pool size.";
+        return null;
+    }
+
+    private static async Task<IResult> CreatePlanAsync(
+        UpsertPlanRequest req, AppDbContext db, AuditWriter audit, CancellationToken ct)
+    {
+        if (ValidatePlan(req) is string err) return Results.BadRequest(new { error = err });
+
+        var plan = new Plan
+        {
+            Name = req.Name.Trim(),
+            MaxUsers = req.MaxUsers,
+            StorageModel = req.StorageModel,
+            PerUserQuotaBytes = req.StorageModel == "per_user" ? req.PerUserQuotaBytes : null,
+            PooledStorageBytes = req.StorageModel == "pooled" ? req.PooledStorageBytes : null,
+            MaxDomains = req.MaxDomains,
+            IncludedProducts = req.IncludedProducts ?? ["mail"],
+            PricePerUserMonthly = req.PricePerUserMonthly,
+            PriceMonthly = req.PriceMonthly,
+        };
+        db.Plans.Add(plan);
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync("plan.created", "plan", plan.Id.ToString(),
+            after: new { plan.Name, plan.StorageModel }, ct: ct);
+        return Results.Created($"/api/admin/plans/{plan.Id}", new { plan.Id, plan.Name });
+    }
+
+    private static async Task<IResult> UpdatePlanAsync(
+        Guid id, UpsertPlanRequest req, AppDbContext db, AuditWriter audit, CancellationToken ct)
+    {
+        var plan = await db.Plans.FirstOrDefaultAsync(p => p.Id == id, ct);
+        if (plan is null) return Results.NotFound();
+        if (ValidatePlan(req) is string err) return Results.BadRequest(new { error = err });
+
+        var before = new { plan.Name, plan.MaxUsers, plan.PricePerUserMonthly, plan.PriceMonthly };
+
+        // Editing a plan changes it for GROWTH — the seat/domain/quota limits it
+        // imposes on new users and domains. It does NOT retroactively resize the
+        // storage pools of organisations already on the plan; that stays a
+        // deliberate per-organisation action, same as changing a plan.
+        plan.Name = req.Name.Trim();
+        plan.MaxUsers = req.MaxUsers;
+        plan.StorageModel = req.StorageModel;
+        plan.PerUserQuotaBytes = req.StorageModel == "per_user" ? req.PerUserQuotaBytes : null;
+        plan.PooledStorageBytes = req.StorageModel == "pooled" ? req.PooledStorageBytes : null;
+        plan.MaxDomains = req.MaxDomains;
+        if (req.IncludedProducts is not null) plan.IncludedProducts = req.IncludedProducts;
+        plan.PricePerUserMonthly = req.PricePerUserMonthly;
+        plan.PriceMonthly = req.PriceMonthly;
+
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync("plan.updated", "plan", id.ToString(),
+            before: before, after: new { plan.Name, plan.MaxUsers }, ct: ct);
+        return Results.Ok(new { plan.Id, plan.Name });
+    }
+
+    private static async Task<IResult> DeletePlanAsync(
+        Guid id, AppDbContext db, AuditWriter audit, CancellationToken ct)
+    {
+        var plan = await db.Plans.FirstOrDefaultAsync(p => p.Id == id, ct);
+        if (plan is null) return Results.NotFound();
+
+        // Refuse to delete a plan any organisation is on — that would orphan
+        // their subscription's foreign key. The operator moves them first.
+        var inUse = await db.Subscriptions.IgnoreQueryFilters().AnyAsync(s => s.PlanId == id, ct);
+        if (inUse)
+            return Results.BadRequest(new
+            {
+                error = "This plan is assigned to one or more organisations. "
+                      + "Move them to another plan before deleting it.",
+            });
+
+        db.Plans.Remove(plan);
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync("plan.deleted", "plan", id.ToString(),
+            before: new { plan.Name }, ct: ct);
+        return Results.Ok(new { deleted = true });
     }
 
     /// <summary>

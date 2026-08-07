@@ -22,13 +22,20 @@ export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' 
   const { mode, setMode } = useAppearance();
   const [anchor, setAnchor] = useState<null | HTMLElement>(null);
 
-  // YZEN collapses the vertical rail by flipping data-toggled on <html>; the
-  // CSS does the rest. "close" is their expanded default, "icon-overlay-close"
-  // the collapsed icon rail.
+  // The rail resting state is viewport-aware. On desktop it sits collapsed to
+  // icons ("icon-overlay-close", expanding on hover); the toggle PINS it fully
+  // open ("close") and back. On mobile it is off-canvas ("close"); the toggle
+  // slides it in ("open") and back. The Sidebar keeps the resting default in
+  // sync with the breakpoint.
   function toggleSidebar() {
     const el = document.documentElement;
-    el.dataset.toggled = el.dataset.toggled === 'icon-overlay-close'
-      ? 'close' : 'icon-overlay-close';
+    const desktop = window.matchMedia('(min-width: 992px)').matches;
+    if (desktop) {
+      el.dataset.toggled = el.dataset.toggled === 'close' ? 'icon-overlay-close' : 'close';
+      delete el.dataset.iconOverlay;
+    } else {
+      el.dataset.toggled = el.dataset.toggled === 'open' ? 'close' : 'open';
+    }
   }
 
   const initial = (user?.displayName ?? '?').charAt(0).toUpperCase();

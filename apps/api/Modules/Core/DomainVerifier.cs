@@ -1,3 +1,4 @@
+using System.Net;
 using DnsClient;
 using DnsClient.Protocol;
 
@@ -65,11 +66,20 @@ public sealed class DomainVerifier
     {
         var checks = new List<Check>();
 
+        // Query the zone's OWN authoritative nameservers, not the server's
+        // recursive resolver. UseCache=false only disables DnsClient's cache —
+        // the upstream recursive resolver (here Docker's embedded DNS forwarding
+        // to the host) still serves whatever record-set it cached, for the full
+        // TTL. That is exactly how a just-added verification TXT stays invisible
+        // for hours while the rest of the internet already sees it. Asking the
+        // authoritative servers directly means there is no cache in the path.
+        var zone = await ZoneClientAsync(fqdn, ct);
+
         // ---- Ownership ---------------------------------------------------
         // The only check that gates anything. A TXT record on the apex proves
         // whoever asked controls the zone — nothing else we could ask for does.
         var expected = $"tatvaos-verification={verificationToken}";
-        var txt = await TxtAsync(fqdn, ct);
+        var txt = await TxtAsync(zone, fqdn, ct);
 
         var owned = txt.Any(t => string.Equals(t.Trim(), expected, StringComparison.OrdinalIgnoreCase));
         checks.Add(new Check(
@@ -84,7 +94,7 @@ public sealed class DomainVerifier
             Required: true));
 
         // ---- MX ----------------------------------------------------------
-        var mx = await MxAsync(fqdn, ct);
+        var mx = await MxAsync(zone, fqdn, ct);
         var mxOk = mx.Any(h => h.TrimEnd('.').Equals(_mailHost, StringComparison.OrdinalIgnoreCase));
         checks.Add(new Check(
             "mx",
@@ -118,7 +128,7 @@ public sealed class DomainVerifier
         if (!string.IsNullOrWhiteSpace(dkimSelector))
         {
             var dkimHost = $"{dkimSelector}._domainkey.{fqdn}";
-            var dkim = await TxtAsync(dkimHost, ct);
+            var dkim = await TxtAsync(zone, dkimHost, ct);
             var dkimOk = dkim.Any(t => t.Contains("p=", StringComparison.OrdinalIgnoreCase));
             checks.Add(new Check(
                 "dkim",
@@ -131,7 +141,7 @@ public sealed class DomainVerifier
         }
 
         // ---- DMARC -------------------------------------------------------
-        var dmarc = await TxtAsync($"_dmarc.{fqdn}", ct);
+        var dmarc = await TxtAsync(zone, $"_dmarc.{fqdn}", ct);
         var dmarcOk = dmarc.Any(t => t.StartsWith("v=DMARC1", StringComparison.OrdinalIgnoreCase));
         checks.Add(new Check(
             "dmarc",
@@ -152,11 +162,62 @@ public sealed class DomainVerifier
 
     // ------------------------------------------------------------------
 
-    private async Task<List<string>> TxtAsync(string host, CancellationToken ct)
+    /// <summary>
+    /// A resolver aimed straight at the domain's authoritative nameservers, so
+    /// no recursive cache sits between us and the truth. Falls back to the
+    /// default (recursive) client if the NS cannot be resolved — a verification
+    /// that occasionally trusts a cache is better than one that cannot run.
+    /// </summary>
+    private async Task<ILookupClient> ZoneClientAsync(string fqdn, CancellationToken ct)
     {
         try
         {
-            var r = await _dns.QueryAsync(host, QueryType.TXT, cancellationToken: ct);
+            var apex = RegistrableDomain(fqdn);
+            var ns = await _dns.QueryAsync(apex, QueryType.NS, cancellationToken: ct);
+            var names = ns.Answers.NsRecords()
+                .Select(n => n.NSDName.Value.TrimEnd('.'))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var ips = new List<IPAddress>();
+            foreach (var name in names)
+            {
+                var a = await _dns.QueryAsync(name, QueryType.A, cancellationToken: ct);
+                ips.AddRange(a.Answers.ARecords().Select(r => r.Address));
+            }
+            if (ips.Count == 0) return _dns;
+
+            return new LookupClient(new LookupClientOptions([.. ips])
+            {
+                UseCache = false,
+                UseTcpFallback = true,
+                Timeout = TimeSpan.FromSeconds(5),
+                Retries = 1,
+            });
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Authoritative NS lookup failed for {Fqdn}; using recursive resolver", fqdn);
+            return _dns;
+        }
+    }
+
+    /// <summary>
+    /// The apex the NS records live on — the last two labels. Good enough for
+    /// the customers here; multi-part public suffixes like co.uk would need a
+    /// Public Suffix List, and none are onboarding today.
+    /// </summary>
+    private static string RegistrableDomain(string fqdn)
+    {
+        var parts = fqdn.TrimEnd('.').Split('.');
+        return parts.Length <= 2 ? fqdn : string.Join('.', parts[^2..]);
+    }
+
+    private async Task<List<string>> TxtAsync(ILookupClient dns, string host, CancellationToken ct)
+    {
+        try
+        {
+            var r = await dns.QueryAsync(host, QueryType.TXT, cancellationToken: ct);
             // Long TXT values arrive split into 255-byte chunks and must be
             // rejoined. A DKIM key is always split, so not doing this means
             // DKIM never validates.
@@ -171,11 +232,11 @@ public sealed class DomainVerifier
         }
     }
 
-    private async Task<List<string>> MxAsync(string host, CancellationToken ct)
+    private async Task<List<string>> MxAsync(ILookupClient dns, string host, CancellationToken ct)
     {
         try
         {
-            var r = await _dns.QueryAsync(host, QueryType.MX, cancellationToken: ct);
+            var r = await dns.QueryAsync(host, QueryType.MX, cancellationToken: ct);
             return r.Answers.MxRecords()
                 .OrderBy(m => m.Preference)
                 .Select(m => m.Exchange.Value)

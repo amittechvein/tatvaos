@@ -36,6 +36,18 @@ public sealed record OrganisationResponse(
 /// <summary>Change which package an organisation is on.</summary>
 public sealed record ChangePlanRequest(Guid PlanId, int? Seats);
 
+/// <summary>Create or edit a plan in the catalogue.</summary>
+public sealed record UpsertPlanRequest(
+    string Name,
+    int? MaxUsers,
+    string StorageModel,          // "per_user" | "pooled"
+    long? PerUserQuotaBytes,
+    long? PooledStorageBytes,
+    int? MaxDomains,
+    string[]? IncludedProducts,
+    decimal? PricePerUserMonthly,
+    decimal? PriceMonthly);
+
 /// <summary>
 /// Edit an organisation's identity and owner contact. Every field optional —
 /// null leaves it unchanged, so the dialog sends only what the operator

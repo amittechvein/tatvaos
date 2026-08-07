@@ -53,7 +53,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       data-header-styles="light"
       data-menu-styles="dark"
       data-width="fullwidth"
-      data-toggled="close"
+      // Icons-only rail by default; it expands on hover (see Sidebar) and can be
+      // pinned open from the header toggle. Client JS switches this to "close"
+      // (off-canvas) on mobile widths.
+      data-toggled="icon-overlay-close"
       suppressHydrationWarning
     >
       <head>

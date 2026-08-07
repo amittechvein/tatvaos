@@ -57,3 +57,57 @@ export async function fetchPlans(authedFetch: AuthedFetch): Promise<PlanRow[]> {
   if (!res.ok) throw new Error('Could not load plans.');
   return res.json();
 }
+
+// ---------------------------------------------------------------------------
+//  Plan management (super-admin). The request shape below is the API's
+//  UpsertPlanRequest: storage is in BYTES (the form collects GB and multiplies
+//  by 1024³), and the two storage fields are mutually exclusive — the one that
+//  does not match storageModel is sent null and ignored by the server.
+// ---------------------------------------------------------------------------
+export interface UpsertPlanBody {
+  name: string;
+  maxUsers?: number | null;
+  storageModel: 'per_user' | 'pooled';
+  perUserQuotaBytes?: number | null;
+  pooledStorageBytes?: number | null;
+  maxDomains?: number | null;
+  includedProducts?: string[];
+  pricePerUserMonthly?: number | null;
+  priceMonthly?: number | null;
+}
+
+// Surfaces the server's own { error } text when present (the DELETE-in-use case
+// returns a message telling the admin to move organisations off first), falling
+// back to a generic line only when the body carries nothing useful.
+async function planError(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = await res.json();
+    return (body && typeof body.error === 'string' && body.error) || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export async function createPlan(
+  authedFetch: AuthedFetch,
+  body: UpsertPlanBody,
+): Promise<{ id: string; name: string }> {
+  const res = await authedFetch('/admin/plans', { method: 'POST', body: JSON.stringify(body) });
+  if (!res.ok) throw new Error(await planError(res, 'Could not create the plan.'));
+  return res.json();
+}
+
+export async function updatePlan(
+  authedFetch: AuthedFetch,
+  id: string,
+  body: UpsertPlanBody,
+): Promise<{ id: string; name: string }> {
+  const res = await authedFetch(`/admin/plans/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+  if (!res.ok) throw new Error(await planError(res, 'Could not save the plan.'));
+  return res.json();
+}
+
+export async function deletePlan(authedFetch: AuthedFetch, id: string): Promise<void> {
+  const res = await authedFetch(`/admin/plans/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(await planError(res, 'Could not delete the plan — it may be in use.'));
+}

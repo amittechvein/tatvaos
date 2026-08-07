@@ -111,30 +111,34 @@ export function Stat({
   tone?: 'primary' | 'info' | 'success' | 'warning' | 'error';
 }) {
   const positive = delta ? (delta.good ?? delta.direction === 'up') : false;
+  // Vertical layout: the label owns the full card width on its own row (with a
+  // small tinted icon chip pinned to the right), the value sits large below, and
+  // the caption/delta spans the full width underneath. This is what stops the
+  // labels and captions from being squeezed against the icon and truncating in
+  // the tight 4-up grid — every text line now has the whole card to breathe.
+  const c = TONE_BG[tone] ?? 'primary';
   return (
     <div className="card custom-card">
       <div className="card-body">
-        <div className="d-flex align-items-center gap-3">
+        <div className="d-flex align-items-center justify-content-between gap-2 mb-2">
+          <span className="fw-medium fs-13 text-muted">{label}</span>
           {icon && (
-            <div className={`avatar avatar-md bg-${TONE_BG[tone] ?? 'primary'}`}>
+            <span className={`avatar avatar-sm bg-${c}-transparent text-${c} flex-shrink-0`}>
               {icon}
-            </div>
+            </span>
           )}
-          <div className="flex-fill">
-            <div className="fw-medium fs-13 mb-1 text-muted">{label}</div>
-            <div className="fs-22 fw-semibold lh-1">{value}</div>
-            {delta ? (
-              <div className="d-flex align-items-center fs-12 mt-1">
-                <span className={`fw-semibold me-1 ${positive ? 'text-success' : 'text-danger'}`}>
-                  {positive ? '↑' : '↓'} {delta.value}
-                </span>
-                {caption && <span className="text-muted">{caption}</span>}
-              </div>
-            ) : caption ? (
-              <div className="fs-12 text-muted mt-1">{caption}</div>
-            ) : null}
-          </div>
         </div>
+        <div className="fs-24 fw-semibold lh-1">{value}</div>
+        {delta ? (
+          <div className="d-flex align-items-center flex-wrap gap-1 fs-12 mt-2">
+            <span className={`fw-semibold ${positive ? 'text-success' : 'text-danger'}`}>
+              {positive ? '↑' : '↓'} {delta.value}
+            </span>
+            {caption && <span className="text-muted">{caption}</span>}
+          </div>
+        ) : caption ? (
+          <div className="fs-12 text-muted mt-2">{caption}</div>
+        ) : null}
       </div>
     </div>
   );

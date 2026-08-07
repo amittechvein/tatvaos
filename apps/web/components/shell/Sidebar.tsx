@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 // ============================================================================
 //  Sidebar — YZEN's exact markup (.app-sidebar / .main-menu / .slide)
@@ -44,8 +44,36 @@ export function Sidebar({ sections, brand }: { sections: NavSection[]; brand: st
     .filter((h) => h && (pathname === h || pathname.startsWith(`${h}/`)))
     .sort((a, b) => b.length - a.length)[0];
 
+  // Keep the rail's resting state matched to the viewport: icons-only overlay on
+  // desktop (it peeks open on hover, below), off-canvas on mobile. Runs on mount
+  // and whenever the breakpoint is crossed, clearing any hover-peek so the rail
+  // never gets stuck half-open after a resize.
+  useEffect(() => {
+    const root = document.documentElement;
+    const desktop = window.matchMedia('(min-width: 992px)');
+    const sync = () => {
+      delete root.dataset.iconOverlay;
+      // Don't fight a rail the user has explicitly pinned/opened via the header
+      // toggle; only (re)assert the resting default for the current breakpoint.
+      root.dataset.toggled = desktop.matches ? 'icon-overlay-close' : 'close';
+    };
+    sync();
+    desktop.addEventListener('change', sync);
+    return () => desktop.removeEventListener('change', sync);
+  }, []);
+
+  // Hover-to-peek: while the rail is resting as icons, entering it expands it as
+  // an overlay (YZEN's data-icon-overlay=open → 15rem, floating over content, no
+  // reflow); leaving collapses it back. A pinned-open rail (data-toggled=close)
+  // ignores this, since the icon-overlay CSS only applies in the collapsed state.
+  const peekOpen = () => {
+    const root = document.documentElement;
+    if (root.dataset.toggled === 'icon-overlay-close') root.dataset.iconOverlay = 'open';
+  };
+  const peekClose = () => { delete document.documentElement.dataset.iconOverlay; };
+
   return (
-    <aside className="app-sidebar sticky" id="sidebar">
+    <aside className="app-sidebar sticky" id="sidebar" onMouseEnter={peekOpen} onMouseLeave={peekClose}>
       {/* Brand */}
       <div className="main-sidebar-header">
         <Link href="/" className="header-logo" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
