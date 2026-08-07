@@ -4,20 +4,15 @@ import type { Config } from 'tailwindcss';
 //  Design tokens
 // ============================================================================
 //
-//  The visual language follows the Spruha admin template the manager chose:
-//  a dark navy rail with a curved active item, an indigo accent, a faintly
-//  lavender canvas, and white cards with a barely-there shadow.
-//
-//  Rebuilt as our own tokens rather than importing the template. Spruha is a
-//  commercial Bootstrap theme — its stylesheet, markup and images are licensed
-//  and cannot simply be copied — and it targets Bootstrap 5, which does not
-//  coexist happily with Tailwind and React 19. A layout convention is not
-//  copyrightable; a stylesheet is. Same look, neither problem.
+//  The visual language is YZEN's (licensed to Techvein): green primary, cool
+//  near-white canvas, white cards, dark rail. These tokens exist for the
+//  Tailwind-built surfaces (the Mail client) and mirror the values YZEN's
+//  stylesheet ships, so both styling systems render one product.
 //
 //  ---------------------------------------------------------------------------
-//  Themeable colours are CSS variables, defined in styles/globals.css.
-//  That is what lets the switcher recolour the entire product in one frame
-//  with no rebuild and no flash. Do not replace them with hex values.
+//  Colours are CSS variables, defined in styles/globals.css. They are static
+//  (the runtime accent switcher is gone); the variables remain so light/dark
+//  can swap the neutral set with one class.
 //  ---------------------------------------------------------------------------
 
 const withAlpha = (v: string) => `rgb(var(${v}) / <alpha-value>)`;
@@ -72,13 +67,14 @@ export default {
 
         line: withAlpha('--line'),
 
-        // Status colours are NOT themeable. Red means danger regardless of
-        // which accent the customer picked; letting it be recoloured would
-        // eventually produce a green "delete" button.
-        ok:     '#22c03c',
-        warn:   '#f7b731',
-        danger: '#ee335e',
-        info:   '#00b0f0',
+        // Status colours are NOT themeable, and they are YZEN's own values
+        // (--success/--warning/--danger/--info-rgb in their stylesheet) so a
+        // Tailwind badge and a YZEN badge signalling the same state are the
+        // same colour.
+        ok:     '#53c405',
+        warn:   '#ffa909',
+        danger: '#fd4963',
+        info:   '#0fbcf9',
       },
 
       boxShadow: {

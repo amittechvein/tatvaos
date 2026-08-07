@@ -3,18 +3,16 @@
 @tailwind utilities;
 
 /* ==========================================================================
-   Runtime theming
+   Theming
    ==========================================================================
 
    Colours live as CSS custom properties, and tailwind.config points at them.
-   That is what lets the switcher recolour the whole product instantly without
-   a rebuild — a Tailwind class like bg-brand-600 compiles to
-   rgb(var(--brand-600)), so changing the variable changes every element that
-   uses it, everywhere, in the same frame.
-
-   The alternative — shipping a stylesheet per theme and swapping the link —
-   means a flash of the old colours on every change and a build step for every
-   new palette.
+   A Tailwind class like bg-brand-600 compiles to rgb(var(--brand-600)), so
+   these variables are the single source the Tailwind surfaces (the Mail
+   client) draw from. They are STATIC now: the runtime accent switcher is
+   gone, the product has one brand colour — YZEN's green — and the values
+   below are derived from the same #03b562 that styles/yzen/styles.css ships
+   as --primary-rgb. Only light/dark switches at runtime (the .dark class).
 
    Values are space-separated RGB channels, NOT hex. Tailwind needs to insert
    an alpha channel for things like bg-brand-600/50, and it can only do that
@@ -23,17 +21,17 @@
 
 @layer base {
   :root {
-    /* Primary — the indigo. Overwritten by the switcher. */
-    --brand-50:  241 240 253;
-    --brand-100: 228 226 251;
-    --brand-200: 201 197 247;
-    --brand-300: 169 162 241;
-    --brand-400: 138 127 234;
-    --brand-500: 108  95 252;
-    --brand-600:  98  89 202;
-    --brand-700:  78  70 165;
-    --brand-800:  61  55 130;
-    --brand-900:  47  42  99;
+    /* Primary — YZEN's green, #03b562. One ramp, fixed at build time. */
+    --brand-50:  240 251 246;
+    --brand-100: 220 245 233;
+    --brand-200: 179 233 208;
+    --brand-300: 129 218 177;
+    --brand-400:  69 200 139;
+    --brand-500:   3 181  98;
+    --brand-600:   7 152  89;
+    --brand-700:  11 124  79;
+    --brand-800:  14  95  70;
+    --brand-900:  18  70  62;
 
     /* The sidebar rail */
     --rail:         28  28  43;
@@ -41,8 +39,10 @@
     --rail-text:   163 164 185;
     --rail-heading: 107 108 133;
 
-    /* The page behind the cards, and the topbar */
-    --canvas:  240 240 248;
+    /* The page behind the cards, and the topbar. Matches YZEN's body
+       background (--body-bg-rgb: 242 244 249) so a Tailwind page and a YZEN
+       page sit on the identical canvas. */
+    --canvas:  242 244 249;
     --surface: 255 255 255;
 
     /* Text */
@@ -61,14 +61,17 @@
      undifferentiated dark rectangle.
      ------------------------------------------------------------------------ */
   .dark {
-    --canvas:   23  23  36;
-    --surface:  33  33  51;
-    --rail:     23  23  36;
-    --rail-soft:33  33  51;
-    --ink:      230 231 240;
-    --ink-muted:150 154 172;
-    --ink-faint:112 116 133;
-    --line:     47  47  70;
+    /* YZEN's dark body is a neutral near-black (25 25 28), not the old navy —
+       staying in their neutral family keeps Mail and the console matching in
+       dark mode too. Surfaces lift slightly above the canvas. */
+    --canvas:   25  25  28;
+    --surface:  35  35  39;
+    --rail:     25  25  28;
+    --rail-soft:35  35  39;
+    --ink:      230 231 236;
+    --ink-muted:152 156 166;
+    --ink-faint:112 116 126;
+    --line:     50  50  56;
   }
 
   html, body { height: 100%; }

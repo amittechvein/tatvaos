@@ -5,21 +5,21 @@ import { useAuth } from '@/lib/auth';
 import { AccountMenu } from './AccountMenu';
 import { AppLauncher } from './AppLauncher';
 import { useTheme as useAppearance } from '@/lib/theme';
-import { Switcher } from './Switcher';
 
 // ============================================================================
 //  Header — YZEN's .app-header markup
 // ============================================================================
 //
 //  Their solid white header with the search on the left and an icon cluster on
-//  the right. The overlays it opens (app launcher, account menu, appearance)
-//  are still our React/MUI components — only the bar itself is YZEN's.
+//  the right. The overlays it opens (app launcher, account menu) are still our
+//  React/MUI components — only the bar itself is YZEN's. The old appearance
+//  panel is gone with the accent switcher; dark/light is the one appearance
+//  control, and it lives right here.
 // ============================================================================
 
 export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' }) {
   const { user } = useAuth();
   const { mode, setMode } = useAppearance();
-  const [switcher, setSwitcher] = useState(false);
   const [anchor, setAnchor] = useState<null | HTMLElement>(null);
 
   // YZEN collapses the vertical rail by flipping data-toggled on <html>; the
@@ -75,14 +75,6 @@ export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' 
               </a>
             </div>
 
-            {/* Appearance */}
-            <div className="header-element">
-              <a href="javascript:void(0);" className="header-link"
-                 aria-label="Appearance" onClick={() => setSwitcher(true)}>
-                <i className="ri-settings-3-line header-link-icon" />
-              </a>
-            </div>
-
             {/* Profile */}
             <div className="header-element">
               <a href="javascript:void(0);" className="header-link d-flex align-items-center"
@@ -104,7 +96,6 @@ export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' 
 
       {/* Overlays — still our components, triggered from the YZEN header */}
       <AccountMenu anchorEl={anchor} onClose={() => setAnchor(null)} />
-      <Switcher open={switcher} onClose={() => setSwitcher(false)} />
     </>
   );
 }

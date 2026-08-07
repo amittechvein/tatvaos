@@ -20,13 +20,15 @@ import { buildTheme } from './theme';
  *  and inlines it, so the first paint is already correct.
  * ─────────────────────────────────────────────────────────────────────────
  *
- * The theme is rebuilt when the accent changes, which is why the appearance
- * panel can recolour the product live. createTheme is cheap; useMemo stops it
- * running on unrelated re-renders.
+ * The theme is built once — the accent is fixed (YZEN's green) since the
+ * appearance panel was removed. useMemo keeps createTheme from running on
+ * unrelated re-renders.
  */
 export function MuiRegistry({ children }: { children: React.ReactNode }) {
-  const { accent, mode } = useAppearance();
-  const theme = useMemo(() => buildTheme(accent), [accent]);
+  const { mode } = useAppearance();
+  // The accent is fixed now (YZEN's green, buildTheme's default) — the theme
+  // is built once and only the mode class changes at runtime.
+  const theme = useMemo(() => buildTheme(), []);
 
   // enableCssLayer is deliberately NOT set.
   //

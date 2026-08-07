@@ -4,139 +4,36 @@
 //  Theme
 // ============================================================================
 //
-//  Drives the switcher panel. Writes CSS custom properties on <html>, which
-//  every Tailwind colour class already points at — so one assignment recolours
-//  the entire product in a single frame, with no rebuild and no flash.
+//  One job now: light/dark. The product's colour is YZEN's green, fixed at
+//  build time — the old runtime accent switcher (and the browser-stored accent
+//  that came with it) is gone by decision: one licensed template, one brand
+//  colour, no per-browser drift. The green ramp lives statically in
+//  styles/globals.css; nothing recolours at runtime except the mode.
 //
-//  Preferences are per browser, not per account. A customer's brand colour
-//  belongs on their tenant and should follow them between devices; that is a
-//  different feature and needs a column in core.tenants. This is the personal
-//  layer on top: dark mode, sidebar width, and trying a colour out.
+//  Mode is still per browser: it is a device preference (a dark room, a bright
+//  office), not an identity setting, so localStorage is the right home.
 // ============================================================================
 
 import {
-  createContext, useCallback, useContext, useEffect, useMemo, useState,
+  createContext, useContext, useEffect, useMemo, useState,
 } from 'react';
 
 export type ColorMode = 'light' | 'dark';
-export type RailMode = 'expanded' | 'icons' | 'hidden';
-
-// The defaults are named constants, not ACCENTS[0].hex. The project compiles
-// with noUncheckedIndexedAccess, which — correctly — treats an array index as
-// possibly undefined. Reaching for ! to silence that would be suppressing a
-// real rule to save a line; naming the value says what it is and the arrays
-// then reference it, so there is still one source of truth.
-// YZEN's primary green. This is THE default accent and must match
-// DEFAULT_PRIMARY in lib/mui/theme.ts — MUI builds its palette from whatever
-// this resolves to, so two files disagreeing means the product ships in a
-// colour neither of them names.
-export const DEFAULT_ACCENT = '#03b562';
-export const DEFAULT_RAIL = '#1c1c2b';
-
-/** Accent presets. The switcher also accepts any hex. */
-export const ACCENTS: { name: string; hex: string }[] = [
-  { name: 'Green',   hex: DEFAULT_ACCENT },
-  { name: 'Blue',    hex: '#3563f0' },
-  { name: 'Teal',    hex: '#0ca5a5' },
-  { name: 'Violet',  hex: '#7367f0' },
-  { name: 'Magenta', hex: '#a855f7' },
-  { name: 'Orange',  hex: '#f06321' },
-  { name: 'Coral',   hex: '#ef5455' },
-];
-
-/** Sidebar backgrounds. */
-export const RAILS: { name: string; hex: string }[] = [
-  { name: 'Charcoal', hex: DEFAULT_RAIL },
-  { name: 'Navy',     hex: '#152449' },
-  { name: 'Teal',     hex: '#0b3a45' },
-  { name: 'Plum',     hex: '#331b46' },
-  { name: 'Forest',   hex: '#12341f' },
-  { name: 'Coffee',   hex: '#3a2416' },
-];
 
 interface Theme {
   mode: ColorMode;
-  accent: string;
-  rail: string;
-  railMode: RailMode;
   setMode: (m: ColorMode) => void;
-  setAccent: (hex: string) => void;
-  setRail: (hex: string) => void;
-  setRailMode: (m: RailMode) => void;
-  toggleRail: () => void;
-  reset: () => void;
 }
 
-const DEFAULTS = {
-  mode: 'light' as ColorMode,
-  accent: DEFAULT_ACCENT,
-  rail: DEFAULT_RAIL,
-  railMode: 'expanded' as RailMode,
-};
-
+// Same key as the old theme object on purpose: reading it finds an existing
+// {mode, accent, rail, ...} blob and takes only the mode; the next write
+// replaces the blob with {mode} alone, which is how the stored orange accent
+// from the switcher era gets purged from every browser that had one.
 const KEY = 'tatvaos.theme';
 const ThemeContext = createContext<Theme | null>(null);
 
-// ---------------------------------------------------------------------------
-//  Colour maths
-// ---------------------------------------------------------------------------
-
-function hexToRgb(hex: string): [number, number, number] {
-  const h = hex.replace('#', '');
-  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
-  return [
-    parseInt(full.slice(0, 2), 16),
-    parseInt(full.slice(2, 4), 16),
-    parseInt(full.slice(4, 6), 16),
-  ];
-}
-
-const mix = (a: number, b: number, t: number) => Math.round(a + (b - a) * t);
-
-/**
- * Builds a 50–900 ramp from one colour.
- *
- * Generated rather than hand-authored because the switcher accepts an
- * arbitrary hex — there is no opportunity to pick tints by eye. Tints go
- * toward white and shades toward a very dark neutral rather than pure black,
- * which keeps the hue recognisable instead of turning everything to mud.
- */
-function ramp(hex: string): Record<string, string> {
-  const [r, g, b] = hexToRgb(hex);
-  const toward = (tr: number, tg: number, tb: number, t: number) =>
-    `${mix(r, tr, t)} ${mix(g, tg, t)} ${mix(b, tb, t)}`;
-
-  return {
-    '--brand-50':  toward(255, 255, 255, 0.94),
-    '--brand-100': toward(255, 255, 255, 0.86),
-    '--brand-200': toward(255, 255, 255, 0.70),
-    '--brand-300': toward(255, 255, 255, 0.50),
-    '--brand-400': toward(255, 255, 255, 0.26),
-    '--brand-500': `${r} ${g} ${b}`,
-    '--brand-600': toward(24, 22, 46, 0.18),
-    '--brand-700': toward(24, 22, 46, 0.36),
-    '--brand-800': toward(24, 22, 46, 0.54),
-    '--brand-900': toward(24, 22, 46, 0.70),
-  };
-}
-
-function railVars(hex: string): Record<string, string> {
-  const [r, g, b] = hexToRgb(hex);
-  return {
-    '--rail': `${r} ${g} ${b}`,
-    // A lifted row, for hover and nested items. Toward white rather than a
-    // fixed grey, so it stays in the same hue family as whatever was chosen.
-    '--rail-soft': `${mix(r, 255, 0.08)} ${mix(g, 255, 0.08)} ${mix(b, 255, 0.08)}`,
-  };
-}
-
-// ---------------------------------------------------------------------------
-
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [mode, setModeState] = useState<ColorMode>(DEFAULTS.mode);
-  const [accent, setAccentState] = useState(DEFAULTS.accent);
-  const [rail, setRailState] = useState(DEFAULTS.rail);
-  const [railMode, setRailModeState] = useState<RailMode>(DEFAULTS.railMode);
+  const [mode, setMode] = useState<ColorMode>('light');
 
   // Read once on mount, not during render. localStorage does not exist on the
   // server, and reading it while rendering makes the first client paint differ
@@ -145,67 +42,31 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(KEY) ?? '{}');
-      if (saved.mode) setModeState(saved.mode);
-      if (saved.accent) setAccentState(saved.accent);
-      if (saved.rail) setRailState(saved.rail);
-      if (saved.railMode) setRailModeState(saved.railMode);
+      if (saved.mode === 'dark' || saved.mode === 'light') setMode(saved.mode);
     } catch {
-      // Corrupt or blocked storage is not worth an error boundary. Defaults
-      // are perfectly usable.
+      // Corrupt or blocked storage is not worth an error boundary.
     }
   }, []);
 
   useEffect(() => {
     const root = document.documentElement;
 
+    // Both styling systems read the mode, each in its own dialect: Tailwind
+    // (the Mail client) matches on the .dark class, YZEN's stylesheet matches
+    // on data-theme-mode / data-header-styles. Setting them together is what
+    // keeps one toggle honest across both.
     root.classList.toggle('dark', mode === 'dark');
-    Object.entries(ramp(accent)).forEach(([k, v]) => root.style.setProperty(k, v));
-
-    // In dark mode the rail matches the canvas, so a chosen rail colour is
-    // ignored rather than producing a light stripe down a dark screen.
-    if (mode === 'light') {
-      Object.entries(railVars(rail)).forEach(([k, v]) => root.style.setProperty(k, v));
-    } else {
-      root.style.removeProperty('--rail');
-      root.style.removeProperty('--rail-soft');
-    }
+    root.dataset.themeMode = mode;
+    root.dataset.headerStyles = mode;
+    // The rail is dark in both modes — YZEN's default and ours.
+    root.dataset.menuStyles = 'dark';
 
     try {
-      localStorage.setItem(KEY, JSON.stringify({ mode, accent, rail, railMode }));
+      localStorage.setItem(KEY, JSON.stringify({ mode }));
     } catch { /* private browsing */ }
-  }, [mode, accent, rail, railMode]);
+  }, [mode]);
 
-  /**
-   * Three states, cycled by one control: expanded → icons → hidden → expanded.
-   *
-   * A two-state toggle would need a second control to reach "hidden", and a
-   * rail that can only be full or narrow is not much of a choice on a laptop
-   * where the mail list wants every pixel. One button, three stops.
-   *
-   * The order matters. Each click takes away a little more, so the direction
-   * is predictable — you never have to remember which way round it goes, only
-   * that pressing again gives you more room until it wraps.
-   */
-  const toggleRail = useCallback(() => {
-    setRailModeState((m) =>
-      m === 'expanded' ? 'icons' : m === 'icons' ? 'hidden' : 'expanded');
-  }, []);
-
-  const reset = useCallback(() => {
-    setModeState(DEFAULTS.mode);
-    setAccentState(DEFAULTS.accent);
-    setRailState(DEFAULTS.rail);
-    setRailModeState(DEFAULTS.railMode);
-  }, []);
-
-  const value = useMemo<Theme>(() => ({
-    mode, accent, rail, railMode,
-    setMode: setModeState,
-    setAccent: setAccentState,
-    setRail: setRailState,
-    setRailMode: setRailModeState,
-    toggleRail, reset,
-  }), [mode, accent, rail, railMode, toggleRail, reset]);
+  const value = useMemo<Theme>(() => ({ mode, setMode }), [mode]);
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
