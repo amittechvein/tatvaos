@@ -1,0 +1,42 @@
+/* ============================================================================
+   Grid utility collision fix — Tailwind vs YZEN (Bootstrap) .grid
+   ----------------------------------------------------------------------------
+   YZEN's styles.css bundles Bootstrap's .grid utility:
+
+       .grid { grid-template-columns: repeat(var(--bs-columns, 12), 1fr); ... }
+
+   It loads AFTER Tailwind (layout imports globals.css -> bootstrap.min.css ->
+   styles.css) and shares specificity with Tailwind's .grid-cols-*, so by source
+   order it wins: every Tailwind grid (the admin dashboard, the onboarding form)
+   is forced to 12 columns. Four stat cards then occupy the first four of twelve
+   1fr tracks and pack to the left, leaving a large empty gutter on the right.
+
+   We use YZEN's own .row/.col grid throughout YZEN markup and never its CSS
+   .grid utility, so here — loaded last — we:
+     (1) neutralise the 12-column template a bare .grid would otherwise impose
+         (Tailwind's own default is a single column that stacks), then
+     (2) re-declare the Tailwind grid-cols-* utilities the app uses so they win
+         the cascade and each grid gets the column count its classes ask for.
+   gap is intentionally left to YZEN; only the column/row template is corrected.
+   ============================================================================ */
+.grid { grid-template-columns: none; grid-template-rows: none; }
+
+.grid-cols-1 { grid-template-columns: repeat(1, minmax(0, 1fr)); }
+.grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+@media (min-width: 640px) {
+  .sm\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sm\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .sm\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (min-width: 1024px) {
+  .lg\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lg\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .lg\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (min-width: 1280px) {
+  .xl\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .xl\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}

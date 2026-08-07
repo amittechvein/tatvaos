@@ -10,6 +10,8 @@ import { MuiRegistry } from '@/lib/mui/ThemeRegistry';
 import '../styles/globals.css';
 import '../styles/yzen/bootstrap.min.css';
 import '../styles/yzen/styles.css';
+// Loaded LAST: corrects the Tailwind/YZEN .grid collision (see overrides.css).
+import '../styles/overrides.css';
 
 // ---------------------------------------------------------------------------
 //  Plus Jakarta Sans — the typeface the console's visual language is tuned
