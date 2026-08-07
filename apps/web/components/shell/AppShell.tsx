@@ -34,7 +34,7 @@ export function AppShell({
   return (
     <div className="page">
       <Topbar scope={scope} />
-      <Sidebar sections={sections} brand={brand} />
+      <Sidebar sections={sections} brand={brand} scope={scope} />
 
       <div className="main-content app-content">
         <div className="container-fluid">

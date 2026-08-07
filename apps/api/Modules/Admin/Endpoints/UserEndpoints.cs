@@ -102,7 +102,13 @@ public static class UserEndpoints
         // No .Where(u => u.TenantId == ...) here — the global query filter and
         // RLS both apply it. Writing it by hand as well would suggest the
         // filter is optional, and someone would eventually "tidy it away".
-        var query = db.Users.AsNoTracking();
+        //
+        // Deleted people are hidden from the roster. A soft delete keeps the
+        // row for audit and for the "one suspend removes every product"
+        // guarantee, but a decommissioned account listed among the active
+        // staff — as the retired bootstrap admin was — is clutter, and the
+        // header count ("N in this organisation") must not include the dead.
+        var query = db.Users.AsNoTracking().Where(u => u.Status != "deleted");
 
         if (departmentId is Guid cid)
             query = query.Where(u => u.DepartmentId == cid);

@@ -40,3 +40,30 @@
   .xl\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .xl\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
+
+/* ============================================================================
+   Brand header — product logo lockup on the sidebar
+   ----------------------------------------------------------------------------
+   The supplied wordmarks (TatvaOS Core / TatvaOS Mail) are dark artwork on a
+   transparent ground, so they would be invisible on the dark rail. The brand
+   header therefore sits on white — which also lines it up with the white
+   topbar to read as one continuous top strip — and stays white in dark mode so
+   the lockup remains legible. !important because YZEN's dark menu sets the
+   header background with a higher-specificity, attribute-qualified selector.
+   The collapsed icon rail shows only the square mark; the wordmark is hidden.
+   ============================================================================ */
+.app-sidebar .main-sidebar-header { background: #fff !important; }
+.app-sidebar .main-sidebar-header .header-logo {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.app-sidebar .main-sidebar-header .header-logo .brand-mark { height: 32px; width: auto; }
+.app-sidebar .main-sidebar-header .header-logo .brand-name { height: 30px; width: auto; }
+
+@media (min-width: 992px) {
+  /* Collapsed to icons and not hover-expanded: show the mark only. */
+  [data-vertical-style=overlay][data-toggled=icon-overlay-close]:not([data-icon-overlay=open]) .app-sidebar .main-sidebar-header .header-logo .brand-name {
+    display: none;
+  }
+}

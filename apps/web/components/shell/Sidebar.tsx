@@ -33,9 +33,16 @@ export interface NavSection {
 export const PANEL_WIDTH = 262;
 export const PANEL_WIDTH_ICONS = 72;
 
-export function Sidebar({ sections, brand }: { sections: NavSection[]; brand: string }) {
+export function Sidebar({ sections, brand, scope }: {
+  sections: NavSection[];
+  brand: string;
+  scope: 'platform' | 'organisation' | 'mail';
+}) {
   const pathname = usePathname();
   const [open, setOpen] = useState<string | null>(null);
+
+  // Mail carries its own lockup; the console (platform/organisation) uses Core.
+  const logo = scope === 'mail' ? 'mail' : 'core';
 
   // Longest match wins so "/org" does not light every page under it.
   const activeHref = sections
@@ -74,21 +81,16 @@ export function Sidebar({ sections, brand }: { sections: NavSection[]; brand: st
 
   return (
     <aside className="app-sidebar sticky" id="sidebar" onMouseEnter={peekOpen} onMouseLeave={peekClose}>
-      {/* Brand */}
+      {/* Brand — the product logo lockup. The mark is a self-contained badge;
+          the wordmark is dark artwork, so the header sits on white (overrides.css)
+          and lines up with the white topbar. The collapsed icon rail shows only
+          the mark. */}
       <div className="main-sidebar-header">
-        <Link href="/" className="header-logo" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span
-            style={{
-              width: 32, height: 32, borderRadius: 8, flexShrink: 0,
-              display: 'grid', placeItems: 'center', fontWeight: 800, fontSize: 16,
-              color: '#fff', background: 'var(--primary-color)',
-            }}
-          >
-            T
-          </span>
-          <span style={{ fontWeight: 800, fontSize: 19, letterSpacing: '-0.01em', color: '#fff' }}>
-            {brand}
-          </span>
+        <Link href="/" className="header-logo">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img className="brand-mark" src={`/brand/${logo}-logo.png`} alt={brand} />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img className="brand-name" src={`/brand/${logo}-name.png`} alt={brand} />
         </Link>
       </div>
 

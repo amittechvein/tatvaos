@@ -68,3 +68,6 @@ desktop.ini
 # Logs
 *.log
 npm-debug.log*
+
+# Raw brand source art (served copies live in apps/web/public/brand)
+/Logo/
