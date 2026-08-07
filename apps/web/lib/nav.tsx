@@ -38,6 +38,11 @@ const PATHS = {
   payroll:   'M12 2v20M17 6H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6',
   sheet:     'M4 4h16v16H4zM4 10h16M10 4v16',
   word:      'M6 3h9l5 5v13H6zM15 3v5h5M9 13h6M9 17h6',
+  // Mail folder icons for the shell rail (mailNav).
+  sent: 'M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z',
+  draft: 'M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z',
+  junk: 'M10.3 3.9 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01',
+  trash: 'M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6',
 };
 
 // ============================================================================
@@ -136,6 +141,32 @@ export function organisationNav(): NavSection[] {
         { href: '/org/domains', label: 'Domains', icon: <Icon d={PATHS.globe} /> },
         { href: '/org/storage', label: 'Storage', icon: <Icon d={PATHS.database} /> },
         { href: '/org/billing', label: 'Billing', icon: <Icon d={PATHS.card} /> },
+      ],
+    },
+  ];
+}
+
+
+/** A person inside the Mail app. The shell rail mirrors Mail's own folders so
+ *  the rail is contextual to Mail rather than showing the console nav. Folders
+ *  are dynamic server-side, but the five standard ones have stable slug routes,
+ *  which is what the rail needs; custom folders still live in Mail's own column. */
+export function mailNav(): NavSection[] {
+  return [
+    {
+      heading: 'Mail',
+      items: [
+        { href: '/mail/inbox', label: 'Inbox', icon: <Icon d={PATHS.inbox} /> },
+        { href: '/mail/drafts', label: 'Drafts', icon: <Icon d={PATHS.draft} /> },
+        { href: '/mail/sent', label: 'Sent', icon: <Icon d={PATHS.sent} /> },
+        { href: '/mail/junk', label: 'Junk', icon: <Icon d={PATHS.junk} /> },
+        { href: '/mail/trash', label: 'Trash', icon: <Icon d={PATHS.trash} /> },
+      ],
+    },
+    {
+      heading: 'Settings',
+      items: [
+        { href: '/account', label: 'Settings', icon: <Icon d={PATHS.gear} /> },
       ],
     },
   ];

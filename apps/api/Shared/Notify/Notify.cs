@@ -21,24 +21,41 @@ namespace TatvaOS.Api.Shared.Notify;
 public sealed class SystemMailer(
     IConfiguration config, SettingsReader settings, ILogger<SystemMailer> log)
 {
-    public async Task<bool> SendAsync(string to, string subject, string body, CancellationToken ct = default)
+    /// <summary>Plain-text system mail (OTPs and the like).</summary>
+    public Task<bool> SendAsync(string to, string subject, string body, CancellationToken ct = default)
+        => SendCoreAsync(to, subject, body, html: false, from: null, ct);
+
+    /// <summary>
+    /// HTML system mail — the welcome email and future branded notices. A
+    /// <paramref name="from"/> override lets a specific message pin its sender
+    /// (the welcome is always no_reply@tatvaos.com) without changing the
+    /// platform default used by everything else.
+    /// </summary>
+    public Task<bool> SendHtmlAsync(
+        string to, string subject, string htmlBody, string? from = null, CancellationToken ct = default)
+        => SendCoreAsync(to, subject, htmlBody, html: true, from, ct);
+
+    private async Task<bool> SendCoreAsync(
+        string to, string subject, string body, bool html, string? from, CancellationToken ct)
     {
         var host = config["Smtp:Host"] ?? "postfix";
         var port = int.TryParse(config["Smtp:Port"], out var p) ? p : 587;
-        var from = await settings.GetAsync(SettingKeys.SmtpFrom, ct)
-                   ?? config["Smtp:From"] ?? "no-reply@tatvaos.com";
+        var sender = from
+                     ?? await settings.GetAsync(SettingKeys.SmtpFrom, ct)
+                     ?? config["Smtp:From"] ?? "no-reply@tatvaos.com";
 
         try
         {
             using var client = new SmtpClient(host, port);
-            using var msg = new MailMessage(from, to, subject, body);
+            using var msg = new MailMessage(sender, to, subject, body) { IsBodyHtml = html };
             await client.SendMailAsync(msg, ct);
             return true;
         }
         catch (Exception ex)
         {
-            // A failed send must not 500 the signup — the UI offers resend, and
-            // in bare local development there is no SMTP server at all.
+            // A failed send must not 500 the caller — the flows that use this
+            // (signup OTP, welcome mail) all treat mail as best-effort, and in
+            // bare local development there is no SMTP server at all.
             log.LogWarning(ex, "System mail to {To} failed", to);
             return false;
         }

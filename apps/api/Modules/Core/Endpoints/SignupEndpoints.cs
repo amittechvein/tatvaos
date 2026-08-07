@@ -217,7 +217,7 @@ public static class SignupEndpoints
     // ------------------------------------------------------------------
     private static async Task<IResult> CompleteAsync(
         Guid id, CompleteSignupRequest req, AppDbContext db, IPasswordHasher hasher,
-        TenantContext tenant, IConfiguration config, CancellationToken ct)
+        TenantContext tenant, IConfiguration config, SystemMailer mailer, CancellationToken ct)
     {
         var d = await db.SignupDrafts.FirstOrDefaultAsync(x => x.Id == id, ct);
         if (d is null) return Results.NotFound();
@@ -313,6 +313,19 @@ public static class SignupEndpoints
         d.ConvertedTenantId = org.Id;
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+
+        // Welcome the new owner. Their email is their OWN (external) address —
+        // so unlike an admin-created person (local delivery to a hosted inbox),
+        // this goes out over the internet and lands once outbound SMTP is
+        // unblocked. Best-effort and after commit: a mail hiccup must never undo
+        // a completed signup. Always from no_reply@tatvaos.com.
+        var baseUrl = config["Jwt:Issuer"] ?? "https://core.tatvaos.com";
+        await mailer.SendHtmlAsync(
+            owner.Email,
+            WelcomeEmail.Subject(org.Name),
+            WelcomeEmail.Html(owner.DisplayName, org.Name, baseUrl, owner.Email),
+            from: "no_reply@tatvaos.com",
+            ct: ct);
 
         return Results.Ok(new
         {

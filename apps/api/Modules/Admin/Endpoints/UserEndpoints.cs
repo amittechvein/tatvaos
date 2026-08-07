@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using TatvaOS.Api.Shared.Auth;
 using TatvaOS.Api.Shared.Data;
+using TatvaOS.Api.Shared.Notify;
 using TatvaOS.Api.Shared.Tenancy;
 
 namespace TatvaOS.Api.Modules.Admin.Endpoints;
@@ -175,7 +176,8 @@ public static class UserEndpoints
     private static async Task<IResult> CreateAsync(
         CreateUserRequest req,
         AppDbContext db, StorageAllocator storage, TenantContext tenant,
-        AuditWriter audit, IPasswordHasher hasher, CancellationToken ct)
+        AuditWriter audit, IPasswordHasher hasher,
+        SystemMailer mailer, IConfiguration config, CancellationToken ct)
     {
         var capacity = await storage.GetCapacityAsync(tenant.TenantId, "mail", ct);
         if (!capacity.CanAddUser)
@@ -297,6 +299,31 @@ public static class UserEndpoints
 
         await audit.WriteAsync("user.created", "user", user.Id.ToString(),
             after: new { user.Email, products, category = category?.Name }, ct: ct);
+
+        // ------------------------------------------------------------------
+        //  Welcome email — the branded first message in their new inbox.
+        //
+        //  Only when a mailbox was actually created: a Payroll-only person has
+        //  no inbox to receive it. This is LOCAL delivery to their own hosted
+        //  mailbox, so it lands even before outbound SMTP is unblocked, and it
+        //  is best-effort — a failed send never fails the person's creation.
+        //  Always from no_reply@tatvaos.com, regardless of the platform default.
+        // ------------------------------------------------------------------
+        if (mailbox is not null)
+        {
+            var orgName = await db.Tenants.AsNoTracking()
+                .Where(t => t.Id == tenant.TenantId)
+                .Select(t => t.Name)
+                .FirstOrDefaultAsync(ct) ?? "your organisation";
+            var baseUrl = config["Jwt:Issuer"] ?? "https://core.tatvaos.com";
+
+            await mailer.SendHtmlAsync(
+                user.Email,
+                WelcomeEmail.Subject(orgName),
+                WelcomeEmail.Html(user.DisplayName, orgName, baseUrl, mailbox.Address),
+                from: "no_reply@tatvaos.com",
+                ct: ct);
+        }
 
         // The generated password is returned once and never stored in
         // recoverable form. Losing it means a reset, which is the correct
@@ -433,7 +460,8 @@ public static class UserEndpoints
     private static async Task<IResult> BulkCreateAsync(
         BulkCreateUserRequest req,
         AppDbContext db, StorageAllocator storage, TenantContext tenant,
-        AuditWriter audit, IPasswordHasher hasher, CancellationToken ct)
+        AuditWriter audit, IPasswordHasher hasher,
+        IServiceScopeFactory scopeFactory, IConfiguration config, CancellationToken ct)
     {
         var capacity = await storage.GetCapacityAsync(tenant.TenantId, "mail", ct);
         if (!capacity.CanAddUser)
@@ -461,6 +489,10 @@ public static class UserEndpoints
 
         var created = new List<object>();
         var skipped = new List<object>();
+        // (address, name) for each new person who got a mailbox — the welcome
+        // emails are sent AFTER the response, in the background, because 200
+        // synchronous SMTP sends would turn a fast bulk import into a timeout.
+        var welcomes = new List<(string Email, string Name)>();
 
         foreach (var entry in req.Users)
         {
@@ -504,6 +536,7 @@ public static class UserEndpoints
                 });
 
             if (wantsMailbox)
+            {
                 db.Mailboxes.Add(new Mailbox
                 {
                     TenantId = tenant.TenantId,
@@ -515,6 +548,8 @@ public static class UserEndpoints
                     ImapPasswordHash = hasher.Hash(password),
                     QuotaBytes = quota,
                 });
+                welcomes.Add((address, entry.DisplayName.Trim()));
+            }
 
             created.Add(new { email = address, temporaryPassword = password });
         }
@@ -523,7 +558,53 @@ public static class UserEndpoints
         await audit.WriteAsync("user.bulk_created", "user", null,
             after: new { count = created.Count, skipped = skipped.Count }, ct: ct);
 
+        // Fire the welcome emails after the response, on a fresh DI scope (the
+        // request's is disposed the moment we return). Best-effort: a school
+        // importing 200 students gets its list instantly, and the inboxes fill
+        // over the next few seconds without the admin waiting on SMTP.
+        if (welcomes.Count > 0)
+        {
+            var orgName = await db.Tenants.AsNoTracking()
+                .Where(t => t.Id == tenant.TenantId).Select(t => t.Name)
+                .FirstOrDefaultAsync(ct) ?? "your organisation";
+            var baseUrl = config["Jwt:Issuer"] ?? "https://core.tatvaos.com";
+            SendWelcomesInBackground(scopeFactory, welcomes, orgName, baseUrl);
+        }
+
         return Results.Ok(new { created, skipped });
+    }
+
+    /// <summary>
+    /// Sends a batch of welcome emails on a background task with its own scope,
+    /// so it outlives the request. Every failure is swallowed per-recipient —
+    /// one undeliverable address must not stop the other 199, and a welcome
+    /// that does not arrive is never worth surfacing an error for.
+    /// </summary>
+    private static void SendWelcomesInBackground(
+        IServiceScopeFactory scopeFactory,
+        IReadOnlyList<(string Email, string Name)> welcomes,
+        string orgName, string baseUrl)
+    {
+        _ = Task.Run(async () =>
+        {
+            using var scope = scopeFactory.CreateScope();
+            var mailer = scope.ServiceProvider.GetRequiredService<SystemMailer>();
+            var subject = WelcomeEmail.Subject(orgName);
+            foreach (var (email, name) in welcomes)
+            {
+                try
+                {
+                    await mailer.SendHtmlAsync(
+                        email, subject, WelcomeEmail.Html(name, orgName, baseUrl, email),
+                        from: "no_reply@tatvaos.com");
+                }
+                catch
+                {
+                    // Best-effort: intentionally swallowed so one bad address
+                    // cannot break the batch or leak an unobserved exception.
+                }
+            }
+        });
     }
 
     /// <summary>
