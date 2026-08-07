@@ -28,7 +28,6 @@ import TableContainer from '@mui/material/TableContainer';
 import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import Typography from '@mui/material/Typography';
-import { alpha } from '@mui/material/styles';
 
 // ---------------------------------------------------------------------------
 export function Card({
@@ -100,54 +99,64 @@ export function statusTone(status: string): Tone {
 }
 
 // ---------------------------------------------------------------------------
+/**
+ * A stat tile in YZEN's exact anatomy: a solid, near-square coloured icon
+ * chip on the LEFT (their `.avatar.avatar-md`, ~42px, 6px radius, white glyph),
+ * and label → value → delta stacked to its right. The delta is a coloured
+ * trend chip — green up, red down — followed by muted context ("this month").
+ *
+ * `tone` colours the icon chip so a row of four cards is not four identical
+ * green squares — YZEN cycles primary / info / success / warning across them.
+ */
 export function Stat({
-  label, value, caption, delta, icon,
+  label, value, caption, delta, icon, tone = 'primary',
 }: {
   label: string;
   value: string;
   caption?: string;
   delta?: { value: string; direction: 'up' | 'down'; good?: boolean };
   icon?: React.ReactNode;
+  tone?: 'primary' | 'info' | 'success' | 'warning' | 'error';
 }) {
-  // Up is not automatically good. Storage used rising is not a success, so
-  // callers say what they mean rather than the component inferring it from an
-  // arrow direction.
   const positive = delta ? (delta.good ?? delta.direction === 'up') : false;
 
   return (
     <MuiCard>
-      <MuiCardContent sx={{ display: 'flex', gap: 2, alignItems: 'flex-start' }}>
-        <Box sx={{ minWidth: 0, flex: 1 }}>
-          <Typography variant="caption" sx={{ fontWeight: 600, letterSpacing: '0.06em',
-                                              textTransform: 'uppercase', color: 'text.secondary' }}>
-            {label}
-          </Typography>
-          {caption && (
-            <Typography variant="caption" sx={{ display: 'block', color: 'text.disabled' }}>
-              {caption}
-            </Typography>
-          )}
-          <Typography variant="h3" sx={{ mt: 1, fontWeight: 700, lineHeight: 1.1 }}>
-            {value}
-          </Typography>
-          {delta && (
-            <Typography variant="caption"
-                        sx={{ display: 'block', mt: 0.5, color: positive ? 'success.main' : 'error.main' }}>
-              <strong>{delta.value}</strong>{' '}
-              <Box component="span" sx={{ color: 'text.secondary' }}>
-                {delta.direction === 'up' ? 'higher' : 'lower'}
-              </Box>
-            </Typography>
-          )}
-        </Box>
+      <MuiCardContent sx={{ display: 'flex', gap: 1.75, alignItems: 'center' }}>
         {icon && (
-          <Box sx={{ width: 46, height: 46, borderRadius: 2.5, display: 'grid', placeItems: 'center',
-                     flexShrink: 0, color: 'primary.main',
-                     bgcolor: (t) => alpha(t.palette.primary.main, 0.14),
-                     boxShadow: (t) => `inset 0 0 0 1px ${alpha(t.palette.primary.main, 0.16)}` }}>
+          <Box sx={{ width: 44, height: 44, borderRadius: 1.5, flexShrink: 0,
+                     display: 'grid', placeItems: 'center', color: '#fff',
+                     bgcolor: `${tone}.main`,
+                     '& svg': { width: 22, height: 22 } }}>
             {icon}
           </Box>
         )}
+        <Box sx={{ minWidth: 0, flex: 1 }}>
+          <Typography sx={{ fontWeight: 500, fontSize: 13, color: 'text.secondary' }} noWrap>
+            {label}
+          </Typography>
+          <Typography sx={{ fontSize: 22, fontWeight: 700, lineHeight: 1.25 }}>
+            {value}
+          </Typography>
+          {delta ? (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.25, fontSize: 12 }}>
+              <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.25,
+                                          fontWeight: 600, color: positive ? 'success.main' : 'error.main' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  {positive ? <path d="M3 17l6-6 4 4 8-8M21 7v6M21 7h-6" />
+                            : <path d="M3 7l6 6 4-4 8 8M21 17v-6M21 17h-6" />}
+                </svg>
+                {delta.value}
+              </Box>
+              {caption && <Box component="span" sx={{ color: 'text.disabled' }}>{caption}</Box>}
+            </Box>
+          ) : caption && (
+            <Typography sx={{ display: 'block', mt: 0.25, fontSize: 12, color: 'text.disabled' }}>
+              {caption}
+            </Typography>
+          )}
+        </Box>
       </MuiCardContent>
     </MuiCard>
   );

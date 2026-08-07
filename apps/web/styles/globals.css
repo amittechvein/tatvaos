@@ -41,16 +41,18 @@
     --rail-text:   163 164 185;
     --rail-heading: 107 108 133;
 
-    /* The page behind the cards, and the topbar */
-    --canvas:  240 240 248;
+    /* YZEN light tokens — kept in lockstep with lib/mui/theme.ts so the
+       Tailwind pages and the MUI components read one palette. Canvas is their
+       #f2f4f9, ink is near-black #0a0a0a, muted is their signature #8d9eb5. */
+    --canvas:  242 244 249;
     --surface: 255 255 255;
 
     /* Text */
-    --ink:       40  47  83;
-    --ink-muted:123 129 145;
-    --ink-faint:168 173 184;
+    --ink:       10  10  10;
+    --ink-muted:141 158 181;
+    --ink-faint:168 179 199;
 
-    --line: 237 237 245;
+    --line: 230 233 238;
   }
 
   /* ------------------------------------------------------------------------

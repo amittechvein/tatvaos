@@ -19,7 +19,10 @@ import { alpha, createTheme, type Theme } from '@mui/material/styles';
 //  does not flash on load.
 // ============================================================================
 
-export const DEFAULT_PRIMARY = '#7367f0';
+// YZEN's primary green. Must match DEFAULT_ACCENT in lib/theme.tsx — MUI
+// builds its palette from whatever the appearance layer resolves to, so two
+// files disagreeing ships the product in a colour neither names.
+export const DEFAULT_PRIMARY = '#03b562';
 
 const mix = (a: number, b: number, t: number) => Math.round(a + (b - a) * t);
 
@@ -65,17 +68,20 @@ export function buildTheme(primary: string = DEFAULT_PRIMARY): Theme {
       light: {
         palette: {
           primary: p,
-          background: { default: '#f4f5fa', paper: '#ffffff' },
+          // YZEN's exact light surfaces: a cool near-white canvas (#f2f4f9),
+          // white cards, ink-black text (#0a0a0a), and the specific muted blue
+          // (#8d9eb5) their secondary text uses. Borders are their #e2e5e7.
+          background: { default: '#f2f4f9', paper: '#ffffff' },
           text: {
-            primary: 'rgba(58, 53, 65, 0.87)',
-            secondary: 'rgba(58, 53, 65, 0.68)',
-            disabled: 'rgba(58, 53, 65, 0.38)',
+            primary: '#0a0a0a',
+            secondary: '#8d9eb5',
+            disabled: '#a8b3c7',
           },
-          divider: 'rgba(58, 53, 65, 0.12)',
-          success: { main: '#56ca00', contrastText: '#fff' },
-          warning: { main: '#ffb400', contrastText: '#fff' },
-          error:   { main: '#ff4c51', contrastText: '#fff' },
-          info:    { main: '#16b1ff', contrastText: '#fff' },
+          divider: '#e6e9ee',
+          success: { main: '#03b562', contrastText: '#fff' },
+          warning: { main: '#f5b849', contrastText: '#fff' },
+          error:   { main: '#e6533c', contrastText: '#fff' },
+          info:    { main: '#49b6f5', contrastText: '#fff' },
         },
       },
       dark: {
@@ -129,17 +135,17 @@ export function buildTheme(primary: string = DEFAULT_PRIMARY): Theme {
         defaultProps: { elevation: 0 },
         styleOverrides: {
           root: ({ theme }) => ({
-            borderRadius: 12,
-            // A DEFINED edge now, not shadow alone. Banking and admin consoles
-            // read as precise because their cards have crisp borders; a pure
-            // drop-shadow card floats and looks consumer. Hairline border +
-            // a tight shadow gives depth AND definition.
+            // YZEN cards: white, a hairline border, a barely-there shadow, and
+            // a modest 10px radius. Definition comes from the border, not a
+            // drop shadow — that is what makes a dense grid of them read as an
+            // admin console rather than a set of floating consumer tiles.
+            borderRadius: 10,
             border: `1px solid ${theme.palette.divider}`,
-            boxShadow: shadow(2, 8, 0.06),
+            boxShadow: '0 1px 2px 0 rgba(16, 24, 40, 0.04)',
             backgroundImage: 'none',
             transition: 'box-shadow 0.2s, border-color 0.2s',
             '&:hover': {
-              boxShadow: shadow(4, 16, 0.10),
+              boxShadow: '0 4px 16px 0 rgba(16, 24, 40, 0.08)',
               borderColor: alpha(theme.palette.primary.main, 0.28),
             },
           }),

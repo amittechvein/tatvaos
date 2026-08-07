@@ -26,24 +26,21 @@ export type RailMode = 'expanded' | 'icons' | 'hidden';
 // possibly undefined. Reaching for ! to silence that would be suppressing a
 // real rule to save a line; naming the value says what it is and the arrays
 // then reference it, so there is still one source of truth.
-// Materio's violet. This is THE default accent and must match
+// YZEN's primary green. This is THE default accent and must match
 // DEFAULT_PRIMARY in lib/mui/theme.ts — MUI builds its palette from whatever
 // this resolves to, so two files disagreeing means the product ships in a
 // colour neither of them names.
-export const DEFAULT_ACCENT = '#7367f0';
+export const DEFAULT_ACCENT = '#03b562';
 export const DEFAULT_RAIL = '#1c1c2b';
 
 /** Accent presets. The switcher also accepts any hex. */
 export const ACCENTS: { name: string; hex: string }[] = [
-  { name: 'Violet',  hex: DEFAULT_ACCENT },
+  { name: 'Green',   hex: DEFAULT_ACCENT },
   { name: 'Blue',    hex: '#3563f0' },
   { name: 'Teal',    hex: '#0ca5a5' },
+  { name: 'Violet',  hex: '#7367f0' },
   { name: 'Magenta', hex: '#a855f7' },
-  // The saturated orange of Indian banking UIs. A preset rather than the
-  // default: the whole theme recolours from one hex, so trying the product
-  // in this palette is one click in the appearance panel, not a rebuild.
   { name: 'Orange',  hex: '#f06321' },
-  { name: 'Green',   hex: '#22a35b' },
   { name: 'Coral',   hex: '#ef5455' },
 ];
 

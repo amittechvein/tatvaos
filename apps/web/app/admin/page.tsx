@@ -93,23 +93,14 @@ export default function PlatformDashboard() {
         </Link>
       }
     >
-      {/* Greeting band — a lit gradient hero rather than a flat fill, with a
-          soft glow disc for depth. Premium consoles open with presence. */}
-      <div
-        className="relative mb-5 overflow-hidden rounded-card px-6 py-7 text-white shadow-lg sm:px-8"
-        style={{
-          background:
-            'linear-gradient(120deg, rgb(var(--brand-700)) 0%, rgb(var(--brand-500)) 55%, rgb(var(--brand-400)) 100%)',
-        }}
-      >
-        <div
-          className="pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full opacity-30"
-          style={{ background: 'radial-gradient(circle, #fff 0%, transparent 70%)' }}
-        />
-        <h2 className="relative text-xl font-bold tracking-tight sm:text-2xl">
-          Welcome back{user?.displayName ? `, ${user.displayName.split(' ')[0]}` : ''}
+      {/* YZEN's dashboard greeting: a plain heading and subline on the canvas,
+          not a coloured hero band. The data below is the star; the greeting is
+          a quiet orientation line, exactly as their "Hello there, Jack Miller". */}
+      <div className="mb-5">
+        <h2 className="text-xl font-bold tracking-tight text-ink sm:text-[22px]">
+          Hello{user?.displayName ? `, ${user.displayName.split(' ')[0]}` : ' there'}
         </h2>
-        <p className="relative mt-1.5 max-w-2xl text-[13.5px] text-white/85">
+        <p className="mt-1 text-[13.5px] text-ink-muted">
           {totals.orgs === 0
             ? 'No organisations yet. Onboarding the first one takes about two minutes.'
             : `${totals.orgs} organisation${totals.orgs === 1 ? '' : 's'} on the platform, ${totals.users} people across them.`}
@@ -119,22 +110,26 @@ export default function PlatformDashboard() {
       {/* Stat row */}
       <div className="mb-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Stat
-          label="Organisations" caption="Customers on the platform"
+          tone="primary"
+          label="Organisations" caption="on the platform"
           value={String(totals.orgs)}
           icon={<Glyph d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-5h6v5" />}
         />
         <Stat
-          label="People" caption="Across every organisation"
+          tone="info"
+          label="People" caption="across every org"
           value={totals.users.toLocaleString()}
           icon={<Glyph d="M16 19v-2a4 4 0 00-8 0v2M12 11a3 3 0 100-6 3 3 0 000 6" />}
         />
         <Stat
-          label="Storage used" caption={`of ${formatBytes(totals.committed)} committed`}
+          tone="success"
+          label="Storage used" caption={`of ${formatBytes(totals.committed)}`}
           value={formatBytes(totals.used)}
           icon={<Glyph d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7" />}
         />
         <Stat
-          label="Needs attention" caption="Suspended or past due"
+          tone={totals.suspended > 0 ? 'error' : 'warning'}
+          label="Needs attention" caption="suspended or past due"
           value={String(totals.suspended)}
           icon={<Glyph d="M12 9v4m0 4h.01M10.3 3.9L2.6 17a2 2 0 001.7 3h15.4a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z" />}
         />

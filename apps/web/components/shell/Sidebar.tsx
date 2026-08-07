@@ -34,6 +34,18 @@ export interface NavSection {
 export const PANEL_WIDTH = 262;
 export const PANEL_WIDTH_ICONS = 72;
 
+// YZEN's default menu is dark (data-menu-styles="dark") over a light page and
+// light header. The charcoal is their rgb(45,45,48); text is muted white,
+// icons stay primary-green, and the active item is green text on a faint
+// green wash. These are fixed rather than theme palette values because the
+// dark rail is a constant of the design, not something that flips with the
+// page's light/dark mode.
+const RAIL_BG = '#2d2d30';
+const RAIL_BORDER = 'rgba(255, 255, 255, 0.08)';
+const RAIL_TEXT = 'rgba(255, 255, 255, 0.72)';
+const RAIL_LABEL = 'rgba(255, 255, 255, 0.38)';
+const RAIL_HOVER = 'rgba(255, 255, 255, 0.06)';
+
 // ============================================================================
 //  One sidebar, three widths — Materio's shape
 // ============================================================================
@@ -85,32 +97,30 @@ export function Sidebar({ sections, brand }: { sections: NavSection[]; brand: st
         zIndex: (t) => t.zIndex.drawer,
         width,
         display: 'flex', flexDirection: 'column',
-        bgcolor: 'background.paper',
-        // Shadow, not a border. Materio separates the drawer from the page
-        // with soft depth; a 1px line next to shadowed cards reads as a
-        // wireframe that never got skinned.
-        boxShadow: (t) => `0 0 16px 0 ${alpha(t.palette.text.primary, 0.1)}`,
+        bgcolor: RAIL_BG,
+        color: RAIL_TEXT,
+        borderRight: `1px solid ${RAIL_BORDER}`,
         transition: (t) => t.transitions.create('width', { duration: 200 }),
         overflow: 'hidden',
       }}
     >
       {/* Brand */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, height: 64, flexShrink: 0,
-                 px: icons ? 0 : 3, justifyContent: icons ? 'center' : 'flex-start' }}>
+                 px: icons ? 0 : 3, justifyContent: icons ? 'center' : 'flex-start',
+                 borderBottom: `1px solid ${RAIL_BORDER}` }}>
         <Box
           component={Link}
           href="/"
           sx={{
-            width: 34, height: 34, borderRadius: 2, display: 'grid', placeItems: 'center',
-            flexShrink: 0, fontWeight: 700, fontSize: 16, color: '#fff', textDecoration: 'none',
-            background: (t) => `linear-gradient(135deg, ${t.palette.primary.main}, ${t.palette.primary.light})`,
-            boxShadow: (t) => `0 2px 6px 0 ${alpha(t.palette.primary.main, 0.4)}`,
+            width: 32, height: 32, borderRadius: 1.5, display: 'grid', placeItems: 'center',
+            flexShrink: 0, fontWeight: 800, fontSize: 16, color: '#fff', textDecoration: 'none',
+            bgcolor: 'primary.main',
           }}
         >
           T
         </Box>
         {!icons && (
-          <Typography sx={{ fontWeight: 700, fontSize: 19, letterSpacing: '0.01em' }} noWrap>
+          <Typography sx={{ fontWeight: 800, fontSize: 19, letterSpacing: '-0.01em', color: '#fff' }} noWrap>
             {brand}
           </Typography>
         )}
@@ -120,14 +130,16 @@ export function Sidebar({ sections, brand }: { sections: NavSection[]; brand: st
         {sections.map((section) => (
           <List key={section.heading} dense sx={{ pl: 0, pr: icons ? 0 : 1.5, py: 0 }}>
             {!icons && (
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, pl: 3, pr: 1.5,
-                         pt: 2.5, pb: 1 }}>
-                <Typography variant="caption"
-                            sx={{ fontWeight: 500, color: 'text.disabled', fontSize: 12,
-                                  whiteSpace: 'nowrap' }}>
+              // YZEN's category label: small, uppercase, wide-tracked, muted —
+              // no divider rule. The all-caps section header is the single
+              // biggest "this is an admin console" tell in their sidebar.
+              <Box sx={{ pl: 3, pr: 1.5, pt: 2.75, pb: 0.75 }}>
+                <Typography
+                  sx={{ fontWeight: 600, color: RAIL_LABEL, fontSize: 11,
+                        letterSpacing: '0.09em', textTransform: 'uppercase',
+                        whiteSpace: 'nowrap' }}>
                   {section.heading}
                 </Typography>
-                <Box sx={{ flex: 1, height: '1px', bgcolor: 'divider' }} />
               </Box>
             )}
 
@@ -148,25 +160,26 @@ export function Sidebar({ sections, brand }: { sections: NavSection[]; brand: st
                       : { component: Link, href: item.href })}
                   selected={!item.disabled && !!active}
                   sx={{
-                    // Materio's signature: the active pill bleeds from the
-                    // panel's left edge — flat left, rounded right. In icons
-                    // mode it becomes a centred rounded tile, since a
-                    // half-pill on a 72px panel just looks cut off.
+                    // YZEN's active item is not a filled pill — it is the item
+                    // turned PRIMARY: green text, green icon, semibold, over a
+                    // faint green wash. The icons are green even when inactive,
+                    // which is YZEN's signature (.side-menu__icon { color:
+                    // primary }); the label is the thing that changes weight
+                    // and colour on select.
+                    borderRadius: 2, minHeight: 42, mb: 0.25, color: RAIL_TEXT,
                     ...(icons
-                      ? { borderRadius: 2, minHeight: 44, mb: 0.5, mx: 'auto',
-                          width: 46, justifyContent: 'center', px: 0 }
-                      : { borderRadius: '0 999px 999px 0', minHeight: 44, mb: 0.5,
-                          pl: 3, pr: 2 }),
+                      ? { mx: 'auto', width: 46, justifyContent: 'center', px: 0 }
+                      : { mx: 1, px: 2 }),
+                    '&:hover': { bgcolor: RAIL_HOVER, color: '#fff' },
                     '&.Mui-selected, &.Mui-selected:hover': {
-                      color: '#fff',
-                      background: (t) =>
-                        `linear-gradient(270deg, ${t.palette.primary.light}, ${t.palette.primary.main})`,
-                      boxShadow: (t) => `0 4px 10px -2px ${alpha(t.palette.primary.main, 0.5)}`,
-                      '& .MuiListItemIcon-root': { color: '#fff' },
+                      color: 'primary.main',
+                      bgcolor: (t) => alpha(t.palette.primary.main, 0.14),
+                      '& .MuiListItemText-primary': { fontWeight: 700 },
+                      '& .MuiListItemIcon-root': { color: 'primary.main' },
                     },
                   }}
                 >
-                  <ListItemIcon sx={{ minWidth: icons ? 0 : 34, color: 'text.secondary' }}>
+                  <ListItemIcon sx={{ minWidth: icons ? 0 : 32, color: 'primary.main' }}>
                     {item.icon}
                   </ListItemIcon>
                   {!icons && (
@@ -209,10 +222,11 @@ export function Sidebar({ sections, brand }: { sections: NavSection[]; brand: st
                           <ListItemButton
                             key={c.href} component={Link} href={c.href}
                             selected={pathname === c.href}
-                            sx={{ borderRadius: 999, minHeight: 36, pl: 1.5,
+                            sx={{ borderRadius: 2, minHeight: 36, pl: 1.5, color: RAIL_TEXT,
+                                  '&:hover': { bgcolor: RAIL_HOVER, color: '#fff' },
                                   '&.Mui-selected': {
                                     bgcolor: 'transparent', color: 'primary.main',
-                                    '& .MuiListItemText-primary': { fontWeight: 600 } } }}
+                                    '& .MuiListItemText-primary': { fontWeight: 700 } } }}
                           >
                             {/* A ring, not an icon. Giving each nested item its
                                 own glyph makes one group read as five unrelated

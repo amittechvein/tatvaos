@@ -1,21 +1,24 @@
 import type { Metadata, Viewport } from 'next';
-import { Inter } from 'next/font/google';
+import { Plus_Jakarta_Sans } from 'next/font/google';
 import { AuthProvider } from '@/lib/auth';
 import { ThemeProvider } from '@/lib/theme';
 import { MuiRegistry } from '@/lib/mui/ThemeRegistry';
 import '../styles/globals.css';
 
 // ---------------------------------------------------------------------------
-//  The theme has named Inter since day one — and nothing ever LOADED it, so
-//  the entire product rendered in Segoe UI. Most of what read as "cheap" was
-//  this one missing import: the metrics, weights and spacing of the design
-//  were tuned for a font that was never on the page.
+//  Plus Jakarta Sans — the typeface the console's visual language is tuned
+//  for. It is geometric and slightly condensed, which is what makes a dense
+//  admin UI read as designed rather than defaulted; the previous Inter (and
+//  before that, unstyled Segoe UI) is most of what read as "cheap".
 //
 //  next/font self-hosts it: no Google request at runtime, no layout shift,
-//  and the file is subset and cached by the build.
+//  and the file is subset and cached by the build. The CSS variable is still
+//  called --font-inter so the theme and globals that reference it keep
+//  working — one rename would otherwise ripple through both.
 // ---------------------------------------------------------------------------
-const inter = Inter({
+const inter = Plus_Jakarta_Sans({
   subsets: ['latin'],
+  weight: ['400', '500', '600', '700', '800'],
   display: 'swap',
   variable: '--font-inter',
 });
@@ -28,7 +31,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  themeColor: '#2145d6',
+  themeColor: '#03b562',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

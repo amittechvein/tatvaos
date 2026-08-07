@@ -21,10 +21,11 @@ import { Switcher } from './Switcher';
 /**
  * The bar across the top.
  *
- * Materio floats it over the content on a blurred, semi-transparent surface
- * rather than sitting it in a solid band — which is why the page appears to
- * slide underneath rather than behind it. That needs both the backdrop filter
- * and a transparent background; either alone looks like a mistake.
+ * YZEN's header (data-header-styles="light") is a SOLID white band with a
+ * hairline bottom border — flush, not floating. The blurred translucent
+ * Materio bar was replaced because a see-through header over a dark sidebar
+ * and light content reads as three planes fighting; a solid white bar with a
+ * border sits cleanly between the charcoal rail and the grey canvas.
  */
 export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' }) {
   const { user } = useAuth();
@@ -38,13 +39,12 @@ export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' 
         position="sticky"
         elevation={0}
         sx={{
-          bgcolor: (t) => alpha(t.palette.background.default, 0.85),
-          backdropFilter: 'blur(8px)',
+          bgcolor: 'background.paper',
           color: 'text.primary',
-          borderBottom: 0,
+          borderBottom: (t) => `1px solid ${t.palette.divider}`,
         }}
       >
-        <Toolbar sx={{ gap: 1, minHeight: { xs: 60, sm: 64 } }}>
+        <Toolbar sx={{ gap: 1, minHeight: { xs: 58, sm: 60 } }}>
           {/* One control, three stops: full → icons → hidden → full. The
               glyph shows what you will GET, not what you have, so the button
               is a preview rather than a status light — and the tooltip names
@@ -68,39 +68,24 @@ export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' 
             </IconButton>
           </Tooltip>
 
-          {/* Ghost search, like the reference: icon, muted prompt, a ⌘K hint.
-              A bordered input up here reads as a form stranded outside its
-              page — the border only appears once it has focus and is real. */}
+          {/* YZEN's header search: a real bordered input, not a ghost. Muted
+              icon, subtle border that turns primary on focus. */}
           <TextField
             placeholder="Search"
             size="small"
             sx={{
-              width: 300, display: { xs: 'none', md: 'block' },
+              width: 260, display: { xs: 'none', md: 'block' },
               '& .MuiOutlinedInput-root': {
-                borderRadius: 999,
-                bgcolor: 'transparent',
-                '& fieldset': { border: 'none' },
-                '&.Mui-focused': {
-                  bgcolor: 'background.paper',
-                  boxShadow: (t) => `0 2px 10px 0 ${alpha(t.palette.text.primary, 0.1)}`,
-                },
+                borderRadius: 2,
+                bgcolor: 'background.paper',
+                '& fieldset': { borderColor: 'divider' },
               },
             }}
             slotProps={{
               input: {
                 startAdornment: (
-                  <InputAdornment position="start">
+                  <InputAdornment position="start" sx={{ color: 'text.disabled' }}>
                     <Glyph d="M15 15l4 4M17 10a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </InputAdornment>
-                ),
-                endAdornment: (
-                  <InputAdornment position="end">
-                    <Box sx={{ px: 0.75, py: 0.1, borderRadius: 1, fontSize: 11,
-                               fontWeight: 600, letterSpacing: '0.04em',
-                               color: 'text.disabled',
-                               border: '1px solid', borderColor: 'divider' }}>
-                      Ctrl K
-                    </Box>
                   </InputAdornment>
                 ),
               },
@@ -118,7 +103,10 @@ export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' 
           )}
 
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5,
-                     ml: scope === 'platform' ? 1 : 'auto' }}>
+                     ml: scope === 'platform' ? 1 : 'auto',
+                     // YZEN header icons are a calm muted grey, not full-ink —
+                     // the profile avatar is the only saturated thing up here.
+                     color: 'text.secondary' }}>
             <AppLauncher />
 
             <IconButton
@@ -149,8 +137,8 @@ export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' 
                 } }}
               >
                 <Avatar
-                  sx={{ width: 36, height: 36, fontSize: 14, fontWeight: 600,
-                        background: (t) => `linear-gradient(72deg, ${t.palette.primary.main}, ${t.palette.primary.light})` }}
+                  sx={{ width: 34, height: 34, fontSize: 14, fontWeight: 700,
+                        bgcolor: 'primary.main' }}
                 >
                   {(user?.displayName ?? '?').charAt(0).toUpperCase()}
                 </Avatar>
