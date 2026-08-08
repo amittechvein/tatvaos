@@ -38,7 +38,7 @@ export function MessageList({
   }
 
   return (
-    <ul className="scroll-thin h-full overflow-y-auto">
+    <ul className="scroll-thin h-full list-none overflow-y-auto pl-0">
       {messages.map((m) => {
         const checked = selectedIds.has(m.id);
         const active = m.id === openId;

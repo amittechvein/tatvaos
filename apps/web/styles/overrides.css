@@ -103,3 +103,21 @@
     display: none;
   }
 }
+
+/* ============================================================================
+   List markers in our own markup
+   ----------------------------------------------------------------------------
+   Tailwind's preflight is disabled in this project and Bootstrap's reboot only
+   zeroes a list's indent, not its marker — so every <ul> we hand-write keeps the
+   browser's default disc or circle. That is where the stray dots beside the rail
+   items came from.
+
+   Scoped to the sidebar deliberately. A blanket reset would also strip the
+   bullets from a list someone types into the composer, and those are content:
+   they have to survive into the sent message.
+   ============================================================================ */
+.app-sidebar ul,
+.app-sidebar ol,
+.app-sidebar li {
+  list-style: none;
+}

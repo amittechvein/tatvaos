@@ -188,13 +188,16 @@ export function Composer({
     <>
       {/* Only full screen dims the mailbox. A docked composer that greyed out
           everything behind it would be a modal wearing a corner panel's clothes. */}
-      {pane === 'full' && <div className="fixed inset-0 z-40 bg-black/40" aria-hidden="true" />}
+      {pane === 'full' && <div className="fixed inset-0 z-[1190] bg-black/40" aria-hidden="true" />}
 
       <div
         className={
           pane === 'full'
-            ? 'fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6'
-            : 'fixed inset-x-0 bottom-0 z-50 flex justify-center sm:inset-x-auto sm:right-5 sm:justify-end'
+            // Above YZEN's chrome: it puts .app-header at z-index 100 and
+            // .app-sidebar at 103, so at Tailwind's z-50 the header covered the
+            // composer's own title bar — and with it the close button.
+            ? 'fixed inset-0 z-[1200] flex items-center justify-center p-4 sm:p-6'
+            : 'fixed inset-x-0 bottom-0 z-[1200] flex justify-center sm:inset-x-auto sm:right-5 sm:justify-end'
         }
       >
         <div
