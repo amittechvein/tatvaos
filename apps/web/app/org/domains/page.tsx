@@ -1,25 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import Alert from '@mui/material/Alert';
-import Box from '@mui/material/Box';
-import Button from '@mui/material/Button';
-import Card from '@mui/material/Card';
-import CardContent from '@mui/material/CardContent';
-import Chip from '@mui/material/Chip';
-import CircularProgress from '@mui/material/CircularProgress';
-import Dialog from '@mui/material/Dialog';
-import DialogActions from '@mui/material/DialogActions';
-import DialogContent from '@mui/material/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle';
-import IconButton from '@mui/material/IconButton';
-import Stack from '@mui/material/Stack';
-import TextField from '@mui/material/TextField';
-import Tooltip from '@mui/material/Tooltip';
-import Typography from '@mui/material/Typography';
-import { alpha } from '@mui/material/styles';
 
 import { AdminShell } from '@/components/admin/AdminShell';
+import { Button } from '@/components/ui/Kit';
+import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 
 // ============================================================================
@@ -66,33 +51,59 @@ function checkFor(checks: Check[], r: DnsRecord, index: number): Check | undefin
   return checks[index];
 }
 
-/** A labelled monospace value with a copy button — the unit DNS admins want. */
-function CopyField({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+/**
+ * A labelled monospace value with a copy button — the unit DNS admins want.
+ *
+ * The button confirms in place for a moment after copying. Without that there
+ * is no way to tell a successful copy from a click that missed, and the usual
+ * result is pasting whatever was on the clipboard before.
+ */
+function CopyField({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    } catch {
+      /* Clipboard blocked — the value is on screen and selectable anyway. */
+    }
+  }
+
   return (
-    <Box>
-      <Typography variant="caption" color="text.disabled"
-                  sx={{ display: 'block', mb: 0.25, fontWeight: 600,
-                        letterSpacing: '0.04em', textTransform: 'uppercase', fontSize: 10 }}>
+    <div className="min-w-0">
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
         {label}
-      </Typography>
-      <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'stretch' }}>
-        <Box sx={{ flex: 1, p: 1, borderRadius: 1.5, minWidth: 0,
-                   fontFamily: mono ? 'monospace' : undefined, fontSize: 13,
-                   wordBreak: 'break-all', bgcolor: 'background.default',
-                   display: 'flex', alignItems: 'center' }}>
+      </div>
+      <div className="flex items-stretch gap-1">
+        <div className="flex min-w-0 flex-1 items-center break-all rounded-lg bg-canvas p-2 font-mono text-[13px] text-ink">
           {value}
-        </Box>
-        <Tooltip title="Copy">
-          <IconButton size="small" onClick={() => void navigator.clipboard.writeText(value)}>
+        </div>
+        <button
+          type="button"
+          onClick={() => void copy()}
+          title={copied ? 'Copied' : 'Copy'}
+          aria-label={copied ? 'Copied' : `Copy ${label}`}
+          className={`shrink-0 rounded-lg border border-line px-2 transition ${
+            copied ? 'text-ok' : 'text-ink-muted hover:bg-canvas hover:text-ink'
+          }`}
+        >
+          {copied ? (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M20 6L9 17l-5-5" />
+            </svg>
+          ) : (
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
                  stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
               <rect x="9" y="9" width="12" height="12" rx="2" />
               <path d="M5 15V5a2 2 0 012-2h10" />
             </svg>
-          </IconButton>
-        </Tooltip>
-      </Box>
-    </Box>
+          )}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -183,107 +194,124 @@ export default function DomainsPage() {
   }
 
   const open = domains.find((d) => d.id === openId);
+  const ownershipPassed = checks.find((c) => c.id === 'ownership')?.passed;
 
   return (
     <AdminShell
       scope="organisation"
       title="Domains"
       subtitle="Addresses your organisation sends and receives on"
-      actions={
-        <Button variant="contained" onClick={() => setAdding(true)}>Add domain</Button>
-      }
+      actions={<Button variant="primary" onClick={() => setAdding(true)}>Add domain</Button>}
     >
-      {error && <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>{error}</Alert>}
+      {error && (
+        <div className="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
+          <span>{error}</span>
+          <button type="button" className="btn-close" aria-label="Dismiss" onClick={() => setError(null)} />
+        </div>
+      )}
 
       {loading ? (
-        <Box sx={{ display: 'grid', placeItems: 'center', py: 8 }}><CircularProgress /></Box>
+        <div className="grid place-items-center py-5">
+          <span className="block h-8 w-8 animate-spin rounded-full border-2 border-line border-t-brand-600" />
+        </div>
       ) : (
-        <Stack spacing={2}>
+        <div className="grid gap-3">
           {domains.map((d) => (
-            <Card key={d.id}>
-              <CardContent sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
-                <Box sx={{ minWidth: 0, flex: 1 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                    <Typography variant="h6" sx={{ wordBreak: 'break-all' }}>{d.fqdn}</Typography>
+            <div className="card custom-card mb-0" key={d.id}>
+              <div className="card-body d-flex align-items-center gap-3 flex-wrap">
+                <div className="min-w-0 flex-fill">
+                  <div className="d-flex align-items-center gap-2 flex-wrap">
+                    <h6 className="fw-semibold mb-0" style={{ wordBreak: 'break-all' }}>{d.fqdn}</h6>
 
                     {d.isPlatform ? (
-                      <Chip size="small" color="primary" label="TatvaOS address" />
+                      <span className="badge bg-primary-transparent">TatvaOS address</span>
                     ) : d.ownershipVerified ? (
-                      <Chip size="small" color="success" label="Verified" />
+                      <span className="badge bg-success-transparent">Verified</span>
                     ) : (
-                      <Chip size="small" color="warning" label="Not verified" />
+                      <span className="badge bg-warning-transparent">Not verified</span>
                     )}
-                  </Box>
+                  </div>
 
-                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                  <p className="fs-13 text-muted mb-0 mt-1">
                     {d.isPlatform
                       ? 'Issued by us and working immediately. Cannot be removed — it is how you sign in if your own domain’s DNS ever breaks.'
                       : d.ownershipVerified
                         ? d.lastCheckResult ?? 'Ownership proven.'
                         : 'Not accepting mail yet. Publish the ownership record, then check again.'}
-                  </Typography>
-                </Box>
+                  </p>
+                </div>
 
                 {!d.isPlatform && (
-                  <Button variant="outlined" onClick={() => openDomain(d.id)}>
+                  <Button variant="secondary" onClick={() => openDomain(d.id)}>
                     {d.ownershipVerified ? 'DNS records' : 'Set up'}
                   </Button>
                 )}
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           ))}
 
           {domains.length === 0 && (
-            <Card><CardContent>
-              <Typography>No domains yet.</Typography>
-            </CardContent></Card>
+            <div className="card custom-card mb-0"><div className="card-body">No domains yet.</div></div>
           )}
-        </Stack>
+        </div>
       )}
 
-      <Alert severity="info" sx={{ mt: 3 }}>
+      <div className="alert alert-info mt-4" role="note">
         Adding a domain changes nothing about your existing mail. It keeps arriving
         wherever it does today until <strong>you</strong> move the MX record — and
         that step is reversible.
-      </Alert>
+      </div>
 
       {/* ---------------------------------------------------------------- */}
-      <Dialog open={adding} onClose={() => setAdding(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Add a domain</DialogTitle>
-        <DialogContent>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2.5 }}>
+      {adding && (
+        <Modal
+          title="Add a domain"
+          onClose={() => setAdding(false)}
+          busy={busy}
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setAdding(false)}>Cancel</Button>
+              <Button variant="primary" onClick={addDomain}
+                      disabled={busy || newFqdn.trim().length < 4}>
+                {busy ? 'Adding…' : 'Add domain'}
+              </Button>
+            </>
+          }
+        >
+          <p className="fs-13 text-muted">
             The domain your organisation&apos;s email addresses use. You will be asked
             to publish a record proving you control it.
-          </Typography>
-          <TextField
-            autoFocus fullWidth label="Domain" placeholder="abcschool.edu.in"
-            value={newFqdn} onChange={(e) => setNewFqdn(e.target.value)}
-            slotProps={{ htmlInput: { autoCapitalize: 'none', spellCheck: false } }}
-          />
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2.5 }}>
-          <Button onClick={() => setAdding(false)}>Cancel</Button>
-          <Button variant="contained" onClick={addDomain} disabled={busy || newFqdn.trim().length < 4}>
-            {busy ? 'Adding…' : 'Add domain'}
-          </Button>
-        </DialogActions>
-      </Dialog>
+          </p>
+          <Field label="Domain">
+            <input
+              className="form-control" autoFocus placeholder="abcschool.edu.in"
+              autoCapitalize="none" spellCheck={false}
+              value={newFqdn} onChange={(e) => setNewFqdn(e.target.value)}
+            />
+          </Field>
+        </Modal>
+      )}
 
       {/* ---------------------------------------------------------------- */}
-      <Dialog open={!!openId} onClose={() => setOpenId(null)} maxWidth="md" fullWidth>
-        <DialogTitle sx={{ pb: 1 }}>
-          {open?.fqdn}
-          <Typography variant="body2" color="text.secondary">
-            Add these to your DNS, then check again.
-          </Typography>
-        </DialogTitle>
-
-        <DialogContent>
+      {openId && (
+        <Modal
+          title={open?.fqdn ?? 'DNS records'}
+          subtitle="Add these to your DNS, then check again."
+          size="lg"
+          onClose={() => setOpenId(null)}
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setOpenId(null)}>Close</Button>
+              <Button variant="primary" onClick={() => openId && verify(openId)} disabled={checking}>
+                {checking ? 'Checking DNS…' : 'Check again'}
+              </Button>
+            </>
+          }
+        >
           {summary && (
-            <Alert severity={checks.find((c) => c.id === 'ownership')?.passed ? 'success' : 'warning'}
-                   sx={{ mb: 2.5 }}>
+            <div className={`alert ${ownershipPassed ? 'alert-success' : 'alert-warning'}`} role="status">
               {summary}
-            </Alert>
+            </div>
           )}
 
           {/* ------------------------------------------------------------
@@ -296,89 +324,81 @@ export default function DomainsPage() {
               DNS wants one self-contained block per record: what it is,
               whether it passes, and exactly what to paste where.
              ------------------------------------------------------------ */}
-          <Stack spacing={2}>
+          <div className="grid gap-3">
             {records.map((r, i) => {
               const check = checkFor(checks, r, i);
               const state: 'passed' | 'required' | 'optional' =
                 check?.passed ? 'passed' : r.required ? 'required' : 'optional';
+              const edge = state === 'passed' ? '#53c405' : state === 'required' ? '#fd4963' : '#ffa909';
 
               return (
-                <Card key={`${r.type}-${r.host}-${i}`} variant="outlined"
-                      sx={{
-                        boxShadow: 'none',
-                        borderColor: (t) =>
-                          state === 'passed' ? alpha(t.palette.success.main, 0.4)
-                            : state === 'required' ? alpha(t.palette.error.main, 0.4)
-                              : t.palette.divider,
-                        borderLeft: '4px solid',
-                        borderLeftColor: state === 'passed' ? 'success.main'
-                          : state === 'required' ? 'error.main' : 'warning.main',
-                      }}>
-                  <CardContent sx={{ '&:last-child': { pb: 2 } }}>
-                    {/* Header: status + name + badges */}
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, mb: 0.75 }}>
-                      <Box sx={{ display: 'grid', placeItems: 'center', width: 26, height: 26,
-                                 borderRadius: '50%', flexShrink: 0, color: '#fff',
-                                 bgcolor: state === 'passed' ? 'success.main'
-                                   : state === 'required' ? 'error.main' : 'warning.main' }}>
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
-                             stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"
-                             strokeLinejoin="round">
-                          {state === 'passed'
-                            ? <path d="M20 6L9 17l-5-5" />
-                            : <path d="M12 7v6m0 4h.01" />}
-                        </svg>
-                      </Box>
+                <div
+                  key={`${r.type}-${r.host}-${i}`}
+                  className="rounded-card border border-line bg-surface p-3"
+                  style={{ borderInlineStartWidth: 4, borderInlineStartColor: edge }}
+                >
+                  {/* Header: status + name + badges */}
+                  <div className="mb-2 flex items-center gap-2">
+                    <span
+                      className="grid h-[26px] w-[26px] shrink-0 place-items-center rounded-full text-white"
+                      style={{ background: edge }}
+                    >
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                           stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"
+                           strokeLinejoin="round">
+                        {state === 'passed'
+                          ? <path d="M20 6L9 17l-5-5" />
+                          : <path d="M12 7v6m0 4h.01" />}
+                      </svg>
+                    </span>
 
-                      <Typography variant="subtitle2" sx={{ fontWeight: 700, flex: 1 }} noWrap>
-                        {check?.label ?? r.purpose.split('.')[0]}
-                      </Typography>
+                    <span className="flex-1 truncate font-bold text-ink">
+                      {check?.label ?? r.purpose.split('.')[0]}
+                    </span>
 
-                      <Chip label={r.type} size="small" sx={{ fontFamily: 'monospace' }} />
-                      {check?.passed
-                        ? <Chip label="verified" size="small" color="success" />
-                        : r.required
-                          ? <Chip label="required" size="small" color="error" variant="outlined" />
-                          : <Chip label="optional" size="small" variant="outlined" />}
-                    </Box>
+                    <span className="badge bg-light text-muted font-monospace">{r.type}</span>
+                    {check?.passed
+                      ? <span className="badge bg-success-transparent">verified</span>
+                      : r.required
+                        ? <span className="badge bg-danger-transparent">required</span>
+                        : <span className="badge bg-light text-muted">optional</span>}
+                  </div>
 
-                    {/* The server's own words when a check ran; the record's
-                        purpose otherwise. "NXDOMAIN looking up TXT" tells a
-                        DNS admin far more than a friendlier rewrite would. */}
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-                      {check && !check.passed ? check.detail : r.purpose}
-                    </Typography>
+                  {/* The server's own words when a check ran; the record's
+                      purpose otherwise. "NXDOMAIN looking up TXT" tells a
+                      DNS admin far more than a friendlier rewrite would. */}
+                  <p className="mb-3 text-[13px] text-ink-muted">
+                    {check && !check.passed ? check.detail : r.purpose}
+                  </p>
 
-                    {/* The record itself — verified ones collapse it, since a
-                        record already found in DNS needs no copying. */}
-                    {!check?.passed && (
-                      <Box sx={{ display: 'grid', gap: 1,
-                                 gridTemplateColumns: { xs: '1fr', sm: '160px 1fr' } }}>
-                        <CopyField label="Host / Name" value={r.host} mono />
-                        <CopyField label="Value" value={r.value} mono />
-                      </Box>
-                    )}
-                  </CardContent>
-                </Card>
+                  {/* The record itself — verified ones collapse it, since a
+                      record already found in DNS needs no copying. */}
+                  {!check?.passed && (
+                    {/* Flex, not grid: overrides.css has to neutralise YZEN's
+                        own .grid rule and can only re-assert the enumerated
+                        grid-cols-* utilities, so an arbitrary column template
+                        would be silently flattened to one column. */}
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <div className="sm:w-40 sm:shrink-0">
+                        <CopyField label="Host / Name" value={r.host} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <CopyField label="Value" value={r.value} />
+                      </div>
+                    </div>
+                  )}
+                </div>
               );
             })}
-          </Stack>
+          </div>
 
-          <Typography variant="caption" color="text.disabled"
-                      sx={{ display: 'block', mt: 3, lineHeight: 1.7 }}>
+          <p className="mt-4 mb-0 text-xs leading-relaxed text-ink-faint">
             DNS changes usually appear within minutes but can take up to an hour.
             If a check fails right after you add a record, wait and try again before
             changing anything.
-          </Typography>
-        </DialogContent>
-
-        <DialogActions sx={{ px: 3, pb: 2.5 }}>
-          <Button onClick={() => setOpenId(null)}>Close</Button>
-          <Button variant="contained" onClick={() => openId && verify(openId)} disabled={checking}>
-            {checking ? 'Checking DNS…' : 'Check again'}
-          </Button>
-        </DialogActions>
-      </Dialog>
+          </p>
+        </Modal>
+      )}
     </AdminShell>
   );
 }
