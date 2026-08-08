@@ -133,6 +133,20 @@ public class Domain
 /// removes Mail, Drive and Payroll at once — and there is no sixth place
 /// someone forgets to revoke on the day an employee leaves.
 /// </summary>
+/// <summary>
+/// A person's profile photo. Its own table (see 13-user-avatars.sql) so the
+/// people list never carries image bytes. UserId is the primary key — one
+/// photo per person.
+/// </summary>
+public class UserAvatar
+{
+    public Guid UserId { get; set; }
+    public Guid TenantId { get; set; }
+    public required byte[] Image { get; set; }
+    [MaxLength(64)] public required string Mime { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
 public class User
 {
     public Guid Id { get; set; } = Guid.NewGuid();

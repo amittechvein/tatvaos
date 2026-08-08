@@ -48,6 +48,12 @@ public static class UserEndpoints
         users.MapPost("/{id:guid}/reset-app-password", ResetAppPasswordAsync);
         users.MapDelete("/{id:guid}", DeleteAsync);
 
+        // Profile photo. GET is not cached by the auth group's default headers,
+        // so a replaced photo shows immediately.
+        users.MapGet("/{id:guid}/avatar", AvatarAsync);
+        users.MapPut("/{id:guid}/avatar", SetAvatarAsync);
+        users.MapDelete("/{id:guid}/avatar", DeleteAvatarAsync);
+
         // Departments live in DepartmentEndpoints — they are a tree now, and
         // two routes reaching the same table with different shapes is how the
         // screen and the API start disagreeing about what a quota means.
@@ -152,6 +158,12 @@ public static class UserEndpoints
             .Select(p => new { p.UserId, p.ProductCode })
             .ToListAsync(ct);
 
+        // Which of these people have a photo — just the ids, never the bytes.
+        var withAvatar = (await db.UserAvatars.AsNoTracking()
+            .Where(a => ids.Contains(a.UserId))
+            .Select(a => a.UserId)
+            .ToListAsync(ct)).ToHashSet();
+
         var boxByUser = boxes.GroupBy(b => b.UserId).ToDictionary(g => g.Key, g => g.First());
         var productsByUser = access.GroupBy(a => a.UserId)
             .ToDictionary(g => g.Key, g => g.Select(a => a.ProductCode).ToArray());
@@ -167,7 +179,8 @@ public static class UserEndpoints
                 productsByUser.TryGetValue(r.Id, out var p) ? p : [],
                 box?.QuotaBytes ?? 0,
                 box?.UsedBytes ?? 0,
-                r.MfaEnabled, r.LastLoginAt, r.CreatedAt);
+                r.MfaEnabled, r.LastLoginAt, r.CreatedAt,
+                withAvatar.Contains(r.Id));
         }).ToList();
 
         return Results.Ok(list);
@@ -788,6 +801,96 @@ public static class UserEndpoints
             temporaryPassword = password,
             note = "Existing mail clients will stop working until reconfigured.",
         });
+    }
+
+    // ------------------------------------------------------------------
+    //  Profile photo
+    // ------------------------------------------------------------------
+
+    private const int MaxAvatarBytes = 2 * 1024 * 1024; // 2 MB decoded
+
+    private static async Task<IResult> AvatarAsync(Guid id, AppDbContext db, CancellationToken ct)
+    {
+        var a = await db.UserAvatars.AsNoTracking()
+            .Where(x => x.UserId == id)
+            .Select(x => new { x.Image, x.Mime })
+            .FirstOrDefaultAsync(ct);
+        return a is null ? Results.NotFound() : Results.File(a.Image, a.Mime);
+    }
+
+    private static async Task<IResult> SetAvatarAsync(
+        Guid id, SetAvatarRequest req, AppDbContext db, TenantContext tenant,
+        AuditWriter audit, CancellationToken ct)
+    {
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id, ct);
+        if (user is null) return Results.NotFound();
+
+        if (!TryParseImageDataUrl(req.DataUrl, out var mime, out var bytes))
+            return Results.BadRequest(new { error = "Expected an image data URL, e.g. data:image/jpeg;base64,…" });
+        if (bytes.Length > MaxAvatarBytes)
+            return Results.BadRequest(new { error = "That image is too large. Crop it or choose a smaller one (max 2 MB)." });
+
+        var existing = await db.UserAvatars.FirstOrDefaultAsync(a => a.UserId == id, ct);
+        if (existing is null)
+        {
+            db.UserAvatars.Add(new UserAvatar
+            {
+                UserId = id, TenantId = user.TenantId, Image = bytes, Mime = mime,
+            });
+        }
+        else
+        {
+            existing.Image = bytes;
+            existing.Mime = mime;
+            existing.UpdatedAt = DateTimeOffset.UtcNow;
+        }
+
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync("user.avatar_set", "user", id.ToString(), ct: ct);
+        return Results.Ok(new { userId = id, hasAvatar = true });
+    }
+
+    private static async Task<IResult> DeleteAvatarAsync(
+        Guid id, AppDbContext db, AuditWriter audit, CancellationToken ct)
+    {
+        var a = await db.UserAvatars.FirstOrDefaultAsync(x => x.UserId == id, ct);
+        if (a is null) return Results.NotFound();
+        db.UserAvatars.Remove(a);
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync("user.avatar_removed", "user", id.ToString(), ct: ct);
+        return Results.Ok(new { userId = id, hasAvatar = false });
+    }
+
+    /// <summary>
+    /// Parses "data:image/xxx;base64,DATA" into a validated image type and its
+    /// bytes. Rejects anything that is not one of a small set of image types —
+    /// storing an arbitrary blob a browser will later render is how a stored
+    /// XSS or an SVG-with-script gets in, so SVG is deliberately excluded.
+    /// </summary>
+    private static bool TryParseImageDataUrl(string dataUrl, out string mime, out byte[] bytes)
+    {
+        mime = "";
+        bytes = [];
+        if (string.IsNullOrWhiteSpace(dataUrl) ||
+            !dataUrl.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var comma = dataUrl.IndexOf(',');
+        if (comma < 0) return false;
+
+        var header = dataUrl[5..comma];
+        if (!header.Contains("base64", StringComparison.OrdinalIgnoreCase)) return false;
+
+        var m = header.Split(';')[0].Trim().ToLowerInvariant();
+        string[] allowed = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+        if (!allowed.Contains(m)) return false;
+
+        try { bytes = Convert.FromBase64String(dataUrl[(comma + 1)..]); }
+        catch { return false; }
+        if (bytes.Length == 0) return false;
+
+        mime = m;
+        return true;
     }
 
     // ------------------------------------------------------------------

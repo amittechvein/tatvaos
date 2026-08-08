@@ -48,6 +48,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<StorageAllocation> StorageAllocations => Set<StorageAllocation>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+    public DbSet<UserAvatar> UserAvatars => Set<UserAvatar>();
 
     /// <summary>
     /// Unfinished signups. NOT tenant-scoped — a draft belongs to nobody yet,
@@ -89,6 +90,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<StorageAllocation>().ToTable("storage_allocations", "core");
         b.Entity<AuditLog>().ToTable("audit_logs", "core");
         b.Entity<RefreshToken>().ToTable("refresh_tokens", "core");
+        b.Entity<UserAvatar>().ToTable("user_avatars", "core");
+        b.Entity<UserAvatar>().HasKey(a => a.UserId);
         b.Entity<SignupDraft>().ToTable("signup_drafts", "core");
         b.Entity<PlatformSetting>().ToTable("platform_settings", "core");
         b.Entity<PlatformSetting>().HasKey(s => s.Key);
@@ -127,6 +130,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<StorageAllocation>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<AuditLog>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<RefreshToken>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<UserAvatar>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Mailbox>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Alias>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Folder>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
@@ -227,6 +231,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<RefreshToken>()
             .HasOne<User>().WithMany()
             .HasForeignKey(t => t.UserId).OnDelete(DeleteBehavior.Cascade);
+        // The avatar's UserId is BOTH its primary key and its foreign key to
+        // the person. Declared so EF inserts the user before the photo and lets
+        // the DB cascade the delete when a person is removed.
+        b.Entity<UserAvatar>()
+            .HasOne<User>().WithOne()
+            .HasForeignKey<UserAvatar>(a => a.UserId).OnDelete(DeleteBehavior.Cascade);
         b.Entity<RefreshToken>()
             .HasOne<Tenant>().WithMany()
             .HasForeignKey(t => t.TenantId).OnDelete(DeleteBehavior.Cascade);

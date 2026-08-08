@@ -91,6 +91,13 @@ public sealed record UpdateUserRequest(
     string? Role,
     long? QuotaBytes);
 
+/// <summary>
+/// A profile photo, as a data URL the browser produces from a cropped image:
+/// "data:image/jpeg;base64,...". The API decodes it, checks the type and size,
+/// and stores the bytes.
+/// </summary>
+public sealed record SetAvatarRequest(string DataUrl);
+
 public sealed record BulkCreateUserRequest(
     Guid DomainId,
     Guid? DepartmentId,
@@ -109,7 +116,11 @@ public sealed record UserResponse(
     string Role, string Status,
     string[] Products,
     long QuotaBytes, long UsedBytes,
-    bool MfaEnabled, DateTimeOffset? LastLoginAt, DateTimeOffset CreatedAt);
+    bool MfaEnabled, DateTimeOffset? LastLoginAt, DateTimeOffset CreatedAt,
+    // Whether a profile photo exists. The list carries only the flag, never the
+    // bytes — the client fetches the image from /org/users/{id}/avatar for the
+    // rows that have one.
+    bool HasAvatar = false);
 
 public sealed record CreateDepartmentRequest(
     string Name, string? Description,
