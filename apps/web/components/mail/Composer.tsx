@@ -104,6 +104,44 @@ export function Composer({
   const [error, setError] = useState<string | null>(null);
   const [plainBody, setPlainBody] = useState('');
 
+  const moreRef = useRef<HTMLDivElement>(null);
+  const emojiBtnRef = useRef<HTMLSpanElement>(null);
+  const emojiPopRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Dismiss the popovers on an outside click or Escape.
+   *
+   * The listener is mousedown, not click, so a popover closes as the press
+   * lands rather than after release. Each trigger is inside the region checked
+   * for containment — otherwise pressing the trigger to close would dismiss on
+   * mousedown and then re-open on the click that followed, and the menu would
+   * appear stuck open.
+   */
+  useEffect(() => {
+    if (!more && !emoji) return undefined;
+
+    function onDown(e: MouseEvent) {
+      const t = e.target as Node;
+      if (more && moreRef.current && !moreRef.current.contains(t)) setMore(false);
+      if (
+        emoji
+        && !emojiPopRef.current?.contains(t)
+        && !emojiBtnRef.current?.contains(t)
+      ) setEmoji(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      // Only the popovers — Escape must never discard a half-written message.
+      if (e.key === 'Escape') { setMore(false); setEmoji(false); }
+    }
+
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [more, emoji]);
+
   // Rich formatting command on the editor.
   function cmd(command: string, value?: string) {
     editorRef.current?.focus();
@@ -371,14 +409,16 @@ export function Composer({
             </>
           )}
           <ToolBtn label="Attach files" onClick={() => fileRef.current?.click()}><Icon name="attach" className="h-4 w-4" /></ToolBtn>
-          <ToolBtn label="Emoji" onClick={() => setEmoji((v) => !v)}><Icon name="emoji" className="h-4 w-4" /></ToolBtn>
+          <span ref={emojiBtnRef} className="inline-flex">
+            <ToolBtn label="Emoji" onClick={() => setEmoji((v) => !v)}><Icon name="emoji" className="h-4 w-4" /></ToolBtn>
+          </span>
 
           {/* Not yet backed by a product — disabled, with the reason on hover. */}
           <ToolBtn label="Insert from Drive — needs the Drive product" disabled><Icon name="drive" className="h-4 w-4" /></ToolBtn>
           <ToolBtn label="Schedule send — needs a server-side queue" disabled><Icon name="clock" className="h-4 w-4" /></ToolBtn>
           <ToolBtn label="Confidential mode — needs expiry/passcode support" disabled><Icon name="lock" className="h-4 w-4" /></ToolBtn>
 
-          <div className="relative ml-auto">
+          <div className="relative ml-auto" ref={moreRef}>
             <ToolBtn label="More options" onClick={() => setMore((v) => !v)}><Icon name="more" className="h-4.5 w-4.5" /></ToolBtn>
             {more && (
               <div className="absolute bottom-11 right-0 z-10 w-64 rounded-xl border border-line bg-surface py-2 text-sm shadow-raised">
@@ -397,7 +437,7 @@ export function Composer({
           <ToolBtn label="Discard" onClick={onClose}><Icon name="trash" className="h-4 w-4" /></ToolBtn>
 
           {emoji && (
-            <div className="absolute bottom-12 left-3 z-10 flex w-64 flex-wrap gap-1 rounded-xl border border-line bg-surface p-2 text-xl shadow-raised">
+            <div ref={emojiPopRef} className="absolute bottom-12 left-3 z-10 flex w-64 flex-wrap gap-1 rounded-xl border border-line bg-surface p-2 text-xl shadow-raised">
               {EMOJI.map((e) => (
                 <button key={e} type="button" onClick={() => insertEmoji(e)} className="rounded p-1 hover:bg-canvas">
                   {e}
