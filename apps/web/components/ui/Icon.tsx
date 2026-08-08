@@ -6,7 +6,7 @@ type IconName =
   | 'reply-all' | 'forward' | 'more' | 'close'
   | 'refresh' | 'envelope' | 'envelope-open' | 'chevron-left' | 'chevron-right'
   | 'bookmark' | 'settings' | 'plus-circle'
-  | 'expand' | 'collapse' | 'list-ul' | 'list-ol' | 'link' | 'emoji'
+  | 'expand' | 'collapse' | 'minimise' | 'list-ul' | 'list-ol' | 'link' | 'emoji'
   | 'drive' | 'clock' | 'lock' | 'print' | 'spellcheck';
 
 const PATHS: Record<IconName, string> = {
@@ -38,6 +38,7 @@ const PATHS: Record<IconName, string> = {
   'plus-circle': 'M12 8v8m-4-4h8M12 21a9 9 0 100-18 9 9 0 000 18z',
   expand: 'M4 9V4h5M20 15v5h-5M15 4h5v5M9 20H4v-5',
   collapse: 'M9 4v5H4M15 20v-5h5M20 9h-5V4M4 15h5v5',
+  minimise: 'M5 12h14',
   'list-ul': 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
   'list-ol': 'M10 6h11M10 12h11M10 18h11M4 6h1v4M4 10h2M4 16h2v2H4z',
   link: 'M10 13a5 5 0 007 0l2-2a5 5 0 00-7-7l-1 1M14 11a5 5 0 00-7 0l-2 2a5 5 0 007 7l1-1',

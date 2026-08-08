@@ -29,6 +29,18 @@ const EMOJI = ['😀', '😊', '👍', '🙏', '🎉', '✅', '❤️', '🔥', 
  */
 export type ComposeMode = 'new' | 'reply' | 'replyAll' | 'forward';
 
+/**
+ * Where the composer sits.
+ *
+ * `docked` is the resting state: a panel in the bottom-right corner with no
+ * backdrop, so the mailbox behind stays readable and clickable while you write
+ * — which is the whole point of composing in place rather than on a page of its
+ * own. `full` centres it as a large modal, dimming the background, for when the
+ * message is the task. `min` collapses it to its own title bar so a half-written
+ * draft can be parked; the component stays mounted, so nothing typed is lost.
+ */
+type PaneState = 'docked' | 'full' | 'min';
+
 /** Recipients of the original, minus the current mailbox, for reply-all. */
 function replyAllCc(original: Message | null | undefined, self: string): string {
   if (!original) return '';
@@ -83,7 +95,7 @@ export function Composer({
     return base.match(/^re:/i) ? base : `Re: ${base}`;
   });
   const [files, setFiles] = useState<File[]>([]);
-  const [full, setFull] = useState(false);
+  const [pane, setPane] = useState<PaneState>('docked');
   const [plain, setPlain] = useState(false);
   const [spell, setSpell] = useState(true);
   const [more, setMore] = useState(false);
@@ -170,50 +182,86 @@ export function Composer({
 
   const totalSize = files.reduce((n, f) => n + f.size, 0);
 
+  const minimised = pane === 'min';
+
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-6">
+    <>
+      {/* Only full screen dims the mailbox. A docked composer that greyed out
+          everything behind it would be a modal wearing a corner panel's clothes. */}
+      {pane === 'full' && <div className="fixed inset-0 z-40 bg-black/40" aria-hidden="true" />}
+
       <div
-        className={`flex h-full w-full flex-col overflow-hidden bg-surface shadow-raised sm:h-auto sm:max-h-[88vh] sm:rounded-card ${
-          full ? 'sm:max-w-5xl' : 'sm:max-w-2xl'
-        }`}
+        className={
+          pane === 'full'
+            ? 'fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6'
+            : 'fixed inset-x-0 bottom-0 z-50 flex justify-center sm:inset-x-auto sm:right-5 sm:justify-end'
+        }
       >
-        {/* Title bar */}
-        <header className="flex items-center justify-between bg-rail px-4 py-2.5 text-white">
-          <span className="text-sm font-medium">{replyTo ? 'Reply' : 'New message'}</span>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => setFull((v) => !v)}
-              aria-label={full ? 'Exit full screen' : 'Full screen'}
-              title={full ? 'Exit full screen' : 'Full screen'}
-              className="rounded p-1 text-rail-text hover:text-white"
-            >
-              <Icon name={full ? 'collapse' : 'expand'} className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close"
-              className="rounded p-1 text-rail-text hover:text-white"
-            >
-              <Icon name="close" className="h-4 w-4" />
-            </button>
-          </div>
-        </header>
+        <div
+          className={`flex w-full flex-col overflow-hidden bg-surface shadow-raised ${
+            pane === 'full'
+              ? 'h-full max-w-5xl rounded-card'
+              : minimised
+                ? 'rounded-t-card sm:w-[360px]'
+                : 'h-[78vh] rounded-t-card sm:h-[560px] sm:w-[560px]'
+          }`}
+        >
+          {/* Title bar. While minimised the whole bar restores the draft — the
+              collapsed strip is the only target left, so all of it should work. */}
+          <header
+            className={`flex items-center justify-between bg-rail px-4 py-2.5 text-white ${minimised ? 'cursor-pointer' : ''}`}
+            onClick={minimised ? () => setPane('docked') : undefined}
+          >
+            <span className="truncate text-sm font-medium">
+              {replyTo ? 'Reply' : 'New message'}
+              {minimised && subject.trim() ? ` — ${subject.trim()}` : ''}
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setPane(minimised ? 'docked' : 'min'); }}
+                aria-label={minimised ? 'Restore' : 'Minimise'}
+                title={minimised ? 'Restore' : 'Minimise'}
+                className="rounded p-1 text-rail-text hover:text-white"
+              >
+                <Icon name={minimised ? 'expand' : 'minimise'} className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setPane(pane === 'full' ? 'docked' : 'full'); }}
+                aria-label={pane === 'full' ? 'Exit full screen' : 'Full screen'}
+                title={pane === 'full' ? 'Exit full screen' : 'Full screen'}
+                className="rounded p-1 text-rail-text hover:text-white"
+              >
+                <Icon name={pane === 'full' ? 'collapse' : 'expand'} className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onClose(); }}
+                aria-label="Close"
+                className="rounded p-1 text-rail-text hover:text-white"
+              >
+                <Icon name="close" className="h-4 w-4" />
+              </button>
+            </div>
+          </header>
+
+          {!minimised && (
+            <>
 
         {/* Recipients */}
         <div className="px-4">
-          <div className="flex items-center gap-2 border-b border-line py-2 text-sm">
+          <div className="flex items-center gap-2 border-b border-line py-2.5 text-sm transition-colors focus-within:border-brand-500">
             <span className="w-12 shrink-0 text-ink-muted">From</span>
             <span className="truncate text-ink">{fromAddress}</span>
           </div>
-          <label className="flex items-center gap-2 border-b border-line py-2 text-sm">
+          <label className="flex items-center gap-2 border-b border-line py-2.5 text-sm transition-colors focus-within:border-brand-500">
             <span className="w-12 shrink-0 text-ink-muted">To</span>
             <input
               value={to}
               onChange={(e) => setTo(e.target.value)}
               placeholder="Recipients — commas for several"
-              className="w-full bg-transparent text-ink outline-none placeholder:text-ink-faint"
+              className="w-full border-0 bg-transparent p-0 text-ink outline-none placeholder:text-ink-faint"
             />
             {!showCc && (
               <button
@@ -226,22 +274,22 @@ export function Composer({
             )}
           </label>
           {showCc && (
-            <label className="flex items-center gap-2 border-b border-line py-2 text-sm">
+            <label className="flex items-center gap-2 border-b border-line py-2.5 text-sm transition-colors focus-within:border-brand-500">
               <span className="w-12 shrink-0 text-ink-muted">Cc</span>
               <input
                 value={cc}
                 onChange={(e) => setCc(e.target.value)}
                 placeholder="name@example.com"
-                className="w-full bg-transparent text-ink outline-none placeholder:text-ink-faint"
+                className="w-full border-0 bg-transparent p-0 text-ink outline-none placeholder:text-ink-faint"
               />
             </label>
           )}
-          <label className="flex items-center gap-2 border-b border-line py-2 text-sm">
+          <label className="flex items-center gap-2 border-b border-line py-2.5 text-sm transition-colors focus-within:border-brand-500">
             <input
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
               placeholder="Subject"
-              className="w-full bg-transparent text-ink outline-none placeholder:text-ink-faint"
+              className="w-full border-0 bg-transparent p-0 text-sm font-medium text-ink outline-none placeholder:text-ink-faint"
             />
           </label>
         </div>
@@ -253,7 +301,7 @@ export function Composer({
             onChange={(e) => setPlainBody(e.target.value)}
             spellCheck={spell}
             placeholder="Write your message"
-            className="scroll-thin min-h-[220px] flex-1 resize-none bg-transparent px-4 py-3 font-mono text-sm text-ink outline-none placeholder:text-ink-faint"
+            className="scroll-thin min-h-[220px] flex-1 resize-none border-0 bg-transparent px-4 py-3 font-mono text-sm text-ink outline-none placeholder:text-ink-faint"
           />
         ) : (
           <div
@@ -307,6 +355,8 @@ export function Composer({
             {!sending && <Icon name="send" className="h-4 w-4" />}
           </button>
 
+          <span className="mx-1.5 h-5 w-px shrink-0 bg-line" aria-hidden="true" />
+
           {!plain && (
             <>
               <ToolBtn label="Bold" onClick={() => cmd('bold')}><span className="text-[15px] font-bold">B</span></ToolBtn>
@@ -329,7 +379,7 @@ export function Composer({
             <ToolBtn label="More options" onClick={() => setMore((v) => !v)}><Icon name="more" className="h-4.5 w-4.5" /></ToolBtn>
             {more && (
               <div className="absolute bottom-11 right-0 z-10 w-64 rounded-xl border border-line bg-surface py-2 text-sm shadow-raised">
-                <MenuItem icon="expand" label={full ? 'Exit full screen' : 'Default to full screen'} onClick={() => { setFull((v) => !v); setMore(false); }} />
+                <MenuItem icon="expand" label={pane === 'full' ? 'Exit full screen' : 'Full screen'} onClick={() => { setPane(pane === 'full' ? 'docked' : 'full'); setMore(false); }} />
                 <MenuItem icon="draft" label="Plain text mode" trailing={plain ? 'on' : undefined} onClick={() => { setPlain((v) => !v); setMore(false); }} />
                 <MenuItem icon="print" label="Print" onClick={() => { window.print(); setMore(false); }} />
                 <MenuItem icon="spellcheck" label="Spell check" trailing={spell ? 'on' : 'off'} onClick={() => { setSpell((v) => !v); setMore(false); }} />
@@ -354,18 +404,21 @@ export function Composer({
           )}
         </div>
 
-        <input
-          ref={fileRef}
-          type="file"
-          multiple
-          className="hidden"
-          onChange={(e) => {
-            onPickFiles(e.target.files);
-            e.target.value = '';
-          }}
-        />
+            <input
+              ref={fileRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                onPickFiles(e.target.files);
+                e.target.value = '';
+              }}
+            />
+            </>
+          )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
