@@ -1,30 +1,232 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { formatBytes } from '@tatvaos/core';
-import { fetchPlans, type PlanRow } from '@/lib/adminData';
+import {
+  fetchPlans, createPlan, updatePlan, deletePlan,
+  type PlanRow, type UpsertPlanBody,
+} from '@/lib/adminData';
 import { useAuth } from '@/lib/auth';
 import { AdminShell } from '@/components/admin/AdminShell';
 import { Empty } from '@/components/ui/Kit';
 
-// The plan catalogue, as YZEN pricing cards. Read from GET /admin/plans.
+// Storage is stored in bytes; the form works in GB and converts on the way in
+// and out — the same GB convention the onboarding form and org pages use.
+const GB = 1024 ** 3;
+
+const PRODUCTS: { key: string; label: string; soon?: boolean }[] = [
+  { key: 'mail', label: 'Mail' },
+  { key: 'drive', label: 'Drive', soon: true },
+  { key: 'payroll', label: 'Payroll', soon: true },
+];
+
+type StorageModel = 'per_user' | 'pooled';
+type PricingModel = 'per_user' | 'flat' | 'custom';
+
+/**
+ * Numbers are held as strings on purpose: an empty field has to mean
+ * "unlimited" rather than 0, and a half-typed value must not coerce to NaN
+ * mid-keystroke. They are converted once, in toBody().
+ */
+interface PlanForm {
+  id?: string;
+  name: string;
+  maxUsers: string;
+  storageModel: StorageModel;
+  perUserQuotaGb: string;
+  pooledStorageGb: string;
+  maxDomains: string;
+  pricingModel: PricingModel;
+  price: string;
+  products: Record<string, boolean>;
+}
+
+function blankForm(): PlanForm {
+  return {
+    name: '',
+    maxUsers: '',
+    storageModel: 'per_user',
+    perUserQuotaGb: '30',
+    pooledStorageGb: '2048',
+    maxDomains: '',
+    pricingModel: 'per_user',
+    price: '',
+    products: { mail: true, drive: false, payroll: false },
+  };
+}
+
+function formFromPlan(p: PlanRow): PlanForm {
+  const pricingModel: PricingModel =
+    p.pricePerUserMonthly != null ? 'per_user' : p.priceMonthly != null ? 'flat' : 'custom';
+  return {
+    id: p.id,
+    name: p.name,
+    maxUsers: p.maxUsers != null ? String(p.maxUsers) : '',
+    storageModel: p.storageModel === 'pooled' ? 'pooled' : 'per_user',
+    perUserQuotaGb: p.perUserQuotaBytes ? String(Math.round(p.perUserQuotaBytes / GB)) : '30',
+    pooledStorageGb: p.pooledStorageBytes ? String(Math.round(p.pooledStorageBytes / GB)) : '2048',
+    maxDomains: p.maxDomains != null ? String(p.maxDomains) : '',
+    pricingModel,
+    price:
+      pricingModel === 'per_user' ? String(p.pricePerUserMonthly)
+      : pricingModel === 'flat' ? String(p.priceMonthly)
+      : '',
+    products: Object.fromEntries(PRODUCTS.map((x) => [x.key, p.includedProducts.includes(x.key)])),
+  };
+}
+
+/** Mirrors the server's rules so an obvious mistake fails here, not after a round trip. */
+function validate(f: PlanForm): string[] {
+  const errs: string[] = [];
+  if (!f.name.trim()) errs.push('A plan name is required.');
+  if (f.storageModel === 'per_user' && !(Number(f.perUserQuotaGb) > 0)) {
+    errs.push('Storage per user must be greater than 0 GB.');
+  }
+  if (f.storageModel === 'pooled' && !(Number(f.pooledStorageGb) > 0)) {
+    errs.push('Pooled storage must be greater than 0 GB.');
+  }
+  if (f.pricingModel !== 'custom' && !(Number(f.price) > 0)) {
+    errs.push('Enter a price, or switch pricing to Custom.');
+  }
+  return errs;
+}
+
+/**
+ * The storage field that does not match the chosen model is sent null, not
+ * left over from a previous edit — otherwise switching a plan from pooled to
+ * per-user would quietly keep billing the old pooled figure.
+ */
+function toBody(f: PlanForm): UpsertPlanBody {
+  return {
+    name: f.name.trim(),
+    maxUsers: f.maxUsers.trim() === '' ? null : Number(f.maxUsers),
+    storageModel: f.storageModel,
+    perUserQuotaBytes: f.storageModel === 'per_user' ? Math.round(Number(f.perUserQuotaGb) * GB) : null,
+    pooledStorageBytes: f.storageModel === 'pooled' ? Math.round(Number(f.pooledStorageGb) * GB) : null,
+    maxDomains: f.maxDomains.trim() === '' ? null : Number(f.maxDomains),
+    includedProducts: PRODUCTS.map((x) => x.key).filter((k) => f.products[k]),
+    pricePerUserMonthly: f.pricingModel === 'per_user' ? Number(f.price) : null,
+    priceMonthly: f.pricingModel === 'flat' ? Number(f.price) : null,
+  };
+}
+
+// ===========================================================================
 export default function AdminPlansPage() {
   const { authedFetch } = useAuth();
   const [plans, setPlans] = useState<PlanRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [notice, setNotice] = useState<{ kind: 'success' | 'danger'; text: string } | null>(null);
 
-  useEffect(() => {
-    fetchPlans(authedFetch).then(setPlans).catch(() => setPlans([])).finally(() => setLoading(false));
+  const [form, setForm] = useState<PlanForm | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [formErrors, setFormErrors] = useState<string[]>([]);
+
+  const [toDelete, setToDelete] = useState<PlanRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const reload = useCallback(() => {
+    setLoading(true);
+    fetchPlans(authedFetch)
+      .then(setPlans)
+      .catch(() => setPlans([]))
+      .finally(() => setLoading(false));
   }, [authedFetch]);
 
+  useEffect(() => { reload(); }, [reload]);
+
+  // Escape closes whichever dialog is open — except mid-save, where it would
+  // leave the operator unsure whether the write went through.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== 'Escape' || saving || deleting) return;
+      setForm(null);
+      setToDelete(null);
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [saving, deleting]);
+
+  function openAdd() { setFormErrors([]); setForm(blankForm()); }
+  function openEdit(p: PlanRow) { setFormErrors([]); setForm(formFromPlan(p)); }
+
+  async function saveForm() {
+    if (!form) return;
+    const errs = validate(form);
+    if (errs.length) { setFormErrors(errs); return; }
+
+    setSaving(true);
+    setFormErrors([]);
+    try {
+      const body = toBody(form);
+      if (form.id) {
+        await updatePlan(authedFetch, form.id, body);
+        setNotice({ kind: 'success', text: `Saved “${body.name}”.` });
+      } else {
+        await createPlan(authedFetch, body);
+        setNotice({ kind: 'success', text: `Created “${body.name}”.` });
+      }
+      setForm(null);
+      reload();
+    } catch (e) {
+      // Server-side rejections stay INSIDE the dialog, next to the fields that
+      // caused them — closing the form to show a banner would lose the edit.
+      setFormErrors([e instanceof Error ? e.message : 'Could not save the plan.']);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function confirmDelete() {
+    if (!toDelete) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deletePlan(authedFetch, toDelete.id);
+      setNotice({ kind: 'success', text: `Deleted “${toDelete.name}”.` });
+      setToDelete(null);
+      reload();
+    } catch (e) {
+      // The "plan is in use" 400 lands here. Its text names what to do about
+      // it (move organisations off first), so it is shown verbatim.
+      setDeleteError(e instanceof Error ? e.message : 'Could not delete the plan.');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
-    <AdminShell scope="platform" title="Plans" subtitle="The catalogue every organisation is billed against">
+    <AdminShell
+      scope="platform"
+      title="Plans"
+      subtitle="The catalogue every organisation is billed against"
+      actions={
+        <button type="button" className="btn btn-primary" onClick={openAdd}>
+          <i className="ri-add-line me-1" /> Add plan
+        </button>
+      }
+    >
+      {notice && (
+        <div className={`alert alert-${notice.kind} d-flex align-items-center justify-content-between`} role="alert">
+          <span>{notice.text}</span>
+          <button type="button" className="btn-close" aria-label="Dismiss" onClick={() => setNotice(null)} />
+        </div>
+      )}
+
       {loading ? (
         <div className="card custom-card"><div className="card-body"><Empty title="Loading…" /></div></div>
       ) : plans.length === 0 ? (
         <div className="card custom-card">
           <div className="card-body">
-            <Empty title="No plans yet" hint="Plans are seeded with the database. Once they exist they appear here and can be assigned from any organisation's Manage dialog." />
+            <Empty
+              title="No plans yet"
+              hint="Add the first plan and it becomes assignable from any organisation's Manage dialog."
+              action={
+                <button type="button" className="btn btn-primary" onClick={openAdd}>
+                  <i className="ri-add-line me-1" /> Add plan
+                </button>
+              }
+            />
           </div>
         </div>
       ) : (
@@ -37,7 +239,7 @@ export default function AdminPlansPage() {
                     <span className="avatar avatar-md bg-primary-transparent">
                       <i className="ri-price-tag-3-line fs-18" />
                     </span>
-                    <h6 className="fw-semibold mb-0">{p.name}</h6>
+                    <h6 className="fw-semibold mb-0 flex-fill">{p.name}</h6>
                   </div>
 
                   <div className="mb-3">
@@ -60,20 +262,245 @@ export default function AdminPlansPage() {
                         : `${formatBytes(p.perUserQuotaBytes ?? 0)} per user`}
                     </Feature>
                     <Feature>{p.maxDomains ? `${p.maxDomains} domain${p.maxDomains > 1 ? 's' : ''}` : 'Unlimited domains'}</Feature>
-                    <Feature>
-                      <span className="text-capitalize">{p.includedProducts.join(', ') || 'mail'}</span>
-                    </Feature>
+                    <Feature><span className="text-capitalize">{p.includedProducts.join(', ') || 'mail'}</span></Feature>
                   </ul>
+
+                  <div className="d-flex gap-2 mt-3 pt-3 border-top">
+                    <button type="button" className="btn btn-sm btn-light flex-fill" onClick={() => openEdit(p)}>
+                      <i className="ri-pencil-line me-1" /> Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline-danger"
+                      aria-label={`Delete ${p.name}`}
+                      onClick={() => { setDeleteError(null); setToDelete(p); }}
+                    >
+                      <i className="ri-delete-bin-line" />
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
           ))}
         </div>
       )}
+
+      {form && (
+        <PlanFormModal
+          form={form} setForm={setForm} errors={formErrors} saving={saving}
+          onClose={() => setForm(null)} onSave={saveForm}
+        />
+      )}
+
+      {toDelete && (
+        <ConfirmDeleteModal
+          plan={toDelete} deleting={deleting} error={deleteError}
+          onClose={() => setToDelete(null)} onConfirm={confirmDelete}
+        />
+      )}
     </AdminShell>
   );
 }
 
+// ---------------------------------------------------------------------------
+//  Add / Edit
+//
+//  Rendered as YZEN's modal markup with the backdrop as a sibling, driven by
+//  React state rather than Bootstrap's JS — the bundle ships no Bootstrap
+//  JavaScript, and `.modal.show.d-block` needs none.
+// ---------------------------------------------------------------------------
+function PlanFormModal({
+  form, setForm, errors, saving, onClose, onSave,
+}: {
+  form: PlanForm;
+  setForm: (f: PlanForm) => void;
+  errors: string[];
+  saving: boolean;
+  onClose: () => void;
+  onSave: () => void;
+}) {
+  const set = <K extends keyof PlanForm>(key: K, value: PlanForm[K]) => setForm({ ...form, [key]: value });
+  const setProduct = (key: string, on: boolean) => setForm({ ...form, products: { ...form.products, [key]: on } });
+  const editing = Boolean(form.id);
+
+  return (
+    <>
+      <div className="modal fade show d-block" tabIndex={-1} role="dialog" aria-modal="true">
+        <div className="modal-dialog modal-dialog-centered modal-lg" role="document">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h6 className="modal-title">{editing ? 'Edit plan' : 'Add plan'}</h6>
+              <button type="button" className="btn-close" aria-label="Close" onClick={onClose} />
+            </div>
+
+            <div className="modal-body">
+              {editing && (
+                <div className="alert alert-warning" role="alert">
+                  Changes apply to new growth only — organisations already on this plan keep the
+                  limits they were given and are not resized.
+                </div>
+              )}
+
+              {errors.length > 0 && (
+                <div className="alert alert-danger" role="alert">
+                  <ul className="mb-0 ps-3">{errors.map((e) => <li key={e}>{e}</li>)}</ul>
+                </div>
+              )}
+
+              <div className="row g-3">
+                <div className="col-12">
+                  <label className="form-label" htmlFor="plan-name">Name</label>
+                  <input id="plan-name" className="form-control" value={form.name} autoFocus
+                         placeholder="Business" onChange={(e) => set('name', e.target.value)} />
+                </div>
+
+                <div className="col-12">
+                  <label className="form-label d-block">Storage model</label>
+                  <div className="btn-group w-100" role="group" aria-label="Storage model">
+                    <button type="button"
+                      className={`btn ${form.storageModel === 'per_user' ? 'btn-primary' : 'btn-outline-primary'}`}
+                      onClick={() => set('storageModel', 'per_user')}>
+                      Per-user quota
+                    </button>
+                    <button type="button"
+                      className={`btn ${form.storageModel === 'pooled' ? 'btn-primary' : 'btn-outline-primary'}`}
+                      onClick={() => set('storageModel', 'pooled')}>
+                      Pooled
+                    </button>
+                  </div>
+                </div>
+
+                <div className="col-sm-6">
+                  {form.storageModel === 'per_user' ? (
+                    <>
+                      <label className="form-label" htmlFor="plan-per-user">Storage per user (GB)</label>
+                      <input id="plan-per-user" type="number" min={1} className="form-control"
+                             value={form.perUserQuotaGb}
+                             onChange={(e) => set('perUserQuotaGb', e.target.value)} />
+                    </>
+                  ) : (
+                    <>
+                      <label className="form-label" htmlFor="plan-pooled">Total pooled storage (GB)</label>
+                      <input id="plan-pooled" type="number" min={1} className="form-control"
+                             value={form.pooledStorageGb}
+                             onChange={(e) => set('pooledStorageGb', e.target.value)} />
+                    </>
+                  )}
+                </div>
+
+                <div className="col-sm-6">
+                  <label className="form-label" htmlFor="plan-seats">Max users</label>
+                  <input id="plan-seats" type="number" min={1} className="form-control"
+                         placeholder="Unlimited" value={form.maxUsers}
+                         onChange={(e) => set('maxUsers', e.target.value)} />
+                </div>
+
+                <div className="col-sm-6">
+                  <label className="form-label" htmlFor="plan-domains">Max domains</label>
+                  <input id="plan-domains" type="number" min={1} className="form-control"
+                         placeholder="Unlimited" value={form.maxDomains}
+                         onChange={(e) => set('maxDomains', e.target.value)} />
+                </div>
+
+                <div className="col-12">
+                  <label className="form-label d-block">Pricing</label>
+                  <div className="btn-group w-100 mb-2" role="group" aria-label="Pricing model">
+                    <button type="button"
+                      className={`btn btn-sm ${form.pricingModel === 'per_user' ? 'btn-primary' : 'btn-outline-primary'}`}
+                      onClick={() => set('pricingModel', 'per_user')}>
+                      Per user / month
+                    </button>
+                    <button type="button"
+                      className={`btn btn-sm ${form.pricingModel === 'flat' ? 'btn-primary' : 'btn-outline-primary'}`}
+                      onClick={() => set('pricingModel', 'flat')}>
+                      Flat / month
+                    </button>
+                    <button type="button"
+                      className={`btn btn-sm ${form.pricingModel === 'custom' ? 'btn-primary' : 'btn-outline-primary'}`}
+                      onClick={() => set('pricingModel', 'custom')}>
+                      Custom
+                    </button>
+                  </div>
+                  {form.pricingModel !== 'custom' && (
+                    <div className="input-group">
+                      <span className="input-group-text">₹</span>
+                      <input type="number" min={0} className="form-control" value={form.price}
+                             placeholder={form.pricingModel === 'per_user' ? 'per user, per month' : 'per month'}
+                             onChange={(e) => set('price', e.target.value)} />
+                    </div>
+                  )}
+                </div>
+
+                <div className="col-12">
+                  <label className="form-label d-block">Included products</label>
+                  {PRODUCTS.map((p) => (
+                    <div className="form-check form-check-inline" key={p.key}>
+                      <input className="form-check-input" type="checkbox" id={`prod-${p.key}`}
+                             checked={Boolean(form.products[p.key])}
+                             onChange={(e) => setProduct(p.key, e.target.checked)} />
+                      <label className="form-check-label" htmlFor={`prod-${p.key}`}>
+                        {p.label}{p.soon && <span className="text-muted fs-11"> (soon)</span>}
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button type="button" className="btn btn-light" onClick={onClose} disabled={saving}>Cancel</button>
+              <button type="button" className="btn btn-primary" onClick={onSave} disabled={saving}>
+                {saving ? 'Saving…' : editing ? 'Save changes' : 'Create plan'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="modal-backdrop fade show" />
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+function ConfirmDeleteModal({
+  plan, deleting, error, onClose, onConfirm,
+}: {
+  plan: PlanRow;
+  deleting: boolean;
+  error: string | null;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <>
+      <div className="modal fade show d-block" tabIndex={-1} role="dialog" aria-modal="true">
+        <div className="modal-dialog modal-dialog-centered" role="document">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h6 className="modal-title">Delete plan</h6>
+              <button type="button" className="btn-close" aria-label="Close" onClick={onClose} />
+            </div>
+            <div className="modal-body">
+              <p className="mb-0">Delete <strong>{plan.name}</strong>? This cannot be undone.</p>
+              {/* The dialog stays open on failure: the server's reason is the
+                  useful part, and reopening to read it would be busywork. */}
+              {error && <div className="alert alert-danger mt-3 mb-0" role="alert">{error}</div>}
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-light" onClick={onClose} disabled={deleting}>Cancel</button>
+              <button type="button" className="btn btn-danger" onClick={onConfirm} disabled={deleting}>
+                {deleting ? 'Deleting…' : 'Delete plan'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="modal-backdrop fade show" />
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
 function Feature({ children }: { children: React.ReactNode }) {
   return (
     <li className="mb-2 d-flex align-items-start gap-2">
