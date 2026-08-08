@@ -1,12 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import Alert from '@mui/material/Alert';
-import Box from '@mui/material/Box';
-import Chip from '@mui/material/Chip';
-import CircularProgress from '@mui/material/CircularProgress';
-import Link from '@mui/material/Link';
-import Typography from '@mui/material/Typography';
 
 import { AdminShell } from '@/components/admin/AdminShell';
 import { Card, Empty, Stat, Table, Td } from '@/components/ui/Kit';
@@ -88,20 +82,23 @@ export default function DraftsPage() {
   return (
     <AdminShell scope="platform" title="Signups in progress"
                 subtitle="People who started and have not finished">
-      {error && <Alert severity="error" sx={{ mb: 3 }}>{error}</Alert>}
+      {error && (
+        <div className="alert alert-danger" role="alert">{error}</div>
+      )}
 
-      <Box sx={{ display: 'grid', gap: 2, mb: 3,
-                 gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, 1fr)' } }}>
+      <div className="mb-4 grid gap-4 sm:grid-cols-3">
         <Stat label="Open" caption="Started, not finished" value={String(funnel.open)} />
         <Stat label="Stuck on verification" caption="Tried and failed — call these"
               value={String(funnel.stalledAtVerification)} />
         <Stat label="Completed" caption={`${rate}% of everyone who started`}
               value={String(funnel.converted)} />
-      </Box>
+      </div>
 
       <Card padded={false}>
         {loading ? (
-          <Box sx={{ display: 'grid', placeItems: 'center', py: 8 }}><CircularProgress /></Box>
+          <div className="grid place-items-center py-5">
+            <span className="block h-7 w-7 animate-spin rounded-full border-2 border-line border-t-brand-600" />
+          </div>
         ) : drafts.length === 0 ? (
           <Empty
             title="Nobody is mid-signup"
@@ -112,51 +109,48 @@ export default function DraftsPage() {
             {drafts.map((d) => (
               <tr key={d.id}>
                 <Td>
-                  <Typography variant="body2" sx={{ fontWeight: 600 }}>{d.orgName}</Typography>
-                  <Typography variant="caption" color="text.secondary"
-                              sx={{ textTransform: 'capitalize' }}>
+                  <div className="fw-semibold">{d.orgName}</div>
+                  <div className="fs-12 text-muted text-capitalize">
                     {d.orgType} · {d.country}
-                  </Typography>
+                  </div>
                 </Td>
 
                 <Td>
-                  <Typography variant="body2">{d.adminName}</Typography>
+                  <div>{d.adminName}</div>
                   {/* Both clickable. This screen exists to be acted on, and
                       making someone copy a number out of a table is friction
                       that turns a call into a maybe. */}
-                  <Link href={`mailto:${d.adminEmail}`} variant="caption"
-                        sx={{ display: 'block' }}>
+                  <a href={`mailto:${d.adminEmail}`} className="d-block fs-12 text-primary">
                     {d.adminEmail}
-                  </Link>
+                  </a>
                   {d.adminPhone && (
-                    <Link href={`tel:${d.adminPhone.replace(/\s/g, '')}`} variant="caption"
-                          sx={{ display: 'block', fontWeight: 600 }}>
+                    <a href={`tel:${d.adminPhone.replace(/\s/g, '')}`}
+                       className="d-block fs-12 fw-semibold text-primary">
                       {d.adminPhone}
-                    </Link>
+                    </a>
                   )}
                 </Td>
 
                 <Td>
                   {d.fqdn
-                    ? <Typography variant="body2" sx={{ wordBreak: 'break-all' }}>{d.fqdn}</Typography>
-                    : <Typography variant="caption" color="text.disabled">not reached</Typography>}
+                    ? <div style={{ wordBreak: 'break-all' }}>{d.fqdn}</div>
+                    : <div className="fs-12 text-muted">not reached</div>}
                   {d.verificationMethod && (
-                    <Typography variant="caption" color="text.secondary"
-                                sx={{ display: 'block', textTransform: 'uppercase' }}>
+                    <div className="fs-12 text-muted text-uppercase">
                       via {d.verificationMethod}
-                    </Typography>
+                    </div>
                   )}
                 </Td>
 
                 <Td>
-                  <Chip size="small"
-                        color={d.stalledAtVerification ? 'warning' : 'default'}
-                        label={STEP_LABEL[d.reachedStep] ?? d.reachedStep} />
+                  <span className={`badge ${d.stalledAtVerification
+                    ? 'bg-warning-transparent' : 'bg-light text-muted'}`}>
+                    {STEP_LABEL[d.reachedStep] ?? d.reachedStep}
+                  </span>
                   {d.attempts > 0 && (
-                    <Typography variant="caption" color="text.secondary"
-                                sx={{ display: 'block', mt: 0.5 }}>
+                    <div className="fs-12 text-muted mt-1">
                       {d.attempts} attempt{d.attempts === 1 ? '' : 's'}
-                    </Typography>
+                    </div>
                   )}
                 </Td>
 
@@ -164,16 +158,15 @@ export default function DraftsPage() {
                   {/* The verifier's own words, unedited. This is what you read
                       aloud on the phone — a friendlier summary would remove the
                       only part that identifies the mistake. */}
-                  <Typography variant="caption" color="text.secondary"
-                              sx={{ display: 'block', maxWidth: 320, lineHeight: 1.5 }}>
+                  <div className="fs-12 text-muted" style={{ maxWidth: 320, lineHeight: 1.5 }}>
                     {d.lastAttemptError ?? '—'}
-                  </Typography>
+                  </div>
                 </Td>
 
                 <Td>
-                  <Link href={d.resumeUrl} target="_blank" rel="noopener" variant="body2">
+                  <a href={d.resumeUrl} target="_blank" rel="noopener" className="text-primary">
                     Open their signup
-                  </Link>
+                  </a>
                 </Td>
               </tr>
             ))}
@@ -181,13 +174,13 @@ export default function DraftsPage() {
         )}
       </Card>
 
-      <Alert severity="info" sx={{ mt: 3 }}>
+      <div className="alert alert-info mt-4" role="note">
         <strong>This queue is the point.</strong> Requiring domain verification
         before sign-in loses customers who cannot reach whoever manages their DNS.
         These are those customers, with a phone number. Working the list is what
         makes that trade-off worth making — leaving it unworked makes it a worse
         design than letting people straight in.
-      </Alert>
+      </div>
     </AdminShell>
   );
 }

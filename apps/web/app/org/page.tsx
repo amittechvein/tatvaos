@@ -17,11 +17,6 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import Alert from '@mui/material/Alert';
-import Box from '@mui/material/Box';
-import CircularProgress from '@mui/material/CircularProgress';
-import Typography from '@mui/material/Typography';
-import { alpha } from '@mui/material/styles';
 
 import { AdminShell } from '@/components/admin/AdminShell';
 import { Button, Card, Meter, Stat } from '@/components/ui/Kit';
@@ -80,7 +75,9 @@ export default function CoreOverview() {
   if (loading) {
     return (
       <AdminShell scope="organisation" title="TatvaOS Core">
-        <Box sx={{ display: 'grid', placeItems: 'center', py: 10 }}><CircularProgress /></Box>
+        <div className="grid place-items-center py-5">
+          <span className="block h-8 w-8 animate-spin rounded-full border-2 border-line border-t-brand-600" />
+        </div>
       </AdminShell>
     );
   }
@@ -115,51 +112,48 @@ export default function CoreOverview() {
     >
       {remaining.length > 0 && (
         <Card className="mb-6">
-          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>
-            Finish setting up
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          <h6 className="mb-1 fw-semibold">Finish setting up</h6>
+          <p className="mb-3 fs-13 text-muted">
             {remaining.length} step{remaining.length === 1 ? '' : 's'} left before
             your organisation is fully live.
-          </Typography>
+          </p>
 
-          <Box sx={{ display: 'grid', gap: 1 }}>
-            {steps.map((st) => (
-              <Box key={st.label} component={st.done ? 'div' : Link}
-                   {...(st.done ? {} : { href: st.href })}
-                   sx={{
-                     display: 'flex', alignItems: 'center', gap: 1.5, p: 1.25,
-                     borderRadius: 1.5, textDecoration: 'none', color: 'inherit',
-                     bgcolor: (t) => st.done ? 'transparent' : alpha(t.palette.primary.main, 0.05),
-                     '&:hover': st.done ? {} : { bgcolor: (t) => alpha(t.palette.primary.main, 0.1) },
-                   }}>
-                <Box sx={{
-                  width: 20, height: 20, borderRadius: '50%', flexShrink: 0,
-                  display: 'grid', placeItems: 'center',
-                  bgcolor: st.done ? 'success.main' : 'transparent',
-                  border: st.done ? 'none' : '1.5px solid',
-                  borderColor: 'divider',
-                }}>
-                  {st.done && (
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff"
-                         strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M20 6L9 17l-5-5" />
-                    </svg>
-                  )}
-                </Box>
-                <Typography variant="body2"
-                            sx={{ color: st.done ? 'text.disabled' : 'text.primary',
-                                  textDecoration: st.done ? 'line-through' : 'none' }}>
-                  {st.label}
-                </Typography>
-              </Box>
-            ))}
-          </Box>
+          <div className="grid gap-2">
+            {steps.map((st) => {
+              const row = (
+                <>
+                  <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full ${
+                    st.done ? 'bg-ok' : 'border-[1.5px] border-line'
+                  }`}>
+                    {st.done && (
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff"
+                           strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M20 6L9 17l-5-5" />
+                      </svg>
+                    )}
+                  </span>
+                  <span className={st.done ? 'text-ink-faint line-through' : 'text-ink'}>
+                    {st.label}
+                  </span>
+                </>
+              );
+              const cls = 'flex items-center gap-3 rounded-lg p-2.5 text-sm no-underline';
+              // A finished step is not a link: there is nothing left to do there,
+              // and making it clickable invites a pointless trip.
+              return st.done
+                ? <div key={st.label} className={cls}>{row}</div>
+                : (
+                  <Link key={st.label} href={st.href}
+                        className={`${cls} bg-brand-50 transition hover:bg-brand-100`}>
+                    {row}
+                  </Link>
+                );
+            })}
+          </div>
         </Card>
       )}
 
-      <Box sx={{ display: 'grid', gap: 2, mb: 3,
-                 gridTemplateColumns: { xs: '1fr 1fr', lg: 'repeat(4, 1fr)' } }}>
+      <div className="mb-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Stat label="People" value={String(s?.userCount ?? 0)}
               caption={s?.maxUsers == null ? 'Unlimited' : `of ${s.maxUsers} allowed`} />
         <Stat label="Departments" value={String(flat.length)} />
@@ -167,64 +161,57 @@ export default function CoreOverview() {
               caption={`${verified.length} verified`} />
         <Stat label="Storage used" value={fmt(s?.usedBytes ?? 0)}
               caption={`of ${fmt(s?.totalBytes ?? 0)}`} />
-      </Box>
+      </div>
 
-      <Box sx={{ display: 'grid', gap: 3, gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' } }}>
+      <div className="grid gap-4 lg:grid-cols-2">
         <Card title="Storage"
               subtitle={s?.storageModel === 'pooled'
                 ? 'Pooled — one allocation shared across every mailbox'
                 : 'Per user — each mailbox has its own fixed allowance'}>
           <Meter used={s?.usedBytes ?? 0} total={s?.totalBytes ?? 1} />
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.5 }}>
+          <p className="mt-3 fs-12 text-muted">
             {fmt(s?.availableBytes ?? 0)} still available.
             {s?.storageModel === 'pooled' &&
               ' When a pool fills, every mailbox stops receiving at once — not just the heaviest one.'}
-          </Typography>
+          </p>
         </Card>
 
         <Card title="People by department"
               actions={<Button variant="ghost" href="/org/departments">Manage</Button>}>
           {flat.length === 0 ? (
-            <Typography variant="body2" color="text.disabled">
+            <p className="fs-13 text-muted mb-0">
               No departments yet. They carry storage and permissions down to
               everyone inside, so creating them first saves setting the same
               thing on every person.
-            </Typography>
+            </p>
           ) : (
-            <Box sx={{ display: 'grid', gap: 1.5 }}>
+            <div className="grid gap-3">
               {flat.map((d) => (
-                <Box key={d.id} sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                  <Box sx={{ width: 10, height: 10, borderRadius: '50%',
-                             bgcolor: d.colour, flexShrink: 0 }} />
-                  <Typography variant="body2" sx={{ flex: 1 }}>{d.name}</Typography>
-                  <Typography variant="body2" sx={{ fontWeight: 600 }}>{d.userCount}</Typography>
-                </Box>
+                <div key={d.id} className="d-flex align-items-center gap-2">
+                  <span className="shrink-0 rounded-circle" style={{ width: 10, height: 10, background: d.colour }} />
+                  <span className="flex-fill fs-13">{d.name}</span>
+                  <span className="fw-semibold fs-13">{d.userCount}</span>
+                </div>
               ))}
               {(data?.unassignedUsers ?? 0) > 0 && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, pt: 1,
-                           borderTop: '1px solid', borderColor: 'divider' }}>
-                  <Box sx={{ width: 10, height: 10, borderRadius: '50%',
-                             bgcolor: 'text.disabled', flexShrink: 0 }} />
-                  <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
-                    No department
-                  </Typography>
-                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                    {data?.unassignedUsers}
-                  </Typography>
-                </Box>
+                <div className="d-flex align-items-center gap-2 pt-2 border-top">
+                  <span className="shrink-0 rounded-circle bg-secondary" style={{ width: 10, height: 10 }} />
+                  <span className="flex-fill fs-13 text-muted">No department</span>
+                  <span className="fw-semibold fs-13">{data?.unassignedUsers}</span>
+                </div>
               )}
-            </Box>
+            </div>
           )}
         </Card>
-      </Box>
+      </div>
 
       {verified.length > 0 && mailReady.length === 0 && (
-        <Alert severity="info" sx={{ mt: 3 }}>
+        <div className="alert alert-info mt-4" role="note">
           Your domain is verified, but mail is still delivered wherever it was
           before. Add the MX records under <Link href="/org/domains">Domains</Link> when
           you are ready to move it — nothing you do here interrupts your current
           email until those change.
-        </Alert>
+        </div>
       )}
     </AdminShell>
   );

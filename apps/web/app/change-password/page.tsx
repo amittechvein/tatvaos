@@ -2,16 +2,11 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import Alert from '@mui/material/Alert';
-import Box from '@mui/material/Box';
-import Button from '@mui/material/Button';
-import Card from '@mui/material/Card';
-import CardContent from '@mui/material/CardContent';
-import LinearProgress from '@mui/material/LinearProgress';
-import TextField from '@mui/material/TextField';
-import Typography from '@mui/material/Typography';
 
 import { useAuth } from '@/lib/auth';
+
+const INPUT =
+  'w-full rounded-lg border border-line bg-surface px-3 py-2.5 text-sm text-ink outline-none transition placeholder:text-ink-faint focus:border-brand-500';
 
 /**
  * Forced on first sign-in, because the account still has a password an admin
@@ -49,66 +44,86 @@ export default function ChangePasswordPage() {
       setError(err instanceof Error ? err.message : 'Could not change the password.');
       setBusy(false);
     }
+    return undefined;
   }
 
   if (done) {
     return (
       <Shell>
-        <Typography variant="h5" sx={{ mb: 1 }}>Password changed</Typography>
-        <Typography variant="body2" color="text.secondary">
+        <h1 className="mb-2 text-xl font-semibold text-ink">Password changed</h1>
+        <p className="text-sm leading-relaxed text-ink-muted">
           Every other session has been signed out, including on your other devices.
           That is deliberate — if someone else knew the old password, leaving their
           session running would defeat the point of changing it.
-        </Typography>
-        <Button fullWidth variant="contained" size="large" sx={{ mt: 3.5 }}
-                onClick={() => router.replace('/login')}>
+        </p>
+        <button
+          type="button"
+          onClick={() => router.replace('/login')}
+          className="mt-7 w-full rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-700"
+        >
           Sign in again
-        </Button>
+        </button>
       </Shell>
     );
   }
 
+  const mismatch = confirm.length > 0 && confirm !== next;
+
   return (
     <Shell>
-      <Typography variant="h5" sx={{ mb: 0.5 }}>Choose a new password</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+      <h1 className="mb-1 text-xl font-semibold text-ink">Choose a new password</h1>
+      <p className="mb-6 text-sm leading-relaxed text-ink-muted">
         Your current password was created by an administrator, so more than one
         person knows it.
-      </Typography>
+      </p>
 
-      <Box component="form" onSubmit={submit} noValidate>
-        {error && <Alert severity="error" sx={{ mb: 2.5 }}>{error}</Alert>}
+      <form onSubmit={submit} noValidate>
+        {error && (
+          <div className="mb-5 rounded-lg bg-danger/10 px-3 py-2.5 text-sm text-danger" role="alert">
+            {error}
+          </div>
+        )}
 
-        <TextField fullWidth type="password" label="Current password" required
-                   autoComplete="current-password" value={current} sx={{ mb: 2.5 }}
-                   onChange={(e) => setCurrent(e.target.value)} />
+        <label className="mb-5 block">
+          <span className="mb-1.5 block text-sm font-medium text-ink">Current password</span>
+          <input type="password" required autoComplete="current-password" className={INPUT}
+                 value={current} onChange={(e) => setCurrent(e.target.value)} />
+        </label>
 
-        <TextField fullWidth type="password" label="New password" required
-                   autoComplete="new-password" value={next}
-                   onChange={(e) => setNext(e.target.value)} />
+        <label className="block">
+          <span className="mb-1.5 block text-sm font-medium text-ink">New password</span>
+          <input type="password" required autoComplete="new-password" className={INPUT}
+                 value={next} onChange={(e) => setNext(e.target.value)} />
+        </label>
 
         <Strength value={next} />
 
-        <TextField
-          fullWidth type="password" label="Confirm new password" required
-          autoComplete="new-password" value={confirm} sx={{ mt: 2.5 }}
-          onChange={(e) => setConfirm(e.target.value)}
-          error={confirm.length > 0 && confirm !== next}
-          helperText={confirm.length > 0 && confirm !== next ? 'These do not match.' : ' '}
-        />
+        <label className="mt-5 block">
+          <span className="mb-1.5 block text-sm font-medium text-ink">Confirm new password</span>
+          <input
+            type="password" required autoComplete="new-password"
+            className={`${INPUT} ${mismatch ? 'border-danger focus:border-danger' : ''}`}
+            value={confirm} onChange={(e) => setConfirm(e.target.value)}
+          />
+          <span className="mt-1 block h-4 text-xs text-danger">
+            {mismatch ? 'These do not match.' : ''}
+          </span>
+        </label>
 
-        <Typography variant="caption" color="text.secondary"
-                    sx={{ display: 'block', mt: 1, lineHeight: 1.6 }}>
+        <p className="mt-1 text-xs leading-relaxed text-ink-muted">
           At least 12 characters. Length matters far more than symbols — a short
           phrase you will actually remember beats something unmemorable with a
           punctuation mark in it.
-        </Typography>
+        </p>
 
-        <Button type="submit" fullWidth variant="contained" size="large" sx={{ mt: 3 }}
-                disabled={busy || !current || !next || !confirm}>
+        <button
+          type="submit"
+          disabled={busy || !current || !next || !confirm}
+          className="mt-6 w-full rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
           {busy ? 'Changing…' : 'Change password'}
-        </Button>
-      </Box>
+        </button>
+      </form>
     </Shell>
   );
 }
@@ -121,35 +136,34 @@ export default function ChangePasswordPage() {
  * guessing, so that is the only thing shown.
  */
 function Strength({ value }: { value: string }) {
-  if (!value) return <Box sx={{ height: 22 }} />;
+  if (!value) return <div className="h-[22px]" />;
 
   const pct = Math.min(100, (value.length / 16) * 100);
   const weak = value.length < 12;
   const strong = value.length >= 16;
+  const tone = weak ? 'bg-danger' : strong ? 'bg-ok' : 'bg-warn';
+  const text = weak ? 'text-danger' : strong ? 'text-ok' : 'text-warn';
 
   return (
-    <Box sx={{ mt: 1 }}>
-      <LinearProgress
-        variant="determinate"
-        value={pct}
-        color={weak ? 'error' : strong ? 'success' : 'warning'}
-      />
-      <Typography variant="caption"
-                  color={weak ? 'error.main' : strong ? 'success.main' : 'warning.main'}>
-        {weak ? `${12 - value.length} more character${12 - value.length === 1 ? '' : 's'}`
-              : strong ? 'Good length' : 'Long enough'}
-      </Typography>
-    </Box>
+    <div className="mt-2">
+      <div className="h-1 w-full overflow-hidden rounded-full bg-line">
+        <div className={`h-full rounded-full transition-all ${tone}`} style={{ width: `${pct}%` }} />
+      </div>
+      <span className={`mt-1 block text-xs ${text}`}>
+        {weak
+          ? `${12 - value.length} more character${12 - value.length === 1 ? '' : 's'}`
+          : strong ? 'Good length' : 'Long enough'}
+      </span>
+    </div>
   );
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center',
-               bgcolor: 'background.default', p: 2 }}>
-      <Card sx={{ width: '100%', maxWidth: 440 }}>
-        <CardContent sx={{ p: { xs: 3, sm: 4 } }}>{children}</CardContent>
-      </Card>
-    </Box>
+    <div className="grid min-h-screen place-items-center bg-canvas p-4">
+      <div className="w-full max-w-[440px] rounded-card border border-line bg-surface p-6 shadow-card sm:p-8">
+        {children}
+      </div>
+    </div>
   );
 }
