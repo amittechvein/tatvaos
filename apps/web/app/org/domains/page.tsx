@@ -374,10 +374,10 @@ export default function DomainsPage() {
                   {/* The record itself — verified ones collapse it, since a
                       record already found in DNS needs no copying. */}
                   {!check?.passed && (
-                    {/* Flex, not grid: overrides.css has to neutralise YZEN's
-                        own .grid rule and can only re-assert the enumerated
-                        grid-cols-* utilities, so an arbitrary column template
-                        would be silently flattened to one column. */}
+                    /* Flex, not grid: overrides.css has to neutralise YZEN's
+                       own .grid rule and can only re-assert the enumerated
+                       grid-cols-* utilities, so an arbitrary column template
+                       would be silently flattened to one column. */
                     <div className="flex flex-col gap-2 sm:flex-row">
                       <div className="sm:w-40 sm:shrink-0">
                         <CopyField label="Host / Name" value={r.host} />
