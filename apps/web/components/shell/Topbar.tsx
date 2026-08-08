@@ -87,7 +87,7 @@ export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' 
             {/* Profile */}
             <div className="header-element">
               <a href="javascript:void(0);" className="header-link d-flex align-items-center"
-                 onClick={(e) => setAnchor(e.currentTarget)} aria-label="Account">
+                 onClick={(e) => setAnchor(anchor ? null : e.currentTarget)} aria-label="Account">
                 {selfPhoto ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={selfPhoto} alt="" width={34} height={34}

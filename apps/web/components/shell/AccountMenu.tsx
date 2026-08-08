@@ -11,9 +11,9 @@
 //  Two behaviours are worth keeping deliberately:
 //
 //  1. SIGNING OUT DOES NOT REMOVE THE ACCOUNT FROM THE LIST. It becomes a
-//     "Signed out" row with Sign in / Remove, exactly as in the screenshot
-//     this was built from. An account that vanishes on sign-out reads as data
-//     loss, and the person then has to remember the address to get back.
+//     "Signed out" row with Sign in / Remove. An account that vanishes on
+//     sign-out reads as data loss, and the person then has to remember the
+//     address to get back.
 //
 //  2. NOTHING HERE HOLDS A TOKEN. The list arrives from the API, assembled
 //     server-side from httpOnly cookies. Switching is a server call that
@@ -23,21 +23,10 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import Alert from '@mui/material/Alert';
-import Avatar from '@mui/material/Avatar';
-import Box from '@mui/material/Box';
-import Button from '@mui/material/Button';
-import CircularProgress from '@mui/material/CircularProgress';
-import Collapse from '@mui/material/Collapse';
-import Divider from '@mui/material/Divider';
-import IconButton from '@mui/material/IconButton';
-import Menu from '@mui/material/Menu';
-import MenuItem from '@mui/material/MenuItem';
-import Typography from '@mui/material/Typography';
-import { alpha } from '@mui/material/styles';
 
 import { useAuth, type AccountSlot } from '@/lib/auth';
 import { useSelfPhoto } from '@/components/ui/UserPhoto';
+import { AnchoredPopover } from '@/components/ui/AnchoredPopover';
 
 /** Stable per-address colour, so an account keeps the same tile every time. */
 const TILE = ['#7367f0', '#28c76f', '#ff9f43', '#ea5455', '#00cfe8', '#a855f7'];
@@ -56,6 +45,8 @@ function initials(name: string, email: string): string {
   return (a + b).toUpperCase();
 }
 
+const PILL = 'rounded-full border border-line px-3 py-1.5 text-sm font-medium text-ink transition hover:bg-canvas disabled:opacity-50';
+
 export function AccountMenu({ anchorEl, onClose }: {
   anchorEl: HTMLElement | null;
   onClose: () => void;
@@ -73,6 +64,7 @@ export function AccountMenu({ anchorEl, onClose }: {
   useEffect(() => { if (anchorEl) void refreshAccounts(); }, [anchorEl, refreshAccounts]);
 
   const others = accounts.filter((a) => a.email !== user?.email);
+  const managedBy = accounts.find((a) => a.active)?.organisation;
 
   async function onSwitch(a: AccountSlot) {
     if (!a.signedIn) { router.push(`/login?email=${encodeURIComponent(a.email)}`); return; }
@@ -93,157 +85,149 @@ export function AccountMenu({ anchorEl, onClose }: {
   }
 
   return (
-    <Menu
-      anchorEl={anchorEl}
-      open={!!anchorEl}
-      onClose={onClose}
-      anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-      transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-      slotProps={{ paper: { sx: { width: 340, mt: 0.5, borderRadius: 3, overflow: 'hidden' } } }}
-    >
+    <AnchoredPopover anchor={anchorEl} onClose={onClose} width={340} padded={false}>
       {/* ---- the account in use ---- */}
-      <Box sx={{ px: 2.5, pt: 2, pb: 2.5, textAlign: 'center' }}>
-        <Typography variant="body2" sx={{ fontWeight: 600 }} noWrap>{user?.email}</Typography>
-        {accounts.find((a) => a.active)?.organisation && (
-          <Typography variant="caption" color="text.secondary">
-            Managed by {accounts.find((a) => a.active)?.organisation}
-          </Typography>
+      <div className="px-5 pb-5 pt-4 text-center">
+        <p className="truncate text-sm font-semibold text-ink">{user?.email}</p>
+        {managedBy && <p className="text-xs text-ink-muted">Managed by {managedBy}</p>}
+
+        {selfPhoto ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={selfPhoto} alt="" className="mx-auto my-4 h-[72px] w-[72px] rounded-full object-cover" />
+        ) : (
+          <div
+            className="mx-auto my-4 grid h-[72px] w-[72px] place-items-center rounded-full text-[26px] font-semibold text-white"
+            style={{ backgroundColor: tint(user?.email ?? '') }}
+          >
+            {initials(user?.displayName ?? '', user?.email ?? '')}
+          </div>
         )}
 
-        {/* src wins when there is a photo; the initials stay as the fallback,
-            so an account with no photo looks exactly as it did before. */}
-        <Avatar
-          src={selfPhoto ?? undefined}
-          sx={{
-            width: 72, height: 72, mx: 'auto', my: 2, fontSize: 26, fontWeight: 600,
-            bgcolor: tint(user?.email ?? ''),
-          }}
-        >
-          {initials(user?.displayName ?? '', user?.email ?? '')}
-        </Avatar>
-
-        <Typography variant="h6" sx={{ mb: 2 }}>
+        <p className="mb-4 text-lg font-medium text-ink">
           Hi, {(user?.displayName ?? '').split(' ')[0] || 'there'}
-        </Typography>
+        </p>
 
-        <Button variant="outlined" size="small" href="/account"
-                sx={{ borderRadius: 5, px: 2.5 }} onClick={onClose}>
+        <a href="/account" onClick={onClose}
+           className="inline-block rounded-full border border-brand-600 px-5 py-1.5 text-sm font-medium text-brand-600 transition hover:bg-brand-50">
           Manage your account
-        </Button>
-      </Box>
+        </a>
+      </div>
 
       {error && (
-        <Alert severity="error" sx={{ mx: 2, mb: 1 }} onClose={() => setError(null)}>
-          {error}
-        </Alert>
+        <div className="mx-4 mb-3 flex items-start gap-2 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">
+          <span className="flex-1">{error}</span>
+          <button type="button" onClick={() => setError(null)} aria-label="Dismiss" className="font-semibold">×</button>
+        </div>
       )}
 
       {/* ---- the other accounts ---- */}
       {others.length > 0 && (
-        <Box sx={{ bgcolor: (t) => alpha(t.palette.text.primary, 0.04) }}>
-          <MenuItem onClick={() => setExpanded((v) => !v)}
-                    sx={{ py: 1.5, display: 'flex', justifyContent: 'space-between' }}>
-            <Typography variant="body2" sx={{ fontWeight: 500 }}>
-              {expanded ? 'Hide more accounts' : `Show ${others.length} more account${others.length === 1 ? '' : 's'}`}
-            </Typography>
-            <Box sx={{ display: 'grid', placeItems: 'center',
-                       transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                   strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M6 9l6 6 6-6" />
-              </svg>
-            </Box>
-          </MenuItem>
+        <div className="bg-canvas">
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium text-ink transition hover:bg-line/40"
+          >
+            <span>
+              {expanded
+                ? 'Hide more accounts'
+                : `Show ${others.length} more account${others.length === 1 ? '' : 's'}`}
+            </span>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                 className={`transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}>
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </button>
 
-          <Collapse in={expanded}>
-            {others.map((a) => (
-              <Box key={a.slot}
-                   sx={{ px: 2, py: 1.5, borderTop: '1px solid', borderColor: 'divider' }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                  <Avatar sx={{ width: 34, height: 34, fontSize: 13, fontWeight: 600,
-                                bgcolor: a.signedIn ? tint(a.email) : 'action.disabledBackground',
-                                color: a.signedIn ? '#fff' : 'text.disabled' }}>
-                    {initials(a.displayName, a.email)}
-                  </Avatar>
+          {expanded && others.map((a) => (
+            <div key={a.slot} className="border-t border-line px-4 py-3">
+              <div className="flex items-center gap-3">
+                <div
+                  className={`grid h-[34px] w-[34px] shrink-0 place-items-center rounded-full text-[13px] font-semibold ${
+                    a.signedIn ? 'text-white' : 'text-ink-faint'
+                  }`}
+                  style={{ backgroundColor: a.signedIn ? tint(a.email) : 'rgb(var(--line))' }}
+                >
+                  {initials(a.displayName, a.email)}
+                </div>
 
-                  <Box sx={{ minWidth: 0, flex: 1 }}>
-                    <Typography variant="body2" noWrap sx={{ fontWeight: 500 }}>
-                      {a.displayName}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary" noWrap
-                                sx={{ display: 'block' }}>
-                      {a.email}
-                    </Typography>
-                  </Box>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-ink">{a.displayName}</p>
+                  <p className="truncate text-xs text-ink-muted">{a.email}</p>
+                </div>
 
-                  {a.signedIn ? (
-                    <IconButton size="small" disabled={busy !== null}
-                                onClick={() => void onSwitch(a)} aria-label={`Switch to ${a.email}`}>
-                      {busy === a.slot
-                        ? <CircularProgress size={16} />
-                        : <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-                               stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                            <path d="M9 18l6-6-6-6" />
-                          </svg>}
-                    </IconButton>
-                  ) : (
-                    <Typography variant="caption"
-                                sx={{ px: 1, py: 0.25, borderRadius: 1, flexShrink: 0,
-                                      bgcolor: 'action.hover', color: 'text.secondary' }}>
-                      Signed out
-                    </Typography>
-                  )}
-                </Box>
-
-                {!a.signedIn && (
-                  <Box sx={{ display: 'flex', gap: 1, mt: 1.5 }}>
-                    <Button size="small" variant="contained" sx={{ borderRadius: 5, flex: 1 }}
-                            onClick={() => void onSwitch(a)}>
-                      Sign in
-                    </Button>
-                    <Button size="small" variant="outlined" color="inherit"
-                            sx={{ borderRadius: 5, flex: 1 }}
-                            onClick={() => void forget(a.slot)}>
-                      Remove
-                    </Button>
-                  </Box>
+                {a.signedIn ? (
+                  <button
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => void onSwitch(a)}
+                    aria-label={`Switch to ${a.email}`}
+                    className="rounded-full p-1.5 text-ink-muted transition hover:bg-surface hover:text-ink disabled:opacity-40"
+                  >
+                    {busy === a.slot ? (
+                      <span className="block h-[18px] w-[18px] animate-spin rounded-full border-2 border-line border-t-brand-600" />
+                    ) : (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                           stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                        <path d="M9 18l6-6-6-6" />
+                      </svg>
+                    )}
+                  </button>
+                ) : (
+                  <span className="shrink-0 rounded bg-line/60 px-2 py-0.5 text-xs text-ink-muted">
+                    Signed out
+                  </span>
                 )}
-              </Box>
-            ))}
-          </Collapse>
-        </Box>
+              </div>
+
+              {!a.signedIn && (
+                <div className="mt-3 flex gap-2">
+                  <button type="button" onClick={() => void onSwitch(a)}
+                          className="flex-1 rounded-full bg-brand-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-brand-700">
+                    Sign in
+                  </button>
+                  <button type="button" onClick={() => void forget(a.slot)} className={`flex-1 ${PILL}`}>
+                    Remove
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
       )}
 
-      <Divider />
+      <div className="h-px bg-line" />
 
-      <Box sx={{ display: 'flex', gap: 1, p: 1.5 }}>
-        <Button fullWidth size="small" variant="outlined" color="inherit"
-                sx={{ borderRadius: 5 }}
+      <div className="flex gap-2 p-3">
+        <button type="button" className={`flex-1 ${PILL}`}
                 onClick={() => { onClose(); router.push('/login?add=1'); }}>
           Add account
-        </Button>
-        <Button fullWidth size="small" variant="outlined" color="inherit"
-                sx={{ borderRadius: 5 }}
+        </button>
+        <button type="button" className={`flex-1 ${PILL}`}
                 onClick={() => { onClose(); void signOut(); }}>
           Sign out
-        </Button>
-      </Box>
+        </button>
+      </div>
 
       {accounts.length > 1 && (
-        <Box sx={{ px: 1.5, pb: 1.5 }}>
-          <Button fullWidth size="small" color="error" sx={{ borderRadius: 5 }}
-                  onClick={() => { onClose(); void signOut(true); }}>
+        <div className="px-3 pb-3">
+          <button
+            type="button"
+            onClick={() => { onClose(); void signOut(true); }}
+            className="w-full rounded-full px-3 py-1.5 text-sm font-medium text-danger transition hover:bg-danger/10"
+          >
             Sign out of all accounts
-          </Button>
-        </Box>
+          </button>
+        </div>
       )}
 
-      <Box sx={{ px: 2.5, pb: 2 }}>
-        <Typography variant="caption" color="text.disabled">
+      <div className="px-5 pb-4">
+        <p className="text-xs text-ink-faint">
           Accounts stay signed in on this browser only. On a shared machine use
           &ldquo;Sign out of all accounts&rdquo;.
-        </Typography>
-      </Box>
-    </Menu>
+        </p>
+      </div>
+    </AnchoredPopover>
   );
 }

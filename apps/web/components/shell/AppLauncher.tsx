@@ -18,13 +18,16 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
-import Box from '@mui/material/Box';
-import IconButton from '@mui/material/IconButton';
-import Popover from '@mui/material/Popover';
-import Tooltip from '@mui/material/Tooltip';
-import Typography from '@mui/material/Typography';
-import { alpha } from '@mui/material/styles';
 import { RAIL_PRODUCTS } from '@/lib/nav';
+import { AnchoredPopover } from '@/components/ui/AnchoredPopover';
+
+/** A product's colour at partial opacity, for the tile gradient and its glow. */
+function fade(hex: string, alpha: number): string {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const n = parseInt(full, 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
 
 export function AppLauncher() {
   const [anchor, setAnchor] = useState<null | HTMLElement>(null);
@@ -37,35 +40,31 @@ export function AppLauncher() {
 
   return (
     <>
-      <Tooltip title="TatvaOS apps">
-        <IconButton size="small" onClick={(e) => setAnchor(e.currentTarget)}
-                    aria-label="TatvaOS apps">
-          {/* The nine dots. */}
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-            {[5, 12, 19].flatMap((y) =>
-              [5, 12, 19].map((x) => <circle key={`${x}-${y}`} cx={x} cy={y} r="1.9" />))}
-          </svg>
-        </IconButton>
-      </Tooltip>
-
-      <Popover
-        open={!!anchor}
-        anchorEl={anchor}
-        onClose={() => setAnchor(null)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-        slotProps={{ paper: { sx: { mt: 1, p: 2, width: 316, borderRadius: 4 } } }}
+      <a
+        href="javascript:void(0);"
+        className="header-link"
+        aria-label="TatvaOS apps"
+        title="TatvaOS apps"
+        onClick={(e) => setAnchor(anchor ? null : e.currentTarget)}
       >
-        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 0.5 }}>
+        {/* The nine dots. */}
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+          {[5, 12, 19].flatMap((y) =>
+            [5, 12, 19].map((x) => <circle key={`${x}-${y}`} cx={x} cy={y} r="1.9" />))}
+        </svg>
+      </a>
+
+      <AnchoredPopover anchor={anchor} onClose={() => setAnchor(null)} width={316}>
+        <div className="grid grid-cols-3 gap-1">
           {products.map((p) => <Tile key={p.code} p={p} onNavigate={() => setAnchor(null)} />)}
-        </Box>
+        </div>
 
-        <Box sx={{ height: '1px', bgcolor: 'divider', my: 1.5 }} />
+        <div className="my-3 h-px bg-line" />
 
-        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 0.5 }}>
+        <div className="grid grid-cols-3 gap-1">
           {consoles.map((p) => <Tile key={p.code} p={p} onNavigate={() => setAnchor(null)} />)}
-        </Box>
-      </Popover>
+        </div>
+      </AnchoredPopover>
     </>
   );
 }
@@ -74,37 +73,37 @@ function Tile({ p, onNavigate }: {
   p: (typeof RAIL_PRODUCTS)[number];
   onNavigate: () => void;
 }) {
-  const inner = (
-    <Box
-      {...(p.live ? { component: Link, href: p.href, onClick: onNavigate } : {})}
-      sx={{
-        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.75,
-        py: 1.5, px: 0.5, borderRadius: 3, textDecoration: 'none',
-        cursor: p.live ? 'pointer' : 'default',
-        opacity: p.live ? 1 : 0.45,
-        '&:hover': p.live ? { bgcolor: 'action.hover' } : {},
-      }}
-    >
-      <Box sx={{
-        width: 44, height: 44, borderRadius: 2.5, display: 'grid', placeItems: 'center',
-        color: '#fff',
-        background: `linear-gradient(135deg, ${p.colour}, ${alpha(p.colour, 0.75)})`,
-        boxShadow: `0 3px 8px -2px ${alpha(p.colour, 0.55)}`,
-      }}>
+  const body = (
+    <>
+      <span
+        className="grid h-11 w-11 place-items-center rounded-xl text-white"
+        style={{
+          background: `linear-gradient(135deg, ${p.colour}, ${fade(p.colour, 0.75)})`,
+          boxShadow: `0 3px 8px -2px ${fade(p.colour, 0.55)}`,
+        }}
+      >
         {p.icon}
-      </Box>
-      <Typography variant="caption"
-                  sx={{ fontWeight: 500, color: 'text.primary', lineHeight: 1.2,
-                        textAlign: 'center' }}>
-        {p.label}
-      </Typography>
-      {!p.live && (
-        <Typography variant="caption" sx={{ fontSize: 10, color: 'text.disabled', mt: -0.5 }}>
-          Soon
-        </Typography>
-      )}
-    </Box>
+      </span>
+      <span className="text-center text-xs font-medium leading-tight text-ink">{p.label}</span>
+      {!p.live && <span className="-mt-1 text-[10px] text-ink-faint">Soon</span>}
+    </>
   );
 
-  return p.live ? inner : <Tooltip title={`${p.label} — coming soon`}>{inner}</Tooltip>;
+  const shared = 'flex flex-col items-center gap-1.5 rounded-xl px-1 py-3 no-underline';
+
+  // A product with nowhere to go is not a link: it is greyed, not clickable,
+  // and says why on hover rather than leading anyone to a page that is not there.
+  if (!p.live) {
+    return (
+      <div className={`${shared} cursor-default opacity-45`} title={`${p.label} — coming soon`}>
+        {body}
+      </div>
+    );
+  }
+
+  return (
+    <Link href={p.href} onClick={onNavigate} className={`${shared} transition hover:bg-canvas`}>
+      {body}
+    </Link>
+  );
 }
