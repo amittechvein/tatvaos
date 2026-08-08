@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using TatvaOS.Api.Modules.Admin;
 using TatvaOS.Api.Shared.Auth;
 using TatvaOS.Api.Shared.Data;
+using TatvaOS.Api.Shared.Notify;
 using TatvaOS.Api.Shared.Tenancy;
 
 namespace TatvaOS.Api.Modules.Auth.Endpoints;
@@ -285,6 +286,14 @@ public static class AuthEndpoints
         g.MapGet("/me", MeAsync).RequireAuthorization("User");
         g.MapPost("/change-password", ChangePasswordAsync).RequireAuthorization("User");
         g.MapGet("/sessions", SessionsAsync).RequireAuthorization("User");
+
+        // ---- forgot password (anonymous: the whole point is no session) --
+        // Email link and phone OTP, each a request/complete pair. Every
+        // request path answers the same whether the account exists or not.
+        g.MapPost("/password/forgot", ForgotPasswordAsync).AllowAnonymous();
+        g.MapPost("/password/reset", ResetPasswordAsync).AllowAnonymous();
+        g.MapPost("/password/forgot-otp", ForgotPasswordOtpAsync).AllowAnonymous();
+        g.MapPost("/password/reset-otp", ResetPasswordOtpAsync).AllowAnonymous();
 
         // ---- multi-account ----------------------------------------------
         // All anonymous. The authority for every one of them is possession of
@@ -998,6 +1007,276 @@ public static class AuthEndpoints
         });
     }
 
+    // =====================================================================
+    //  FORGOT PASSWORD
+    // =====================================================================
+    //
+    //  Two channels, both request/complete pairs, both anonymous:
+    //
+    //    email  /password/forgot  →  /password/reset      (a one-time link)
+    //    phone  /password/forgot-otp → /password/reset-otp (a six-digit code)
+    //
+    //  THE REQUEST STEP NEVER REVEALS WHETHER AN ACCOUNT EXISTS. A form that
+    //  answers differently for a known and an unknown address is a free
+    //  membership check — the same rule the login and login-OTP paths follow,
+    //  and for the same reason. Every request returns the identical generic
+    //  reply whether we sent anything or not.
+    //
+    //  On success EVERY session ends, exactly like change-password: if the
+    //  reason for the reset is that someone else had the old password, leaving
+    //  their session alive defeats the point. The reset also clears any lockout
+    //  — someone recovering their password should not then be told to wait
+    //  fifteen minutes.
+    //
+    //  Reset state lives in the password_reset_* columns, kept separate from the
+    //  login OTP so neither secret can be spent at the other's endpoint. The
+    //  channel column pins which door a secret was minted for.
+    // =====================================================================
+
+    private const string ForgotEmailReply =
+        "If an account exists for that address, a link to reset the password has been sent to it.";
+    private const string ForgotPhoneReply =
+        "If that number is registered, a code to reset the password has been sent to it.";
+
+    // Longer than the login OTP's five minutes: an email hop can be slow, and a
+    // link the recipient opens twenty minutes later must still work.
+    private static readonly TimeSpan ResetLinkLifetime = TimeSpan.FromHours(1);
+
+    private const int MinPasswordLength = 12;
+    private const string ShortPasswordMessage =
+        "Use at least 12 characters. A short phrase you can remember beats a short password you cannot.";
+
+    // ------------------------------------------------------------------
+    private static async Task<IResult> ForgotPasswordAsync(
+        ForgotPasswordRequest req, AppDbContext db, TenantContext tenant,
+        SystemMailer mailer, IConfiguration config, CancellationToken ct)
+    {
+        var email = req.Email?.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(email))
+            return Results.BadRequest(new { error = "An email address is required." });
+
+        // Cross-tenant, like login: the tenant is unknown until the user is
+        // found. Exact-match on email returns one row or none.
+        var user = await db.Users.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(u => u.Email == email && u.Status != "deleted" && u.Status != "suspended", ct);
+
+        if (user is null)
+            return Results.Ok(new { sent = true, message = ForgotEmailReply });
+
+        // Resend throttle — a different answer inside the gap would itself leak
+        // that the address exists.
+        if (user.PasswordResetSentAt is DateTimeOffset last
+            && DateTimeOffset.UtcNow - last < OtpResendGap)
+            return Results.Ok(new { sent = true, message = ForgotEmailReply });
+
+        tenant.Set(user.TenantId, user.Id, user.Role);
+        await db.SyncTenantAsync(ct);
+
+        // High-entropy token, carried in the link. The user is later found BY
+        // its hash, so the token needs no separate identity.
+        var token = TokenIssuer.GenerateRefreshToken();
+        user.PasswordResetHash = TokenIssuer.HashRefreshToken(token);
+        user.PasswordResetSentAt = DateTimeOffset.UtcNow;
+        user.PasswordResetAttempts = 0;
+        user.PasswordResetChannel = "email";
+        await db.SaveChangesAsync(ct);
+
+        var baseUrl = (config["Jwt:Issuer"] ?? "https://core.tatvaos.com").TrimEnd('/');
+        var resetUrl = $"{baseUrl}/reset-password?token={Uri.EscapeDataString(token)}";
+
+        await mailer.SendHtmlAsync(
+            user.Email,
+            ResetEmail.Subject(),
+            ResetEmail.Html(user.DisplayName, baseUrl, resetUrl, (int)ResetLinkLifetime.TotalMinutes),
+            from: "no_reply@tatvaos.com", ct);
+
+        return Results.Ok(new { sent = true, message = ForgotEmailReply });
+    }
+
+    // ------------------------------------------------------------------
+    private static async Task<IResult> ResetPasswordAsync(
+        ResetPasswordRequest req, AppDbContext db, IPasswordHasher hasher,
+        TenantContext tenant, AuditWriter audit, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req.Token) || string.IsNullOrEmpty(req.NewPassword))
+            return Results.BadRequest(new { error = "A reset token and a new password are required." });
+
+        if (req.NewPassword.Length < MinPasswordLength)
+            return Results.BadRequest(new { error = ShortPasswordMessage });
+
+        var hash = TokenIssuer.HashRefreshToken(req.Token.Trim());
+
+        var user = await db.Users.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(u => u.PasswordResetHash == hash
+                                      && u.PasswordResetChannel == "email"
+                                      && u.Status != "deleted" && u.Status != "suspended", ct);
+
+        var expired = user?.PasswordResetSentAt is null
+            || DateTimeOffset.UtcNow - user.PasswordResetSentAt > ResetLinkLifetime;
+
+        if (user is null || expired)
+            return Results.Json(new
+            {
+                error = "This reset link is invalid or has expired. Request a new one.",
+            }, statusCode: 400);
+
+        tenant.Set(user.TenantId, user.Id, user.Role);
+        await db.SyncTenantAsync(ct);
+
+        // A used email link proves the address is readable — worth recording,
+        // since an unconfirmed address is a support case waiting to happen.
+        user.EmailConfirmedAt ??= DateTimeOffset.UtcNow;
+
+        await ApplyPasswordResetAsync(user, req.NewPassword, hasher, db, ct);
+        await audit.WriteAsync("user.password_reset", "user", user.Id.ToString(), ct: ct);
+
+        return Results.Ok(new
+        {
+            reset = true,
+            note = "Your password has been reset and all sessions signed out. Sign in with your new password.",
+        });
+    }
+
+    // ------------------------------------------------------------------
+    private static async Task<IResult> ForgotPasswordOtpAsync(
+        ForgotPasswordOtpRequest req, AppDbContext db, TenantContext tenant,
+        Shared.Notify.ISmsSender sms, Shared.Settings.SettingsReader settings,
+        CancellationToken ct)
+    {
+        var phone = Shared.PhoneNumber.Normalise(req.Phone);
+        if (phone is null)
+            return Results.BadRequest(new
+            {
+                error = "Enter the mobile number with its country code, like +91 98765 43210.",
+            });
+
+        // Exactly one live match may proceed — an ambiguous number fails closed,
+        // like the login OTP, since a code that reset "whichever matched first"
+        // would hand one person another person's account.
+        var matches = await db.Users.IgnoreQueryFilters()
+            .Where(u => u.Phone == phone && u.Status != "deleted" && u.Status != "suspended")
+            .Take(2)
+            .ToListAsync(ct);
+
+        if (matches.Count != 1)
+            return Results.Ok(new { sent = true, message = ForgotPhoneReply });
+
+        var user = matches[0];
+
+        if (user.PasswordResetSentAt is DateTimeOffset last
+            && DateTimeOffset.UtcNow - last < OtpResendGap)
+            return Results.Ok(new { sent = true, message = ForgotPhoneReply });
+
+        tenant.Set(user.TenantId, user.Id, user.Role);
+        await db.SyncTenantAsync(ct);
+
+        var code = System.Security.Cryptography.RandomNumberGenerator
+            .GetInt32(0, 1_000_000).ToString("D6");
+
+        user.PasswordResetHash = OtpHash(user.Id, code);
+        user.PasswordResetSentAt = DateTimeOffset.UtcNow;
+        user.PasswordResetAttempts = 0;
+        user.PasswordResetChannel = "phone";
+        await db.SaveChangesAsync(ct);
+
+        var result = await sms.SendOtpAsync(phone, code, ct);
+
+        var showOtp = await settings.FlagAsync(
+            Shared.Settings.SettingKeys.ShowOtpOnScreen, fallback: false, ct);
+
+        return Results.Ok(new
+        {
+            sent = true,
+            message = ForgotPhoneReply,
+            devCode = showOtp && !result.Sent ? code : null,
+        });
+    }
+
+    // ------------------------------------------------------------------
+    private static async Task<IResult> ResetPasswordOtpAsync(
+        ResetPasswordOtpRequest req, AppDbContext db, IPasswordHasher hasher,
+        TenantContext tenant, AuditWriter audit, CancellationToken ct)
+    {
+        var phone = Shared.PhoneNumber.Normalise(req.Phone);
+        var code = req.Code?.Trim() ?? "";
+
+        if (string.IsNullOrEmpty(req.NewPassword))
+            return Results.BadRequest(new { error = "A new password is required." });
+        if (req.NewPassword.Length < MinPasswordLength)
+            return Results.BadRequest(new { error = ShortPasswordMessage });
+        if (phone is null || code.Length != 6)
+            return Results.Json(new { error = "That code is invalid or has expired." }, statusCode: 400);
+
+        var matches = await db.Users.IgnoreQueryFilters()
+            .Where(u => u.Phone == phone && u.Status != "deleted" && u.Status != "suspended")
+            .Take(2)
+            .ToListAsync(ct);
+
+        if (matches.Count != 1)
+            return Results.Json(new { error = "That code is invalid or has expired." }, statusCode: 400);
+
+        var user = matches[0];
+
+        tenant.Set(user.TenantId, user.Id, user.Role);
+        await db.SyncTenantAsync(ct);
+
+        var expired = user.PasswordResetSentAt is null
+            || DateTimeOffset.UtcNow - user.PasswordResetSentAt > OtpLifetime;
+
+        if (user.PasswordResetHash is null || user.PasswordResetChannel != "phone" || expired
+            || user.PasswordResetAttempts >= OtpMaxAttempts
+            || OtpHash(user.Id, code) != user.PasswordResetHash)
+        {
+            user.PasswordResetAttempts++;
+            // Burn the code after five wrong guesses so an attacker cannot sit
+            // on one code and grind all million combinations.
+            if (user.PasswordResetAttempts >= OtpMaxAttempts)
+                user.PasswordResetHash = null;
+            await db.SaveChangesAsync(ct);
+            return Results.Json(new { error = "That code is invalid or has expired." }, statusCode: 400);
+        }
+
+        await ApplyPasswordResetAsync(user, req.NewPassword, hasher, db, ct);
+        await audit.WriteAsync("user.password_reset", "user", user.Id.ToString(), ct: ct);
+
+        return Results.Ok(new
+        {
+            reset = true,
+            note = "Your password has been reset and all sessions signed out. Sign in with your new password.",
+        });
+    }
+
+    /// <summary>
+    /// The tail shared by both reset paths: set the new password, clear the
+    /// reset state and any lockout, and END EVERY OTHER SESSION. Written once
+    /// so the email and phone paths cannot drift on the part that matters most
+    /// — a reset that forgot to revoke sessions would leave a thief signed in.
+    /// </summary>
+    private static async Task ApplyPasswordResetAsync(
+        User user, string newPassword, IPasswordHasher hasher, AppDbContext db, CancellationToken ct)
+    {
+        user.PasswordHash = hasher.Hash(newPassword);
+        user.PasswordChangedAt = DateTimeOffset.UtcNow;
+        user.MustChangePassword = false;
+
+        // The secret is spent, and the lockout (if any) is lifted — recovering
+        // a password should not then make you wait out a lockout.
+        user.PasswordResetHash = null;
+        user.PasswordResetSentAt = null;
+        user.PasswordResetAttempts = 0;
+        user.PasswordResetChannel = null;
+        user.FailedLoginCount = 0;
+        user.LockedUntil = null;
+
+        await db.RefreshTokens
+            .Where(t => t.UserId == user.Id && t.RevokedAt == null)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(t => t.RevokedAt, (DateTimeOffset?)DateTimeOffset.UtcNow)
+                .SetProperty(t => t.RevokeReason, (string?)"password reset"), ct);
+
+        await db.SaveChangesAsync(ct);
+    }
+
     // ------------------------------------------------------------------
     private static async Task<IResult> SessionsAsync(
         AppDbContext db, TenantContext tenant, CancellationToken ct)
@@ -1094,6 +1373,12 @@ public sealed record SwitchRequest(int Slot);
 /// </summary>
 public sealed record LogoutRequest(bool All = false, string? RefreshToken = null);
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
+
+// ---- forgot password ----
+public sealed record ForgotPasswordRequest(string? Email);
+public sealed record ResetPasswordRequest(string? Token, string NewPassword);
+public sealed record ForgotPasswordOtpRequest(string? Phone);
+public sealed record ResetPasswordOtpRequest(string? Phone, string? Code, string NewPassword);
 
 public sealed record AuthResponse(
     string AccessToken,

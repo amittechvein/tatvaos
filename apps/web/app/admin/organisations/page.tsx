@@ -2,17 +2,9 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import Alert from '@mui/material/Alert';
-import Box from '@mui/material/Box';
-import Dialog from '@mui/material/Dialog';
-import DialogActions from '@mui/material/DialogActions';
-import DialogContent from '@mui/material/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle';
-import MenuItem from '@mui/material/MenuItem';
-import TextField from '@mui/material/TextField';
-import Typography from '@mui/material/Typography';
 import { formatBytes } from '@tatvaos/core';
 import { fetchOrganisations, fetchPlans, type OrgRow, type PlanRow } from '@/lib/adminData';
+import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 import { AdminShell } from '@/components/admin/AdminShell';
 import { StatusBadge } from '@/components/admin/StatusBadge';
@@ -277,109 +269,134 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
     phone !== (org.phone ?? '') || gstin !== (org.gstin ?? '');
 
   return (
-    <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle sx={{ pb: 1 }}>
-        Manage — {org.name}
-        <Typography variant="body2" color="text.secondary">
-          {org.planName ?? 'No plan'}
-          {' · '}
-          <Box component="span" sx={{ textTransform: 'capitalize' }}>{org.status}</Box>
-        </Typography>
-      </DialogTitle>
-
-      <DialogContent>
-        {error && <Alert severity="error" sx={{ mb: 2.5 }}>{error}</Alert>}
-
-        {/* ---- Details: name, type, owner ---------------------------- */}
-        <Typography variant="body2" sx={{ fontWeight: 600, mb: 1.5 }}>Details</Typography>
-        <TextField fullWidth label="Organisation name" value={name} sx={{ mb: 2 }}
-                   onChange={(e) => setName(e.target.value)} />
-        <TextField select fullWidth label="Type" value={type} sx={{ mb: 2 }}
-                   onChange={(e) => setType(e.target.value)}>
-          {Object.entries(TYPE_LABEL).map(([v, label]) => (
-            <MenuItem key={v} value={v}>{label}</MenuItem>
-          ))}
-        </TextField>
-        <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, mb: 2 }}>
-          <TextField fullWidth label="Owner name" value={adminName}
-                     onChange={(e) => setAdminName(e.target.value)} />
-          <TextField fullWidth label="Owner email" value={adminEmail}
-                     onChange={(e) => setAdminEmail(e.target.value)} />
-          <TextField fullWidth label="Phone" value={phone}
-                     onChange={(e) => setPhone(e.target.value)} />
-          <TextField fullWidth label="GSTIN" value={gstin}
-                     onChange={(e) => setGstin(e.target.value)} />
-        </Box>
-        <Typography variant="caption" color="text.secondary">
-          The owner contact is who this organisation is billed to and called
-          about — editing it here does not change any user&apos;s sign-in.
-        </Typography>
-        <Box sx={{ mt: 1.5 }}>
-          <Button variant="primary" onClick={saveDetails} disabled={busy || !detailsDirty || name.trim().length < 2}>
-            {busy ? 'Saving…' : 'Save details'}
+    <Modal
+      title={`Manage — ${org.name}`}
+      subtitle={<>{org.planName ?? 'No plan'} · <span className="text-capitalize">{org.status}</span></>}
+      onClose={onClose}
+      busy={busy}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Close</Button>
+          <Button variant="primary" onClick={changePlan}
+                  disabled={busy || !planId || planId === org.planId}>
+            {busy ? 'Saving…' : 'Change plan'}
           </Button>
-        </Box>
+        </>
+      }
+    >
+      {error && <div className="alert alert-danger" role="alert">{error}</div>}
 
-        <Box sx={{ my: 3, borderTop: '1px solid', borderColor: 'divider' }} />
+      {/* ---- Details: name, type, owner ---------------------------- */}
+      <h6 className="fw-semibold mb-3">Details</h6>
 
-        {/* ---- Lifecycle: the "still trial" fix ----------------------- */}
-        <Typography variant="body2" sx={{ fontWeight: 600, mb: 1 }}>Status</Typography>
-        <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', mb: 1 }}>
-          {(onTrial || suspended) && (
-            <Button variant="primary" disabled={busy}
-                    onClick={() => post('/activate', 'POST', onChanged)}>
-              {onTrial ? 'End trial — activate' : 'Reactivate'}
-            </Button>
-          )}
-          {active && (
-            <Button variant="ghost" disabled={busy}
-                    onClick={() => post('/suspend', 'POST', onChanged)}>
-              Suspend
-            </Button>
-          )}
-        </Box>
-        <Typography variant="caption" color="text.secondary">
-          {onTrial && 'Activating ends the trial and marks the organisation a paying customer. It keeps signing in and receiving mail throughout.'}
-          {active && 'Suspending stops sign-in and mail delivery immediately. Nothing is deleted — data is retained for the grace period.'}
-          {suspended && 'Reactivating restores sign-in and delivery.'}
-        </Typography>
+      <Field label="Organisation name">
+        <input className="form-control" value={name} onChange={(e) => setName(e.target.value)} />
+      </Field>
 
-        <Box sx={{ my: 3, borderTop: '1px solid', borderColor: 'divider' }} />
+      <Field label="Type">
+        <select className="form-select" value={type} onChange={(e) => setType(e.target.value)}>
+          {Object.entries(TYPE_LABEL).map(([v, label]) => (
+            <option key={v} value={v}>{label}</option>
+          ))}
+        </select>
+      </Field>
 
-        {/* ---- Plan --------------------------------------------------- */}
-        <Typography variant="body2" sx={{ fontWeight: 600, mb: 1.5 }}>Plan</Typography>
-        <TextField select fullWidth label="Plan" value={planId} sx={{ mb: 2.5 }}
-                   onChange={(e) => setPlanId(e.target.value)}>
+      <div className="row g-3">
+        <div className="col-sm-6">
+          <Field label="Owner name">
+            <input className="form-control" value={adminName}
+                   onChange={(e) => setAdminName(e.target.value)} />
+          </Field>
+        </div>
+        <div className="col-sm-6">
+          <Field label="Owner email">
+            <input className="form-control" value={adminEmail}
+                   onChange={(e) => setAdminEmail(e.target.value)} />
+          </Field>
+        </div>
+        <div className="col-sm-6">
+          <Field label="Phone">
+            <input className="form-control" value={phone}
+                   onChange={(e) => setPhone(e.target.value)} />
+          </Field>
+        </div>
+        <div className="col-sm-6">
+          <Field label="GSTIN">
+            <input className="form-control" value={gstin}
+                   onChange={(e) => setGstin(e.target.value)} />
+          </Field>
+        </div>
+      </div>
+
+      <p className="fs-12 text-muted">
+        The owner contact is who this organisation is billed to and called
+        about — editing it here does not change any user&apos;s sign-in.
+      </p>
+
+      <div className="mt-2">
+        <Button variant="primary" onClick={saveDetails}
+                disabled={busy || !detailsDirty || name.trim().length < 2}>
+          {busy ? 'Saving…' : 'Save details'}
+        </Button>
+      </div>
+
+      <hr className="my-4" />
+
+      {/* ---- Lifecycle: the "still trial" fix ----------------------- */}
+      <h6 className="fw-semibold mb-2">Status</h6>
+      <div className="d-flex flex-wrap gap-2 mb-2">
+        {(onTrial || suspended) && (
+          <Button variant="primary" disabled={busy}
+                  onClick={() => post('/activate', 'POST', onChanged)}>
+            {onTrial ? 'End trial — activate' : 'Reactivate'}
+          </Button>
+        )}
+        {active && (
+          <Button variant="ghost" disabled={busy}
+                  onClick={() => post('/suspend', 'POST', onChanged)}>
+            Suspend
+          </Button>
+        )}
+      </div>
+      <p className="fs-12 text-muted">
+        {onTrial && 'Activating ends the trial and marks the organisation a paying customer. It keeps signing in and receiving mail throughout.'}
+        {active && 'Suspending stops sign-in and mail delivery immediately. Nothing is deleted — data is retained for the grace period.'}
+        {suspended && 'Reactivating restores sign-in and delivery.'}
+      </p>
+
+      <hr className="my-4" />
+
+      {/* ---- Plan --------------------------------------------------- */}
+      <h6 className="fw-semibold mb-3">Plan</h6>
+
+      <Field label="Plan">
+        <select className="form-select" value={planId} onChange={(e) => setPlanId(e.target.value)}>
           {plans.map((p) => (
-            <MenuItem key={p.id} value={p.id}>
+            <option key={p.id} value={p.id}>
               {p.name}
               {p.maxUsers ? ` — up to ${p.maxUsers} people` : ' — unlimited people'}
               {p.pricePerUserMonthly ? `, ₹${p.pricePerUserMonthly}/user/mo`
                 : p.priceMonthly ? `, ₹${p.priceMonthly}/mo` : ''}
-            </MenuItem>
+            </option>
           ))}
-        </TextField>
+        </select>
+      </Field>
 
-        <TextField fullWidth label="Seats (optional)" value={seats}
-                   onChange={(e) => setSeats(e.target.value.replace(/\D/g, ''))}
-                   helperText={chosen?.maxUsers
-                     ? `Billable seats. Leave empty to keep the current value; the plan caps people at ${chosen.maxUsers}.`
-                     : 'Billable seats. Leave empty to keep the current value.'} />
+      <Field
+        label="Seats (optional)"
+        hint={chosen?.maxUsers
+          ? `Billable seats. Leave empty to keep the current value; the plan caps people at ${chosen.maxUsers}.`
+          : 'Billable seats. Leave empty to keep the current value.'}
+      >
+        <input className="form-control" value={seats}
+               onChange={(e) => setSeats(e.target.value.replace(/\D/g, ''))} />
+      </Field>
 
-        <Alert severity="info" sx={{ mt: 2.5 }}>
-          The new plan&apos;s seat and domain limits apply immediately to new
-          growth. Storage already provisioned is untouched — shrinking a live
-          organisation&apos;s storage is a separate, deliberate action.
-        </Alert>
-      </DialogContent>
-
-      <DialogActions sx={{ px: 3, pb: 2.5 }}>
-        <Button variant="ghost" onClick={onClose}>Close</Button>
-        <Button variant="primary" onClick={changePlan}
-                disabled={busy || !planId || planId === org.planId}>
-          {busy ? 'Saving…' : 'Change plan'}
-        </Button>
-      </DialogActions>
-    </Dialog>
+      <div className="alert alert-info mb-0" role="note">
+        The new plan&apos;s seat and domain limits apply immediately to new
+        growth. Storage already provisioned is untouched — shrinking a live
+        organisation&apos;s storage is a separate, deliberate action.
+      </div>
+    </Modal>
   );
 }

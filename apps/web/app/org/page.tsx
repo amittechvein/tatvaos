@@ -195,7 +195,7 @@ export default function CoreOverview() {
               ))}
               {(data?.unassignedUsers ?? 0) > 0 && (
                 <div className="d-flex align-items-center gap-2 pt-2 border-top">
-                  <span className="shrink-0 rounded-circle bg-secondary" style={{ width: 10, height: 10 }} />
+                  <span className="shrink-0 rounded-circle" style={{ width: 10, height: 10, background: 'rgb(var(--ink-faint))' }} />
                   <span className="flex-fill fs-13 text-muted">No department</span>
                   <span className="fw-semibold fs-13">{data?.unassignedUsers}</span>
                 </div>

@@ -172,6 +172,19 @@ public class User
     [MaxLength(64)] public string? LoginOtpHash { get; set; }
     public DateTimeOffset? LoginOtpSentAt { get; set; }
     public int LoginOtpAttempts { get; set; }
+
+    // ---- Password reset (14-password-reset.sql) -------------------------
+    // Kept separate from the login OTP above ON PURPOSE: a reset secret must
+    // not be replayable at the login endpoint, nor a login OTP at the reset
+    // endpoint. The secret is never stored — this is a SHA-256 hex digest, of
+    // the raw email token (which is itself high-entropy and globally unique)
+    // or of (user id, code) for the phone path. Channel pins which door the
+    // secret was minted for, so the two verify paths cannot be crossed.
+    [MaxLength(64)] public string? PasswordResetHash { get; set; }
+    public DateTimeOffset? PasswordResetSentAt { get; set; }
+    public int PasswordResetAttempts { get; set; }
+    [MaxLength(8)] public string? PasswordResetChannel { get; set; }
+
     [MaxLength(200)] public required string DisplayName { get; set; }
 
     /// <summary>Argon2id. Never any other scheme in production.</summary>
