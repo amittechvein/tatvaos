@@ -25,7 +25,7 @@ const PAGE_SIZE = 50;
 export default function MailPage({ params }: { params: Promise<{ folderId: string }> }) {
   const { folderId: folderParam } = use(params);
   const router = useRouter();
-  const { authedFetch, user } = useAuth();
+  const { authedFetch } = useAuth();
 
   const [boot, setBoot] = useState<MailBootstrap | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -316,7 +316,6 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   }
 
   const mailbox = boot.mailbox;
-  const displayName = user?.displayName ?? mailbox.displayName;
   const rangeStart = total === 0 ? 0 : skip + 1;
   const rangeEnd = Math.min(skip + messages.length, total);
   const allSelected = selectedIds.size > 0 && selectedIds.size === filtered.length;

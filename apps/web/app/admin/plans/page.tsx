@@ -14,10 +14,16 @@ import { Empty } from '@/components/ui/Kit';
 // and out — the same GB convention the onboarding form and org pages use.
 const GB = 1024 ** 3;
 
+// Every product a plan can grant, kept in step with RAIL_PRODUCTS in lib/nav.
+// This list being short is not cosmetic: a plan that includes Sheet, with no
+// Sheet checkbox to reflect it, would lose Sheet the moment anyone pressed Save.
 const PRODUCTS: { key: string; label: string; soon?: boolean }[] = [
   { key: 'mail', label: 'Mail' },
   { key: 'drive', label: 'Drive', soon: true },
+  { key: 'people', label: 'People', soon: true },
   { key: 'payroll', label: 'Payroll', soon: true },
+  { key: 'sheet', label: 'Sheet', soon: true },
+  { key: 'word', label: 'Word', soon: true },
 ];
 
 type StorageModel = 'per_user' | 'pooled';
@@ -51,7 +57,7 @@ function blankForm(): PlanForm {
     maxDomains: '',
     pricingModel: 'per_user',
     price: '',
-    products: { mail: true, drive: false, payroll: false },
+    products: Object.fromEntries(PRODUCTS.map((p) => [p.key, p.key === 'mail'] as const)),
   };
 }
 
@@ -71,7 +77,13 @@ function formFromPlan(p: PlanRow): PlanForm {
       pricingModel === 'per_user' ? String(p.pricePerUserMonthly)
       : pricingModel === 'flat' ? String(p.priceMonthly)
       : '',
-    products: Object.fromEntries(PRODUCTS.map((x) => [x.key, p.includedProducts.includes(x.key)])),
+    // The union of what the UI knows about and what this plan already grants,
+    // so an unrecognised product still shows up as a ticked box rather than
+    // vanishing from the form — and therefore from the plan.
+    products: Object.fromEntries(
+      [...new Set([...PRODUCTS.map((x) => x.key), ...p.includedProducts])]
+        .map((k) => [k, p.includedProducts.includes(k)] as const),
+    ),
   };
 }
 
@@ -104,7 +116,9 @@ function toBody(f: PlanForm): UpsertPlanBody {
     perUserQuotaBytes: f.storageModel === 'per_user' ? Math.round(Number(f.perUserQuotaGb) * GB) : null,
     pooledStorageBytes: f.storageModel === 'pooled' ? Math.round(Number(f.pooledStorageGb) * GB) : null,
     maxDomains: f.maxDomains.trim() === '' ? null : Number(f.maxDomains),
-    includedProducts: PRODUCTS.map((x) => x.key).filter((k) => f.products[k]),
+    // Built from the form's own keys, never from PRODUCTS — that is what keeps
+    // a product this screen does not recognise attached to the plan.
+    includedProducts: Object.entries(f.products).filter(([, on]) => on).map(([k]) => k),
     pricePerUserMonthly: f.pricingModel === 'per_user' ? Number(f.price) : null,
     priceMonthly: f.pricingModel === 'flat' ? Number(f.price) : null,
   };
@@ -433,16 +447,20 @@ function PlanFormModal({
 
                 <div className="col-12">
                   <label className="form-label d-block">Included products</label>
-                  {PRODUCTS.map((p) => (
-                    <div className="form-check form-check-inline" key={p.key}>
-                      <input className="form-check-input" type="checkbox" id={`prod-${p.key}`}
-                             checked={Boolean(form.products[p.key])}
-                             onChange={(e) => setProduct(p.key, e.target.checked)} />
-                      <label className="form-check-label" htmlFor={`prod-${p.key}`}>
-                        {p.label}{p.soon && <span className="text-muted fs-11"> (soon)</span>}
-                      </label>
-                    </div>
-                  ))}
+                  {Object.keys(form.products).map((key) => {
+                    const known = PRODUCTS.find((x) => x.key === key);
+                    return (
+                      <div className="form-check form-check-inline" key={key}>
+                        <input className="form-check-input" type="checkbox" id={`prod-${key}`}
+                               checked={Boolean(form.products[key])}
+                               onChange={(e) => setProduct(key, e.target.checked)} />
+                        <label className="form-check-label text-capitalize" htmlFor={`prod-${key}`}>
+                          {known?.label ?? key}
+                          {known?.soon && <span className="text-muted fs-11"> (soon)</span>}
+                        </label>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>

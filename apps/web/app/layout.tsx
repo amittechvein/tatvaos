@@ -65,7 +65,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         {/* Free icon fonts YZEN's markup uses (ti = Tabler, ri = RemixIcon).
             Loaded from their own open-source CDNs, not from the theme. */}
-        {/* eslint-disable-next-line @next/next/no-page-custom-font */}
         <link rel="stylesheet"
           href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.11.0/dist/tabler-icons.min.css" />
         <link rel="stylesheet"
