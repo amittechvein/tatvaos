@@ -4,14 +4,14 @@
 # doors onto the same web container, so without this every product answered on
 # every host — core.tatvaos.com/mail/inbox served the app on the wrong domain.
 #
-# WHY A handle, NOT A BARE redir. A bare `redir` sits outside the site's
-# `handle` blocks, and Caddy's directive ordering let the catch-all
-# `handle { reverse_proxy web:3000 }` win first — so the redirect never fired
-# and the page 200'd. Wrapping it in a `handle` puts it in the same mutually-
-# exclusive group as that catch-all; because this fragment is imported before
-# the other handles, it is matched first for /mail paths and redirects
-# deterministically. The path is preserved ({uri}) and the auth cookie is on
-# .tatvaos.com, so a deep link and the session both survive the hop.
-handle /mail /mail/* {
+# A named matcher + handle: `handle` takes exactly ONE matcher token, so the
+# two paths (/mail and everything under it) go in a named matcher first. Using
+# a `handle` (not a bare redir) puts this in the same mutually-exclusive group
+# as the catch-all `handle { reverse_proxy web:3000 }`; imported before it, this
+# matches /mail paths first and redirects deterministically. The path is kept
+# ({uri}) and the auth cookie is on .tatvaos.com, so deep links and the session
+# both survive the hop.
+@mailpaths path /mail /mail/*
+handle @mailpaths {
     redir https://{$MAIL_DOMAIN}{uri} 302
 }
