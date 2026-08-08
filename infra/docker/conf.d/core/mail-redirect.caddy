@@ -13,5 +13,5 @@
 # deterministically. The path is preserved ({uri}) and the auth cookie is on
 # .tatvaos.com, so a deep link and the session both survive the hop.
 handle /mail /mail/* {
-    redir * https://{$MAIL_DOMAIN}{uri} 302
+    redir https://{$MAIL_DOMAIN}{uri} 302
 }
