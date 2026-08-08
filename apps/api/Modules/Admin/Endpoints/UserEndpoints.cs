@@ -48,11 +48,19 @@ public static class UserEndpoints
         users.MapPost("/{id:guid}/reset-app-password", ResetAppPasswordAsync);
         users.MapDelete("/{id:guid}", DeleteAsync);
 
-        // Profile photo. GET is not cached by the auth group's default headers,
-        // so a replaced photo shows immediately.
-        users.MapGet("/{id:guid}/avatar", AvatarAsync);
-        users.MapPut("/{id:guid}/avatar", SetAvatarAsync);
-        users.MapDelete("/{id:guid}/avatar", DeleteAvatarAsync);
+        // Profile photos are SELF-SERVICE or admin-managed, so they cannot sit
+        // in the OrgAdmin group — an ordinary employee setting their own photo
+        // from the account page is not an admin and would be blocked before the
+        // handler ran. This group requires only an authenticated user; each
+        // write handler enforces "your own photo, or you administer this org".
+        // Reads are open to any signed-in member of the tenant (RLS scopes them
+        // to the tenant anyway) so colleagues' photos can render in a list.
+        var avatars = app.MapGroup("/api/org/users")
+            .RequireAuthorization("User")
+            .WithTags("Organisation administration");
+        avatars.MapGet("/{id:guid}/avatar", AvatarAsync);
+        avatars.MapPut("/{id:guid}/avatar", SetAvatarAsync);
+        avatars.MapDelete("/{id:guid}/avatar", DeleteAvatarAsync);
 
         // Departments live in DepartmentEndpoints — they are a tree now, and
         // two routes reaching the same table with different shapes is how the
@@ -809,6 +817,12 @@ public static class UserEndpoints
 
     private const int MaxAvatarBytes = 2 * 1024 * 1024; // 2 MB decoded
 
+    // You may change a photo if it is YOUR OWN, or if you administer this org.
+    // The account page relies on the first half; Add Person on the second.
+    private static bool MayManageAvatar(TenantContext tenant, Guid targetUserId) =>
+        tenant.UserId == targetUserId ||
+        tenant.Role is "org_owner" or "org_admin" or "super_admin";
+
     private static async Task<IResult> AvatarAsync(Guid id, AppDbContext db, CancellationToken ct)
     {
         var a = await db.UserAvatars.AsNoTracking()
@@ -822,6 +836,9 @@ public static class UserEndpoints
         Guid id, SetAvatarRequest req, AppDbContext db, TenantContext tenant,
         AuditWriter audit, CancellationToken ct)
     {
+        if (!MayManageAvatar(tenant, id))
+            return Results.Json(new { error = "You can only change your own photo." }, statusCode: 403);
+
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id, ct);
         if (user is null) return Results.NotFound();
 
@@ -851,8 +868,11 @@ public static class UserEndpoints
     }
 
     private static async Task<IResult> DeleteAvatarAsync(
-        Guid id, AppDbContext db, AuditWriter audit, CancellationToken ct)
+        Guid id, AppDbContext db, TenantContext tenant, AuditWriter audit, CancellationToken ct)
     {
+        if (!MayManageAvatar(tenant, id))
+            return Results.Json(new { error = "You can only change your own photo." }, statusCode: 403);
+
         var a = await db.UserAvatars.FirstOrDefaultAsync(x => x.UserId == id, ct);
         if (a is null) return Results.NotFound();
         db.UserAvatars.Remove(a);
