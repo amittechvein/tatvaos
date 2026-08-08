@@ -145,3 +145,27 @@
   .mail-rail-slot .mail-rail .rail-compose { padding-inline: 0; }
   .mail-rail-slot .mail-rail:hover .rail-compose { padding-inline: 1rem; }
 }
+
+/* ============================================================================
+   Mail rail — list markers and the collapsed Compose button
+   ----------------------------------------------------------------------------
+   Tailwind's preflight is OFF in this project, so a bare <ul> keeps the
+   browser's defaults: disc markers AND a 40px inline-start padding. In the rail
+   that showed as a stray dot beside every folder, and — worse — the padding
+   pushed each row's icon past the collapsed 4rem strip, where overflow:hidden
+   clipped it, so the icon rail looked empty apart from the bullets.
+
+   The Compose button needs its own rule: opacity alone still reserves the
+   label's width, so with the button only 2.5rem wide the centred icon was
+   pushed out of view. Dropping the label from layout while collapsed lets the
+   icon centre properly. It is a plain inline <span>, so restoring `inline` on
+   hover is safe — this is deliberately scoped to .rail-compose rather than all
+   .rail-text, because several of those carry Tailwind display classes (the
+   storage row is `flex`) that a blanket display rule would clobber.
+   ============================================================================ */
+.mail-rail ul { list-style: none; margin: 0; padding-inline-start: 0; }
+
+@media (min-width: 640px) {
+  .mail-rail-slot .mail-rail .rail-compose .rail-text { display: none; }
+  .mail-rail-slot .mail-rail:hover .rail-compose .rail-text { display: inline; }
+}
