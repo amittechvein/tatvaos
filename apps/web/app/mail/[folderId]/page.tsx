@@ -1,13 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import type { Attachment, Folder, Message } from '@tatvaos/types';
 import { useAuth } from '@/lib/auth';
 import { mailApi, resolveFolder, type MailBootstrap } from '@/lib/mail';
 import DOMPurify from 'dompurify';
-import { Sidebar } from '@/components/mail/Sidebar';
 import { MessageList } from '@/components/mail/MessageList';
 import { MessageView } from '@/components/mail/MessageView';
 import { Composer, type ComposeMode } from '@/components/mail/Composer';
@@ -39,9 +38,19 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   const [composing, setComposing] = useState(false);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [composeMode, setComposeMode] = useState<ComposeMode>('new');
-  const [navOpen, setNavOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
+  const searchParams = useSearchParams();
+
+  // Compose lives in the shell rail, which cannot reach this page's state, so it
+  // links to ?compose=1. Open the composer, then strip the parameter so a
+  // refresh (or a back navigation) does not reopen it.
+  useEffect(() => {
+    if (searchParams.get('compose') === '1') {
+      startCompose(null, 'new');
+      router.replace(`/mail/${folderParam}`);
+    }
+  }, [searchParams, folderParam, router]);
 
   const folder: Folder | undefined = useMemo(
     () => (boot ? resolveFolder(boot.folders, folderParam) : undefined),
@@ -313,33 +322,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   const allSelected = selectedIds.size > 0 && selectedIds.size === filtered.length;
 
   return (
-    <div className="flex h-full bg-canvas">
-      {/* ---- Rail ---- */}
-      <div
-        className={`mail-rail-slot fixed inset-y-0 left-0 z-40 p-3 transition-transform lg:static lg:z-auto lg:translate-x-0 lg:p-0 ${
-          navOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
-      >
-        <Sidebar
-          folders={boot.folders}
-          mailbox={mailbox}
-          displayName={displayName}
-          onCompose={() => {
-            startCompose(null, 'new');
-            setNavOpen(false);
-          }}
-          onNavigate={() => setNavOpen(false)}
-        />
-      </div>
-      {navOpen && (
-        <div
-          className="fixed inset-0 z-30 bg-black/20 lg:hidden"
-          onClick={() => setNavOpen(false)}
-          aria-hidden="true"
-        />
-      )}
-
-      <div className="flex min-w-0 flex-1 gap-3 p-3">
+    <div className="flex h-full gap-3 bg-canvas p-3">
       {/* ---- List ---- */}
       <section
         className={`flex min-w-0 flex-col overflow-hidden rounded-card border border-line bg-surface lg:w-[420px] lg:shrink-0 ${
@@ -347,14 +330,6 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
         }`}
       >
         <header className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3">
-          <button
-            type="button"
-            onClick={() => setNavOpen(true)}
-            aria-label="Open menu"
-            className="flex h-9 w-9 items-center justify-center rounded-lg border border-line text-ink-muted lg:hidden"
-          >
-            <Icon name="menu" className="h-4.5 w-4.5" />
-          </button>
           <input
             type="checkbox"
             checked={allSelected}
@@ -488,7 +463,6 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
           </div>
         )}
       </section>
-      </div>
 
       {composing && (
         <Composer

@@ -16,9 +16,14 @@ import type { NavSection } from '@/components/shell/Sidebar';
 //  the Core/product split exists to avoid.
 // ============================================================================
 
-const Icon = ({ d }: { d: string }) => (
+// `colour` paints an individual rail icon. The svg strokes with currentColor,
+// so an inline colour on the element overrides the colour YZEN's stylesheet
+// sets on the .side-menu__icon wrapper — none of those rules use !important,
+// so the inline value wins cleanly and the label keeps the rail's own colour.
+const Icon = ({ d, colour }: { d: string; colour?: string }) => (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-       strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+       strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"
+       style={colour ? { color: colour } : undefined}>
     <path d={d} />
   </svg>
 );
@@ -43,6 +48,7 @@ const PATHS = {
   draft: 'M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z',
   junk: 'M10.3 3.9 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01',
   trash: 'M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6',
+  compose: 'M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z',
 };
 
 // ============================================================================
@@ -147,26 +153,35 @@ export function organisationNav(): NavSection[] {
 }
 
 
-/** A person inside the Mail app. The shell rail mirrors Mail's own folders so
- *  the rail is contextual to Mail rather than showing the console nav. Folders
- *  are dynamic server-side, but the five standard ones have stable slug routes,
- *  which is what the rail needs; custom folders still live in Mail's own column. */
+/** A person inside the Mail app.
+ *
+ *  Mail uses the same rail as the console — same markup, same collapse
+ *  behaviour — just a different item list, so moving between products never
+ *  changes the shape of the navigation. Icons are individually coloured: at
+ *  4rem collapsed the icon IS the item, and colour is what makes one findable
+ *  at a glance when the labels are hidden.
+ *
+ *  Compose is an action rather than a destination, so it links to the inbox
+ *  with ?compose=1 and the mail page opens the composer and tidies the URL.
+ *  That keeps it a real link — middle-click and deep-link both behave.
+ */
 export function mailNav(): NavSection[] {
   return [
     {
       heading: 'Mail',
       items: [
-        { href: '/mail/inbox', label: 'Inbox', icon: <Icon d={PATHS.inbox} /> },
-        { href: '/mail/drafts', label: 'Drafts', icon: <Icon d={PATHS.draft} /> },
-        { href: '/mail/sent', label: 'Sent', icon: <Icon d={PATHS.sent} /> },
-        { href: '/mail/junk', label: 'Junk', icon: <Icon d={PATHS.junk} /> },
-        { href: '/mail/trash', label: 'Trash', icon: <Icon d={PATHS.trash} /> },
+        { href: '/mail/inbox?compose=1', label: 'Compose', icon: <Icon d={PATHS.compose} colour="#03b562" /> },
+        { href: '/mail/inbox', label: 'Inbox', icon: <Icon d={PATHS.inbox} colour="#0fbcf9" /> },
+        { href: '/mail/drafts', label: 'Drafts', icon: <Icon d={PATHS.draft} colour="#ffa909" /> },
+        { href: '/mail/sent', label: 'Sent', icon: <Icon d={PATHS.sent} colour="#7367f0" /> },
+        { href: '/mail/junk', label: 'Junk', icon: <Icon d={PATHS.junk} colour="#fd4963" /> },
+        { href: '/mail/trash', label: 'Trash', icon: <Icon d={PATHS.trash} colour="#98a2b8" /> },
       ],
     },
     {
       heading: 'Settings',
       items: [
-        { href: '/account', label: 'Settings', icon: <Icon d={PATHS.gear} /> },
+        { href: '/account', label: 'Settings', icon: <Icon d={PATHS.gear} colour="#00cfe8" /> },
       ],
     },
   ];

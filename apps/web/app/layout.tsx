@@ -3,6 +3,7 @@ import { Plus_Jakarta_Sans } from 'next/font/google';
 import { AuthProvider } from '@/lib/auth';
 import { ThemeProvider } from '@/lib/theme';
 import { MuiRegistry } from '@/lib/mui/ThemeRegistry';
+import { BuildBadge } from '@/components/BuildBadge';
 // YZEN's real stylesheet (licensed to Techvein) drives the console look. Order
 // matters: our Tailwind/globals baseline first, then Bootstrap, then YZEN's
 // styles.css last so its component rules win. Icon fonts (Tabler, RemixIcon)
@@ -69,6 +70,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.11.0/dist/tabler-icons.min.css" />
         <link rel="stylesheet"
           href="https://cdn.jsdelivr.net/npm/remixicon@4.3.0/fonts/remixicon.css" />
+        {/* Machine-readable build stamp — lets a deploy be verified without
+            reading the screen (document.querySelector('meta[name=x-build]')). */}
+        <meta name="x-build" content={process.env.NEXT_PUBLIC_BUILD_SHA || 'unknown'} />
       </head>
       {/*
         AuthProvider wraps everything so the access token lives in one place,
@@ -93,6 +97,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <AuthProvider>{children}</AuthProvider>
           </MuiRegistry>
         </ThemeProvider>
+        {/* Outside the providers on purpose: the version must still render
+            even if a provider below it throws. */}
+        <BuildBadge />
       </body>
     </html>
   );

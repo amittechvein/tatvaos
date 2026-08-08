@@ -23,6 +23,7 @@ export function AppShell({
   actions,
   children,
   bleed = false,
+  railFooter,
 }: {
   scope: 'platform' | 'organisation' | 'mail';
   brand: string;
@@ -34,13 +35,15 @@ export function AppShell({
   /** App-style screens (Mail) fill the shell body and scroll internally
    *  instead of flowing in the padded container. */
   bleed?: boolean;
+  /** Rendered at the bottom of the rail. */
+  railFooter?: React.ReactNode;
 }) {
   return (
     <div className="page">
       <Topbar scope={scope} />
-      {scope !== 'mail' && <Sidebar sections={sections} brand={brand} scope={scope} />}
+      <Sidebar sections={sections} brand={brand} scope={scope} footer={railFooter} />
 
-      <div className={`main-content app-content${bleed ? ' app-content--bleed' : ''}${scope === 'mail' ? ' app-content--norail' : ''}`}>
+      <div className={`main-content app-content${bleed ? ' app-content--bleed' : ''}`}>
         {bleed ? (
           children
         ) : (

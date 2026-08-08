@@ -3,6 +3,7 @@
 import { RequireAuth } from '@/components/RequireAuth';
 import { AppShell } from '@/components/shell/AppShell';
 import { mailNav } from '@/lib/nav';
+import { MailRailStorage } from '@/components/mail/MailRailStorage';
 
 /**
  * Mail is real now — everything under /mail talks to the API, so everything
@@ -19,7 +20,13 @@ import { mailNav } from '@/lib/nav';
 export default function MailLayout({ children }: { children: React.ReactNode }) {
   return (
     <RequireAuth>
-      <AppShell scope="mail" brand="TatvaOS" sections={mailNav()} bleed>
+      <AppShell
+        scope="mail"
+        brand="TatvaOS"
+        sections={mailNav()}
+        railFooter={<MailRailStorage />}
+        bleed
+      >
         {children}
       </AppShell>
     </RequireAuth>

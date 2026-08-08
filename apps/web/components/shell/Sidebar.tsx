@@ -33,10 +33,13 @@ export interface NavSection {
 export const PANEL_WIDTH = 262;
 export const PANEL_WIDTH_ICONS = 72;
 
-export function Sidebar({ sections, brand, scope }: {
+export function Sidebar({ sections, brand, scope, footer }: {
   sections: NavSection[];
   brand: string;
   scope: 'platform' | 'organisation' | 'mail';
+  /** Pinned to the bottom of the rail (Mail puts the storage meter here).
+   *  Hidden while the rail is collapsed to icons — see overrides.css. */
+  footer?: React.ReactNode;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState<string | null>(null);
@@ -158,6 +161,8 @@ export function Sidebar({ sections, brand, scope }: {
           </ul>
         </nav>
       </div>
+
+      {footer && <div className="sidebar-footer">{footer}</div>}
     </aside>
   );
 }
