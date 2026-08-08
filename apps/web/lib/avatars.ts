@@ -36,6 +36,18 @@ const OUTPUT_PX = 256;
 // ---------------------------------------------------------------------------
 const cache = new Map<string, Promise<string | null>>();
 
+// Anything currently showing a photo needs to know when it is replaced: the
+// object URL it is holding gets revoked below, which would otherwise leave a
+// broken image on screen until that component happened to remount.
+type Listener = (userId: string) => void;
+const listeners = new Set<Listener>();
+
+/** Subscribe to photo changes. Returns the unsubscribe function. */
+export function onAvatarChange(fn: Listener): () => void {
+  listeners.add(fn);
+  return () => { listeners.delete(fn); };
+}
+
 export function avatarObjectUrl(authedFetch: AuthedFetch, userId: string): Promise<string | null> {
   const hit = cache.get(userId);
   if (hit) return hit;
@@ -56,6 +68,7 @@ export function bustAvatar(userId: string): void {
   const pending = cache.get(userId);
   cache.delete(userId);
   pending?.then((url) => { if (url) URL.revokeObjectURL(url); }).catch(() => {});
+  listeners.forEach((fn) => fn(userId));
 }
 
 // ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { avatarHue, initials } from '@tatvaos/core';
 import { useAuth } from '@/lib/auth';
-import { avatarObjectUrl } from '@/lib/avatars';
+import { avatarObjectUrl, onAvatarChange } from '@/lib/avatars';
 
 /**
  * A person's profile photo, falling back to their initials.
@@ -29,13 +29,20 @@ export function UserPhoto({
 }) {
   const { authedFetch } = useAuth();
   const [url, setUrl] = useState<string | null>(null);
+  const [version, setVersion] = useState(0);
+
+  // Only this person's changes matter — otherwise one edit would re-fetch every
+  // photo on a fifty-row page.
+  useEffect(() => onAvatarChange((changed) => {
+    if (changed === userId) setVersion((v) => v + 1);
+  }), [userId]);
 
   useEffect(() => {
     if (!hasAvatar) { setUrl(null); return; }
     let alive = true;
     avatarObjectUrl(authedFetch, userId).then((u) => { if (alive) setUrl(u); });
     return () => { alive = false; };
-  }, [authedFetch, userId, hasAvatar]);
+  }, [authedFetch, userId, hasAvatar, version]);
 
   if (url) {
     return (
@@ -65,4 +72,31 @@ export function UserPhoto({
       {initials({ name: name ?? undefined, email })}
     </div>
   );
+}
+
+/**
+ * The signed-in person's own photo, or null.
+ *
+ * Shared by the header button and the account menu so both track a photo the
+ * moment it changes — a new photo that only appeared after a page reload would
+ * read as the change having failed.
+ */
+export function useSelfPhoto(): string | null {
+  const { user, authedFetch } = useAuth();
+  const [url, setUrl] = useState<string | null>(null);
+  const [version, setVersion] = useState(0);
+
+  useEffect(() => onAvatarChange((changed) => {
+    if (changed === user?.id) setVersion((v) => v + 1);
+  }), [user?.id]);
+
+  useEffect(() => {
+    const id = user?.id;
+    if (!id) { setUrl(null); return; }
+    let alive = true;
+    avatarObjectUrl(authedFetch, id).then((u) => { if (alive) setUrl(u); });
+    return () => { alive = false; };
+  }, [authedFetch, user?.id, version]);
+
+  return url;
 }

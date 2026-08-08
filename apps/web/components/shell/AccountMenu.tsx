@@ -37,6 +37,7 @@ import Typography from '@mui/material/Typography';
 import { alpha } from '@mui/material/styles';
 
 import { useAuth, type AccountSlot } from '@/lib/auth';
+import { useSelfPhoto } from '@/components/ui/UserPhoto';
 
 /** Stable per-address colour, so an account keeps the same tile every time. */
 const TILE = ['#7367f0', '#28c76f', '#ff9f43', '#ea5455', '#00cfe8', '#a855f7'];
@@ -65,6 +66,7 @@ export function AccountMenu({ anchorEl, onClose }: {
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const selfPhoto = useSelfPhoto();
 
   // The roster changes in another tab too — signing out over there should not
   // leave this menu offering an account that is gone.
@@ -108,10 +110,15 @@ export function AccountMenu({ anchorEl, onClose }: {
           </Typography>
         )}
 
-        <Avatar sx={{
-          width: 72, height: 72, mx: 'auto', my: 2, fontSize: 26, fontWeight: 600,
-          bgcolor: tint(user?.email ?? ''),
-        }}>
+        {/* src wins when there is a photo; the initials stay as the fallback,
+            so an account with no photo looks exactly as it did before. */}
+        <Avatar
+          src={selfPhoto ?? undefined}
+          sx={{
+            width: 72, height: 72, mx: 'auto', my: 2, fontSize: 26, fontWeight: 600,
+            bgcolor: tint(user?.email ?? ''),
+          }}
+        >
           {initials(user?.displayName ?? '', user?.email ?? '')}
         </Avatar>
 

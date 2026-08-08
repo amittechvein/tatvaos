@@ -5,6 +5,7 @@ import { useAuth } from '@/lib/auth';
 import { AccountMenu } from './AccountMenu';
 import { AppLauncher } from './AppLauncher';
 import { useTheme as useAppearance } from '@/lib/theme';
+import { useSelfPhoto } from '@/components/ui/UserPhoto';
 
 // ============================================================================
 //  Header — YZEN's .app-header markup
@@ -21,6 +22,7 @@ export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' 
   const { user } = useAuth();
   const { mode, setMode } = useAppearance();
   const [anchor, setAnchor] = useState<null | HTMLElement>(null);
+  const selfPhoto = useSelfPhoto();
 
   // The rail resting state is viewport-aware. On desktop it sits collapsed to
   // icons ("icon-overlay-close", expanding on hover); the toggle PINS it fully
@@ -86,15 +88,21 @@ export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' 
             <div className="header-element">
               <a href="javascript:void(0);" className="header-link d-flex align-items-center"
                  onClick={(e) => setAnchor(e.currentTarget)} aria-label="Account">
-                <span
-                  style={{
-                    width: 34, height: 34, borderRadius: '50%', display: 'grid',
-                    placeItems: 'center', fontWeight: 700, fontSize: 14, color: '#fff',
-                    background: 'var(--primary-color)',
-                  }}
-                >
-                  {initial}
-                </span>
+                {selfPhoto ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={selfPhoto} alt="" width={34} height={34}
+                       style={{ width: 34, height: 34, borderRadius: '50%', objectFit: 'cover' }} />
+                ) : (
+                  <span
+                    style={{
+                      width: 34, height: 34, borderRadius: '50%', display: 'grid',
+                      placeItems: 'center', fontWeight: 700, fontSize: 14, color: '#fff',
+                      background: 'var(--primary-color)',
+                    }}
+                  >
+                    {initial}
+                  </span>
+                )}
               </a>
             </div>
           </div>
