@@ -316,7 +316,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     <div className="flex h-full bg-canvas">
       {/* ---- Rail ---- */}
       <div
-        className={`fixed inset-y-0 left-0 z-40 p-3 transition-transform lg:relative lg:z-auto lg:translate-x-0 lg:p-0 lg:w-16 lg:shrink-0 ${
+        className={`mail-rail-slot fixed inset-y-0 left-0 z-40 p-3 transition-transform lg:static lg:z-auto lg:translate-x-0 lg:p-0 ${
           navOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >

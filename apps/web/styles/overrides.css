@@ -97,3 +97,51 @@
 .app-content--norail { margin-inline-start: 0 !important; }
 .app-header--norail { padding-inline-start: 0 !important; }
 .app-header .header-brand-logo { height: 26px; width: auto; display: block; }
+
+/* ============================================================================
+   Mail rail — hide/unhide (matches the console's icon-overlay rail)
+   ----------------------------------------------------------------------------
+   >= 640px: the rail rests as a 4rem icon strip and expands to its full 16rem
+   as an OVERLAY on hover (the content beside it does not reflow — the slot keeps
+   its 4rem), with the text labels (.rail-text) fading in. Below 640px none of
+   this applies, so the rail stays the full-width mobile slide-in panel.
+
+   !important throughout: these must beat the Mail sidebar's own Tailwind width /
+   position utilities (w-64, fixed, translate-x-*) no matter which CSS chunk
+   those land in — a plain same-specificity rule is not guaranteed to win across
+   Next.js's split stylesheets, which is why the earlier lg:* approach did not
+   collapse.
+   ============================================================================ */
+@media (min-width: 640px) {
+  .mail-rail-slot {
+    position: relative !important;
+    width: 4rem !important;
+    flex: 0 0 4rem !important;
+    padding: 0 !important;
+    transform: none !important;
+    z-index: auto !important;
+  }
+  .mail-rail-slot .mail-rail {
+    position: absolute !important;
+    inset-block: 0;
+    inset-inline-start: 0;
+    width: 4rem !important;
+    z-index: 30;
+    overflow: hidden;
+    transition: width 200ms ease;
+  }
+  .mail-rail-slot .mail-rail:hover {
+    width: 16rem !important;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  }
+  /* Labels: hidden while collapsed, revealed on hover. */
+  .mail-rail-slot .mail-rail .rail-text {
+    opacity: 0;
+    white-space: nowrap;
+    transition: opacity 200ms ease;
+  }
+  .mail-rail-slot .mail-rail:hover .rail-text { opacity: 1; }
+  /* Compose button: icon-only while collapsed so it isn't cramped. */
+  .mail-rail-slot .mail-rail .rail-compose { padding-inline: 0; }
+  .mail-rail-slot .mail-rail:hover .rail-compose { padding-inline: 1rem; }
+}

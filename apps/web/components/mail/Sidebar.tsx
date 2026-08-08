@@ -9,23 +9,21 @@ import { Avatar } from '../ui/Avatar';
 import { Icon } from '../ui/Icon';
 
 // ============================================================================
-//  Mail rail — the dark navy rail, matching the Core console's rail, including
+//  Mail rail — the dark navy rail, matching the Core console's rail including
 //  its hide/unhide behaviour.
 //
-//  On desktop the rail rests as a 4rem icon strip and expands to its full width
-//  as an OVERLAY on hover (the content beside it does not reflow — the same feel
-//  as the console's icon-overlay rail); on mouse-leave it collapses back. On
-//  mobile it is the full-width slide-in panel (the width/overlay classes are all
-//  lg: prefixed, so nothing collapses there).
-//
-//  The collapse is pure CSS: the <nav> is a hover group whose width animates,
-//  every text label fades out via `T` when collapsed, and the icons/avatars —
-//  which sit at the left of each row — stay visible in the 4rem strip.
+//  On screens >= 640px the rail rests as a 4rem icon strip and expands to its
+//  full width as an OVERLAY on hover (content beside it does not reflow), then
+//  collapses on mouse-leave. Below 640px it is the full-width slide-in panel.
+//  The collapse itself is driven by CSS in styles/overrides.css keyed off the
+//  `.mail-rail` / `.mail-rail-slot` / `.rail-text` classes — done there (loaded
+//  last, with !important) so it beats this component's Tailwind width/position
+//  utilities regardless of which CSS chunk they land in. `rail-text` marks every
+//  label that fades out while the rail is the icon strip.
 // ============================================================================
 
-// Applied to every text label: hidden (faded) while the rail is the icon strip,
-// shown once it expands on hover. Base (mobile) leaves it visible.
-const T = 'whitespace-nowrap transition-opacity duration-200 lg:opacity-0 lg:group-hover/rail:opacity-100';
+// Marks a text label that hides while the rail is collapsed (see overrides.css).
+const T = 'rail-text';
 
 const FOLDER_ICONS: Record<string, 'inbox' | 'send' | 'draft' | 'junk' | 'trash'> = {
   '\\Inbox': 'inbox',
@@ -74,18 +72,13 @@ export function Sidebar({
   const pct = quotaPercent(mailbox.usedBytes, mailbox.quotaBytes);
 
   return (
-    <nav
-      className="group/rail flex h-full w-64 shrink-0 flex-col overflow-hidden bg-rail text-rail-text
-                 transition-[width] duration-200 ease-out
-                 lg:absolute lg:inset-y-0 lg:left-0 lg:z-30 lg:w-16 lg:hover:w-64
-                 lg:hover:shadow-2xl lg:hover:shadow-black/50"
-    >
+    <nav className="mail-rail flex h-full w-64 shrink-0 flex-col overflow-hidden bg-rail text-rail-text">
       {/* Compose */}
       <div className="border-b border-white/10 p-3">
         <button
           type="button"
           onClick={onCompose}
-          className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-brand-700 lg:px-0 lg:group-hover/rail:px-4"
+          className="rail-compose flex w-full items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-brand-700"
         >
           <Icon name="plus-circle" className="h-4 w-4 shrink-0" />
           <span className={T}>Compose Mail</span>
