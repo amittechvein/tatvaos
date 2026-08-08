@@ -24,6 +24,9 @@ import { alpha } from '@mui/material/styles';
 import { AdminShell } from '@/components/admin/AdminShell';
 import { Badge, Button, Card, Empty, Meter, Table, Td, statusTone } from '@/components/ui/Kit';
 import { useAuth } from '@/lib/auth';
+import { UserPhoto } from '@/components/ui/UserPhoto';
+import { PhotoPicker } from '@/components/ui/PhotoPicker';
+import { avatarObjectUrl, bustAvatar } from '@/lib/avatars';
 
 const GB = 1024 ** 3;
 
@@ -41,6 +44,7 @@ interface Person {
   role: string; status: string; products: string[];
   quotaBytes: number; usedBytes: number;
   mfaEnabled: boolean; lastLoginAt: string | null;
+  hasAvatar?: boolean;
 }
 
 interface DomainOpt { id: string; fqdn: string; isActive: boolean; ownershipVerified: boolean }
@@ -187,8 +191,14 @@ export default function PeoplePage() {
                     onClick={() => setEditing(p)}
                     title="Edit this person">
                   <Td>
-                    <Typography variant="body2" sx={{ fontWeight: 600 }}>{p.displayName}</Typography>
-                    <Typography variant="caption" color="text.secondary">{p.email}</Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                      <UserPhoto userId={p.id} hasAvatar={p.hasAvatar}
+                                 name={p.displayName} email={p.email} size={36} />
+                      <Box sx={{ minWidth: 0 }}>
+                        <Typography variant="body2" sx={{ fontWeight: 600 }}>{p.displayName}</Typography>
+                        <Typography variant="caption" color="text.secondary">{p.email}</Typography>
+                      </Box>
+                    </Box>
                   </Td>
                   <Td>
                     {dept ? (
@@ -283,6 +293,8 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
   const [quotaGb, setQuotaGb] = useState(15);
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<{ email: string; password: string } | null>(null);
+  const [photo, setPhoto] = useState<string | null>(null);
+  const [photoWarning, setPhotoWarning] = useState<string | null>(null);
 
   const dept = departments.find((f) => f.d.id === departmentId)?.d;
   const inherited = dept?.effectiveQuotaBytes ?? poolFloor;
@@ -307,6 +319,28 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
 
       // Shown once, never stored recoverably. A retrievable password is a
       // stored plaintext password.
+      // Deliberately a second call: it keeps the create request lean, and a
+      // photo that fails to attach must not fail the person — they already
+      // exist by this point, so this surfaces as a warning, not an error.
+      if (photo) {
+        if (!body.id) {
+          setPhotoWarning('The photo was not saved — the server did not return the new id.');
+        } else {
+          try {
+            const put = await authedFetch(`/org/users/${body.id}/avatar`, {
+              method: 'PUT',
+              body: JSON.stringify({ dataUrl: photo }),
+            });
+            if (!put.ok) {
+              const pb = await put.json().catch(() => ({}));
+              setPhotoWarning(pb.error ?? 'The photo could not be saved.');
+            }
+          } catch {
+            setPhotoWarning('The photo could not be saved.');
+          }
+        }
+      }
+
       setCreated({ email: body.email, password: body.temporaryPassword });
     } catch (e) {
       onError(e instanceof Error ? e.message : 'Could not create this person.');
@@ -319,6 +353,11 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
       <Dialog open onClose={() => onCreated(`${created.email} created.`)} maxWidth="sm" fullWidth>
         <DialogTitle>{created.email} is ready</DialogTitle>
         <DialogContent>
+          {photoWarning && (
+            <Typography variant="body2" sx={{ mb: 2, color: 'warning.main' }}>
+              {photoWarning} You can add it from their profile.
+            </Typography>
+          )}
           <Alert severity="warning" sx={{ mb: 2.5 }}>
             This password is shown once and cannot be retrieved later. Copy it now —
             if it is lost, reset it rather than asking us for it.
@@ -361,8 +400,13 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
       </DialogTitle>
 
       <DialogContent>
-        <TextField autoFocus fullWidth label="Full name" required value={displayName}
-                   onChange={(e) => setDisplayName(e.target.value)} sx={{ mt: 1, mb: 2.5 }} />
+        <Box sx={{ mt: 1, mb: 2.5 }}>
+          <PhotoPicker preview={photo} name={displayName} onPick={setPhoto}
+                       onRemove={() => setPhoto(null)} disabled={busy} />
+        </Box>
+
+        <TextField fullWidth label="Full name" required value={displayName}
+                   onChange={(e) => setDisplayName(e.target.value)} sx={{ mb: 2.5 }} />
 
         <Box sx={{ display: 'flex', gap: 1.5, mb: 2.5, alignItems: 'flex-start' }}>
           <TextField label="Email address" required value={localPart}
@@ -468,6 +512,16 @@ function EditPerson({ person, departments, onClose, onSaved, onError }: {
   const [quotaGb, setQuotaGb] = useState(Math.max(1, Math.round(person.quotaBytes / GB)));
   const [busy, setBusy] = useState(false);
   const [tempPassword, setTempPassword] = useState<string | null>(null);
+  // undefined = untouched, null = remove, string = a newly picked photo.
+  const [photo, setPhoto] = useState<string | null | undefined>(undefined);
+  const [storedPhoto, setStoredPhoto] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!person.hasAvatar) return;
+    let alive = true;
+    avatarObjectUrl(authedFetch, person.id).then((u) => { if (alive) setStoredPhoto(u); });
+    return () => { alive = false; };
+  }, [authedFetch, person.id, person.hasAvatar]);
   const [armDelete, setArmDelete] = useState(false);
 
   const editingSelf = me?.id === person.id;
@@ -509,6 +563,24 @@ function EditPerson({ person, departments, onClose, onSaved, onError }: {
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? 'Could not save the changes.');
+
+      if (photo !== undefined) {
+        if (photo === null) {
+          await authedFetch(`/org/users/${person.id}/avatar`, { method: 'DELETE' });
+        } else {
+          const put = await authedFetch(`/org/users/${person.id}/avatar`, {
+            method: 'PUT',
+            body: JSON.stringify({ dataUrl: photo }),
+          });
+          if (!put.ok) {
+            const pb = await put.json().catch(() => ({}));
+            throw new Error(pb.error ?? 'The photo could not be saved.');
+          }
+        }
+        // Release the cached object URL so the list re-reads the new photo.
+        bustAvatar(person.id);
+      }
+
       onSaved(`${displayName.trim()} updated.`);
     } catch (e) {
       onError(e instanceof Error ? e.message : 'Could not save the changes.');
@@ -562,8 +634,19 @@ function EditPerson({ person, departments, onClose, onSaved, onError }: {
       </DialogTitle>
 
       <DialogContent>
-        <TextField autoFocus fullWidth label="Full name" required value={displayName}
-                   onChange={(e) => setDisplayName(e.target.value)} sx={{ mt: 1, mb: 2.5 }} />
+        <Box sx={{ mt: 1, mb: 2.5 }}>
+          <PhotoPicker
+            preview={photo !== undefined ? photo : storedPhoto}
+            name={person.displayName}
+            email={person.email}
+            onPick={setPhoto}
+            onRemove={() => setPhoto(null)}
+            disabled={busy}
+          />
+        </Box>
+
+        <TextField fullWidth label="Full name" required value={displayName}
+                   onChange={(e) => setDisplayName(e.target.value)} sx={{ mb: 2.5 }} />
 
         <TextField select fullWidth label="Department" value={departmentId} sx={{ mb: 2.5 }}
                    onChange={(e) => setDepartmentId(e.target.value)}>

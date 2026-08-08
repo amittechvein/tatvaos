@@ -27,6 +27,8 @@ import InputAdornment from '@mui/material/InputAdornment';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { alpha } from '@mui/material/styles';
+import { PhotoPicker } from '@/components/ui/PhotoPicker';
+import { avatarObjectUrl, bustAvatar } from '@/lib/avatars';
 
 import { RequireAuth } from '@/components/RequireAuth';
 import { AppLauncher } from '@/components/shell/AppLauncher';
@@ -138,6 +140,53 @@ function AccountHub() {
   const [loading, setLoading] = useState(true);
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
 
+  const [myPhoto, setMyPhoto] = useState<string | null>(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+
+  // Asked for unconditionally: this page has no hasAvatar flag to consult, and
+  // a 404 simply resolves to null, which renders as initials.
+  useEffect(() => {
+    const id = user?.id;
+    if (!id) return;
+    let alive = true;
+    avatarObjectUrl(authedFetch, id).then((u) => { if (alive) setMyPhoto(u); });
+    return () => { alive = false; };
+  }, [authedFetch, user?.id]);
+
+  /**
+   * Saves immediately rather than collecting into a Save button — this page has
+   * no form to submit, so a picked photo that sat unsaved would be a trap.
+   * Passing null removes the photo.
+   */
+  async function updatePhoto(dataUrl: string | null) {
+    const id = user?.id;
+    if (!id) return;
+    setPhotoBusy(true);
+    setPhotoError(null);
+    try {
+      if (dataUrl === null) {
+        const r = await authedFetch(`/org/users/${id}/avatar`, { method: 'DELETE' });
+        if (!r.ok) throw new Error('Could not remove the photo.');
+        setMyPhoto(null);
+      } else {
+        const r = await authedFetch(`/org/users/${id}/avatar`, {
+          method: 'PUT',
+          body: JSON.stringify({ dataUrl }),
+        });
+        const b = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(b.error ?? 'Could not save the photo.');
+        // The data URL is a valid src, so the new photo shows without a refetch.
+        setMyPhoto(dataUrl);
+      }
+      bustAvatar(id);
+    } catch (e) {
+      setPhotoError(e instanceof Error ? e.message : 'Could not update the photo.');
+    } finally {
+      setPhotoBusy(false);
+    }
+  }
+
   const load = useCallback(async () => {
     const [meRes, sesRes] = await Promise.all([
       authedFetch('/auth/me'),
@@ -232,10 +281,22 @@ function AccountHub() {
             {section === 'home' && (
               <>
                 <Box sx={{ textAlign: 'center', pt: 6, pb: 4 }}>
-                  <Avatar sx={{ width: 96, height: 96, fontSize: 38, fontWeight: 600,
-                                bgcolor: 'primary.main', mx: 'auto', mb: 2.5 }}>
-                    {initial}
-                  </Avatar>
+                  <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2.5 }}>
+                    <PhotoPicker
+                      preview={myPhoto}
+                      name={user?.displayName}
+                      email={user?.email}
+                      onPick={(d) => void updatePhoto(d)}
+                      onRemove={() => void updatePhoto(null)}
+                      disabled={photoBusy}
+                      size={96}
+                    />
+                  </Box>
+                  {photoError && (
+                    <Typography variant="body2" sx={{ color: 'error.main', mb: 1.5 }}>
+                      {photoError}
+                    </Typography>
+                  )}
                   <Typography variant="h4" sx={{ fontWeight: 500 }}>
                     {user?.displayName}
                   </Typography>
