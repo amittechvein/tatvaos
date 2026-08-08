@@ -323,21 +323,21 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
       // photo that fails to attach must not fail the person — they already
       // exist by this point, so this surfaces as a warning, not an error.
       if (photo) {
-        if (!body.id) {
-          setPhotoWarning('The photo was not saved — the server did not return the new id.');
-        } else {
-          try {
-            const put = await authedFetch(`/org/users/${body.id}/avatar`, {
-              method: 'PUT',
-              body: JSON.stringify({ dataUrl: photo }),
-            });
-            if (!put.ok) {
-              const pb = await put.json().catch(() => ({}));
-              setPhotoWarning(pb.error ?? 'The photo could not be saved.');
-            }
-          } catch {
-            setPhotoWarning('The photo could not be saved.');
+        try {
+          const put = await authedFetch(`/org/users/${body.id}/avatar`, {
+            method: 'PUT',
+            body: JSON.stringify({ dataUrl: photo }),
+          });
+          if (!put.ok) {
+            // The server still validates type and size, so this can fail even
+            // on a file we resized happily. Reported rather than thrown: the
+            // person already exists by now, and losing them over a photo would
+            // be the worse outcome.
+            const pb = await put.json().catch(() => ({}));
+            setPhotoWarning(pb.error ?? 'The photo could not be saved.');
           }
+        } catch {
+          setPhotoWarning('The photo could not be saved.');
         }
       }
 
