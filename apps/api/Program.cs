@@ -8,6 +8,8 @@ using TatvaOS.Api.Modules.Auth.Endpoints;
 using TatvaOS.Api.Modules.Core;
 using TatvaOS.Api.Modules.Core.Endpoints;
 using TatvaOS.Api.Modules.Mail.Endpoints;
+using TatvaOS.Api.Modules.Family;
+using TatvaOS.Api.Modules.Family.Endpoints;
 using TatvaOS.Api.Workers;
 using TatvaOS.Api.Shared.Notify;
 using TatvaOS.Api.Shared.Settings;
@@ -85,6 +87,11 @@ builder.Services.AddScoped<TokenIssuer>();
 builder.Services.AddScoped<StorageAllocator>();
 builder.Services.AddScoped<AuditWriter>();
 
+// Scoped: it writes through the request's AppDbContext and reads its
+// TenantContext. A singleton holding either would serve one tenant's scope to
+// whichever request arrived next.
+builder.Services.AddScoped<ContactAutoSave>();
+
 // Singleton: it holds a DNS client with its own connection handling, and a
 // new resolver per request would discard that for no benefit.
 builder.Services.AddSingleton<DomainVerifier>();
@@ -151,6 +158,7 @@ app.MapSignupEndpoints();
 app.MapSettingsEndpoints();
 app.MapDepartmentEndpoints();
 app.MapMailEndpoints();
+app.MapFamilyEndpoints();
 
 // ---------------------------------------------------------------------------
 //  Bootstrap the first super admin

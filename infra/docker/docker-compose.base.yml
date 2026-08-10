@@ -223,6 +223,7 @@ services:
       # Blank on staging, where one host serves everything. Caddy tolerates an
       # empty site block; it simply matches nothing.
       MAIL_DOMAIN: ${MAIL_DOMAIN:-}
+      FAMILY_DOMAIN: ${FAMILY_DOMAIN:-}
     ports:
       - "80:80"
       - "443:443"

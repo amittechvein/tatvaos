@@ -43,7 +43,7 @@ public sealed class TenantConnectionInterceptor(TenantContext tenant) : DbConnec
             return;
         }
 
-        await SetTenantAsync(connection, tenant.TenantId, cancellationToken);
+        await SetTenantAsync(connection, tenant.TenantId, tenant.UserId, cancellationToken);
     }
 
     /// <remarks>
@@ -62,7 +62,7 @@ public sealed class TenantConnectionInterceptor(TenantContext tenant) : DbConnec
             try
             {
                 await using var cmd = connection.CreateCommand();
-                cmd.CommandText = "RESET app.tenant_id";
+                cmd.CommandText = "RESET app.tenant_id; RESET app.user_id";
                 await cmd.ExecuteNonQueryAsync();
             }
             catch
@@ -77,8 +77,22 @@ public sealed class TenantConnectionInterceptor(TenantContext tenant) : DbConnec
         return result;
     }
 
+    /// <summary>
+    /// Sets <c>app.tenant_id</c> and <c>app.user_id</c> for this connection.
+    ///
+    /// The user id is needed because Family's contacts are visible per PERSON,
+    /// not merely per tenant: a personal contact must stay hidden from a
+    /// colleague. Core and Mail policies ignore it, so adding it changes
+    /// nothing for them.
+    ///
+    /// A NULL user id writes an empty string, which
+    /// <c>current_setting('app.user_id', true)::uuid</c> reads back as NULL and
+    /// every comparison against it then fails. That is the intended behaviour
+    /// for a background worker with no person behind it: organisational rows
+    /// remain reachable, personal ones do not.
+    /// </summary>
     private static async Task SetTenantAsync(
-        DbConnection connection, Guid tenantId, CancellationToken ct)
+        DbConnection connection, Guid tenantId, Guid? userId, CancellationToken ct)
     {
         await using var cmd = connection.CreateCommand();
 
@@ -86,12 +100,18 @@ public sealed class TenantConnectionInterceptor(TenantContext tenant) : DbConnec
         // SET statement, because a SET cannot take parameters and building SQL
         // from a value — even a Guid — is a habit that eventually meets a
         // string.
-        cmd.CommandText = "SELECT set_config('app.tenant_id', @tenant, false)";
+        cmd.CommandText = "SELECT set_config('app.tenant_id', @tenant, false), " +
+                          "       set_config('app.user_id',   @user,   false)";
 
         var p = cmd.CreateParameter();
         p.ParameterName = "@tenant";
         p.Value = tenantId.ToString();
         cmd.Parameters.Add(p);
+
+        var u = cmd.CreateParameter();
+        u.ParameterName = "@user";
+        u.Value = userId?.ToString() ?? string.Empty;
+        cmd.Parameters.Add(u);
 
         await cmd.ExecuteNonQueryAsync(ct);
     }

@@ -72,6 +72,18 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<FilterRule> FilterRules => Set<FilterRule>();
     public DbSet<Signature> Signatures => Set<Signature>();
 
+    // ---- family. RLS enabled and forced; see 19-family-schema.sql ----
+    public DbSet<Contact> Contacts => Set<Contact>();
+    public DbSet<ContactEmail> ContactEmails => Set<ContactEmail>();
+    public DbSet<ContactPhone> ContactPhones => Set<ContactPhone>();
+    public DbSet<ContactAddress> ContactAddresses => Set<ContactAddress>();
+    public DbSet<ContactGroup> ContactGroups => Set<ContactGroup>();
+    public DbSet<ContactGroupMember> ContactGroupMembers => Set<ContactGroupMember>();
+    public DbSet<ContactInteraction> ContactInteractions => Set<ContactInteraction>();
+    public DbSet<ContactAuditLog> ContactAuditLogs => Set<ContactAuditLog>();
+    public DbSet<ContactSetting> ContactSettings => Set<ContactSetting>();
+    public DbSet<ContactSource> ContactSources => Set<ContactSource>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         // ---- Schemas -----------------------------------------------------
@@ -109,6 +121,17 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<FilterRule>().ToTable("filter_rules", "mail");
         b.Entity<Signature>().ToTable("signatures", "mail");
 
+        b.Entity<Contact>().ToTable("contacts", "family");
+        b.Entity<ContactEmail>().ToTable("contact_emails", "family");
+        b.Entity<ContactPhone>().ToTable("contact_phones", "family");
+        b.Entity<ContactAddress>().ToTable("contact_addresses", "family");
+        b.Entity<ContactGroup>().ToTable("contact_groups", "family");
+        b.Entity<ContactGroupMember>().ToTable("contact_group_members", "family");
+        b.Entity<ContactInteraction>().ToTable("contact_interactions", "family");
+        b.Entity<ContactAuditLog>().ToTable("contact_audit_logs", "family");
+        b.Entity<ContactSetting>().ToTable("contact_settings", "family");
+        b.Entity<ContactSource>().ToTable("contact_sources", "family");
+
         // ---- Column types Npgsql cannot infer ----------------------------
         // A string property maps to text by default, and PostgreSQL has no
         // implicit text -> jsonb cast, so every audit write would fail at
@@ -127,12 +150,18 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         // writing NULL over the trigger's work on every update.
         b.Entity<Message>().Property(m => m.SearchVector).ValueGeneratedOnAddOrUpdate();
 
+        // Same two reasons as above, for Family: jsonb needs stating, and the
+        // contact search vector is trigger-maintained (19-family-schema.sql).
+        b.Entity<ContactAuditLog>().Property(a => a.Changes).HasColumnType("jsonb");
+        b.Entity<Contact>().Property(c => c.SearchVector).ValueGeneratedOnAddOrUpdate();
+
         // ---- Keys --------------------------------------------------------
         b.Entity<Product>().HasKey(p => p.Code);
         b.Entity<ProductAccess>().HasKey(p => new { p.UserId, p.ProductCode });
         b.Entity<StoragePool>().HasKey(s => s.TenantId);
         b.Entity<StorageAllocation>().HasKey(s => new { s.TenantId, s.ProductCode });
         b.Entity<MailboxPermission>().HasKey(p => new { p.MailboxId, p.UserId, p.Permission });
+        b.Entity<ContactGroupMember>().HasKey(m => new { m.GroupId, m.ContactId });
 
         // ---- Global tenant filters ---------------------------------------
         // Everything carrying a TenantId. Tenants are the boundary itself;
@@ -156,6 +185,28 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<FilterRule>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Signature>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<DkimKey>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+
+        // Family. The contact filter carries the OWNERSHIP test as well as the
+        // tenant one, because Family's boundary is the person, not only the
+        // organisation — a colleague must not see my personal contacts. It
+        // mirrors the RLS policy exactly; the policy is still the guarantee.
+        //
+        // Child rows are filtered by tenant here and scoped through the parent
+        // contact by RLS. Repeating the ownership test on each child in C#
+        // would be a second place for the two to drift apart.
+        b.Entity<Contact>().HasQueryFilter(e =>
+            e.TenantId == tenant.TenantId &&
+            (e.OwnershipType == "organisational" || e.OwnerUserId == tenant.UserId));
+        b.Entity<ContactEmail>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<ContactPhone>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<ContactAddress>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<ContactGroup>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<ContactGroupMember>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<ContactInteraction>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<ContactAuditLog>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<ContactSetting>().HasQueryFilter(e =>
+            e.TenantId == tenant.TenantId && e.UserId == tenant.UserId);
+        b.Entity<ContactSource>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
 
         // ---- Uniqueness ---------------------------------------------------
         // Domains are unique across the WHOLE platform, not per tenant. Two
@@ -189,6 +240,13 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         // duplicate is.
         b.Entity<BlockedSender>().HasIndex(x => new { x.MailboxId, x.Address }).IsUnique();
         b.Entity<Signature>().HasIndex(s => s.MailboxId).IsUnique();
+
+        b.Entity<ContactGroup>().HasIndex(g => new { g.TenantId, g.Name }).IsUnique();
+        b.Entity<ContactSetting>().HasIndex(s => new { s.TenantId, s.UserId }).IsUnique();
+        b.Entity<ContactSource>()
+            .HasIndex(s => new { s.ContactId, s.MailMessageId, s.SourceType }).IsUnique();
+        // The address lookup auto-save performs on every delivered message.
+        b.Entity<ContactEmail>().HasIndex(e => new { e.TenantId, e.EmailNormalised });
 
         // ---- Read paths that matter ---------------------------------------
         b.Entity<Message>().HasIndex(m => new { m.MailboxId, m.ReceivedAt });
@@ -311,6 +369,48 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             .HasOne<Department>().WithMany()
             .HasForeignKey(d => d.ParentId).OnDelete(DeleteBehavior.Cascade);
 
+        // ---- Family ------------------------------------------------------
+        // Declared for the same reason as everywhere else in this file: EF
+        // orders its writes by the relationships it knows about, and an
+        // undeclared one produces a 23503 at runtime, not at build.
+        b.Entity<Contact>().HasOne<Tenant>().WithMany()
+            .HasForeignKey(c => c.TenantId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<Contact>().HasOne<User>().WithMany()
+            .HasForeignKey(c => c.OwnerUserId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<Contact>().HasOne<User>().WithMany()
+            .HasForeignKey(c => c.CreatedByUserId).OnDelete(DeleteBehavior.SetNull);
+
+        b.Entity<ContactEmail>().HasOne<Contact>().WithMany(c => c.Emails)
+            .HasForeignKey(e => e.ContactId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<ContactPhone>().HasOne<Contact>().WithMany(c => c.Phones)
+            .HasForeignKey(e => e.ContactId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<ContactAddress>().HasOne<Contact>().WithMany(c => c.Addresses)
+            .HasForeignKey(e => e.ContactId).OnDelete(DeleteBehavior.Cascade);
+
+        b.Entity<ContactGroupMember>().HasOne<ContactGroup>().WithMany()
+            .HasForeignKey(m => m.GroupId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<ContactGroupMember>().HasOne<Contact>().WithMany()
+            .HasForeignKey(m => m.ContactId).OnDelete(DeleteBehavior.Cascade);
+
+        b.Entity<ContactInteraction>().HasOne<Contact>().WithMany()
+            .HasForeignKey(i => i.ContactId).OnDelete(DeleteBehavior.Cascade);
+        // Set-null, not cascade: the fact of the exchange outlives the message.
+        b.Entity<ContactInteraction>().HasOne<Message>().WithMany()
+            .HasForeignKey(i => i.MailMessageId).OnDelete(DeleteBehavior.SetNull);
+
+        b.Entity<ContactAuditLog>().HasOne<Contact>().WithMany()
+            .HasForeignKey(a => a.ContactId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<ContactAuditLog>().HasOne<User>().WithMany()
+            .HasForeignKey(a => a.ActorUserId).OnDelete(DeleteBehavior.SetNull);
+
+        b.Entity<ContactSetting>().HasOne<User>().WithMany()
+            .HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+
+        b.Entity<ContactSource>().HasOne<Contact>().WithMany()
+            .HasForeignKey(x => x.ContactId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<ContactSource>().HasOne<Message>().WithMany()
+            .HasForeignKey(x => x.MailMessageId).OnDelete(DeleteBehavior.Cascade);
+
         base.OnModelCreating(b);
 
         // ---- snake_case columns ---------------------------------------------
@@ -371,11 +471,18 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
 
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = Database.CurrentTransaction?.GetDbTransaction();
-        cmd.CommandText = "SELECT set_config('app.tenant_id', @tenant, false)";
+        // Both settings, matching TenantConnectionInterceptor — Family's RLS
+        // reads app.user_id and would otherwise see the previous scope's person.
+        cmd.CommandText = "SELECT set_config('app.tenant_id', @tenant, false), " +
+                          "       set_config('app.user_id',   @user,   false)";
         var p = cmd.CreateParameter();
         p.ParameterName = "@tenant";
         p.Value = tenant.TenantId.ToString();
         cmd.Parameters.Add(p);
+        var u = cmd.CreateParameter();
+        u.ParameterName = "@user";
+        u.Value = tenant.UserId?.ToString() ?? string.Empty;
+        cmd.Parameters.Add(u);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
