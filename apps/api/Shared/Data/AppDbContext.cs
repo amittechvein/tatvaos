@@ -68,6 +68,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<Folder> Folders => Set<Folder>();
     public DbSet<Message> Messages => Set<Message>();
     public DbSet<Attachment> Attachments => Set<Attachment>();
+    public DbSet<BlockedSender> BlockedSenders => Set<BlockedSender>();
+    public DbSet<FilterRule> FilterRules => Set<FilterRule>();
+    public DbSet<Signature> Signatures => Set<Signature>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -102,6 +105,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<Folder>().ToTable("folders", "mail");
         b.Entity<Message>().ToTable("messages", "mail");
         b.Entity<Attachment>().ToTable("attachments", "mail");
+        b.Entity<BlockedSender>().ToTable("blocked_senders", "mail");
+        b.Entity<FilterRule>().ToTable("filter_rules", "mail");
+        b.Entity<Signature>().ToTable("signatures", "mail");
 
         // ---- Column types Npgsql cannot infer ----------------------------
         // A string property maps to text by default, and PostgreSQL has no
@@ -110,6 +116,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         // send the parameter as jsonb.
         b.Entity<AuditLog>().Property(a => a.BeforeState).HasColumnType("jsonb");
         b.Entity<AuditLog>().Property(a => a.AfterState).HasColumnType("jsonb");
+
+        // Same reason as the audit log's state columns: without this Npgsql
+        // sends text and Postgres will not implicitly cast it to jsonb.
+        b.Entity<FilterRule>().Property(r => r.Conditions).HasColumnType("jsonb");
+        b.Entity<FilterRule>().Property(r => r.Actions).HasColumnType("jsonb");
+
+        // The search vector belongs to the database: a trigger maintains it
+        // (15-mail-search.sql). Telling EF it is store-generated stops it
+        // writing NULL over the trigger's work on every update.
+        b.Entity<Message>().Property(m => m.SearchVector).ValueGeneratedOnAddOrUpdate();
 
         // ---- Keys --------------------------------------------------------
         b.Entity<Product>().HasKey(p => p.Code);
@@ -136,6 +152,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<Folder>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Message>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Attachment>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<BlockedSender>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<FilterRule>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<Signature>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<DkimKey>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
 
         // ---- Uniqueness ---------------------------------------------------
@@ -165,6 +184,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
 
         b.Entity<Department>().HasIndex(c => new { c.TenantId, c.Name }).IsUnique();
         b.Entity<Folder>().HasIndex(f => new { f.MailboxId, f.Name }).IsUnique();
+        // Both mirror UNIQUE constraints in the SQL (13-mail-blocklist.sql,
+        // 17-mail-signatures.sql) so EF and the database agree about what a
+        // duplicate is.
+        b.Entity<BlockedSender>().HasIndex(x => new { x.MailboxId, x.Address }).IsUnique();
+        b.Entity<Signature>().HasIndex(s => s.MailboxId).IsUnique();
 
         // ---- Read paths that matter ---------------------------------------
         b.Entity<Message>().HasIndex(m => new { m.MailboxId, m.ReceivedAt });

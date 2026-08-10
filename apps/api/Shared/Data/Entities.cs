@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using NpgsqlTypes;
 
 namespace TatvaOS.Api.Shared.Data;
 
@@ -577,6 +578,13 @@ public class Message
     public bool HasAttachments { get; set; }
 
     /// <summary>
+    /// The plain-text body, extracted once at ingest so search has something to
+    /// index. RawBody holds the full MIME, but indexing that would index base64
+    /// attachment blobs: a large index full of matches nobody is looking for.
+    /// </summary>
+    public string? BodyText { get; set; }
+
+    /// <summary>
     /// Where the maildir file lives, relative to the vmail root, with the
     /// Dovecot flags suffix stripped (the base name is stable; the flags
     /// change every time someone touches the message over IMAP). Doubles as
@@ -592,6 +600,14 @@ public class Message
     /// object storage later is a change to two methods, not to the client.
     /// </summary>
     public string? RawBody { get; set; }
+
+    /// <summary>
+    /// Full-text index over subject, sender, recipients and body. Maintained by
+    /// a database trigger (15-mail-search.sql), NOT by this application: the
+    /// trigger cannot be bypassed by whatever else writes to the table, and it
+    /// keeps the index from drifting away from the row it describes.
+    /// </summary>
+    public NpgsqlTsVector? SearchVector { get; set; }
 }
 
 public class Attachment
@@ -613,4 +629,82 @@ public class Attachment
     /// twice.
     /// </summary>
     public int? PartIndex { get; set; }
+}
+
+/// <summary>
+/// An address one mailbox has blocked.
+///
+/// Blocking files future mail into Junk at ingest; it never refuses the message
+/// at SMTP. A rejection would confirm to a spammer that the address is live and
+/// would turn one person's preference into a domain-reputation event.
+///
+/// Per mailbox, not per tenant: blocking a recruiter must not silence them for
+/// the whole organisation.
+/// </summary>
+public class BlockedSender
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid MailboxId { get; set; }
+    /// <summary>Lowercased on write, so ingest matching is plain equality.</summary>
+    [MaxLength(320)] public required string Address { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// A filing rule, applied by the ingest worker as mail arrives.
+///
+/// Conditions and Actions are jsonb because the shape of a rule is the part
+/// most likely to grow. The database cannot validate that shape, so the API
+/// parses into a strict contract (MailFilters) before writing — these strings
+/// are never assembled anywhere else.
+/// </summary>
+public class FilterRule
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid MailboxId { get; set; }
+    [MaxLength(200)] public required string Name { get; set; }
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Evaluation order. All matching rules apply, lowest first.</summary>
+    public int Position { get; set; }
+
+    /// <summary>true = every condition must match (AND); false = any (OR).</summary>
+    public bool MatchAll { get; set; } = true;
+
+    /// <summary>JSON array of { field, op, value }.</summary>
+    public string Conditions { get; set; } = "[]";
+
+    /// <summary>JSON object of { moveToFolderId, markRead, flag }.</summary>
+    public string Actions { get; set; } = "{}";
+
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// One mailbox's signature.
+///
+/// Both representations are stored: a message goes out as
+/// multipart/alternative, and a signature present in only one part means half
+/// the recipients see a different message — usually the plain-text half, which
+/// is the half that gets quoted in replies.
+/// </summary>
+public class Signature
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid MailboxId { get; set; }
+    public string BodyHtml { get; set; } = "";
+    public string BodyText { get; set; } = "";
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// Separate from Enabled on purpose: most people want their block on a new
+    /// message but not repeated down every turn of a long thread.
+    /// </summary>
+    public bool IncludeOnReply { get; set; }
+
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
