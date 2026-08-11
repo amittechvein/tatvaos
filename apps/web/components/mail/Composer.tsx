@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { formatBytes } from '@tatvaos/core';
 import type { Message } from '@tatvaos/types';
 import { Icon } from '../ui/Icon';
+import { ContactPicker } from '@/components/family/ContactPicker';
 
 /** Comma- or semicolon-separated addresses → a clean list. */
 function splitAddresses(raw: string): string[] {
@@ -298,12 +299,21 @@ export function Composer({
           </div>
           <label className="flex items-center gap-2 border-b border-line py-2.5 text-sm transition-colors focus-within:border-brand-500">
             <span className="w-12 shrink-0 text-ink-muted">To</span>
-            <input
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-              placeholder="Recipients — commas for several"
-              className="w-full border-0 bg-transparent p-0 text-ink outline-none placeholder:text-ink-faint"
-            />
+            {/* Family supplies suggestions; this input still owns the value,
+                the parsing and the validation, so mail sends normally when
+                Family is unavailable. */}
+            <ContactPicker value={to} onPick={setTo}>
+              {(pickerRef, onPickerKeyDown) => (
+                <input
+                  ref={pickerRef}
+                  value={to}
+                  onChange={(e) => setTo(e.target.value)}
+                  onKeyDown={onPickerKeyDown}
+                  placeholder="Recipients — commas for several"
+                  className="w-full border-0 bg-transparent p-0 text-ink outline-none placeholder:text-ink-faint"
+                />
+              )}
+            </ContactPicker>
             {!showCc && (
               <button
                 type="button"
