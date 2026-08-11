@@ -112,6 +112,16 @@ public sealed class ContactAutoSave(ILogger<ContactAutoSave> log)
         var key = ContactMatching.NormaliseEmail(address);
         if (key.Length == 0 || !key.Contains('@')) return;
 
+        // A robot is not a contact. See ContactMatching.IsNoReply for why this
+        // is conservative — support@ and accounts@ are real correspondents and
+        // are deliberately NOT filtered.
+        //
+        // Checked BEFORE the self-check and the existing-contact lookup, so a
+        // no-reply address saved before this shipped stops accruing
+        // interactions too. Adding one by hand still works: this governs what
+        // mail saves for you, not what you choose to keep.
+        if (ContactMatching.IsNoReply(address)) return;
+
         // Never file the mailbox owner as their own contact. Their address is
         // on every Sent copy, and one "me" row appearing in everyone's address
         // book is the first thing anyone would report as a bug.

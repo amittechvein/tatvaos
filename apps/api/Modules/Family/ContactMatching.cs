@@ -70,6 +70,74 @@ public static class ContactMatching
     }
 
     /// <summary>
+    /// Is this address a machine that cannot be replied to?
+    ///
+    /// ─────────────────────────────────────────────────────────────────────
+    ///  THIS IS WHAT KEEPS AUTO-SAVE WORTH HAVING.
+    ///
+    ///  Auto-save is on by default. Without this, every newsletter, receipt,
+    ///  delivery notification and password reset becomes a contact. Within a
+    ///  month a real address book is mostly robots, and the way people react
+    ///  to that is to turn auto-save off — which costs the feature entirely.
+    ///  Filtering is cheaper than losing the feature.
+    /// ─────────────────────────────────────────────────────────────────────
+    ///
+    /// DELIBERATELY CONSERVATIVE, for the same reason NormaliseEmail only
+    /// folds dots for Gmail: a false positive silently loses a real person and
+    /// nobody ever finds out, while a false negative leaves one robot in the
+    /// list that someone deletes in two seconds.
+    ///
+    /// So support@, info@, sales@, accounts@, hello@ and billing@ are NOT
+    /// filtered. They look impersonal and they are real correspondents —
+    /// filing a supplier's accounts desk is what an address book is for. Only
+    /// addresses that by convention cannot receive a reply are excluded.
+    ///
+    /// What this cannot see: List-Unsubscribe, Auto-Submitted and
+    /// Precedence: bulk, which are the authoritative signals. They live in
+    /// headers, and auto-save runs after commit with only the mail.messages
+    /// row, which does not carry them. An is_bulk column set at ingest — where
+    /// MimeKit has already parsed the headers — is the proper fix.
+    /// </summary>
+    public static bool IsNoReply(string email)
+    {
+        var normalised = NormaliseEmail(email);
+        var at = normalised.LastIndexOf('@');
+        if (at <= 0) return false;
+
+        var local = normalised[..at];
+
+        // mailer-daemon and postmaster are RFC-mandated; the rest are the
+        // near-universal spellings of "this mailbox is not read".
+        string[] exact = [
+            "noreply", "no-reply", "no_reply", "donotreply", "do-not-reply",
+            "do_not_reply", "nepasrepondre",
+            "mailer-daemon", "mailerdaemon", "postmaster", "daemon",
+            "bounce", "bounces", "returns",
+            "notification", "notifications", "notify",
+            "automated", "automailer", "autoresponder", "auto-confirm",
+        ];
+        if (exact.Contains(local)) return true;
+
+        // VERP and per-message bounce addresses: bounce-1234-user=example.com@,
+        // notifications-abc123@. Prefix rather than substring — "announcebounce@"
+        // is not a bounce address, and a substring match would swallow real names.
+        string[] prefixes = [
+            "noreply", "no-reply", "donotreply", "do-not-reply",
+            "bounce", "bounces", "mailer-daemon", "notifications-", "notification-",
+        ];
+        foreach (var pre in prefixes)
+            if (local.StartsWith(pre, StringComparison.Ordinal) &&
+                local.Length > pre.Length &&
+                (local[pre.Length] is '-' or '+' or '_' or '.' or (>= '0' and <= '9')))
+                return true;
+
+        // Some senders put the intent after a plus, which NormaliseEmail has
+        // already stripped — so check the raw address too.
+        var raw = (email ?? string.Empty).ToLowerInvariant();
+        return raw.Contains("+bounce") || raw.Contains("+noreply");
+    }
+
+    /// <summary>
     /// A readable name for an address that arrived with none.
     ///
     /// "accounts.payable@supplier.com" becomes "Accounts Payable", which is

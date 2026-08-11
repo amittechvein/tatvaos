@@ -36,7 +36,7 @@ export const PANEL_WIDTH_ICONS = 72;
 export function Sidebar({ sections, brand, scope, footer }: {
   sections: NavSection[];
   brand: string;
-  scope: 'platform' | 'organisation' | 'mail';
+  scope: 'platform' | 'organisation' | 'mail' | 'family';
   /** Pinned to the bottom of the rail (Mail puts the storage meter here).
    *  Hidden while the rail is collapsed to icons — see overrides.css. */
   footer?: React.ReactNode;
@@ -44,8 +44,10 @@ export function Sidebar({ sections, brand, scope, footer }: {
   const pathname = usePathname();
   const [open, setOpen] = useState<string | null>(null);
 
-  // Mail carries its own lockup; the console (platform/organisation) uses Core.
-  const logo = scope === 'mail' ? 'mail' : 'core';
+  // Each product with its own front door carries its own lockup; the console
+  // (platform/organisation) falls back to Core. Files live in public/brand as
+  // <scope>-logo.png and <scope>-name.png.
+  const logo = scope === 'mail' || scope === 'family' ? scope : 'core';
 
   // Longest match wins so "/org" does not light every page under it.
   const activeHref = sections

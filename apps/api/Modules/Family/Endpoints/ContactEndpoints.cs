@@ -41,6 +41,7 @@ public static class ContactEndpoints
         g.MapGet("/contacts/{id:guid}", GetAsync);
         g.MapPatch("/contacts/{id:guid}", PatchAsync);
         g.MapDelete("/contacts/{id:guid}", DeleteAsync);
+        g.MapPost("/contacts/{id:guid}/restore", RestoreAsync);
 
         g.MapGet("/contacts/search", SearchAsync);
         g.MapGet("/contacts/autocomplete", AutocompleteAsync);
@@ -127,6 +128,7 @@ public static class ContactEndpoints
     private static async Task<IResult> ListAsync(
         AppDbContext db, TenantContext tenant, CancellationToken ct,
         string? ownership = null, Guid? groupId = null, bool? favourite = null,
+        string? source = null, string? sort = null, bool deleted = false,
         int page = 1, int pageSize = 50)
     {
         if (page < 1) page = 1;
@@ -134,7 +136,11 @@ public static class ContactEndpoints
         // in the client, and failing the request makes that bug look like ours.
         pageSize = Math.Clamp(pageSize, 1, 200);
 
-        var q = Live(db);
+        // deleted=true is the Bin. Soft-deleted rows are otherwise invisible
+        // everywhere, which is the point — this is the one door to them.
+        var q = deleted
+            ? db.Contacts.Where(c => c.DeletedAt != null)
+            : Live(db);
 
         if (ownership is "personal" or "organisational")
             q = q.Where(c => c.OwnershipType == ownership);
@@ -142,20 +148,66 @@ public static class ContactEndpoints
         if (favourite == true)
             q = q.Where(c => c.IsFavourite);
 
+        // "auto" is the whole family of auto_* sources rather than one value:
+        // the client's question is "what did mail decide to save", not which
+        // particular flavour of mail event produced it.
+        if (source == "auto")
+            q = q.Where(c => c.Source == "auto_received"
+                          || c.Source == "auto_sent"
+                          || c.Source == "auto_reply");
+        else if (source == "manual")
+            q = q.Where(c => c.Source == "manual" || c.Source == "import" || c.Source == "api");
+
         if (groupId is Guid gid)
             q = q.Where(c => db.ContactGroupMembers
                 .Any(m => m.GroupId == gid && m.ContactId == c.Id));
 
         var total = await q.CountAsync(ct);
 
+        // Sorting is server-side because it has to hold across pages. Sorting
+        // one page in the browser puts the most-contacted person on page four
+        // at the top of page one and nowhere near the truth.
+        q = sort switch
+        {
+            // Nulls last: someone never contacted is not "most recent".
+            "recent"   => q.OrderByDescending(c => c.LastContactedAt ?? DateTimeOffset.MinValue),
+            "frequent" => q.OrderByDescending(c => c.InteractionCount)
+                           .ThenByDescending(c => c.LastContactedAt ?? DateTimeOffset.MinValue),
+            "deleted"  => q.OrderByDescending(c => c.DeletedAt),
+            _          => q.OrderBy(c => c.DisplayName),
+        };
+
         var items = await q
-            .OrderBy(c => c.DisplayName)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .Select(Summary)
             .ToListAsync(ct);
 
         return Results.Ok(new { total, page, pageSize, items });
+    }
+
+    /// <summary>
+    /// Undo a soft delete.
+    ///
+    /// Deliberately does NOT reset Source. A contact that came from mail and
+    /// was deleted and restored is still one mail saved — rewriting that would
+    /// lose the only record of where it came from.
+    /// </summary>
+    private static async Task<IResult> RestoreAsync(
+        Guid id, AppDbContext db, TenantContext tenant, HttpContext http, CancellationToken ct)
+    {
+        if (!TryCaller(tenant, out var uid)) return Results.Unauthorized();
+
+        var c = await db.Contacts.FirstOrDefaultAsync(x => x.Id == id && x.DeletedAt != null, ct);
+        if (c is null) return Results.NotFound();
+
+        c.DeletedAt = null;
+        c.UpdatedAt = DateTimeOffset.UtcNow;
+        Audit(db, tenant, c.Id, uid, "update",
+            new Dictionary<string, object?> { ["restored"] = true }, http);
+
+        await db.SaveChangesAsync(ct);
+        return Results.NoContent();
     }
 
     private static async Task<IResult> GetAsync(

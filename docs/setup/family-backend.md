@@ -63,18 +63,12 @@ Everything below runs from that repository root unless stated otherwise.
 
 ## Step 2 — Build
 
-This is the real verification step. I could not compile any of it — there is
-no .NET SDK in the environment I was working in — so the first `dotnet build`
-is the first time this code meets a compiler.
-
 ```powershell
 cd apps\api
 dotnet build
 ```
 
-Expect this to need a pass or two of fixing. The database layer has been run
-for real (see step 4) and the entity-to-column mapping has been checked
-against the live schema, but the C# has not.
+Expect `Build succeeded`.
 
 ## Step 3 — Apply the schema
 
@@ -83,7 +77,7 @@ The local stack runs the `init` directory automatically on a **fresh** volume:
 ```bash
 cd local
 docker compose down -v          # -v drops the volume; the init scripts only run on an empty one
-docker compose up -d --build
+docker compose up -d --build    # --build matters — see the troubleshooting section
 ```
 
 On a database you want to keep, apply the one file instead. It is idempotent —
@@ -197,6 +191,10 @@ Then:
 
 Being explicit, because the gap matters more than the list of what works.
 
+**Auto-save from received mail IS verified**, including idempotency across a
+restart — see the last section of this page for how, since it needs a
+workaround when the API runs natively on Windows.
+
 **No API-level tests.** `tests/isolation/family/family-rls.sql` proves the
 database enforces the boundary. It does not prove the endpoints ask the
 database the right questions. Every route should get a case that calls it as
@@ -218,3 +216,149 @@ dots will still produce two rows. That is the conservative direction: merging
 two real people is worse than keeping two rows for one.
 
 **No rate limiting**, consistent with the rest of the API.
+
+---
+
+## When it does not work on Windows
+
+Three environment problems cost an afternoon on the first run-through, and
+none of them were code. All three present as something else, which is why they
+are written down.
+
+### `28P01 password authentication failed for user "tatvaos_app"`
+
+**A second PostgreSQL is installed on Windows and holds port 5432.**
+
+The API connects to `localhost:5432` and reaches *that* server, not the
+container. Every `ALTER ROLE` you run through `docker exec` goes to the
+container and changes nothing the API can see, so the password looks wrong no
+matter how many times you reset it.
+
+The confirming detail is two listeners on one port:
+
+```powershell
+Get-NetTCPConnection -LocalPort 5432 -State Listen |
+    ForEach-Object { Get-Process -Id $_.OwningProcess } |
+    Select-Object Id, ProcessName
+```
+
+Anything other than a single `com.docker.backend` row is the problem. Stop the
+native service from an ELEVATED PowerShell — the version number varies:
+
+```powershell
+Get-Service | Where-Object Name -like "postgres*" | Select-Object Name, Status
+Stop-Service postgresql-x64-18
+Set-Service postgresql-x64-18 -StartupType Manual
+```
+
+`Manual` stops it returning after a reboot without uninstalling anything.
+
+Do NOT test the password with `psql -h 127.0.0.1` inside the container to rule
+this out. The image's `pg_hba.conf` trusts loopback, so a deliberately wrong
+password succeeds and the test proves nothing. Go over the bridge network
+instead, which uses the same `scram-sha-256` path the API does:
+
+```powershell
+docker run --rm --network tatvaos-mail-local_mailnet -e PGPASSWORD=dev_app_pw `
+    postgres:17-alpine psql -U tatvaos_app -h tv-postgres -d tatvaos_mail -c "SELECT current_user;"
+```
+
+### `column "department_id" of relation "users" does not exist`
+
+**The volume predates the init script that added it.**
+
+`local/postgres/init/*.sql` runs ONCE, on an empty data directory. A container
+created before a script existed never runs it, and stays behind for good.
+Adding a file to that directory does nothing to a database that already exists.
+
+```powershell
+cd C:\Users\amitd\Downloads\tatvaOS\local
+docker compose down -v
+docker compose up -d --build
+```
+
+`down -v` drops the volume — all local mail and any tenants you created go with
+it. The seed data comes back. To keep the data, apply the missing scripts by
+hand with `docker compose cp` and `psql -f` instead.
+
+`docker compose` only works from the `local` folder. Run it anywhere else and
+you get "no configuration file provided: not found", which is easy to skim past
+and leaves you believing a rebuild happened when it did not.
+
+### `Relay access denied`, and `virtual_mailbox_maps` is empty
+
+**The image is stale.** `entrypoint.sh` is COPIED into the image at build time —
+only `main.cf`, `master.cf` and `sql/` are bind-mounted. So an entrypoint change
+needs a rebuild, and `docker compose up -d` does not rebuild.
+
+The symptom is a Postfix that starts cleanly and rejects every recipient. It is
+running Postfix's stock `main.cf` because the render step in the newer
+entrypoint never executed, which leaves no virtual domains configured, so every
+address looks foreign.
+
+Read the START of the log, not the tail — the render lines are the first thing
+printed and their absence is the whole diagnosis:
+
+```powershell
+docker logs tv-postfix 2>&1 | Select-Object -First 20
+```
+
+Healthy startup says `[postfix] CONTAINED …`, `[postfix] myhostname = …` and
+`[postfix] rendered 5 SQL lookup files`. Missing means stale image:
+
+```powershell
+cd C:\Users\amitd\Downloads\tatvaOS\local
+docker compose up -d --build
+docker exec tv-postfix postconf virtual_mailbox_maps
+```
+
+That last line must print a `pgsql:` path, not nothing.
+
+**Always `up -d --build`.** The README says so; plain `up -d` is how a
+four-day-old image survives a rebuild you thought you did.
+
+---
+
+## Verifying auto-save without a containerised API
+
+The local stack has no `api` service, so the API runs natively on Windows —
+where `/var/mail/vhosts` does not exist and the maildir worker sits idle,
+logging `Vmail root /var/mail/vhosts does not exist; ingest idle`.
+
+The worker only reads files, and its root is configurable, so point it at a
+copy:
+
+```powershell
+# 1. deliver a message from an OUTSIDE address to a seeded mailbox
+Send-MailMessage -SmtpServer localhost -Port 2525 `
+    -From "priya.raman@example.com" -To "amit@techvein.local" `
+    -Subject "Auto-save test" -Body "testing"
+
+# 2. confirm Dovecot wrote it
+docker exec tv-dovecot find /var/mail/vhosts -type f -path "*new*"
+
+# 3. copy the tree out
+docker cp tv-dovecot:/var/mail/vhosts C:\temp\vhosts
+
+# 4. restart the API with the worker pointed at it
+$env:Mail__VmailRoot = "C:\temp\vhosts"
+dotnet run
+```
+
+Seeded mailboxes are `amit@` and `hr@` on techvein.local, and `principal@` on
+abcschool.local. Anything else bounces.
+
+Check the result as `postgres`, not through the API — the contact belongs to
+Amit personally and RLS correctly hides it from everyone else:
+
+```powershell
+docker exec tv-postgres psql -U postgres -d tatvaos_mail -c "SELECT display_name, source, interaction_count FROM family.contacts;"
+```
+
+`Priya Raman | auto_received | 1`. The name is derived from the address by
+`ContactMatching.DisplayNameFromEmail`.
+
+**Then restart the API and check again.** The count must still be 1. The worker
+re-reads the same maildir on every start, so this is the case that matters, and
+`family.contact_sources` is what prevents the double count. Verified working —
+but re-check it after any change to `ContactAutoSave`.

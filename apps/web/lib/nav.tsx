@@ -84,6 +84,8 @@ export const RAIL_PRODUCTS: RailProduct[] = [
     live: true, colour: '#7367f0', match: ['/org', '/account'] },
   { code: 'mail', label: 'Mail', href: '/mail/inbox', icon: <Icon d={PATHS.mail} />,
     live: true, colour: '#ff4c51', match: ['/mail'] },
+  { code: 'family', label: 'Family', href: '/family/contacts', icon: <Icon d={PATHS.users} />,
+    live: true, colour: '#00b8d9', match: ['/family'] },
   { code: 'drive', label: 'Drive', href: '/drive', icon: <Icon d={PATHS.drive} />,
     live: false, colour: '#28c76f', match: ['/drive'] },
   { code: 'people', label: 'People', href: '/people', icon: <Icon d={PATHS.people} />,
@@ -185,4 +187,86 @@ export function mailNav(): NavSection[] {
       ],
     },
   ];
+}
+
+// ============================================================================
+//  Family — the address book.
+//
+//  Modelled on what people already know from Google Contacts, because an
+//  address book is not the place to teach someone a new mental model. The
+//  names are theirs; what sits behind each one is ours:
+//
+//    Contacts        everything you can see, yours and the organisation's
+//    Directory       the organisation's shared contacts
+//    Frequent        sorted by how often you have actually corresponded
+//    Other contacts  the ones mail saved for you, which you never typed
+//    Bin             soft-deleted, restorable
+//
+//  Each is a REAL PATH, not a query string. The rail decides what is active by
+//  pathname alone, so five links to /family/contacts?view=… would all light up
+//  at once.
+//
+//  Merge and Import are listed and disabled. They are the two operations with
+//  no server behind them yet, and a menu that hides unfinished work is a menu
+//  that gets the same feature requested three times.
+// ============================================================================
+
+export function familyNav(opts: {
+  total?: number;
+  labels?: { id: string; name: string; colour: string | null }[];
+} = {}): NavSection[] {
+  const { total, labels = [] } = opts;
+
+  const sections: NavSection[] = [
+    {
+      heading: 'Family',
+      items: [
+        { href: '/family/contacts?create=1', label: 'Create contact',
+          icon: <Icon d={PATHS.compose} colour="#03b562" /> },
+        { href: '/family/contacts', label: 'Contacts',
+          icon: <Icon d={PATHS.users} colour="#00b8d9" />,
+          badge: total !== undefined && total > 0 ? String(total) : undefined },
+        { href: '/family/directory', label: 'Directory',
+          icon: <Icon d={PATHS.building} colour="#7367f0" /> },
+        { href: '/family/frequent', label: 'Frequent',
+          icon: <Icon d={PATHS.sent} colour="#ffa909" /> },
+        { href: '/family/other', label: 'Other contacts',
+          icon: <Icon d={PATHS.inbox} colour="#98a2b8" /> },
+      ],
+    },
+    {
+      heading: 'Fix and manage',
+      items: [
+        { href: '/family/merge', label: 'Merge and fix',
+          icon: <Icon d={PATHS.users} colour="#98a2b8" />, disabled: true, badge: 'soon' },
+        { href: '/family/import', label: 'Import',
+          icon: <Icon d={PATHS.draft} colour="#98a2b8" />, disabled: true, badge: 'soon' },
+        { href: '/family/bin', label: 'Bin',
+          icon: <Icon d={PATHS.trash} colour="#98a2b8" /> },
+      ],
+    },
+  ];
+
+  sections.push({
+    heading: 'Labels',
+    items: [
+      ...labels.map((l) => ({
+        href: `/family/contacts?groupId=${l.id}`,
+        label: l.name,
+        icon: <Icon d={PATHS.users} colour={l.colour ?? '#98a2b8'} />,
+      })),
+      { href: '/family/labels', label: labels.length > 0 ? 'Manage labels' : 'Create label',
+        icon: <Icon d={PATHS.gear} colour="#00cfe8" /> },
+    ],
+  });
+
+  sections.push({
+    heading: 'Settings',
+    items: [
+      { href: '/family/settings', label: 'Contact settings',
+        icon: <Icon d={PATHS.gear} colour="#00cfe8" /> },
+    ],
+  });
+
+  return sections;
 }
