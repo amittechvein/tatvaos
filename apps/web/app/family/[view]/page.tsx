@@ -1,8 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
+import Checkbox from '@mui/material/Checkbox';
 import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
 import Dialog from '@mui/material/Dialog';
@@ -12,6 +13,7 @@ import DialogTitle from '@mui/material/DialogTitle';
 import Divider from '@mui/material/Divider';
 import IconButton from '@mui/material/IconButton';
 import InputAdornment from '@mui/material/InputAdornment';
+import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import Tooltip from '@mui/material/Tooltip';
 import TextField from '@mui/material/TextField';
@@ -84,6 +86,15 @@ const VIEWS: Record<View, ViewSpec> = {
 };
 
 const isView = (v: string): v is View => Object.prototype.hasOwnProperty.call(VIEWS, v);
+
+/**
+ * The options object the list route takes.
+ *
+ * Named so the bulk-label change can be handed the SAME object the list was
+ * built from. "Select all 1,499 matching" is only honest if the two are one
+ * value rather than two lists of clauses that have to be kept in step.
+ */
+type ListQuery = Parameters<typeof familyApi.list>[1];
 
 // ============================================================================
 //  Contacts — the address book.
@@ -166,13 +177,35 @@ export default function FamilyViewPage() {
   const [note, setNote] = useState<string | null>(null);
 
   const [filter, setFilter] = useState<Filter>('all');
-  const [groupId, setGroupId] = useState<string>('');
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
   const [page, setPage] = useState(1);
 
   const [creating, setCreating] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
+
+  // ---------------------------------------------------------------------
+  //  Selection.
+  //
+  //  Two kinds, and the difference matters:
+  //
+  //    selected     ids that were ticked. What you see is what changes.
+  //    allMatching  everything the current filter returns, which is usually
+  //                 more than one page and may be thousands of contacts
+  //                 nobody has looked at.
+  //
+  //  The second is the one worth having — pruning an imported address book
+  //  fifty rows at a time is why people abandon address books — and it is the
+  //  one that has to be impossible to trigger by accident. So it is never the
+  //  default, it takes a second deliberate click after the page is already
+  //  selected, and the count is spelled out on the button that acts on it.
+  // ---------------------------------------------------------------------
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [allMatching, setAllMatching] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [menu, setMenu] = useState<{ anchor: HTMLElement; mode: 'add' | 'remove' } | null>(null);
+  const [newLabel, setNewLabel] = useState<string | null>(null);
+  const [groupTick, setGroupTick] = useState(0);
 
   // "Create contact" in the rail is a real link to ?create=1 rather than a
   // button, so middle-click and deep-link both behave. Consume the flag and
@@ -184,9 +217,34 @@ export default function FamilyViewPage() {
     }
   }, [search, router, view]);
 
-  // A label chosen from the rail arrives as ?groupId=…
-  const railGroup = search.get('groupId');
-  useEffect(() => { if (railGroup) setGroupId(railGroup); }, [railGroup]);
+  // ---------------------------------------------------------------------
+  //  THE LABEL FILTER LIVES IN THE URL, NOT IN STATE.
+  //
+  //  It used to be a useState mirrored from ?groupId= by an effect that only
+  //  ever SET it:
+  //
+  //      useEffect(() => { if (railGroup) setGroupId(railGroup); }, [railGroup])
+  //
+  //  So clicking a label filtered the list, and then clicking Contacts — which
+  //  goes to /family/contacts with no query at all — left the state exactly
+  //  where it was. The URL said everything, the screen showed 1,499 of 1,650,
+  //  and the only clue was a dropdown in the corner still naming a label you
+  //  had already navigated away from. It reads as "the filter is broken"
+  //  because the thing on screen no longer matches anything you clicked.
+  //
+  //  Deriving it from the URL removes the second copy, and with it the whole
+  //  class of bug: back, forward, refresh, deep-link and the rail all agree
+  //  because there is only one answer to agree with.
+  // ---------------------------------------------------------------------
+  const groupId = search.get('groupId') ?? '';
+
+  const chooseGroup = useCallback((next: string) => {
+    router.replace(next ? `/family/${view}?groupId=${next}` : `/family/${view}`);
+  }, [router, view]);
+
+  // Page 1 of a different set. Staying on page 12 of a label with three
+  // contacts shows an empty table and looks like the filter found nothing.
+  useEffect(() => { setPage(1); }, [groupId]);
 
   // Debounce, so typing "priya" is one request rather than five.
   useEffect(() => {
@@ -199,6 +257,26 @@ export default function FamilyViewPage() {
   // search race, and it looks like the filter is ignoring you.
   const loadToken = useRef(0);
 
+  // ---------------------------------------------------------------------
+  //  ONE definition of "what this screen is showing".
+  //
+  //  Used by the list request and by "select all matching". Written twice,
+  //  these two drift, and the day they do somebody labels a set of contacts
+  //  the screen never showed them. The server keeps the same promise from its
+  //  end — see ContactFilters on the API side.
+  // ---------------------------------------------------------------------
+  const listQuery: ListQuery = useMemo(() => ({
+    ...spec.query,
+    // The chips refine the view; they never widen it. Directory stays
+    // organisational even with "Mine" selected — the alternative is a filter
+    // that silently contradicts the page you are on.
+    ...(filter === 'personal' || filter === 'organisational'
+      ? { ownership: spec.query?.ownership ?? filter } : {}),
+    ...(filter === 'favourite' ? { favourite: true } : {}),
+    ...(filter === 'auto' ? { source: 'auto' as const } : {}),
+    groupId: groupId || undefined,
+  }), [spec, filter, groupId]);
+
   const load = useCallback(async () => {
     const mine = ++loadToken.current;
     setLoading(true); setError(null);
@@ -209,15 +287,7 @@ export default function FamilyViewPage() {
         setRows(found); setTotal(found.length);
       } else {
         const res = await familyApi.list(authedFetch, {
-          ...spec.query,
-          // The chips refine the view; they never widen it. Directory stays
-          // organisational even with "Mine" selected — the alternative is a
-          // filter that silently contradicts the page you are on.
-          ...(filter === 'personal' || filter === 'organisational'
-            ? { ownership: spec.query?.ownership ?? filter } : {}),
-          ...(filter === 'favourite' ? { favourite: true } : {}),
-          ...(filter === 'auto' ? { source: 'auto' as const } : {}),
-          groupId: groupId || undefined,
+          ...listQuery,
           page, pageSize: PAGE_SIZE,
         });
         if (mine !== loadToken.current) return;
@@ -228,7 +298,7 @@ export default function FamilyViewPage() {
     } finally {
       if (mine === loadToken.current) setLoading(false);
     }
-  }, [authedFetch, debounced, filter, groupId, page, spec]);
+  }, [authedFetch, debounced, listQuery, page]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -238,12 +308,108 @@ export default function FamilyViewPage() {
       .then((g) => { if (live) setGroups(g); })
       .catch(() => { /* groups are a filter, not the page — a failure here is not fatal */ });
     return () => { live = false; };
-  }, [authedFetch]);
+  }, [authedFetch, groupTick]);
+
+  // A selection belongs to one set of results. Keeping ticks across a filter
+  // change or a page turn means acting on rows that are no longer on screen,
+  // which is the single easiest way to relabel the wrong people.
+  useEffect(() => {
+    setSelected(new Set());
+    setAllMatching(false);
+  }, [debounced, listQuery, page, view]);
 
   // No client-side sieve: every filter is a server query, so a page of results
   // is a page of results. Filtering here would silently drop rows and make the
   // count disagree with what is on screen.
   const visible = rows;
+
+  const activeGroup = groupId ? groups.find((g) => g.id === groupId) ?? null : null;
+
+  // ---- selection ---------------------------------------------------------
+  const pageIds = visible.map((c) => c.id);
+  const allOnPage = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
+  const someOnPage = pageIds.some((id) => selected.has(id));
+  const selectionCount = allMatching ? total : selected.size;
+
+  // Offered only once the whole page is already ticked, and never during a
+  // search — the server filter has no idea what you typed, so "all matching"
+  // would quietly mean something other than what is on screen.
+  const canSelectAll =
+    !allMatching && allOnPage && debounced.length === 0 && total > pageIds.length;
+
+  const clearSelection = () => { setSelected(new Set()); setAllMatching(false); };
+
+  const toggleOne = (id: string) => {
+    setAllMatching(false);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const togglePage = () => {
+    setAllMatching(false);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allOnPage) pageIds.forEach((id) => next.delete(id));
+      else pageIds.forEach((id) => next.add(id));
+      return next;
+    });
+  };
+
+  const applyLabel = async (labelId: string, mode: 'add' | 'remove', labelName?: string) => {
+    setBulkBusy(true); setError(null);
+    try {
+      // allMatching sends the filter, not the ids. The server re-runs it, so
+      // what changes is what the count on the button was counting.
+      const body: Parameters<typeof familyApi.bulkLabels>[1] = allMatching
+        ? {
+            all: true,
+            ownership: listQuery.ownership,
+            groupId: listQuery.groupId,
+            favourite: listQuery.favourite,
+            source: listQuery.source,
+          }
+        : { contactIds: [...selected] };
+
+      if (mode === 'add') body.add = [labelId];
+      else body.remove = [labelId];
+
+      const result = await familyApi.bulkLabels(authedFetch, body);
+      const name = labelName ?? groups.find((g) => g.id === labelId)?.name ?? 'That label';
+
+      if (mode === 'add') {
+        const already = result.contacts - result.added;
+        setNote(`${name} added to ${plural(result.added, 'contact')}.`
+          + (already > 0 ? ` ${plural(already, 'contact')} already had it.` : ''));
+      } else {
+        setNote(`${name} removed from ${plural(result.removed, 'contact')}.`);
+      }
+
+      clearSelection();
+      setGroupTick((t) => t + 1);
+      chrome.refresh();
+      void load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const createAndApply = async (name: string) => {
+    setBulkBusy(true); setError(null);
+    try {
+      const { id } = await familyApi.createGroup(authedFetch, name);
+      setNewLabel(null);
+      setGroupTick((t) => t + 1);
+      await applyLabel(id, 'add', name);
+    } catch (e) {
+      setError((e as Error).message);
+      setBulkBusy(false);
+    }
+  };
 
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -253,6 +419,35 @@ export default function FamilyViewPage() {
       {note && <Alert severity="success" className="mb-4" onClose={() => setNote(null)}>{note}</Alert>}
 
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>{spec.blurb}</Typography>
+
+      {/*
+        A filtered list has to say so where you are looking.
+
+        The count lives at the bottom of fifty rows, and two labels covering
+        most of the same address book produce a first page that looks
+        identical either way — which is indistinguishable from a filter that
+        does nothing. This is the line that tells you it worked, and the one
+        click that undoes it.
+      */}
+      {activeGroup && (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2, flexWrap: 'wrap' }}>
+          <Typography variant="body2" color="text.secondary">Showing only</Typography>
+          <Chip
+            size="small"
+            label={activeGroup.name}
+            onDelete={() => chooseGroup('')}
+            sx={activeGroup.colour
+              ? { bgcolor: activeGroup.colour, color: '#fff',
+                  '& .MuiChip-deleteIcon': { color: '#fff' } }
+              : undefined}
+          />
+          {!loading && (
+            <Typography variant="body2" color="text.secondary">
+              — {total === 1 ? '1 contact' : `${total} contacts`}
+            </Typography>
+          )}
+        </Box>
+      )}
 
       <Card
         padded={false}
@@ -299,7 +494,7 @@ export default function FamilyViewPage() {
             <TextField
               select size="small" label="Group"
               value={groupId}
-              onChange={(e) => { setGroupId(e.target.value); setPage(1); }}
+              onChange={(e) => chooseGroup(e.target.value)}
               sx={{ minWidth: 160 }}
             >
               <MenuItem value="">All groups</MenuItem>
@@ -307,6 +502,48 @@ export default function FamilyViewPage() {
             </TextField>
           )}
         </Box>
+
+        {/*
+          The bar only exists while something is selected, so the screen is not
+          carrying a permanently disabled toolbar for a thing nobody is doing.
+        */}
+        {!isBin && selectionCount > 0 && (
+          <Box
+            sx={{
+              display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap',
+              px: 2, py: 1.5, bgcolor: 'action.hover',
+              borderTop: '1px solid', borderColor: 'divider',
+            }}
+          >
+            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+              {allMatching
+                ? `All ${total} selected`
+                : `${plural(selected.size, 'contact')} selected`}
+            </Typography>
+
+            {canSelectAll && (
+              <Button variant="ghost" onClick={() => setAllMatching(true)}>
+                Select all {total} matching
+              </Button>
+            )}
+
+            <Button
+              variant="secondary" disabled={bulkBusy}
+              onClick={(e) => setMenu({ anchor: e.currentTarget, mode: 'add' })}
+            >
+              Add label
+            </Button>
+            <Button
+              variant="secondary" disabled={bulkBusy}
+              onClick={(e) => setMenu({ anchor: e.currentTarget, mode: 'remove' })}
+            >
+              Remove label
+            </Button>
+
+            <Button variant="ghost" disabled={bulkBusy} onClick={clearSelection}>Clear</Button>
+            {bulkBusy && <CircularProgress size={18} />}
+          </Box>
+        )}
 
         <Divider />
 
@@ -318,7 +555,22 @@ export default function FamilyViewPage() {
             hint={debounced ? 'Try part of a name, a company, or an email address.' : spec.emptyHint}
           />
         ) : (
-          <Table head={['Name', 'Company', 'Address', 'Last contacted', isBin ? '' : 'Visibility']}>
+          <Table
+            head={[
+              ...(isBin ? [] : [(
+                <Checkbox
+                  key="select-page"
+                  size="small"
+                  sx={{ p: 0 }}
+                  checked={allOnPage}
+                  indeterminate={!allOnPage && someOnPage}
+                  onChange={togglePage}
+                  aria-label="Select everything on this page"
+                />
+              )]),
+              'Name', 'Company', 'Address', 'Last contacted', isBin ? '' : 'Visibility',
+            ]}
+          >
             {visible.map((c) => (
               <tr
                 key={c.id}
@@ -326,6 +578,20 @@ export default function FamilyViewPage() {
                 onClick={isBin ? undefined : () => setOpenId(c.id)}
                 title={isBin ? undefined : 'Open this contact'}
               >
+                {!isBin && (
+                  <Td>
+                    {/* stopPropagation, or ticking a box also opens the contact. */}
+                    <Checkbox
+                      size="small"
+                      sx={{ p: 0 }}
+                      checked={allMatching || selected.has(c.id)}
+                      disabled={allMatching}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => toggleOne(c.id)}
+                      aria-label={`Select ${c.displayName}`}
+                    />
+                  </Td>
+                )}
                 <Td>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minWidth: 0 }}>
                     <Box
@@ -426,8 +692,64 @@ export default function FamilyViewPage() {
           }}
         />
       )}
+      <Menu open={menu !== null} anchorEl={menu?.anchor ?? null} onClose={() => setMenu(null)}>
+        {groups.length === 0 && <MenuItem disabled>No labels yet</MenuItem>}
+        {groups.map((g) => (
+          <MenuItem
+            key={g.id}
+            onClick={() => {
+              const mode = menu?.mode ?? 'add';
+              setMenu(null);
+              void applyLabel(g.id, mode);
+            }}
+          >
+            {g.name}
+          </MenuItem>
+        ))}
+        {menu?.mode === 'add' && <Divider />}
+        {menu?.mode === 'add' && (
+          <MenuItem onClick={() => { setMenu(null); setNewLabel(''); }}>New label…</MenuItem>
+        )}
+      </Menu>
+
+      <Dialog
+        open={newLabel !== null}
+        onClose={bulkBusy ? undefined : () => setNewLabel(null)}
+        maxWidth="xs" fullWidth
+      >
+        <DialogTitle>New label</DialogTitle>
+        <DialogContent dividers>
+          <TextField
+            autoFocus fullWidth size="small" label="Name" sx={{ mt: 1 }}
+            value={newLabel ?? ''}
+            onChange={(e) => setNewLabel(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (newLabel ?? '').trim().length > 0) {
+                e.preventDefault();
+                void createAndApply((newLabel ?? '').trim());
+              }
+            }}
+            helperText={`It will be created and put on ${
+              selectionCount === 1 ? 'this contact' : `these ${selectionCount} contacts`}.`}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button variant="ghost" disabled={bulkBusy} onClick={() => setNewLabel(null)}>Cancel</Button>
+          <Button
+            variant="primary"
+            disabled={bulkBusy || (newLabel ?? '').trim().length === 0}
+            onClick={() => void createAndApply((newLabel ?? '').trim())}
+          >
+            {bulkBusy ? 'Creating…' : 'Create and apply'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </FamilyShell>
   );
+}
+
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
 
 // ---------------------------------------------------------------------------
