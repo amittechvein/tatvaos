@@ -160,11 +160,28 @@ anything else touches that file, because the same mistake will be copied.
 
 ---
 
-## 8. Bulk select
+## 8. Bulk select — BUILT for labels, not yet for delete
 
-Pairs with Other contacts. If mail has saved 200 people and nine are worth
-keeping, pruning one dialog at a time is why people abandon address books.
-Checkbox column, then label or delete the selection.
+Checkbox column on the contacts list, a select-all in the table header, and a
+second deliberate click for "select all N matching this filter". Add and remove
+labels from the bar, including creating a label and applying it in one step.
+
+The server side is `POST /api/family/contacts/labels` and `ContactFilters.cs`.
+That second file is the load-bearing one: "all matching" re-runs the SAME
+filter the list route ran, so the number on the button is the number that
+changes. Three copies of those clauses existed before it; two of them only
+read, and the third writes.
+
+Still open:
+
+- **Bulk delete.** The obvious next button, and the one worth being slow about
+  — a mis-aimed "select all 1,499" that deletes is a very different afternoon
+  from one that labels. Soft delete makes it recoverable, which is an argument
+  for doing it, not for doing it casually.
+- **Bulk restore in the Bin.** Checkboxes are hidden there today.
+- **Selection does not survive a page turn.** Deliberate: acting on rows that
+  scrolled off screen is the easiest way to relabel the wrong people. "Select
+  all matching" is the answer for anything larger than a page.
 
 ---
 

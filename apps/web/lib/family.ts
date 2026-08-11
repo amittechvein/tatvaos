@@ -59,6 +59,14 @@ export interface LabelSummary extends ContactGroup {
   count: number;
 }
 
+export interface BulkLabelResult {
+  /** How many contacts were touched. */
+  contacts: number;
+  /** Membership rows created — never more than contacts x labels, often fewer. */
+  added: number;
+  removed: number;
+}
+
 export interface ContactDetail extends ContactSummary {
   firstName: string | null;
   lastName: string | null;
@@ -400,6 +408,31 @@ export const familyApi = {
   deleteGroup: (f: AuthedFetch, groupId: string) =>
     f(`/family/groups/${groupId}`, { method: 'DELETE' })
       .then((r) => ok(r, 'Could not delete the group.')),
+
+  /**
+   * Add and remove labels across many contacts in one request.
+   *
+   * Two ways to say which contacts, and they are not equivalent:
+   *
+   *   contactIds   the rows someone ticked
+   *   all + filter everything matching, which may be thousands they have not
+   *                seen — the server runs the SAME filter the list route ran,
+   *                so the number on the button is the number that changes
+   *
+   * `added` and `removed` count membership rows, not contacts: labelling 100
+   * contacts with a label half of them already carried reports 50.
+   */
+  bulkLabels: (f: AuthedFetch, body: {
+    contactIds?: string[];
+    all?: boolean;
+    ownership?: Ownership;
+    groupId?: string;
+    favourite?: boolean;
+    source?: 'auto' | 'manual';
+    add?: string[];
+    remove?: string[];
+  }) => f('/family/contacts/labels', { method: 'POST', body: JSON.stringify(body) })
+        .then((r) => json<BulkLabelResult>(r, 'Could not update the labels.')),
 
   /** PUT, and idempotent — adding twice succeeds rather than 409. */
   addToGroup: (f: AuthedFetch, groupId: string, contactId: string) =>

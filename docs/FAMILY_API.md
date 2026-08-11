@@ -317,6 +317,47 @@ label, and the contacts that were in it are simply no longer in anything.
 
 Filter the contact list by group with `GET /api/family/contacts?groupId=…`.
 
+### Labelling many contacts at once
+
+```
+POST /api/family/contacts/labels
+```
+
+```jsonc
+// an explicit selection
+{ "contactIds": ["…", "…"], "add": ["groupId"], "remove": ["groupId"] }
+
+// or everything matching a filter — the same one the list route was showing
+{ "all": true, "ownership": "personal", "groupId": "…",
+  "favourite": false, "source": "auto", "add": ["groupId"] }
+```
+
+```json
+{ "contacts": 1499, "added": 1451, "removed": 0 }
+```
+
+`contacts` is how many were touched; `added` and `removed` count membership
+rows, so labelling 100 contacts with a label half of them already carried
+reports 50. Adding a label a contact already has is a success, not a conflict.
+
+**Do not call the single-member routes in a loop.** 1,499 round trips is not a
+feature, it is a hang.
+
+`all` re-runs the same server-side filter the list route ran — one shared
+`ContactFilters.Apply` — so "select all 1,499 matching" changes exactly the
+1,499 the screen was counting. It deliberately does **not** understand the
+search term: full-text search runs on a different path, so the UI must hide
+"select all matching" while a search is active, which it does.
+
+Ids the caller cannot see are silently absent from the result rather than
+reported, because "3 of your 5 ids were not found" confirms that two contacts
+exist somewhere. Unknown label ids are dropped for the same reason a stale menu
+should not fail a 1,499-contact operation. The limit is 10,000 contacts per
+call; above that it is a 400 asking you to narrow the filter.
+
+Not audited — and consistently so: the single-member routes do not write audit
+rows either. A label is a view over contacts rather than a change to one.
+
 ---
 
 ## Settings

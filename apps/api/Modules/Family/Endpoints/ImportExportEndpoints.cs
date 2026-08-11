@@ -61,22 +61,11 @@ public static class ImportExportEndpoints
         var vcard = format.Equals("vcf", StringComparison.OrdinalIgnoreCase)
                  || format.Equals("vcard", StringComparison.OrdinalIgnoreCase);
 
-        var q = db.Contacts.Where(c => c.DeletedAt == null);
-
-        if (ownership is "personal" or "organisational")
-            q = q.Where(c => c.OwnershipType == ownership);
-
-        if (favourite) q = q.Where(c => c.IsFavourite);
-
-        if (source == "auto")
-            q = q.Where(c => c.Source == "auto_received"
-                          || c.Source == "auto_sent"
-                          || c.Source == "auto_reply");
-        else if (source == "manual")
-            q = q.Where(c => c.Source == "manual" || c.Source == "import" || c.Source == "api");
-
-        if (groupId is Guid gid)
-            q = q.Where(c => db.ContactGroupMembers.Any(m => m.GroupId == gid && m.ContactId == c.Id));
+        // The same filter the list route applies, so "export what I am looking
+        // at" means exactly that. See ContactFilters.
+        var q = ContactFilters.Apply(
+            db, db.Contacts.Where(c => c.DeletedAt == null),
+            ownership, groupId, favourite, source);
 
         var count = await q.CountAsync(ct);
         if (count > MaxExportRows)

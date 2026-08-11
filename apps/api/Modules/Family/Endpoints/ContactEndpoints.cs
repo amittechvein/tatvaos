@@ -63,6 +63,10 @@ public static class ContactEndpoints
         g.MapPut("/groups/{groupId:guid}/members/{id:guid}", AddToGroupAsync);
         g.MapDelete("/groups/{groupId:guid}/members/{id:guid}", RemoveFromGroupAsync);
 
+        // Labelling many contacts at once. Not the single-member routes in a
+        // loop: 1,499 round trips is not a feature, it is a hang.
+        g.MapPost("/contacts/labels", BulkLabelsAsync);
+
         // Import and export live in their own file — the parsing they need is
         // longer than everything above put together.
         g.MapImportExport();
@@ -147,25 +151,9 @@ public static class ContactEndpoints
             ? db.Contacts.Where(c => c.DeletedAt != null)
             : Live(db);
 
-        if (ownership is "personal" or "organisational")
-            q = q.Where(c => c.OwnershipType == ownership);
-
-        if (favourite == true)
-            q = q.Where(c => c.IsFavourite);
-
-        // "auto" is the whole family of auto_* sources rather than one value:
-        // the client's question is "what did mail decide to save", not which
-        // particular flavour of mail event produced it.
-        if (source == "auto")
-            q = q.Where(c => c.Source == "auto_received"
-                          || c.Source == "auto_sent"
-                          || c.Source == "auto_reply");
-        else if (source == "manual")
-            q = q.Where(c => c.Source == "manual" || c.Source == "import" || c.Source == "api");
-
-        if (groupId is Guid gid)
-            q = q.Where(c => db.ContactGroupMembers
-                .Any(m => m.GroupId == gid && m.ContactId == c.Id));
+        // One definition, shared with export and with bulk labelling — see
+        // ContactFilters for why that matters now that one of them writes.
+        q = ContactFilters.Apply(db, q, ownership, groupId, favourite, source);
 
         var total = await q.CountAsync(ct);
 
@@ -887,6 +875,147 @@ public static class ContactEndpoints
         return Results.NoContent();
     }
 
+    /// <summary>
+    /// Add and remove labels across many contacts in one request.
+    ///
+    /// ──────────────────────────────────────────────────────────────────
+    ///  TWO WAYS TO SAY WHICH CONTACTS, AND THE SECOND IS THE DANGEROUS ONE.
+    ///
+    ///    contactIds   the rows someone ticked. What they saw is what changes.
+    ///    all + filter everything matching — which may be thousands of
+    ///                 contacts the caller has never laid eyes on.
+    ///
+    ///  The second exists because pruning an imported address book one page of
+    ///  fifty at a time is why people give up on address books. It is made
+    ///  safe by running the SAME ContactFilters.Apply the list route ran, so
+    ///  "all 1,499 matching" is exactly the 1,499 the screen was counting.
+    /// ──────────────────────────────────────────────────────────────────
+    ///
+    /// Not audited, deliberately — and consistently: AddToGroupAsync and
+    /// RemoveFromGroupAsync do not write audit rows either. A label is a view
+    /// over contacts rather than a change to one, and 1,499 audit rows saying
+    /// "labelled" would bury the edits that do matter.
+    ///
+    /// Ids the caller cannot see simply do not come back from the query, so a
+    /// forged id is a no-op rather than an error. Reporting "3 of your 5 ids
+    /// were not found" would confirm that two contacts exist somewhere.
+    /// </summary>
+    private static async Task<IResult> BulkLabelsAsync(
+        BulkLabelRequest req, AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        if (!TryCaller(tenant, out _)) return Results.Unauthorized();
+
+        var add = (req.Add ?? []).Distinct().ToList();
+        var remove = (req.Remove ?? []).Distinct().ToList();
+
+        // A label in both lists is a contradiction, and add is the kinder
+        // reading of it — removing something the caller also asked for is the
+        // outcome nobody wants.
+        remove = remove.Where(id => !add.Contains(id)).ToList();
+
+        if (add.Count == 0 && remove.Count == 0)
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+                { ["add"] = ["Nothing to add and nothing to remove."] });
+
+        List<Guid> ids;
+
+        if (req.All == true)
+        {
+            var q = ContactFilters.Apply(
+                db, Live(db), req.Ownership, req.GroupId, req.Favourite, req.Source);
+
+            // One over the limit, so "too many" is distinguishable from "exactly
+            // the limit" without a second COUNT.
+            ids = await q.Select(c => c.Id).Take(MaxBulk + 1).ToListAsync(ct);
+        }
+        else
+        {
+            var wanted = (req.ContactIds ?? []).Distinct().ToList();
+
+            if (wanted.Count == 0)
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                    { ["contactIds"] = ["No contacts were selected."] });
+
+            if (wanted.Count > MaxBulk)
+                return TooMany(wanted.Count);
+
+            // Loaded through the filtered DbSet, so an id belonging to someone
+            // else's personal contact is not in the result and never changes.
+            ids = await Live(db)
+                .Where(c => wanted.Contains(c.Id))
+                .Select(c => c.Id)
+                .ToListAsync(ct);
+        }
+
+        if (ids.Count > MaxBulk) return TooMany(ids.Count);
+        if (ids.Count == 0) return Results.Ok(new BulkLabelResult(0, 0, 0));
+
+        // Only labels that exist in this tenant. An unknown id is dropped
+        // rather than refused — the alternative is failing a 1,499-contact
+        // operation over one stale id in a menu the client rendered a minute ago.
+        var named = add.Concat(remove).Distinct().ToList();
+        var known = await db.ContactGroups
+            .Where(x => named.Contains(x.Id))
+            .Select(x => x.Id)
+            .ToListAsync(ct);
+
+        add = add.Where(known.Contains).ToList();
+        remove = remove.Where(known.Contains).ToList();
+
+        if (add.Count == 0 && remove.Count == 0)
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+                { ["add"] = ["Those labels no longer exist."] });
+
+        var existing = await db.ContactGroupMembers
+            .Where(m => ids.Contains(m.ContactId) && named.Contains(m.GroupId))
+            .ToListAsync(ct);
+
+        var have = existing.Select(m => (m.GroupId, m.ContactId)).ToHashSet();
+
+        var added = 0;
+        foreach (var groupId in add)
+        {
+            foreach (var contactId in ids)
+            {
+                // Idempotent: already carrying the label is a success, not a
+                // duplicate key. Adding "Dealers" to a selection that partly
+                // has it already is the normal case, not an edge one.
+                if (!have.Add((groupId, contactId))) continue;
+
+                db.ContactGroupMembers.Add(new ContactGroupMember
+                {
+                    TenantId = tenant.TenantId,
+                    GroupId = groupId,
+                    ContactId = contactId,
+                });
+                added++;
+            }
+        }
+
+        var removed = 0;
+        foreach (var m in existing)
+        {
+            if (!remove.Contains(m.GroupId)) continue;
+            db.ContactGroupMembers.Remove(m);
+            removed++;
+        }
+
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(new BulkLabelResult(ids.Count, added, removed));
+    }
+
+    /// <summary>
+    /// Ten thousand. Well past any real selection, and comfortably below the
+    /// size where one SaveChanges becomes everybody else's problem.
+    /// </summary>
+    private const int MaxBulk = 10_000;
+
+    private static IResult TooMany(int count) => Results.Problem(
+        title: "That is too many contacts for one change.",
+        detail: $"This would affect {count:N0} contacts and the limit is {MaxBulk:N0}. " +
+                "Narrow it with a filter and do it in parts.",
+        statusCode: StatusCodes.Status400BadRequest);
+
     // ==================================================================
     //  Settings
     // ==================================================================
@@ -1036,5 +1165,29 @@ public record CreateGroupRequest(string? Name, string? Description, string? Colo
 
 /// <summary>Every field optional: absent means leave it alone.</summary>
 public record UpdateGroupRequest(string? Name, string? Description, string? Colour);
+
+/// <summary>
+/// Which contacts, and what to do to their labels.
+///
+/// Supply ContactIds for an explicit selection, or All = true with the same
+/// filter the list route was showing. The filter fields are ignored unless
+/// All is true — sending both is not an error, it is just a selection.
+/// </summary>
+public record BulkLabelRequest(
+    List<Guid>? ContactIds,
+    bool? All,
+    string? Ownership,
+    Guid? GroupId,
+    bool? Favourite,
+    string? Source,
+    List<Guid>? Add,
+    List<Guid>? Remove);
+
+/// <summary>
+/// Contacts is how many were touched; Added and Removed are membership rows,
+/// so labelling 100 contacts with two labels they half had already is
+/// perfectly capable of reporting 137.
+/// </summary>
+public record BulkLabelResult(int Contacts, int Added, int Removed);
 public record LogInteractionRequest(string Type, string? Subject, string? Notes,
     DateTimeOffset? OccurredAt);
