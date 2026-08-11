@@ -17,7 +17,7 @@ import Tooltip from '@mui/material/Tooltip';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 
-import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { notFound, useParams, useRouter, useSearchParams } from 'next/navigation';
 
 import { FamilyShell, useFamilyChrome } from '@/components/family/FamilyShell';
 import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
@@ -144,7 +144,17 @@ export default function FamilyViewPage() {
   const router = useRouter();
   const chrome = useFamilyChrome();
 
-  const view: View = isView(params.view) ? params.view : 'contacts';
+  // Anything that is not one of the five is a 404 — NOT a quiet fall back to
+  // Contacts.
+  //
+  // The fallback is what hid the missing /family/labels page for weeks. The
+  // sidebar linked to it, Next found no static route, matched this dynamic one
+  // instead, and this line turned an unknown view into the contacts list. So
+  // clicking "Manage labels" looked like a button that did nothing rather than
+  // like a broken link. A wrong screen is harder to diagnose than an error.
+  if (!isView(params.view)) notFound();
+  const view = params.view as View;
+
   const spec = VIEWS[view];
   const isBin = view === 'bin';
 

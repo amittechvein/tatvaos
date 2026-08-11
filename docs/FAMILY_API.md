@@ -281,20 +281,41 @@ for deleted contacts too, which is the point of the soft delete.
 
 ---
 
-## Groups
+## Groups (labels)
 
 ```
 GET    /api/family/groups
 POST   /api/family/groups                             { "name": "Suppliers", "colour": "#c2410c" }
+PATCH  /api/family/groups/{groupId}                   { "name": "Vendors" }
 DELETE /api/family/groups/{groupId}
 PUT    /api/family/groups/{groupId}/members/{contactId}
 DELETE /api/family/groups/{groupId}/members/{contactId}
 ```
 
-Groups are tenant-wide. Adding a member is a `PUT` and is idempotent — calling
-it twice succeeds. Deleting a group does not delete its contacts.
+Groups are tenant-wide and the name is unique within a tenant. Adding a member
+is a `PUT` and is idempotent — calling it twice succeeds. Deleting a group does
+not delete its contacts.
 
-Filter the list by group with `GET /api/family/contacts?groupId=…`.
+`GET /groups` returns a count with each one:
+
+```json
+[{ "id": "…", "name": "Suppliers", "description": null,
+   "colour": "#c2410c", "count": 12 }]
+```
+
+`count` is **live contacts only** — anything in the Bin is excluded, so the
+number agrees with what you see after clicking through to
+`GET /api/family/contacts?groupId=…`.
+
+`PATCH` takes any subset of `name`, `description` and `colour`. An absent field
+is left alone; an empty string clears it. A name that collides is a 409 with a
+readable `message`, not a constraint violation.
+
+**Rename, never delete-and-recreate.** Every membership row points at the
+group id. Recreating a label with the same name gives you a new id and an empty
+label, and the contacts that were in it are simply no longer in anything.
+
+Filter the contact list by group with `GET /api/family/contacts?groupId=…`.
 
 ---
 

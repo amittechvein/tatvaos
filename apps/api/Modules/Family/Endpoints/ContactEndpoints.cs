@@ -58,6 +58,7 @@ public static class ContactEndpoints
 
         g.MapGet("/groups", ListGroupsAsync);
         g.MapPost("/groups", CreateGroupAsync);
+        g.MapPatch("/groups/{groupId:guid}", UpdateGroupAsync);
         g.MapDelete("/groups/{groupId:guid}", DeleteGroupAsync);
         g.MapPut("/groups/{groupId:guid}/members/{id:guid}", AddToGroupAsync);
         g.MapDelete("/groups/{groupId:guid}/members/{id:guid}", RemoveFromGroupAsync);
@@ -723,14 +724,89 @@ public static class ContactEndpoints
     //  Groups
     // ==================================================================
 
+    /// <summary>
+    /// Every label, with how many live contacts carry it.
+    ///
+    /// The count is a SECOND query joined in memory rather than a correlated
+    /// subquery inside the projection. Two reasons: a label screen showing "12
+    /// contacts" when three of them are in the Bin is wrong, and the version
+    /// that gets that right in one statement nests an EXISTS inside a COUNT
+    /// inside a SELECT — which either translates or throws at request time,
+    /// and this route is called on every contacts page load. The join-and-group
+    /// form is the same shape used by the export route and is not clever.
+    /// </summary>
     private static async Task<IResult> ListGroupsAsync(
         AppDbContext db, TenantContext tenant, CancellationToken ct)
     {
-        var items = await db.ContactGroups
+        var groups = await db.ContactGroups
             .OrderBy(x => x.Name)
-            .Select(x => new GroupDto(x.Id, x.Name, x.Description, x.Colour))
+            .Select(x => new { x.Id, x.Name, x.Description, x.Colour })
             .ToListAsync(ct);
+
+        var counts = await db.ContactGroupMembers
+            .Join(db.Contacts.Where(c => c.DeletedAt == null),
+                  m => m.ContactId, c => c.Id, (m, c) => m.GroupId)
+            .GroupBy(id => id)
+            .Select(g => new { GroupId = g.Key, Count = g.Count() })
+            .ToListAsync(ct);
+
+        var byGroup = counts.ToDictionary(x => x.GroupId, x => x.Count);
+
+        var items = groups
+            .Select(x => new LabelDto(
+                x.Id, x.Name, x.Description, x.Colour,
+                byGroup.TryGetValue(x.Id, out var n) ? n : 0))
+            .ToList();
+
         return Results.Ok(items);
+    }
+
+    /// <summary>
+    /// Rename a label, or change its colour.
+    ///
+    /// Renaming rather than delete-and-recreate matters: a label is referenced
+    /// by every membership row, and recreating one silently empties it. The
+    /// name is unique per tenant, so a clash is a 409 naming the offender
+    /// rather than a constraint violation nobody can read.
+    /// </summary>
+    private static async Task<IResult> UpdateGroupAsync(
+        Guid groupId, UpdateGroupRequest req, AppDbContext db, TenantContext tenant,
+        CancellationToken ct)
+    {
+        var g = await db.ContactGroups.FirstOrDefaultAsync(x => x.Id == groupId, ct);
+        if (g is null) return Results.NotFound();
+
+        if (req.Name is { } supplied)
+        {
+            var name = supplied.Trim();
+
+            if (name.Length == 0)
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                    { ["name"] = ["A name is required."] });
+
+            if (name.Length > 200)
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                    { ["name"] = ["A label name cannot be longer than 200 characters."] });
+
+            if (name != g.Name &&
+                await db.ContactGroups.AnyAsync(x => x.Name == name && x.Id != groupId, ct))
+                return Results.Conflict(new
+                {
+                    error = "duplicate_group",
+                    message = $"\"{name}\" already exists.",
+                });
+
+            g.Name = name;
+        }
+
+        // Absent means leave it; an empty string means clear it. Trim folds
+        // whitespace-only to null, which is the same thing.
+        if (req.Description is not null) g.Description = Trim(req.Description);
+        if (req.Colour is not null) g.Colour = Trim(req.Colour);
+
+        g.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+        return Results.NoContent();
     }
 
     private static async Task<IResult> CreateGroupAsync(
@@ -742,6 +818,12 @@ public static class ContactEndpoints
         if (name.Length == 0)
             return Results.ValidationProblem(new Dictionary<string, string[]>
                 { ["name"] = ["A name is required."] });
+
+        // The column is 200. Without this, a pasted paragraph is a 500 rather
+        // than a message anyone can act on.
+        if (name.Length > 200)
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+                { ["name"] = ["A label name cannot be longer than 200 characters."] });
 
         if (await db.ContactGroups.AnyAsync(x => x.Name == name, ct))
             return Results.Conflict(new { error = "duplicate_group", message = $"\"{name}\" already exists." });
@@ -917,6 +999,14 @@ public record PhoneDto(Guid Id, string Phone, string Type, bool IsPrimary);
 public record AddressDto(Guid Id, string Type, string? StreetLine1, string? StreetLine2,
     string? City, string? StateProvince, string? PostalCode, string? Country, bool IsPrimary);
 public record GroupDto(Guid Id, string Name, string? Description, string? Colour);
+
+/// <summary>
+/// A label on the manage-labels screen. Same as GroupDto plus the number of
+/// live contacts carrying it, which is the one thing that makes a label list
+/// worth looking at — an empty label is a tidy-up, a label with forty is a
+/// filter.
+/// </summary>
+public record LabelDto(Guid Id, string Name, string? Description, string? Colour, int Count);
 public record InteractionDto(Guid Id, string Type, string? Subject, string? Notes,
     Guid? MailMessageId, DateTimeOffset OccurredAt);
 public record AuditDto(Guid Id, string Operation, Guid? ActorUserId, string? Changes,
@@ -943,5 +1033,8 @@ public record PatchContactRequest(
 public record AddEmailRequest(string? Email, string? Type, bool? IsPrimary);
 public record AddPhoneRequest(string? Phone, string? Type, bool? IsPrimary);
 public record CreateGroupRequest(string? Name, string? Description, string? Colour);
+
+/// <summary>Every field optional: absent means leave it alone.</summary>
+public record UpdateGroupRequest(string? Name, string? Description, string? Colour);
 public record LogInteractionRequest(string Type, string? Subject, string? Notes,
     DateTimeOffset? OccurredAt);

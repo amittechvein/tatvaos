@@ -50,6 +50,15 @@ export interface ContactGroup {
   id: string; name: string; description: string | null; colour: string | null;
 }
 
+/**
+ * A label with the number of live contacts carrying it. What
+ * `GET /family/groups` actually returns — `count` excludes contacts in the
+ * Bin, so it agrees with what you see when you click through.
+ */
+export interface LabelSummary extends ContactGroup {
+  count: number;
+}
+
 export interface ContactDetail extends ContactSummary {
   firstName: string | null;
   lastName: string | null;
@@ -364,11 +373,29 @@ export const familyApi = {
       .then((r) => json<AuditEntry[]>(r, 'Could not load the audit trail.')),
 
   groups: (f: AuthedFetch) =>
-    f('/family/groups').then((r) => json<ContactGroup[]>(r, 'Could not load groups.')),
+    f('/family/groups').then((r) => json<LabelSummary[]>(r, 'Could not load labels.')),
 
   createGroup: (f: AuthedFetch, name: string, description?: string, colour?: string) =>
     f('/family/groups', { method: 'POST', body: JSON.stringify({ name, description, colour }) })
       .then((r) => json<{ id: string }>(r, 'Could not create the group.')),
+
+  /**
+   * Rename, recolour, or describe. Send only what changed — an absent field is
+   * left alone, an empty string clears it.
+   *
+   * A rename is a real update, never a delete and recreate: every membership
+   * row points at this id, and recreating the label would quietly empty it.
+   */
+  updateGroup: (f: AuthedFetch, groupId: string, body: {
+    name?: string; description?: string; colour?: string;
+  }) => f(`/family/groups/${groupId}`, { method: 'PATCH', body: JSON.stringify(body) })
+        .then(async (r) => {
+          if (r.status === 409) {
+            const b = await r.json().catch(() => ({})) as { message?: string };
+            throw new Error(b.message ?? 'A label with that name already exists.');
+          }
+          return ok(r, 'Could not save the label.');
+        }),
 
   deleteGroup: (f: AuthedFetch, groupId: string) =>
     f(`/family/groups/${groupId}`, { method: 'DELETE' })
