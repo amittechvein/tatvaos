@@ -457,23 +457,53 @@ public static class ContactEndpoints
 
         var prefix = term.ToLowerInvariant() + "%";
 
-        var items = await db.ContactEmails
+        // TWO SOURCES, AND THEY ARE DIFFERENT KINDS OF PERSON.
+        //
+        //   family.contacts  people you correspond with  — external
+        //   core.users       your colleagues             — internal
+        //
+        // A recipient picker that offers only the first is the wrong tool: the
+        // address you type most often is the one next to you. Colleagues were
+        // never in Family and never will be — a person exists once, in Core —
+        // so this reads both and merges.
+        //
+        // Colleagues are listed FIRST. Typing three letters and getting a
+        // supplier before your own team is the behaviour people complain about.
+        var colleagues = await db.Users
+            .Where(u => u.Status == "active" &&
+                        (EF.Functions.ILike(u.Email, prefix) ||
+                         EF.Functions.ILike(u.DisplayName, prefix)))
+            .OrderBy(u => u.DisplayName)
+            .Take(limit)
+            .Select(u => new AutocompleteRow(u.Id, u.Email, u.DisplayName, true))
+            .ToListAsync(ct);
+
+        var contacts = await db.ContactEmails
             .Where(e => EF.Functions.ILike(e.Email, prefix) ||
                         db.Contacts.Any(c => c.Id == e.ContactId &&
                                              c.DeletedAt == null &&
                                              EF.Functions.ILike(c.DisplayName, prefix)))
             .OrderByDescending(e => e.IsPrimary)
             .Take(limit)
-            .Select(e => new
-            {
-                contactId = e.ContactId,
-                email = e.Email,
-                displayName = db.Contacts.Where(c => c.Id == e.ContactId)
-                                         .Select(c => c.DisplayName).FirstOrDefault()
-            })
+            .Select(e => new AutocompleteRow(
+                e.ContactId,
+                e.Email,
+                db.Contacts.Where(c => c.Id == e.ContactId)
+                           .Select(c => c.DisplayName).FirstOrDefault() ?? e.Email,
+                false))
             .ToListAsync(ct);
 
-        return Results.Ok(items);
+        // A colleague who is ALSO saved as a contact would otherwise appear
+        // twice. The colleague row wins — it is the authoritative record of
+        // that person, and a stale copy in someone's address book should not
+        // shadow it.
+        var seen = colleagues.Select(c => c.Email.ToLowerInvariant()).ToHashSet();
+        var merged = colleagues
+            .Concat(contacts.Where(c => !seen.Contains(c.Email.ToLowerInvariant())))
+            .Take(limit)
+            .ToList();
+
+        return Results.Ok(merged);
     }
 
     /// <summary>
@@ -888,6 +918,13 @@ public record InteractionDto(Guid Id, string Type, string? Subject, string? Note
 public record AuditDto(Guid Id, string Operation, Guid? ActorUserId, string? Changes,
     string? Reason, DateTimeOffset OccurredAt);
 public record SettingsDto(bool AutoSaveReceived, bool AutoSaveSent, bool AutoSaveReply);
+
+/// <summary>
+/// One row in the recipient picker. IsColleague distinguishes a core.users row
+/// from a family.contacts one — the client can badge them differently, and
+/// only the latter has a contact card to open.
+/// </summary>
+public record AutocompleteRow(Guid Id, string Email, string DisplayName, bool IsColleague);
 
 public record CreateContactRequest(
     string? DisplayName, string? FirstName, string? LastName, string? Nickname,

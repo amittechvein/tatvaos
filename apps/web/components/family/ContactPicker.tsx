@@ -23,7 +23,13 @@ import { familyApi } from '@/lib/family';
  * ─────────────────────────────────────────────────────────────────────────
  */
 
-interface Suggestion { contactId: string; email: string; displayName: string }
+interface Suggestion {
+  id: string;
+  email: string;
+  displayName: string;
+  /** A colleague from core.users rather than a saved contact. */
+  isColleague: boolean;
+}
 
 /** The fragment being typed: everything after the last comma or semicolon. */
 function currentFragment(value: string): string {
@@ -108,7 +114,7 @@ export function ContactPicker({ value, onPick, children }: {
         <Paper elevation={6} sx={{ minWidth: 320, maxWidth: 460, py: 0.5 }}>
           {items.map((s, i) => (
             <Box
-              key={`${s.contactId}-${s.email}`}
+              key={`${s.id}-${s.email}`}
               onMouseDown={(e) => { e.preventDefault(); choose(s); }}
               onMouseEnter={() => setActive(i)}
               sx={{
@@ -116,7 +122,14 @@ export function ContactPicker({ value, onPick, children }: {
                 bgcolor: i === active ? 'action.hover' : 'transparent',
               }}
             >
-              <Typography variant="body2" sx={{ fontWeight: 600 }}>{s.displayName}</Typography>
+              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                {s.displayName}
+                {s.isColleague && (
+                  <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                    colleague
+                  </Typography>
+                )}
+              </Typography>
               <Typography variant="caption" color="text.secondary">{s.email}</Typography>
             </Box>
           ))}

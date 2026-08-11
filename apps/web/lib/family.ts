@@ -178,7 +178,9 @@ export const familyApi = {
   /** One row per ADDRESS, not per contact — someone with two appears twice. */
   autocomplete: (f: AuthedFetch, q: string, limit = 10) =>
     f(`/family/contacts/autocomplete?q=${encodeURIComponent(q)}&limit=${limit}`)
-      .then((r) => json<{ contactId: string; email: string; displayName: string }[]>(r, 'Lookup failed.')),
+      .then((r) => json<{
+        id: string; email: string; displayName: string; isColleague: boolean;
+      }[]>(r, 'Lookup failed.')),
 
   /** 404 is a normal answer — the address simply is not in the address book. */
   lookup: async (f: AuthedFetch, email: string): Promise<ContactSummary | null> => {
