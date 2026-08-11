@@ -114,9 +114,14 @@ const FILTERS: [Filter, string][] = [
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '?';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  // Every index is guarded because this project builds with
+  // noUncheckedIndexedAccess: parts[0] is string | undefined even directly
+  // after a length check, and the compiler is right to insist.
+  const first = parts.at(0) ?? '';
+  const last = parts.at(-1) ?? '';
+  if (first.length === 0) return '?';
+  if (parts.length === 1) return first.slice(0, 2).toUpperCase();
+  return `${first.charAt(0)}${last.charAt(0)}`.toUpperCase();
 }
 
 /** "3 days ago", not a timestamp. Nobody reads an ISO string. */
