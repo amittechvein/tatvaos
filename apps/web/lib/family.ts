@@ -143,7 +143,123 @@ async function duplicateAware(res: Response, fallbackError: string): Promise<{ i
   return json<{ id: string }>(res, fallbackError);
 }
 
+/**
+ * What one row of an imported file turned into. `outcome` is "skipped" today —
+ * created and updated rows are counted, not listed, because a four-hundred-row
+ * success does not need four hundred lines of proof.
+ */
+export interface ImportOutcome {
+  row: number;
+  name: string;
+  email: string | null;
+  outcome: string;
+  reason: string;
+  contactId: string | null;
+}
+
+export interface ImportReport {
+  dryRun: boolean;
+  fileName: string;
+  /** 'csv' | 'vcard' — worked out from the file, not from what you told us. */
+  format: string;
+  rowsRead: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  /** Things worth saying out loud that are not failures. */
+  warnings: string[];
+  problems: ImportOutcome[];
+  problemsTruncated: boolean;
+  /** The first few names that would be added, so a dry run is checkable. */
+  sample: string[];
+}
+
+export interface ImportSettings {
+  /** Check the file and report, writing nothing. */
+  dryRun?: boolean;
+  /** Where the imported contacts land. Defaults to personal. */
+  ownership?: Ownership;
+  /**
+   * skip    an address already in the book leaves that contact alone
+   * update  fills in its blanks and adds addresses and numbers it lacks
+   */
+  mode?: 'skip' | 'update';
+  createLabels?: boolean;
+  /** A label put on everything in this file — the only bulk undo there is. */
+  label?: string;
+}
+
+export interface ExportSettings {
+  format: 'csv' | 'vcf';
+  ownership?: Ownership;
+  groupId?: string;
+  source?: 'auto' | 'manual';
+  favourite?: boolean;
+}
+
+/**
+ * The import routes answer with { message } rather than { error } — the string
+ * is written to be read by the person who chose the file, and putting the
+ * machine-readable code in front of them instead would be a small betrayal.
+ */
+async function readable(res: Response, fallback: string): Promise<never> {
+  const body = await res.json().catch(() => ({})) as
+    { message?: string; detail?: string; title?: string; error?: string };
+  throw new Error(body.message ?? body.detail ?? body.title ?? body.error ?? fallback);
+}
+
 export const familyApi = {
+  /**
+   * Read a file and say what would happen, or make it happen.
+   *
+   * Sent as multipart because that is what a browser file input produces and
+   * authedFetch already leaves FormData's own Content-Type alone. The options
+   * ride in the query string so the body stays exactly the file the person
+   * chose — nothing wrapped, nothing re-encoded.
+   */
+  importFile: async (f: AuthedFetch, file: File, opts: ImportSettings = {}) => {
+    const p = new URLSearchParams();
+    if (opts.dryRun) p.set('dryRun', 'true');
+    if (opts.ownership) p.set('ownership', opts.ownership);
+    if (opts.mode) p.set('mode', opts.mode);
+    if (opts.createLabels === false) p.set('createLabels', 'false');
+    if (opts.label) p.set('label', opts.label);
+
+    const body = new FormData();
+    body.append('file', file, file.name);
+
+    const res = await f(`/family/contacts/import?${p}`, { method: 'POST', body });
+    if (!res.ok) return readable(res, 'The import failed.');
+    return res.json() as Promise<ImportReport>;
+  },
+
+  /**
+   * Returns the file itself, not a URL. The endpoint needs an Authorization
+   * header, so it cannot be an anchor tag — the page has to fetch it and hand
+   * the browser a blob.
+   */
+  exportFile: async (f: AuthedFetch, opts: ExportSettings) => {
+    const p = new URLSearchParams({ format: opts.format });
+    if (opts.ownership) p.set('ownership', opts.ownership);
+    if (opts.groupId) p.set('groupId', opts.groupId);
+    if (opts.source) p.set('source', opts.source);
+    if (opts.favourite) p.set('favourite', 'true');
+
+    const res = await f(`/family/contacts/export?${p}`);
+    if (!res.ok) return readable(res, 'The export failed.');
+
+    // Content-Disposition is only readable when the API is same-origin or
+    // exposes the header, so the name is computed as a fallback rather than
+    // depended on. A download called "blob" is a support ticket.
+    const today = new Date().toISOString().slice(0, 10);
+    const suggested = nameFromDisposition(res.headers.get('content-disposition'));
+
+    return {
+      blob: await res.blob(),
+      name: suggested ?? `tatvaos-contacts-${today}.${opts.format}`,
+    };
+  },
+
   bootstrap: (f: AuthedFetch) =>
     f('/family/bootstrap').then((r) => json<FamilyBootstrap>(r, 'Could not load your contacts.')),
 
@@ -289,3 +405,30 @@ export function sourceLabel(s: ContactSource): string {
 }
 
 export const isAutoSaved = (s: ContactSource) => s.startsWith('auto_');
+
+/** filename="x.csv" or filename*=UTF-8''x.csv out of a Content-Disposition. */
+function nameFromDisposition(header: string | null): string | null {
+  if (!header) return null;
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(header);
+  if (star?.[1]) return decodeURIComponent(star[1].trim());
+  const plain = /filename="?([^";]+)"?/i.exec(header);
+  return plain?.[1]?.trim() ?? null;
+}
+
+/**
+ * Hand a blob to the browser as a download.
+ *
+ * The object URL is revoked on the next tick rather than immediately: revoking
+ * it in the same frame as the click races the download in Safari and produces
+ * an empty file.
+ */
+export function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}

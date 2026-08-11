@@ -206,9 +206,9 @@ export function mailNav(): NavSection[] {
 //  pathname alone, so five links to /family/contacts?view=… would all light up
 //  at once.
 //
-//  Merge and Import are listed and disabled. They are the two operations with
-//  no server behind them yet, and a menu that hides unfinished work is a menu
-//  that gets the same feature requested three times.
+//  Merge is listed and disabled. It is the one operation with no server behind
+//  it yet, and a menu that hides unfinished work is a menu that gets the same
+//  feature requested three times.
 // ============================================================================
 
 export function familyNav(opts: {
@@ -239,8 +239,8 @@ export function familyNav(opts: {
       items: [
         { href: '/family/merge', label: 'Merge and fix',
           icon: <Icon d={PATHS.users} colour="#98a2b8" />, disabled: true, badge: 'soon' },
-        { href: '/family/import', label: 'Import',
-          icon: <Icon d={PATHS.draft} colour="#98a2b8" />, disabled: true, badge: 'soon' },
+        { href: '/family/import', label: 'Import and export',
+          icon: <Icon d={PATHS.draft} colour="#00b8d9" /> },
         { href: '/family/bin', label: 'Bin',
           icon: <Icon d={PATHS.trash} colour="#98a2b8" /> },
       ],

@@ -247,7 +247,10 @@ export default function FamilyViewPage() {
       <Card
         padded={false}
         actions={!isBin && (
-          <Button variant="primary" onClick={() => setCreating(true)}>Add contact</Button>
+          <>
+            <Button variant="secondary" href="/family/import">Import / export</Button>
+            <Button variant="primary" onClick={() => setCreating(true)}>Add contact</Button>
+          </>
         )}
       >
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, alignItems: 'center', p: 2 }}>

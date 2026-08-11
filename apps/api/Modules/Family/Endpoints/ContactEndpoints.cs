@@ -62,6 +62,10 @@ public static class ContactEndpoints
         g.MapPut("/groups/{groupId:guid}/members/{id:guid}", AddToGroupAsync);
         g.MapDelete("/groups/{groupId:guid}/members/{id:guid}", RemoveFromGroupAsync);
 
+        // Import and export live in their own file — the parsing they need is
+        // longer than everything above put together.
+        g.MapImportExport();
+
         g.MapGet("/settings", GetSettingsAsync);
         g.MapPut("/settings", PutSettingsAsync);
     }

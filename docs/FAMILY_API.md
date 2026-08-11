@@ -321,6 +321,121 @@ mailbox says nothing about who the organisation knows.
 
 ---
 
+## Import and export
+
+```
+GET  /api/family/contacts/export?format=csv|vcf
+     &ownership=personal|organisational  &groupId=…  &source=auto|manual  &favourite=true
+POST /api/family/contacts/import?dryRun=true
+     &ownership=personal|organisational  &mode=skip|update
+     &createLabels=true|false  &label=Imported%202026-08-11
+```
+
+### Export
+
+Returns the file, not JSON — `text/csv` or `text/vcard`, with a
+`Content-Disposition` naming it `tatvaos-contacts-<date>.csv`.
+
+It needs the `Authorization` header, so **it cannot be an `<a href>`**. Fetch
+it, take the blob, and hand that to the browser:
+
+```ts
+const { blob, name } = await familyApi.exportFile(authedFetch, { format: 'csv' });
+saveBlob(blob, name);                     // both are exported from lib/family
+```
+
+`Content-Disposition` is only readable by JavaScript when the API is
+same-origin or explicitly exposes the header, so `exportFile` computes a
+fallback name. Do not rely on the header.
+
+The filters are the same ones the list route takes, so "export what I am
+looking at" is the same query object. Above 20,000 rows the request is refused
+with a 400 telling the caller to narrow it — that is a real answer to show, not
+an error to swallow.
+
+Deleted contacts are never exported. Photos and birthdays are not in the file
+because neither is stored yet.
+
+### Import
+
+`multipart/form-data` with one file part, or the raw file as the body. CSV or
+vCard; the format is worked out from the extension and then from the content,
+not from what the browser claims. 10 MB and 5,000 rows per file.
+
+**Always call it with `dryRun=true` first.** The response is identical apart
+from `dryRun`, and nothing is written. The UI should refuse to run a real
+import the person has not seen a report for — this is the single most useful
+thing this screen does.
+
+```jsonc
+{
+  "dryRun": true,
+  "fileName": "contacts.csv",
+  "format": "csv",              // or "vcard"
+  "rowsRead": 512,
+  "created": 470,               // would be added
+  "updated": 0,                 // would be filled in — only when mode=update
+  "skipped": 42,
+  "warnings": ["47 birthdays were found in this file and not imported — …"],
+  "problems": [
+    { "row": 14, "name": "Priya Sharma", "email": "priya@acme.com",
+      "outcome": "skipped", "reason": "priya@acme.com is already saved as Priya S.",
+      "contactId": "…" }
+  ],
+  "problemsTruncated": false,   // problems is capped at 500; the counts are not
+  "sample": ["Anil Kumar <anil@…>", "…"]   // first 25 that would be added
+}
+```
+
+Every row that does not become a contact appears in `problems` with a reason
+written for a person. Show them. An import that says "470 imported" and says
+nothing about the other 42 is how somebody discovers a missing supplier three
+months later with no file left to re-run.
+
+`mode`:
+
+- **skip** (default) — a row whose address is already in the book is left
+  alone and reported.
+- **update** — that contact has its blanks filled in and gains any addresses
+  and numbers it lacked. Nothing already filled in is ever overwritten, and
+  postal addresses are only added when the contact has none.
+
+`label` tags everything in the file. Keep it set and keep it in the UI: it is
+the only bulk undo an import has.
+
+Duplicate detection uses the same `NormaliseEmail` rule as auto-save, so an
+import cannot let in an address that mail would have folded into an existing
+contact. Duplicates *within* one file are caught too, and reported pointing at
+the earlier row.
+
+### What the importer understands
+
+Column names are matched against a table of aliases, so a Google export
+(either generation), an Outlook export and an Apple one all work unedited:
+
+| Ours | Also accepted |
+|---|---|
+| Name | Display Name, Full Name, Contact Name |
+| First Name | Given Name |
+| Last Name | Family Name, Surname |
+| Organization Name | Company, Organisation, Organization 1 - Name |
+| Organization Title | Job Title, Position, Role — **not** "Title", which is Mr/Ms in Outlook |
+| Labels | Group Membership, Categories, Tags |
+| E-mail *n* - Value | E-mail *n* - Address, E-mail Address, E-mail *n* Address |
+| Phone *n* - Value | Phone *n* - Number, Mobile Phone, Home Phone, Business Phone … |
+| Address *n* - Street | Home Street, Business Street, and the City/Region/Postal Code/Country siblings |
+
+Also handled without being asked: a semicolon or tab delimiter (Excel writes
+the locale's list separator), a UTF-8 or UTF-16 byte-order mark, a legacy
+single-byte encoding, Google's `:::` multi-value cells, and quoted cells
+containing commas and newlines.
+
+vCard 2.1, 3.0 and 4.0 are read, including quoted-printable bodies and folded
+lines. vCard 3.0 is written, because it is the one version every phone and
+mail client imports without complaining.
+
+---
+
 ## Status codes
 
 | Code | Meaning |
@@ -415,6 +530,12 @@ button yet.
 and `firstlast@corp.com` are treated as different people, because for most
 providers they are.
 
-**The backend has not been compiled yet.** Wait for confirmation that
-`dotnet build` passes before you start wiring screens — route shapes are
-settled, but names could shift by a character if the build turns something up.
+**Birthdays are parsed on import and thrown away.** `family.contact_dates`
+exists in SQL and has no entity behind it yet, so a file carrying birthdays
+produces a warning in the report rather than dates in the database. The warning
+tells the person to keep the original file, which is the honest thing to do
+until the entity lands.
+
+**Export is not audited.** `family.contact_audit_logs` needs a contact id per
+row, so there is nowhere to record "somebody exported the directory". If that
+matters for your compliance story it wants its own small table.

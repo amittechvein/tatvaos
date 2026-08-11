@@ -112,15 +112,51 @@ never show a computed age for those.
 
 ---
 
-## 7. Import and export
+## 7. Import and export — BUILT
 
-Import unblocks migration from Google Contacts, which is the actual adoption
-barrier. Export matters more than it looks: an address book you cannot get out
-of is one people will not commit to.
+Shipped as `Csv.cs`, `VCard.cs`, `ContactRecord.cs`, `ContactCsvFormat.cs`,
+`ContactImport.cs` and `Endpoints/ImportExportEndpoints.cs`, with
+`app/family/import/page.tsx` in front of it. Documented in `FAMILY_API.md`.
 
-CSV first — Google's export format — then vCard. Import must reuse the
-duplicate check rather than bypassing it, and must report what it skipped and
-why rather than silently dropping rows.
+CSV and vCard both directions. The importer reads Google's two column
+generations, Outlook's and Apple's; the exporter writes a Google-compatible
+CSV and vCard 3.0. Duplicate detection reuses `ContactMatching.NormaliseEmail`,
+so an import cannot let in an address that auto-save would have folded. Every
+row that does not become a contact is reported with a reason, and `dryRun=true`
+gives that report without writing anything — the UI refuses to import a file
+the person has not seen a report for.
+
+Verify with `tests/isolation/family/smoke-family-import.ps1`. Its round-trip
+step — import, export, re-import as a dry run, insist nothing is new — is the
+one that catches a disagreement between the reader and the writer.
+
+Still open, and small:
+
+- **Birthdays are parsed and discarded.** The report warns and tells the person
+  to keep the original file. Fixed by item 6, not by anything in the importer.
+- **Rows with no email cannot be de-duplicated.** Nothing to match on. Importing
+  the same nameless-but-addressless file twice makes two of everything.
+- **`keys.Contains(e.EmailNormalised)` against a citext column.** EF turns this
+  into `= ANY(@keys)` and the operator resolution goes through citext's
+  implicit cast from text. It should be fine and it is the first thing to check
+  if the first real import throws — the smoke test's dry-run step exercises it
+  before any data is written.
+- **Export is not audited.** `contact_audit_logs` needs a contact id per row, so
+  there is nowhere to record a bulk export. Wants its own small table if that
+  matters.
+
+---
+
+## 7b. The sidebar count does not refresh
+
+`app/family/[view]/page.tsx` calls `useFamilyChrome()` and then renders
+`<FamilyShell>`. The provider is inside the shell, so the hook reads the
+default context and `chrome.refresh()` is a no-op — add a contact and the count
+in the rail stays where it was until a full reload.
+
+Three lines: move the page body into an inner component and render that as the
+shell's child, the way `app/family/import/page.tsx` does. Worth doing before
+anything else touches that file, because the same mistake will be copied.
 
 ---
 

@@ -1,0 +1,8 @@
+﻿Name,Given Name,Family Name,Organization Name,Organization Title,Notes,Group Membership,E-mail 1 - Type,E-mail 1 - Value,Phone 1 - Type,Phone 1 - Value
+Priya Sharma,Priya,Sharma,Acme Trading,Buyer,"Met at the Delhi fair, stand 14.
+Prefers a call.",* myContacts ::: Suppliers,* Work,priya.sharma@example.com,* Mobile,+91 98765 43210
+Anil Kumar,Anil,Kumar,Kumar Logistics,Owner,,* myContacts,* Work,anil@example.com ::: anil.k@example.com,* Work,022 2345 6789
+Ravi G,Ravi,G,,,,,* Home,r.a.v.i@gmail.com,,
+Ravi Gupta,Ravi,Gupta,,,,,* Home,ravi+work@gmail.com,,
+,,,,,No name and no address at all,,,,* Mobile,99999 11111
+=Danger Name,,,Formula Co,,,,* Work,danger@example.com,,
