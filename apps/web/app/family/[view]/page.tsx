@@ -370,7 +370,7 @@ export default function FamilyViewPage() {
                     </Button>
                   ) : c.ownershipType === 'organisational'
                     ? <Badge tone="info">Shared</Badge>
-                    : <Badge tone="primary">Mine</Badge>}
+                    : <Badge tone="neutral">Mine</Badge>}
                 </Td>
               </tr>
             ))}
@@ -611,7 +611,7 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
         <span>{c?.displayName ?? 'Contact'}</span>
         {c && (c.ownershipType === 'organisational'
           ? <Badge tone="info">Shared</Badge>
-          : <Badge tone="primary">Mine</Badge>)}
+          : <Badge tone="neutral">Mine</Badge>)}
         {c && isAutoSaved(c.source) && (
           <Chip label={sourceLabel(c.source)} size="small" variant="outlined" />
         )}
