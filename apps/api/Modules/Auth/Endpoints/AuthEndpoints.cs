@@ -308,7 +308,8 @@ public static class AuthEndpoints
     // ------------------------------------------------------------------
     private static async Task<IResult> LoginAsync(
         LoginRequest req, AppDbContext db, TokenIssuer tokens, IPasswordHasher hasher,
-        TenantContext tenant, HttpContext http, CancellationToken ct)
+        TenantContext tenant, HttpContext http, IServiceScopeFactory scopeFactory,
+        IConfiguration config, CancellationToken ct)
     {
         var email = req.Email?.Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(email) || string.IsNullOrEmpty(req.Password))
@@ -364,7 +365,7 @@ public static class AuthEndpoints
         if (user.Status is "suspended" or "deleted" || org?.Status is "suspended" or "deleted")
             return Results.Json(new { error = GenericFailure }, statusCode: 401);
 
-        return await CompleteSignInAsync(user, org, db, tokens, http, ct);
+        return await CompleteSignInAsync(user, org, db, tokens, http, scopeFactory, config, ct);
     }
 
     // =====================================================================
@@ -465,7 +466,8 @@ public static class AuthEndpoints
 
     private static async Task<IResult> OtpVerifyAsync(
         OtpVerifyRequest req, AppDbContext db, TokenIssuer tokens,
-        TenantContext tenant, HttpContext http, CancellationToken ct)
+        TenantContext tenant, HttpContext http, IServiceScopeFactory scopeFactory,
+        IConfiguration config, CancellationToken ct)
     {
         var phone = Shared.PhoneNumber.Normalise(req.Phone);
         var code = req.Code?.Trim() ?? "";
@@ -518,7 +520,7 @@ public static class AuthEndpoints
             return Results.Json(new { error = GenericFailure }, statusCode: 401);
         }
 
-        return await CompleteSignInAsync(user, org, db, tokens, http, ct);
+        return await CompleteSignInAsync(user, org, db, tokens, http, scopeFactory, config, ct);
     }
 
     /// <summary>
@@ -532,16 +534,31 @@ public static class AuthEndpoints
     /// </summary>
     private static async Task<IResult> CompleteSignInAsync(
         User user, Tenant? org, AppDbContext db, TokenIssuer tokens,
-        HttpContext http, CancellationToken ct)
+        HttpContext http, IServiceScopeFactory scopeFactory, IConfiguration config,
+        CancellationToken ct)
     {
         user.FailedLoginCount = 0;
         user.LockedUntil = null;
         user.LastLoginAt = DateTimeOffset.UtcNow;
         if (user.Status == "pending") user.Status = "active";
 
+        // Asked BEFORE the new session is written, or the device we are about
+        // to record would count as evidence that we had seen it before.
+        var alertDevice = await IsNewDeviceAsync(db, user, http, ct);
+
         var (refresh, _) = await IssueRefreshAsync(db, user, Guid.NewGuid(), http, ct);
         var access = tokens.IssueAccessToken(user);
         await db.SaveChangesAsync(ct);
+
+        // Sent in the background, deliberately: a slow or dead SMTP server must
+        // never add latency to a sign-in, let alone fail one. The person is
+        // already through the door — the mail is a notification, not a gate.
+        if (alertDevice)
+            SendNewDeviceAlertInBackground(
+                scopeFactory, user.Email, user.DisplayName,
+                Shared.DeviceFingerprint.Describe(http.Request.Headers.UserAgent.ToString()),
+                http.Connection.RemoteIpAddress?.ToString(),
+                config["Jwt:Issuer"] ?? "https://core.tatvaos.com");
 
         // Take a slot rather than overwriting whoever was signed in. Somebody
         // adding a second account should not be silently signed out of the
@@ -558,6 +575,97 @@ public static class AuthEndpoints
             User: Describe(user),
             Slot: slot,
             Accounts: BuildRoster(http, slot)));
+    }
+
+    // =====================================================================
+    //  NEW-DEVICE SIGN-IN ALERTS
+    // =====================================================================
+    //
+    //  The other half of the security story. Recovery and credentials were
+    //  already strong, but a stolen password used from the attacker's own
+    //  machine produced no signal at all to the person it belonged to. This
+    //  sends the "we noticed a new sign-in" mail every serious provider sends.
+    //
+    //  It hangs off CompleteSignInAsync because that is the ONE point every
+    //  credential passes through — password and OTP alike. A second copy for
+    //  the OTP path is how one door ends up silent.
+    //
+    //  Two things are suppressed on purpose, both to protect the alert's
+    //  credibility. An alert people learn to ignore is worse than none.
+    // =====================================================================
+
+    /// <summary>
+    /// True when this browser/OS has never been seen for this user AND we hold
+    /// at least one fingerprinted session to compare against.
+    ///
+    /// That second condition does two jobs at once:
+    ///
+    ///   FIRST-EVER SIGN-IN. A brand-new account has nothing to compare to, so
+    ///   every first sign-in would be "new". Alerting there is noise — the
+    ///   person is holding the welcome email that told them to sign in.
+    ///
+    ///   THE DEPLOY OF THIS FEATURE. Sessions created before device_key existed
+    ///   carry null, so on release day every existing user would be told their
+    ///   own everyday laptop was unrecognised. That is an alert storm that
+    ///   teaches thousands of people to ignore this email forever, on the one
+    ///   day it has no real news to carry.
+    ///
+    /// Both resolve themselves: this sign-in writes a fingerprint, so the next
+    /// genuinely new device does alert. Revoked and expired sessions still
+    /// count as having seen the device — signing out does not make your own
+    /// laptop foreign.
+    /// </summary>
+    private static async Task<bool> IsNewDeviceAsync(
+        AppDbContext db, User user, HttpContext http, CancellationToken ct)
+    {
+        var key = Shared.DeviceFingerprint.Key(http.Request.Headers.UserAgent.ToString());
+
+        var seenThisDevice = await db.RefreshTokens
+            .AnyAsync(t => t.UserId == user.Id && t.DeviceKey == key, ct);
+
+        if (seenThisDevice) return false;
+
+        return await db.RefreshTokens
+            .AnyAsync(t => t.UserId == user.Id && t.DeviceKey != null, ct);
+    }
+
+    /// <summary>
+    /// Sends the alert on a background task with its OWN service scope.
+    ///
+    /// The request's AppDbContext is disposed the moment the response is
+    /// written, so reusing it here would throw as soon as the send took longer
+    /// than the request — which is exactly what a slow SMTP server does. Same
+    /// shape as the bulk welcome sender in UserEndpoints.
+    ///
+    /// Every failure is swallowed. A security notice that could 500 a sign-in
+    /// would make the product less available in exchange for making it more
+    /// secure, and nobody asked for that trade.
+    /// </summary>
+    private static void SendNewDeviceAlertInBackground(
+        IServiceScopeFactory scopeFactory, string email, string displayName,
+        string device, string? ip, string baseUrl)
+    {
+        var when = DateTimeOffset.UtcNow;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var scope = scopeFactory.CreateScope();
+                var mailer = scope.ServiceProvider.GetRequiredService<SystemMailer>();
+
+                await mailer.SendHtmlAsync(
+                    email,
+                    SignInAlertEmail.Subject(device),
+                    SignInAlertEmail.Html(displayName, baseUrl, device, ip, when),
+                    from: "no_reply@tatvaos.com");
+            }
+            catch
+            {
+                // Best effort by design — see the summary above. SystemMailer
+                // already logs its own failures.
+            }
+        });
     }
 
     // ------------------------------------------------------------------
@@ -1332,6 +1440,11 @@ public static class AuthEndpoints
             ExpiresAt = DateTimeOffset.UtcNow.Add(TokenIssuer.RefreshTokenLifetime),
             UserAgent = Truncate(http.Request.Headers.UserAgent.ToString(), 512),
             IpAddress = http.Connection.RemoteIpAddress?.ToString(),
+            // Set on ROTATION as well as sign-in, so a device stays recognised
+            // for as long as it keeps renewing. Were it only stamped at
+            // sign-in, a long-lived session that rotates for weeks would age
+            // out of its own history and alert the user about their own desk.
+            DeviceKey = Shared.DeviceFingerprint.Key(http.Request.Headers.UserAgent.ToString()),
         };
 
         db.RefreshTokens.Add(row);

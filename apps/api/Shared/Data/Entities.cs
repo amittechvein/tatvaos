@@ -262,6 +262,25 @@ public class RefreshToken
 
     [MaxLength(512)] public string? UserAgent { get; set; }
     [MaxLength(64)]  public string? IpAddress { get; set; }
+
+    /// <summary>
+    /// A stable fingerprint of the BROWSER AND OS this session was issued to
+    /// (15-signin-alerts.sql), used to answer one question cheaply: have we
+    /// seen this device for this user before? A first sighting sends the "new
+    /// sign-in" alert.
+    ///
+    /// Deliberately derived from the user agent and NOT the IP address. A
+    /// phone changes IP every time it moves between wifi and mobile data, so
+    /// an IP-keyed fingerprint would alert on almost every sign-in — and an
+    /// alert that cries wolf is one people learn to delete unread, which is
+    /// worse than no alert at all.
+    ///
+    /// The cost of that choice, stated plainly: an attacker on the same
+    /// browser and OS as the victim raises no alert. This catches the common
+    /// case (a leaked password used from the attacker's own machine), not
+    /// every case.
+    /// </summary>
+    [MaxLength(64)] public string? DeviceKey { get; set; }
 }
 
 /// <summary>
