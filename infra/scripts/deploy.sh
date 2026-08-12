@@ -127,6 +127,43 @@ else
     note "  echo ${ENV} > .environment"
 fi
 
+# ---------------------------------------------------------------------------
+#  Branch guard.
+#
+#  This script deploys whatever the checkout happens to be sitting on, and used
+#  to say nothing about what that was. A server left on a feature branch
+#  therefore kept deploying successfully — green output, healthy containers —
+#  while shipping none of the work that had been merged to main. A week of
+#  deploys became no-ops and nothing anywhere reported a problem.
+#
+#  It failed the other way too: a branch that legitimately carried a whole
+#  product was reset to main by someone assuming main was what was running, and
+#  a live subdomain went dark because main did not contain it.
+#
+#  Both directions have the same root cause — the branch was invisible. So it is
+#  printed on every run, and a production deploy from anything other than main
+#  stops here.
+# ---------------------------------------------------------------------------
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+printf '   %sbranch%s %s\n' "$D" "$X" "$BRANCH"
+
+if [ "$ENV" = "production" ] && [ "$BRANCH" != "main" ]; then
+    bad "Production deploys run from 'main'; this checkout is on '${BRANCH}'."
+    note "Deploying a feature branch ships work nobody has reviewed, and"
+    note "silently omits everything merged to main since it was cut."
+    note "  git fetch origin && git checkout -B main origin/main"
+    note "If this is genuinely intended, re-run with DEPLOY_ALLOW_BRANCH=1."
+    [ "${DEPLOY_ALLOW_BRANCH:-}" = "1" ] || exit 1
+    note "DEPLOY_ALLOW_BRANCH=1 — proceeding from ${BRANCH} anyway"
+fi
+
+# Detached HEAD deploys nothing anyone can name afterwards. Worth a warning
+# even when the commit is correct, because "which commit is live" becomes
+# unanswerable the moment the checkout moves on.
+if [ "$BRANCH" = "HEAD" ]; then
+    printf '   %s[warn]%s detached HEAD — no branch to attribute this deploy to.\n' "$Y" "$X"
+fi
+
 if [ "$ENV" = "production" ]; then
     printf '\n   %sProduction deploy. Outbound mail WILL reach real inboxes.%s\n' "$Y" "$X"
     if [ "${CI:-}" = "1" ]; then
