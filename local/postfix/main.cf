@@ -60,7 +60,42 @@ virtual_transport = lmtp:inet:dovecot:24
 smtpd_recipient_restrictions =
     reject_unauth_destination
     reject_unlisted_recipient
+    check_policy_service inet:api:10025
     permit
+
+# ----------------------------------------------------------------------------
+#  THE QUOTA GATE
+# ----------------------------------------------------------------------------
+#  Asks the API whether this mailbox can take the message, while the sender
+#  still owns it. RCPT time is the last honest moment to refuse: after Dovecot
+#  has written the maildir, the SMTP session is over and the only remaining
+#  options are to hide the message or delete it.
+#
+#  It sits AFTER the two rejects on purpose. Those decide whether we would take
+#  the mail at all; there is no point asking about quota for a recipient we are
+#  about to refuse anyway, and it keeps the policy service off the path of the
+#  relay probes that hit port 25 all day.
+#
+#  ---------------------------------------------------------------------------
+#  default_action = DUNNO IS THE IMPORTANT LINE.
+#
+#  If the API is restarting, wedged, or simply not listening yet, Postfix
+#  applies this instead of the policy result. Without it the default is to
+#  defer, which turns "the API is down" into "nobody in the company receives
+#  mail" — a far bigger outage than the one the quota check prevents.
+#
+#  The service itself also fails open on every internal error, so this is the
+#  second of two independent guards, not the only one.
+#  ---------------------------------------------------------------------------
+smtpd_policy_service_default_action = DUNNO
+
+# A quota lookup is one indexed query. If it has not answered in this long,
+# something is wrong and waiting longer only holds the sender's connection
+# open — take the mail and move on.
+smtpd_policy_service_request_limit = 100
+smtpd_policy_service_timeout = 10s
+smtpd_policy_service_try_limit = 2
+smtpd_policy_service_retry_delay = 1s
 
 smtpd_helo_required = yes
 
