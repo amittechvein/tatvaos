@@ -212,31 +212,136 @@ public sealed class StorageAllocator(AppDbContext db)
         return pool?.PerUserQuotaBytes ?? DefaultPerUserQuota;
     }
 
+    // =====================================================================
+    //  CAN THIS MAILBOX TAKE THIS MESSAGE?
+    // =====================================================================
+    //
+    //  WHY THIS RETURNS A REASON AND NOT A BOOLEAN.
+    //
+    //  The caller is a Postfix policy service at RCPT time, and it has to turn
+    //  the answer into an SMTP response. "No" is not enough to do that: a full
+    //  mailbox and a suspended organisation are both "no" and must produce
+    //  opposite behaviour on the wire. Collapsing them into false forces the
+    //  caller to guess, and the guess that gets made is the wrong one — every
+    //  refusal ends up behind the same temporary failure, and a suspended
+    //  customer's senders retry for days before bouncing with a "mailbox full"
+    //  reason that was never true.
+    //
+    //  So the decision is named, and the mapping to SMTP lives with the caller
+    //  who owns the wire. The intended mapping:
+    //
+    //    Accept          DUNNO — carry on down the restriction list.
+    //    Full            DEFER_IF_PERMIT 452. Temporary, and the ONLY honest
+    //                    deferral here.
+    //    Suspended       DUNNO — take the mail. See below.
+    //    NoSuchMailbox   permanent reject, though reject_unlisted_recipient
+    //                    already catches most of these first.
+    //
+    //  NEVER 552 or any 5xx for Full. A permanent failure discards the
+    //  sender's message instead of making them retry; a wrong reading then
+    //  costs the message rather than a retry. This is the single most
+    //  expensive mistake available on this path.
+    //
+    //  WHY SUSPENSION STILL TAKES THE MAIL.
+    //
+    //  Suspension is nearly always non-payment, and it is temporary by design.
+    //  Deferring means a customer who pays on day five collects a mailbox full
+    //  of bounces instead of their mail — a billing state turned into
+    //  permanent data loss for someone actively trying to pay us. Access is
+    //  what suspension removes, and that is already enforced where it is real:
+    //  sign-in refuses, and the refresh path revokes live sessions. The sender
+    //  is not party to the dispute and should not be punished for it.
+    //
+    //  The cost is that storage keeps accruing for a non-payer. It is bounded,
+    //  it is visible on the storage page, and it is far cheaper than bouncing
+    //  real mail.
+    // =====================================================================
+
+    public enum AcceptDecision
+    {
+        /// <summary>Deliverable as far as Core is concerned.</summary>
+        Accept,
+
+        /// <summary>Out of space. The only case that warrants a 452.</summary>
+        Full,
+
+        /// <summary>Org or person suspended. Take the mail; access is barred elsewhere.</summary>
+        Suspended,
+
+        /// <summary>No such mailbox, or it is closed for good. Permanent refusal.</summary>
+        NoSuchMailbox,
+    }
+
+    /// <param name="Detail">
+    /// A short phrase for the policy service's log line. Written for whoever is
+    /// reading logs during the observe-only rollout, so it names the figures
+    /// that drove the decision rather than restating the decision.
+    /// </param>
+    public sealed record AcceptResult(AcceptDecision Decision, string Detail)
+    {
+        public bool IsAccepted => Decision is AcceptDecision.Accept or AcceptDecision.Suspended;
+    }
+
     /// <summary>
-    /// Whether a mailbox can accept a message of this size.
+    /// Whether a mailbox can take a message of this size, and why not if it
+    /// cannot. See the block above before changing any of the outcomes.
     ///
-    /// Callers must reject with SMTP 452 (temporary) rather than 552
-    /// (permanent). A temporary failure makes the sender retry; a permanent one
-    /// discards their message. Getting this backwards loses customer mail and
-    /// is not recoverable.
+    /// <paramref name="sizeBytes"/> is the size ANNOUNCED by the sender, which
+    /// at RCPT time may be zero — plenty of clients omit SIZE= on MAIL FROM.
+    /// That is fine and by design: the real question here is "is this mailbox
+    /// already at its limit", and the accrual after delivery does the exact
+    /// accounting. Passing zero simply asks that question with no headroom.
     /// </summary>
-    public async Task<bool> CanAcceptAsync(Guid mailboxId, long sizeBytes, CancellationToken ct = default)
+    public async Task<AcceptResult> EvaluateAcceptAsync(
+        Guid mailboxId, long sizeBytes = 0, CancellationToken ct = default)
     {
         var mb = await db.Mailboxes.AsNoTracking()
             .FirstOrDefaultAsync(m => m.Id == mailboxId, ct);
-        if (mb is null || !mb.IsActive) return false;
+
+        if (mb is null)
+            return new(AcceptDecision.NoSuchMailbox, "no mailbox row");
+        if (!mb.IsActive)
+            return new(AcceptDecision.NoSuchMailbox, "mailbox inactive");
 
         var org = await db.Tenants.AsNoTracking()
             .FirstOrDefaultAsync(t => t.Id == mb.TenantId, ct);
-        if (org is null || org.Status == "suspended") return false;
 
-        // A suspended person stops receiving. A shared mailbox has no person
-        // behind it and is governed by the mailbox row alone.
+        // A deleted organisation used to pass this check entirely — it tested
+        // only for "suspended" — so a wound-up customer's address kept taking
+        // mail forever. Deleted is permanent and is not the same answer.
+        if (org is null || org.Status == "deleted")
+            return new(AcceptDecision.NoSuchMailbox, "organisation deleted");
+        if (org.Status == "suspended")
+            return new(AcceptDecision.Suspended, "organisation suspended");
+
+        // A shared mailbox has no person behind it and is governed by the
+        // mailbox row alone.
         if (mb.UserId is Guid uid)
         {
-            var userActive = await db.Users.AsNoTracking()
-                .AnyAsync(u => u.Id == uid && u.Status == "active", ct);
-            if (!userActive) return false;
+            var status = await db.Users.AsNoTracking()
+                .Where(u => u.Id == uid)
+                .Select(u => u.Status)
+                .FirstOrDefaultAsync(ct);
+
+            switch (status)
+            {
+                case null:
+                case "deleted":
+                    return new(AcceptDecision.NoSuchMailbox, "person deleted");
+
+                case "suspended":
+                    return new(AcceptDecision.Suspended, "person suspended");
+
+                // "pending" IS deliverable, and this is the trap worth naming:
+                // an admin-created person stays pending until their FIRST
+                // SIGN-IN. Requiring "active" here — as this check used to —
+                // meant every new employee's mailbox refused everything until
+                // they happened to log in, starting with the welcome email we
+                // send them at creation. A person who has been given an address
+                // can be written to.
+                default:
+                    break;
+            }
         }
 
         var pool = await db.StoragePools.AsNoTracking()
@@ -246,10 +351,29 @@ public sealed class StorageAllocator(AppDbContext db)
         {
             var alloc = await db.StorageAllocations.AsNoTracking()
                 .FirstOrDefaultAsync(a => a.TenantId == mb.TenantId && a.ProductCode == "mail", ct);
+
             var cap = alloc?.AllocatedBytes ?? pool.TotalBytes;
-            return (alloc?.UsedBytes ?? 0) + sizeBytes <= cap;
+            var used = alloc?.UsedBytes ?? 0;
+
+            return used + sizeBytes <= cap
+                ? new(AcceptDecision.Accept, $"pooled used={used} cap={cap}")
+                : new(AcceptDecision.Full, $"pool full used={used} cap={cap}");
         }
 
-        return mb.UsedBytes + sizeBytes <= mb.QuotaBytes;
+        return mb.UsedBytes + sizeBytes <= mb.QuotaBytes
+            ? new(AcceptDecision.Accept, $"used={mb.UsedBytes} quota={mb.QuotaBytes}")
+            : new(AcceptDecision.Full, $"mailbox full used={mb.UsedBytes} quota={mb.QuotaBytes}");
     }
+
+    /// <summary>
+    /// Convenience for callers that genuinely only need yes or no — an
+    /// in-product check, not the delivery path.
+    ///
+    /// Note that a SUSPENDED mailbox answers TRUE here, because the mail is
+    /// still accepted; suspension is enforced at sign-in. Anything deciding an
+    /// SMTP response must use <see cref="EvaluateAcceptAsync"/> and switch on
+    /// the reason, because this collapses exactly the distinction that matters.
+    /// </summary>
+    public async Task<bool> CanAcceptAsync(Guid mailboxId, long sizeBytes, CancellationToken ct = default)
+        => (await EvaluateAcceptAsync(mailboxId, sizeBytes, ct)).IsAccepted;
 }
