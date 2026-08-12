@@ -107,6 +107,11 @@ builder.Services.AddScoped<ISmsSender, SmsSender>();
 // per mailbox because tenant context must change between mailboxes.
 builder.Services.AddHostedService<MaildirIngestWorker>();
 
+// Keeps core.storage_allocations.used_bytes derived from the mailbox figures.
+// The storage endpoints reconcile the tenant being viewed, so this covers the
+// readers with no human present: the add-user gate and the quota check.
+builder.Services.AddHostedService<StorageReconcileWorker>();
+
 builder.Services.AddOpenApi();
 
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
@@ -150,6 +155,7 @@ app.MapDomainEndpoints();
 app.MapSignupEndpoints();
 app.MapSettingsEndpoints();
 app.MapDepartmentEndpoints();
+app.MapStorageEndpoints();
 app.MapMailEndpoints();
 
 // ---------------------------------------------------------------------------

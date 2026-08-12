@@ -52,6 +52,23 @@ public sealed class StorageAllocator(AppDbContext db)
         bool CanAddUser,
         string? Reason);
 
+    /// <summary>
+    /// Recomputes core.storage_allocations.used_bytes from the mailbox figures,
+    /// which are the source of truth. Pass null to reconcile every tenant.
+    ///
+    /// See 17-storage-usage.sql for why this is a database function: it crosses
+    /// tenants in one statement, it keeps the fix out of the Mail lane's files,
+    /// and a derived figure cannot drift the way an incremental counter does.
+    ///
+    /// Cheap enough to call on a page load — it is one GROUP BY over one
+    /// tenant's mailboxes — which is why the storage endpoints call it before
+    /// reading. Opening the storage page repairs that organisation's number.
+    /// </summary>
+    public async Task<int> ReconcileUsageAsync(Guid? tenantId, CancellationToken ct = default)
+        => await db.Database
+            .SqlQuery<int>($"SELECT core.reconcile_storage_usage({tenantId}) AS \"Value\"")
+            .FirstOrDefaultAsync(ct);
+
     public async Task<Capacity> GetCapacityAsync(
         Guid tenantId, string productCode = "mail", CancellationToken ct = default)
     {
@@ -105,9 +122,11 @@ public sealed class StorageAllocator(AppDbContext db)
             totalBytes = perUser * (maxUsers ?? userCount);
         }
 
-        // Maintained incrementally by each product. Never SUM() mailboxes here
-        // — this runs on every user-creation check and, via CanAcceptAsync, on
-        // every inbound message.
+        // Read, never computed here: this runs on every user-creation check
+        // and, via CanAcceptAsync, on every inbound message, so it has to stay
+        // O(1). The column is kept honest out of band — see ReconcileUsageAsync
+        // and StorageReconcileWorker. Until 17-storage-usage.sql shipped,
+        // NOTHING wrote it and this was always zero.
         var usedBytes = alloc?.UsedBytes ?? 0;
 
         var fraction = totalBytes > 0 ? (double)usedBytes / totalBytes : 0;
