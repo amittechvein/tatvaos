@@ -35,6 +35,9 @@ const PATHS = {
   globe:     'M12 21a9 9 0 100-18 9 9 0 000 18zM3.6 9h16.8M3.6 15h16.8M12 3a15 15 0 010 18a15 15 0 010-18',
   database:  'M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3',
   card:      'M3 7h18v10H3zM3 11h18M7 15h3',
+  // Shield-and-tick: the audit trail is read to answer "who did this", which
+  // is a security question before it is an administrative one.
+  audit:     'M12 3l7 3v6c0 4-3 7.5-7 9-4-1.5-7-5-7-9V6l7-3zM9 12l2 2 4-4',
   inbox:     'M4 13h4l2 3h4l2-3h4M4 13l2-8h12l2 8v6H4v-6z',
   gear:      'M10.3 3h3.4l.5 2.3 1.9 1.1 2.2-.8 1.7 3-1.7 1.6v2.2l1.7 1.6-1.7 3-2.2-.8-1.9 1.1-.5 2.3h-3.4l-.5-2.3-1.9-1.1-2.2.8-1.7-3 1.7-1.6v-2.2L4 8.6l1.7-3 2.2.8 1.9-1.1.5-2.3zM12 14.6a2.6 2.6 0 100-5.2 2.6 2.6 0 000 5.2z',
   mail:      'M3 7l9 6 9-6M3 7h18v10H3z',
@@ -148,6 +151,7 @@ export function organisationNav(): NavSection[] {
         },
         { href: '/org/domains', label: 'Domains', icon: <Icon d={PATHS.globe} /> },
         { href: '/org/storage', label: 'Storage', icon: <Icon d={PATHS.database} /> },
+        { href: '/org/audit', label: 'Audit trail', icon: <Icon d={PATHS.audit} /> },
         { href: '/org/billing', label: 'Billing', icon: <Icon d={PATHS.card} /> },
       ],
     },

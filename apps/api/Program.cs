@@ -163,6 +163,7 @@ app.MapSignupEndpoints();
 app.MapSettingsEndpoints();
 app.MapDepartmentEndpoints();
 app.MapStorageEndpoints();
+app.MapAuditEndpoints();
 app.MapMailEndpoints();
 app.MapFamilyEndpoints();
 
