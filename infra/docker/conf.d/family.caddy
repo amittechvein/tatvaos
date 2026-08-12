@@ -1,0 +1,51 @@
+# ============================================================================
+#  TatvaOS Family — family.tatvaos.com
+# ============================================================================
+#
+#  Its own front door onto the same web and api containers, exactly as
+#  mail.caddy does. One deployment, three addresses.
+#
+#  Same-origin on purpose: /api/* is proxied here rather than pointed at the
+#  Core host, so the browser never makes a cross-origin call and the API needs
+#  no CORS entry for this domain. Sending the frontend to
+#  https://{$SITE_DOMAIN}/api instead would turn every request into a
+#  preflight AND put the refresh cookie in third-party territory, which
+#  Safari's ITP drops without asking.
+#
+#  Mounted by the PRODUCTION overlay only. Staging serves everything from one
+#  host, so this file is absent there and the import matches nothing.
+#
+#  Requires FAMILY_DOMAIN in the production environment file. Leaving it unset
+#  while this file is mounted makes Caddy reject the whole config and restart
+#  forever — the same failure mode mail.caddy's comment describes.
+# ============================================================================
+
+{$FAMILY_DOMAIN} {
+    encode zstd gzip
+
+    handle /api/* {
+        reverse_proxy api:8080
+    }
+
+    # Landing on the host should land in the address book, not the Core
+    # dashboard — otherwise the separate address means nothing.
+    redir / /family/contacts
+
+    # Administration lives on Core and nowhere else. Sign-in and /account stay
+    # valid here: someone signing in ON family should not be bounced through
+    # another domain first.
+    @consolepaths path /org /org/* /admin /admin/* /signup /signup/*
+    redir @consolepaths https://{$SITE_DOMAIN}{uri}
+
+    handle {
+        reverse_proxy web:3000
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+}

@@ -145,14 +145,20 @@ export function Stat({
 }
 
 // ---------------------------------------------------------------------------
-export function Table({ head, children }: { head: string[]; children: React.ReactNode }) {
+// head takes nodes rather than strings so a table can put a control in its
+// own header — a select-all checkbox belongs at the top of the column it
+// selects, not floating in the toolbar above the table.
+export function Table({ head, children }: { head: React.ReactNode[]; children: React.ReactNode }) {
   return (
     <div className="table-responsive">
       <table className="table text-nowrap table-hover">
         <thead>
           <tr>
             {head.map((h, i) => (
-              <th key={`${h}-${i}`} scope="col">{h}</th>
+              // Keyed by position: a heading may now be an element, and two
+              // blank headings are not distinguishable by their content.
+              // eslint-disable-next-line react/no-array-index-key
+              <th key={i} scope="col">{h}</th>
             ))}
           </tr>
         </thead>

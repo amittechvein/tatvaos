@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using MimeKit;
 using TatvaOS.Api.Modules.Mail;
+using TatvaOS.Api.Modules.Family;
 using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Tenancy;
 
@@ -139,6 +140,12 @@ public sealed class MaildirIngestWorker(
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var tenant = scope.ServiceProvider.GetRequiredService<TenantContext>();
+        var autoSave = scope.ServiceProvider.GetRequiredService<ContactAutoSave>();
+
+        // Filled as messages are staged, drained after the save. Family's
+        // contact_sources has a foreign key to mail.messages, so nothing can
+        // reference these rows until they are committed.
+        var ingested = new List<Message>();
 
         // mail.mailboxes carries no RLS (the mail edge reads it to route), so
         // this cross-tenant lookup is by design. Everything after it is
@@ -313,6 +320,7 @@ public sealed class MaildirIngestWorker(
                     pendingThreads[mid.Trim('<', '>')] = threadId;
 
                 db.Messages.Add(message);
+                ingested.Add(message);
 
                 for (var i = 0; i < attachments.Count; i++)
                 {
@@ -343,6 +351,12 @@ public sealed class MaildirIngestWorker(
         {
             await db.SaveChangesAsync(ct);
             log.LogInformation("Ingested {Count} message(s) for {Address}", added, address);
+
+            // After the commit, never before, and never inside the same
+            // SaveChanges: a failure to update the address book must not roll
+            // back delivered mail. box.UserId is null for a shared mailbox,
+            // which RecordAsync treats as "no address book to write to".
+            await autoSave.RecordAsync(db, tenant, box.UserId, ingested, "sender", ct);
         }
     }
 

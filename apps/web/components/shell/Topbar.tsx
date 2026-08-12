@@ -18,7 +18,7 @@ import { useSelfPhoto } from '@/components/ui/UserPhoto';
 //  control, and it lives right here.
 // ============================================================================
 
-export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' }) {
+export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' | 'family' }) {
   const { user } = useAuth();
   const { mode, setMode } = useAppearance();
   const [anchor, setAnchor] = useState<null | HTMLElement>(null);

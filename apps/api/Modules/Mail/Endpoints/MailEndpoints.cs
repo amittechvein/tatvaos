@@ -2,6 +2,7 @@ using MailKit.Net.Smtp;
 using MailKit.Security;
 using Microsoft.EntityFrameworkCore;
 using MimeKit;
+using TatvaOS.Api.Modules.Family;
 using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Tenancy;
 
@@ -430,7 +431,7 @@ public static class MailEndpoints
 
     private static async Task<IResult> SendAsync(
         HttpRequest request, AppDbContext db, TenantContext tenant, IConfiguration config,
-        ILoggerFactory logFactory, CancellationToken ct)
+        ILoggerFactory logFactory, ContactAutoSave autoSave, CancellationToken ct)
     {
         var log = logFactory.CreateLogger("MailSend");
 
@@ -592,6 +593,11 @@ public static class MailEndpoints
 
         box.UsedBytes += message.SizeBytes;
         await db.SaveChangesAsync(ct);
+
+        // Offer the recipients to the sender's address book. Off by default —
+        // see ContactSettings.AutoSaveSent — and after the commit, because a
+        // failure here must not lose a message that has already gone out.
+        await autoSave.RecordAsync(db, tenant, box.UserId, [message], "recipient", ct);
 
         return Results.Ok(new { id = message.Id, folderId = message.FolderId });
     }
