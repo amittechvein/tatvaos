@@ -34,6 +34,24 @@ export interface MailSignature {
   includeOnReply: boolean;
 }
 
+/**
+ * A draft, in the shape the composer edits.
+ *
+ * Attachments are absent on purpose: files stay in the browser until send, so
+ * a saved draft carries recipients, subject and body only. The composer has to
+ * say so — someone who closes the window believing their attachment was kept
+ * has lost work.
+ */
+export interface MailDraft {
+  id: string;
+  to: string;
+  cc: string;
+  bcc: string;
+  subject: string;
+  bodyText: string;
+  bodyHtml: string;
+}
+
 export interface MailBootstrap {
   /** Null is a normal state — a person with no mail product. */
   mailbox: MailMailbox | null;
@@ -145,6 +163,25 @@ export const mailApi = {
   message: (f: AuthedFetch, id: string) =>
     f(`/mail/messages/${id}`).then((r) => json<Message>(r, 'Could not load the message.')),
 
+  /**
+   * Drafts. A draft is a message in the Drafts folder, so it appears there and
+   * in search like anything else.
+   */
+  draft: (f: AuthedFetch, id: string) =>
+    f(`/mail/drafts/${id}`).then((r) => json<MailDraft>(r, 'Could not open that draft.')),
+
+  createDraft: (f: AuthedFetch, d: Omit<MailDraft, 'id'>) =>
+    f('/mail/drafts', { method: 'POST', body: JSON.stringify(d) })
+      .then((r) => json<{ id: string }>(r, 'Could not save the draft.')),
+
+  updateDraft: (f: AuthedFetch, id: string, d: Omit<MailDraft, 'id'>) =>
+    f(`/mail/drafts/${id}`, { method: 'PUT', body: JSON.stringify(d) })
+      .then((r) => json<{ id: string }>(r, 'Could not save the draft.')),
+
+  deleteDraft: (f: AuthedFetch, id: string) =>
+    f(`/mail/drafts/${id}`, { method: 'DELETE' })
+      .then((r) => json<{ deleted: boolean }>(r, 'Could not discard the draft.')),
+
   /** This mailbox's signature. Also included in the bootstrap response. */
   signature: (f: AuthedFetch) =>
     f('/mail/signature').then((r) => json<MailSignature>(r, 'Could not load your signature.')),
@@ -218,6 +255,8 @@ export const mailApi = {
       bodyHtml?: string;
       inReplyToId?: string;
       files?: File[];
+      /** The draft this was composed from; the server deletes it after send. */
+      draftId?: string;
     },
   ) => {
     // Multipart, not JSON — the send endpoint now carries file attachments.
@@ -228,6 +267,7 @@ export const mailApi = {
     fd.append('bodyText', payload.bodyText);
     if (payload.bodyHtml) fd.append('bodyHtml', payload.bodyHtml);
     if (payload.inReplyToId) fd.append('inReplyToId', payload.inReplyToId);
+    if (payload.draftId) fd.append('draftId', payload.draftId);
     for (const file of payload.files ?? []) fd.append('files', file, file.name);
     return f('/mail/send', { method: 'POST', body: fd }).then((r) =>
       json<{ id: string | null }>(r, 'The message could not be sent.'),
