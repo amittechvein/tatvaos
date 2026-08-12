@@ -49,14 +49,32 @@ Scope: a filtered, paged read endpoint plus an org and platform console page. Ch
 the hard part (capturing correctly, tamper-resistantly) is already done. Also the first thing
 asked for in a DPDP-Act conversation.
 
-### 3. Storage module — *medium*
+### 3. Storage module — *backend visibility done; enforcement outstanding*
 
-`apps/web/app/org/storage/page.tsx` is a 13-line placeholder and there are **no storage
-endpoints at all**. Plans already carry per-user and pooled quotas, so the data model is
-half-built and currently unenforced.
+**Done** (`17-storage-usage.sql`, `StorageEndpoints.cs`, `StorageReconcileWorker.cs`):
 
-Scope: real usage figures per user and per product, pool headroom, and enforcement when a
-quota is hit. Enforcement is the part that turns quotas from decoration into a product.
+`storage_allocations.used_bytes` was read in four places and written by nothing, so every
+organisation reported zero usage however full its mailboxes were — and the pooled quota check
+compared `0 + size` against the allocation, so it could never refuse anything. It is now
+**derived** from `mail.mailboxes` rather than counted incrementally, which is the important
+part: a counter drifts when a crash lands between filing a message and bumping it, and nothing
+ever notices. A derivation cannot. Reconciled on a 15-minute timer and on every read of the
+storage page.
+
+Three endpoints: `GET /api/org/storage`, `GET /api/org/storage/users`,
+`PUT /api/org/storage/allocations/{productCode}`.
+
+**Outstanding:**
+
+- **Frontend:** `org/storage/page.tsx` is still a 13-line placeholder.
+- **Enforcement.** `StorageAllocator.CanAcceptAsync` is public and correct but **nothing on
+  the delivery path calls it** — a full mailbox still accepts mail. Agreed split: Core owns
+  the check, the Mail lane calls it from `MaildirIngestWorker`. Callers must reject with SMTP
+  **452 (temporary)**, never 552 — a permanent failure discards the sender's message instead
+  of making them retry, and that loses customer mail unrecoverably.
+- Worth doing only once the derived figures have been watched in production for a few days.
+  Enforcement acting on a wrong number silently rejects real mail, which is a worse failure
+  than the one it fixes.
 
 ### 4. Employee offboarding — *medium*
 
