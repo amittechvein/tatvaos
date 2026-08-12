@@ -41,6 +41,31 @@ export type ComposeMode = 'new' | 'reply' | 'replyAll' | 'forward';
  */
 type PaneState = 'docked' | 'full' | 'min';
 
+/**
+ * The signature, as the mail bootstrap returns it.
+ *
+ * Declared here rather than imported from lib/mail so the composer keeps no
+ * dependency on the mail client module — anything with these four fields
+ * satisfies it, which is all this component needs to know.
+ */
+/** What autosave hands back to the page, which owns the draft id. */
+export interface DraftFields {
+  to: string;
+  cc: string;
+  bcc: string;
+  subject: string;
+  bodyText: string;
+  bodyHtml: string;
+}
+
+export interface ComposerSignature {
+  bodyHtml: string;
+  bodyText: string;
+  enabled: boolean;
+  /** Separate from `enabled` — most people don't want it on every reply. */
+  includeOnReply: boolean;
+}
+
 /** Recipients of the original, minus the current mailbox, for reply-all. */
 function replyAllCc(original: Message | null | undefined, self: string): string {
   if (!original) return '';
@@ -62,6 +87,8 @@ export function Composer({
   mode = 'new',
   selfAddress = '',
   fromAddress,
+  signature,
+  onSaveDraft,
   onClose,
   onSend,
 }: {
@@ -70,6 +97,14 @@ export function Composer({
   /** The current mailbox address, so reply-all does not Cc yourself. */
   selfAddress?: string;
   fromAddress: string;
+  /** Seeded into an empty body when the composer opens. */
+  signature?: ComposerSignature | null;
+  /**
+   * Autosave. Debounced while typing and flushed on minimise. The page owns the
+   * draft id this produces and threads it through later saves, so a long
+   * message updates one row instead of filling Drafts with one per keystroke.
+   */
+  onSaveDraft?: (fields: DraftFields) => void;
   onClose: () => void;
   onSend: (draft: {
     to: string[];
@@ -88,6 +123,11 @@ export function Composer({
   const initialCc = mode === 'replyAll' ? replyAllCc(replyTo, selfAddress) : '';
   const [cc, setCc] = useState(initialCc);
   const [showCc, setShowCc] = useState(initialCc.length > 0);
+  const [bcc, setBcc] = useState('');
+  const [showBcc, setShowBcc] = useState(false);
+  // The contenteditable does not drive React state, so typing in the body would
+  // otherwise never re-run the autosave timer. This counter is the signal.
+  const [bodyEdits, setBodyEdits] = useState(0);
   const [subject, setSubject] = useState(() => {
     if (!replyTo) return '';
     const base = replyTo.subject;
@@ -211,12 +251,74 @@ export function Composer({
   // A forward starts with the original quoted into the body. Seed the editor
   // once, after it mounts, and only when there is something to quote.
   useEffect(() => {
-    if (seeded.current || plain) return;
-    if (mode === 'forward' && replyTo && editorRef.current) {
-      editorRef.current.innerHTML = quotedHtml(replyTo);
+    if (seeded.current) return;
+
+    // Whether the signature applies at all. `enabled` is the master switch;
+    // `includeOnReply` is asked separately because most people want a signature
+    // on a new message and not on the fourth reply in a thread.
+    const withSig = Boolean(signature?.enabled && (mode === 'new' || signature.includeOnReply));
+
+    if (plain) {
+      if (!withSig || !signature) return;
+      // Functional update so an already-typed body is never overwritten — this
+      // effect re-runs on a mode change, and the body may not be empty by then.
+      setPlainBody((b) => (b.trim() === '' ? `\n\n${signature.bodyText}` : b));
       seeded.current = true;
+      return;
     }
-  }, [mode, replyTo, plain]);
+
+    const el = editorRef.current;
+    if (!el) return;
+
+    // "Empty" has to ignore the <br> browsers drop into a contenteditable the
+    // moment it is focused, or the body never looks empty and nothing seeds.
+    if (el.innerHTML.replace(/<br\s*\/?>/gi, '').trim() !== '') return;
+
+    // Signature ABOVE the quote: a reply then reads reply → signature → quote,
+    // which keeps the quoted history last where it can be collapsed and read
+    // as history rather than as part of the new message.
+    const sig = withSig && signature ? `<br><br>${signature.bodyHtml}` : '';
+    const quote = mode === 'forward' && replyTo ? quotedHtml(replyTo) : '';
+    if (!sig && !quote) return;
+
+    el.innerHTML = sig + quote;
+    seeded.current = true;
+  }, [mode, replyTo, plain, signature]);
+
+  /** Current contents, in the shape autosave and send both want. */
+  function draftFields(): DraftFields {
+    const el = editorRef.current;
+    return {
+      to, cc, bcc, subject,
+      bodyText: plain ? plainBody : (el?.innerText ?? ''),
+      bodyHtml: plain ? '' : (el?.innerHTML ?? ''),
+    };
+  }
+
+  /**
+   * Never throws. A failed autosave must not interrupt someone mid-sentence —
+   * the send path reports its own failures, and that is the one that matters.
+   */
+  function saveDraftNow() {
+    if (!onSaveDraft) return;
+    // An opened-and-abandoned window should not leave a junk row in Drafts.
+    if (!to.trim() && !cc.trim() && !bcc.trim() && !subject.trim()) return;
+    try {
+      onSaveDraft(draftFields());
+    } catch {
+      /* silent by design */
+    }
+  }
+
+  useEffect(() => {
+    if (!onSaveDraft) return undefined;
+    if (!to.trim() && !cc.trim() && !bcc.trim() && !subject.trim()) return undefined;
+    const t = setTimeout(saveDraftNow, 2000);
+    return () => clearTimeout(t);
+    // saveDraftNow is re-created each render and deliberately not a dependency;
+    // the fields below are what should restart the timer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [to, cc, bcc, subject, plainBody, bodyEdits, onSaveDraft]);
 
   const totalSize = files.reduce((n, f) => n + f.size, 0);
 
@@ -260,7 +362,13 @@ export function Composer({
             <div className="flex items-center gap-1">
               <button
                 type="button"
-                onClick={(e) => { e.stopPropagation(); setPane(minimised ? 'docked' : 'min'); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  // Minimising is the clearest "I am coming back to this" there
+                  // is, so the draft is flushed rather than left to the timer.
+                  if (!minimised) saveDraftNow();
+                  setPane(minimised ? 'docked' : 'min');
+                }}
                 aria-label={minimised ? 'Restore' : 'Minimise'}
                 title={minimised ? 'Restore' : 'Minimise'}
                 className="rounded p-1 text-rail-text hover:text-white"
@@ -304,15 +412,20 @@ export function Composer({
               placeholder="Recipients — commas for several"
               className="w-full border-0 bg-transparent p-0 text-ink outline-none placeholder:text-ink-faint"
             />
-            {!showCc && (
-              <button
-                type="button"
-                onClick={() => setShowCc(true)}
-                className="shrink-0 text-xs font-medium text-ink-muted hover:text-ink"
-              >
-                Cc
-              </button>
-            )}
+            <span className="flex shrink-0 items-center gap-2">
+              {!showCc && (
+                <button type="button" onClick={() => setShowCc(true)}
+                        className="text-xs font-medium text-ink-muted hover:text-ink">
+                  Cc
+                </button>
+              )}
+              {!showBcc && (
+                <button type="button" onClick={() => setShowBcc(true)}
+                        className="text-xs font-medium text-ink-muted hover:text-ink">
+                  Bcc
+                </button>
+              )}
+            </span>
           </label>
           {showCc && (
             <label className="flex items-center gap-2 border-b border-line py-2.5 text-sm transition-colors focus-within:border-brand-500">
@@ -321,6 +434,17 @@ export function Composer({
                 value={cc}
                 onChange={(e) => setCc(e.target.value)}
                 placeholder="name@example.com"
+                className="w-full border-0 bg-transparent p-0 text-ink outline-none placeholder:text-ink-faint"
+              />
+            </label>
+          )}
+          {showBcc && (
+            <label className="flex items-center gap-2 border-b border-line py-2.5 text-sm transition-colors focus-within:border-brand-500">
+              <span className="w-12 shrink-0 text-ink-muted">Bcc</span>
+              <input
+                value={bcc}
+                onChange={(e) => setBcc(e.target.value)}
+                placeholder="Hidden from everyone else on the message"
                 className="w-full border-0 bg-transparent p-0 text-ink outline-none placeholder:text-ink-faint"
               />
             </label>
@@ -351,6 +475,7 @@ export function Composer({
             suppressContentEditableWarning
             spellCheck={spell}
             data-placeholder="Write your message"
+            onInput={() => setBodyEdits((n) => n + 1)}
             className="composer-body scroll-thin min-h-[220px] flex-1 overflow-y-auto px-4 py-3 text-sm leading-relaxed text-ink outline-none"
           />
         )}
@@ -379,6 +504,16 @@ export function Composer({
             <span className="text-[11px] text-ink-faint">{formatBytes(totalSize)} total</span>
           </div>
         )}
+
+            {/* Said where the attachments are, not in a help page. Someone who
+                minimises believing the file was kept has lost work, and they
+                will not find out until they reopen the draft. */}
+            {onSaveDraft && files.length > 0 && (
+              <p className="px-4 pb-1 text-[11px] text-warn">
+                Attachments are not saved with a draft — they stay in this window
+                and are only included if you send now.
+              </p>
+            )}
 
         {error && (
           <div className="border-t border-line bg-danger/5 px-4 py-2 text-sm text-danger">{error}</div>
