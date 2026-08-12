@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
 import { useAuth } from '@/lib/auth';
+import { MIN_PASSWORD, PASSWORD_HINT, PasswordStrength } from '@/components/ui/PasswordStrength';
 
 const INPUT =
   'w-full rounded-lg border border-line bg-surface px-3 py-2.5 text-sm text-ink outline-none transition placeholder:text-ink-faint focus:border-brand-500';
@@ -33,7 +34,7 @@ export default function ChangePasswordPage() {
     setError(null);
 
     if (next !== confirm) return setError('The two new passwords do not match.');
-    if (next.length < 12) return setError('Use at least 12 characters.');
+    if (next.length < MIN_PASSWORD) return setError(`Use at least ${MIN_PASSWORD} characters.`);
     if (next === current) return setError('The new password must be different from the current one.');
 
     setBusy(true);
@@ -96,7 +97,7 @@ export default function ChangePasswordPage() {
                  value={next} onChange={(e) => setNext(e.target.value)} />
         </label>
 
-        <Strength value={next} />
+        <PasswordStrength value={next} />
 
         <label className="mt-5 block">
           <span className="mb-1.5 block text-sm font-medium text-ink">Confirm new password</span>
@@ -110,11 +111,7 @@ export default function ChangePasswordPage() {
           </span>
         </label>
 
-        <p className="mt-1 text-xs leading-relaxed text-ink-muted">
-          At least 12 characters. Length matters far more than symbols — a short
-          phrase you will actually remember beats something unmemorable with a
-          punctuation mark in it.
-        </p>
+        <p className="mt-1 text-xs leading-relaxed text-ink-muted">{PASSWORD_HINT}</p>
 
         <button
           type="submit"
@@ -125,36 +122,6 @@ export default function ChangePasswordPage() {
         </button>
       </form>
     </Shell>
-  );
-}
-
-/**
- * Length only — deliberately not a character-class score.
- *
- * Scores that reward a capital and a digit rate "Password1!" highly, and it is
- * on every wordlist there is. Length is the property that actually resists
- * guessing, so that is the only thing shown.
- */
-function Strength({ value }: { value: string }) {
-  if (!value) return <div className="h-[22px]" />;
-
-  const pct = Math.min(100, (value.length / 16) * 100);
-  const weak = value.length < 12;
-  const strong = value.length >= 16;
-  const tone = weak ? 'bg-danger' : strong ? 'bg-ok' : 'bg-warn';
-  const text = weak ? 'text-danger' : strong ? 'text-ok' : 'text-warn';
-
-  return (
-    <div className="mt-2">
-      <div className="h-1 w-full overflow-hidden rounded-full bg-line">
-        <div className={`h-full rounded-full transition-all ${tone}`} style={{ width: `${pct}%` }} />
-      </div>
-      <span className={`mt-1 block text-xs ${text}`}>
-        {weak
-          ? `${12 - value.length} more character${12 - value.length === 1 ? '' : 's'}`
-          : strong ? 'Good length' : 'Long enough'}
-      </span>
-    </div>
   );
 }
 

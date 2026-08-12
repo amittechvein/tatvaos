@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 import Alert from '@mui/material/Alert';
@@ -456,6 +457,14 @@ function SignInForm() {
             >
               {busy ? 'Signing in…' : 'Sign in'}
             </Button>
+
+            {/* Anonymous recovery. The mobile-code route works today; the
+                emailed link depends on outbound SMTP being unblocked. */}
+            <p className="mt-4 text-center text-sm">
+              <Link href="/forgot-password" className="text-brand-600 hover:underline">
+                Forgot password?
+              </Link>
+            </p>
           </Box>
           )}
 
