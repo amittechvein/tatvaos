@@ -30,6 +30,21 @@ export interface MessagePage {
   messages: Message[];
 }
 
+/**
+ * A search hit is a Message plus where it lives — results span every folder,
+ * so a row has to be able to say "in Sent" and navigate there.
+ */
+export type SearchHit = Message & {
+  folderId: string;
+  folderName: string | null;
+  folderSlug: string | null;
+};
+
+export interface SearchPage {
+  total: number;
+  messages: SearchHit[];
+}
+
 async function json<T>(res: Response, fallbackError: string): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -56,6 +71,20 @@ export const mailApi = {
     return f(`/mail/folders/${folderId}/messages${qs}`).then((r) =>
       json<MessagePage>(r, 'Could not load messages.'),
     );
+  },
+
+  /**
+   * Search the whole mailbox — every folder, including message bodies.
+   *
+   * This replaces filtering the loaded page in the browser, which only ever
+   * searched the ~50 rows on screen in the current folder: a search for older
+   * mail returned nothing and looked exactly like "no such message".
+   */
+  search: (f: AuthedFetch, q: string, opts?: { skip?: number; take?: number }) => {
+    const params = new URLSearchParams({ q });
+    if (opts?.skip) params.set('skip', String(opts.skip));
+    if (opts?.take) params.set('take', String(opts.take));
+    return f(`/mail/search?${params}`).then((r) => json<SearchPage>(r, 'Could not search your mail.'));
   },
 
   message: (f: AuthedFetch, id: string) =>

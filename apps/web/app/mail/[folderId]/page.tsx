@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import type { Attachment, Folder, Message } from '@tatvaos/types';
 import { useAuth } from '@/lib/auth';
-import { mailApi, resolveFolder, type MailBootstrap } from '@/lib/mail';
+import { mailApi, resolveFolder, type MailBootstrap, type SearchHit } from '@/lib/mail';
 import DOMPurify from 'dompurify';
 import { MessageList } from '@/components/mail/MessageList';
 import { MessageView } from '@/components/mail/MessageView';
@@ -35,6 +35,9 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   const [open, setOpen] = useState<Message | null>(null);
   const [openLoading, setOpenLoading] = useState(false);
   const [query, setQuery] = useState('');
+  const [searchHits, setSearchHits] = useState<SearchHit[] | null>(null);
+  const [searchTotal, setSearchTotal] = useState(0);
+  const [searching, setSearching] = useState(false);
   const [composing, setComposing] = useState(false);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [composeMode, setComposeMode] = useState<ComposeMode>('new');
@@ -115,17 +118,39 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     void loadMessages(folder.id, 0);
   }, [folder, loadMessages]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return messages;
-    return messages.filter(
-      (m) =>
-        m.subject.toLowerCase().includes(q) ||
-        m.snippet.toLowerCase().includes(q) ||
-        m.from.email.toLowerCase().includes(q) ||
-        (m.from.name ?? '').toLowerCase().includes(q),
-    );
-  }, [messages, query]);
+  // ---- Search ---------------------------------------------------------
+  //
+  //  Server-side, across every folder, including message bodies. This used to
+  //  be a filter over `messages` — the ~50 rows already on screen in the
+  //  current folder — so searching for older mail returned nothing and looked
+  //  identical to "no such message". Debounced: a keystroke should not be a
+  //  query.
+  useEffect(() => {
+    const term = query.trim();
+    if (!term) {
+      setSearchHits(null);
+      setSearchTotal(0);
+      return;
+    }
+
+    let cancelled = false;
+    setSearching(true);
+    const t = setTimeout(() => {
+      mailApi.search(authedFetch, term, { take: PAGE_SIZE })
+        .then((page) => {
+          if (cancelled) return;
+          setSearchHits(page.messages);
+          setSearchTotal(page.total);
+        })
+        .catch(() => { if (!cancelled) setSearchHits([]); })
+        .finally(() => { if (!cancelled) setSearching(false); });
+    }, 250);
+
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [query, authedFetch]);
+
+  // What the list renders: search results when searching, else the folder page.
+  const filtered: Message[] = searchHits ?? messages;
 
   // ---- Local state helpers --------------------------------------------
   const patchMessage = useCallback((id: string, patch: Partial<Message>) => {
@@ -148,7 +173,10 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
 
   // ---- Actions --------------------------------------------------------
   async function handleOpen(id: string) {
-    const row = messages.find((m) => m.id === id);
+    // `filtered`, not `messages`: while searching, the row lives in the search
+    // results — which may be a message in another folder that was never in the
+    // loaded folder page at all.
+    const row = filtered.find((m) => m.id === id);
     if (!row) return;
 
     if (!row.isRead) {
@@ -390,7 +418,11 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
           ) : (
             <span>
               {query ? (
-                <>{filtered.length} match{filtered.length === 1 ? '' : 'es'}</>
+                searching ? (
+                  <>Searching&hellip;</>
+                ) : (
+                  <>{searchTotal} result{searchTotal === 1 ? '' : 's'} in all mail</>
+                )
               ) : (
                 <>Showing {rangeStart}&ndash;{rangeEnd} of {total}</>
               )}
