@@ -16,7 +16,24 @@
 #  definitions, which is the only way a test result means anything.
 # ============================================================================
 
-name: tatvaos
+# ----------------------------------------------------------------------------
+#  NO `name:` HERE — EVERY OVERLAY DECLARES ITS OWN. READ THIS BEFORE ADDING ONE.
+#
+#  The Compose project name determines which containers and which NAMED VOLUMES
+#  a command acts on. It used to live in this file, which meant every checkout
+#  on a box — production and testing alike — resolved to the same project
+#  `tatvaos` and therefore the same `tatvaos_pgdata` and `tatvaos_vmail`.
+#
+#  The consequence was not theoretical. `docker compose down -v` run from a
+#  testing checkout, intending to tear down testing, would have deleted
+#  PRODUCTION's database and every customer's mail — because the directory you
+#  type the command in has no bearing on which project it targets. Only the
+#  name does.
+#
+#  So the name belongs to the environment, not to the shared definitions. An
+#  overlay without one falls back to the directory name, which is a confusing
+#  default but a SAFE one: it cannot collide with a deliberately-named project.
+# ----------------------------------------------------------------------------
 
 services:
 

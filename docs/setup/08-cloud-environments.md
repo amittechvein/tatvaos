@@ -216,8 +216,13 @@ un-deleting a file.
 3. **A new overlay**, `docker-compose.testing.yml`, written fresh against the
    current base. Recovering the deleted one from git history is a trap — it
    predates several changes to the base and would drift silently.
-   Non-negotiable contents: `RELAY_TO_MAILPIT=true` so no test mail can reach a
-   real person, plus Mailpit itself.
+   Two non-negotiable contents:
+   - `RELAY_TO_MAILPIT=true`, plus Mailpit, so no test mail can reach a real
+     person.
+   - **`name: tatvaos-testing`** — its own Compose project name. The old
+     overlay inherited `tatvaos` from the base, which meant a `down -v` in the
+     testing checkout would have destroyed production's `pgdata` and `vmail`.
+     The name, not the directory, decides what a command touches.
 4. **Re-add `testing` to the case statement in `deploy.sh`**, which currently
    rejects it with an explanation.
 5. `echo testing > .environment` on that checkout, so a wrong-environment

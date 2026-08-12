@@ -14,6 +14,11 @@
 #      up rather than be rebuilt on a whim.
 # ============================================================================
 
+# The project name lives here, not in the base — see the block at the top of
+# docker-compose.base.yml. Unchanged from what production already runs, so this
+# recreates nothing; any future overlay must declare a DIFFERENT one.
+name: tatvaos
+
 services:
 
   caddy:
