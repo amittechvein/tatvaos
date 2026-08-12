@@ -171,9 +171,23 @@ export function Td({ children, className = '' }: { children?: React.ReactNode; c
  * A progress bar that changes colour as it fills. Thresholds match
  * StorageAllocator: 80% warns, 95% blocks.
  */
-export function Meter({ used, total }: { used: number; total: number }) {
+export function Meter({ used, total, tone }: {
+  used: number;
+  total: number;
+  /**
+   * Overrides the computed colour.
+   *
+   * The 80/95 thresholds below are a convenience for callers that have nothing
+   * better. Where the SERVER decides — org storage returns isWarning/isCritical,
+   * and the same flags gate whether a user can be added — pass the tone through
+   * instead. Two copies of a threshold eventually disagree, and the version that
+   * blocks the action is the one that matters.
+   */
+  tone?: 'ok' | 'warn' | 'danger';
+}) {
   const pct = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0;
-  const colour = pct >= 95 ? 'danger' : pct >= 80 ? 'warning' : 'primary';
+  const computed = pct >= 95 ? 'danger' : pct >= 80 ? 'warning' : 'primary';
+  const colour = tone ? ({ ok: 'primary', warn: 'warning', danger: 'danger' } as const)[tone] : computed;
   return (
     <div className="progress progress-sm" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
       <div className={`progress-bar bg-${colour}`} style={{ width: `${pct}%` }} />
