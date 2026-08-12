@@ -172,6 +172,22 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   }, []);
 
   // ---- Actions --------------------------------------------------------
+  /**
+   * Block the sender, then file this message where future ones will go.
+   *
+   * The move is what makes blocking feel like it did something — otherwise the
+   * message you just blocked is still sitting open in front of you. Blocking
+   * never refuses mail at SMTP; it only changes where it lands.
+   */
+  async function handleBlockSender(m: Message) {
+    try {
+      await mailApi.blockSender(authedFetch, m.from.email);
+      await handleArchive(m.id);
+    } catch (e) {
+      setListError(e instanceof Error ? e.message : 'Could not block that sender.');
+    }
+  }
+
   async function handleOpen(id: string) {
     // `filtered`, not `messages`: while searching, the row lives in the search
     // results — which may be a message in another folder that was never in the
@@ -482,6 +498,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
               onDelete={(m) => void handleDelete(m.id)}
               onToggleFlag={(m) => handleToggleFlag(m.id)}
               onArchive={(m) => void handleArchive(m.id)}
+              onBlockSender={(m) => void handleBlockSender(m)}
               onMarkUnread={handleMarkUnread}
               onPrint={handlePrint}
               onDownloadAttachment={(m, a: Attachment) => downloadAttachment(m.id, a.id, a.filename)}
