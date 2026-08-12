@@ -157,13 +157,70 @@ public sealed class MaildirIngestWorker(
                 .ToListAsync(ct))
             .ToHashSet();
 
-        var inbox = await db.Folders.FirstOrDefaultAsync(
-            f => f.MailboxId == box.Id && f.SpecialUse == "\\Inbox", ct);
+        // Every folder, tracked: filing increments the target's UidNext, and a
+        // rule may move mail into any of them. One query rather than one lookup
+        // per special-use folder.
+        var folders = await db.Folders.Where(f => f.MailboxId == box.Id).ToListAsync(ct);
+        var folderById = folders.ToDictionary(f => f.Id);
+
+        var inbox = folders.FirstOrDefault(f => f.SpecialUse == "\\Inbox");
         if (inbox is null)
         {
             log.LogWarning("Mailbox {Address} has no Inbox folder; skipping ingest", address);
             return;
         }
+
+        // Blocked senders are filed to Junk instead of Inbox. Nothing is
+        // dropped: blocking is a filing rule, not a refusal, so unblocking
+        // makes past mail findable again where it already sits.
+        //
+        // Both this and the rules below are best-effort. A mailbox with no Junk
+        // folder, or a failed query, degrades to "everything lands in Inbox" —
+        // losing the blocklist can never cost mail.
+        var junk = folders.FirstOrDefault(f => f.SpecialUse == "\\Junk");
+
+        var blocked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            blocked = (await db.BlockedSenders.AsNoTracking()
+                    .Where(x => x.MailboxId == box.Id)
+                    .Select(x => x.Address)
+                    .ToListAsync(ct))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "Could not read the blocklist for {Address}; filing everything to Inbox", address);
+        }
+
+        // Filter rules, parsed once per mailbox rather than per message.
+        var rules = new List<(List<MailFilters.Condition> Conditions, bool MatchAll, MailFilters.Actions Actions)>();
+        try
+        {
+            var rows = await db.FilterRules.AsNoTracking()
+                .Where(r => r.MailboxId == box.Id && r.Enabled)
+                .OrderBy(r => r.Position).ThenBy(r => r.CreatedAt)
+                .ToListAsync(ct);
+
+            foreach (var r in rows)
+            {
+                var conditions = MailFilters.ParseConditions(r.Conditions);
+                // A rule with no readable conditions matches nothing; drop it
+                // here rather than evaluate it per message.
+                if (conditions.Count == 0) continue;
+                rules.Add((conditions, r.MatchAll, MailFilters.ParseActions(r.Actions)));
+            }
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "Could not read filter rules for {Address}; delivering unfiltered", address);
+        }
+
+        // Message-Id -> thread for messages added in THIS sweep. A reply can
+        // arrive in the same batch as the message it answers, and that parent is
+        // only in the change tracker until the save at the end — without this
+        // the pair would split into two conversations.
+        var pendingThreads = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
 
         var added = 0;
         foreach (var (key, path) in files)
@@ -181,12 +238,51 @@ public sealed class MaildirIngestWorker(
                 var (fromName, fromAddr) = MailContent.FirstFrom(mime);
                 var attachments = MailContent.AttachmentParts(mime);
 
+                // Where this one lands. UIDs are per folder, so the target has
+                // to be chosen before ImapUid is read — filing to Junk while
+                // taking the Inbox's UID would corrupt both folders' sequences.
+                var isBlocked = fromAddr is not null && blocked.Contains(fromAddr);
+                var target = (junk is not null && isBlocked) ? junk : inbox;
+
+                // Filter rules. Blocking wins: someone who blocked a sender does
+                // not want a rule quietly pulling that mail back out of Junk, so
+                // rules only run when the sender is not blocked.
+                //
+                // ALL matching rules apply, in position order. A later move
+                // overrides an earlier one; the flags accumulate.
+                var markRead = false;
+                var flag = false;
+                if (!isBlocked && rules.Count > 0)
+                {
+                    var subject = new MailFilters.Subject(
+                        fromAddr,
+                        MailContent.Addresses(mime.To),
+                        mime.Subject,
+                        mime.TextBody ?? mime.HtmlBody);
+
+                    foreach (var (conditions, matchAll, actions) in rules)
+                    {
+                        if (!MailFilters.Matches(conditions, matchAll, subject)) continue;
+                        if (actions.MarkRead) markRead = true;
+                        if (actions.Flag) flag = true;
+                        // Only into a folder that still exists in this mailbox —
+                        // a rule outlives the folder it pointed at.
+                        if (actions.MoveToFolderId is Guid fid
+                            && folderById.TryGetValue(fid, out var dest))
+                            target = dest;
+                    }
+                }
+
+                var threadId = await MailThreads.ResolveAsync(
+                    db, box.Id, mime, pendingThreads, ct);
+
                 var message = new Message
                 {
                     TenantId = box.TenantId,
                     MailboxId = box.Id,
-                    FolderId = inbox.Id,
-                    ImapUid = inbox.UidNext,
+                    FolderId = target.Id,
+                    ThreadId = threadId,
+                    ImapUid = target.UidNext,
                     MessageIdHeader = string.IsNullOrEmpty(mime.MessageId) ? null : mime.MessageId,
                     FromAddr = Truncate(fromAddr, 320),
                     FromName = Truncate(fromName, 320),
@@ -194,6 +290,10 @@ public sealed class MaildirIngestWorker(
                     CcAddrs = mime.Cc.Count > 0 ? MailContent.Addresses(mime.Cc) : null,
                     Subject = Truncate(mime.Subject, 1000),
                     Snippet = MailContent.Snippet(mime),
+                    // Extracted once, here, so search has a body to index
+                    // without re-parsing MIME per query. HtmlBody is the
+                    // fallback for senders who ship no text alternative.
+                    BodyText = mime.TextBody ?? mime.HtmlBody,
                     // .ToUniversalTime() is not optional: an email's Date
                     // header carries the sender's offset (+05:30 for IST), and
                     // Npgsql refuses to write a non-UTC DateTimeOffset to a
@@ -201,12 +301,16 @@ public sealed class MaildirIngestWorker(
                     SentAt = mime.Date == DateTimeOffset.MinValue ? null : mime.Date.ToUniversalTime(),
                     ReceivedAt = info.LastWriteTimeUtc,
                     SizeBytes = info.Length,
-                    IsRead = false,
+                    IsRead = markRead,
+                    IsFlagged = flag,
                     HasAttachments = attachments.Count > 0,
                     BlobKey = blobKey,
                     RawBody = raw,
                 };
-                inbox.UidNext++;
+                target.UidNext++;
+
+                if (message.MessageIdHeader is string mid && mid.Length > 0)
+                    pendingThreads[mid.Trim('<', '>')] = threadId;
 
                 db.Messages.Add(message);
 
