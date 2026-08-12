@@ -1,4 +1,4 @@
-# Cloud Environments — Testing and Production
+# Cloud Environments — Production
 
 **Decision:** the platform runs on Linode.
 
@@ -6,16 +6,24 @@
 >
 > `172.105.57.198` began as staging and has been promoted. `core.`, `mail.`,
 > `mx.` and `staging.` all resolve to it; `staging.` now 308-redirects to
-> `core.`. There is no separate testing environment, which means **there is no
-> longer anywhere to try a change before customers see it** — the local Docker
-> stack in `local/` is the only safety net, and it is a weaker one because it
-> does not exercise real DNS, real TLS or real SMTP.
+> `core.`.
 >
-> Restore the second environment before onboarding a customer who would notice
-> a bad deploy. Everything below describes the two-environment design and stays
-> accurate for the day the testing box comes back.
+> **The testing environment has been REMOVED**, not merely left idle:
+> `docker-compose.testing.yml` and `.env.testing.example` are deleted and
+> `deploy.sh` no longer accepts `testing`. Nothing was running it, and a
+> half-present environment described in docs but absent from the tree is worse
+> than none — it invites someone to deploy an overlay that does not exist.
+>
+> The consequence is real and worth stating plainly: **there is nowhere to try
+> a change before customers see it.** The local Docker stack in `local/` is the
+> only safety net, and it is a weaker one because it does not exercise real
+> DNS, real TLS or real SMTP — which is where most deploy problems live.
+>
+> Bring a second environment back before onboarding a customer who would notice
+> a bad deploy. It needs its OWN overlay; see "Restoring a second environment"
+> at the end.
 
-Two environments, deployed the same way, differing only where they must.
+One environment today, described as it actually is.
 
 ---
 
@@ -75,15 +83,13 @@ One base file with the service definitions, plus a per-environment overlay:
 
 ```
 infra/docker/
-├── docker-compose.base.yml         shared — identical in both
-├── docker-compose.testing.yml      containment, testers' tools, small limits
+├── docker-compose.base.yml         shared service definitions
 ├── docker-compose.production.yml   real ports, no catcher, real limits
-├── Caddyfile                       automatic TLS, same file for both
-├── .env.testing.example
+├── Caddyfile                       automatic TLS
 └── .env.production.example
 ```
 
-Keeping the base free of environment specifics means both run the **same service definitions**. That is the only way a passing test means anything about production.
+The base carries no environment specifics, so any future overlay runs the **same service definitions** as production. That is the only way a passing test means anything about production — and it is why a restored testing environment must be a new overlay rather than a copy of the production one.
 
 ---
 
@@ -92,20 +98,19 @@ Keeping the base free of environment specifics means both run the **same service
 **Machine:** the target server · **Directory:** the repo checkout
 
 ```bash
-./infra/scripts/deploy.sh testing
 ./infra/scripts/deploy.sh production
 ```
 
 The script refuses to proceed if:
 
 - `.env` is missing or still contains `CHANGE_ME`
-- the server's `/etc/tatvaos-environment` disagrees with the environment you named
+- the checkout's `.environment` (or the host's `/etc/tatvaos-environment`) disagrees with the environment you named
 - the pre-deploy database backup fails
 
-That middle check is worth explaining. Deploying the testing overlay to production would silently switch off outbound containment; deploying production config to the test box would let test mail reach real people. Both are one typo away, so mark each server once:
+That middle check matters again the moment a second environment exists: deploying production config to a test box would switch outbound containment off and let test mail reach real people. Mark each server once:
 
 ```bash
-echo testing | sudo tee /etc/tatvaos-environment
+echo production | sudo tee /etc/tatvaos-environment
 ```
 
 Production deploys additionally require typing `production` to confirm, because the consequence — mail reaching real inboxes — is not reversible.
@@ -197,20 +202,29 @@ That said, it is your call and the machine is yours. If you want cloud-only, the
 
 ---
 
-## Getting there
+## Restoring a second environment
 
-1. **Resize the Linode to 4 GB** — Cloud Manager, a few minutes plus a reboot
-2. **DNS:** `A staging.tatvaos.com → 172.105.57.198`
-3. On the server:
+This is the work, whenever it becomes worth doing. It is not a matter of
+un-deleting a file.
 
-```bash
-git clone <your-repo> tatvaos && cd tatvaos
-cp infra/docker/.env.testing.example infra/docker/.env
-# fill in every CHANGE_ME — openssl rand -base64 32
-echo testing | sudo tee /etc/tatvaos-environment
-./infra/scripts/deploy.sh testing
-```
+1. **A second Linode.** Sharing one box defeats the purpose — a runaway test
+   process takes production down with it, and you cannot rehearse an OS upgrade
+   on the machine you are protecting.
+2. **DNS** for the hostname you choose. `staging.tatvaos.com` currently
+   308-redirects to Core (see `infra/docker/conf.d/legacy-staging.caddy`);
+   delete that block to reclaim the name.
+3. **A new overlay**, `docker-compose.testing.yml`, written fresh against the
+   current base. Recovering the deleted one from git history is a trap — it
+   predates several changes to the base and would drift silently.
+   Non-negotiable contents: `RELAY_TO_MAILPIT=true` so no test mail can reach a
+   real person, plus Mailpit itself.
+4. **Re-add `testing` to the case statement in `deploy.sh`**, which currently
+   rejects it with an explanation.
+5. `echo testing > .environment` on that checkout, so a wrong-environment
+   deploy is refused.
 
-Caddy obtains the TLS certificate automatically on first request. No certbot, no cron job, no expiry incident at 3am.
+Caddy obtains TLS automatically on first request — no certbot, no cron job, no
+expiry incident at 3am.
 
-**Testing does not need the SMTP unblock.** Internal mail — tenant to tenant, which is most of what testers exercise — never touches port 25 outbound. Staging can be live while that ticket is still open.
+**A test environment does not need the SMTP unblock.** Internal tenant-to-tenant
+mail, which is most of what testers exercise, never touches outbound port 25.

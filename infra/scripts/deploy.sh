@@ -2,10 +2,15 @@
 #
 # TatvaOS Mail — deploy to a cloud environment
 #
-#   ./deploy.sh testing
 #   ./deploy.sh production
 #
 # Run ON the target server, from the repo checkout.
+#
+# There was a second environment ("testing") with outbound mail contained to
+# Mailpit. It was removed once 172.105.57.198 was promoted to production and
+# nothing was left running it. If a real staging box ever exists again, it
+# needs its own overlay — do NOT deploy the production overlay to it, because
+# production sets RELAY_TO_MAILPIT=false and test mail would reach real people.
 
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
@@ -21,8 +26,12 @@ bad()  { printf '   %s[FAIL]%s %s\n' "$R" "$X" "$1"; }
 note() { printf '   %s%s%s\n' "$D" "$1" "$X"; }
 
 case "$ENV" in
-    testing|production) ;;
-    *) printf '\nUsage: ./deploy.sh testing|production\n\n'; exit 1 ;;
+    production) ;;
+    testing)
+        printf '\nThe testing environment was removed — its overlay no longer exists.\n'
+        printf 'Use the local stack in local/ to rehearse, or build a new overlay.\n\n'
+        exit 1 ;;
+    *) printf '\nUsage: ./deploy.sh production\n\n'; exit 1 ;;
 esac
 
 COMPOSE="docker compose \
@@ -87,15 +96,17 @@ if [ "$MEM_MB" -gt 0 ] && [ "$MEM_MB" -lt 3500 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-#  The guard that matters.
+#  Environment marker.
 #
-#  Deploying the testing overlay to production would silently disable outbound
-#  containment; deploying production config to the test box would let test mail
-#  reach real people. Both are one typo away, so the server states which it is.
+#  Only production exists today, so this no longer guards against deploying the
+#  wrong overlay — it guards against deploying to the wrong CHECKOUT. It stays
+#  because the day a second environment appears is exactly the day someone
+#  deploys production config to it, and outbound containment is the difference
+#  between test mail and mail to real people.
 # ---------------------------------------------------------------------------
-# Per-checkout marker, not per-host: with testing and production on the SAME
-# VPS, a host-level file cannot tell them apart. Falls back to the host file
-# for a dedicated server.
+# Per-checkout marker, not per-host: two environments could share one VPS, and
+# a host-level file cannot tell them apart. Falls back to the host file for a
+# dedicated server.
 MARKER=""
 [ -f .environment ] && MARKER=.environment
 [ -z "$MARKER" ] && [ -f /etc/tatvaos-environment ] && MARKER=/etc/tatvaos-environment
@@ -104,8 +115,8 @@ if [ -n "$MARKER" ]; then
     DECLARED=$(tr -d '[:space:]' < "$MARKER")
     if [ "$DECLARED" != "$ENV" ]; then
         bad "This checkout is marked '${DECLARED}' but you asked to deploy '${ENV}'."
-        note "Deploying testing config to production silently disables outbound"
-        note "containment; the reverse lets test mail reach real people."
+        note "Deploying the wrong environment's config can disable outbound"
+        note "containment, which lets test mail reach real people."
         note "If genuinely intended, update ${MARKER} first."
         exit 1
     fi
@@ -254,11 +265,5 @@ printf '\n   %s%s deployed.%s\n\n' "$G" "$ENV" "$X"
 printf '   App        https://%s\n' "$DOMAIN"
 printf '   API        https://%s/api\n' "$DOMAIN"
 printf '   Health     https://%s/health\n' "$DOMAIN"
-if [ "$ENV" = "testing" ]; then
-    printf '   Webmail    https://webmail.%s\n' "$DOMAIN"
-    printf '   Caught     https://mail-catcher.%s\n' "$DOMAIN"
-    printf '\n   %sOutbound mail is contained — nothing reaches real inboxes.%s\n' "$D" "$X"
-else
-    printf '\n   %sOutbound mail reaches the real internet.%s\n' "$Y" "$X"
-fi
+printf '\n   %sOutbound mail reaches the real internet.%s\n' "$Y" "$X"
 printf '\n'

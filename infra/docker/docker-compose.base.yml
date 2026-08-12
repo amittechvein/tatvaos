@@ -5,11 +5,14 @@
 #  Never used alone. Combined with an environment overlay:
 #
 #      docker compose -f docker-compose.base.yml \
-#                     -f docker-compose.testing.yml up -d
+#                     -f docker-compose.production.yml up -d
+#
+#  Production is the only cloud overlay today; the contained "testing" one was
+#  removed when this box was promoted. Local development uses local/ instead.
 #
 #  Everything environment-specific — ports, domains, resource limits, whether
 #  outbound mail can leave the box — lives in the overlay. Keeping the base
-#  free of those means testing and production run the SAME service
+#  free of those means any future environment runs the SAME service
 #  definitions, which is the only way a test result means anything.
 # ============================================================================
 

@@ -1,5 +1,19 @@
 # Promoting 172.105.57.198 from staging to production
 
+> **HISTORICAL — this promotion is complete.** The box is production and has
+> been since it was promoted. The testing environment it describes migrating
+> away from has since been removed outright: `docker-compose.testing.yml` and
+> `.env.testing.example` are deleted, and `deploy.sh` no longer accepts
+> `testing`.
+>
+> Kept because the provisioning detail is real and was hard-won — the DKIM,
+> PTR, relay and containment steps are how this box came to be configured, and
+> the next server will need most of them again. **Do not follow it start to
+> finish.** Commands here that reference the testing overlay will fail, which
+> is the safe direction.
+>
+> For how things stand now, see `08-cloud-environments.md`.
+
 **Status:** DNS is done. This is what remains.
 
 The box that has been serving `staging.tatvaos.com` becomes production. Two
