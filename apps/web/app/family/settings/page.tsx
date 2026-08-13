@@ -1,13 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import Alert from '@mui/material/Alert';
-import Box from '@mui/material/Box';
-import CircularProgress from '@mui/material/CircularProgress';
-import Divider from '@mui/material/Divider';
-import FormControlLabel from '@mui/material/FormControlLabel';
-import Switch from '@mui/material/Switch';
-import Typography from '@mui/material/Typography';
 
 import { FamilyShell } from '@/components/family/FamilyShell';
 import { Button, Card } from '@/components/ui/Kit';
@@ -21,6 +14,11 @@ import { familyApi, type FamilySettings } from '@/lib/family';
  * reasons about "autoSaveReceived", they reason about "save people who write
  * to me". The defaults are deliberate and explained inline, because the one
  * that is OFF is the one people ask about.
+ *
+ * Converted off MUI: Switch + FormControlLabel became Bootstrap's
+ * form-check form-switch, which keeps the label clickable via htmlFor. That
+ * association is easy to lose when hand-rolling a switch, and losing it makes
+ * the control noticeably harder to hit.
  */
 export default function FamilySettingsPage() {
   const { authedFetch } = useAuth();
@@ -59,13 +57,49 @@ export default function FamilySettingsPage() {
     }
   }, [authedFetch, settings]);
 
-  const toggle = (key: keyof FamilySettings) => (_: unknown, checked: boolean) =>
+  // Takes the boolean directly. MUI's onChange handed over (event, checked);
+  // a native checkbox gives only the event, so the call sites read
+  // e.target.checked and this stays a plain setter.
+  const toggle = (key: keyof FamilySettings) => (checked: boolean) =>
     setSettings((s) => (s ? { ...s, [key]: checked } : s));
+
+  const SWITCHES: { key: keyof FamilySettings; id: string; label: string; hint: string }[] = [
+    {
+      key: 'autoSaveReceived',
+      id: 'tv-auto-received',
+      label: 'Save people who write to me',
+      hint: 'When a message arrives from someone not in your contacts, add them.',
+    },
+    {
+      key: 'autoSaveSent',
+      id: 'tv-auto-sent',
+      label: 'Save people I write to',
+      hint: 'Off by default. You already know who you wrote to, and with this on every one-off recipient lands in your address book.',
+    },
+    {
+      key: 'autoSaveReply',
+      id: 'tv-auto-reply',
+      label: 'Keep “last contacted” up to date',
+      hint: 'For people already in your contacts, record each exchange so the list can be sorted by who you have spoken to recently.',
+    },
+  ];
 
   return (
     <FamilyShell title="Contact settings" breadcrumb="Settings">
-      {error && <Alert severity="error" className="mb-4" onClose={() => setError(null)}>{error}</Alert>}
-      {note && <Alert severity="success" className="mb-4" onClose={() => setNote(null)}>{note}</Alert>}
+      {error && (
+        <div className="alert alert-danger d-flex align-items-start mb-4">
+          <div className="flex-fill">{error}</div>
+          <button type="button" className="btn-close" aria-label="Dismiss"
+                  onClick={() => setError(null)} />
+        </div>
+      )}
+      {note && (
+        <div className="alert alert-success d-flex align-items-start mb-4">
+          <div className="flex-fill">{note}</div>
+          <button type="button" className="btn-close" aria-label="Dismiss"
+                  onClick={() => setNote(null)} />
+        </div>
+      )}
 
       <Card
         title="Saving contacts automatically"
@@ -77,60 +111,48 @@ export default function FamilySettingsPage() {
         }
       >
         {!settings ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}><CircularProgress size={28} /></Box>
+          <div className="d-flex justify-content-center py-4">
+            <span className="d-inline-block animate-spin rounded-circle"
+                  style={{ width: 28, height: 28, border: '3px solid rgba(0,0,0,.12)',
+                           borderTopColor: '#03b562' }} />
+          </div>
         ) : (
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
-            <Box>
-              <FormControlLabel
-                control={<Switch checked={settings.autoSaveReceived} onChange={toggle('autoSaveReceived')} />}
-                label="Save people who write to me"
-              />
-              <Typography variant="body2" color="text.secondary" sx={{ ml: 6 }}>
-                When a message arrives from someone not in your contacts, add them.
-              </Typography>
-            </Box>
-
-            <Divider />
-
-            <Box>
-              <FormControlLabel
-                control={<Switch checked={settings.autoSaveSent} onChange={toggle('autoSaveSent')} />}
-                label="Save people I write to"
-              />
-              <Typography variant="body2" color="text.secondary" sx={{ ml: 6 }}>
-                Off by default. You already know who you wrote to, and with this on every
-                one-off recipient lands in your address book.
-              </Typography>
-            </Box>
-
-            <Divider />
-
-            <Box>
-              <FormControlLabel
-                control={<Switch checked={settings.autoSaveReply} onChange={toggle('autoSaveReply')} />}
-                label="Keep “last contacted” up to date"
-              />
-              <Typography variant="body2" color="text.secondary" sx={{ ml: 6 }}>
-                For people already in your contacts, record each exchange so the list can be
-                sorted by who you have spoken to recently.
-              </Typography>
-            </Box>
-          </Box>
+          <div className="d-flex flex-column gap-3">
+            {SWITCHES.map((s, i) => (
+              <div key={s.key}>
+                {i > 0 && <hr className="mt-0 mb-3" />}
+                <div className="form-check form-switch">
+                  <input
+                    className="form-check-input"
+                    type="checkbox"
+                    role="switch"
+                    id={s.id}
+                    checked={Boolean(settings[s.key])}
+                    onChange={(e) => toggle(s.key)(e.target.checked)}
+                  />
+                  <label className="form-check-label" htmlFor={s.id}>{s.label}</label>
+                </div>
+                {/* Indented to line up under the label rather than the switch,
+                    so the hint reads as belonging to the setting above it. */}
+                <p className="fs-14 text-muted mb-0" style={{ marginLeft: 44 }}>{s.hint}</p>
+              </div>
+            ))}
+          </div>
         )}
       </Card>
 
-      <Card title="What this does not do" className="mt-6">
-        <Typography variant="body2" color="text.secondary">
+      <Card title="What this does not do" className="mt-4">
+        <p className="fs-14 text-muted mb-0">
           Automatically saved contacts are personal to you. A message arriving in your mailbox
           says something about who <em>you</em> correspond with; it says nothing about who the
           organisation knows, so nothing here is ever shared with colleagues. To share a
           contact, open it and choose “Share with organisation” — that is a deliberate act,
           and it cannot be undone from this screen.
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
+        </p>
+        <p className="fs-14 text-muted mt-3 mb-0">
           Deleting an automatically saved contact also stops it coming back. The next message
           from that address will not recreate it.
-        </Typography>
+        </p>
       </Card>
     </FamilyShell>
   );
