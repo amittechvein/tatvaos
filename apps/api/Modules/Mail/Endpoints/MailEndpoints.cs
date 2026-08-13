@@ -35,6 +35,7 @@ public static class MailEndpoints
         g.MapGet("/bootstrap", BootstrapAsync);
         g.MapGet("/folders", FoldersAsync);
         g.MapGet("/folders/{folderId:guid}/messages", ListMessagesAsync);
+        g.MapGet("/folders/{folderId:guid}/threads", ListThreadsAsync);
         g.MapGet("/search", SearchAsync);
         g.MapGet("/threads/{threadId:guid}/messages", ThreadAsync);
         g.MapGet("/messages/{id:guid}", GetMessageAsync);
@@ -943,6 +944,108 @@ public static class MailEndpoints
         });
 
         return Results.Ok(new { total, messages });
+    }
+
+    // ------------------------------------------------------------------
+    //  Conversation list - one row per thread in a folder.
+    //
+    //  A separate endpoint rather than a flag on the message list. The two
+    //  return different shapes, and a response whose shape depends on a query
+    //  parameter is cheap to write and miserable to consume.
+    //
+    //  THE GROUPING KEY IS thread_id ?? id. Messages that predate threading
+    //  have no thread of their own, and keying on thread_id alone would drop
+    //  every one of them out of the folder entirely - on this deployment
+    //  today that is most of the inbox. A message with no thread is simply a
+    //  conversation of one.
+    //
+    //  Grouping is per FOLDER, not global. A conversation that reaches both
+    //  Inbox and Sent appears in both, which is what you want when you are
+    //  looking at one folder: a Sent list showing conversations you never
+    //  sent in would be a strange thing to explain.
+    // ------------------------------------------------------------------
+    private static async Task<IResult> ListThreadsAsync(
+        Guid folderId, AppDbContext db, TenantContext tenant,
+        int? skip, int? take, CancellationToken ct)
+    {
+        var box = await OwnMailboxAsync(db, tenant, ct);
+        if (box is null) return Results.NotFound();
+
+        var folder = await db.Folders.AsNoTracking()
+            .FirstOrDefaultAsync(f => f.Id == folderId && f.MailboxId == box.Id, ct);
+        if (folder is null) return Results.NotFound();
+
+        var scope = db.Messages.AsNoTracking()
+            .Where(m => m.MailboxId == box.Id && m.FolderId == folderId);
+
+        var total = await scope.Select(m => m.ThreadId ?? m.Id).Distinct().CountAsync(ct);
+
+        // Two queries and an in-memory rollup, not one grouped-and-shaped
+        // query. The aggregate below is restricted to Max on purpose: that is
+        // the GroupBy shape EF translates reliably, and everything harder is
+        // done in memory where it cannot fail at runtime on a production box
+        // that has no staging in front of it.
+        var page = await scope
+            .GroupBy(m => m.ThreadId ?? m.Id)
+            .Select(g => new { Key = g.Key, Latest = g.Max(x => x.ReceivedAt) })
+            .OrderByDescending(x => x.Latest)
+            .Skip(Math.Max(0, skip ?? 0))
+            .Take(Math.Clamp(take ?? 50, 1, 100))
+            .ToListAsync(ct);
+
+        if (page.Count == 0)
+            return Results.Ok(new { total, threads = Array.Empty<object>() });
+
+        var keys = page.Select(p => p.Key).ToList();
+        var rows = await scope
+            .Where(m => keys.Contains(m.ThreadId ?? m.Id))
+            .Select(m => new
+            {
+                m.Id, m.ThreadId, m.FromName, m.FromAddr, m.Subject, m.Snippet,
+                m.SentAt, m.ReceivedAt, m.IsRead, m.IsFlagged, m.HasAttachments,
+            })
+            .ToListAsync(ct);
+
+        var byKey = rows.ToLookup(m => m.ThreadId ?? m.Id);
+
+        var threads = page
+            .Select(p => new { p.Key, Msgs = byKey[p.Key].OrderBy(m => m.ReceivedAt).ToList() })
+            .Where(x => x.Msgs.Count > 0)
+            .Select(x =>
+            {
+                var newest = x.Msgs[^1];
+                return new
+                {
+                    threadId = x.Key,
+                    // What a click on the row should open.
+                    latestMessageId = newest.Id,
+                    count = x.Msgs.Count,
+                    // Subject comes from the OLDEST message. Replies accrete
+                    // "Re:" and someone who renames it on the fourth reply
+                    // would otherwise turn one conversation into two.
+                    subject = x.Msgs[0].Subject ?? "",
+                    snippet = newest.Snippet ?? "",
+                    from = new { name = newest.FromName, email = newest.FromAddr ?? "" },
+                    // Distinct senders, oldest first, for the "A, B, C" line
+                    // every client puts where a single sender would go.
+                    participants = x.Msgs
+                        .Select(m => new { name = m.FromName, email = m.FromAddr ?? "" })
+                        .GroupBy(a => a.email)
+                        .Select(g => g.First())
+                        .ToList(),
+                    sentAt = newest.SentAt ?? newest.ReceivedAt,
+                    receivedAt = newest.ReceivedAt,
+                    // Unread if ANY message is unread; flagged if any is
+                    // flagged. Rolling these up the other way round hides the
+                    // one new reply at the end of a long read conversation.
+                    isRead = x.Msgs.All(m => m.IsRead),
+                    isFlagged = x.Msgs.Any(m => m.IsFlagged),
+                    hasAttachments = x.Msgs.Any(m => m.HasAttachments),
+                };
+            })
+            .ToList();
+
+        return Results.Ok(new { total, threads });
     }
 
     // ------------------------------------------------------------------
