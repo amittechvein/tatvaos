@@ -13,20 +13,22 @@
 //  The session list is still the security heart of it. Somebody who suspects
 //  their account is used elsewhere needs to see where it is signed in and end
 //  those sessions themselves, without waiting on an admin.
+//
+//  ---------------------------------------------------------------------------
+//  CONVERTED OFF MUI. Two notes for whoever edits the layout next.
+//
+//  Columns use Bootstrap's row/col, not Tailwind's grid. YZEN ships its own
+//  12-column `.grid` that collides with Tailwind's, and overrides.css can only
+//  re-declare the enumerated utilities — an arbitrary value like
+//  grid-cols-[180px_1fr] silently flattens to one column. Flex and row/col are
+//  the reliable choices here.
+//
+//  Tailwind's preflight is off (YZEN's Bootstrap reboot owns the reset), so a
+//  bare element keeps its browser defaults. Every list and input below carries
+//  an explicit class for that reason.
 // ============================================================================
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import Alert from '@mui/material/Alert';
-import Avatar from '@mui/material/Avatar';
-import Box from '@mui/material/Box';
-import Chip from '@mui/material/Chip';
-import CircularProgress from '@mui/material/CircularProgress';
-import Divider from '@mui/material/Divider';
-import IconButton from '@mui/material/IconButton';
-import InputAdornment from '@mui/material/InputAdornment';
-import TextField from '@mui/material/TextField';
-import Typography from '@mui/material/Typography';
-import { alpha } from '@mui/material/styles';
 import { PhotoPicker } from '@/components/ui/PhotoPicker';
 import { avatarObjectUrl, bustAvatar } from '@/lib/avatars';
 
@@ -52,6 +54,16 @@ interface Me {
   organisation: { name: string; type: string } | null;
   products: string[];
   mailboxAddress: string | null;
+}
+
+/** The console green. Fixed rather than read from the theme — MUI's palette
+ *  went with MUI, and this is the one brand colour the page needs. */
+const BRAND = '#03b562';
+
+/** Replaces MUI's alpha(). Takes #rrggbb and returns an rgba() string. */
+function tint(hex: string, a: number): string {
+  const n = parseInt(hex.replace('#', ''), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
 }
 
 /** Enough to recognise your own devices; not a fingerprinting exercise. */
@@ -80,6 +92,21 @@ function when(iso: string): string {
   if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
   const days = Math.round(hrs / 24);
   return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
+/** Replaces MUI's CircularProgress. */
+function Spinner({ size = 22 }: { size?: number }) {
+  return (
+    <span
+      className="d-inline-block animate-spin rounded-circle"
+      style={{
+        width: size, height: size,
+        border: '2px solid rgba(0,0,0,.12)', borderTopColor: BRAND,
+      }}
+      role="status"
+      aria-label="Loading"
+    />
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +166,7 @@ function AccountHub() {
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
+  const [hovered, setHovered] = useState<SectionId | null>(null);
 
   const [myPhoto, setMyPhoto] = useState<string | null>(null);
   const [photoBusy, setPhotoBusy] = useState(false);
@@ -212,76 +240,95 @@ function AccountHub() {
   const initial = (user?.displayName ?? '?').charAt(0).toUpperCase();
 
   return (
-    <Box sx={{ minHeight: '100dvh', bgcolor: 'background.paper',
-               display: 'flex', flexDirection: 'column' }}>
+    <div className="d-flex flex-column bg-white" style={{ minHeight: '100dvh' }}>
 
       {/* ---- Top bar --------------------------------------------------- */}
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: { xs: 2, md: 3 },
-                 py: 1.25, position: 'sticky', top: 0, zIndex: 10,
-                 bgcolor: 'background.paper', borderBottom: '1px solid', borderColor: 'divider' }}>
-        <Typography sx={{ fontSize: 20, fontWeight: 500 }}>
-          <Box component="span" sx={{ fontWeight: 700, color: 'primary.main' }}>TatvaOS</Box>
-          {' '}Account
-        </Typography>
-        <Box sx={{ flex: 1 }} />
+      <div
+        className="d-flex align-items-center gap-2 px-3 px-md-4 bg-white border-bottom position-sticky top-0"
+        style={{ paddingTop: 10, paddingBottom: 10, zIndex: 10 }}
+      >
+        <span style={{ fontSize: 20, fontWeight: 500 }}>
+          <span style={{ fontWeight: 700, color: BRAND }}>TatvaOS</span> Account
+        </span>
+        <div className="flex-fill" />
         <AppLauncher />
-        <IconButton onClick={(e) => setMenuAnchor(e.currentTarget)} sx={{ p: 0.5 }}>
-          <Avatar sx={{ width: 34, height: 34, fontSize: 15, fontWeight: 600,
-                        bgcolor: 'primary.main' }}>
+        <button
+          type="button"
+          className="btn btn-icon btn-sm border-0 bg-transparent p-1"
+          onClick={(e) => setMenuAnchor(e.currentTarget)}
+          aria-label="Account menu"
+        >
+          <span
+            className="d-grid rounded-circle text-white"
+            style={{
+              width: 34, height: 34, placeItems: 'center',
+              fontSize: 15, fontWeight: 600, background: BRAND,
+            }}
+          >
             {initial}
-          </Avatar>
-        </IconButton>
+          </span>
+        </button>
         <AccountMenu anchorEl={menuAnchor} onClose={() => setMenuAnchor(null)} />
-      </Box>
+      </div>
 
       {/* ---- Body: sections rail + content ----------------------------- */}
-      <Box sx={{ display: 'flex', flex: 1, minHeight: 0 }}>
+      <div className="d-flex flex-fill" style={{ minHeight: 0 }}>
 
-        <Box component="nav"
-             sx={{ width: 290, flexShrink: 0, py: 2, pr: 1,
-                   display: { xs: 'none', md: 'block' },
-                   position: 'sticky', top: 57, alignSelf: 'flex-start' }}>
+        <nav
+          className="d-none d-md-block flex-shrink-0 py-3 pe-2 position-sticky align-self-start"
+          style={{ width: 290, top: 57 }}
+        >
           {visible.map((s) => {
             const isActive = s.id === section;
+            // Hover is state rather than CSS: the tint is computed per section
+            // from its own colour, which a stylesheet rule cannot know.
+            const bg = isActive
+              ? tint(BRAND, 0.12)
+              : hovered === s.id ? tint(BRAND, 0.05) : 'transparent';
+
             return (
-              <Box key={s.id} onClick={() => { setSection(s.id); setQ(''); }}
-                   sx={{ display: 'flex', alignItems: 'center', gap: 2, px: 2.5, py: 1.25,
-                         mb: 0.5, cursor: 'pointer', userSelect: 'none',
-                         borderRadius: '0 999px 999px 0',
-                         bgcolor: isActive
-                           ? (t) => alpha(t.palette.primary.main, 0.12) : 'transparent',
-                         '&:hover': {
-                           bgcolor: (t) => alpha(t.palette.primary.main, isActive ? 0.12 : 0.05),
-                         } }}>
-                <Box sx={{ width: 38, height: 38, borderRadius: '50%', flexShrink: 0,
-                           display: 'grid', placeItems: 'center',
-                           bgcolor: alpha(s.tint, 0.15), color: s.tint }}>
+              <div
+                key={s.id}
+                onClick={() => { setSection(s.id); setQ(''); }}
+                onMouseEnter={() => setHovered(s.id)}
+                onMouseLeave={() => setHovered(null)}
+                className="d-flex align-items-center gap-3 px-3 mb-1 user-select-none"
+                style={{
+                  paddingTop: 10, paddingBottom: 10, cursor: 'pointer',
+                  borderRadius: '0 999px 999px 0', background: bg,
+                }}
+              >
+                <span
+                  className="d-grid rounded-circle flex-shrink-0"
+                  style={{
+                    width: 38, height: 38, placeItems: 'center',
+                    background: tint(s.tint, 0.15), color: s.tint,
+                  }}
+                >
                   <svg width="19" height="19" viewBox="0 0 24 24" fill="none"
                        stroke="currentColor" strokeWidth="1.8"
                        strokeLinecap="round" strokeLinejoin="round">
                     {s.icon}
                   </svg>
-                </Box>
-                <Typography variant="body2" sx={{ fontWeight: isActive ? 600 : 500 }}>
+                </span>
+                <span className="fs-14" style={{ fontWeight: isActive ? 600 : 500 }}>
                   {s.label}
-                </Typography>
-              </Box>
+                </span>
+              </div>
             );
           })}
           {visible.length === 0 && (
-            <Typography variant="body2" color="text.disabled" sx={{ px: 2.5, py: 2 }}>
-              Nothing matches “{q}”.
-            </Typography>
+            <p className="fs-14 text-muted px-3 py-3 mb-0">Nothing matches “{q}”.</p>
           )}
-        </Box>
+        </nav>
 
-        <Box sx={{ flex: 1, minWidth: 0, overflowY: 'auto', px: { xs: 2, md: 4 }, pb: 8 }}>
-          <Box sx={{ maxWidth: 760, mx: 'auto' }}>
+        <div className="flex-fill px-3 px-md-4" style={{ minWidth: 0, overflowY: 'auto', paddingBottom: 64 }}>
+          <div className="mx-auto" style={{ maxWidth: 760 }}>
 
             {section === 'home' && (
               <>
-                <Box sx={{ textAlign: 'center', pt: 6, pb: 4 }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2.5 }}>
+                <div className="text-center" style={{ paddingTop: 48, paddingBottom: 32 }}>
+                  <div className="d-flex justify-content-center mb-3">
                     <PhotoPicker
                       preview={myPhoto}
                       name={user?.displayName}
@@ -291,73 +338,82 @@ function AccountHub() {
                       disabled={photoBusy}
                       size={96}
                     />
-                  </Box>
+                  </div>
                   {photoError && (
-                    <Typography variant="body2" sx={{ color: 'error.main', mb: 1.5 }}>
-                      {photoError}
-                    </Typography>
+                    <p className="fs-14 text-danger mb-2">{photoError}</p>
                   )}
-                  <Typography variant="h4" sx={{ fontWeight: 500 }}>
+                  <h1 className="mb-0" style={{ fontSize: 30, fontWeight: 500 }}>
                     {user?.displayName}
-                  </Typography>
-                  <Typography variant="body1" color="text.secondary" sx={{ mt: 0.5 }}>
-                    {user?.email}
-                  </Typography>
+                  </h1>
+                  <p className="text-muted mt-1 mb-0">{user?.email}</p>
                   {me?.organisation && (
-                    <Chip size="small" label={`Managed by ${me.organisation.name}`}
-                          sx={{ mt: 1.5 }} />
+                    <span className="badge bg-light text-muted mt-3">
+                      Managed by {me.organisation.name}
+                    </span>
                   )}
-                </Box>
+                </div>
 
-                <TextField fullWidth placeholder="Search your account settings"
-                           value={q} onChange={(e) => setQ(e.target.value)}
-                           onKeyDown={(e) => {
-                             const first = visible[0];
-                             if (e.key === 'Enter' && first && q.trim()) {
-                               setSection(first.id); setQ('');
-                             }
-                           }}
-                           sx={{ mb: 5,
-                                 '& .MuiOutlinedInput-root': { borderRadius: 999, px: 1 } }}
-                           slotProps={{ input: { startAdornment: (
-                             <InputAdornment position="start">
-                               <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-                                    stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                                 <circle cx="11" cy="11" r="7" /><path d="m20 20-3.8-3.8" />
-                               </svg>
-                             </InputAdornment>
-                           ) } }} />
+                {/* The search pill. The icon is positioned rather than an input
+                    group, so the field keeps its fully rounded shape. */}
+                <div className="position-relative" style={{ marginBottom: 40 }}>
+                  <span
+                    className="position-absolute text-muted d-flex align-items-center"
+                    style={{ left: 18, top: 0, bottom: 0, pointerEvents: 'none' }}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                      <circle cx="11" cy="11" r="7" /><path d="m20 20-3.8-3.8" />
+                    </svg>
+                  </span>
+                  <input
+                    type="text"
+                    className="form-control rounded-pill"
+                    style={{ paddingLeft: 46, height: 46 }}
+                    placeholder="Search your account settings"
+                    value={q}
+                    onChange={(e) => setQ(e.target.value)}
+                    onKeyDown={(e) => {
+                      const first = visible[0];
+                      if (e.key === 'Enter' && first && q.trim()) {
+                        setSection(first.id); setQ('');
+                      }
+                    }}
+                  />
+                </div>
 
-                <Box sx={{ display: 'grid', gap: 2.5,
-                           gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' } }}>
-                  <Card title="Security check"
-                        subtitle={`Signed in on ${sessions.length || '…'} device${sessions.length === 1 ? '' : 's'}`}>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                      Review where your account is signed in, and end anything
-                      you do not recognise.
-                    </Typography>
-                    <Button variant="ghost" onClick={() => setSection('devices')}>Review devices</Button>
-                  </Card>
-                  <Card title="Password"
-                        subtitle={user?.mfaEnabled ? 'Two-step verification is on' : 'Two-step verification is off'}>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                      A password only you know is the one lock on everything here.
-                    </Typography>
-                    <Button variant="ghost" href="/change-password">Change password</Button>
-                  </Card>
-                </Box>
+                <div className="row g-3">
+                  <div className="col-sm-6">
+                    <Card title="Security check"
+                          subtitle={`Signed in on ${sessions.length || '…'} device${sessions.length === 1 ? '' : 's'}`}>
+                      <p className="fs-14 text-muted mb-3">
+                        Review where your account is signed in, and end anything
+                        you do not recognise.
+                      </p>
+                      <Button variant="ghost" onClick={() => setSection('devices')}>Review devices</Button>
+                    </Card>
+                  </div>
+                  <div className="col-sm-6">
+                    <Card title="Password"
+                          subtitle={user?.mfaEnabled ? 'Two-step verification is on' : 'Two-step verification is off'}>
+                      <p className="fs-14 text-muted mb-3">
+                        A password only you know is the one lock on everything here.
+                      </p>
+                      <Button variant="ghost" href="/change-password">Change password</Button>
+                    </Card>
+                  </div>
+                </div>
               </>
             )}
 
             {section !== 'home' && (
-              <Typography variant="h5" sx={{ fontWeight: 500, pt: 5, pb: 3 }}>
+              <h2 className="mb-0" style={{ fontSize: 24, fontWeight: 500, paddingTop: 40, paddingBottom: 24 }}>
                 {SECTIONS.find((s) => s.id === section)?.label}
-              </Typography>
+              </h2>
             )}
 
             {section === 'personal' && (
               <Card>
-                {loading ? <CircularProgress size={22} /> : (
+                {loading ? <Spinner /> : (
                   <>
                     <InfoRow label="Name" value={user?.displayName ?? '—'} />
                     <InfoRow label="Sign-in email" value={user?.email ?? '—'} />
@@ -369,18 +425,18 @@ function AccountHub() {
                     <InfoRow label="Products"
                              value={me?.products?.length ? me.products.join(', ') : '—'}
                              capitalize last />
-                    <Alert severity="info" sx={{ mt: 3 }}>
+                    <div className="alert alert-info mt-4 mb-0">
                       Name, email and role are managed by your organisation&apos;s
                       administrator — ask them for a change. Everything on the
                       Security page you control yourself.
-                    </Alert>
+                    </div>
                   </>
                 )}
               </Card>
             )}
 
             {section === 'security' && (
-              <Box sx={{ display: 'grid', gap: 2.5 }}>
+              <div className="d-flex flex-column gap-3">
                 <Card title="Password"
                       subtitle="Changing it signs out every session, including this one">
                   <Button variant="primary" href="/change-password">Change password</Button>
@@ -389,11 +445,11 @@ function AccountHub() {
                       subtitle={user?.mfaEnabled
                         ? 'On — a code is required alongside your password'
                         : 'Off'}>
-                  <Typography variant="body2" color="text.secondary">
+                  <p className="fs-14 text-muted mb-0">
                     {user?.mfaEnabled
                       ? 'Managed from your authenticator app.'
                       : 'Coming to this page soon. Until then your password and your phone number (for OTP sign-in) protect this account.'}
-                  </Typography>
+                  </p>
                 </Card>
                 <Card title="Where you are signed in"
                       subtitle="Every device holding a live session"
@@ -402,11 +458,11 @@ function AccountHub() {
                           See devices
                         </Button>
                       }>
-                  <Typography variant="body2" color="text.secondary">
+                  <p className="fs-14 text-muted mb-0">
                     {sessions.length} active session{sessions.length === 1 ? '' : 's'}.
-                  </Typography>
+                  </p>
                 </Card>
-              </Box>
+              </div>
             )}
 
             {section === 'devices' && (
@@ -416,81 +472,84 @@ function AccountHub() {
                 </Button>
               }>
                 {loading ? (
-                  <Box sx={{ display: 'grid', placeItems: 'center', py: 4 }}>
-                    <CircularProgress size={22} />
-                  </Box>
+                  <div className="d-flex justify-content-center py-4">
+                    <Spinner />
+                  </div>
                 ) : sessions.length === 0 ? (
-                  <Typography variant="body2" color="text.disabled">No sessions.</Typography>
+                  <p className="fs-14 text-muted mb-0">No sessions.</p>
                 ) : (
-                  <Box sx={{ display: 'grid', gap: 2 }}>
+                  <div className="d-flex flex-column gap-3">
                     {sessions.map((s) => (
-                      <Box key={s.id} sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
-                        <Box sx={{ mt: 0.25, color: 'text.secondary' }}>
+                      <div key={s.id} className="d-flex gap-2 align-items-start">
+                        <span className="text-muted" style={{ marginTop: 2 }}>
                           <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
                                stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
                             <rect x="3" y="4" width="18" height="12" rx="2" />
                             <path d="M8 20h8M12 16v4" />
                           </svg>
-                        </Box>
-                        <Box sx={{ minWidth: 0, flex: 1 }}>
-                          <Typography variant="body2">{describeAgent(s.userAgent)}</Typography>
-                          <Typography variant="caption" color="text.secondary">
+                        </span>
+                        <div className="flex-fill" style={{ minWidth: 0 }}>
+                          <div className="fs-14">{describeAgent(s.userAgent)}</div>
+                          <div className="fs-12 text-muted">
                             {s.ipAddress ?? 'unknown address'} · started {when(s.issuedAt)}
-                          </Typography>
-                        </Box>
-                      </Box>
+                          </div>
+                        </div>
+                      </div>
                     ))}
-                  </Box>
+                  </div>
                 )}
-                <Alert severity="info" sx={{ mt: 3 }}>
+                <div className="alert alert-info mt-4 mb-0">
                   Signing out everywhere also ends this one. Changing your password
                   does the same thing — which is what you want if the reason for
                   changing it is that somebody else knows it.
-                </Alert>
+                </div>
               </Card>
             )}
 
             {section === 'accounts' && (
               <Card subtitle="Switch between them from the avatar in the top right — no password needed">
                 {accounts.length <= 1 ? (
-                  <Typography variant="body2" color="text.disabled">
+                  <p className="fs-14 text-muted mb-0">
                     Only this account is on this browser. Add another from the
                     avatar menu in the top right.
-                  </Typography>
+                  </p>
                 ) : (
-                  <Box sx={{ display: 'grid', gap: 1.5 }}>
+                  <div className="d-flex flex-column gap-2">
                     {accounts.map((a) => (
-                      <Box key={a.slot} sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                        <Box sx={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-                                   bgcolor: a.signedIn ? 'success.main' : 'text.disabled' }} />
-                        <Typography variant="body2" sx={{ flex: 1 }} noWrap>
+                      <div key={a.slot} className="d-flex align-items-center gap-2">
+                        <span
+                          className="rounded-circle flex-shrink-0"
+                          style={{
+                            width: 8, height: 8,
+                            background: a.signedIn ? '#22a35b' : '#adb5bd',
+                          }}
+                        />
+                        <span className="fs-14 flex-fill text-truncate">
                           {a.email}{a.active ? ' — this one' : ''}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
+                        </span>
+                        <span className="fs-12 text-muted">
                           {a.signedIn ? 'Signed in' : 'Signed out'}
-                        </Typography>
-                      </Box>
+                        </span>
+                      </div>
                     ))}
-                  </Box>
+                  </div>
                 )}
-                <Typography variant="caption" color="text.disabled"
-                            sx={{ display: 'block', mt: 2 }}>
+                <p className="fs-12 text-muted d-block mt-3 mb-0">
                   They stay on this browser only. On a shared machine, use sign
                   out everywhere on the devices page.
-                </Typography>
+                </p>
               </Card>
             )}
 
-            <Divider sx={{ mt: 8, mb: 2 }} />
-            <Typography variant="caption" color="text.disabled" sx={{ textAlign: 'center',
-                        display: 'block' }}>
+            <hr style={{ marginTop: 64, marginBottom: 16 }} />
+            <p className="fs-12 text-muted text-center mb-0">
               Only you can see your settings.
               {active?.organisation ? ` Your account is managed by ${active.organisation}.` : ''}
-            </Typography>
-          </Box>
-        </Box>
-      </Box>
-    </Box>
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -500,16 +559,23 @@ function InfoRow({ label, value, capitalize, last }: {
   label: string; value: string; capitalize?: boolean; last?: boolean;
 }) {
   return (
-    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '180px 1fr' },
-               gap: 0.5, py: 1.75,
-               borderBottom: last ? 'none' : '1px solid', borderColor: 'divider' }}>
-      <Typography variant="caption" color="text.secondary"
-                  sx={{ textTransform: 'uppercase', letterSpacing: 0.4, pt: 0.25 }}>
-        {label}
-      </Typography>
-      <Typography variant="body2" sx={{ textTransform: capitalize ? 'capitalize' : 'none' }}>
-        {value}
-      </Typography>
-    </Box>
+    <div
+      className={`row g-1 ${last ? '' : 'border-bottom'}`}
+      style={{ paddingTop: 14, paddingBottom: 14, marginLeft: 0, marginRight: 0 }}
+    >
+      <div className="col-12 col-sm-4 px-0">
+        <span
+          className="fs-12 text-muted text-uppercase d-block"
+          style={{ letterSpacing: '0.4px', paddingTop: 2 }}
+        >
+          {label}
+        </span>
+      </div>
+      <div className="col-12 col-sm-8 px-0">
+        <span className="fs-14" style={{ textTransform: capitalize ? 'capitalize' : 'none' }}>
+          {value}
+        </span>
+      </div>
+    </div>
   );
 }

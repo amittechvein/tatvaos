@@ -2,21 +2,29 @@
 
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useState } from 'react';
-import Alert from '@mui/material/Alert';
-import AlertTitle from '@mui/material/AlertTitle';
-import Box from '@mui/material/Box';
-import Button from '@mui/material/Button';
-import CircularProgress from '@mui/material/CircularProgress';
-import Link from '@mui/material/Link';
-import MenuItem from '@mui/material/MenuItem';
-import Step from '@mui/material/Step';
-import StepLabel from '@mui/material/StepLabel';
-import Stepper from '@mui/material/Stepper';
-import TextField from '@mui/material/TextField';
-import Typography from '@mui/material/Typography';
-import { alpha } from '@mui/material/styles';
+
+// ============================================================================
+//  Converted off MUI. Notes for the next editor.
+//
+//  Columns are Bootstrap row/col or flex, never Tailwind's grid — YZEN ships
+//  its own 12-column `.grid` that collides with Tailwind's, and arbitrary
+//  values like grid-cols-[1fr_1fr] silently flatten to a single column.
+//
+//  Tailwind's preflight is off (YZEN's reboot owns the reset), so every input
+//  and list carries an explicit class rather than relying on a normalised
+//  default.
+//
+//  useSearchParams() is why the page is wrapped in <Suspense> at the bottom —
+//  without it the production build fails, and it passes in dev, so the failure
+//  only appears at build time.
+// ============================================================================
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? '/api';
+
+/** The brand ramp, fixed here now that MUI's palette has gone. */
+const BRAND_DARK = '#0a8a4b';
+const BRAND = '#03b562';
+const BRAND_LIGHT = '#35d68c';
 
 /**
  * A 500 from ASP.NET has an empty body, and res.json() on an empty body
@@ -43,6 +51,40 @@ const ORG_TYPES = [
   { value: 'government', label: 'Government' },
   { value: 'other', label: 'Other' },
 ];
+
+/** Replaces MUI's CircularProgress. */
+function Spinner({ size = 20, light }: { size?: number; light?: boolean }) {
+  return (
+    <span
+      className="d-inline-block animate-spin rounded-circle align-middle"
+      style={{
+        width: size, height: size,
+        border: `2px solid ${light ? 'rgba(255,255,255,.35)' : 'rgba(0,0,0,.12)'}`,
+        borderTopColor: light ? '#fff' : BRAND,
+      }}
+      role="status"
+      aria-label="Working"
+    />
+  );
+}
+
+/**
+ * A labelled field. MUI's TextField bundled label, input and helper text; this
+ * keeps the same three parts so the call sites read the same way.
+ */
+function Field({
+  label, hint, required, children,
+}: { label: string; hint?: string; required?: boolean; children: React.ReactNode }) {
+  return (
+    <div className="mb-3">
+      <label className="form-label fs-13 fw-medium mb-1">
+        {label}{required && <span className="text-danger ms-1">*</span>}
+      </label>
+      {children}
+      {hint && <div className="form-text fs-12">{hint}</div>}
+    </div>
+  );
+}
 
 // ============================================================================
 //  Signup: organisation → you → prove email and phone → account.
@@ -178,27 +220,32 @@ function Wizard() {
   if (done) {
     return (
       <Split>
-        <Box sx={{ width: '100%', maxWidth: 460, textAlign: 'center' }}>
-          <Box sx={{ width: 64, height: 64, borderRadius: '50%', mx: 'auto', mb: 3,
-                     display: 'grid', placeItems: 'center', color: 'success.main',
-                     bgcolor: (t) => alpha(t.palette.success.main, 0.12) }}>
+        <div className="w-100 text-center" style={{ maxWidth: 460 }}>
+          <div
+            className="d-grid rounded-circle mx-auto mb-4"
+            style={{
+              width: 64, height: 64, placeItems: 'center',
+              color: BRAND_DARK, background: 'rgba(3,181,98,0.12)',
+            }}
+          >
             <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                  strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
               <path d="M20 6L9 17l-5-5" />
             </svg>
-          </Box>
-          <Typography variant="h4" sx={{ mb: 1 }}>Account created</Typography>
-          <Typography variant="body1" color="text.secondary" sx={{ mb: 1 }}>
+          </div>
+          <h1 className="mb-2" style={{ fontSize: 30, fontWeight: 600 }}>Account created</h1>
+          <p className="text-muted mb-2">
             Sign in and add your organisation&apos;s domain under <strong>Domains</strong> —
             you will get clear instructions and a choice of ways to verify it.
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>
+          </p>
+          <p className="fs-14 text-muted mb-4">
             Until then your email keeps arriving exactly where it does today.
-          </Typography>
-          <Button variant="contained" size="large" fullWidth onClick={() => router.push('/login')}>
+          </p>
+          <button type="button" className="btn btn-primary btn-lg w-100"
+                  onClick={() => router.push('/login')}>
             Sign in as {done.email}
-          </Button>
-        </Box>
+          </button>
+        </div>
       </Split>
     );
   }
@@ -206,33 +253,73 @@ function Wizard() {
   // ---------------------------------------------------------------- wizard
   return (
     <Split>
-      <Box sx={{ width: '100%', maxWidth: 560 }}>
-        <Stepper activeStep={step} sx={{ mb: 5 }} alternativeLabel>
-          {STEPS.map((s) => <Step key={s}><StepLabel>{s}</StepLabel></Step>)}
-        </Stepper>
+      <div className="w-100" style={{ maxWidth: 560 }}>
+        {/* Stepper. Three fixed steps, so a flex row of numbered dots says the
+            same thing MUI's Stepper did with none of the weight. */}
+        <ol className="list-unstyled d-flex align-items-start justify-content-between mb-5">
+          {STEPS.map((s, i) => {
+            const state = i < step ? 'done' : i === step ? 'current' : 'todo';
+            return (
+              <li key={s} className="text-center flex-fill">
+                <span
+                  className="d-grid rounded-circle mx-auto mb-1"
+                  style={{
+                    width: 30, height: 30, placeItems: 'center',
+                    fontSize: 13, fontWeight: 600,
+                    background: state === 'todo' ? '#e9ecef' : BRAND,
+                    color: state === 'todo' ? '#6c757d' : '#fff',
+                  }}
+                >
+                  {state === 'done' ? '✓' : i + 1}
+                </span>
+                <span className={`fs-12 ${state === 'current' ? 'fw-semibold' : 'text-muted'}`}>
+                  {s}
+                </span>
+              </li>
+            );
+          })}
+        </ol>
 
-        {error && <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>{error}</Alert>}
+        {error && (
+          <div className="alert alert-danger alert-dismissible d-flex align-items-start mb-4">
+            <div className="flex-fill">{error}</div>
+            <button type="button" className="btn-close" aria-label="Dismiss"
+                    onClick={() => setError(null)} />
+          </div>
+        )}
 
         {step === 0 && (
           <Pane title="Your organisation"
                 hint="This is what your people will see, and what appears on invoices.">
-            <TextField fullWidth label="Organisation name" required value={orgName}
-                       onChange={(e) => setOrgName(e.target.value)}
-                       placeholder="ABC School" sx={{ mb: 2.5 }} />
-            <TextField fullWidth select label="Type" value={orgType} sx={{ mb: 2.5 }}
-                       onChange={(e) => setOrgType(e.target.value)}
-                       helperText="Sets up sensible starting categories — teachers and students for a school, doctors and nursing for a clinic.">
-              {ORG_TYPES.map((t) => <MenuItem key={t.value} value={t.value}>{t.label}</MenuItem>)}
-            </TextField>
-            <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-              <TextField label="Country" value={country} sx={{ flex: 1, minWidth: 160 }}
+            <Field label="Organisation name" required>
+              <input className="form-control" value={orgName} placeholder="ABC School"
+                     onChange={(e) => setOrgName(e.target.value)} />
+            </Field>
+            <Field
+              label="Type"
+              hint="Sets up sensible starting categories — teachers and students for a school, doctors and nursing for a clinic."
+            >
+              <select className="form-select" value={orgType}
+                      onChange={(e) => setOrgType(e.target.value)}>
+                {ORG_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+            </Field>
+            <div className="d-flex gap-3 flex-wrap">
+              <div className="flex-fill" style={{ minWidth: 160 }}>
+                <Field label="Country">
+                  <input className="form-control" value={country}
                          onChange={(e) => setCountry(e.target.value)} />
+                </Field>
+              </div>
               {country === 'India' && (
-                <TextField label="GSTIN" value={gstin} sx={{ flex: 1, minWidth: 200 }}
-                           onChange={(e) => setGstin(e.target.value.toUpperCase())}
-                           helperText="Optional — needed for a GST invoice" />
+                <div className="flex-fill" style={{ minWidth: 200 }}>
+                  <Field label="GSTIN" hint="Optional — needed for a GST invoice">
+                    <input className="form-control" value={gstin}
+                           onChange={(e) => setGstin(e.target.value.toUpperCase())} />
+                  </Field>
+                </div>
               )}
-            </Box>
+            </div>
             <Nav onNext={() => setStep(1)} nextDisabled={orgName.trim().length < 2} />
           </Pane>
         )}
@@ -240,18 +327,25 @@ function Wizard() {
         {step === 1 && (
           <Pane title="About you"
                 hint="You will be the owner of this organisation, and can add others afterwards.">
-            <TextField fullWidth label="Your name" required value={adminName}
-                       onChange={(e) => setAdminName(e.target.value)} sx={{ mb: 2.5 }} />
-            <TextField fullWidth label="Email address" type="email" required value={adminEmail}
-                       onChange={(e) => setAdminEmail(e.target.value)} sx={{ mb: 2.5 }}
-                       helperText="A code is sent here now, and invoices later. Use an address you can read today." />
-            <TextField fullWidth label="Mobile number" required value={adminPhone}
-                       onChange={(e) => setAdminPhone(e.target.value)}
-                       placeholder="+91 98765 43210" sx={{ mb: 2.5 }}
-                       helperText="A code is sent here too. Include the country code." />
-            <TextField fullWidth type="password" label="Choose a password" required
-                       value={password} onChange={(e) => setPassword(e.target.value)}
-                       helperText="At least 12 characters. A short phrase you will remember beats a short password you will not." />
+            <Field label="Your name" required>
+              <input className="form-control" value={adminName}
+                     onChange={(e) => setAdminName(e.target.value)} />
+            </Field>
+            <Field label="Email address" required
+                   hint="A code is sent here now, and invoices later. Use an address you can read today.">
+              <input className="form-control" type="email" value={adminEmail}
+                     onChange={(e) => setAdminEmail(e.target.value)} />
+            </Field>
+            <Field label="Mobile number" required
+                   hint="A code is sent here too. Include the country code.">
+              <input className="form-control" value={adminPhone} placeholder="+91 98765 43210"
+                     onChange={(e) => setAdminPhone(e.target.value)} />
+            </Field>
+            <Field label="Choose a password" required
+                   hint="At least 12 characters. A short phrase you will remember beats a short password you will not.">
+              <input className="form-control" type="password" value={password}
+                     onChange={(e) => setPassword(e.target.value)} />
+            </Field>
             <Nav onBack={() => setStep(0)} onNext={start} busy={busy}
                  nextLabel="Send codes"
                  nextDisabled={adminName.trim().length < 2
@@ -265,29 +359,45 @@ function Wizard() {
           <Pane title="Two codes"
                 hint={`One emailed to ${adminEmail || 'your address'}, one sent by SMS to ${phoneMasked || 'your mobile'}.`}>
             {(devCodes.email || devCodes.phone) && (
-              <Alert severity="info" sx={{ mb: 3 }}>
-                <AlertTitle sx={{ fontSize: 14 }}>Test environment</AlertTitle>
-                Codes are shown here because this is staging — in production they
-                arrive only by email and SMS.
-                {devCodes.email && <Box component="span" sx={{ display: 'block', fontFamily: 'monospace', mt: 1 }}>Email: {devCodes.email}</Box>}
-                {devCodes.phone && <Box component="span" sx={{ display: 'block', fontFamily: 'monospace' }}>SMS: {devCodes.phone}</Box>}
-              </Alert>
+              <div className="alert alert-info mb-4">
+                {/* Wording no longer says "staging" — that environment was
+                    removed. Codes appear here only when the show-OTP-on-screen
+                    setting is on AND the real send failed. */}
+                <div className="fw-semibold fs-14 mb-1">Codes shown on screen</div>
+                On-screen codes are switched on for this platform, and the real
+                send did not go out — in normal operation they arrive only by
+                email and SMS.
+                {devCodes.email && (
+                  <span className="d-block font-monospace mt-2">Email: {devCodes.email}</span>
+                )}
+                {devCodes.phone && (
+                  <span className="d-block font-monospace">SMS: {devCodes.phone}</span>
+                )}
+              </div>
             )}
 
-            <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 1 }}>
-              <TextField label="Email code" value={emailCode} disabled={emailOk}
-                         onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, ''))}
-                         sx={{ flex: 1, minWidth: 180 }}
-                         slotProps={{ htmlInput: { inputMode: 'numeric', maxLength: 6 } }}
-                         helperText={emailOk ? 'Verified' : ' '}
-                         color={emailOk ? 'success' : undefined} focused={emailOk || undefined} />
-              <TextField label="SMS code" value={phoneCode} disabled={phoneOk}
-                         onChange={(e) => setPhoneCode(e.target.value.replace(/\D/g, ''))}
-                         sx={{ flex: 1, minWidth: 180 }}
-                         slotProps={{ htmlInput: { inputMode: 'numeric', maxLength: 6 } }}
-                         helperText={phoneOk ? 'Verified' : ' '}
-                         color={phoneOk ? 'success' : undefined} focused={phoneOk || undefined} />
-            </Box>
+            <div className="d-flex gap-3 flex-wrap mb-1">
+              <div className="flex-fill" style={{ minWidth: 180 }}>
+                <Field label="Email code" hint={emailOk ? 'Verified' : undefined}>
+                  <input
+                    className={`form-control ${emailOk ? 'is-valid' : ''}`}
+                    value={emailCode} disabled={emailOk}
+                    inputMode="numeric" maxLength={6}
+                    onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, ''))}
+                  />
+                </Field>
+              </div>
+              <div className="flex-fill" style={{ minWidth: 180 }}>
+                <Field label="SMS code" hint={phoneOk ? 'Verified' : undefined}>
+                  <input
+                    className={`form-control ${phoneOk ? 'is-valid' : ''}`}
+                    value={phoneCode} disabled={phoneOk}
+                    inputMode="numeric" maxLength={6}
+                    onChange={(e) => setPhoneCode(e.target.value.replace(/\D/g, ''))}
+                  />
+                </Field>
+              </div>
+            </div>
 
             {/* A resumed session arrives here with no password in memory —
                 state died with the old tab. Without this field, completing
@@ -295,25 +405,25 @@ function Wizard() {
                 `resumed`, not on the password being empty, or the field would
                 unmount under the cursor at the first keystroke. */}
             {resumed && (
-              <TextField
-                fullWidth type="password" label="Choose a password" required
-                value={password} onChange={(e) => setPassword(e.target.value)}
-                sx={{ mt: 1, mb: 2 }}
-                helperText="At least 12 characters — you are back on a fresh session, so set it here."
-              />
+              <Field label="Choose a password" required
+                     hint="At least 12 characters — you are back on a fresh session, so set it here.">
+                <input className="form-control" type="password" value={password}
+                       onChange={(e) => setPassword(e.target.value)} />
+              </Field>
             )}
 
             {codeErrors.map((e) => (
-              <Alert key={e} severity="warning" sx={{ mb: 1 }}>{e}</Alert>
+              <div key={e} className="alert alert-warning py-2 mb-2">{e}</div>
             ))}
 
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+            <p className="fs-12 text-muted mt-2 mb-0">
               Nothing arrived?{' '}
-              <Link component="button" type="button" onClick={resend} disabled={busy}>
+              <button type="button" className="btn btn-link btn-sm p-0 align-baseline"
+                      onClick={resend} disabled={busy}>
                 Send fresh codes
-              </Link>
+              </button>
               {' '}— they expire after 10 minutes.
-            </Typography>
+            </p>
 
             <Nav onBack={() => setStep(1)} onNext={verifyCodes} busy={busy}
                  nextLabel="Verify and create account"
@@ -323,14 +433,11 @@ function Wizard() {
           </Pane>
         )}
 
-        <Typography variant="caption" color="text.disabled"
-                    sx={{ display: 'block', mt: 4, textAlign: 'center' }}>
+        <p className="fs-12 text-muted text-center mt-5 mb-0">
           Already have an account?{' '}
-          <Box component="a" href="/login" sx={{ color: 'primary.main', textDecoration: 'none' }}>
-            Sign in
-          </Box>
-        </Typography>
-      </Box>
+          <a href="/login" className="text-decoration-none" style={{ color: BRAND }}>Sign in</a>
+        </p>
+      </div>
     </Split>
   );
 }
@@ -338,11 +445,11 @@ function Wizard() {
 // ---------------------------------------------------------------------------
 function Pane({ title, hint, children }: { title: string; hint: string; children: React.ReactNode }) {
   return (
-    <Box>
-      <Typography variant="h4" sx={{ mb: 0.75 }}>{title}</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>{hint}</Typography>
+    <div>
+      <h1 className="mb-1" style={{ fontSize: 28, fontWeight: 600 }}>{title}</h1>
+      <p className="fs-14 text-muted mb-4">{hint}</p>
       {children}
-    </Box>
+    </div>
   );
 }
 
@@ -351,78 +458,97 @@ function Nav({ onBack, onNext, busy, nextDisabled, nextLabel = 'Continue' }: {
   nextDisabled?: boolean; nextLabel?: string;
 }) {
   return (
-    <Box sx={{ display: 'flex', gap: 1.5, mt: 4 }}>
-      {onBack && <Button onClick={onBack} disabled={busy}>Back</Button>}
-      <Button variant="contained" size="large" onClick={onNext}
-              disabled={busy || nextDisabled} sx={{ ml: 'auto', minWidth: 200 }}>
-        {busy ? <CircularProgress size={20} color="inherit" /> : nextLabel}
-      </Button>
-    </Box>
+    <div className="d-flex gap-2 mt-4">
+      {onBack && (
+        <button type="button" className="btn btn-light" onClick={onBack} disabled={busy}>
+          Back
+        </button>
+      )}
+      <button
+        type="button"
+        className="btn btn-primary btn-lg ms-auto"
+        style={{ minWidth: 200 }}
+        onClick={onNext}
+        disabled={busy || nextDisabled}
+      >
+        {busy ? <Spinner light /> : nextLabel}
+      </button>
+    </div>
   );
 }
 
 /** Branded panel, same language as sign-in so the two feel like one product. */
 function Split({ children }: { children: React.ReactNode }) {
   return (
-    <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: 'background.paper' }}>
-      <Box sx={{ display: { xs: 'none', lg: 'flex' }, flexDirection: 'column',
-                 width: '42%', px: { lg: 5, xl: 7 }, py: { lg: 5, xl: 7 },
-                 position: 'relative', overflow: 'hidden', color: '#fff',
-                 background: (t) => `linear-gradient(135deg, ${t.palette.primary.dark} 0%, ${t.palette.primary.main} 55%, ${t.palette.primary.light} 100%)` }}>
-        <Box aria-hidden sx={{ position: 'absolute', width: 420, height: 420, borderRadius: '50%',
-          top: -150, right: -130, bgcolor: alpha('#fff', 0.07) }} />
-        <Box aria-hidden sx={{ position: 'absolute', width: 300, height: 300, borderRadius: '50%',
-          bottom: -100, left: -70, bgcolor: alpha('#fff', 0.05) }} />
+    <div className="d-flex bg-white" style={{ minHeight: '100vh' }}>
+      <div
+        className="d-none d-lg-flex flex-column position-relative text-white p-5"
+        style={{
+          width: '42%', overflow: 'hidden',
+          background: `linear-gradient(135deg, ${BRAND_DARK} 0%, ${BRAND} 55%, ${BRAND_LIGHT} 100%)`,
+        }}
+      >
+        <div aria-hidden className="position-absolute rounded-circle"
+             style={{ width: 420, height: 420, top: -150, right: -130, background: 'rgba(255,255,255,0.07)' }} />
+        <div aria-hidden className="position-absolute rounded-circle"
+             style={{ width: 300, height: 300, bottom: -100, left: -70, background: 'rgba(255,255,255,0.05)' }} />
 
-        <Box sx={{ position: 'relative', display: 'flex', flexDirection: 'column', height: '100%' }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.75 }}>
-            <Box sx={{ width: 44, height: 44, borderRadius: 2.5, display: 'grid',
-                       placeItems: 'center', fontWeight: 700, fontSize: 20,
-                       bgcolor: alpha('#fff', 0.18),
-                       border: `1px solid ${alpha('#fff', 0.25)}` }}>T</Box>
-            <Typography sx={{ fontWeight: 700, fontSize: 22 }}>
-              TatvaOS <Box component="span" sx={{ opacity: 0.7, fontWeight: 400 }}>Core</Box>
-            </Typography>
-          </Box>
+        <div className="position-relative d-flex flex-column h-100">
+          <div className="d-flex align-items-center gap-3">
+            <span
+              className="d-grid"
+              style={{
+                width: 44, height: 44, borderRadius: 12, placeItems: 'center',
+                fontWeight: 700, fontSize: 20,
+                background: 'rgba(255,255,255,0.18)',
+                border: '1px solid rgba(255,255,255,0.25)',
+              }}
+            >
+              T
+            </span>
+            <span style={{ fontWeight: 700, fontSize: 22 }}>
+              TatvaOS <span style={{ opacity: 0.7, fontWeight: 400 }}>Core</span>
+            </span>
+          </div>
 
-          <Typography sx={{ mt: { lg: 5, xl: 7 }, fontSize: { lg: 28, xl: 32 }, fontWeight: 600,
-                            lineHeight: 1.25, letterSpacing: '-0.02em' }}>
+          <p className="mb-0" style={{ marginTop: 48, fontSize: 28, fontWeight: 600,
+                                       lineHeight: 1.25, letterSpacing: '-0.02em' }}>
             Two minutes to an account.<br />Your mail stays put.
-          </Typography>
+          </p>
 
-          <Typography sx={{ mt: 2, fontSize: 15, opacity: 0.82, lineHeight: 1.65, maxWidth: 380 }}>
+          <p className="mt-3 mb-0" style={{ fontSize: 15, opacity: 0.82, lineHeight: 1.65, maxWidth: 380 }}>
             Prove your email and mobile are real and you are in. Your domain is
             added later, from your console — with your existing email untouched
             until you decide to move it.
-          </Typography>
+          </p>
 
-          <Box sx={{ mt: 'auto', pt: 5, display: 'grid', gap: 2 }}>
+          <div className="mt-auto d-flex flex-column gap-3" style={{ paddingTop: 40 }}>
             {[
               ['One identity', 'One sign-in across Mail, Drive and Payroll as they arrive.'],
               ['Isolated by the database', 'Row-level security, not code that remembers to filter.'],
               ['Hosted in India', 'DPDP residency, with a full audit trail.'],
             ].map(([t, d]) => (
-              <Box key={t} sx={{ display: 'flex', gap: 1.5 }}>
-                <Box sx={{ mt: '3px', opacity: 0.8 }}>
+              <div key={t} className="d-flex gap-2">
+                <span style={{ marginTop: 3, opacity: 0.8 }}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                        strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M20 6L9 17l-5-5" />
                   </svg>
-                </Box>
-                <Box>
-                  <Typography sx={{ fontWeight: 600, fontSize: 14 }}>{t}</Typography>
-                  <Typography sx={{ fontSize: 13, opacity: 0.75, lineHeight: 1.55 }}>{d}</Typography>
-                </Box>
-              </Box>
+                </span>
+                <span>
+                  <span className="d-block" style={{ fontWeight: 600, fontSize: 14 }}>{t}</span>
+                  <span className="d-block" style={{ fontSize: 13, opacity: 0.75, lineHeight: 1.55 }}>{d}</span>
+                </span>
+              </div>
             ))}
-          </Box>
-        </Box>
-      </Box>
+          </div>
+        </div>
+      </div>
 
-      <Box sx={{ flex: 1, display: 'grid', placeItems: 'center', p: { xs: 3, sm: 6 } }}>
+      <div className="flex-fill d-grid p-4 p-sm-5" style={{ placeItems: 'center' }}>
         {children}
-      </Box>
-    </Box>
+      </div>
+    </div>
   );
 }
 
