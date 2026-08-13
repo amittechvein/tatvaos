@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from 'next';
 import { Plus_Jakarta_Sans } from 'next/font/google';
 import { AuthProvider } from '@/lib/auth';
 import { ThemeProvider } from '@/lib/theme';
-import { MuiRegistry } from '@/lib/mui/ThemeRegistry';
 import { BuildBadge } from '@/components/BuildBadge';
 // YZEN's real stylesheet (licensed to Techvein) drives the console look. Order
 // matters: our Tailwind/globals baseline first, then Bootstrap, then YZEN's
@@ -85,16 +84,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         is expected rather than a bug worth warning about.
       */}
       {/*
-        Order matters. ThemeProvider holds the user's chosen accent and mode;
-        MuiRegistry reads them to build the MUI theme. Reversing these means
-        MUI mounts before the preference is known and the product repaints
-        after load.
+        MuiRegistry used to sit between ThemeProvider and AuthProvider, reading
+        the chosen accent to build a MUI theme. MUI is gone — the console is
+        Bootstrap and YZEN throughout — so the registry, its emotion cache and
+        the six packages behind it have all been removed.
       */}
       <body className={`h-full ${inter.variable} ${inter.className}`}>
         <ThemeProvider>
-          <MuiRegistry>
-            <AuthProvider>{children}</AuthProvider>
-          </MuiRegistry>
+          <AuthProvider>{children}</AuthProvider>
         </ThemeProvider>
         {/* Outside the providers on purpose: the version must still render
             even if a provider below it throws. */}

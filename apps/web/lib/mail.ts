@@ -80,6 +80,35 @@ export interface SearchPage {
   messages: SearchHit[];
 }
 
+/**
+ * One conversation in a folder listing: the newest message, plus the parts
+ * of the group that only make sense rolled up.
+ *
+ * `isRead` is false when ANY message in the conversation is unread - the
+ * alternative hides the single new reply at the end of a long read thread.
+ */
+export interface ThreadSummary {
+  threadId: string;
+  /** The message a click on the row should open: newest in this folder. */
+  latestMessageId: string;
+  count: number;
+  subject: string;
+  snippet: string;
+  from: { name: string | null; email: string };
+  /** Distinct senders, oldest first. */
+  participants: { name: string | null; email: string }[];
+  sentAt: string;
+  receivedAt: string;
+  isRead: boolean;
+  isFlagged: boolean;
+  hasAttachments: boolean;
+}
+
+export interface ThreadPage {
+  total: number;
+  threads: ThreadSummary[];
+}
+
 /** An address this mailbox has blocked. Blocked mail is filed to Junk, not refused. */
 export interface BlockedSender {
   id: string;
@@ -153,6 +182,23 @@ export const mailApi = {
     const qs = params.size > 0 ? `?${params}` : '';
     return f(`/mail/folders/${folderId}/messages${qs}`).then((r) =>
       json<MessagePage>(r, 'Could not load messages.'),
+    );
+  },
+
+  /**
+   * A folder as conversations rather than as messages.
+   *
+   * Grouping is per folder and the key is the thread id, falling back to the
+   * message id - so mail that predates threading still appears, as a
+   * conversation of one, instead of vanishing from the list.
+   */
+  folderThreads: (f: AuthedFetch, folderId: string, opts?: { skip?: number; take?: number }) => {
+    const params = new URLSearchParams();
+    if (opts?.skip) params.set('skip', String(opts.skip));
+    if (opts?.take) params.set('take', String(opts.take));
+    const qs = params.size > 0 ? `?${params}` : '';
+    return f(`/mail/folders/${folderId}/threads${qs}`).then((r) =>
+      json<ThreadPage>(r, 'Could not load conversations.'),
     );
   },
 

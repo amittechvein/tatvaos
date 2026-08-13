@@ -1,19 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Alert from '@mui/material/Alert';
-import Box from '@mui/material/Box';
-import Checkbox from '@mui/material/Checkbox';
-import Chip from '@mui/material/Chip';
-import CircularProgress from '@mui/material/CircularProgress';
-import Divider from '@mui/material/Divider';
-import IconButton from '@mui/material/IconButton';
-import InputAdornment from '@mui/material/InputAdornment';
-import Menu from '@mui/material/Menu';
-import MenuItem from '@mui/material/MenuItem';
-import Tooltip from '@mui/material/Tooltip';
-import TextField from '@mui/material/TextField';
-import Typography from '@mui/material/Typography';
 
 import { notFound, useParams, useRouter, useSearchParams } from 'next/navigation';
 
@@ -412,10 +399,22 @@ export default function FamilyViewPage() {
 
   return (
     <FamilyShell title={spec.title} breadcrumb={spec.title}>
-      {error && <Alert severity="error" className="mb-4" onClose={() => setError(null)}>{error}</Alert>}
-      {note && <Alert severity="success" className="mb-4" onClose={() => setNote(null)}>{note}</Alert>}
+      {error && (
+        <div className="alert alert-danger d-flex align-items-start mb-4">
+          <div className="flex-fill">{error}</div>
+          <button type="button" className="btn-close" aria-label="Dismiss"
+                  onClick={() => setError(null)} />
+        </div>
+      )}
+      {note && (
+        <div className="alert alert-success d-flex align-items-start mb-4">
+          <div className="flex-fill">{note}</div>
+          <button type="button" className="btn-close" aria-label="Dismiss"
+                  onClick={() => setNote(null)} />
+        </div>
+      )}
 
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>{spec.blurb}</Typography>
+      <p className="fs-14 text-muted mb-3">{spec.blurb}</p>
 
       {/*
         A filtered list has to say so where you are looking.
@@ -427,23 +426,30 @@ export default function FamilyViewPage() {
         click that undoes it.
       */}
       {activeGroup && (
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2, flexWrap: 'wrap' }}>
-          <Typography variant="body2" color="text.secondary">Showing only</Typography>
-          <Chip
-            size="small"
-            label={activeGroup.name}
-            onDelete={() => chooseGroup('')}
-            sx={activeGroup.colour
-              ? { bgcolor: activeGroup.colour, color: '#fff',
-                  '& .MuiChip-deleteIcon': { color: '#fff' } }
-              : undefined}
-          />
+        <div className="d-flex align-items-center gap-2 mb-3 flex-wrap">
+          <span className="fs-14 text-muted">Showing only</span>
+          <span
+            className="badge rounded-pill d-inline-flex align-items-center gap-2"
+            style={activeGroup.colour
+              ? { background: activeGroup.colour, color: '#fff' }
+              : { background: '#e9ecef', color: '#495057' }}
+          >
+            {activeGroup.name}
+            {/* The dismiss affordance MUI's Chip onDelete gave us. */}
+            <button
+              type="button"
+              className="btn-close btn-close-white p-0"
+              style={{ fontSize: 9, opacity: 0.9 }}
+              aria-label={`Stop filtering by ${activeGroup.name}`}
+              onClick={() => chooseGroup('')}
+            />
+          </span>
           {!loading && (
-            <Typography variant="body2" color="text.secondary">
+            <span className="fs-14 text-muted">
               — {total === 1 ? '1 contact' : `${total} contacts`}
-            </Typography>
+            </span>
           )}
-        </Box>
+        </div>
       )}
 
       <Card
@@ -455,68 +461,79 @@ export default function FamilyViewPage() {
           </>
         )}
       >
-        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, alignItems: 'center', p: 2 }}>
-          <TextField
-            size="small"
-            placeholder="Search name, company or address…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            sx={{ minWidth: 280, flex: '1 1 280px' }}
-            slotProps={{
-              input: {
-                startAdornment: <InputAdornment position="start">🔍</InputAdornment>,
-                endAdornment: query ? (
-                  <InputAdornment position="end">
-                    <IconButton size="small" onClick={() => setQuery('')} aria-label="Clear search">×</IconButton>
-                  </InputAdornment>
-                ) : undefined,
-              },
-            }}
-          />
+        <div className="d-flex flex-wrap gap-2 align-items-center p-3">
+          <div className="position-relative" style={{ minWidth: 280, flex: '1 1 280px' }}>
+            <span className="position-absolute d-flex align-items-center"
+                  style={{ left: 10, top: 0, bottom: 0, pointerEvents: 'none' }}>🔍</span>
+            <input
+              className="form-control form-control-sm"
+              placeholder="Search name, company or address…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              style={{ paddingLeft: 32, paddingRight: query ? 32 : undefined }}
+            />
+            {query && (
+              <button
+                type="button"
+                className="btn btn-sm border-0 position-absolute p-0"
+                style={{ right: 8, top: '50%', transform: 'translateY(-50%)', lineHeight: 1 }}
+                onClick={() => setQuery('')}
+                aria-label="Clear search"
+              >
+                ×
+              </button>
+            )}
+          </div>
 
-          <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap' }}>
+          {/* Filter pills are buttons: they change the list on click, so they
+              have to be reachable by keyboard. MUI's clickable Chip was doing
+              that quietly. */}
+          <div className="d-flex gap-1 flex-wrap">
             {!isBin && FILTERS.map(([key, label]) => (
-              <Chip
+              <button
                 key={key}
-                label={label}
-                size="small"
-                color={filter === key ? 'primary' : 'default'}
-                variant={filter === key ? 'filled' : 'outlined'}
+                type="button"
+                aria-pressed={filter === key}
+                className={`badge rounded-pill border ${filter === key
+                  ? 'bg-primary text-white border-0'
+                  : 'bg-transparent text-body-secondary'}`}
+                style={{ cursor: 'pointer', fontWeight: 500 }}
                 onClick={() => { setFilter(key); setPage(1); }}
-              />
+              >
+                {label}
+              </button>
             ))}
-          </Box>
+          </div>
 
           {groups.length > 0 && (
-            <TextField
-              select size="small" label="Group"
-              value={groupId}
-              onChange={(e) => chooseGroup(e.target.value)}
-              sx={{ minWidth: 160 }}
-            >
-              <MenuItem value="">All groups</MenuItem>
-              {groups.map((g) => <MenuItem key={g.id} value={g.id}>{g.name}</MenuItem>)}
-            </TextField>
+            <div style={{ minWidth: 160 }}>
+              <select
+                className="form-select form-select-sm"
+                value={groupId}
+                aria-label="Group"
+                onChange={(e) => chooseGroup(e.target.value)}
+              >
+                <option value="">All groups</option>
+                {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+              </select>
+            </div>
           )}
-        </Box>
+        </div>
 
         {/*
           The bar only exists while something is selected, so the screen is not
           carrying a permanently disabled toolbar for a thing nobody is doing.
         */}
         {!isBin && selectionCount > 0 && (
-          <Box
-            sx={{
-              display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap',
-              px: 2, py: 1.5, bgcolor: 'action.hover',
-              borderTop: '1px solid', borderColor: 'divider',
-            }}
+          <div
+            className="d-flex align-items-center gap-2 flex-wrap px-3 py-2 border-top"
+            style={{ background: 'rgba(0,0,0,0.03)' }}
           >
-            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            <span className="fs-14 fw-semibold">
               {allMatching
                 ? `All ${total} selected`
                 : `${plural(selected.size, 'contact')} selected`}
-            </Typography>
+            </span>
 
             {canSelectAll && (
               <Button variant="ghost" onClick={() => setAllMatching(true)}>
@@ -538,14 +555,22 @@ export default function FamilyViewPage() {
             </Button>
 
             <Button variant="ghost" disabled={bulkBusy} onClick={clearSelection}>Clear</Button>
-            {bulkBusy && <CircularProgress size={18} />}
-          </Box>
+            {bulkBusy && (
+              <span className="d-inline-block animate-spin rounded-circle"
+                    style={{ width: 18, height: 18, border: '2px solid rgba(0,0,0,.12)',
+                             borderTopColor: '#03b562' }} />
+            )}
+          </div>
         )}
 
-        <Divider />
+        <hr className="m-0" />
 
         {loading ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}><CircularProgress size={30} /></Box>
+          <div className="d-flex justify-content-center py-5">
+            <span className="d-inline-block animate-spin rounded-circle"
+                  style={{ width: 30, height: 30, border: '3px solid rgba(0,0,0,.12)',
+                           borderTopColor: '#03b562' }} />
+          </div>
         ) : visible.length === 0 ? (
           <Empty
             title={debounced ? `Nothing matches “${debounced}”` : spec.emptyTitle}
@@ -555,12 +580,12 @@ export default function FamilyViewPage() {
           <Table
             head={[
               ...(isBin ? [] : [(
-                <Checkbox
+                <input
                   key="select-page"
-                  size="small"
-                  sx={{ p: 0 }}
+                  type="checkbox"
+                  className="form-check-input m-0"
                   checked={allOnPage}
-                  indeterminate={!allOnPage && someOnPage}
+                  ref={(el) => { if (el) el.indeterminate = !allOnPage && someOnPage; }}
                   onChange={togglePage}
                   aria-label="Select everything on this page"
                 />
@@ -578,9 +603,9 @@ export default function FamilyViewPage() {
                 {!isBin && (
                   <Td>
                     {/* stopPropagation, or ticking a box also opens the contact. */}
-                    <Checkbox
-                      size="small"
-                      sx={{ p: 0 }}
+                    <input
+                      type="checkbox"
+                      className="form-check-input m-0"
                       checked={allMatching || selected.has(c.id)}
                       disabled={allMatching}
                       onClick={(e) => e.stopPropagation()}
@@ -590,44 +615,46 @@ export default function FamilyViewPage() {
                   </Td>
                 )}
                 <Td>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minWidth: 0 }}>
-                    <Box
+                  <div className="d-flex align-items-center gap-2" style={{ minWidth: 0 }}>
+                    <span
                       aria-hidden
-                      sx={{
-                        width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
-                        display: 'grid', placeItems: 'center',
-                        fontSize: 13, fontWeight: 700,
-                        bgcolor: 'var(--mui-palette-primary-main)', color: '#fff',
+                      className="d-grid rounded-circle flex-shrink-0 text-white"
+                      style={{
+                        width: 36, height: 36, placeItems: 'center',
+                        fontSize: 13, fontWeight: 700, background: '#03b562',
                       }}
                     >
                       {initials(c.displayName)}
-                    </Box>
-                    <Box sx={{ minWidth: 0 }}>
-                      <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    </span>
+                    <div style={{ minWidth: 0 }}>
+                      <div className="fs-14 fw-semibold">
                         {c.isFavourite && <span aria-label="Starred" title="Starred">★ </span>}
                         {c.displayName}
-                      </Typography>
-                      {c.jobTitle && (
-                        <Typography variant="caption" color="text.secondary">{c.jobTitle}</Typography>
-                      )}
-                    </Box>
-                  </Box>
+                      </div>
+                      {c.jobTitle && <div className="fs-12 text-muted">{c.jobTitle}</div>}
+                    </div>
+                  </div>
                 </Td>
                 <Td>{c.companyName ?? '—'}</Td>
                 <Td>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <div className="d-flex align-items-center gap-2">
                     <span>{c.primaryEmail ?? '—'}</span>
                     {isAutoSaved(c.source) && (
-                      <Tooltip title={sourceLabel(c.source)}>
-                        <Chip label="auto" size="small" variant="outlined" />
-                      </Tooltip>
+                      // title= replaces MUI's Tooltip — no library, and it is
+                      // reachable on keyboard focus.
+                      <span
+                        className="badge rounded-pill border text-body-secondary bg-transparent fw-normal"
+                        title={sourceLabel(c.source)}
+                      >
+                        auto
+                      </span>
                     )}
-                  </Box>
+                  </div>
                 </Td>
                 <Td>
-                  <Tooltip title={c.interactionCount === 1 ? '1 exchange' : `${c.interactionCount} exchanges`}>
-                    <span>{ago(c.lastContactedAt)}</span>
-                  </Tooltip>
+                  <span title={c.interactionCount === 1 ? '1 exchange' : `${c.interactionCount} exchanges`}>
+                    {ago(c.lastContactedAt)}
+                  </span>
                 </Td>
                 <Td>
                   {isBin ? (
@@ -654,15 +681,15 @@ export default function FamilyViewPage() {
         )}
 
         {!debounced && pages > 1 && (
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', p: 2 }}>
-            <Typography variant="body2" color="text.secondary">
+          <div className="d-flex justify-content-between align-items-center p-3">
+            <span className="fs-14 text-muted">
               {total} contacts · page {page} of {pages}
-            </Typography>
-            <Box sx={{ display: 'flex', gap: 1 }}>
+            </span>
+            <div className="d-flex gap-2">
               <Button variant="ghost" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Previous</Button>
               <Button variant="ghost" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>Next</Button>
-            </Box>
-          </Box>
+            </div>
+          </div>
         )}
       </Card>
 
@@ -689,25 +716,37 @@ export default function FamilyViewPage() {
           }}
         />
       )}
-      <Menu open={menu !== null} anchorEl={menu?.anchor ?? null} onClose={() => setMenu(null)}>
-        {groups.length === 0 && <MenuItem disabled>No labels yet</MenuItem>}
-        {groups.map((g) => (
-          <MenuItem
-            key={g.id}
-            onClick={() => {
-              const mode = menu?.mode ?? 'add';
-              setMenu(null);
-              void applyLabel(g.id, mode);
-            }}
-          >
-            {g.name}
-          </MenuItem>
-        ))}
-        {menu?.mode === 'add' && <Divider />}
-        {menu?.mode === 'add' && (
-          <MenuItem onClick={() => { setMenu(null); setNewLabel(''); }}>New label…</MenuItem>
-        )}
-      </Menu>
+      {menu !== null && (
+        <AnchoredMenu anchor={menu.anchor} onClose={() => setMenu(null)}>
+          {groups.length === 0 && (
+            <li className="dropdown-item text-muted" aria-disabled>No labels yet</li>
+          )}
+          {groups.map((g) => (
+            <li key={g.id}>
+              <button
+                type="button"
+                className="dropdown-item"
+                onClick={() => {
+                  const mode = menu?.mode ?? 'add';
+                  setMenu(null);
+                  void applyLabel(g.id, mode);
+                }}
+              >
+                {g.name}
+              </button>
+            </li>
+          ))}
+          {menu.mode === 'add' && <li><hr className="dropdown-divider" /></li>}
+          {menu.mode === 'add' && (
+            <li>
+              <button type="button" className="dropdown-item"
+                      onClick={() => { setMenu(null); setNewLabel(''); }}>
+                New label…
+              </button>
+            </li>
+          )}
+        </AnchoredMenu>
+      )}
 
       {newLabel !== null && (
         <Modal
@@ -1237,5 +1276,62 @@ function AddRow({ label, value, onChange, onAdd, busy }: {
       />
       <Button variant="secondary" disabled={busy || value.trim().length === 0} onClick={onAdd}>Add</Button>
     </div>
+  );
+}
+
+
+/**
+ * Replaces MUI's Menu: a list positioned under the element that opened it.
+ *
+ * Fixed positioning measured from the anchor, for the same reason as the
+ * contact picker — the bulk bar scrolls, and an absolutely positioned child
+ * would be clipped by the card's overflow.
+ *
+ * Dismissal is deliberately complete: outside click, Escape, scroll and
+ * resize all close it. MUI repositioned on scroll instead; closing is the
+ * simpler promise to keep, and a menu left floating beside the button it no
+ * longer points at is worse than one that has gone away.
+ */
+function AnchoredMenu({ anchor, onClose, children }: {
+  anchor: HTMLElement;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  const [box, setBox] = useState<{ top: number; left: number } | null>(null);
+
+  useEffect(() => {
+    const r = anchor.getBoundingClientRect();
+    setBox({ top: r.bottom + 4, left: r.left });
+
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('resize', onClose);
+    window.addEventListener('scroll', onClose, true);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', onClose);
+      window.removeEventListener('scroll', onClose, true);
+    };
+  }, [anchor, onClose]);
+
+  if (!box) return null;
+
+  return (
+    <>
+      {/* A transparent full-screen catcher, so any outside click closes the
+          menu without every ancestor needing its own handler. */}
+      <div className="position-fixed top-0 start-0 w-100 h-100"
+           style={{ zIndex: 1390 }} onClick={onClose} aria-hidden />
+      <ul
+        className="list-unstyled bg-white rounded shadow border m-0 py-1"
+        style={{
+          position: 'fixed', top: box.top, left: box.left,
+          minWidth: 200, maxHeight: 320, overflowY: 'auto', zIndex: 1400,
+        }}
+        role="menu"
+      >
+        {children}
+      </ul>
+    </>
   );
 }
