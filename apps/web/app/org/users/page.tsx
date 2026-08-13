@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
-import Chip from '@mui/material/Chip';
 import Collapse from '@mui/material/Collapse';
 import Dialog from '@mui/material/Dialog';
 import Divider from '@mui/material/Divider';
@@ -206,50 +205,47 @@ export default function PeoplePage() {
                     onClick={() => setEditing(p)}
                     title="Edit this person">
                   <Td>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                    <div className="d-flex align-items-center gap-2">
                       <UserPhoto userId={p.id} hasAvatar={p.hasAvatar}
                                  name={p.displayName} email={p.email} size={36} />
-                      <Box sx={{ minWidth: 0 }}>
-                        <Typography variant="body2" sx={{ fontWeight: 600 }}>{p.displayName}</Typography>
-                        <Typography variant="caption" color="text.secondary">{p.email}</Typography>
-                      </Box>
-                    </Box>
+                      <div style={{ minWidth: 0 }}>
+                        <div className="fs-14 fw-semibold">{p.displayName}</div>
+                        <div className="fs-12 text-muted">{p.email}</div>
+                      </div>
+                    </div>
                   </Td>
                   <Td>
                     {dept ? (
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: dept.colour }} />
-                        <Typography variant="body2">{dept.name}</Typography>
-                      </Box>
+                      <div className="d-flex align-items-center gap-2">
+                        <span className="rounded-circle flex-shrink-0"
+                              style={{ width: 8, height: 8, background: dept.colour }} />
+                        <span className="fs-14">{dept.name}</span>
+                      </div>
                     ) : (
-                      <Typography variant="caption" color="text.disabled">Unassigned</Typography>
+                      <span className="fs-12 text-muted">Unassigned</span>
                     )}
                   </Td>
                   <Td>
-                    <Typography variant="body2" sx={{ textTransform: 'capitalize' }}>
-                      {p.role.replace(/_/g, ' ')}
-                    </Typography>
+                    <span className="fs-14 text-capitalize">{p.role.replace(/_/g, ' ')}</span>
                   </Td>
                   <Td>
                     {p.mailboxAddress ? (
                       <>
-                        <Typography variant="caption">
-                          {fmt(p.usedBytes)} <Box component="span" sx={{ color: 'text.disabled' }}>
-                            / {fmt(p.quotaBytes)}
-                          </Box>
-                        </Typography>
-                        <Box sx={{ width: 110, mt: 0.5 }}>
+                        <span className="fs-12">
+                          {fmt(p.usedBytes)} <span className="text-muted">/ {fmt(p.quotaBytes)}</span>
+                        </span>
+                        <div style={{ width: 110, marginTop: 4 }}>
                           <Meter used={p.usedBytes} total={p.quotaBytes} />
-                        </Box>
+                        </div>
                       </>
                     ) : (
-                      <Typography variant="caption" color="text.disabled">No mailbox</Typography>
+                      <span className="fs-12 text-muted">No mailbox</span>
                     )}
                   </Td>
                   <Td>
                     {p.mfaEnabled
-                      ? <Chip label="On" size="small" color="success" />
-                      : <Typography variant="caption" color="text.disabled">Off</Typography>}
+                      ? <Badge tone="ok">On</Badge>
+                      : <span className="fs-12 text-muted">Off</span>}
                   </Td>
                   <Td><Badge tone={statusTone(p.status)}>{p.status}</Badge></Td>
                 </tr>
@@ -259,10 +255,10 @@ export default function PeoplePage() {
         )}
       </Card>
 
-      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
+      <p className="fs-12 text-muted d-block mt-3 mb-0">
         You can create people and reset their passwords. You cannot read their mail —
         administrative power over an account never implies access to its contents.
-      </Typography>
+      </p>
 
       {editing && (
         <EditPerson
