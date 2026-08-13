@@ -19,10 +19,27 @@ export interface MailMailbox {
   usedBytes: number;
 }
 
+/**
+ * A mailbox's signature.
+ *
+ * Both representations are stored: outgoing mail is multipart/alternative, and
+ * a signature present in only one part means half the recipients see a
+ * different message.
+ */
+export interface MailSignature {
+  bodyHtml: string;
+  bodyText: string;
+  enabled: boolean;
+  /** Separate from `enabled` — most people don't want it on every reply. */
+  includeOnReply: boolean;
+}
+
 export interface MailBootstrap {
   /** Null is a normal state — a person with no mail product. */
   mailbox: MailMailbox | null;
   folders: Folder[];
+  /** Arrives with bootstrap so a composer has it the moment it opens. */
+  signature?: MailSignature;
 }
 
 export interface MessagePage {
@@ -127,6 +144,14 @@ export const mailApi = {
 
   message: (f: AuthedFetch, id: string) =>
     f(`/mail/messages/${id}`).then((r) => json<Message>(r, 'Could not load the message.')),
+
+  /** This mailbox's signature. Also included in the bootstrap response. */
+  signature: (f: AuthedFetch) =>
+    f('/mail/signature').then((r) => json<MailSignature>(r, 'Could not load your signature.')),
+
+  saveSignature: (f: AuthedFetch, sig: MailSignature) =>
+    f('/mail/signature', { method: 'PUT', body: JSON.stringify(sig) })
+      .then((r) => json<MailSignature>(r, 'Could not save your signature.')),
 
   /**
    * Blocked senders. Blocking is a filing rule, not a refusal: future mail from

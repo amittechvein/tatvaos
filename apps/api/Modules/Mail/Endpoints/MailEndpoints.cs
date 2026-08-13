@@ -48,6 +48,9 @@ public static class MailEndpoints
         g.MapPost("/blocked", BlockSenderAsync);
         g.MapDelete("/blocked/{id:guid}", UnblockSenderAsync);
 
+        g.MapGet("/signature", GetSignatureAsync);
+        g.MapPut("/signature", SaveSignatureAsync);
+
         g.MapGet("/filters", ListFiltersAsync);
         g.MapPost("/filters", CreateFilterAsync);
         g.MapPut("/filters/{id:guid}", UpdateFilterAsync);
@@ -128,6 +131,69 @@ public static class MailEndpoints
         db.BlockedSenders.Remove(row);
         await db.SaveChangesAsync(ct);
         return Results.Ok(new { unblocked = true });
+    }
+
+    // ------------------------------------------------------------------
+    //  Signature — one per mailbox, HTML and plain text together.
+    // ------------------------------------------------------------------
+    public sealed record SignatureRequest(
+        string BodyHtml, string BodyText, bool Enabled, bool IncludeOnReply);
+
+    /// <summary>
+    /// A mailbox with no signature row yet is "off, with nothing in it" — not
+    /// an error and not a 404. The editor opens empty and the first save
+    /// creates the row.
+    /// </summary>
+    private static object ShapeSignature(Signature? s) => new
+    {
+        bodyHtml = s?.BodyHtml ?? "",
+        bodyText = s?.BodyText ?? "",
+        enabled = s?.Enabled ?? false,
+        includeOnReply = s?.IncludeOnReply ?? false,
+    };
+
+    private static async Task<IResult> GetSignatureAsync(
+        AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var box = await OwnMailboxAsync(db, tenant, ct);
+        if (box is null) return Results.Ok(ShapeSignature(null));
+
+        var sig = await db.Signatures.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.MailboxId == box.Id, ct);
+        return Results.Ok(ShapeSignature(sig));
+    }
+
+    private static async Task<IResult> SaveSignatureAsync(
+        SignatureRequest req, AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var box = await OwnMailboxAsync(db, tenant, ct);
+        if (box is null) return Results.BadRequest(new { error = "You have no mailbox." });
+
+        // This is the person's own content going into their own outgoing mail,
+        // so it is not attacker-controlled the way a received message is. It is
+        // still user input that ends up in an HTML body, and a size cap is the
+        // difference between a signature and a payload.
+        const int MaxSignatureChars = 20_000;
+        var html = req.BodyHtml ?? "";
+        var text = req.BodyText ?? "";
+        if (html.Length > MaxSignatureChars || text.Length > MaxSignatureChars)
+            return Results.BadRequest(new { error = "That signature is too long." });
+
+        var sig = await db.Signatures.FirstOrDefaultAsync(s => s.MailboxId == box.Id, ct);
+        if (sig is null)
+        {
+            sig = new Signature { TenantId = box.TenantId, MailboxId = box.Id };
+            db.Signatures.Add(sig);
+        }
+
+        sig.BodyHtml = html;
+        sig.BodyText = text;
+        sig.Enabled = req.Enabled;
+        sig.IncludeOnReply = req.IncludeOnReply;
+        sig.UpdatedAt = DateTimeOffset.UtcNow;
+
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(ShapeSignature(sig));
     }
 
     // ------------------------------------------------------------------
@@ -450,6 +516,12 @@ public static class MailEndpoints
         var user = await db.Users.AsNoTracking()
             .FirstOrDefaultAsync(u => u.Id == tenant.UserId, ct);
 
+        // The signature rides along with bootstrap rather than being fetched
+        // when a composer opens: a second round trip at that moment shows an
+        // empty editor that then rewrites itself under the cursor.
+        var sig = await db.Signatures.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.MailboxId == box.Id, ct);
+
         return Results.Ok(new
         {
             mailbox = new
@@ -462,6 +534,7 @@ public static class MailEndpoints
                 usedBytes = box.UsedBytes,
             },
             folders = await FolderListAsync(db, box.Id, ct),
+            signature = ShapeSignature(sig),
         });
     }
 
