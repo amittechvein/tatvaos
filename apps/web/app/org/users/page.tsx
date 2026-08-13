@@ -3,25 +3,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
-import Collapse from '@mui/material/Collapse';
 import Dialog from '@mui/material/Dialog';
 import Divider from '@mui/material/Divider';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
-import FormControlLabel from '@mui/material/FormControlLabel';
 import IconButton from '@mui/material/IconButton';
 import InputAdornment from '@mui/material/InputAdornment';
 import MenuItem from '@mui/material/MenuItem';
-import Switch from '@mui/material/Switch';
 import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
-import { alpha } from '@mui/material/styles';
 
 import { AdminShell } from '@/components/admin/AdminShell';
 import { Badge, Button, Card, Empty, Meter, Table, Td, statusTone } from '@/components/ui/Kit';
-import { Modal } from '@/components/ui/Modal';
+import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 import { UserPhoto } from '@/components/ui/UserPhoto';
 import { PhotoPicker } from '@/components/ui/PhotoPicker';
@@ -168,20 +164,27 @@ export default function PeoplePage() {
         </div>
       )}
 
-      <Box sx={{ display: 'flex', gap: 1.5, mb: 3, flexWrap: 'wrap', alignItems: 'center' }}>
-        <TextField select size="small" label="Department" value={filterDept}
-                   onChange={(e) => setFilterDept(e.target.value)} sx={{ minWidth: 240 }}>
-          <MenuItem value="all">All departments</MenuItem>
-          {flat.map(({ d, depth }) => (
-            <MenuItem key={d.id} value={d.id}>
-              {' '.repeat(depth * 3)}{depth > 0 ? '└ ' : ''}{d.name}
-            </MenuItem>
-          ))}
-        </TextField>
+      <div className="d-flex gap-2 mb-3 flex-wrap align-items-end">
+        <div style={{ minWidth: 240 }}>
+          <label className="form-label fs-12 text-muted mb-1" htmlFor="tv-dept-filter">
+            Department
+          </label>
+          <select id="tv-dept-filter" className="form-select form-select-sm" value={filterDept}
+                  onChange={(e) => setFilterDept(e.target.value)}>
+            <option value="all">All departments</option>
+            {flat.map(({ d, depth }) => (
+              <option key={d.id} value={d.id}>
+                {' '.repeat(depth * 3)}{depth > 0 ? '└ ' : ''}{d.name}
+              </option>
+            ))}
+          </select>
+        </div>
 
-        <TextField size="small" placeholder="Search name or address" value={query}
-                   onChange={(e) => setQuery(e.target.value)} sx={{ ml: 'auto', minWidth: 260 }} />
-      </Box>
+        <div className="ms-auto" style={{ minWidth: 260 }}>
+          <input className="form-control form-control-sm" placeholder="Search name or address"
+                 value={query} onChange={(e) => setQuery(e.target.value)} />
+        </div>
+      </div>
 
       <Card padded={false}>
         {loading ? (
@@ -409,108 +412,132 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
   }
 
   return (
-    <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle sx={{ pb: 1 }}>
-        Add a person
-        <Typography variant="body2" color="text.secondary">
-          They get a sign-in and a mailbox, and inherit their department&apos;s settings.
-        </Typography>
-      </DialogTitle>
+    <Modal
+      title="Add a person"
+      subtitle="They get a sign-in and a mailbox, and inherit their department's settings."
+      onClose={onClose}
+      busy={busy}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" onClick={create}
+                  disabled={busy || displayName.trim().length < 2 || localPart.length < 1 || !domain}>
+            {busy ? 'Creating…' : 'Create person'}
+          </Button>
+        </>
+      }
+    >
+      <div className="mb-3">
+        <PhotoPicker preview={photo} name={displayName} onPick={setPhoto}
+                     onRemove={() => setPhoto(null)} disabled={busy} />
+      </div>
 
-      <DialogContent>
-        <Box sx={{ mt: 1, mb: 2.5 }}>
-          <PhotoPicker preview={photo} name={displayName} onPick={setPhoto}
-                       onRemove={() => setPhoto(null)} disabled={busy} />
-        </Box>
+      <Field label="Full name" required>
+        <input className="form-control" value={displayName}
+               onChange={(e) => setDisplayName(e.target.value)} />
+      </Field>
 
-        <TextField fullWidth label="Full name" required value={displayName}
-                   onChange={(e) => setDisplayName(e.target.value)} sx={{ mb: 2.5 }} />
+      <div className="d-flex gap-2 align-items-start">
+        <div className="flex-fill">
+          <Field label="Email address" required>
+            {/* input-group replaces MUI's endAdornment: the @ becomes part of
+                the control rather than text floating beside it. */}
+            <div className="input-group">
+              <input
+                className="form-control"
+                value={localPart}
+                autoCapitalize="none"
+                spellCheck={false}
+                onChange={(e) => setLocalPart(e.target.value.replace(/[^a-zA-Z0-9._-]/g, ''))}
+              />
+              <span className="input-group-text">@</span>
+            </div>
+          </Field>
+        </div>
+        <div style={{ minWidth: 200 }}>
+          <Field label="Domain">
+            <select className="form-select" value={domainId}
+                    onChange={(e) => setDomainId(e.target.value)}>
+              {domains.map((d) => <option key={d.id} value={d.id}>{d.fqdn}</option>)}
+            </select>
+          </Field>
+        </div>
+      </div>
 
-        <Box sx={{ display: 'flex', gap: 1.5, mb: 2.5, alignItems: 'flex-start' }}>
-          <TextField label="Email address" required value={localPart}
-                     onChange={(e) => setLocalPart(e.target.value.replace(/[^a-zA-Z0-9._-]/g, ''))}
-                     sx={{ flex: 1 }}
-                     slotProps={{
-                       input: { endAdornment: <InputAdornment position="end">@</InputAdornment> },
-                       htmlInput: { autoCapitalize: 'none', spellCheck: false },
-                     }} />
-          <TextField select label="Domain" value={domainId} sx={{ minWidth: 200 }}
-                     onChange={(e) => setDomainId(e.target.value)}>
-            {domains.map((d) => (
-              <MenuItem key={d.id} value={d.id}>{d.fqdn}</MenuItem>
-            ))}
-          </TextField>
-        </Box>
-
-        <TextField select fullWidth label="Department" value={departmentId} sx={{ mb: 2.5 }}
-                   onChange={(e) => { setDepartmentId(e.target.value); setOverride(false); }}
-                   helperText="Sets their role, storage and whether they can email outsiders">
-          <MenuItem value="">
-            <em>No department — organisation defaults</em>
-          </MenuItem>
+      <Field label="Department"
+             hint="Sets their role, storage and whether they can email outsiders">
+        <select className="form-select" value={departmentId}
+                onChange={(e) => { setDepartmentId(e.target.value); setOverride(false); }}>
+          <option value="">No department — organisation defaults</option>
           {departments.map(({ d, depth }) => (
-            <MenuItem key={d.id} value={d.id}>
-              {' '.repeat(depth * 3)}{depth > 0 ? '└ ' : ''}{d.name}
-            </MenuItem>
+            <option key={d.id} value={d.id}>
+              {' '.repeat(depth * 3)}{depth > 0 ? '└ ' : ''}{d.name}
+            </option>
           ))}
-        </TextField>
+        </select>
+      </Field>
 
-        <TextField select fullWidth label="Role" value={role} sx={{ mb: 2.5 }}
-                   onChange={(e) => setRole(e.target.value)}
-                   helperText="What they can administer. Leave on the default unless this person runs things.">
-          <MenuItem value="">
-            <em>{dept ? `Department default (${dept.defaultRole.replace(/_/g, ' ')})` : 'Default (employee)'}</em>
-          </MenuItem>
+      <Field label="Role"
+             hint="What they can administer. Leave on the default unless this person runs things.">
+        <select className="form-select" value={role} onChange={(e) => setRole(e.target.value)}>
+          <option value="">
+            {dept ? `Department default (${dept.defaultRole.replace(/_/g, ' ')})` : 'Default (employee)'}
+          </option>
           {roleOptions(me?.role === 'org_owner' || me?.role === 'super_admin').map(([v, label]) => (
-            <MenuItem key={v} value={v}>{label}</MenuItem>
+            <option key={v} value={v}>{label}</option>
           ))}
-        </TextField>
+        </select>
+      </Field>
 
-        {/* Storage. The inherited value is shown BEFORE the override, so the
-            common case needs no decision at all — and the number is visible
-            rather than something the admin has to go and look up. */}
-        <Box sx={{ p: 2, borderRadius: 2, mb: 1,
-                   bgcolor: (t) => alpha(t.palette.primary.main, 0.05) }}>
-          <Typography variant="body2" sx={{ fontWeight: 600, mb: 1 }}>Storage</Typography>
+      {/* Storage. The inherited value is shown BEFORE the override, so the
+          common case needs no decision at all — and the number is visible
+          rather than something the admin has to go and look up. */}
+      <div className="rounded p-3 mb-2" style={{ background: 'rgba(3,181,98,0.05)' }}>
+        <div className="fs-14 fw-semibold mb-2">Storage</div>
 
-          <FormControlLabel
-            control={<Switch checked={!override} onChange={(e) => setOverride(!e.target.checked)} />}
-            label={
-              <Typography variant="body2">
-                Use <strong>{fmt(inherited)}</strong>
-                {dept ? ` from ${dept.name}` : ' from the organisation default'}
-              </Typography>
-            }
+        <div className="form-check form-switch">
+          <input
+            className="form-check-input"
+            type="checkbox"
+            role="switch"
+            id="tv-inherit-quota"
+            checked={!override}
+            onChange={(e) => setOverride(!e.target.checked)}
           />
+          <label className="form-check-label fs-14" htmlFor="tv-inherit-quota">
+            Use <strong>{fmt(inherited)}</strong>
+            {dept ? ` from ${dept.name}` : ' from the organisation default'}
+          </label>
+        </div>
 
-          <Collapse in={override}>
-            <TextField type="number" label="Storage for this person" value={quotaGb}
-                       onChange={(e) => setQuotaGb(Math.max(1, Number(e.target.value)))}
-                       sx={{ mt: 1.5, width: 240 }}
-                       slotProps={{
-                         input: { endAdornment: <InputAdornment position="end">GB</InputAdornment> },
-                         htmlInput: { min: 1, max: 5000 },
-                       }}
-                       helperText="Applies to this person only" />
-          </Collapse>
-        </Box>
-
-        {dept && !dept.canSendExternal && (
-          <Alert severity="info" sx={{ mt: 2 }}>
-            {dept.name} is internal-only, so this person will be able to email colleagues
-            but not the outside world.
-          </Alert>
+        {/* Plain conditional rendering replaces MUI's Collapse. The animation
+            carried no meaning, and one fewer dependency is worth more. */}
+        {override && (
+          <div style={{ width: 240, marginTop: 12 }}>
+            <Field label="Storage for this person" hint="Applies to this person only">
+              <div className="input-group">
+                <input
+                  type="number"
+                  className="form-control"
+                  min={1}
+                  max={5000}
+                  value={quotaGb}
+                  onChange={(e) => setQuotaGb(Math.max(1, Number(e.target.value)))}
+                />
+                <span className="input-group-text">GB</span>
+              </div>
+            </Field>
+          </div>
         )}
-      </DialogContent>
+      </div>
 
-      <DialogActions sx={{ px: 3, pb: 2.5 }}>
-        <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button variant="primary" onClick={create}
-                disabled={busy || displayName.trim().length < 2 || localPart.length < 1 || !domain}>
-          {busy ? 'Creating…' : 'Create person'}
-        </Button>
-      </DialogActions>
-    </Dialog>
+      {dept && !dept.canSendExternal && (
+        <div className="alert alert-info mt-3 mb-0">
+          {dept.name} is internal-only, so this person will be able to email colleagues
+          but not the outside world.
+        </div>
+      )}
+    </Modal>
   );
 }
 
