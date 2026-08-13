@@ -119,6 +119,11 @@ builder.Services.AddHostedService<MaildirIngestWorker>();
 // readers with no human present: the add-user gate and the quota check.
 builder.Services.AddHostedService<StorageReconcileWorker>();
 
+// Answers Postfix's quota question at RCPT time — the last moment a refusal
+// still leaves the message with the sender. Starts in observe-only mode and
+// refuses nothing until Mail:QuotaEnforcement is set to "enforce".
+builder.Services.AddHostedService<PostfixPolicyWorker>();
+
 builder.Services.AddOpenApi();
 
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
