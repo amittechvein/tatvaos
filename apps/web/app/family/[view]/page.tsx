@@ -23,6 +23,7 @@ import { notFound, useParams, useRouter, useSearchParams } from 'next/navigation
 
 import { FamilyShell, useFamilyChrome } from '@/components/family/FamilyShell';
 import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
+import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 import {
   DuplicateContactError, familyApi, isAutoSaved, sourceLabel,
@@ -804,75 +805,88 @@ function CreateDialog({ groups, onClose, onCreated, onOpenExisting }: {
   };
 
   return (
-    <Dialog open onClose={busy ? undefined : onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Add a contact</DialogTitle>
-      <DialogContent dividers>
-        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+    <Modal
+      title="Add a contact"
+      busy={busy}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button variant="primary" onClick={save} disabled={busy || displayName.trim().length === 0}>
+            {busy ? 'Adding…' : 'Add contact'}
+          </Button>
+        </>
+      }
+    >
+      {error && <div className="alert alert-danger mb-3">{error}</div>}
 
-        {duplicate && (
-          <Alert
-            severity="warning"
-            sx={{ mb: 2 }}
-            action={
-              <Button variant="ghost" onClick={() => onOpenExisting(duplicate.contactId)}>
-                Open it
-              </Button>
-            }
-          >
-            {duplicate.message}
-          </Alert>
-        )}
+      {duplicate && (
+        <div className="alert alert-warning d-flex align-items-center gap-2 mb-3">
+          <div className="flex-fill">{duplicate.message}</div>
+          <Button variant="ghost" onClick={() => onOpenExisting(duplicate.contactId)}>
+            Open it
+          </Button>
+        </div>
+      )}
 
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
-          <TextField
-            label="Name" required autoFocus fullWidth size="small"
-            value={displayName} onChange={(e) => setDisplayName(e.target.value)}
-            helperText="How this person appears in every list"
-          />
-          <Box sx={{ display: 'flex', gap: 2 }}>
-            <TextField label="Company" fullWidth size="small"
-                       value={companyName} onChange={(e) => setCompanyName(e.target.value)} />
-            <TextField label="Job title" fullWidth size="small"
-                       value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
-          </Box>
-          <TextField
-            label="Email" type="email" fullWidth size="small"
-            value={email} onChange={(e) => setEmail(e.target.value)}
-            helperText="Becomes the primary address"
-          />
-          <TextField label="Phone" fullWidth size="small"
-                     value={phone} onChange={(e) => setPhone(e.target.value)} />
+      <Field label="Name" required hint="How this person appears in every list">
+        <input className="form-control" autoFocus value={displayName}
+               onChange={(e) => setDisplayName(e.target.value)} />
+      </Field>
 
-          <TextField
-            select label="Visibility" fullWidth size="small"
-            value={ownership} onChange={(e) => setOwnership(e.target.value as Ownership)}
-            helperText={ownership === 'personal'
-              ? 'Only you can see this contact.'
-              : 'Everyone in your organisation can see this contact. This cannot be undone later.'}
-          >
-            <MenuItem value="personal">Only me</MenuItem>
-            <MenuItem value="organisational">Everyone in my organisation</MenuItem>
-          </TextField>
+      <div className="d-flex gap-3">
+        <div className="flex-fill">
+          <Field label="Company">
+            <input className="form-control" value={companyName}
+                   onChange={(e) => setCompanyName(e.target.value)} />
+          </Field>
+        </div>
+        <div className="flex-fill">
+          <Field label="Job title">
+            <input className="form-control" value={jobTitle}
+                   onChange={(e) => setJobTitle(e.target.value)} />
+          </Field>
+        </div>
+      </div>
 
-          {groups.length > 0 && (
-            <TextField select label="Add to group" fullWidth size="small"
-                       value={groupToJoin} onChange={(e) => setGroupToJoin(e.target.value)}>
-              <MenuItem value="">None</MenuItem>
-              {groups.map((g) => <MenuItem key={g.id} value={g.id}>{g.name}</MenuItem>)}
-            </TextField>
-          )}
+      <Field label="Email" hint="Becomes the primary address">
+        <input className="form-control" type="email" value={email}
+               onChange={(e) => setEmail(e.target.value)} />
+      </Field>
 
-          <TextField label="Notes" fullWidth multiline minRows={2} size="small"
-                     value={notes} onChange={(e) => setNotes(e.target.value)} />
-        </Box>
-      </DialogContent>
-      <DialogActions>
-        <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
-        <Button variant="primary" onClick={save} disabled={busy || displayName.trim().length === 0}>
-          {busy ? 'Adding…' : 'Add contact'}
-        </Button>
-      </DialogActions>
-    </Dialog>
+      <Field label="Phone">
+        <input className="form-control" value={phone}
+               onChange={(e) => setPhone(e.target.value)} />
+      </Field>
+
+      <Field
+        label="Visibility"
+        hint={ownership === 'personal'
+          ? 'Only you can see this contact.'
+          : 'Everyone in your organisation can see this contact. This cannot be undone later.'}
+      >
+        <select className="form-select" value={ownership}
+                onChange={(e) => setOwnership(e.target.value as Ownership)}>
+          <option value="personal">Only me</option>
+          <option value="organisational">Everyone in my organisation</option>
+        </select>
+      </Field>
+
+      {groups.length > 0 && (
+        <Field label="Add to group">
+          <select className="form-select" value={groupToJoin}
+                  onChange={(e) => setGroupToJoin(e.target.value)}>
+            <option value="">None</option>
+            {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+          </select>
+        </Field>
+      )}
+
+      <Field label="Notes">
+        <textarea className="form-control" rows={2} value={notes}
+                  onChange={(e) => setNotes(e.target.value)} />
+      </Field>
+    </Modal>
   );
 }
 
@@ -1142,20 +1156,20 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
 // ---------------------------------------------------------------------------
 
 const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
-  <Box>
-    <Typography variant="subtitle2" sx={{ mb: 1 }}>{title}</Typography>
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>{children}</Box>
-  </Box>
+  <div>
+    <div className="fs-14 fw-semibold mb-2">{title}</div>
+    <div className="d-flex flex-column gap-2">{children}</div>
+  </div>
 );
 
 const Row = ({ children }: { children: React.ReactNode }) => (
-  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
+  <div className="d-flex align-items-center justify-content-between gap-2">
     {children}
-  </Box>
+  </div>
 );
 
 const Muted = ({ children }: { children: React.ReactNode }) => (
-  <Typography variant="body2" color="text.secondary">{children}</Typography>
+  <span className="fs-14 text-muted">{children}</span>
 );
 
 function AddRow({ label, value, onChange, onAdd, busy }: {
@@ -1163,13 +1177,15 @@ function AddRow({ label, value, onChange, onAdd, busy }: {
   onAdd: () => void; busy: boolean;
 }) {
   return (
-    <Box sx={{ display: 'flex', gap: 1 }}>
-      <TextField
-        size="small" fullWidth placeholder={label} value={value}
+    <div className="d-flex gap-2">
+      <input
+        className="form-control form-control-sm"
+        placeholder={label}
+        value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter' && value.trim()) { e.preventDefault(); onAdd(); } }}
       />
       <Button variant="secondary" disabled={busy || value.trim().length === 0} onClick={onAdd}>Add</Button>
-    </Box>
+    </div>
   );
 }
