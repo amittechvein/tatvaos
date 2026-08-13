@@ -63,6 +63,30 @@ export function AppLauncher() {
 
         <div className="grid grid-cols-3 gap-1">
           {consoles.map((p) => <Tile key={p.code} p={p} onNavigate={() => setAnchor(null)} />)}
+
+          {/* Your account sits with the consoles, not the products: it is a
+              place you go to manage yourself rather than a thing you use.
+              It lives here because Mail's own Settings now means MAIL
+              settings, so the personal hub needed a home the launcher could
+              give it — the same place Google puts it. */}
+          <Tile
+            p={{
+              code: 'account',
+              label: 'Account',
+              href: '/account',
+              icon: (
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="8" r="3.5" />
+                  <path d="M5 20c1.3-3.4 3.8-5 7-5s5.7 1.6 7 5" />
+                </svg>
+              ),
+              live: true,
+              colour: '#00cfe8',
+              match: ['/account'],
+            }}
+            onNavigate={() => setAnchor(null)}
+          />
         </div>
       </AnchoredPopover>
     </>

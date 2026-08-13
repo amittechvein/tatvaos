@@ -187,7 +187,14 @@ export function mailNav(): NavSection[] {
     {
       heading: 'Settings',
       items: [
-        { href: '/account', label: 'Settings', icon: <Icon d={PATHS.gear} colour="#00cfe8" /> },
+        // Mail's own settings — signature, and the per-mailbox preferences.
+        // This pointed at /account, which is the PERSONAL hub: password,
+        // devices, the accounts on this browser. Someone in their inbox
+        // looking for "Settings" wants their signature and their filters, the
+        // way Gmail's gear behaves. The personal hub is reachable from the
+        // avatar menu and the app launcher instead.
+        { href: '/mail/settings', label: 'Settings', icon: <Icon d={PATHS.gear} colour="#00cfe8" /> },
+        { href: '/mail/filters', label: 'Filters and blocking', icon: <Icon d={PATHS.junk} colour="#fd4963" /> },
       ],
     },
   ];
