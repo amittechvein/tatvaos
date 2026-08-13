@@ -1,18 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import Alert from '@mui/material/Alert';
-import Box from '@mui/material/Box';
-import CircularProgress from '@mui/material/CircularProgress';
-import Dialog from '@mui/material/Dialog';
-import DialogActions from '@mui/material/DialogActions';
-import DialogContent from '@mui/material/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle';
-import TextField from '@mui/material/TextField';
-import Typography from '@mui/material/Typography';
 
 import { FamilyShell, useFamilyChrome } from '@/components/family/FamilyShell';
 import { Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
+import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 import { familyApi, type LabelSummary } from '@/lib/family';
 
@@ -35,6 +27,9 @@ import { familyApi, type LabelSummary } from '@/lib/family';
 //  A label is a `family.contact_groups` row. Renaming one is a real update
 //  rather than a delete and recreate, because every membership points at the
 //  id and recreating it would silently empty the label.
+//
+//  Converted off MUI onto the Kit Modal, so these dialogs behave like every
+//  other dialog in the console rather than like MUI's.
 // ============================================================================
 
 /**
@@ -108,20 +103,36 @@ function Labels() {
 
   return (
     <>
-      {error && <Alert severity="error" className="mb-4" onClose={() => setError(null)}>{error}</Alert>}
-      {note && <Alert severity="success" className="mb-4" onClose={() => setNote(null)}>{note}</Alert>}
+      {error && (
+        <div className="alert alert-danger d-flex align-items-start mb-4">
+          <div className="flex-fill">{error}</div>
+          <button type="button" className="btn-close" aria-label="Dismiss"
+                  onClick={() => setError(null)} />
+        </div>
+      )}
+      {note && (
+        <div className="alert alert-success d-flex align-items-start mb-4">
+          <div className="flex-fill">{note}</div>
+          <button type="button" className="btn-close" aria-label="Dismiss"
+                  onClick={() => setNote(null)} />
+        </div>
+      )}
 
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+      <p className="fs-14 text-muted mb-3">
         Labels group contacts without moving them. A contact can carry any number, and
         deleting a label never deletes the people in it.
-      </Typography>
+      </p>
 
       <Card
         padded={false}
         actions={<Button variant="primary" onClick={() => setEditing('new')}>New label</Button>}
       >
         {loading ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}><CircularProgress size={30} /></Box>
+          <div className="d-flex justify-content-center py-5">
+            <span className="d-inline-block animate-spin rounded-circle"
+                  style={{ width: 30, height: 30, border: '3px solid rgba(0,0,0,.12)',
+                           borderTopColor: '#03b562' }} />
+          </div>
         ) : rows.length === 0 ? (
           <Empty
             title="No labels yet"
@@ -133,25 +144,21 @@ function Labels() {
             {rows.map((l) => (
               <tr key={l.id}>
                 <Td>
-                  <Box
+                  <span
                     aria-hidden
-                    sx={{
-                      width: 12, height: 12, borderRadius: '50%',
-                      bgcolor: l.colour ?? '#98a2b8',
-                    }}
+                    className="d-inline-block rounded-circle"
+                    style={{ width: 12, height: 12, background: l.colour ?? '#98a2b8' }}
                   />
                 </Td>
                 <Td>
-                  <Typography variant="body2" sx={{ fontWeight: 600 }}>{l.name}</Typography>
+                  <span className="fs-14 fw-semibold">{l.name}</span>
                 </Td>
                 <Td>
-                  <Typography variant="body2" color="text.secondary">
-                    {l.description ?? '—'}
-                  </Typography>
+                  <span className="fs-14 text-muted">{l.description ?? '—'}</span>
                 </Td>
                 <Td>
                   {l.count === 0 ? (
-                    <Typography variant="body2" color="text.secondary">Empty</Typography>
+                    <span className="fs-14 text-muted">Empty</span>
                   ) : (
                     <Button variant="ghost" href={`/family/contacts?groupId=${l.id}`}>
                       {l.count === 1 ? '1 contact' : `${l.count} contacts`}
@@ -159,10 +166,10 @@ function Labels() {
                   )}
                 </Td>
                 <Td>
-                  <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
+                  <div className="d-flex gap-2 justify-content-end">
                     <Button variant="ghost" onClick={() => setEditing(l)}>Rename</Button>
                     <Button variant="ghost" onClick={() => setDeleting(l)}>Delete</Button>
-                  </Box>
+                  </div>
                 </Td>
               </tr>
             ))}
@@ -178,29 +185,34 @@ function Labels() {
         />
       )}
 
-      <Dialog open={deleting !== null} onClose={busy ? undefined : () => setDeleting(null)}
-              maxWidth="xs" fullWidth>
-        <DialogTitle>Delete this label?</DialogTitle>
-        <DialogContent dividers>
-          <Typography variant="body2">
-            {deleting && deleting.count > 0
+      {deleting !== null && (
+        <Modal
+          title="Delete this label?"
+          size="sm"
+          busy={busy}
+          onClose={() => setDeleting(null)}
+          footer={
+            <>
+              <Button variant="ghost" disabled={busy} onClick={() => setDeleting(null)}>Cancel</Button>
+              <Button variant="danger" disabled={busy}
+                      onClick={() => { void remove(deleting); }}>
+                {busy ? 'Deleting…' : 'Delete'}
+              </Button>
+            </>
+          }
+        >
+          <p className="fs-14 mb-0">
+            {deleting.count > 0
               ? `“${deleting.name}” comes off ${deleting.count === 1
                   ? 'one contact' : `${deleting.count} contacts`}. The contacts themselves stay exactly where they are.`
               : 'This label is empty, so nothing else changes.'}
-          </Typography>
-          <Typography variant="body2" sx={{ mt: 1.5 }} color="text.secondary">
+          </p>
+          <p className="fs-14 text-muted mt-3 mb-0">
             There is no undo for the label itself — you would have to create it again and
             re-add the contacts.
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button variant="ghost" disabled={busy} onClick={() => setDeleting(null)}>Cancel</Button>
-          <Button variant="danger" disabled={busy}
-                  onClick={() => { if (deleting) void remove(deleting); }}>
-            {busy ? 'Deleting…' : 'Delete'}
-          </Button>
-        </DialogActions>
-      </Dialog>
+          </p>
+        </Modal>
+      )}
     </>
   );
 }
@@ -249,63 +261,74 @@ function LabelDialog({ label, onClose, onSaved }: {
   };
 
   return (
-    <Dialog open onClose={busy ? undefined : onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>{label ? 'Rename label' : 'New label'}</DialogTitle>
-      <DialogContent dividers>
-        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+    <Modal
+      title={label ? 'Rename label' : 'New label'}
+      size="sm"
+      busy={busy}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button variant="primary" onClick={save} disabled={busy || name.trim().length === 0}>
+            {busy ? 'Saving…' : label ? 'Save' : 'Create label'}
+          </Button>
+        </>
+      }
+    >
+      {error && <div className="alert alert-danger mb-3">{error}</div>}
 
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
-          <TextField
-            label="Name" required autoFocus fullWidth size="small"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && name.trim().length > 0) { e.preventDefault(); void save(); }
-            }}
-            helperText={label
-              ? 'Renaming keeps every contact already in this label.'
-              : 'Names are unique. Suppliers, Dealers, Fair 2026 — whatever you will look for later.'}
-          />
+      <Field
+        label="Name"
+        required
+        hint={label
+          ? 'Renaming keeps every contact already in this label.'
+          : 'Names are unique. Suppliers, Dealers, Fair 2026 — whatever you will look for later.'}
+      >
+        <input
+          className="form-control"
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && name.trim().length > 0) { e.preventDefault(); void save(); }
+          }}
+        />
+      </Field>
 
-          <TextField
-            label="Description" fullWidth size="small"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            helperText="Optional. Only shown on this screen."
-          />
+      <Field label="Description" hint="Optional. Only shown on this screen.">
+        <input
+          className="form-control"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+        />
+      </Field>
 
-          <Box>
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-              Colour — this is the dot in the sidebar
-            </Typography>
-            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-              {COLOURS.map((c) => (
-                <Box
-                  key={c}
-                  role="button"
-                  tabIndex={0}
-                  aria-label={`Use ${c}`}
-                  aria-pressed={colour === c}
-                  onClick={() => setColour(c)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setColour(c); }}
-                  sx={{
-                    width: 28, height: 28, borderRadius: '50%', bgcolor: c, cursor: 'pointer',
-                    outline: colour === c ? '2px solid' : '1px solid',
-                    outlineColor: colour === c ? 'text.primary' : 'divider',
-                    outlineOffset: 2,
-                  }}
-                />
-              ))}
-            </Box>
-          </Box>
-        </Box>
-      </DialogContent>
-      <DialogActions>
-        <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
-        <Button variant="primary" onClick={save} disabled={busy || name.trim().length === 0}>
-          {busy ? 'Saving…' : label ? 'Save' : 'Create label'}
-        </Button>
-      </DialogActions>
-    </Dialog>
+      <div>
+        <div className="fs-12 text-muted mb-2">Colour — this is the dot in the sidebar</div>
+        {/* Real buttons rather than divs with role="button": type="button" keeps
+            them out of the form's submit path, and Space/Enter activation comes
+            from the browser instead of a hand-written key handler. */}
+        <div className="d-flex gap-2 flex-wrap">
+          {COLOURS.map((c) => (
+            <button
+              key={c}
+              type="button"
+              aria-label={`Use ${c}`}
+              aria-pressed={colour === c}
+              onClick={() => setColour(c)}
+              className="rounded-circle border-0 p-0"
+              style={{
+                width: 28,
+                height: 28,
+                background: c,
+                cursor: 'pointer',
+                outline: colour === c ? '2px solid #0a0a0a' : '1px solid #dee2e6',
+                outlineOffset: 2,
+              }}
+            />
+          ))}
+        </div>
+      </div>
+    </Modal>
   );
 }
