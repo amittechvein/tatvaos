@@ -457,6 +457,17 @@ public class StoragePool
     public long TotalBytes { get; set; }
     public long? PerUserQuotaBytes { get; set; }
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    /// <summary>
+    /// The highest warning already emailed: null, "warn" (80%) or "critical"
+    /// (95%). See 23-storage-warnings.sql.
+    ///
+    /// This is what keeps the warning worth reading. Without it the reconcile
+    /// worker would send mail every fifteen minutes for as long as the pool
+    /// stayed above a threshold, and the admin would build a filter for it.
+    /// Cleared when usage drops back below, so a second fill warns again.
+    /// </summary>
+    [MaxLength(16)] public string? WarnedLevel { get; set; }
 }
 
 public class StorageAllocation
