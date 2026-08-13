@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Chip from '@mui/material/Chip';
-import CircularProgress from '@mui/material/CircularProgress';
 import Collapse from '@mui/material/Collapse';
 import Dialog from '@mui/material/Dialog';
 import Divider from '@mui/material/Divider';
@@ -146,15 +145,27 @@ export default function PeoplePage() {
         </Button>
       }
     >
-      {error && <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>{error}</Alert>}
-      {notice && <Alert severity="success" sx={{ mb: 3 }} onClose={() => setNotice(null)}>{notice}</Alert>}
+      {error && (
+        <div className="alert alert-danger d-flex align-items-start mb-3">
+          <div className="flex-fill">{error}</div>
+          <button type="button" className="btn-close" aria-label="Dismiss"
+                  onClick={() => setError(null)} />
+        </div>
+      )}
+      {notice && (
+        <div className="alert alert-success d-flex align-items-start mb-3">
+          <div className="flex-fill">{notice}</div>
+          <button type="button" className="btn-close" aria-label="Dismiss"
+                  onClick={() => setNotice(null)} />
+        </div>
+      )}
 
       {usable.length === 0 && !loading && (
-        <Alert severity="warning" sx={{ mb: 3 }}>
+        <div className="alert alert-warning mb-3">
           No verified domain yet, so mailboxes cannot be created. Add and verify one
           under <strong>Domains</strong> first — people created on an unverified
           domain would have addresses that receive nothing.
-        </Alert>
+        </div>
       )}
 
       <Box sx={{ display: 'flex', gap: 1.5, mb: 3, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -174,7 +185,11 @@ export default function PeoplePage() {
 
       <Card padded={false}>
         {loading ? (
-          <Box sx={{ display: 'grid', placeItems: 'center', py: 8 }}><CircularProgress /></Box>
+          <div className="d-flex justify-content-center py-5">
+            <span className="d-inline-block animate-spin rounded-circle"
+                  style={{ width: 30, height: 30, border: '3px solid rgba(0,0,0,.12)',
+                           borderTopColor: '#03b562' }} />
+          </div>
         ) : filtered.length === 0 ? (
           <Empty
             title={people.length === 0 ? 'Nobody yet' : 'Nobody matches that filter'}
