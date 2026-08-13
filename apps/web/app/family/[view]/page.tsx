@@ -955,36 +955,68 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
   const inGroups = new Set((c?.groups ?? []).map((g) => g.id));
 
   return (
-    <Dialog open onClose={busy ? undefined : onClose} maxWidth="sm" fullWidth>
-      <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-        <span>{c?.displayName ?? 'Contact'}</span>
-        {c && (c.ownershipType === 'organisational'
-          ? <Badge tone="info">Shared</Badge>
-          : <Badge tone="neutral">Mine</Badge>)}
-        {c && isAutoSaved(c.source) && (
-          <Chip label={sourceLabel(c.source)} size="small" variant="outlined" />
-        )}
-      </DialogTitle>
+    // The two confirmations are SIBLINGS of the detail dialog, not children of
+    // it. MUI nested them and stacked its own backdrops; Kit's Modal renders a
+    // fixed overlay, so a nested one would sit inside a container that is
+    // already positioned and inherit the wrong stacking context. Rendering
+    // them alongside keeps each overlay owning the whole viewport.
+    <>
+      <Modal
+        title={c?.displayName ?? 'Contact'}
+        busy={busy}
+        onClose={onClose}
+        footer={
+          <div className="d-flex justify-content-between w-100">
+            <Button variant="ghost" disabled={busy} onClick={() => setConfirmDelete(true)}>Delete</Button>
+            <Button variant="secondary" onClick={onClose} disabled={busy}>Close</Button>
+          </div>
+        }
+      >
+        <div className="d-flex align-items-center gap-2 mb-3">
+          {c && (c.ownershipType === 'organisational'
+            ? <Badge tone="info">Shared</Badge>
+            : <Badge tone="neutral">Mine</Badge>)}
+          {c && isAutoSaved(c.source) && (
+            <span className="badge rounded-pill border text-body-secondary bg-transparent fw-normal">
+              {sourceLabel(c.source)}
+            </span>
+          )}
+        </div>
 
-      <DialogContent dividers>
-        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+        {error && <div className="alert alert-danger mb-3">{error}</div>}
 
         {!c ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', py: 5 }}><CircularProgress size={28} /></Box>
+          <div className="d-flex justify-content-center py-5">
+            <span className="d-inline-block animate-spin rounded-circle"
+                  style={{ width: 28, height: 28, border: '3px solid rgba(0,0,0,.12)',
+                           borderTopColor: '#03b562' }} />
+          </div>
         ) : (
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5, pt: 1 }}>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <TextField label="Name" fullWidth size="small" value={form.displayName}
-                         onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))} />
-              <Box sx={{ display: 'flex', gap: 2 }}>
-                <TextField label="Company" fullWidth size="small" value={form.companyName}
+          <div className="d-flex flex-column gap-3">
+            <div className="d-flex flex-column gap-2">
+              <Field label="Name">
+                <input className="form-control" value={form.displayName}
+                       onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))} />
+              </Field>
+              <div className="d-flex gap-3">
+                <div className="flex-fill">
+                  <Field label="Company">
+                    <input className="form-control" value={form.companyName}
                            onChange={(e) => setForm((f) => ({ ...f, companyName: e.target.value }))} />
-                <TextField label="Job title" fullWidth size="small" value={form.jobTitle}
+                  </Field>
+                </div>
+                <div className="flex-fill">
+                  <Field label="Job title">
+                    <input className="form-control" value={form.jobTitle}
                            onChange={(e) => setForm((f) => ({ ...f, jobTitle: e.target.value }))} />
-              </Box>
-              <TextField label="Notes" fullWidth multiline minRows={2} size="small" value={form.notes}
-                         onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
-              <Box sx={{ display: 'flex', gap: 1 }}>
+                  </Field>
+                </div>
+              </div>
+              <Field label="Notes">
+                <textarea className="form-control" rows={2} value={form.notes}
+                          onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
+              </Field>
+              <div className="d-flex gap-2">
                 <Button
                   variant="primary" disabled={busy || !dirty}
                   onClick={() => run(() => familyApi.patch(authedFetch, id, {
@@ -1002,16 +1034,19 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
                 >
                   {c.isFavourite ? '★ Starred' : '☆ Star'}
                 </Button>
-              </Box>
-            </Box>
+              </div>
+            </div>
 
-            <Divider />
+            <hr className="my-0" />
 
             <Section title="Email addresses">
               {c.emails.length === 0 && <Muted>No addresses.</Muted>}
               {c.emails.map((e) => (
                 <Row key={e.id}>
-                  <span>{e.email}{e.isPrimary && <Chip label="primary" size="small" sx={{ ml: 1 }} />}</span>
+                  <span>
+                    {e.email}
+                    {e.isPrimary && <span className="badge bg-light text-muted ms-2">primary</span>}
+                  </span>
                   <Button variant="ghost" disabled={busy}
                           onClick={() => run(() => familyApi.removeEmail(authedFetch, id, e.id))}>
                     Remove
@@ -1031,7 +1066,10 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
               {c.phones.length === 0 && <Muted>No numbers.</Muted>}
               {c.phones.map((p) => (
                 <Row key={p.id}>
-                  <span>{p.phone}{p.isPrimary && <Chip label="primary" size="small" sx={{ ml: 1 }} />}</span>
+                  <span>
+                    {p.phone}
+                    {p.isPrimary && <span className="badge bg-light text-muted ms-2">primary</span>}
+                  </span>
                   <Button variant="ghost" disabled={busy}
                           onClick={() => run(() => familyApi.removePhone(authedFetch, id, p.id))}>
                     Remove
@@ -1049,105 +1087,114 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
 
             {groups.length > 0 && (
               <Section title="Groups">
-                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
+                {/* Real buttons: these toggle membership on click, so they were
+                    interactive Chips. A span with onClick is not reachable by
+                    keyboard, and MUI's Chip was quietly handling that. */}
+                <div className="d-flex flex-wrap gap-2">
                   {groups.map((g) => {
                     const member = inGroups.has(g.id);
                     return (
-                      <Chip
-                        key={g.id} label={g.name} size="small"
-                        color={member ? 'primary' : 'default'}
-                        variant={member ? 'filled' : 'outlined'}
+                      <button
+                        key={g.id}
+                        type="button"
+                        disabled={busy}
+                        aria-pressed={member}
+                        className={`badge rounded-pill border ${member
+                          ? 'bg-primary text-white border-0'
+                          : 'bg-transparent text-body-secondary'}`}
+                        style={{ cursor: 'pointer', fontWeight: 500 }}
                         onClick={() => run(() => member
                           ? familyApi.removeFromGroup(authedFetch, g.id, id)
                           : familyApi.addToGroup(authedFetch, g.id, id))}
-                      />
+                      >
+                        {g.name}
+                      </button>
                     );
                   })}
-                </Box>
+                </div>
               </Section>
             )}
 
-            <Divider />
+            <hr className="my-0" />
 
-            <Box>
-              <Typography variant="body2" color="text.secondary">
-                {c.interactionCount === 0
-                  ? 'No exchanges recorded.'
-                  : `${c.interactionCount} exchange${c.interactionCount === 1 ? '' : 's'}, most recently ${ago(c.lastContactedAt).toLowerCase()}.`}
-              </Typography>
-            </Box>
+            <p className="fs-14 text-muted mb-0">
+              {c.interactionCount === 0
+                ? 'No exchanges recorded.'
+                : `${c.interactionCount} exchange${c.interactionCount === 1 ? '' : 's'}, most recently ${ago(c.lastContactedAt).toLowerCase()}.`}
+            </p>
 
             {c.ownershipType === 'personal' && (
-              <Alert
-                severity="info"
-                action={<Button variant="ghost" onClick={() => setConfirmShare(true)}>Share</Button>}
-              >
-                Only you can see this contact.
-              </Alert>
+              <div className="alert alert-info d-flex align-items-center gap-2 mb-0">
+                <div className="flex-fill">Only you can see this contact.</div>
+                <Button variant="ghost" onClick={() => setConfirmShare(true)}>Share</Button>
+              </div>
             )}
-          </Box>
+          </div>
         )}
-      </DialogContent>
-
-      <DialogActions sx={{ justifyContent: 'space-between' }}>
-        <Button variant="ghost" disabled={busy} onClick={() => setConfirmDelete(true)}>Delete</Button>
-        <Button variant="secondary" onClick={onClose} disabled={busy}>Close</Button>
-      </DialogActions>
+      </Modal>
 
       {/* Sharing is irreversible, so the dialog says so before, not after. */}
-      <Dialog open={confirmShare} onClose={() => setConfirmShare(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>Share with your organisation?</DialogTitle>
-        <DialogContent dividers>
-          <Typography variant="body2">
+      {confirmShare && (
+        <Modal
+          title="Share with your organisation?"
+          size="sm"
+          onClose={() => setConfirmShare(false)}
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setConfirmShare(false)}>Cancel</Button>
+              <Button
+                variant="primary" disabled={busy}
+                onClick={() => { setConfirmShare(false); void run(
+                  () => familyApi.patch(authedFetch, id, { ownershipType: 'organisational' }),
+                  'Shared with your organisation.',
+                ); }}
+              >
+                Share it
+              </Button>
+            </>
+          }
+        >
+          <p className="fs-14 mb-0">
             Everyone in your organisation will be able to see, edit and use this contact.
-          </Typography>
-          <Typography variant="body2" sx={{ mt: 1.5, fontWeight: 600 }}>
+          </p>
+          <p className="fs-14 fw-semibold mt-3 mb-0">
             This cannot be undone. Making it personal again would mean choosing who owns it,
             and there is no right answer to that — you would have to create a fresh copy.
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button variant="ghost" onClick={() => setConfirmShare(false)}>Cancel</Button>
-          <Button
-            variant="primary" disabled={busy}
-            onClick={() => { setConfirmShare(false); void run(
-              () => familyApi.patch(authedFetch, id, { ownershipType: 'organisational' }),
-              'Shared with your organisation.',
-            ); }}
-          >
-            Share it
-          </Button>
-        </DialogActions>
-      </Dialog>
+          </p>
+        </Modal>
+      )}
 
-      <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>Delete this contact?</DialogTitle>
-        <DialogContent dividers>
-          <Typography variant="body2">
-            It disappears from every list and search.
-          </Typography>
+      {confirmDelete && (
+        <Modal
+          title="Delete this contact?"
+          size="sm"
+          onClose={() => setConfirmDelete(false)}
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setConfirmDelete(false)}>Cancel</Button>
+              <Button
+                variant="primary" disabled={busy}
+                onClick={async () => {
+                  setConfirmDelete(false); setBusy(true);
+                  try { await familyApi.remove(authedFetch, id); onDeleted(); }
+                  catch (e) { setError((e as Error).message); setBusy(false); }
+                }}
+              >
+                Delete
+              </Button>
+            </>
+          }
+        >
+          <p className="fs-14 mb-0">It disappears from every list and search.</p>
           {c && isAutoSaved(c.source) && (
-            <Typography variant="body2" sx={{ mt: 1.5 }}>
+            <p className="fs-14 mt-3 mb-0">
               Because this one was saved automatically, deleting it also stops it coming back —
               the next message from that address will not recreate it.
-            </Typography>
+            </p>
           )}
-        </DialogContent>
-        <DialogActions>
-          <Button variant="ghost" onClick={() => setConfirmDelete(false)}>Cancel</Button>
-          <Button
-            variant="primary" disabled={busy}
-            onClick={async () => {
-              setConfirmDelete(false); setBusy(true);
-              try { await familyApi.remove(authedFetch, id); onDeleted(); }
-              catch (e) { setError((e as Error).message); setBusy(false); }
-            }}
-          >
-            Delete
-          </Button>
-        </DialogActions>
-      </Dialog>
-    </Dialog>
+        </Modal>
+      )}
+    </>
   );
 }
 
