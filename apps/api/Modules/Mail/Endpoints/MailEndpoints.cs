@@ -43,6 +43,228 @@ public static class MailEndpoints
         g.MapDelete("/messages/{id:guid}", DeleteAsync);
         g.MapGet("/messages/{id:guid}/attachments/{attachmentId:guid}", DownloadAttachmentAsync);
         g.MapPost("/send", SendAsync);
+
+        g.MapGet("/blocked", ListBlockedAsync);
+        g.MapPost("/blocked", BlockSenderAsync);
+        g.MapDelete("/blocked/{id:guid}", UnblockSenderAsync);
+
+        g.MapGet("/filters", ListFiltersAsync);
+        g.MapPost("/filters", CreateFilterAsync);
+        g.MapPut("/filters/{id:guid}", UpdateFilterAsync);
+        g.MapDelete("/filters/{id:guid}", DeleteFilterAsync);
+    }
+
+    // ------------------------------------------------------------------
+    //  Blocked senders.
+    //
+    //  Blocking files future mail into Junk at ingest — it never refuses the
+    //  message at SMTP. A rejection would confirm to a spammer that the
+    //  address is live, and would make one person's preference a
+    //  domain-reputation event. Nothing is lost meanwhile, so unblocking takes
+    //  effect on the next message with no gap to reconstruct.
+    // ------------------------------------------------------------------
+    public sealed record BlockRequest(string Address);
+
+    private static async Task<IResult> ListBlockedAsync(
+        AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var box = await OwnMailboxAsync(db, tenant, ct);
+        if (box is null) return Results.Ok(new { blocked = Array.Empty<object>() });
+
+        var blocked = await db.BlockedSenders.AsNoTracking()
+            .Where(x => x.MailboxId == box.Id)
+            .OrderBy(x => x.Address)
+            .Select(x => new { id = x.Id, address = x.Address, createdAt = x.CreatedAt })
+            .ToListAsync(ct);
+
+        return Results.Ok(new { blocked });
+    }
+
+    private static async Task<IResult> BlockSenderAsync(
+        BlockRequest req, AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var box = await OwnMailboxAsync(db, tenant, ct);
+        if (box is null) return Results.BadRequest(new { error = "You have no mailbox." });
+
+        if (!MailboxAddress.TryParse(req.Address?.Trim() ?? "", out var parsed))
+            return Results.BadRequest(new { error = "That is not a valid email address." });
+
+        // Lowercased on write so the ingest worker's check is plain equality.
+        var address = parsed.Address.ToLowerInvariant();
+
+        // Blocking yourself would divert your own Sent-to-self mail and reads
+        // as a bug rather than a choice.
+        if (address == box.Address.ToLowerInvariant())
+            return Results.BadRequest(new { error = "You cannot block your own address." });
+
+        var already = await db.BlockedSenders
+            .FirstOrDefaultAsync(x => x.MailboxId == box.Id && x.Address == address, ct);
+        if (already is not null)
+            // Idempotent: blocking twice is the same state, not an error.
+            return Results.Ok(new { id = already.Id, address = already.Address });
+
+        var row = new BlockedSender
+        {
+            TenantId = box.TenantId,
+            MailboxId = box.Id,
+            Address = address,
+        };
+        db.BlockedSenders.Add(row);
+        await db.SaveChangesAsync(ct);
+
+        return Results.Ok(new { id = row.Id, address = row.Address });
+    }
+
+    private static async Task<IResult> UnblockSenderAsync(
+        Guid id, AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var box = await OwnMailboxAsync(db, tenant, ct);
+        if (box is null) return Results.NotFound();
+
+        var row = await db.BlockedSenders
+            .FirstOrDefaultAsync(x => x.Id == id && x.MailboxId == box.Id, ct);
+        if (row is null) return Results.NotFound();
+
+        db.BlockedSenders.Remove(row);
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(new { unblocked = true });
+    }
+
+    // ------------------------------------------------------------------
+    //  Filter rules.
+    //
+    //  Conditions and actions are validated through MailFilters before they
+    //  are written: the jsonb columns cannot validate themselves, and the
+    //  ingest worker has to be able to trust what it reads.
+    // ------------------------------------------------------------------
+    public sealed record FilterRequest(
+        string Name,
+        bool Enabled,
+        bool MatchAll,
+        int Position,
+        List<MailFilters.Condition> Conditions,
+        MailFilters.Actions Actions);
+
+    private static object ShapeFilter(FilterRule r) => new
+    {
+        id = r.Id,
+        name = r.Name,
+        enabled = r.Enabled,
+        matchAll = r.MatchAll,
+        position = r.Position,
+        conditions = MailFilters.ParseConditions(r.Conditions),
+        actions = MailFilters.ParseActions(r.Actions),
+        createdAt = r.CreatedAt,
+    };
+
+    private static async Task<IResult> ListFiltersAsync(
+        AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var box = await OwnMailboxAsync(db, tenant, ct);
+        if (box is null) return Results.Ok(new { filters = Array.Empty<object>() });
+
+        var rules = await db.FilterRules.AsNoTracking()
+            .Where(r => r.MailboxId == box.Id)
+            .OrderBy(r => r.Position).ThenBy(r => r.CreatedAt)
+            .ToListAsync(ct);
+
+        return Results.Ok(new { filters = rules.Select(ShapeFilter).ToList() });
+    }
+
+    /// <summary>
+    /// Shared by create and update. A move target must be a folder in the
+    /// caller's OWN mailbox — otherwise a rule could file mail into someone
+    /// else's folder by id.
+    /// </summary>
+    private static async Task<string?> ValidateFilterAsync(
+        FilterRequest req, Guid mailboxId, AppDbContext db, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req.Name))
+            return "Give the rule a name so it can be found later.";
+
+        var (_, error) = MailFilters.ValidateConditions(req.Conditions);
+        if (error is not null) return error;
+
+        if (req.Actions is null || req.Actions.IsEmpty)
+            return "A rule needs at least one action, or it does nothing.";
+
+        if (req.Actions.MoveToFolderId is Guid folderId)
+        {
+            var exists = await db.Folders
+                .AnyAsync(f => f.Id == folderId && f.MailboxId == mailboxId, ct);
+            if (!exists) return "That folder does not exist in your mailbox.";
+        }
+
+        return null;
+    }
+
+    private static async Task<IResult> CreateFilterAsync(
+        FilterRequest req, AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var box = await OwnMailboxAsync(db, tenant, ct);
+        if (box is null) return Results.BadRequest(new { error = "You have no mailbox." });
+
+        var error = await ValidateFilterAsync(req, box.Id, db, ct);
+        if (error is not null) return Results.BadRequest(new { error });
+
+        var (conditions, _) = MailFilters.ValidateConditions(req.Conditions);
+
+        var rule = new FilterRule
+        {
+            TenantId = box.TenantId,
+            MailboxId = box.Id,
+            Name = req.Name.Trim(),
+            Enabled = req.Enabled,
+            MatchAll = req.MatchAll,
+            Position = req.Position,
+            Conditions = MailFilters.Serialise(conditions!),
+            Actions = MailFilters.Serialise(req.Actions),
+        };
+
+        db.FilterRules.Add(rule);
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(ShapeFilter(rule));
+    }
+
+    private static async Task<IResult> UpdateFilterAsync(
+        Guid id, FilterRequest req, AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var box = await OwnMailboxAsync(db, tenant, ct);
+        if (box is null) return Results.NotFound();
+
+        var rule = await db.FilterRules
+            .FirstOrDefaultAsync(r => r.Id == id && r.MailboxId == box.Id, ct);
+        if (rule is null) return Results.NotFound();
+
+        var error = await ValidateFilterAsync(req, box.Id, db, ct);
+        if (error is not null) return Results.BadRequest(new { error });
+
+        var (conditions, _) = MailFilters.ValidateConditions(req.Conditions);
+
+        rule.Name = req.Name.Trim();
+        rule.Enabled = req.Enabled;
+        rule.MatchAll = req.MatchAll;
+        rule.Position = req.Position;
+        rule.Conditions = MailFilters.Serialise(conditions!);
+        rule.Actions = MailFilters.Serialise(req.Actions);
+
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(ShapeFilter(rule));
+    }
+
+    private static async Task<IResult> DeleteFilterAsync(
+        Guid id, AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var box = await OwnMailboxAsync(db, tenant, ct);
+        if (box is null) return Results.NotFound();
+
+        var rule = await db.FilterRules
+            .FirstOrDefaultAsync(r => r.Id == id && r.MailboxId == box.Id, ct);
+        if (rule is null) return Results.NotFound();
+
+        db.FilterRules.Remove(rule);
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(new { deleted = true });
     }
 
     // ------------------------------------------------------------------

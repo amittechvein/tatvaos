@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+import { useState } from 'react';
 import { displayName, formatBytes, formatRecipients } from '@tatvaos/core';
 import type { Attachment, Message } from '@tatvaos/types';
 import { Avatar } from '../ui/Avatar';
@@ -50,6 +52,7 @@ export function MessageView({
   onMarkUnread,
   onPrint,
   onDownloadAttachment,
+  onBlockSender,
 }: {
   message: Message;
   bodyLoading?: boolean;
@@ -63,7 +66,14 @@ export function MessageView({
   onMarkUnread: (m: Message) => void;
   onPrint: (m: Message) => void;
   onDownloadAttachment?: (m: Message, a: Attachment) => void;
+  /**
+   * Block this sender. Future mail from the address is filed to Junk at
+   * ingest — never refused at SMTP, which would confirm to a spammer that the
+   * address is live. Absent when the caller has nothing to wire it to.
+   */
+  onBlockSender?: (m: Message) => void;
 }) {
+  const [menu, setMenu] = useState(false);
   return (
     <article className="flex h-full flex-col overflow-hidden rounded-card border border-line bg-surface">
       {/* Toolbar — the open-message action row */}
@@ -78,6 +88,49 @@ export function MessageView({
           <ToolButton icon="reply" label="Reply" onClick={() => onReply(message, 'reply')} />
           <ToolButton icon="reply-all" label="Reply all" onClick={() => onReply(message, 'replyAll')} />
           <ToolButton icon="forward" label="Forward" onClick={() => onReply(message, 'forward')} />
+
+          {/* Sender-level actions. These are deliberately behind a menu rather
+              than another toolbar button: blocking someone is a decision, and a
+              one-click icon next to Reply invites the mis-click. */}
+          <div className="relative">
+            <ToolButton icon="more" label="More" onClick={() => setMenu((v) => !v)} />
+            {menu && (
+              <>
+                {/* Transparent click-away layer, below the menu, above the page. */}
+                <div className="fixed inset-0 z-10" onClick={() => setMenu(false)} aria-hidden="true" />
+                <div
+                  role="menu"
+                  className="absolute right-0 top-full z-20 mt-1 w-64 overflow-hidden rounded-xl border border-line bg-surface py-1.5 text-sm shadow-raised"
+                >
+                  {onBlockSender && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => { onBlockSender(message); setMenu(false); }}
+                      className="block w-full truncate px-4 py-2 text-left text-ink hover:bg-canvas"
+                    >
+                      Block {message.from.email}
+                    </button>
+                  )}
+                  <Link
+                    role="menuitem"
+                    href={`/mail/filters?from=${encodeURIComponent(message.from.email)}`}
+                    className="block w-full px-4 py-2 text-left text-ink hover:bg-canvas"
+                  >
+                    Filter messages like this
+                  </Link>
+                  <div className="my-1 border-t border-line" />
+                  <Link
+                    role="menuitem"
+                    href="/mail/filters"
+                    className="block w-full px-4 py-2 text-left text-ink hover:bg-canvas"
+                  >
+                    Manage filters and blocked senders
+                  </Link>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 

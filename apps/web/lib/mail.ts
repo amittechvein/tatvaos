@@ -45,6 +45,44 @@ export interface SearchPage {
   messages: SearchHit[];
 }
 
+/** An address this mailbox has blocked. Blocked mail is filed to Junk, not refused. */
+export interface BlockedSender {
+  id: string;
+  address: string;
+  createdAt: string;
+}
+
+/** What a filter rule can match on, and what it can do. */
+export type FilterField = 'from' | 'to' | 'subject' | 'body';
+export type FilterOp = 'contains' | 'equals';
+
+export interface FilterCondition {
+  field: FilterField;
+  op: FilterOp;
+  value: string;
+}
+
+export interface FilterActions {
+  /** Null means "leave it where it landed". */
+  moveToFolderId: string | null;
+  markRead: boolean;
+  flag: boolean;
+}
+
+export interface FilterRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  matchAll: boolean;
+  position: number;
+  conditions: FilterCondition[];
+  actions: FilterActions;
+  createdAt: string;
+}
+
+/** A create/update body — everything but the server-owned fields. */
+export type FilterDraft = Omit<FilterRule, 'id' | 'createdAt'>;
+
 async function json<T>(res: Response, fallbackError: string): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -89,6 +127,45 @@ export const mailApi = {
 
   message: (f: AuthedFetch, id: string) =>
     f(`/mail/messages/${id}`).then((r) => json<Message>(r, 'Could not load the message.')),
+
+  /**
+   * Blocked senders. Blocking is a filing rule, not a refusal: future mail from
+   * the address lands in Junk instead of the Inbox, and nothing is lost — so
+   * unblocking takes effect immediately and costs no history.
+   */
+  blocked: (f: AuthedFetch) =>
+    f('/mail/blocked')
+      .then((r) => json<{ blocked: BlockedSender[] }>(r, 'Could not load blocked senders.'))
+      .then((b) => b.blocked),
+
+  blockSender: (f: AuthedFetch, address: string) =>
+    f('/mail/blocked', { method: 'POST', body: JSON.stringify({ address }) })
+      .then((r) => json<{ id: string; address: string }>(r, 'Could not block that sender.')),
+
+  unblockSender: (f: AuthedFetch, id: string) =>
+    f(`/mail/blocked/${id}`, { method: 'DELETE' })
+      .then((r) => json<{ unblocked: boolean }>(r, 'Could not unblock that sender.')),
+
+  /**
+   * Filter rules. Applied by the ingest worker as mail arrives, in position
+   * order — every matching rule runs, so a later move overrides an earlier one.
+   */
+  filters: (f: AuthedFetch) =>
+    f('/mail/filters')
+      .then((r) => json<{ filters: FilterRule[] }>(r, 'Could not load filters.'))
+      .then((b) => b.filters),
+
+  createFilter: (f: AuthedFetch, draft: FilterDraft) =>
+    f('/mail/filters', { method: 'POST', body: JSON.stringify(draft) })
+      .then((r) => json<FilterRule>(r, 'Could not save the filter.')),
+
+  updateFilter: (f: AuthedFetch, id: string, draft: FilterDraft) =>
+    f(`/mail/filters/${id}`, { method: 'PUT', body: JSON.stringify(draft) })
+      .then((r) => json<FilterRule>(r, 'Could not save the filter.')),
+
+  deleteFilter: (f: AuthedFetch, id: string) =>
+    f(`/mail/filters/${id}`, { method: 'DELETE' })
+      .then((r) => json<{ deleted: boolean }>(r, 'Could not delete the filter.')),
 
   setRead: (f: AuthedFetch, id: string, isRead: boolean) =>
     f(`/mail/messages/${id}/read`, { method: 'POST', body: JSON.stringify({ isRead }) }),
