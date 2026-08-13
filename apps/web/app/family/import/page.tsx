@@ -1,16 +1,6 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import Alert from '@mui/material/Alert';
-import Box from '@mui/material/Box';
-import Chip from '@mui/material/Chip';
-import Divider from '@mui/material/Divider';
-import FormControlLabel from '@mui/material/FormControlLabel';
-import LinearProgress from '@mui/material/LinearProgress';
-import MenuItem from '@mui/material/MenuItem';
-import Switch from '@mui/material/Switch';
-import TextField from '@mui/material/TextField';
-import Typography from '@mui/material/Typography';
 
 import { FamilyShell, useFamilyChrome } from '@/components/family/FamilyShell';
 import { Badge, Button, Card, Stat, Table, Td } from '@/components/ui/Kit';
@@ -36,12 +26,40 @@ import {
 //   with the file's name and today's date, because that is the only thing
 //   that turns "undo the import" from an afternoon into two clicks.
 //  ─────────────────────────────────────────────────────────────────────────
+//
+//  Converted off MUI. LinearProgress became Bootstrap's indeterminate striped
+//  bar, and the select/switch controls became native ones — see the note on
+//  Bar below for the one behaviour worth knowing about.
 // ============================================================================
 
 const ACCEPT = '.csv,.vcf,.vcard,.txt,text/csv,text/vcard,text/x-vcard';
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * An indeterminate progress bar.
+ *
+ * Deliberately not a percentage: the server streams the whole file and reports
+ * once at the end, so any number here would be invented. A moving bar says
+ * "working" honestly; a fake percentage that jumps 0 → 100 does not.
+ */
+function Bar() {
+  return (
+    <div className="progress mt-3" style={{ height: 4 }} role="status" aria-label="Working">
+      <div className="progress-bar progress-bar-striped progress-bar-animated w-100" />
+    </div>
+  );
+}
+
+/** A small outlined pill — MUI's Chip variant="outlined". */
+function Pill({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="badge rounded-pill border text-body-secondary bg-transparent fw-normal">
+      {children}
+    </span>
+  );
 }
 
 export default function FamilyImportExportPage() {
@@ -51,7 +69,7 @@ export default function FamilyImportExportPage() {
   return (
     <FamilyShell title="Import and export" breadcrumb="Import and export">
       <ImportPanel />
-      <Box sx={{ height: 24 }} />
+      <div style={{ height: 24 }} />
       <ExportPanel />
     </FamilyShell>
   );
@@ -138,25 +156,29 @@ function ImportPanel() {
       subtitle="From Google Contacts, Outlook, Apple, or a phone backup"
       actions={<Button variant="ghost" href="/family/contacts">Back to contacts</Button>}
     >
-      {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
+      {error && (
+        <div className="alert alert-danger d-flex align-items-start mb-3">
+          <div className="flex-fill">{error}</div>
+          <button type="button" className="btn-close" aria-label="Dismiss"
+                  onClick={() => setError(null)} />
+        </div>
+      )}
 
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2.5 }}>
+      <p className="fs-14 text-muted mb-3">
         CSV or vCard, up to 10 MB and 5,000 contacts in one go. Nothing is written until
         you have seen what the file contains — checking it first is one click and changes
         nothing.
-      </Typography>
+      </p>
 
-      <Box
+      <div
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
           e.preventDefault();
           const dropped = e.dataTransfer.files.item(0);
           if (dropped) chooseFile(dropped);
         }}
-        sx={{
-          border: '1px dashed', borderColor: 'divider', borderRadius: 2,
-          p: 3, textAlign: 'center', mb: 2.5,
-        }}
+        className="rounded text-center mb-3"
+        style={{ border: '1px dashed #dee2e6', padding: 24 }}
       >
         <input
           ref={picker}
@@ -167,77 +189,100 @@ function ImportPanel() {
         />
 
         {file ? (
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'center' }}>
-            <Typography variant="body2" sx={{ fontWeight: 600 }}>{file.name}</Typography>
-            <Typography variant="caption" color="text.secondary">
-              {(file.size / 1024).toFixed(0)} KB
-            </Typography>
-            <Box sx={{ display: 'flex', gap: 1, mt: 0.5 }}>
+          <div className="d-flex flex-column gap-2 align-items-center">
+            <span className="fs-14 fw-semibold">{file.name}</span>
+            <span className="fs-12 text-muted">{(file.size / 1024).toFixed(0)} KB</span>
+            <div className="d-flex gap-2 mt-1">
               <Button variant="ghost" onClick={() => picker.current?.click()}>Choose another</Button>
               <Button variant="ghost" onClick={() => chooseFile(null)}>Remove</Button>
-            </Box>
-          </Box>
+            </div>
+          </div>
         ) : (
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'center' }}>
-            <Typography variant="body2">Drop a file here, or choose one.</Typography>
-            <Typography variant="caption" color="text.secondary">
+          <div className="d-flex flex-column gap-2 align-items-center">
+            <span className="fs-14">Drop a file here, or choose one.</span>
+            <span className="fs-12 text-muted">
               In Google Contacts: Export → Google CSV. In Outlook: File → Open &amp; Export →
               Import/Export → Export to a file → Comma Separated Values.
-            </Typography>
+            </span>
             <Button variant="primary" onClick={() => picker.current?.click()}>Choose a file</Button>
-          </Box>
+          </div>
         )}
-      </Box>
+      </div>
 
-      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 2 }}>
-        <TextField
-          select size="small" label="Who can see them"
-          value={ownership}
-          onChange={(e) => { setOwnership(e.target.value as Ownership); setChecked(null); }}
-          sx={{ minWidth: 220 }}
-          helperText={ownership === 'personal'
-            ? 'Only you.'
-            : 'Everyone in your organisation. This cannot be undone per contact.'}
-        >
-          <MenuItem value="personal">Only me</MenuItem>
-          <MenuItem value="organisational">Everyone in my organisation</MenuItem>
-        </TextField>
+      <div className="d-flex flex-wrap gap-3 mb-3">
+        <div style={{ minWidth: 220 }}>
+          <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-ownership">
+            Who can see them
+          </label>
+          <select
+            id="tv-ownership"
+            className="form-select form-select-sm"
+            value={ownership}
+            onChange={(e) => { setOwnership(e.target.value as Ownership); setChecked(null); }}
+          >
+            <option value="personal">Only me</option>
+            <option value="organisational">Everyone in my organisation</option>
+          </select>
+          <div className="form-text fs-12">
+            {ownership === 'personal'
+              ? 'Only you.'
+              : 'Everyone in your organisation. This cannot be undone per contact.'}
+          </div>
+        </div>
 
-        <TextField
-          select size="small" label="If an address is already saved"
-          value={mode}
-          onChange={(e) => { setMode(e.target.value as 'skip' | 'update'); setChecked(null); }}
-          sx={{ minWidth: 260 }}
-          helperText={mode === 'skip'
-            ? 'Leave the existing contact untouched.'
-            : 'Fill in its blanks and add numbers it does not have. Nothing is overwritten.'}
-        >
-          <MenuItem value="skip">Skip that row</MenuItem>
-          <MenuItem value="update">Fill in what is missing</MenuItem>
-        </TextField>
+        <div style={{ minWidth: 260 }}>
+          <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-dupe-mode">
+            If an address is already saved
+          </label>
+          <select
+            id="tv-dupe-mode"
+            className="form-select form-select-sm"
+            value={mode}
+            onChange={(e) => { setMode(e.target.value as 'skip' | 'update'); setChecked(null); }}
+          >
+            <option value="skip">Skip that row</option>
+            <option value="update">Fill in what is missing</option>
+          </select>
+          <div className="form-text fs-12">
+            {mode === 'skip'
+              ? 'Leave the existing contact untouched.'
+              : 'Fill in its blanks and add numbers it does not have. Nothing is overwritten.'}
+          </div>
+        </div>
 
-        <TextField
-          size="small" label="Tag every contact with"
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          sx={{ minWidth: 260 }}
-          helperText="Leave it set. It is how you undo this import in one go."
+        <div style={{ minWidth: 260 }}>
+          <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-import-label">
+            Tag every contact with
+          </label>
+          <input
+            id="tv-import-label"
+            className="form-control form-control-sm"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+          />
+          <div className="form-text fs-12">
+            Leave it set. It is how you undo this import in one go.
+          </div>
+        </div>
+      </div>
+
+      <div className="form-check form-switch mb-2">
+        <input
+          className="form-check-input"
+          type="checkbox"
+          role="switch"
+          id="tv-create-labels"
+          checked={createLabels}
+          onChange={(e) => setCreateLabels(e.target.checked)}
         />
-      </Box>
+        <label className="form-check-label fs-14" htmlFor="tv-create-labels">
+          Also create the labels the file names, such as Google groups
+        </label>
+      </div>
 
-      <FormControlLabel
-        control={<Switch checked={createLabels} onChange={(e) => setCreateLabels(e.target.checked)} />}
-        label={
-          <Typography variant="body2">
-            Also create the labels the file names, such as Google groups
-          </Typography>
-        }
-        sx={{ mb: 1 }}
-      />
+      <hr className="my-3" />
 
-      <Divider sx={{ my: 2 }} />
-
-      <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
+      <div className="d-flex gap-2 align-items-center flex-wrap">
         <Button variant="secondary" disabled={!file || busy !== null} onClick={check}>
           {busy === 'check' ? 'Checking…' : 'Check the file'}
         </Button>
@@ -249,13 +294,13 @@ function ImportPanel() {
               : 'Import'}
         </Button>
         {pending === null && file && !done && (
-          <Typography variant="caption" color="text.secondary">
+          <span className="fs-12 text-muted">
             Check the file first — the import button turns on once you have seen the report.
-          </Typography>
+          </span>
         )}
-      </Box>
+      </div>
 
-      {busy !== null && <LinearProgress sx={{ mt: 2 }} />}
+      {busy !== null && <Bar />}
 
       {report && <Report report={report} live={done !== null} label={label.trim()} />}
     </Card>
@@ -272,66 +317,71 @@ function Report({ report, live, label }: {
   label: string;
 }) {
   return (
-    <Box sx={{ mt: 3 }}>
-      <Divider sx={{ mb: 2.5 }} />
+    <div className="mt-4">
+      <hr className="mb-3" />
 
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
-        <Typography variant="subtitle2">
+      <div className="d-flex align-items-center gap-2 mb-3 flex-wrap">
+        <span className="fs-14 fw-semibold">
           {live ? 'Imported' : 'This is what would happen'}
-        </Typography>
+        </span>
         <Badge tone={live ? 'ok' : 'info'}>{live ? 'Done' : 'Nothing written yet'}</Badge>
-        <Chip size="small" variant="outlined"
-              label={report.format === 'vcard' ? 'vCard' : 'CSV'} />
-      </Box>
+        <Pill>{report.format === 'vcard' ? 'vCard' : 'CSV'}</Pill>
+      </div>
 
-      <Box sx={{
-        display: 'grid', gap: 2, mb: 2.5,
-        gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
-      }}>
-        <Stat label="Rows in the file" value={String(report.rowsRead)} tone="info" />
-        <Stat label={live ? 'Added' : 'Would be added'} value={String(report.created)} tone="success" />
-        <Stat label={live ? 'Filled in' : 'Would be filled in'} value={String(report.updated)} tone="primary" />
-        <Stat label="Skipped" value={String(report.skipped)}
-              tone={report.skipped > 0 ? 'warning' : 'primary'} />
-      </Box>
+      {/* row/col rather than an auto-fit grid: YZEN's .grid collides with
+          Tailwind's, and an arbitrary minmax() template would flatten. */}
+      <div className="row g-3 mb-3">
+        <div className="col-6 col-md-3">
+          <Stat label="Rows in the file" value={String(report.rowsRead)} tone="info" />
+        </div>
+        <div className="col-6 col-md-3">
+          <Stat label={live ? 'Added' : 'Would be added'} value={String(report.created)} tone="success" />
+        </div>
+        <div className="col-6 col-md-3">
+          <Stat label={live ? 'Filled in' : 'Would be filled in'} value={String(report.updated)} tone="primary" />
+        </div>
+        <div className="col-6 col-md-3">
+          <Stat label="Skipped" value={String(report.skipped)}
+                tone={report.skipped > 0 ? 'warning' : 'primary'} />
+        </div>
+      </div>
 
       {report.warnings.map((w) => (
-        <Alert key={w} severity="warning" sx={{ mb: 1.5 }}>{w}</Alert>
+        <div key={w} className="alert alert-warning py-2 mb-2">{w}</div>
       ))}
 
       {live && report.created + report.updated > 0 && (
-        <Alert severity="success" sx={{ mb: 2 }}>
+        <div className="alert alert-success mb-3">
           {label
             ? <>Everything from this file carries the label <strong>{label}</strong>. If it went
                wrong, open that label from the sidebar and delete what is in it.</>
             : <>These contacts were not tagged with a label, so there is no quick way to undo
                the import. Next time, leave the tag field filled in.</>}
-        </Alert>
+        </div>
       )}
 
       {!live && report.sample.length > 0 && (
-        <Box sx={{ mb: 2.5 }}>
-          <Typography variant="subtitle2" sx={{ mb: 1 }}>
-            The first few that would be added
-          </Typography>
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
-            {report.sample.map((s) => <Chip key={s} label={s} size="small" variant="outlined" />)}
+        <div className="mb-3">
+          <div className="fs-14 fw-semibold mb-2">The first few that would be added</div>
+          <div className="d-flex flex-wrap gap-1">
+            {report.sample.map((s) => <Pill key={s}>{s}</Pill>)}
             {report.created > report.sample.length && (
-              <Chip size="small"
-                    label={`and ${report.created - report.sample.length} more`} />
+              <span className="badge rounded-pill bg-light text-muted fw-normal">
+                and {report.created - report.sample.length} more
+              </span>
             )}
-          </Box>
-        </Box>
+          </div>
+        </div>
       )}
 
       {report.problems.length > 0 && (
-        <Box>
-          <Typography variant="subtitle2" sx={{ mb: 1 }}>
+        <div>
+          <div className="fs-14 fw-semibold mb-2">
             {plural(report.skipped, 'row')} not imported
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+          </div>
+          <p className="fs-14 text-muted mb-3">
             Every one of these is listed with a reason. Nothing was dropped quietly.
-          </Typography>
+          </p>
 
           <Table head={['Row', 'Name', 'Address', 'Why']}>
             {report.problems.map((p) => (
@@ -345,13 +395,13 @@ function Report({ report, live, label }: {
           </Table>
 
           {report.problemsTruncated && (
-            <Typography variant="caption" color="text.secondary">
+            <span className="fs-12 text-muted">
               Only the first 500 are listed. The counts above are complete.
-            </Typography>
+            </span>
           )}
-        </Box>
+        </div>
       )}
-    </Box>
+    </div>
   );
 }
 
@@ -394,52 +444,72 @@ function ExportPanel() {
       title="Export contacts"
       subtitle="Everything you can see, in a file Google and Apple will read"
     >
-      {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
-      {note && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setNote(null)}>{note}</Alert>}
+      {error && (
+        <div className="alert alert-danger d-flex align-items-start mb-3">
+          <div className="flex-fill">{error}</div>
+          <button type="button" className="btn-close" aria-label="Dismiss"
+                  onClick={() => setError(null)} />
+        </div>
+      )}
+      {note && (
+        <div className="alert alert-success d-flex align-items-start mb-3">
+          <div className="flex-fill">{note}</div>
+          <button type="button" className="btn-close" aria-label="Dismiss"
+                  onClick={() => setNote(null)} />
+        </div>
+      )}
 
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2.5 }}>
+      <p className="fs-14 text-muted mb-3">
         No cap and no gate. An address book you cannot get out of is one you should not
         put anything important into.
-      </Typography>
+      </p>
 
-      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'flex-start' }}>
-        <TextField
-          select size="small" label="What to export"
-          value={scope} onChange={(e) => setScope(e.target.value)}
-          sx={{ minWidth: 260 }}
-        >
-          <MenuItem value="all">Everything I can see</MenuItem>
-          <MenuItem value="personal">Only my own contacts</MenuItem>
-          <MenuItem value="organisational">Only the shared directory</MenuItem>
-          <MenuItem value="favourite">Only starred</MenuItem>
-          {labels.map((l) => (
-            <MenuItem key={l.id} value={`label:${l.id}`}>Label: {l.name}</MenuItem>
-          ))}
-        </TextField>
+      <div className="d-flex flex-wrap gap-3 align-items-start">
+        <div style={{ minWidth: 260 }}>
+          <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-export-scope">
+            What to export
+          </label>
+          <select id="tv-export-scope" className="form-select form-select-sm"
+                  value={scope} onChange={(e) => setScope(e.target.value)}>
+            <option value="all">Everything I can see</option>
+            <option value="personal">Only my own contacts</option>
+            <option value="organisational">Only the shared directory</option>
+            <option value="favourite">Only starred</option>
+            {labels.map((l) => (
+              <option key={l.id} value={`label:${l.id}`}>Label: {l.name}</option>
+            ))}
+          </select>
+        </div>
 
-        <TextField
-          select size="small" label="Format"
-          value={format} onChange={(e) => setFormat(e.target.value as 'csv' | 'vcf')}
-          sx={{ minWidth: 220 }}
-          helperText={format === 'csv'
-            ? 'Opens in Excel; imports into Google Contacts.'
-            : 'One card per person; imports into iPhone and Android.'}
-        >
-          <MenuItem value="csv">CSV</MenuItem>
-          <MenuItem value="vcf">vCard</MenuItem>
-        </TextField>
+        <div style={{ minWidth: 220 }}>
+          <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-export-format">
+            Format
+          </label>
+          <select id="tv-export-format" className="form-select form-select-sm"
+                  value={format} onChange={(e) => setFormat(e.target.value as 'csv' | 'vcf')}>
+            <option value="csv">CSV</option>
+            <option value="vcf">vCard</option>
+          </select>
+          <div className="form-text fs-12">
+            {format === 'csv'
+              ? 'Opens in Excel; imports into Google Contacts.'
+              : 'One card per person; imports into iPhone and Android.'}
+          </div>
+        </div>
 
-        <Button variant="primary" disabled={busy} onClick={download}>
-          {busy ? 'Preparing…' : 'Download'}
-        </Button>
-      </Box>
+        <div style={{ paddingTop: 26 }}>
+          <Button variant="primary" disabled={busy} onClick={download}>
+            {busy ? 'Preparing…' : 'Download'}
+          </Button>
+        </div>
+      </div>
 
-      {busy && <LinearProgress sx={{ mt: 2 }} />}
+      {busy && <Bar />}
 
-      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
+      <p className="fs-12 text-muted mt-3 mb-0">
         Photos and birthdays are not in the file yet — neither is stored.
         Deleted contacts are never exported.
-      </Typography>
+      </p>
     </Card>
   );
 }
