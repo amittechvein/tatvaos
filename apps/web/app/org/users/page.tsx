@@ -21,6 +21,7 @@ import { alpha } from '@mui/material/styles';
 
 import { AdminShell } from '@/components/admin/AdminShell';
 import { Badge, Button, Card, Empty, Meter, Table, Td, statusTone } from '@/components/ui/Kit';
+import { Modal } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 import { UserPhoto } from '@/components/ui/UserPhoto';
 import { PhotoPicker } from '@/components/ui/PhotoPicker';
@@ -361,43 +362,49 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
 
   if (created) {
     return (
-      <Dialog open onClose={() => onCreated(`${created.email} created.`)} maxWidth="sm" fullWidth>
-        <DialogTitle>{created.email} is ready</DialogTitle>
-        <DialogContent>
-          {photoWarning && (
-            <Typography variant="body2" sx={{ mb: 2, color: 'warning.main' }}>
-              {photoWarning} You can add it from their profile.
-            </Typography>
-          )}
-          <Alert severity="warning" sx={{ mb: 2.5 }}>
-            This password is shown once and cannot be retrieved later. Copy it now —
-            if it is lost, reset it rather than asking us for it.
-          </Alert>
-          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-            <Box sx={{ flex: 1, p: 1.5, borderRadius: 1.5, fontFamily: 'monospace',
-                       fontSize: 15, bgcolor: 'background.default' }}>
-              {created.password}
-            </Box>
-            <Tooltip title="Copy">
-              <IconButton onClick={() => void navigator.clipboard.writeText(created.password)}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                     strokeWidth="1.8" strokeLinecap="round">
-                  <rect x="9" y="9" width="12" height="12" rx="2" />
-                  <path d="M5 15V5a2 2 0 012-2h10" />
-                </svg>
-              </IconButton>
-            </Tooltip>
-          </Box>
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
-            They will be asked to change it when they first sign in.
-          </Typography>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+      <Modal
+        title={`${created.email} is ready`}
+        onClose={() => onCreated(`${created.email} created.`)}
+        footer={
           <Button variant="primary" onClick={() => onCreated(`${created.email} created.`)}>
             Done
           </Button>
-        </DialogActions>
-      </Dialog>
+        }
+      >
+        {photoWarning && (
+          <p className="fs-14 text-warning mb-3">
+            {photoWarning} You can add it from their profile.
+          </p>
+        )}
+        <div className="alert alert-warning mb-3">
+          This password is shown once and cannot be retrieved later. Copy it now —
+          if it is lost, reset it rather than asking us for it.
+        </div>
+        <div className="d-flex gap-2 align-items-center">
+          <div className="flex-fill font-monospace bg-light rounded"
+               style={{ padding: 12, fontSize: 15 }}>
+            {created.password}
+          </div>
+          {/* title= replaces MUI's Tooltip: no library needed for one hint,
+              and the native tooltip is keyboard-reachable for free. */}
+          <button
+            type="button"
+            className="btn btn-light btn-icon"
+            title="Copy"
+            aria-label="Copy password"
+            onClick={() => void navigator.clipboard.writeText(created.password)}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 strokeWidth="1.8" strokeLinecap="round">
+              <rect x="9" y="9" width="12" height="12" rx="2" />
+              <path d="M5 15V5a2 2 0 012-2h10" />
+            </svg>
+          </button>
+        </div>
+        <p className="fs-12 text-muted mt-3 mb-0">
+          They will be asked to change it when they first sign in.
+        </p>
+      </Modal>
     );
   }
 
