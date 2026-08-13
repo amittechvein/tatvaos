@@ -6,10 +6,6 @@ import Box from '@mui/material/Box';
 import Checkbox from '@mui/material/Checkbox';
 import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
-import Dialog from '@mui/material/Dialog';
-import DialogActions from '@mui/material/DialogActions';
-import DialogContent from '@mui/material/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle';
 import Divider from '@mui/material/Divider';
 import IconButton from '@mui/material/IconButton';
 import InputAdornment from '@mui/material/InputAdornment';
@@ -713,38 +709,45 @@ export default function FamilyViewPage() {
         )}
       </Menu>
 
-      <Dialog
-        open={newLabel !== null}
-        onClose={bulkBusy ? undefined : () => setNewLabel(null)}
-        maxWidth="xs" fullWidth
-      >
-        <DialogTitle>New label</DialogTitle>
-        <DialogContent dividers>
-          <TextField
-            autoFocus fullWidth size="small" label="Name" sx={{ mt: 1 }}
-            value={newLabel ?? ''}
-            onChange={(e) => setNewLabel(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && (newLabel ?? '').trim().length > 0) {
-                e.preventDefault();
-                void createAndApply((newLabel ?? '').trim());
-              }
-            }}
-            helperText={`It will be created and put on ${
+      {newLabel !== null && (
+        <Modal
+          title="New label"
+          size="sm"
+          busy={bulkBusy}
+          onClose={() => setNewLabel(null)}
+          footer={
+            <>
+              <Button variant="ghost" disabled={bulkBusy} onClick={() => setNewLabel(null)}>Cancel</Button>
+              <Button
+                variant="primary"
+                disabled={bulkBusy || (newLabel ?? '').trim().length === 0}
+                onClick={() => void createAndApply((newLabel ?? '').trim())}
+              >
+                {bulkBusy ? 'Creating…' : 'Create and apply'}
+              </Button>
+            </>
+          }
+        >
+          <Field
+            label="Name"
+            hint={`It will be created and put on ${
               selectionCount === 1 ? 'this contact' : `these ${selectionCount} contacts`}.`}
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button variant="ghost" disabled={bulkBusy} onClick={() => setNewLabel(null)}>Cancel</Button>
-          <Button
-            variant="primary"
-            disabled={bulkBusy || (newLabel ?? '').trim().length === 0}
-            onClick={() => void createAndApply((newLabel ?? '').trim())}
           >
-            {bulkBusy ? 'Creating…' : 'Create and apply'}
-          </Button>
-        </DialogActions>
-      </Dialog>
+            <input
+              className="form-control"
+              autoFocus
+              value={newLabel ?? ''}
+              onChange={(e) => setNewLabel(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (newLabel ?? '').trim().length > 0) {
+                  e.preventDefault();
+                  void createAndApply((newLabel ?? '').trim());
+                }
+              }}
+            />
+          </Field>
+        </Modal>
+      )}
     </FamilyShell>
   );
 }
