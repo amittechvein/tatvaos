@@ -160,6 +160,18 @@ export const mailApi = {
     return f(`/mail/search?${params}`).then((r) => json<SearchPage>(r, 'Could not search your mail.'));
   },
 
+  /**
+   * Every message in one conversation, oldest first.
+   *
+   * Rows are the same shape as a search hit, folder included: a thread
+   * legitimately spans Inbox and Sent, so a row has to be able to say which
+   * one it is in. `total` is the untruncated count - a very long thread is
+   * capped server-side, and the strip should say so rather than just stop.
+   */
+  thread: (f: AuthedFetch, threadId: string) =>
+    f(`/mail/threads/${threadId}/messages`)
+      .then((r) => json<SearchPage>(r, 'Could not load this conversation.')),
+
   message: (f: AuthedFetch, id: string) =>
     f(`/mail/messages/${id}`).then((r) => json<Message>(r, 'Could not load the message.')),
 

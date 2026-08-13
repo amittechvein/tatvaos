@@ -36,6 +36,7 @@ public static class MailEndpoints
         g.MapGet("/folders", FoldersAsync);
         g.MapGet("/folders/{folderId:guid}/messages", ListMessagesAsync);
         g.MapGet("/search", SearchAsync);
+        g.MapGet("/threads/{threadId:guid}/messages", ThreadAsync);
         g.MapGet("/messages/{id:guid}", GetMessageAsync);
         g.MapPost("/messages/{id:guid}/read", SetReadAsync);
         g.MapPost("/messages/{id:guid}/flag", SetFlagAsync);
@@ -656,6 +657,93 @@ public static class MailEndpoints
                 folderId = m.FolderId,
                 folderName = folderNames.TryGetValue(m.FolderId, out var f) ? f.name : null,
                 folderSlug = folderNames.TryGetValue(m.FolderId, out var f2) ? f2.slug : null,
+                threadId = m.ThreadId,
+                from = new { name = m.FromName, email = m.FromAddr ?? "" },
+                to = (m.ToAddrs ?? []).Select(a => new { name = (string?)null, email = a }).ToList(),
+                cc = (m.CcAddrs ?? []).Select(a => new { name = (string?)null, email = a }).ToList(),
+                subject = m.Subject ?? "",
+                snippet = m.Snippet ?? "",
+                sentAt = m.SentAt ?? m.ReceivedAt,
+                receivedAt = m.ReceivedAt,
+                sizeBytes = m.SizeBytes,
+                isRead = m.IsRead,
+                isFlagged = m.IsFlagged,
+                hasAttachments = m.HasAttachments,
+            }).ToList(),
+        });
+    }
+
+    // ------------------------------------------------------------------
+    //  Conversation - every message in one thread, oldest first.
+    //
+    //  Rows carry the SAME shape as a search hit, folder included. A thread
+    //  legitimately spans Inbox and Sent, and now that the Sent copy is
+    //  threaded on send, the strip has to be able to say which side of the
+    //  exchange each message sits on.
+    //
+    //  Trash is excluded. Somebody who deleted a message expects it gone from
+    //  the views they use, and the conversation strip is one of those. It is
+    //  still in Trash and still in search: this hides it, it does not lose it.
+    // ------------------------------------------------------------------
+    private static async Task<IResult> ThreadAsync(
+        Guid threadId, AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var box = await OwnMailboxAsync(db, tenant, ct);
+        // A thread id belonging to somebody else is not an error worth
+        // reporting; it is a conversation this mailbox does not have.
+        if (box is null)
+            return Results.Ok(new { total = 0, messages = Array.Empty<object>() });
+
+        var query = db.Messages.AsNoTracking()
+            .Where(m => m.MailboxId == box.Id && m.ThreadId == threadId);
+
+        var trash = await db.Folders.AsNoTracking()
+            .Where(f => f.MailboxId == box.Id && f.SpecialUse == "\\Trash")
+            .Select(f => f.Id)
+            .FirstOrDefaultAsync(ct);
+        // Guid.Empty means this mailbox has no Trash folder. The comparison is
+        // guarded rather than inlined because "folder_id <> NULL" is NULL in
+        // SQL, which would silently return an empty conversation every time.
+        if (trash != Guid.Empty)
+            query = query.Where(m => m.FolderId != trash);
+
+        var total = await query.CountAsync(ct);
+
+        // Capped, and the cap is VISIBLE: total comes back alongside, so a
+        // long conversation can say what it is not showing instead of just
+        // appearing to end.
+        const int MaxInThread = 200;
+
+        var rows = await query
+            .OrderBy(m => m.SentAt ?? m.ReceivedAt)
+            .Take(MaxInThread)
+            .Select(m => new
+            {
+                m.Id, m.FolderId, m.ThreadId, m.FromName, m.FromAddr, m.ToAddrs,
+                m.CcAddrs, m.Subject, m.Snippet, m.SentAt, m.ReceivedAt,
+                m.SizeBytes, m.IsRead, m.IsFlagged, m.HasAttachments,
+            })
+            .ToListAsync(ct);
+
+        // One query for the folder labels, not one per row - same approach as
+        // the search endpoint, which this deliberately mirrors.
+        var folderIds = rows.Select(r => r.FolderId).Distinct().ToList();
+        var folders = await db.Folders.AsNoTracking()
+            .Where(f => folderIds.Contains(f.Id))
+            .ToDictionaryAsync(
+                f => f.Id,
+                f => new { name = f.SpecialUse == "\\Inbox" ? "Inbox" : f.Name, slug = SlugFor(f.SpecialUse) },
+                ct);
+
+        return Results.Ok(new
+        {
+            total,
+            messages = rows.Select(m => new
+            {
+                id = m.Id,
+                folderId = m.FolderId,
+                folderName = folders.TryGetValue(m.FolderId, out var f) ? f.name : null,
+                folderSlug = folders.TryGetValue(m.FolderId, out var f2) ? f2.slug : null,
                 threadId = m.ThreadId,
                 from = new { name = m.FromName, email = m.FromAddr ?? "" },
                 to = (m.ToAddrs ?? []).Select(a => new { name = (string?)null, email = a }).ToList(),
