@@ -1,10 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import Box from '@mui/material/Box';
-import Paper from '@mui/material/Paper';
-import Popper from '@mui/material/Popper';
-import Typography from '@mui/material/Typography';
 
 import { useAuth } from '@/lib/auth';
 import { familyApi } from '@/lib/family';
@@ -21,6 +17,13 @@ import { familyApi } from '@/lib/family';
  *  its validation — so mail still sends when Family is unavailable, which is
  *  the only acceptable failure mode for a compose box.
  * ─────────────────────────────────────────────────────────────────────────
+ *
+ *  CONVERTED OFF MUI. Popper did the positioning; this measures the anchor and
+ *  places a fixed-position list itself. Two reasons it is fixed rather than
+ *  absolute: the composer is a docked, transformed container, so an absolutely
+ *  positioned child would be clipped by its overflow — and wrapping the input
+ *  in a relative container would change the composer's own flex layout, which
+ *  this component exists to avoid touching.
  */
 
 interface Suggestion {
@@ -58,6 +61,7 @@ export function ContactPicker({ value, onPick, children }: {
   const [items, setItems] = useState<Suggestion[]>([]);
   const [active, setActive] = useState(0);
   const [open, setOpen] = useState(false);
+  const [box, setBox] = useState<{ top: number; left: number; width: number } | null>(null);
 
   const fragment = currentFragment(value);
 
@@ -85,6 +89,28 @@ export function ContactPicker({ value, onPick, children }: {
     return () => clearTimeout(t);
   }, [authedFetch, fragment]);
 
+  // Measure the input and follow it. Scroll is captured (third argument true)
+  // so the list tracks the composer's own scrolling container, not just the
+  // window — otherwise it detaches and floats over unrelated content.
+  useEffect(() => {
+    if (!open || items.length === 0) { setBox(null); return; }
+    const el = anchor.current;
+    if (!el) return;
+
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      setBox({ top: r.bottom + 4, left: r.left, width: r.width });
+    };
+
+    measure();
+    window.addEventListener('resize', measure);
+    window.addEventListener('scroll', measure, true);
+    return () => {
+      window.removeEventListener('resize', measure);
+      window.removeEventListener('scroll', measure, true);
+    };
+  }, [open, items.length]);
+
   const choose = useCallback((s: Suggestion) => {
     onPick(replaceFragment(value, s.email));
     setOpen(false);
@@ -105,36 +131,52 @@ export function ContactPicker({ value, onPick, children }: {
   return (
     <>
       {children(anchor, onKeyDown)}
-      <Popper
-        open={open && items.length > 0}
-        anchorEl={anchor.current}
-        placement="bottom-start"
-        style={{ zIndex: 1400 }}
-      >
-        <Paper elevation={6} sx={{ minWidth: 320, maxWidth: 460, py: 0.5 }}>
+      {open && items.length > 0 && box && (
+        // list-unstyled is not decoration: Tailwind's preflight is off, so a
+        // bare <ul> keeps the browser's bullets and 40px indent.
+        //
+        // z-index 1400 clears the composer, which sits at 1200. Tailwind's
+        // scale stops at 50 and would put this behind the shell chrome.
+        <ul
+          className="list-unstyled bg-white rounded shadow m-0 py-1 border"
+          style={{
+            position: 'fixed',
+            top: box.top,
+            left: box.left,
+            minWidth: Math.max(320, box.width),
+            maxWidth: 460,
+            maxHeight: 280,
+            overflowY: 'auto',
+            zIndex: 1400,
+          }}
+          role="listbox"
+        >
           {items.map((s, i) => (
-            <Box
+            <li
               key={`${s.id}-${s.email}`}
+              role="option"
+              aria-selected={i === active}
+              // mousedown, not click: the input would blur first and the
+              // composer would close the list before the click landed.
               onMouseDown={(e) => { e.preventDefault(); choose(s); }}
               onMouseEnter={() => setActive(i)}
-              sx={{
-                px: 1.5, py: 0.75, cursor: 'pointer',
-                bgcolor: i === active ? 'action.hover' : 'transparent',
+              style={{
+                padding: '6px 12px',
+                cursor: 'pointer',
+                background: i === active ? 'rgba(0,0,0,0.05)' : 'transparent',
               }}
             >
-              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+              <div className="fs-14 fw-semibold">
                 {s.displayName}
                 {s.isColleague && (
-                  <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1 }}>
-                    colleague
-                  </Typography>
+                  <span className="fs-12 fw-normal text-muted ms-2">colleague</span>
                 )}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">{s.email}</Typography>
-            </Box>
+              </div>
+              <div className="fs-12 text-muted">{s.email}</div>
+            </li>
           ))}
-        </Paper>
-      </Popper>
+        </ul>
+      )}
     </>
   );
 }
