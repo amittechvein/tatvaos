@@ -3,21 +3,6 @@
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
-import Alert from '@mui/material/Alert';
-import Box from '@mui/material/Box';
-import Button from '@mui/material/Button';
-import Checkbox from '@mui/material/Checkbox';
-import Chip from '@mui/material/Chip';
-import FormControlLabel from '@mui/material/FormControlLabel';
-import MenuItem from '@mui/material/MenuItem';
-import Tab from '@mui/material/Tab';
-import Tabs from '@mui/material/Tabs';
-import IconButton from '@mui/material/IconButton';
-import InputAdornment from '@mui/material/InputAdornment';
-import Stack from '@mui/material/Stack';
-import TextField from '@mui/material/TextField';
-import Typography from '@mui/material/Typography';
-import { alpha } from '@mui/material/styles';
 
 import { useAuth } from '@/lib/auth';
 import { homeFor } from '@/components/RequireAuth';
@@ -37,7 +22,18 @@ import { homeFor } from '@/components/RequireAuth';
 //  It collapses on small screens. On a phone, someone signing in wants the
 //  form, and a marketing panel above it means scrolling past your own product
 //  to use it.
+//
+//  ---------------------------------------------------------------------------
+//  CONVERTED OFF MUI. Layout is flex and Bootstrap utilities, never Tailwind's
+//  grid — YZEN ships a colliding 12-column `.grid`, and arbitrary values are
+//  silently flattened. Tailwind's preflight is off, so inputs and lists carry
+//  explicit classes rather than relying on a reset that is not there.
 // ============================================================================
+
+/** The brand ramp, fixed here now that MUI's palette has gone. */
+const BRAND_DARK = '#0a8a4b';
+const BRAND = '#03b562';
+const BRAND_LIGHT = '#35d68c';
 
 const CAPABILITIES = [
   {
@@ -185,309 +181,346 @@ function SignInForm() {
     }
   }
 
+  const TABS: { id: 'email' | 'otp' | 'qr'; label: string; disabled?: boolean }[] = [
+    { id: 'email', label: 'Email' },
+    { id: 'otp', label: 'Mobile OTP' },
+    { id: 'qr', label: 'QR code', disabled: true },
+  ];
+
   return (
     // minHeight AND height: the panel is a fixed-height column that manages
     // its own overflow, so the page itself should not scroll on a laptop.
-    <Box sx={{ display: 'flex', minHeight: '100vh', height: { lg: '100vh' },
-               overflow: { lg: 'hidden' }, bgcolor: 'background.paper' }}>
+    <div className="d-flex bg-white login-shell" style={{ minHeight: '100vh' }}>
       {/* ---------------------------------------------------------------- */}
       {/*  Left: what this is                                              */}
       {/* ---------------------------------------------------------------- */}
-      <Box
-        sx={{
-          display: { xs: 'none', lg: 'flex' },
-          flexDirection: 'column',
+      <div
+        className="d-none d-lg-flex flex-column position-relative text-white"
+        style={{
           width: '54%',
           // Tighter padding and a scroll container, because the panel has to
           // survive a 660px-tall laptop viewport. Without this the roadmap —
           // the one part that answers "what else is coming" — falls below the
           // fold, which is the only part of the panel that cannot be inferred
           // from the rest.
-          px: { lg: 5, xl: 7 },
-          py: { lg: 4.5, xl: 6 },
-          position: 'relative',
+          padding: '36px 40px',
           overflow: 'hidden',
           maxHeight: '100vh',
-          color: '#fff',
-          background: (t) =>
-            `linear-gradient(135deg, ${t.palette.primary.dark} 0%, ${t.palette.primary.main} 55%, ${t.palette.primary.light} 100%)`,
+          background: `linear-gradient(135deg, ${BRAND_DARK} 0%, ${BRAND} 55%, ${BRAND_LIGHT} 100%)`,
         }}
       >
         {/* Two soft discs, to stop a flat gradient reading as a placeholder.
-            Cheaper than an illustration and it recolours with the theme. */}
-        <Box aria-hidden sx={{ position: 'absolute', width: 480, height: 480, borderRadius: '50%',
-          top: -160, right: -140, bgcolor: alpha('#fff', 0.07) }} />
-        <Box aria-hidden sx={{ position: 'absolute', width: 320, height: 320, borderRadius: '50%',
-          bottom: -110, left: -80, bgcolor: alpha('#fff', 0.05) }} />
+            Cheaper than an illustration. */}
+        <div aria-hidden className="position-absolute rounded-circle"
+             style={{ width: 480, height: 480, top: -160, right: -140, background: 'rgba(255,255,255,0.07)' }} />
+        <div aria-hidden className="position-absolute rounded-circle"
+             style={{ width: 320, height: 320, bottom: -110, left: -80, background: 'rgba(255,255,255,0.05)' }} />
 
-        <Box sx={{ position: 'relative', display: 'flex', flexDirection: 'column', height: '100%' }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.75 }}>
-            <Box sx={{ width: 44, height: 44, borderRadius: 2.5, display: 'grid',
-                       placeItems: 'center', fontWeight: 700, fontSize: 20,
-                       bgcolor: alpha('#fff', 0.18),
-                       border: `1px solid ${alpha('#fff', 0.25)}` }}>
+        <div className="position-relative d-flex flex-column h-100">
+          <div className="d-flex align-items-center gap-3">
+            <span
+              className="d-grid"
+              style={{
+                width: 44, height: 44, borderRadius: 12, placeItems: 'center',
+                fontWeight: 700, fontSize: 20,
+                background: 'rgba(255,255,255,0.18)',
+                border: '1px solid rgba(255,255,255,0.25)',
+              }}
+            >
               T
-            </Box>
-            <Box>
-              <Typography sx={{ fontWeight: 700, fontSize: 22, lineHeight: 1.15,
-                                letterSpacing: '0.01em' }}>
-                TatvaOS <Box component="span" sx={{ opacity: 0.7, fontWeight: 400 }}>Core</Box>
-              </Typography>
-              <Typography sx={{ fontSize: 12.5, opacity: 0.72, letterSpacing: '0.04em' }}>
+            </span>
+            <span>
+              <span className="d-block" style={{ fontWeight: 700, fontSize: 22, lineHeight: 1.15,
+                                                 letterSpacing: '0.01em' }}>
+                TatvaOS <span style={{ opacity: 0.7, fontWeight: 400 }}>Core</span>
+              </span>
+              <span className="d-block" style={{ fontSize: 12.5, opacity: 0.72, letterSpacing: '0.04em' }}>
                 by Techvein
-              </Typography>
-            </Box>
-          </Box>
+              </span>
+            </span>
+          </div>
 
-          <Typography sx={{ mt: { lg: 4, xl: 6 }, fontSize: { lg: 30, xl: 34 }, fontWeight: 600,
-                            lineHeight: 1.2, maxWidth: 520, letterSpacing: '-0.02em' }}>
+          <p className="mb-0" style={{ marginTop: 32, fontSize: 30, fontWeight: 600,
+                                       lineHeight: 1.2, maxWidth: 520, letterSpacing: '-0.02em' }}>
             One identity.<br />Every product.
-          </Typography>
+          </p>
 
-          <Typography sx={{ mt: 1.75, fontSize: 15, opacity: 0.82, maxWidth: 500, lineHeight: 1.6 }}>
+          <p className="mb-0" style={{ marginTop: 14, fontSize: 15, opacity: 0.82,
+                                       maxWidth: 500, lineHeight: 1.6 }}>
             Core is the layer your organisation runs on — people, domains, storage
             and billing in one place. Products plug into it.
-          </Typography>
+          </p>
 
-          <Stack spacing={{ lg: 2.25, xl: 3 }} sx={{ mt: { lg: 3.5, xl: 5 }, maxWidth: 520 }}>
+          <div className="d-flex flex-column gap-3" style={{ marginTop: 28, maxWidth: 520 }}>
             {CAPABILITIES.map((c) => (
-              <Box key={c.title} sx={{ display: 'flex', gap: 2 }}>
-                <Box sx={{ width: 38, height: 38, borderRadius: 2, flexShrink: 0,
-                           display: 'grid', placeItems: 'center',
-                           bgcolor: alpha('#fff', 0.14) }}>
+              <div key={c.title} className="d-flex gap-3">
+                <span
+                  className="d-grid flex-shrink-0"
+                  style={{
+                    width: 38, height: 38, borderRadius: 10, placeItems: 'center',
+                    background: 'rgba(255,255,255,0.14)',
+                  }}
+                >
                   <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                        strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
                     <path d={c.d} />
                   </svg>
-                </Box>
-                <Box>
-                  <Typography sx={{ fontWeight: 600, fontSize: 15 }}>{c.title}</Typography>
-                  <Typography sx={{ fontSize: 13.5, opacity: 0.76, lineHeight: 1.6, mt: 0.25 }}>
+                </span>
+                <span>
+                  <span className="d-block" style={{ fontWeight: 600, fontSize: 15 }}>{c.title}</span>
+                  <span className="d-block" style={{ fontSize: 13.5, opacity: 0.76,
+                                                     lineHeight: 1.6, marginTop: 2 }}>
                     {c.body}
-                  </Typography>
-                </Box>
-              </Box>
+                  </span>
+                </span>
+              </div>
             ))}
-          </Stack>
+          </div>
 
           {/* The roadmap, stated rather than implied. Shipped and not-yet are
               visibly different — promising six products and delivering one is
               how a platform loses the customer it just won. */}
-          <Box sx={{ mt: 'auto', pt: { lg: 3.5, xl: 6 } }}>
-            <Typography sx={{ fontSize: 11.5, fontWeight: 600, letterSpacing: '0.09em',
-                              textTransform: 'uppercase', opacity: 0.62, mb: 1.5 }}>
+          <div className="mt-auto" style={{ paddingTop: 28 }}>
+            <p className="mb-2" style={{ fontSize: 11.5, fontWeight: 600, letterSpacing: '0.09em',
+                                         textTransform: 'uppercase', opacity: 0.62 }}>
               Products
-            </Typography>
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+            </p>
+            <div className="d-flex flex-wrap gap-2">
               {ROADMAP.map((p) => (
-                <Chip
+                <span
                   key={p.label}
-                  size="small"
-                  label={p.live ? p.label : `${p.label} · soon`}
-                  sx={{
+                  className="badge rounded-pill"
+                  style={{
                     fontWeight: 500,
                     color: '#fff',
-                    bgcolor: alpha('#fff', p.live ? 0.24 : 0.08),
-                    border: `1px solid ${alpha('#fff', p.live ? 0.35 : 0.16)}`,
+                    background: `rgba(255,255,255,${p.live ? 0.24 : 0.08})`,
+                    border: `1px solid rgba(255,255,255,${p.live ? 0.35 : 0.16})`,
                     opacity: p.live ? 1 : 0.7,
                   }}
-                />
+                >
+                  {p.live ? p.label : `${p.label} · soon`}
+                </span>
               ))}
-            </Box>
-          </Box>
-        </Box>
-      </Box>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* ---------------------------------------------------------------- */}
       {/*  Right: the form                                                 */}
       {/* ---------------------------------------------------------------- */}
-      <Box sx={{ flex: 1, display: 'grid', placeItems: 'center', p: { xs: 3, sm: 6 } }}>
-        <Box sx={{ width: '100%', maxWidth: 400 }}>
+      <div className="flex-fill d-grid p-4 p-sm-5" style={{ placeItems: 'center' }}>
+        <div className="w-100" style={{ maxWidth: 400 }}>
           {/* Brand repeats on small screens, where the left panel is hidden
               and the page would otherwise be an unlabelled password prompt. */}
-          <Box sx={{ display: { xs: 'flex', lg: 'none' }, alignItems: 'center',
-                     gap: 1.5, mb: 5 }}>
-            <Box sx={{ width: 40, height: 40, borderRadius: 2, display: 'grid',
-                       placeItems: 'center', color: '#fff', fontWeight: 700, fontSize: 18,
-                       background: (t) => `linear-gradient(72deg, ${t.palette.primary.main}, ${t.palette.primary.light})` }}>
+          <div className="d-flex d-lg-none align-items-center gap-2 mb-5">
+            <span
+              className="d-grid text-white"
+              style={{
+                width: 40, height: 40, borderRadius: 10, placeItems: 'center',
+                fontWeight: 700, fontSize: 18,
+                background: `linear-gradient(72deg, ${BRAND}, ${BRAND_LIGHT})`,
+              }}
+            >
               T
-            </Box>
-            <Typography variant="h5" sx={{ fontWeight: 700 }}>
-              TatvaOS <Box component="span" sx={{ color: 'text.disabled', fontWeight: 400 }}>Core</Box>
-            </Typography>
-          </Box>
+            </span>
+            <span style={{ fontSize: 22, fontWeight: 700 }}>
+              TatvaOS <span className="text-muted" style={{ fontWeight: 400 }}>Core</span>
+            </span>
+          </div>
 
-          <Typography variant="h4" sx={{ mb: 0.75 }}>Welcome back</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2.5 }}>
-            Sign in to administer your organisation.
-          </Typography>
+          <h1 className="mb-1" style={{ fontSize: 28, fontWeight: 600 }}>Welcome back</h1>
+          <p className="fs-14 text-muted mb-3">Sign in to administer your organisation.</p>
 
           {/* Three ways in, the way every Indian bank lays them out — the
               audience already knows this screen by heart. QR needs the mobile
               app to scan with; until that ships it is visibly coming rather
               than quietly missing. */}
-          <Tabs value={tab} onChange={(_, v) => { setTab(v); setError(null); }}
-                sx={{ mb: 3, minHeight: 40,
-                      '& .MuiTab-root': { minHeight: 40, textTransform: 'none',
-                                          fontWeight: 600, fontSize: 14 } }}>
-            <Tab value="email" label="Email" />
-            <Tab value="otp" label="Mobile OTP" />
-            <Tab value="qr" label="QR code" disabled />
-          </Tabs>
+          <ul className="nav nav-tabs mb-4" role="tablist">
+            {TABS.map((t) => (
+              <li key={t.id} className="nav-item" role="presentation">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === t.id}
+                  disabled={t.disabled}
+                  className={`nav-link fs-14 fw-semibold ${tab === t.id ? 'active' : ''} ${t.disabled ? 'disabled' : ''}`}
+                  onClick={() => { setTab(t.id); setError(null); }}
+                >
+                  {t.label}
+                </button>
+              </li>
+            ))}
+          </ul>
 
-          {error && <Alert severity="error" sx={{ mb: 2.5 }}>{error}</Alert>}
+          {error && <div className="alert alert-danger mb-3">{error}</div>}
 
           {tab === 'otp' && (
-          <Box component="form" onSubmit={submitOtp} noValidate>
-            <TextField
-              fullWidth
-              label="Mobile number"
-              type="tel"
-              autoComplete="tel"
-              required
-              placeholder="+91 98765 43210"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              disabled={otpSent}
-              sx={{ mb: 2.5 }}
-            />
-
-            {!otpSent ? (
-              <Button fullWidth variant="contained" size="large"
-                      disabled={busy || phone.trim().length < 8}
-                      onClick={() => void sendOtp()}>
-                {busy ? 'Sending…' : 'Send code'}
-              </Button>
-            ) : (
-              <>
-                <Alert severity="info" sx={{ mb: 2.5 }}>
-                  If this number is registered, a 6-digit code is on its way.
-                  It works for 5 minutes.
-                </Alert>
-                {devCode && (
-                  <Alert severity="warning" sx={{ mb: 2.5 }}>
-                    Testing mode — SMS is not configured, so the code is shown
-                    here: <strong>{devCode}</strong>
-                  </Alert>
-                )}
-                <TextField
-                  fullWidth
-                  label="6-digit code"
+            <form onSubmit={submitOtp} noValidate>
+              <div className="mb-3">
+                <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-phone">
+                  Mobile number <span className="text-danger">*</span>
+                </label>
+                <input
+                  id="tv-phone"
+                  className="form-control"
+                  type="tel"
+                  autoComplete="tel"
                   required
-                  autoFocus
-                  value={otpCode}
-                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  slotProps={{ htmlInput: { inputMode: 'numeric', maxLength: 6 } }}
-                  sx={{ mb: 2.5 }}
+                  placeholder="+91 98765 43210"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  disabled={otpSent}
                 />
-                <Button type="submit" fullWidth variant="contained" size="large"
-                        disabled={busy || otpCode.length !== 6}>
-                  {busy ? 'Signing in…' : 'Sign in'}
-                </Button>
-                <Button fullWidth variant="text" size="small" sx={{ mt: 1.5 }}
-                        disabled={busy || resendIn > 0}
+              </div>
+
+              {!otpSent ? (
+                <button type="button" className="btn btn-primary btn-lg w-100"
+                        disabled={busy || phone.trim().length < 8}
                         onClick={() => void sendOtp()}>
-                  {resendIn > 0 ? `Resend in ${resendIn}s` : 'Resend code'}
-                </Button>
-              </>
-            )}
-          </Box>
+                  {busy ? 'Sending…' : 'Send code'}
+                </button>
+              ) : (
+                <>
+                  <div className="alert alert-info mb-3">
+                    If this number is registered, a 6-digit code is on its way.
+                    It works for 5 minutes.
+                  </div>
+                  {devCode && (
+                    <div className="alert alert-warning mb-3">
+                      On-screen codes are switched on and the SMS did not go out,
+                      so the code is shown here: <strong>{devCode}</strong>
+                    </div>
+                  )}
+                  <div className="mb-3">
+                    <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-otp">
+                      6-digit code <span className="text-danger">*</span>
+                    </label>
+                    <input
+                      id="tv-otp"
+                      className="form-control"
+                      required
+                      autoFocus
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={otpCode}
+                      onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    />
+                  </div>
+                  <button type="submit" className="btn btn-primary btn-lg w-100"
+                          disabled={busy || otpCode.length !== 6}>
+                    {busy ? 'Signing in…' : 'Sign in'}
+                  </button>
+                  <button type="button" className="btn btn-link btn-sm w-100 mt-2"
+                          disabled={busy || resendIn > 0}
+                          onClick={() => void sendOtp()}>
+                    {resendIn > 0 ? `Resend in ${resendIn}s` : 'Resend code'}
+                  </button>
+                </>
+              )}
+            </form>
           )}
 
           {tab === 'email' && (
-          <Box component="form" onSubmit={submit} noValidate>
-            <TextField
-              fullWidth
-              label="Email address"
-              type="email"
-              autoComplete="username"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              sx={{ mb: 2.5 }}
-            />
+            <form onSubmit={submit} noValidate>
+              <div className="mb-3">
+                <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-email">
+                  Email address <span className="text-danger">*</span>
+                </label>
+                <input
+                  id="tv-email"
+                  className="form-control"
+                  type="email"
+                  autoComplete="username"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+              </div>
 
-            <TextField
-              fullWidth
-              label="Password"
-              type={reveal ? 'text' : 'password'}
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              slotProps={{
-                input: {
-                  endAdornment: (
-                    <InputAdornment position="end">
-                      {/* A reveal toggle reduces failed attempts on long
-                          passwords, and this account locks after five. */}
-                      <IconButton
-                        onClick={() => setReveal((v) => !v)}
-                        edge="end"
-                        size="small"
-                        aria-label={reveal ? 'Hide password' : 'Show password'}
-                      >
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-                             stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                          <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z" />
-                          <circle cx="12" cy="12" r="3" />
-                          {!reveal && <path d="M4 20L20 4" />}
-                        </svg>
-                      </IconButton>
-                    </InputAdornment>
-                  ),
-                },
-              }}
-            />
+              <div className="mb-2">
+                <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-password">
+                  Password <span className="text-danger">*</span>
+                </label>
+                <div className="input-group">
+                  <input
+                    id="tv-password"
+                    className="form-control"
+                    type={reveal ? 'text' : 'password'}
+                    autoComplete="current-password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                  {/* A reveal toggle reduces failed attempts on long
+                      passwords, and this account locks after five. */}
+                  <button
+                    type="button"
+                    className="btn btn-outline-secondary"
+                    onClick={() => setReveal((v) => !v)}
+                    aria-label={reveal ? 'Hide password' : 'Show password'}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                      <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z" />
+                      <circle cx="12" cy="12" r="3" />
+                      {!reveal && <path d="M4 20L20 4" />}
+                    </svg>
+                  </button>
+                </div>
+              </div>
 
-            <FormControlLabel
-              sx={{ mt: 1 }}
-              control={<Checkbox size="small" checked={remember}
-                                onChange={(e) => setRemember(e.target.checked)} />}
-              label={<Typography variant="body2">Remember my email on this device</Typography>}
-            />
+              <div className="form-check mt-2">
+                <input
+                  className="form-check-input"
+                  type="checkbox"
+                  id="tv-remember"
+                  checked={remember}
+                  onChange={(e) => setRemember(e.target.checked)}
+                />
+                <label className="form-check-label fs-14" htmlFor="tv-remember">
+                  Remember my email on this device
+                </label>
+              </div>
 
-            <Button
-              type="submit"
-              fullWidth
-              variant="contained"
-              size="large"
-              disabled={busy || !email || !password}
-              sx={{ mt: 2.5 }}
-            >
-              {busy ? 'Signing in…' : 'Sign in'}
-            </Button>
+              <button type="submit" className="btn btn-primary btn-lg w-100 mt-3"
+                      disabled={busy || !email || !password}>
+                {busy ? 'Signing in…' : 'Sign in'}
+              </button>
 
-            {/* Anonymous recovery. The mobile-code route works today; the
-                emailed link depends on outbound SMTP being unblocked. */}
-            <p className="mt-4 text-center text-sm">
-              <Link href="/forgot-password" className="text-brand-600 hover:underline">
-                Forgot password?
-              </Link>
-            </p>
-          </Box>
+              {/* Anonymous recovery. The mobile-code route works today; the
+                  emailed link depends on outbound SMTP being unblocked. */}
+              <p className="text-center fs-14 mt-4 mb-0">
+                <Link href="/forgot-password" className="text-decoration-none" style={{ color: BRAND }}>
+                  Forgot password?
+                </Link>
+              </p>
+            </form>
           )}
 
           {/* Outside the tabs: applies to whichever way you sign in. */}
-          <TextField
-            select fullWidth size="small" label="Start in" value={startIn}
-            onChange={(e) => setStartIn(e.target.value as 'default' | 'mail')}
-            sx={{ mt: 3 }}
-            helperText="Where you land after signing in"
-          >
-            <MenuItem value="default">Dashboard</MenuItem>
-            <MenuItem value="mail">Mail inbox</MenuItem>
-          </TextField>
+          <div className="mt-4">
+            <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-startin">Start in</label>
+            <select
+              id="tv-startin"
+              className="form-select form-select-sm"
+              value={startIn}
+              onChange={(e) => setStartIn(e.target.value as 'default' | 'mail')}
+            >
+              <option value="default">Dashboard</option>
+              <option value="mail">Mail inbox</option>
+            </select>
+            <div className="form-text fs-12">Where you land after signing in</div>
+          </div>
 
-          <Typography variant="caption" color="text.disabled"
-                      sx={{ display: 'block', mt: 4, lineHeight: 1.7 }}>
+          <p className="fs-12 text-muted mt-4 mb-0" style={{ lineHeight: 1.7 }}>
             Forgotten your password? Your organisation&apos;s administrator can reset
             it. Techvein staff cannot read your mail — administrative access never
             implies access to contents.
-          </Typography>
-        </Box>
-      </Box>
-    </Box>
+          </p>
+        </div>
+      </div>
+    </div>
   );
 }
 
