@@ -118,6 +118,16 @@ export interface FilterRule {
 /** A create/update body — everything but the server-owned fields. */
 export type FilterDraft = Omit<FilterRule, 'id' | 'createdAt'>;
 
+/**
+ * A person you can address inside your own organisation, as offered by the
+ * composer's "@" picker. Mailboxes only: somebody with a Core account but no
+ * mail product has no address worth suggesting.
+ */
+export interface DirectoryPerson {
+  email: string;
+  name: string;
+}
+
 async function json<T>(res: Response, fallbackError: string): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -162,6 +172,18 @@ export const mailApi = {
 
   message: (f: AuthedFetch, id: string) =>
     f(`/mail/messages/${id}`).then((r) => json<Message>(r, 'Could not load the message.')),
+
+  /**
+   * Recipient suggestions for the composer's "@" picker.
+   *
+   * Server-side rather than filtering a list held in the browser: the client
+   * never has to hold the whole organisation, and a company that grows does
+   * not mean shipping a longer list of its people into every page load.
+   */
+  directory: (f: AuthedFetch, q: string) =>
+    f(`/mail/directory?q=${encodeURIComponent(q)}`)
+      .then((r) => json<{ people: DirectoryPerson[] }>(r, 'Could not load your directory.'))
+      .then((b) => b.people),
 
   /**
    * Drafts. A draft is a message in the Drafts folder, so it appears there and
