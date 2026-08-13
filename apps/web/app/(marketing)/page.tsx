@@ -3,17 +3,6 @@
 import Link from 'next/link';
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import AppBar from '@mui/material/AppBar';
-import Box from '@mui/material/Box';
-import Button from '@mui/material/Button';
-import Card from '@mui/material/Card';
-import CardContent from '@mui/material/CardContent';
-import Chip from '@mui/material/Chip';
-import Container from '@mui/material/Container';
-import Divider from '@mui/material/Divider';
-import Toolbar from '@mui/material/Toolbar';
-import Typography from '@mui/material/Typography';
-import { alpha } from '@mui/material/styles';
 
 import { useAuth } from '@/lib/auth';
 import { homeFor } from '@/components/RequireAuth';
@@ -30,7 +19,18 @@ import { homeFor } from '@/components/RequireAuth';
 //  Written for one reader: an administrator at an Indian school, clinic or small
 //  business who is currently paying for Google Workspace or using free Gmail
 //  with their domain, and is not certain those are the same thing.
+//
+//  ---------------------------------------------------------------------------
+//  CONVERTED OFF MUI. Bootstrap's container/row/col replaces Container and the
+//  sx grids — YZEN ships a colliding `.grid`, and arbitrary Tailwind values
+//  like grid-cols-[repeat(4,1fr)] flatten to one column without warning.
+//  Tailwind's preflight is off, so nothing here relies on a normalised default.
 // ============================================================================
+
+/** The brand ramp, fixed here now that MUI's palette has gone. */
+const BRAND_DARK = '#0a8a4b';
+const BRAND = '#03b562';
+const BRAND_LIGHT = '#35d68c';
 
 const PILLARS = [
   {
@@ -73,185 +73,199 @@ export default function Landing() {
   }, [loading, user, router]);
 
   return (
-    <Box sx={{ bgcolor: 'background.paper' }}>
+    <div className="bg-white">
       {/* ---------------------------------------------------------------- */}
-      <AppBar position="sticky" elevation={0}
-              sx={{ bgcolor: (t) => alpha(t.palette.background.paper, 0.9),
-                    backdropFilter: 'blur(8px)', color: 'text.primary',
-                    borderBottom: '1px solid', borderColor: 'divider' }}>
-        <Container maxWidth="lg">
-          <Toolbar disableGutters sx={{ gap: 2 }}>
+      <header
+        className="position-sticky top-0 border-bottom"
+        style={{ background: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(8px)', zIndex: 20 }}
+      >
+        <div className="container py-2">
+          <div className="d-flex align-items-center gap-3">
             <Brand />
-            <Box sx={{ ml: 'auto', display: 'flex', gap: 1.5, alignItems: 'center' }}>
-              <Button component={Link} href="/login" color="inherit">Sign in</Button>
-              <Button component={Link} href="/signup" variant="contained">Get started</Button>
-            </Box>
-          </Toolbar>
-        </Container>
-      </AppBar>
+            <div className="ms-auto d-flex gap-2 align-items-center">
+              <Link href="/login" className="btn btn-link text-body text-decoration-none">Sign in</Link>
+              <Link href="/signup" className="btn btn-primary">Get started</Link>
+            </div>
+          </div>
+        </div>
+      </header>
 
       {/* ---------------------------------------------------------------- */}
-      <Box sx={{ position: 'relative', overflow: 'hidden', color: '#fff',
-                 background: (t) => `linear-gradient(135deg, ${t.palette.primary.dark} 0%, ${t.palette.primary.main} 55%, ${t.palette.primary.light} 100%)` }}>
-        <Box aria-hidden sx={{ position: 'absolute', width: 620, height: 620, borderRadius: '50%',
-          top: -260, right: -180, bgcolor: alpha('#fff', 0.07) }} />
-        <Box aria-hidden sx={{ position: 'absolute', width: 380, height: 380, borderRadius: '50%',
-          bottom: -180, left: -120, bgcolor: alpha('#fff', 0.05) }} />
+      <section
+        className="position-relative text-white"
+        style={{
+          overflow: 'hidden',
+          background: `linear-gradient(135deg, ${BRAND_DARK} 0%, ${BRAND} 55%, ${BRAND_LIGHT} 100%)`,
+        }}
+      >
+        <div aria-hidden className="position-absolute rounded-circle"
+             style={{ width: 620, height: 620, top: -260, right: -180, background: 'rgba(255,255,255,0.07)' }} />
+        <div aria-hidden className="position-absolute rounded-circle"
+             style={{ width: 380, height: 380, bottom: -180, left: -120, background: 'rgba(255,255,255,0.05)' }} />
 
-        <Container maxWidth="lg" sx={{ position: 'relative', py: { xs: 8, md: 13 } }}>
-          <Chip label="TatvaOS Core · by Techvein" size="small"
-                sx={{ mb: 3, color: '#fff', bgcolor: alpha('#fff', 0.16),
-                      border: `1px solid ${alpha('#fff', 0.24)}` }} />
+        <div className="container position-relative py-5" style={{ paddingTop: 80, paddingBottom: 80 }}>
+          <span
+            className="badge rounded-pill mb-4"
+            style={{
+              color: '#fff', background: 'rgba(255,255,255,0.16)',
+              border: '1px solid rgba(255,255,255,0.24)', fontWeight: 500,
+            }}
+          >
+            TatvaOS Core · by Techvein
+          </span>
 
-          <Typography component="h1"
-                      sx={{ fontSize: { xs: 38, sm: 52, md: 62 }, fontWeight: 600,
-                            lineHeight: 1.08, letterSpacing: '-0.03em', maxWidth: 860 }}>
+          <h1 className="mb-0" style={{ fontSize: 'clamp(38px, 6vw, 62px)', fontWeight: 600,
+                                        lineHeight: 1.08, letterSpacing: '-0.03em', maxWidth: 860 }}>
             One identity.<br />Every product.
-          </Typography>
+          </h1>
 
-          <Typography sx={{ mt: 3, fontSize: { xs: 16, md: 19 }, opacity: 0.86,
-                            maxWidth: 640, lineHeight: 1.6 }}>
+          <p className="mb-0" style={{ marginTop: 24, fontSize: 'clamp(16px, 2vw, 19px)',
+                                       opacity: 0.86, maxWidth: 640, lineHeight: 1.6 }}>
             Business email and identity for Indian organisations. Your people,
             domains, storage and billing in one place — with products that plug
             into it rather than sitting beside it.
-          </Typography>
+          </p>
 
-          <Box sx={{ mt: 5, display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-            <Button component={Link} href="/signup" size="large"
-                    sx={{ bgcolor: '#fff', color: 'primary.main', px: 4,
-                          '&:hover': { bgcolor: alpha('#fff', 0.9) } }}>
+          <div className="d-flex gap-3 flex-wrap" style={{ marginTop: 40 }}>
+            <Link href="/signup" className="btn btn-lg px-4"
+                  style={{ background: '#fff', color: BRAND, fontWeight: 600 }}>
               Start free
-            </Button>
-            <Button component={Link} href="/login" size="large"
-                    sx={{ color: '#fff', border: `1px solid ${alpha('#fff', 0.4)}`, px: 4 }}>
+            </Link>
+            <Link href="/login" className="btn btn-lg px-4"
+                  style={{ color: '#fff', border: '1px solid rgba(255,255,255,0.4)' }}>
               Sign in
-            </Button>
-          </Box>
+            </Link>
+          </div>
 
           {/* The objection that actually stops people, answered above the fold
               rather than three sections down. */}
-          <Typography sx={{ mt: 4, fontSize: 14, opacity: 0.72, maxWidth: 560 }}>
+          <p className="mb-0" style={{ marginTop: 32, fontSize: 14, opacity: 0.72, maxWidth: 560 }}>
             Setting up does not touch your existing email. You prove you own your
             domain, and nothing else changes until you choose to move your mail.
-          </Typography>
-        </Container>
-      </Box>
+          </p>
+        </div>
+      </section>
 
       {/* ---------------------------------------------------------------- */}
-      <Container maxWidth="lg" sx={{ py: { xs: 8, md: 12 } }}>
-        <Typography variant="h3" sx={{ maxWidth: 620, letterSpacing: '-0.02em' }}>
+      <div className="container" style={{ paddingTop: 80, paddingBottom: 80 }}>
+        <h2 style={{ maxWidth: 620, letterSpacing: '-0.02em', fontWeight: 600 }}>
           Not an email product with an admin screen
-        </Typography>
-        <Typography variant="body1" color="text.secondary" sx={{ mt: 2, maxWidth: 640 }}>
+        </h2>
+        <p className="text-muted mt-3" style={{ maxWidth: 640 }}>
           Core is the layer your organisation runs on. Mail is the first product
           on it — Drive, People, Payroll, Sheet and Word follow, and every one of
           them uses the same people, the same storage and the same bill.
-        </Typography>
+        </p>
 
-        <Box sx={{ mt: 6, display: 'grid', gap: 3,
-                   gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
+        <div className="row g-4" style={{ marginTop: 24 }}>
           {PILLARS.map((p) => (
-            <Card key={p.title}>
-              <CardContent sx={{ p: 3.5 }}>
-                <Box sx={{ width: 44, height: 44, borderRadius: 2, mb: 2.5,
-                           display: 'grid', placeItems: 'center', color: 'primary.main',
-                           bgcolor: (t) => alpha(t.palette.primary.main, 0.12) }}>
-                  <svg width="21" height="21" viewBox="0 0 24 24" fill="none"
-                       stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
-                       strokeLinejoin="round">
-                    <path d={p.d} />
-                  </svg>
-                </Box>
-                <Typography variant="h6" sx={{ mb: 1 }}>{p.title}</Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.7 }}>
-                  {p.body}
-                </Typography>
-              </CardContent>
-            </Card>
+            <div key={p.title} className="col-12 col-md-6">
+              <div className="card custom-card h-100">
+                <div className="card-body" style={{ padding: 28 }}>
+                  <span
+                    className="d-grid mb-3"
+                    style={{
+                      width: 44, height: 44, borderRadius: 10, placeItems: 'center',
+                      color: BRAND, background: 'rgba(3,181,98,0.12)',
+                    }}
+                  >
+                    <svg width="21" height="21" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
+                         strokeLinejoin="round">
+                      <path d={p.d} />
+                    </svg>
+                  </span>
+                  <h3 className="mb-2" style={{ fontSize: 19, fontWeight: 600 }}>{p.title}</h3>
+                  <p className="text-muted mb-0" style={{ fontSize: 14, lineHeight: 1.7 }}>
+                    {p.body}
+                  </p>
+                </div>
+              </div>
+            </div>
           ))}
-        </Box>
-      </Container>
+        </div>
+      </div>
 
       {/* ---------------------------------------------------------------- */}
-      <Box sx={{ bgcolor: 'background.default', py: { xs: 8, md: 12 } }}>
-        <Container maxWidth="lg">
-          <Typography variant="h3" sx={{ letterSpacing: '-0.02em' }}>
+      <section className="bg-light" style={{ paddingTop: 80, paddingBottom: 80 }}>
+        <div className="container">
+          <h2 style={{ letterSpacing: '-0.02em', fontWeight: 600 }}>
             Four steps, and your mail stays put
-          </Typography>
-          <Typography variant="body1" color="text.secondary" sx={{ mt: 2, maxWidth: 620 }}>
+          </h2>
+          <p className="text-muted mt-3" style={{ maxWidth: 620 }}>
             The order matters. You get value before you take any risk.
-          </Typography>
+          </p>
 
-          <Box sx={{ mt: 6, display: 'grid', gap: 3,
-                     gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', lg: 'repeat(4, 1fr)' } }}>
+          <div className="row g-4" style={{ marginTop: 24 }}>
             {STEPS.map((s) => (
-              <Box key={s.n}>
-                <Box sx={{ width: 36, height: 36, borderRadius: '50%', mb: 2,
-                           display: 'grid', placeItems: 'center', fontWeight: 600,
-                           color: '#fff',
-                           background: (t) => `linear-gradient(72deg, ${t.palette.primary.main}, ${t.palette.primary.light})` }}>
+              <div key={s.n} className="col-12 col-sm-6 col-lg-3">
+                <span
+                  className="d-grid rounded-circle mb-3 text-white"
+                  style={{
+                    width: 36, height: 36, placeItems: 'center', fontWeight: 600,
+                    background: `linear-gradient(72deg, ${BRAND}, ${BRAND_LIGHT})`,
+                  }}
+                >
                   {s.n}
-                </Box>
-                <Typography variant="body1" sx={{ fontWeight: 600, mb: 0.75 }}>
-                  {s.title}
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.65 }}>
+                </span>
+                <div className="fw-semibold mb-1">{s.title}</div>
+                <p className="text-muted mb-0" style={{ fontSize: 14, lineHeight: 1.65 }}>
                   {s.body}
-                </Typography>
-              </Box>
+                </p>
+              </div>
             ))}
-          </Box>
-        </Container>
-      </Box>
+          </div>
+        </div>
+      </section>
 
       {/* ---------------------------------------------------------------- */}
-      <Container maxWidth="lg" sx={{ py: { xs: 8, md: 12 } }}>
-        <Card sx={{ background: (t) => `linear-gradient(120deg, ${t.palette.primary.main}, ${t.palette.primary.light})`,
-                    color: '#fff' }}>
-          <CardContent sx={{ p: { xs: 4, md: 7 }, textAlign: 'center' }}>
-            <Typography variant="h4" sx={{ letterSpacing: '-0.02em' }}>
-              Set up in minutes
-            </Typography>
-            <Typography sx={{ mt: 1.5, opacity: 0.88, maxWidth: 520, mx: 'auto' }}>
+      <div className="container" style={{ paddingTop: 80, paddingBottom: 80 }}>
+        <div
+          className="card custom-card text-white border-0"
+          style={{ background: `linear-gradient(120deg, ${BRAND}, ${BRAND_LIGHT})` }}
+        >
+          <div className="card-body text-center" style={{ padding: 56 }}>
+            <h2 style={{ letterSpacing: '-0.02em', fontWeight: 600 }}>Set up in minutes</h2>
+            <p className="mx-auto mb-0" style={{ marginTop: 12, opacity: 0.88, maxWidth: 520 }}>
               Prove you own your domain and you are in. Move your mail across
               whenever you are ready.
-            </Typography>
-            <Button component={Link} href="/signup" size="large"
-                    sx={{ mt: 4, bgcolor: '#fff', color: 'primary.main', px: 5,
-                          '&:hover': { bgcolor: alpha('#fff', 0.9) } }}>
+            </p>
+            <Link href="/signup" className="btn btn-lg px-5"
+                  style={{ marginTop: 32, background: '#fff', color: BRAND, fontWeight: 600 }}>
               Get started
-            </Button>
-          </CardContent>
-        </Card>
-      </Container>
+            </Link>
+          </div>
+        </div>
+      </div>
 
       {/* ---------------------------------------------------------------- */}
-      <Divider />
-      <Container maxWidth="lg" sx={{ py: 5 }}>
-        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+      <hr className="m-0" />
+      <div className="container py-4">
+        <div className="d-flex gap-3 flex-wrap align-items-center">
           <Brand />
-          <Typography variant="caption" color="text.disabled" sx={{ ml: { sm: 'auto' } }}>
+          <span className="fs-12 text-muted ms-sm-auto">
             © {new Date().getFullYear()} Techvein. Hosted in India.
-          </Typography>
-        </Box>
-      </Container>
-    </Box>
+          </span>
+        </div>
+      </div>
+    </div>
   );
 }
 
 function Brand() {
   return (
-    <Box component={Link} href="/"
-         sx={{ display: 'flex', alignItems: 'center', gap: 1.25, textDecoration: 'none',
-               color: 'inherit' }}>
-      <Box sx={{ width: 32, height: 32, borderRadius: 1.5, display: 'grid',
-                 placeItems: 'center', color: '#fff', fontWeight: 700, fontSize: 15,
-                 background: (t) => `linear-gradient(72deg, ${t.palette.primary.main}, ${t.palette.primary.light})` }}>
+    <Link href="/" className="d-flex align-items-center gap-2 text-decoration-none text-body">
+      <span
+        className="d-grid text-white"
+        style={{
+          width: 32, height: 32, borderRadius: 8, placeItems: 'center',
+          fontWeight: 700, fontSize: 15,
+          background: `linear-gradient(72deg, ${BRAND}, ${BRAND_LIGHT})`,
+        }}
+      >
         T
-      </Box>
-      <Typography sx={{ fontWeight: 700, fontSize: 18, letterSpacing: '0.01em' }}>
-        TatvaOS
-      </Typography>
-    </Box>
+      </span>
+      <span style={{ fontWeight: 700, fontSize: 18, letterSpacing: '0.01em' }}>TatvaOS</span>
+    </Link>
   );
 }
