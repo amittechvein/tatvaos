@@ -35,6 +35,7 @@ public static class MailEndpoints
         g.MapGet("/bootstrap", BootstrapAsync);
         g.MapGet("/folders", FoldersAsync);
         g.MapGet("/folders/{folderId:guid}/messages", ListMessagesAsync);
+        g.MapGet("/search", SearchAsync);
         g.MapGet("/messages/{id:guid}", GetMessageAsync);
         g.MapPost("/messages/{id:guid}/read", SetReadAsync);
         g.MapPost("/messages/{id:guid}/flag", SetFlagAsync);
@@ -109,6 +110,112 @@ public static class MailEndpoints
     }
 
     // ------------------------------------------------------------------
+    //  One definition of "matches", used by folder listing and by the
+    //  cross-folder search endpoint, so the two can never disagree about
+    //  what a query means.
+    //
+    //  TWO CLAUSES ON PURPOSE:
+    //
+    //   * The tsvector clause is the real search — it covers the BODY, it is
+    //     backed by the GIN index (15-mail-search.sql), and it understands
+    //     quoted phrases and -exclusions via websearch_to_tsquery.
+    //
+    //   * The ILIKE clause is what makes typing feel right. A tsquery matches
+    //     whole lexemes, so "prax" finds nothing in "Prakash" — but a person
+    //     typing into a search box expects partial words to narrow as they
+    //     go. It is restricted to the short columns so it stays cheap.
+    //
+    //  Both, OR'd: full-text power without a search box that appears broken
+    //  until you finish typing the word.
+    // ------------------------------------------------------------------
+    private static IQueryable<Message> ApplySearch(IQueryable<Message> query, string q)
+    {
+        var term = q.Trim();
+        var pattern = $"%{term}%";
+
+        return query.Where(m =>
+            (m.SearchVector != null
+             && m.SearchVector.Matches(EF.Functions.WebSearchToTsQuery("simple", term)))
+            || EF.Functions.ILike(m.Subject ?? "", pattern)
+            || EF.Functions.ILike(m.FromAddr ?? "", pattern)
+            || EF.Functions.ILike(m.FromName ?? "", pattern)
+            || EF.Functions.ILike(m.Snippet ?? "", pattern));
+    }
+
+    /// <summary>
+    /// Search the whole mailbox, not one folder.
+    ///
+    /// The client used to filter the rows it had already loaded, in the
+    /// browser — so a search for last month's mail found nothing and looked
+    /// identical to "no such message". This searches every folder and returns
+    /// which folder each hit lives in, so the result can be opened.
+    /// </summary>
+    private static async Task<IResult> SearchAsync(
+        string? q, int? skip, int? take, AppDbContext db, TenantContext tenant,
+        CancellationToken ct)
+    {
+        var box = await OwnMailboxAsync(db, tenant, ct);
+        if (box is null) return Results.Ok(new { total = 0, messages = Array.Empty<object>() });
+
+        var term = (q ?? "").Trim();
+        if (term.Length == 0)
+            // An empty query is not "everything" — that is the folder listing,
+            // and returning the whole mailbox here would be a surprise.
+            return Results.Ok(new { total = 0, messages = Array.Empty<object>() });
+
+        var query = ApplySearch(
+            db.Messages.AsNoTracking().Where(m => m.MailboxId == box.Id), term);
+
+        var total = await query.CountAsync(ct);
+
+        var rows = await query
+            .OrderByDescending(m => m.ReceivedAt)
+            .Skip(Math.Max(0, skip ?? 0))
+            .Take(Math.Clamp(take ?? 50, 1, 100))
+            .Select(m => new
+            {
+                m.Id, m.FolderId, m.ThreadId, m.FromName, m.FromAddr, m.ToAddrs,
+                m.CcAddrs, m.Subject, m.Snippet, m.SentAt, m.ReceivedAt,
+                m.SizeBytes, m.IsRead, m.IsFlagged, m.HasAttachments,
+            })
+            .ToListAsync(ct);
+
+        // Folder names for the hits, so a result can say where it lives —
+        // one query for the page rather than one per row.
+        var folderIds = rows.Select(r => r.FolderId).Distinct().ToList();
+        var folderNames = await db.Folders.AsNoTracking()
+            .Where(f => folderIds.Contains(f.Id))
+            .ToDictionaryAsync(
+                f => f.Id,
+                f => new { name = f.SpecialUse == "\\Inbox" ? "Inbox" : f.Name, slug = SlugFor(f.SpecialUse) },
+                ct);
+
+        return Results.Ok(new
+        {
+            total,
+            messages = rows.Select(m => new
+            {
+                id = m.Id,
+                folderId = m.FolderId,
+                folderName = folderNames.TryGetValue(m.FolderId, out var f) ? f.name : null,
+                folderSlug = folderNames.TryGetValue(m.FolderId, out var f2) ? f2.slug : null,
+                threadId = m.ThreadId,
+                from = new { name = m.FromName, email = m.FromAddr ?? "" },
+                to = (m.ToAddrs ?? []).Select(a => new { name = (string?)null, email = a }).ToList(),
+                cc = (m.CcAddrs ?? []).Select(a => new { name = (string?)null, email = a }).ToList(),
+                subject = m.Subject ?? "",
+                snippet = m.Snippet ?? "",
+                sentAt = m.SentAt ?? m.ReceivedAt,
+                receivedAt = m.ReceivedAt,
+                sizeBytes = m.SizeBytes,
+                isRead = m.IsRead,
+                isFlagged = m.IsFlagged,
+                hasAttachments = m.HasAttachments,
+            }).ToList(),
+        });
+    }
+
+    // ------------------------------------------------------------------
     private static async Task<IResult> BootstrapAsync(
         AppDbContext db, TenantContext tenant, CancellationToken ct)
     {
@@ -160,17 +267,7 @@ public static class MailEndpoints
             .Where(m => m.MailboxId == box.Id && m.FolderId == folderId);
 
         if (!string.IsNullOrWhiteSpace(q))
-        {
-            // ILIKE over the indexed-enough columns. Not full-text search —
-            // the tsvector column exists for that day; this is the search a
-            // 200-message mailbox needs now.
-            var pattern = $"%{q.Trim()}%";
-            query = query.Where(m =>
-                EF.Functions.ILike(m.Subject ?? "", pattern) ||
-                EF.Functions.ILike(m.FromAddr ?? "", pattern) ||
-                EF.Functions.ILike(m.FromName ?? "", pattern) ||
-                EF.Functions.ILike(m.Snippet ?? "", pattern));
-        }
+            query = ApplySearch(query, q);
 
         var total = await query.CountAsync(ct);
 
@@ -565,6 +662,9 @@ public static class MailEndpoints
             CcAddrs = cc.Count > 0 ? cc.Select(a => a.Address).ToArray() : null,
             Subject = mime.Subject,
             Snippet = MailContent.Snippet(mime),
+            // Same as ingest: give search a body to index. Without this, mail
+            // you sent would be findable by subject but not by what you wrote.
+            BodyText = mime.TextBody ?? mime.HtmlBody,
             SentAt = DateTimeOffset.UtcNow,
             ReceivedAt = DateTimeOffset.UtcNow,
             SizeBytes = raw.Length,
