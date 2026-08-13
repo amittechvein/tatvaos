@@ -1114,11 +1114,27 @@ public static class MailEndpoints
 
         var raw = mime.ToString();
         var attParts = MailContent.AttachmentParts(mime);
+
+        // The Sent copy joins the conversation it answers.
+        //
+        // Without this, thread_id is set on every message people send US and
+        // on none of the ones we send back, so a conversation renders as the
+        // other side's half with our replies silently missing. That reads as
+        // complete and is therefore worse than no threading at all.
+        //
+        // Same resolver the ingest worker calls, deliberately: one definition
+        // of what a conversation is, in one place. The pending-batch argument
+        // is empty because there is no batch here - one message, one call -
+        // and mime already carries the In-Reply-To/References set above.
+        var threadId = await MailThreads.ResolveAsync(
+            db, box.Id, mime, new Dictionary<string, Guid>(), ct);
+
         var message = new Message
         {
             TenantId = box.TenantId,
             MailboxId = box.Id,
             FolderId = sent.Id,
+            ThreadId = threadId,
             MessageIdHeader = mime.MessageId,
             FromAddr = box.Address,
             FromName = user?.DisplayName,
