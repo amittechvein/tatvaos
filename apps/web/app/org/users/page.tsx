@@ -1,19 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import Alert from '@mui/material/Alert';
-import Box from '@mui/material/Box';
-import Dialog from '@mui/material/Dialog';
-import Divider from '@mui/material/Divider';
-import DialogActions from '@mui/material/DialogActions';
-import DialogContent from '@mui/material/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle';
-import IconButton from '@mui/material/IconButton';
-import InputAdornment from '@mui/material/InputAdornment';
-import MenuItem from '@mui/material/MenuItem';
-import TextField from '@mui/material/TextField';
-import Tooltip from '@mui/material/Tooltip';
-import Typography from '@mui/material/Typography';
 
 import { AdminShell } from '@/components/admin/AdminShell';
 import { Badge, Button, Card, Empty, Meter, Table, Td, statusTone } from '@/components/ui/Kit';
@@ -638,162 +625,182 @@ function EditPerson({ person, departments, onClose, onSaved, onError }: {
   // it" step rather than something a stray click can do.
   if (tempPassword) {
     return (
-      <Dialog open maxWidth="sm" fullWidth>
-        <DialogTitle>New password for {person.displayName}</DialogTitle>
-        <DialogContent>
-          <Alert severity="warning" sx={{ mb: 2.5 }}>
-            Shown once — copy it now and pass it to them directly. They must
-            change it at first sign-in, and every session they had is already
-            signed out.
-          </Alert>
-          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-            <Box sx={{ flex: 1, p: 1.5, borderRadius: 1.5, fontFamily: 'monospace',
-                       fontSize: 15, bgcolor: 'background.default' }}>
-              {tempPassword}
-            </Box>
-            <Tooltip title="Copy">
-              <IconButton onClick={() => void navigator.clipboard.writeText(tempPassword)}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                     strokeWidth="1.8" strokeLinecap="round">
-                  <rect x="9" y="9" width="12" height="12" rx="2" />
-                  <path d="M5 15V5a2 2 0 012-2h10" />
-                </svg>
-              </IconButton>
-            </Tooltip>
-          </Box>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+      <Modal
+        title={`New password for ${person.displayName}`}
+        onClose={() => onSaved(`Password reset for ${person.email}.`)}
+        footer={
           <Button variant="primary" onClick={() => onSaved(`Password reset for ${person.email}.`)}>
             Done
           </Button>
-        </DialogActions>
-      </Dialog>
+        }
+      >
+        <div className="alert alert-warning mb-3">
+          Shown once — copy it now and pass it to them directly. They must
+          change it at first sign-in, and every session they had is already
+          signed out.
+        </div>
+        <div className="d-flex gap-2 align-items-center">
+          <div className="flex-fill font-monospace bg-light rounded"
+               style={{ padding: 12, fontSize: 15 }}>
+            {tempPassword}
+          </div>
+          <button
+            type="button"
+            className="btn btn-light btn-icon"
+            title="Copy"
+            aria-label="Copy password"
+            onClick={() => void navigator.clipboard.writeText(tempPassword)}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 strokeWidth="1.8" strokeLinecap="round">
+              <rect x="9" y="9" width="12" height="12" rx="2" />
+              <path d="M5 15V5a2 2 0 012-2h10" />
+            </svg>
+          </button>
+        </div>
+      </Modal>
     );
   }
 
   return (
-    <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle sx={{ pb: 1 }}>
-        Edit {person.displayName}
-        <Typography variant="body2" color="text.secondary">{person.email}</Typography>
-      </DialogTitle>
+    <Modal
+      title={`Edit ${person.displayName}`}
+      subtitle={person.email}
+      onClose={onClose}
+      busy={busy}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" onClick={save}
+                  disabled={busy || targetLocked || displayName.trim().length < 2}>
+            {busy ? 'Saving…' : 'Save changes'}
+          </Button>
+        </>
+      }
+    >
+      <div className="mb-3">
+        <PhotoPicker
+          preview={photo !== undefined ? photo : storedPhoto}
+          name={person.displayName}
+          email={person.email}
+          onPick={setPhoto}
+          onRemove={() => setPhoto(null)}
+          disabled={busy}
+        />
+      </div>
 
-      <DialogContent>
-        <Box sx={{ mt: 1, mb: 2.5 }}>
-          <PhotoPicker
-            preview={photo !== undefined ? photo : storedPhoto}
-            name={person.displayName}
-            email={person.email}
-            onPick={setPhoto}
-            onRemove={() => setPhoto(null)}
-            disabled={busy}
-          />
-        </Box>
+      <Field label="Full name" required>
+        <input className="form-control" value={displayName}
+               onChange={(e) => setDisplayName(e.target.value)} />
+      </Field>
 
-        <TextField fullWidth label="Full name" required value={displayName}
-                   onChange={(e) => setDisplayName(e.target.value)} sx={{ mb: 2.5 }} />
-
-        <TextField select fullWidth label="Department" value={departmentId} sx={{ mb: 2.5 }}
-                   onChange={(e) => setDepartmentId(e.target.value)}>
-          <MenuItem value="">
-            <em>No department — organisation defaults</em>
-          </MenuItem>
+      <Field label="Department">
+        <select className="form-select" value={departmentId}
+                onChange={(e) => setDepartmentId(e.target.value)}>
+          <option value="">No department — organisation defaults</option>
           {departments.map(({ d, depth }) => (
-            <MenuItem key={d.id} value={d.id}>
-              {'\u00A0'.repeat(depth * 3)}{depth > 0 ? '└ ' : ''}{d.name}
-            </MenuItem>
+            <option key={d.id} value={d.id}>
+              {' '.repeat(depth * 3)}{depth > 0 ? '└ ' : ''}{d.name}
+            </option>
           ))}
-        </TextField>
+        </select>
+      </Field>
 
-        <TextField select fullWidth label="Role" value={role} sx={{ mb: 2.5 }}
-                   onChange={(e) => setRole(e.target.value)}
-                   disabled={editingSelf || targetLocked}
-                   helperText={editingSelf
-                     ? 'You cannot change your own role — ask another owner.'
-                     : targetLocked
-                       ? 'Only an organisation owner can manage an owner.'
-                       : 'What they can administer. Mail access is unaffected.'}>
+      <Field
+        label="Role"
+        hint={editingSelf
+          ? 'You cannot change your own role — ask another owner.'
+          : targetLocked
+            ? 'Only an organisation owner can manage an owner.'
+            : 'What they can administer. Mail access is unaffected.'}
+      >
+        <select className="form-select" value={role}
+                disabled={editingSelf || targetLocked}
+                onChange={(e) => setRole(e.target.value)}>
           {roleOptions(canMakeOwner, person.role).map(([v, label]) => (
-            <MenuItem key={v} value={v}>{label}</MenuItem>
+            <option key={v} value={v}>{label}</option>
           ))}
-        </TextField>
+        </select>
+      </Field>
 
-        {person.mailboxAddress ? (
-          <TextField type="number" fullWidth label="Mailbox storage" value={quotaGb}
-                     onChange={(e) => setQuotaGb(Math.max(1, Number(e.target.value)))}
-                     slotProps={{
-                       input: { endAdornment: <InputAdornment position="end">GB</InputAdornment> },
-                       htmlInput: { min: 1, max: 5000 },
-                     }}
-                     helperText={`Currently using ${fmt(person.usedBytes)} — the quota will not shrink below that.`} />
-        ) : (
-          <Alert severity="info">No mailbox — storage does not apply to this person.</Alert>
-        )}
+      {person.mailboxAddress ? (
+        <Field
+          label="Mailbox storage"
+          hint={`Currently using ${fmt(person.usedBytes)} — the quota will not shrink below that.`}
+        >
+          <div className="input-group">
+            <input
+              type="number"
+              className="form-control"
+              min={1}
+              max={5000}
+              value={quotaGb}
+              onChange={(e) => setQuotaGb(Math.max(1, Number(e.target.value)))}
+            />
+            <span className="input-group-text">GB</span>
+          </div>
+        </Field>
+      ) : (
+        <div className="alert alert-info mb-0">
+          No mailbox — storage does not apply to this person.
+        </div>
+      )}
 
-        {/* ------------------------------------------------------------
-            Account actions. Not offered against yourself — suspending or
-            deleting the account you are signed in with is a support ticket
-            in the making, and the server refuses it anyway. */}
-        {!editingSelf && !targetLocked && (
-          <>
-            <Divider sx={{ my: 3 }} />
-            <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>Account</Typography>
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
-              Status: <strong>{person.status}</strong>
-              {person.status === 'suspended' &&
-                ' — cannot sign in, mailbox rejecting mail, data retained'}
-              {person.status === 'deleted' &&
-                ' — this account is closed. Create the person again if they return.'}
-            </Typography>
+      {/* ------------------------------------------------------------
+          Account actions. Not offered against yourself — suspending or
+          deleting the account you are signed in with is a support ticket
+          in the making, and the server refuses it anyway. */}
+      {!editingSelf && !targetLocked && (
+        <>
+          <hr className="my-4" />
+          <div className="fs-14 fw-semibold mb-1">Account</div>
+          <p className="fs-12 text-muted mb-3">
+            Status: <strong>{person.status}</strong>
+            {person.status === 'suspended' &&
+              ' — cannot sign in, mailbox rejecting mail, data retained'}
+            {person.status === 'deleted' &&
+              ' — this account is closed. Create the person again if they return.'}
+          </p>
 
-            {person.status !== 'deleted' && (
-            <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
-              {person.status === 'suspended' ? (
-                <Button variant="ghost" disabled={busy}
-                        onClick={() => void act('/reactivate', 'POST',
-                          () => onSaved(`${person.displayName} is active again.`))}>
-                  Reactivate
-                </Button>
-              ) : (
-                <Button variant="ghost" disabled={busy}
-                        onClick={() => void act('/suspend', 'POST',
-                          () => onSaved(`${person.displayName} deactivated. Their mail is retained.`))}>
-                  Deactivate
-                </Button>
-              )}
-
+          {person.status !== 'deleted' && (
+          <div className="d-flex gap-2 flex-wrap">
+            {person.status === 'suspended' ? (
               <Button variant="ghost" disabled={busy}
-                      onClick={() => void act('/reset-password', 'POST',
-                        (body) => { setTempPassword(String(body.temporaryPassword)); setBusy(false); })}>
-                Reset password
+                      onClick={() => void act('/reactivate', 'POST',
+                        () => onSaved(`${person.displayName} is active again.`))}>
+                Reactivate
               </Button>
-
-              {/* Two clicks, both on the same button, second one labelled in
-                  plain words. A nested confirm dialog gets clicked through;
-                  a button that changes its mind out loud does not. */}
+            ) : (
               <Button variant="ghost" disabled={busy}
-                      onClick={() => {
-                        if (!armDelete) { setArmDelete(true); return; }
-                        void act('', 'DELETE',
-                          () => onSaved(`${person.email} deleted. Sign-in and mail are closed; stored mail is retained.`));
-                      }}>
-                <Box component="span" sx={{ color: 'error.main', fontWeight: armDelete ? 700 : 500 }}>
-                  {armDelete ? 'Click again — this deletes their account' : 'Delete person'}
-                </Box>
+                      onClick={() => void act('/suspend', 'POST',
+                        () => onSaved(`${person.displayName} deactivated. Their mail is retained.`))}>
+                Deactivate
               </Button>
-            </Box>
             )}
-          </>
-        )}
-      </DialogContent>
 
-      <DialogActions sx={{ px: 3, pb: 2.5 }}>
-        <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button variant="primary" onClick={save}
-                disabled={busy || targetLocked || displayName.trim().length < 2}>
-          {busy ? 'Saving…' : 'Save changes'}
-        </Button>
-      </DialogActions>
-    </Dialog>
+            <Button variant="ghost" disabled={busy}
+                    onClick={() => void act('/reset-password', 'POST',
+                      (body) => { setTempPassword(String(body.temporaryPassword)); setBusy(false); })}>
+              Reset password
+            </Button>
+
+            {/* Two clicks, both on the same button, second one labelled in
+                plain words. A nested confirm dialog gets clicked through;
+                a button that changes its mind out loud does not. */}
+            <Button variant="ghost" disabled={busy}
+                    onClick={() => {
+                      if (!armDelete) { setArmDelete(true); return; }
+                      void act('', 'DELETE',
+                        () => onSaved(`${person.email} deleted. Sign-in and mail are closed; stored mail is retained.`));
+                    }}>
+              <span className="text-danger" style={{ fontWeight: armDelete ? 700 : 500 }}>
+                {armDelete ? 'Click again — this deletes their account' : 'Delete person'}
+              </span>
+            </Button>
+          </div>
+          )}
+        </>
+      )}
+    </Modal>
   );
 }
