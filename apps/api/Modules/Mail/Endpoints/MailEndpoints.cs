@@ -43,6 +43,7 @@ public static class MailEndpoints
         g.MapDelete("/messages/{id:guid}", DeleteAsync);
         g.MapGet("/messages/{id:guid}/attachments/{attachmentId:guid}", DownloadAttachmentAsync);
         g.MapPost("/send", SendAsync);
+        g.MapGet("/directory", DirectoryAsync);
 
         g.MapGet("/blocked", ListBlockedAsync);
         g.MapPost("/blocked", BlockSenderAsync);
@@ -60,6 +61,73 @@ public static class MailEndpoints
         g.MapPost("/filters", CreateFilterAsync);
         g.MapPut("/filters/{id:guid}", UpdateFilterAsync);
         g.MapDelete("/filters/{id:guid}", DeleteFilterAsync);
+    }
+
+    // ------------------------------------------------------------------
+    //  Directory - who you can address inside your own organisation.
+    //
+    //  Backs the composer's "@" recipient picker. It is a MAILBOX lookup,
+    //  not a user lookup: someone with a Core account but no mail product
+    //  has no address to offer, and offering their name would produce a
+    //  message that bounces.
+    //
+    //  Tenant scope comes from the global query filters on Mailbox and User,
+    //  so this cannot name a person in another organisation. That is the
+    //  whole security story for this endpoint, and it is why the query is
+    //  written against db.Mailboxes rather than anything IgnoreQueryFilters.
+    // ------------------------------------------------------------------
+    private static async Task<IResult> DirectoryAsync(
+        string? q, AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var self = await OwnMailboxAsync(db, tenant, ct);
+
+        // Capped before it reaches the query: this fires on every keystroke,
+        // and an unbounded term is a cheap way to make Postgres work hard.
+        var term = (q ?? string.Empty).Trim();
+        if (term.Length > 100) term = term[..100];
+
+        // % and _ are LIKE wildcards. Someone typing "_" is looking for an
+        // underscore in an address, not for "any character".
+        var escaped = term
+            .Replace("\\", "\\\\")
+            .Replace("%", "\\%")
+            .Replace("_", "\\_");
+
+        var query =
+            from m in db.Mailboxes.AsNoTracking()
+            join u in db.Users.AsNoTracking() on m.UserId equals (Guid?)u.Id
+            where m.IsActive && m.Type == "user"
+            select new { m.Id, m.Address, u.DisplayName };
+
+        // Shared mailboxes and groups are excluded by Type above; you are
+        // excluded here, because offering to mail yourself is never the
+        // thing being asked for.
+        if (self is not null)
+            query = query.Where(x => x.Id != self.Id);
+
+        if (escaped.Length > 0)
+            query = query.Where(x =>
+                EF.Functions.ILike(x.Address, $"%{escaped}%", "\\") ||
+                EF.Functions.ILike(x.DisplayName, $"%{escaped}%", "\\"));
+
+        var matches = await query
+            .OrderBy(x => x.DisplayName)
+            .Take(20)
+            .ToListAsync(ct);
+
+        // Prefix matches float to the top, and that ordering is done HERE
+        // rather than in SQL. A CASE-expression OrderBy is the kind of thing
+        // that translates on one provider and throws at runtime on another,
+        // and there is no environment to find that out in before production.
+        // Twenty rows in memory costs nothing.
+        var people = matches
+            .OrderBy(x => x.Address.StartsWith(term, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .Take(8)
+            .Select(x => new { email = x.Address, name = x.DisplayName })
+            .ToList();
+
+        return Results.Ok(new { people });
     }
 
     // ------------------------------------------------------------------
