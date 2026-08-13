@@ -51,6 +51,11 @@ public static class MailEndpoints
         g.MapGet("/signature", GetSignatureAsync);
         g.MapPut("/signature", SaveSignatureAsync);
 
+        g.MapGet("/drafts/{id:guid}", GetDraftAsync);
+        g.MapPost("/drafts", CreateDraftAsync);
+        g.MapPut("/drafts/{id:guid}", UpdateDraftAsync);
+        g.MapDelete("/drafts/{id:guid}", DeleteDraftAsync);
+
         g.MapGet("/filters", ListFiltersAsync);
         g.MapPost("/filters", CreateFilterAsync);
         g.MapPut("/filters/{id:guid}", UpdateFilterAsync);
@@ -194,6 +199,170 @@ public static class MailEndpoints
 
         await db.SaveChangesAsync(ct);
         return Results.Ok(ShapeSignature(sig));
+    }
+
+    // ------------------------------------------------------------------
+    //  Drafts.
+    //
+    //  A draft is a Message in the Drafts folder, not a table of its own. It
+    //  already needs every field a message has, it should appear in that folder
+    //  and in search like anything else, and a separate table would mean two
+    //  shapes for one thing plus a migration on the day a draft becomes a sent
+    //  message.
+    //
+    //  ATTACHMENTS ARE NOT SAVED WITH A DRAFT. Files live in the browser until
+    //  send; persisting them needs object storage that does not exist yet. The
+    //  client has to say so rather than implying they are safe — someone who
+    //  closes the window believing their attachment was kept has lost work.
+    // ------------------------------------------------------------------
+    public sealed record DraftRequest(
+        string? To, string? Cc, string? Bcc, string? Subject,
+        string? BodyText, string? BodyHtml);
+
+    private static async Task<(Mailbox? Box, Folder? Drafts)> DraftsFolderAsync(
+        AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var box = await OwnMailboxAsync(db, tenant, ct);
+        if (box is null) return (null, null);
+        var folder = await db.Folders.FirstOrDefaultAsync(
+            f => f.MailboxId == box.Id && f.SpecialUse == "\\Drafts", ct);
+        return (box, folder);
+    }
+
+    /// <summary>
+    /// The stored MIME for a draft. Bcc goes in these headers and stays there:
+    /// a draft is never transmitted, so this is the one place a Bcc line can
+    /// live without leaking it to anybody.
+    /// </summary>
+    private static MimeMessage DraftMime(DraftRequest req, Mailbox box, string? displayName)
+    {
+        var builder = new BodyBuilder();
+        if (!string.IsNullOrWhiteSpace(req.BodyHtml)) builder.HtmlBody = req.BodyHtml;
+        builder.TextBody = req.BodyText ?? "";
+
+        var mime = new MimeMessage();
+        mime.From.Add(new MailboxAddress(displayName ?? box.LocalPart, box.Address));
+        foreach (var a in ParseAddressLine(req.To) ?? []) mime.To.Add(a);
+        foreach (var a in ParseAddressLine(req.Cc) ?? []) mime.Cc.Add(a);
+        foreach (var a in ParseAddressLine(req.Bcc) ?? []) mime.Bcc.Add(a);
+        mime.Subject = req.Subject?.Trim() ?? "";
+        mime.Body = builder.ToMessageBody();
+        return mime;
+    }
+
+    private static async Task<IResult> CreateDraftAsync(
+        DraftRequest req, AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var (box, drafts) = await DraftsFolderAsync(db, tenant, ct);
+        if (box is null) return Results.BadRequest(new { error = "You have no mailbox." });
+        if (drafts is null) return Results.BadRequest(new { error = "This mailbox has no Drafts folder." });
+
+        var user = await db.Users.AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Id == tenant.UserId, ct);
+
+        var mime = DraftMime(req, box, user?.DisplayName);
+        var raw = mime.ToString();
+        var ccList = (ParseAddressLine(req.Cc) ?? []).Select(a => a.Address).ToArray();
+
+        var message = new Message
+        {
+            TenantId = box.TenantId,
+            MailboxId = box.Id,
+            FolderId = drafts.Id,
+            ImapUid = drafts.UidNext,
+            FromAddr = box.Address,
+            FromName = user?.DisplayName,
+            ToAddrs = (ParseAddressLine(req.To) ?? []).Select(a => a.Address).ToArray(),
+            CcAddrs = ccList.Length > 0 ? ccList : null,
+            Subject = mime.Subject,
+            Snippet = MailContent.Snippet(mime),
+            BodyText = mime.TextBody ?? mime.HtmlBody,
+            ReceivedAt = DateTimeOffset.UtcNow,
+            SizeBytes = raw.Length,
+            // A draft is something you wrote; it has never been unread.
+            IsRead = true,
+            RawBody = raw,
+        };
+        drafts.UidNext++;
+
+        db.Messages.Add(message);
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(new { id = message.Id });
+    }
+
+    private static async Task<IResult> UpdateDraftAsync(
+        Guid id, DraftRequest req, AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var (box, drafts) = await DraftsFolderAsync(db, tenant, ct);
+        if (box is null || drafts is null) return Results.NotFound();
+
+        // Scoped to the Drafts folder as well as the mailbox: this endpoint
+        // must not become a way to rewrite a message already sent or received.
+        var message = await db.Messages.FirstOrDefaultAsync(
+            m => m.Id == id && m.MailboxId == box.Id && m.FolderId == drafts.Id, ct);
+        if (message is null) return Results.NotFound();
+
+        var user = await db.Users.AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Id == tenant.UserId, ct);
+
+        var mime = DraftMime(req, box, user?.DisplayName);
+        var raw = mime.ToString();
+        var ccList = (ParseAddressLine(req.Cc) ?? []).Select(a => a.Address).ToArray();
+
+        message.ToAddrs = (ParseAddressLine(req.To) ?? []).Select(a => a.Address).ToArray();
+        message.CcAddrs = ccList.Length > 0 ? ccList : null;
+        message.Subject = mime.Subject;
+        message.Snippet = MailContent.Snippet(mime);
+        message.BodyText = mime.TextBody ?? mime.HtmlBody;
+        message.SizeBytes = raw.Length;
+        message.RawBody = raw;
+        message.ReceivedAt = DateTimeOffset.UtcNow;
+
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(new { id = message.Id });
+    }
+
+    private static async Task<IResult> GetDraftAsync(
+        Guid id, AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var (box, drafts) = await DraftsFolderAsync(db, tenant, ct);
+        if (box is null || drafts is null) return Results.NotFound();
+
+        var message = await db.Messages.AsNoTracking().FirstOrDefaultAsync(
+            m => m.Id == id && m.MailboxId == box.Id && m.FolderId == drafts.Id, ct);
+        if (message is null || string.IsNullOrEmpty(message.RawBody)) return Results.NotFound();
+
+        // Re-parsed rather than rebuilt from the columns, because Bcc exists
+        // only in the stored MIME.
+        var mime = MailContent.Parse(message.RawBody);
+
+        return Results.Ok(new
+        {
+            id = message.Id,
+            to = string.Join(", ", MailContent.Addresses(mime.To)),
+            cc = string.Join(", ", MailContent.Addresses(mime.Cc)),
+            bcc = string.Join(", ", MailContent.Addresses(mime.Bcc)),
+            subject = mime.Subject ?? "",
+            bodyText = mime.TextBody ?? "",
+            bodyHtml = mime.HtmlBody ?? "",
+        });
+    }
+
+    private static async Task<IResult> DeleteDraftAsync(
+        Guid id, AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var (box, drafts) = await DraftsFolderAsync(db, tenant, ct);
+        if (box is null || drafts is null) return Results.NotFound();
+
+        var message = await db.Messages.FirstOrDefaultAsync(
+            m => m.Id == id && m.MailboxId == box.Id && m.FolderId == drafts.Id, ct);
+        if (message is null) return Results.NotFound();
+
+        // Hard delete rather than a move to Trash. An abandoned draft is not
+        // something anyone expects to find later, and Send removes its own.
+        db.Messages.Remove(message);
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(new { deleted = true });
     }
 
     // ------------------------------------------------------------------
@@ -968,6 +1137,22 @@ public static class MailEndpoints
             RawBody = raw,
         };
         db.Messages.Add(message);
+
+        // The draft this was composed from has become a sent message. Leaving
+        // it in Drafts is how someone sends the same mail twice, having found
+        // what looks like an unsent copy of it later.
+        if (Guid.TryParse(form["draftId"], out var draftId))
+        {
+            var draftsFolder = await db.Folders.FirstOrDefaultAsync(
+                f => f.MailboxId == box.Id && f.SpecialUse == "\\Drafts", ct);
+            if (draftsFolder is not null)
+            {
+                var draft = await db.Messages.FirstOrDefaultAsync(
+                    m => m.Id == draftId && m.MailboxId == box.Id
+                         && m.FolderId == draftsFolder.Id, ct);
+                if (draft is not null) db.Messages.Remove(draft);
+            }
+        }
 
         // Index the Sent copy's attachments so they show as chips and download
         // through the same part-index path as received mail.
