@@ -91,6 +91,13 @@ builder.Services.AddScoped<TotpService>();
 builder.Services.AddScoped<StorageAllocator>();
 builder.Services.AddScoped<AuditWriter>();
 
+// Where Space's bytes live. Singleton — it holds only the root path; key
+// format and path validation live inside. Swapping to S3-compatible object
+// storage later is a new implementation of this interface, not an endpoint
+// change. The volume behind Space:BlobRoot must be writable by UID 5000.
+builder.Services.AddSingleton<TatvaOS.Api.Modules.Space.IBlobStore,
+                              TatvaOS.Api.Modules.Space.FileSystemBlobStore>();
+
 // Scoped: it writes through the request's AppDbContext and reads its
 // TenantContext. A singleton holding either would serve one tenant's scope to
 // whichever request arrived next.
