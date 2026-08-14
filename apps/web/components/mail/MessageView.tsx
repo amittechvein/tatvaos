@@ -3,10 +3,28 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { displayName, formatBytes, formatRecipients } from '@tatvaos/core';
-import type { Attachment, Message } from '@tatvaos/types';
+import type { Address, Attachment, Message } from '@tatvaos/types';
 import { Avatar } from '../ui/Avatar';
 import { Icon } from '../ui/Icon';
 import { SafeHtml } from './SafeHtml';
+
+/**
+ * One row of the conversation strip. Deliberately the fields a strip needs and
+ * no more, so this does not go stale every time the message shape grows.
+ */
+export interface ThreadRow {
+  id: string;
+  subject: string;
+  snippet: string;
+  // The shared Address type, not a copy of its shape: displayName() takes
+  // Address, and a duplicated `name: string | null` differs from its
+  // `string | undefined` just enough to fail at the call site.
+  from: Address;
+  sentAt: string;
+  isRead: boolean;
+  /** A conversation legitimately spans Inbox and Sent — say which. */
+  folderName?: string | null;
+}
 
 /** An outlined icon button, matching the template's reading-pane toolbar. */
 function ToolButton({
@@ -53,6 +71,9 @@ export function MessageView({
   onPrint,
   onDownloadAttachment,
   onBlockSender,
+  threadMessages,
+  onOpenMessage,
+  threadTotal,
 }: {
   message: Message;
   bodyLoading?: boolean;
@@ -72,6 +93,20 @@ export function MessageView({
    * address is live. Absent when the caller has nothing to wire it to.
    */
   onBlockSender?: (m: Message) => void;
+  /**
+   * The rest of this conversation, oldest first, INCLUDING the open message.
+   *
+   * Passed in rather than fetched here, because everything else in this
+   * component arrives as a prop and the folder page already owns loading. Undefined
+   * means "not a thread, or not loaded" — both render nothing, which is the
+   * honest state while it is in flight.
+   */
+  threadMessages?: ThreadRow[];
+  /** Opening a sibling. Absent when the caller has nowhere to route it. */
+  onOpenMessage?: (id: string) => void;
+  /** The untruncated count. A long thread is capped server-side; saying so is
+   *  better than silently showing the first N. */
+  threadTotal?: number;
 }) {
   const [menu, setMenu] = useState(false);
   return (
@@ -133,6 +168,59 @@ export function MessageView({
           </div>
         </div>
       </div>
+
+
+      {/* ------------------------------------------------------------------
+          The conversation.
+
+          Shown only when there is more than one message, because a strip
+          saying "1 message" on every single email is noise that teaches people
+          to stop reading the area.
+
+          Collapsed by default with the open message marked. Expanding a whole
+          thread inline is Gmail's model and it fights the reading pane —
+          people came here to read ONE message and the rest is context.
+      ------------------------------------------------------------------ */}
+      {threadMessages && threadMessages.length > 1 && (
+        <details className="border-b border-line bg-canvas/50 px-4 py-2">
+          <summary className="cursor-pointer select-none text-xs text-ink-muted">
+            {threadMessages.length} messages in this conversation
+            {threadTotal && threadTotal > threadMessages.length
+              ? ` — showing the most recent ${threadMessages.length} of ${threadTotal}`
+              : ''}
+          </summary>
+
+          <ul className="mt-2 list-none space-y-1 p-0">
+            {threadMessages.map((t) => {
+              const open = t.id === message.id;
+              return (
+                <li key={t.id}>
+                  <button
+                    type="button"
+                    disabled={open || !onOpenMessage}
+                    onClick={() => onOpenMessage?.(t.id)}
+                    className={`flex w-full items-baseline gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition ${
+                      open ? 'bg-brand-50 text-ink' : 'text-ink-muted hover:bg-surface'
+                    }`}
+                  >
+                    <span className={`shrink-0 ${t.isRead ? '' : 'font-semibold text-ink'}`}>
+                      {displayName(t.from)}
+                    </span>
+                    <span className="truncate">{t.snippet}</span>
+                    <span className="ml-auto shrink-0 text-ink-faint">
+                      {new Date(t.sentAt).toLocaleDateString(undefined,
+                        { day: 'numeric', month: 'short' })}
+                      {/* A thread spans folders; a reply of yours living in
+                          Sent is not a mystery if the row says so. */}
+                      {t.folderName ? ` · ${t.folderName}` : ''}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </details>
+      )}
 
       {/* Sender identity */}
       <header className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3">
