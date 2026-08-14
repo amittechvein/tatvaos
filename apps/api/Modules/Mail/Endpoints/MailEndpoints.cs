@@ -1438,7 +1438,13 @@ public static class MailEndpoints
                 ContentType = part.ContentType?.MimeType,
                 SizeBytes = files.ElementAtOrDefault(i)?.Length ?? 0,
                 PartIndex = i,
-                ScanStatus = "clean",
+                // "pending", not "clean". Nothing on this platform scans an
+                // attachment, so a row saying clean is a security claim we
+                // cannot support - and it is worse than an honest unknown,
+                // because a client would be right to trust it. Inbound mail
+                // has always recorded pending; this makes outbound agree, so
+                // the day a scanner exists it has one backlog, not two.
+                ScanStatus = "pending",
             });
         }
 
