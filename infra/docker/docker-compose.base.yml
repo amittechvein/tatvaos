@@ -172,6 +172,12 @@ services:
       # mail.messages; it must never be able to write the maildir — one
       # writer per store, and Dovecot is the maildir's.
       - vmail:/var/mail/vhosts:ro
+      # Space's file bytes. WRITABLE, unlike the maildir — the API is this
+      # volume's ONE writer. The named volume is created root-owned, and the
+      # container runs as 5000, so the FIRST deploy must chown it once:
+      #   docker run --rm -v tatvaos_spaceblobs:/b alpine chown 5000:5000 /b
+      # (same one-time step dkimkeys needed; see the deploy checklist).
+      - spaceblobs:/var/lib/space/blobs
     environment:
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-tatvaos_mail};Username=tatvaos_app;Password=${APP_DB_PASSWORD:?APP_DB_PASSWORD must be set};Pooling=true"
       Jwt__SigningKey: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set}
@@ -184,6 +190,9 @@ services:
       # Where DKIM private keys are written for OpenDKIM to read. The API is
       # the only writer; the signer mounts the same volume read-only.
       Dkim__KeyDirectory: /dkim
+      # Where Space writes file bytes — the volume above. The database holds
+      # opaque blob keys only; see apps/api/Modules/Space/BlobStore.cs.
+      Space__BlobRoot: /var/lib/space/blobs
       # Creates the first super admin if none exists, then does nothing on
       # every later start. Blank is fine and normal once you have signed in
       # once - see apps/api/Shared/Auth/BootstrapAdmin.cs.
@@ -212,6 +221,11 @@ services:
       Mail__SpfInclude: ${MAIL_SPF_INCLUDE:-_spf.tatvaos.com}
       # Zone new organisations get their free sign-in subdomain under.
       Mail__PlatformZone: ${MAIL_PLATFORM_ZONE:-tatvaos.com}
+      # One-off thread_id repair for mail stored before threading existed.
+      # Empty - the default, and where it belongs the rest of the time - means
+      # the worker returns immediately. "report" logs what it would do and
+      # writes nothing; "run" commits it. Set MAIL_THREAD_BACKFILL to use it.
+      Mail__ThreadBackfill: ${MAIL_THREAD_BACKFILL:-}
     # No healthcheck. The .NET runtime image has neither wget nor curl, so this
     # check could never pass - the container reported "unhealthy" while serving
     # traffic fine. See the reasoning in apps/api/Dockerfile; liveness is
@@ -244,6 +258,11 @@ services:
       # empty site block; it simply matches nothing.
       MAIL_DOMAIN: ${MAIL_DOMAIN:-}
       FAMILY_DOMAIN: ${FAMILY_DOMAIN:-}
+      # Space. Blank default like the others: a variable with no matching
+      # conf.d file is harmless, while a conf.d file with no variable makes
+      # Caddy reject the WHOLE config and restart-loop — taking Core, Mail and
+      # Family down with it. Add the variable before the site file, never after.
+      SPACE_DOMAIN: ${SPACE_DOMAIN:-}
     ports:
       - "80:80"
       - "443:443"
@@ -259,6 +278,7 @@ networks:
 
 volumes:
   dkimkeys:
+  spaceblobs:
   pgdata:
   redisdata:
   vmail:
