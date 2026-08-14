@@ -138,6 +138,32 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     void loadMessages(folderId, 0);
   }, [folderId, loadMessages]);
 
+  // ---- Auto-refresh ---------------------------------------------------
+  //
+  //  New mail should appear without anyone pressing Refresh. A silent poll,
+  //  NOT loadMessages: that helper resets the selection and shows the list
+  //  error state, both wrong for a background tick. This one replaces the
+  //  rows and counts and touches nothing else — the open message, the
+  //  selection, and the current page all survive. Skipped while a search is
+  //  on screen (the poll would swap results back to the folder) and while
+  //  the tab is hidden (a background tab does not need fresh mail, and
+  //  thirty tabs polling is a load story).
+  useEffect(() => {
+    if (!folderId) return;
+    const tick = async () => {
+      if (document.visibilityState !== 'visible') return;
+      if (query.trim()) return;
+      try {
+        const page = await mailApi.messages(authedFetch, folderId, { skip, take: PAGE_SIZE });
+        setMessages(page.messages);
+        setTotal(page.total);
+      } catch { /* transient; the next tick retries */ }
+      void refreshFolders();
+    };
+    const t = setInterval(() => void tick(), 30_000);
+    return () => clearInterval(t);
+  }, [folderId, skip, query, authedFetch, refreshFolders]);
+
   // ---- Search ---------------------------------------------------------
   //
   //  Server-side, across every folder, including message bodies. This used to
