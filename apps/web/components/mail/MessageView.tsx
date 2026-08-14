@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { displayName, formatBytes, formatRecipients } from '@tatvaos/core';
 import type { Address, Attachment, Message } from '@tatvaos/types';
 import { Avatar } from '../ui/Avatar';
@@ -115,6 +115,89 @@ export function MessageView({
   onToggleExpand?: () => void;
 }) {
   const [menu, setMenu] = useState(false);
+
+  const isThread = !!threadMessages && threadMessages.length > 1;
+
+  // Oldest first — a conversation reads downwards.
+  const ordered = useMemo(
+    () => (threadMessages ? [...threadMessages].sort(
+      (a, b) => +new Date(a.sentAt) - +new Date(b.sentAt)) : []),
+    [threadMessages],
+  );
+
+  // Bring the expanded message into view when a collapsed row is chosen —
+  // in a long thread the row clicked and the place it expands can be a
+  // screen apart.
+  const openRef = useRef<HTMLLIElement | null>(null);
+  useEffect(() => {
+    openRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [message.id]);
+
+  // The expanded message: ONE dense identity row, Gmail-style — who, to
+  // whom, when — then the body.
+  const senderHeader = (
+    <header className="flex items-center gap-2.5 px-4 py-2.5">
+      <Avatar address={message.from} size={34} />
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <span className="truncate text-sm font-semibold text-ink">{displayName(message.from)}</span>
+          <span className="hidden truncate text-xs text-ink-muted sm:inline">{message.from.email}</span>
+        </div>
+        <div className="truncate text-xs text-ink-muted">
+          to {formatRecipients(message.to)}
+          {message.cc && message.cc.length > 0 && ` · cc ${formatRecipients(message.cc)}`}
+        </div>
+      </div>
+      <time className="shrink-0 text-xs text-ink-muted">
+        {new Date(message.sentAt).toLocaleString(undefined, {
+          day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit',
+        })}
+      </time>
+    </header>
+  );
+
+  const body = (
+    <div>
+      {message.bodyHtml ? (
+        <SafeHtml html={message.bodyHtml} />
+      ) : bodyLoading ? (
+        <p className="text-sm text-ink-faint">Loading…</p>
+      ) : (
+        <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-ink">
+          {message.bodyText ?? message.snippet}
+        </pre>
+      )}
+    </div>
+  );
+
+  const attachments = message.attachments && message.attachments.length > 0 ? (
+    <div className="mt-6 border-t border-line pt-4">
+      <div className="mb-3 flex items-center gap-1.5 text-sm font-medium text-ink">
+        <Icon name="attach" className="h-4 w-4 text-ink-muted" />
+        {message.attachments.length} attachment
+        {message.attachments.length === 1 ? '' : 's'}
+      </div>
+      <div className="flex flex-wrap gap-3">
+        {message.attachments.map((a) => (
+          <button
+            key={a.id}
+            type="button"
+            onClick={() => onDownloadAttachment?.(message, a)}
+            title={`Download ${a.filename}`}
+            className="flex w-40 items-center gap-2 rounded-xl border border-line p-2.5 text-left transition hover:bg-canvas"
+          >
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-600/20">
+              <Icon name="attach" className="h-5 w-5" />
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate text-xs font-medium text-ink">{a.filename}</span>
+              <span className="block text-[11px] text-ink-muted">{formatBytes(a.sizeBytes)}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  ) : null;
   return (
     <article className="flex h-full flex-col overflow-hidden rounded-card border border-line bg-surface">
       {/* Toolbar — the open-message action row */}
@@ -203,119 +286,69 @@ export function MessageView({
       </div>
 
       {/* ------------------------------------------------------------------
-          The conversation.
-
-          Shown only when there is more than one message, because a strip
-          saying "1 message" on every single email is noise that teaches people
-          to stop reading the area.
-
-          Collapsed by default with the open message marked. Expanding a whole
-          thread inline is Gmail's model and it fights the reading pane —
-          people came here to read ONE message and the rest is context.
+          The conversation, Gmail's way: every message stacked in one scroll,
+          oldest first. Siblings are single collapsed rows — who, snippet,
+          when — and clicking one expands it here in place (the caller
+          re-opens it, so its full body arrives the same way any open does).
+          The first attempt was a collapsed "N messages" strip above the
+          message; nobody expanded it, because a closed drawer reads as
+          furniture. The conversation IS the content, so it gets the pane.
       ------------------------------------------------------------------ */}
-      {threadMessages && threadMessages.length > 1 && (
-        <details className="border-b border-line bg-canvas/50 px-4 py-2">
-          <summary className="cursor-pointer select-none text-xs text-ink-muted">
-            {threadMessages.length} messages in this conversation
-            {threadTotal && threadTotal > threadMessages.length
-              ? ` — showing the most recent ${threadMessages.length} of ${threadTotal}`
-              : ''}
-          </summary>
+      <div className="scroll-thin flex-1 overflow-y-auto">
+        {isThread && threadTotal && threadTotal > ordered.length ? (
+          <p className="border-b border-line bg-canvas/50 px-4 py-1.5 text-xs text-ink-muted">
+            Showing the most recent {ordered.length} of {threadTotal} messages.
+          </p>
+        ) : null}
 
-          <ul className="mt-2 list-none space-y-1 p-0">
-            {threadMessages.map((t) => {
-              const open = t.id === message.id;
+        {isThread ? (
+          <ul className="list-none p-0">
+            {ordered.map((t) => {
+              const isOpen = t.id === message.id;
+              if (!isOpen) {
+                return (
+                  <li key={t.id} className="border-b border-line">
+                    <button
+                      type="button"
+                      disabled={!onOpenMessage}
+                      onClick={() => onOpenMessage?.(t.id)}
+                      className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left transition hover:bg-canvas/70"
+                    >
+                      <Avatar address={t.from} size={30} />
+                      <span className={`w-36 shrink-0 truncate text-sm ${t.isRead ? 'text-ink-muted' : 'font-semibold text-ink'}`}>
+                        {displayName(t.from)}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-xs text-ink-faint">
+                        {t.snippet}
+                      </span>
+                      <span className="shrink-0 text-xs text-ink-faint">
+                        {new Date(t.sentAt).toLocaleDateString(undefined,
+                          { day: 'numeric', month: 'short' })}
+                        {t.folderName ? ` · ${t.folderName}` : ''}
+                      </span>
+                    </button>
+                  </li>
+                );
+              }
               return (
-                <li key={t.id}>
-                  <button
-                    type="button"
-                    disabled={open || !onOpenMessage}
-                    onClick={() => onOpenMessage?.(t.id)}
-                    className={`flex w-full items-baseline gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition ${
-                      open ? 'bg-brand-50 text-ink' : 'text-ink-muted hover:bg-surface'
-                    }`}
-                  >
-                    <span className={`shrink-0 ${t.isRead ? '' : 'font-semibold text-ink'}`}>
-                      {displayName(t.from)}
-                    </span>
-                    <span className="truncate">{t.snippet}</span>
-                    <span className="ml-auto shrink-0 text-ink-faint">
-                      {new Date(t.sentAt).toLocaleDateString(undefined,
-                        { day: 'numeric', month: 'short' })}
-                      {/* A thread spans folders; a reply of yours living in
-                          Sent is not a mystery if the row says so. */}
-                      {t.folderName ? ` · ${t.folderName}` : ''}
-                    </span>
-                  </button>
+                <li key={t.id} ref={openRef} className="border-b border-line">
+                  {senderHeader}
+                  <div className="px-6 py-4">
+                    {body}
+                    {attachments}
+                  </div>
                 </li>
               );
             })}
           </ul>
-        </details>
-      )}
-
-      {/* Sender identity — ONE dense row, Gmail-style: who, to whom, when. */}
-      <header className="flex items-center gap-2.5 border-b border-line px-4 py-2.5">
-        <Avatar address={message.from} size={34} />
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-baseline gap-2">
-            <span className="truncate text-sm font-semibold text-ink">{displayName(message.from)}</span>
-            <span className="hidden truncate text-xs text-ink-muted sm:inline">{message.from.email}</span>
-          </div>
-          <div className="truncate text-xs text-ink-muted">
-            to {formatRecipients(message.to)}
-            {message.cc && message.cc.length > 0 && ` · cc ${formatRecipients(message.cc)}`}
-          </div>
-        </div>
-        <time className="shrink-0 text-xs text-ink-muted">
-          {new Date(message.sentAt).toLocaleString(undefined, {
-            day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit',
-          })}
-        </time>
-      </header>
-
-      <div className="scroll-thin flex-1 overflow-y-auto px-6 py-4">
-        {/* Body */}
-        <div>
-          {message.bodyHtml ? (
-            <SafeHtml html={message.bodyHtml} />
-          ) : bodyLoading ? (
-            <p className="text-sm text-ink-faint">Loading…</p>
-          ) : (
-            <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-ink">
-              {message.bodyText ?? message.snippet}
-            </pre>
-          )}
-        </div>
-
-        {/* Attachments — thumbnail tiles like the template */}
-        {message.attachments && message.attachments.length > 0 && (
-          <div className="mt-6 border-t border-line pt-4">
-            <div className="mb-3 flex items-center gap-1.5 text-sm font-medium text-ink">
-              <Icon name="attach" className="h-4 w-4 text-ink-muted" />
-              {message.attachments.length} attachment
-              {message.attachments.length === 1 ? '' : 's'}
+        ) : (
+          <>
+            {senderHeader}
+            <div className="px-6 py-4">
+              {body}
+              {attachments}
             </div>
-            <div className="flex flex-wrap gap-3">
-              {message.attachments.map((a) => (
-                <button
-                  key={a.id}
-                  type="button"
-                  onClick={() => onDownloadAttachment?.(message, a)}
-                  title={`Download ${a.filename}`}
-                  className="flex w-40 items-center gap-2 rounded-xl border border-line p-2.5 text-left transition hover:bg-canvas"
-                >
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-600/20">
-                    <Icon name="attach" className="h-5 w-5" />
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block truncate text-xs font-medium text-ink">{a.filename}</span>
-                    <span className="block text-[11px] text-ink-muted">{formatBytes(a.sizeBytes)}</span>
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
+          </>
         )}
       </div>
     </article>
