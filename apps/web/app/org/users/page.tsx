@@ -254,6 +254,7 @@ export default function PeoplePage() {
       {editing && (
         <EditPerson
           person={editing}
+          people={people}
           departments={flat}
           onClose={() => setEditing(null)}
           onSaved={async (msg) => { setEditing(null); setNotice(msg); await load(); }}
@@ -529,8 +530,9 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
 }
 
 // ---------------------------------------------------------------------------
-function EditPerson({ person, departments, onClose, onSaved, onError }: {
+function EditPerson({ person, people, departments, onClose, onSaved, onError }: {
   person: Person;
+  people: Person[];
   departments: { d: Dept; depth: number }[];
   onClose: () => void;
   onSaved: (msg: string) => void;
@@ -555,6 +557,38 @@ function EditPerson({ person, departments, onClose, onSaved, onError }: {
     return () => { alive = false; };
   }, [authedFetch, person.id, person.hasAvatar]);
   const [armDelete, setArmDelete] = useState(false);
+
+  // ---- Offboarding -----------------------------------------------------
+  //  Delete answers "remove this account". Offboarding answers "this person
+  //  is LEAVING" — the same teardown, plus the question deletion silently
+  //  skips: what happens to mail still sent to their address?
+  const [offboarding, setOffboarding] = useState(false);
+  const [forwardTo, setForwardTo] = useState('');
+  const successors = useMemo(
+    () => people
+      .filter((p) => p.id !== person.id && p.status === 'active' && p.mailboxAddress)
+      .sort((a, b) => a.displayName.localeCompare(b.displayName)),
+    [people, person.id],
+  );
+
+  async function offboard() {
+    setBusy(true);
+    try {
+      const res = await authedFetch(`/org/users/${person.id}/offboard`, {
+        method: 'POST',
+        body: JSON.stringify({ forwardToUserId: forwardTo || null }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof body.error === 'string' ? body.error : 'That did not work.');
+      const successor = successors.find((p) => p.id === forwardTo);
+      onSaved(successor
+        ? `${person.displayName} offboarded. Mail to ${person.mailboxAddress} now reaches ${successor.displayName}.`
+        : `${person.displayName} offboarded. Sign-in and access are closed; their stored mail is retained.`);
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'That did not work.');
+      setBusy(false);
+    }
+  }
 
   const editingSelf = me?.id === person.id;
   const canMakeOwner = me?.role === 'org_owner' || me?.role === 'super_admin';
@@ -797,7 +831,48 @@ function EditPerson({ person, departments, onClose, onSaved, onError }: {
                 {armDelete ? 'Click again — this deletes their account' : 'Delete person'}
               </span>
             </Button>
+
+            {!offboarding && (
+              <Button variant="ghost" disabled={busy} onClick={() => setOffboarding(true)}>
+                Offboard&hellip;
+              </Button>
+            )}
           </div>
+          )}
+
+          {/* ----------------------------------------------------------
+              Offboarding panel. One decision — where does their mail go —
+              then one action that closes sign-in, revokes access, and
+              deactivates the mailbox together. Forwarding is real routing:
+              mail from ANYONE to their address, colleagues or customers,
+              is delivered to the successor from the moment this runs. */}
+          {offboarding && person.status !== 'deleted' && (
+            <div className="border rounded p-3 mt-3">
+              <div className="fs-14 fw-semibold mb-1">Offboard {person.displayName}</div>
+              <p className="fs-12 text-muted mb-2">
+                Closes sign-in and all access, and deactivates their mailbox.
+                Their stored mail is retained. Choose what happens to mail
+                still sent to {person.mailboxAddress ?? 'their address'}:
+              </p>
+              <select className="form-select mb-2" value={forwardTo}
+                      disabled={busy}
+                      onChange={(e) => setForwardTo(e.target.value)}>
+                <option value="">No forwarding — new mail to their address bounces</option>
+                {successors.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    Forward to {p.displayName} ({p.mailboxAddress})
+                  </option>
+                ))}
+              </select>
+              <div className="d-flex gap-2">
+                <Button variant="primary" disabled={busy} onClick={() => void offboard()}>
+                  {busy ? 'Working…' : `Offboard ${person.displayName}`}
+                </Button>
+                <Button variant="ghost" disabled={busy} onClick={() => setOffboarding(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
           )}
         </>
       )}
