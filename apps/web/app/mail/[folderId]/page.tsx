@@ -34,6 +34,12 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [open, setOpen] = useState<Message | null>(null);
   const [openLoading, setOpenLoading] = useState(false);
+
+  // The open message's conversation, fetched when it carries a threadId.
+  // Null while loading or for a lone message — the strip renders nothing for
+  // either, which is the honest state.
+  const [thread, setThread] = useState<SearchHit[] | null>(null);
+  const [threadTotal, setThreadTotal] = useState(0);
   const [query, setQuery] = useState('');
   const [searchHits, setSearchHits] = useState<SearchHit[] | null>(null);
   const [searchTotal, setSearchTotal] = useState(0);
@@ -192,7 +198,9 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     // `filtered`, not `messages`: while searching, the row lives in the search
     // results — which may be a message in another folder that was never in the
     // loaded folder page at all.
-    const row = filtered.find((m) => m.id === id);
+    // The thread strip adds a third row source: a sibling in this
+    // conversation may live in Sent and appear in no loaded list.
+    const row = filtered.find((m) => m.id === id) ?? thread?.find((m) => m.id === id);
     if (!row) return;
 
     if (!row.isRead) {
@@ -203,6 +211,27 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
 
     setOpen({ ...row, isRead: true });
     setOpenLoading(true);
+
+    // The conversation loads alongside the body. Kept only if the SAME thread
+    // is still open when it lands; opening a sibling skips the refetch.
+    if (row.threadId && !(thread && thread.some((m) => m.id === id))) {
+      setThread(null);
+      const tid = row.threadId;
+      void mailApi.thread(authedFetch, tid).then(
+        (page) => setOpen((prev) => {
+          if (prev && prev.threadId === tid) {
+            setThread(page.messages);
+            setThreadTotal(page.total);
+          }
+          return prev;
+        }),
+        () => { /* no strip is a fine fallback; the message still reads */ },
+      );
+    } else if (!row.threadId) {
+      setThread(null);
+      setThreadTotal(0);
+    }
+
     try {
       const full = await mailApi.message(authedFetch, id);
       setOpen((prev) => (prev && prev.id === id ? { ...full, isRead: true } : prev));
@@ -502,6 +531,9 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
               onMarkUnread={handleMarkUnread}
               onPrint={handlePrint}
               onDownloadAttachment={(m, a: Attachment) => downloadAttachment(m.id, a.id, a.filename)}
+              threadMessages={thread ?? undefined}
+              threadTotal={threadTotal}
+              onOpenMessage={(id) => void handleOpen(id)}
             />
           </div>
         ) : (
