@@ -91,6 +91,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<ContactSetting> ContactSettings => Set<ContactSetting>();
     public DbSet<ContactSource> ContactSources => Set<ContactSource>();
 
+    // ---- space. RLS enabled and forced; see 25-space-schema.sql ----
+    public DbSet<SpaceFolder> SpaceFolders => Set<SpaceFolder>();
+    public DbSet<SpaceFile> SpaceFiles => Set<SpaceFile>();
+    public DbSet<SpaceShare> SpaceShares => Set<SpaceShare>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         // ---- Schemas -----------------------------------------------------
@@ -140,6 +145,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<ContactSetting>().ToTable("contact_settings", "family");
         b.Entity<ContactSource>().ToTable("contact_sources", "family");
 
+        b.Entity<SpaceFolder>().ToTable("folders", "space");
+        b.Entity<SpaceFile>().ToTable("files", "space");
+        b.Entity<SpaceShare>().ToTable("shares", "space");
+
         // ---- Column types Npgsql cannot infer ----------------------------
         // A string property maps to text by default, and PostgreSQL has no
         // implicit text -> jsonb cast, so every audit write would fail at
@@ -162,6 +171,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         // contact search vector is trigger-maintained (19-family-schema.sql).
         b.Entity<ContactAuditLog>().Property(a => a.Changes).HasColumnType("jsonb");
         b.Entity<Contact>().Property(c => c.SearchVector).ValueGeneratedOnAddOrUpdate();
+
+        // Space file names, same trigger arrangement (25-space-schema.sql).
+        b.Entity<SpaceFile>().Property(f => f.SearchVector).ValueGeneratedOnAddOrUpdate();
 
         // ---- Keys --------------------------------------------------------
         b.Entity<Product>().HasKey(p => p.Code);
@@ -215,6 +227,15 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<ContactSetting>().HasQueryFilter(e =>
             e.TenantId == tenant.TenantId && e.UserId == tenant.UserId);
         b.Entity<ContactSource>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+
+        // Space. Tenant-scoped ONLY here, deliberately weaker than the RLS
+        // policy: visibility through shares and ancestor folders needs a
+        // recursive walk no EF filter can express. RLS is the guarantee —
+        // these filters just stop an accidental cross-tenant query from
+        // compiling into something that looks like it worked.
+        b.Entity<SpaceFolder>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<SpaceFile>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<SpaceShare>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
 
         // ---- Uniqueness ---------------------------------------------------
         // Domains are unique across the WHOLE platform, not per tenant. Two
@@ -430,6 +451,49 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             .HasForeignKey(x => x.ContactId).OnDelete(DeleteBehavior.Cascade);
         b.Entity<ContactSource>().HasOne<Message>().WithMany()
             .HasForeignKey(x => x.MailMessageId).OnDelete(DeleteBehavior.Cascade);
+
+        // ---- Space -------------------------------------------------------
+        // One blob, one row — mirrors uq_space_files_blob so EF and the
+        // database agree what a duplicate is. Purging one row must never be
+        // able to destroy another row's bytes.
+        b.Entity<SpaceFile>().HasIndex(f => f.BlobKey).IsUnique();
+
+        // Every FK declared, as everywhere in this file: EF orders writes by
+        // the relationships it KNOWS about, and an undeclared one is a 23503
+        // at runtime. Owner FKs are SetNull, not Cascade — the Family
+        // departure lesson: files outlive their owner as retained rows.
+        b.Entity<SpaceFolder>().HasOne<Tenant>().WithMany()
+            .HasForeignKey(f => f.TenantId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<SpaceFolder>().HasOne<SpaceFolder>().WithMany()
+            .HasForeignKey(f => f.ParentFolderId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<SpaceFolder>().HasOne<User>().WithMany()
+            .HasForeignKey(f => f.OwnerUserId).OnDelete(DeleteBehavior.SetNull);
+        b.Entity<SpaceFolder>().HasOne<User>().WithMany()
+            .HasForeignKey(f => f.CreatedByUserId).OnDelete(DeleteBehavior.SetNull);
+        b.Entity<SpaceFolder>().HasOne<User>().WithMany()
+            .HasForeignKey(f => f.DeletedByUserId).OnDelete(DeleteBehavior.SetNull);
+
+        b.Entity<SpaceFile>().HasOne<Tenant>().WithMany()
+            .HasForeignKey(f => f.TenantId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<SpaceFile>().HasOne<SpaceFolder>().WithMany()
+            .HasForeignKey(f => f.FolderId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<SpaceFile>().HasOne<User>().WithMany()
+            .HasForeignKey(f => f.OwnerUserId).OnDelete(DeleteBehavior.SetNull);
+        b.Entity<SpaceFile>().HasOne<User>().WithMany()
+            .HasForeignKey(f => f.CreatedByUserId).OnDelete(DeleteBehavior.SetNull);
+        b.Entity<SpaceFile>().HasOne<User>().WithMany()
+            .HasForeignKey(f => f.DeletedByUserId).OnDelete(DeleteBehavior.SetNull);
+
+        b.Entity<SpaceShare>().HasOne<Tenant>().WithMany()
+            .HasForeignKey(s => s.TenantId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<SpaceShare>().HasOne<SpaceFile>().WithMany()
+            .HasForeignKey(s => s.FileId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<SpaceShare>().HasOne<SpaceFolder>().WithMany()
+            .HasForeignKey(s => s.FolderId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<SpaceShare>().HasOne<User>().WithMany()
+            .HasForeignKey(s => s.SharedByUserId).OnDelete(DeleteBehavior.SetNull);
+        b.Entity<SpaceShare>().HasOne<User>().WithMany()
+            .HasForeignKey(s => s.SharedWithUserId).OnDelete(DeleteBehavior.Cascade);
 
         base.OnModelCreating(b);
 

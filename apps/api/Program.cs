@@ -10,6 +10,7 @@ using TatvaOS.Api.Modules.Core.Endpoints;
 using TatvaOS.Api.Modules.Mail.Endpoints;
 using TatvaOS.Api.Modules.Family;
 using TatvaOS.Api.Modules.Family.Endpoints;
+using TatvaOS.Api.Modules.Space.Endpoints;
 using TatvaOS.Api.Workers;
 using TatvaOS.Api.Shared.Notify;
 using TatvaOS.Api.Shared.Settings;
@@ -174,6 +175,7 @@ app.MapStorageEndpoints();
 app.MapAuditEndpoints();
 app.MapMailEndpoints();
 app.MapFamilyEndpoints();
+app.MapSpaceEndpoints();
 
 // ---------------------------------------------------------------------------
 //  Bootstrap the first super admin
