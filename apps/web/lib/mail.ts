@@ -232,6 +232,24 @@ export const mailApi = {
     f(`/mail/messages/${id}`).then((r) => json<Message>(r, 'Could not load the message.')),
 
   /**
+   * The message exactly as it arrived - headers, boundaries, encodings, all
+   * of it. Returned as text rather than JSON: this is bytes off the wire, and
+   * wrapping them in a JSON string would re-encode the thing being inspected.
+   *
+   * What the reading pane shows is an interpretation. This is the evidence.
+   */
+  messageSource: async (f: AuthedFetch, id: string) => {
+    const res = await f(`/mail/messages/${id}/source`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(
+        (body as { error?: string }).error ?? 'Could not load the original message.',
+      );
+    }
+    return res.text();
+  },
+
+  /**
    * Recipient suggestions for the composer's "@" picker.
    *
    * Server-side rather than filtering a list held in the browser: the client
