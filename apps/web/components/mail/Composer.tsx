@@ -443,23 +443,38 @@ export function Composer({
           {showCc && (
             <label className="flex items-center gap-2 border-b border-line py-2.5 text-sm transition-colors focus-within:border-brand-500">
               <span className="w-12 shrink-0 text-ink-muted">Cc</span>
-              <input
-                value={cc}
-                onChange={(e) => setCc(e.target.value)}
-                placeholder="name@example.com"
-                className="w-full border-0 bg-transparent p-0 text-ink outline-none placeholder:text-ink-faint"
-              />
+              {/* Same picker as To. Cc and Bcc were the only recipient fields
+                  without suggestions, which read as the feature randomly not
+                  working depending on which line you typed in. */}
+              <ContactPicker value={cc} onPick={setCc}>
+                {(pickerRef, onPickerKeyDown) => (
+                  <input
+                    ref={pickerRef}
+                    value={cc}
+                    onChange={(e) => setCc(e.target.value)}
+                    onKeyDown={onPickerKeyDown}
+                    placeholder="name@example.com"
+                    className="w-full border-0 bg-transparent p-0 text-ink outline-none placeholder:text-ink-faint"
+                  />
+                )}
+              </ContactPicker>
             </label>
           )}
           {showBcc && (
             <label className="flex items-center gap-2 border-b border-line py-2.5 text-sm transition-colors focus-within:border-brand-500">
               <span className="w-12 shrink-0 text-ink-muted">Bcc</span>
-              <input
-                value={bcc}
-                onChange={(e) => setBcc(e.target.value)}
-                placeholder="Hidden from everyone else on the message"
-                className="w-full border-0 bg-transparent p-0 text-ink outline-none placeholder:text-ink-faint"
-              />
+              <ContactPicker value={bcc} onPick={setBcc}>
+                {(pickerRef, onPickerKeyDown) => (
+                  <input
+                    ref={pickerRef}
+                    value={bcc}
+                    onChange={(e) => setBcc(e.target.value)}
+                    onKeyDown={onPickerKeyDown}
+                    placeholder="Hidden from everyone else on the message"
+                    className="w-full border-0 bg-transparent p-0 text-ink outline-none placeholder:text-ink-faint"
+                  />
+                )}
+              </ContactPicker>
             </label>
           )}
           <label className="flex items-center gap-2 border-b border-line py-2.5 text-sm transition-colors focus-within:border-brand-500">
