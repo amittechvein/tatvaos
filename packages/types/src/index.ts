@@ -57,7 +57,14 @@ export interface Folder {
 }
 
 export interface Address {
-  name?: string;
+  /**
+   * Null, not merely absent. Every mail endpoint serialises a missing display
+   * name as JSON null - from_name is nullable in the database and goes out as
+   * it is - so a type allowing only undefined was describing a response the
+   * API has never actually sent. Optional as well as nullable, so callers
+   * constructing an Address by hand can still leave it out.
+   */
+  name?: string | null;
   email: string;
 }
 
