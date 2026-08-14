@@ -1,9 +1,14 @@
 # TatvaOS Space — API contract
 
-**Status: CONTRACT.** None of this works yet. It is the surface the frontend
-builds against; disagreements found now are cheap. Shapes follow Mail:
+**Status: APPROVED CONTRACT (v1.1, 2026-08-14).** Reviewed by Core; the
+frontend builds against this. None of it works yet. Shapes follow Mail:
 `authedFetch`, JSON bodies, camelCase, and every error is
 `{ "error": "sentence." }` — the console prints it verbatim.
+
+v1.1 amendments from Core's review: quota refusal is `413` + `reason`
+(never 507 — 5xx retries and false-pages), `myPermission` batched per page,
+share rows survive ownership flips, upload rejects `file`-before-`sizeBytes`,
+and the meter uses `GET /api/org/storage` instead of a Space usage endpoint.
 
 Written against migration `25-space-schema.sql`, branch `feature/space-schema`.
 
@@ -23,8 +28,15 @@ Written against migration `25-space-schema.sql`, branch `feature/space-schema`.
   is enforced in the application; RLS answers visibility only.
 - **Status codes** used: `200`, `201`, `204`; `400` validation, `403`
   insufficient level, `404` not visible / does not exist, `409` structural
-  conflict (cycle, duplicate share), `413` single file over the per-file cap,
-  `507` storage quota — see Upload for the `reason` field.
+  conflict (cycle, duplicate share), `413` upload refused for storage
+  reasons — see Upload for the `reason` field. **Never a 5xx for quota**:
+  5xx gets auto-retried by clients and proxies (re-streaming a 2 GB upload
+  at the worst possible moment) and lands on error dashboards as a server
+  fault. Out of space is the caller's condition, not our failure.
+- **`myPermission` is computed batched**, never per row: folder access is
+  resolved once for the listing, then the page's file-level share rows are
+  fetched in ONE query keyed by file id and folded in memory —
+  `max(folder-derived, own grants)`. A recursive walk per row is a bug.
 - **Scope.** Everyone has two roots: `personal` (mine) and `organisational`
   (the tenant's). A root is not a row — it is `folderId = null` plus a scope.
   Endpoints that can target a root take `scope` wherever `folderId` is null.
@@ -119,7 +131,8 @@ their ancestor and are not listed separately (restore is one un-stamp).
 {
   "folders": [ FolderDto ],   // deletedAt set on all
   "files":   [ FileDto ],
-  "retentionDays": 30         // purge deadline = deletedAt + retentionDays
+  "retentionDays": 30,        // purge deadline = deletedAt + retentionDays
+  "trashBytes": 52428800      // reclaimable now — for "empty trash frees X"
 }
 ```
 
@@ -162,11 +175,16 @@ FileDto
 
 Errors:
 - `404` folder not visible · `403` visible but no `edit`
-- `413` file exceeds the per-file cap → `{ "error": "…" }`
-- `507` quota → `{ "error": "sentence for the console.", "reason": "full" | "suspended" | "no_allocation" }`
-  — `reason` is machine-readable so the UI can link the storage page on
-  `full` and say something different on `suspended`. Mirrors what
-  `EvaluateAcceptAsync` learned: a bare refusal makes the caller guess wrong.
+- `400` if the `file` part arrives before `sizeBytes` — rejected with a clear
+  message, bytes never read. (The frontend appends FormData in order, but the
+  server guards anyway.)
+- `413` upload refused for storage reasons →
+  `{ "error": "sentence for the console.", "reason": "full" | "suspended" | "no_allocation" | "file_too_large" }`
+  — ONE status for every storage refusal, so the UI branches on `reason`, not
+  on scattered codes: link the storage page on `full`, say something
+  different on `suspended`, name the per-file cap on `file_too_large`.
+  Mirrors what `EvaluateAcceptAsync` learned: a bare refusal makes the
+  caller guess wrong. `4xx` deliberately — see Conventions for why not 507.
 
 ### `PUT /api/space/files/{id}/content` — replace content (overwrite)
 
@@ -204,6 +222,12 @@ does **not** change `ownershipType` — that is explicit, below.
 Owner (or org-admin, for reclaiming retained owner-less files) only.
 `organisational → personal` sets the caller as owner. `200` FileDto.
 Audited to `core.audit_logs` — this is the "whose is this" trail.
+
+**Existing share rows SURVIVE the flip**, in both directions. On
+`personal → organisational` they become redundant (org-wide access
+supersedes them) but are not deleted — silent deletion is the kind of thing
+nobody notices until access disappears on the flip back. The shares list
+still shows them; removing them is an explicit DELETE by a human.
 
 ### Trash lifecycle
 
@@ -279,24 +303,16 @@ on purpose); `403` level.
 
 ---
 
-## Usage
+## Usage — no Space endpoint, deliberately
 
-### `GET /api/space/usage`
+The storage meter reads the existing **`GET /api/org/storage`**, which
+already returns per-product allocations including `drive`. Space adds no
+usage endpoint of its own: one product, one quota system, one place to read
+it. The Space-specific number the org endpoint cannot give — reclaimable
+trash bytes — rides on `GET /api/space/trash` above.
 
-Reads `core.storage_pools` / `core.storage_allocations` (product `drive`) —
-Space owns no quota numbers. Reconciles this tenant on read, like the storage
-console, so opening the meter repairs it.
-
-```jsonc
-// 200
-{
-  "usedBytes": 734003200,          // includes trash — bytes are still on disk
-  "trashBytes": 52428800,          // the reclaimable part, for "empty trash frees X"
-  "allocatedBytes": 536870912000,  // null = draw from whatever is left in the pool
-  "poolTotalBytes": 2199023255552,
-  "poolUsedBytes": 1651113328640   // all products, for the "of your plan" line
-}
-```
+Reads of the drive figure reconcile this tenant on the way through, same as
+the storage console, so opening the meter repairs it.
 
 ---
 
