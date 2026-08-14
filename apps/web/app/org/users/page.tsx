@@ -709,6 +709,7 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
       subtitle={person.email}
       onClose={onClose}
       busy={busy}
+      size="xl"
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
@@ -719,6 +720,12 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
         </>
       }
     >
+      {/* Two columns on a desktop, stacked on a phone. The dialog is wide
+          so everything is visible at once — a section hidden behind a
+          scrollbar may as well not exist, and this dialog will keep
+          growing as products are added. */}
+      <div className="row g-4">
+      <div className="col-md-6">
       {/* ---- Profile -------------------------------------------------- */}
       {sectionTitle('Profile')}
       <div className="mb-3">
@@ -749,8 +756,8 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
         </select>
       </Field>
 
-      <hr className="my-4" />
-
+      </div>
+      <div className="col-md-6">
       {/* ---- Access --------------------------------------------------- */}
       {sectionTitle('Access')}
       {/* The facts an admin opens this dialog to check, previously not
@@ -841,6 +848,8 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
           No mailbox — storage does not apply to this person.
         </div>
       )}
+      </div>
+      </div>
 
       {/* ---- Leaving and removal -------------------------------------- */}
       {/* Not offered against yourself — suspending or deleting the account

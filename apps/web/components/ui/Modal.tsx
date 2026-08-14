@@ -25,7 +25,7 @@ export function Modal({
   onClose: () => void;
   children: React.ReactNode;
   footer?: React.ReactNode;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg' | 'xl';
   /** Blocks every dismissal path while a request is in flight. */
   busy?: boolean;
 }) {
@@ -37,7 +37,7 @@ export function Modal({
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose, busy]);
 
-  const width = size === 'lg' ? ' modal-lg' : size === 'sm' ? ' modal-sm' : '';
+  const width = size === 'xl' ? ' modal-xl' : size === 'lg' ? ' modal-lg' : size === 'sm' ? ' modal-sm' : '';
 
   return (
     <>
