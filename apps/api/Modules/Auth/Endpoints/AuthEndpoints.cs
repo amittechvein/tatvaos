@@ -290,6 +290,11 @@ public static class AuthEndpoints
         // ---- forgot password (anonymous: the whole point is no session) --
         // Email link and phone OTP, each a request/complete pair. Every
         // request path answers the same whether the account exists or not.
+        // The second half of a challenged sign-in. Anonymous, because by
+        // definition there is no session yet — the challenge IS the credential
+        // that says the password was already accepted.
+        g.MapPost("/mfa/verify", MfaVerifyAsync).AllowAnonymous();
+
         g.MapPost("/password/forgot", ForgotPasswordAsync).AllowAnonymous();
         g.MapPost("/password/reset", ResetPasswordAsync).AllowAnonymous();
         g.MapPost("/password/forgot-otp", ForgotPasswordOtpAsync).AllowAnonymous();
@@ -309,7 +314,7 @@ public static class AuthEndpoints
     private static async Task<IResult> LoginAsync(
         LoginRequest req, AppDbContext db, TokenIssuer tokens, IPasswordHasher hasher,
         TenantContext tenant, HttpContext http, IServiceScopeFactory scopeFactory,
-        IConfiguration config, CancellationToken ct)
+        IConfiguration config, TotpService totp, CancellationToken ct)
     {
         var email = req.Email?.Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(email) || string.IsNullOrEmpty(req.Password))
@@ -365,7 +370,7 @@ public static class AuthEndpoints
         if (user.Status is "suspended" or "deleted" || org?.Status is "suspended" or "deleted")
             return Results.Json(new { error = GenericFailure }, statusCode: 401);
 
-        return await CompleteSignInAsync(user, org, db, tokens, http, scopeFactory, config, ct);
+        return await CompleteSignInAsync(user, org, db, tokens, http, scopeFactory, config, ct, totp);
     }
 
     // =====================================================================
@@ -467,7 +472,7 @@ public static class AuthEndpoints
     private static async Task<IResult> OtpVerifyAsync(
         OtpVerifyRequest req, AppDbContext db, TokenIssuer tokens,
         TenantContext tenant, HttpContext http, IServiceScopeFactory scopeFactory,
-        IConfiguration config, CancellationToken ct)
+        IConfiguration config, TotpService totp, CancellationToken ct)
     {
         var phone = Shared.PhoneNumber.Normalise(req.Phone);
         var code = req.Code?.Trim() ?? "";
@@ -520,7 +525,7 @@ public static class AuthEndpoints
             return Results.Json(new { error = GenericFailure }, statusCode: 401);
         }
 
-        return await CompleteSignInAsync(user, org, db, tokens, http, scopeFactory, config, ct);
+        return await CompleteSignInAsync(user, org, db, tokens, http, scopeFactory, config, ct, totp);
     }
 
     /// <summary>
@@ -532,11 +537,38 @@ public static class AuthEndpoints
     /// pending→active promotion or the slot pick, and the symptom would be a
     /// user who exists differently depending on how they signed in.
     /// </summary>
+    /// <param name="totp">
+    /// Present when the caller is a first-factor path (password, mobile OTP).
+    /// Null when the second factor has ALREADY been checked — the MFA verify
+    /// endpoint passes null so it does not challenge the person twice.
+    /// </param>
     private static async Task<IResult> CompleteSignInAsync(
         User user, Tenant? org, AppDbContext db, TokenIssuer tokens,
         HttpContext http, IServiceScopeFactory scopeFactory, IConfiguration config,
-        CancellationToken ct)
+        CancellationToken ct, TotpService? totp = null)
     {
+        // ---------------------------------------------------------------
+        //  The second factor, if there is one.
+        //
+        //  This sits BEFORE any of the state below because none of it should
+        //  happen on a half-finished sign-in: the failed-login counter must
+        //  not reset, the lockout must not lift, LastLoginAt must not move,
+        //  and a pending account must not become active. Somebody who knows
+        //  the password and not the code has not signed in, and the account
+        //  should look exactly as it did.
+        //
+        //  No session, no cookie, no slot — only a challenge.
+        // ---------------------------------------------------------------
+        if (totp is not null && user.MfaEnabled && user.MfaSecretRef is not null)
+        {
+            return Results.Ok(new
+            {
+                mfaRequired = true,
+                challenge = totp.IssueChallenge(user.Id),
+                note = "Enter the code from your authenticator app.",
+            });
+        }
+
         user.FailedLoginCount = 0;
         user.LockedUntil = null;
         user.LastLoginAt = DateTimeOffset.UtcNow;
@@ -1116,6 +1148,114 @@ public static class AuthEndpoints
     }
 
     // =====================================================================
+    //  SECOND FACTOR
+    // =====================================================================
+    //
+    //  Completes a sign-in that CompleteSignInAsync stopped and handed back a
+    //  challenge for. Two ways through: the six digits from the authenticator,
+    //  or one of the recovery codes issued at enrolment.
+    //
+    //  THE FAILURE MESSAGE IS THE SAME FOR BOTH, and does not say which was
+    //  tried. Distinguishing "wrong code" from "wrong recovery code" tells an
+    //  attacker holding a stolen password which of the two they are closer to.
+    //
+    //  The password lockout counter applies here too. Without it the second
+    //  factor is a free six-digit oracle: someone with the password could
+    //  grind a million guesses against a challenge they can reissue at will.
+
+    private const string MfaFailure =
+        "That code was not accepted. Try the current code from your app, or one of your recovery codes.";
+
+    private static async Task<IResult> MfaVerifyAsync(
+        MfaVerifyRequest req, AppDbContext db, TokenIssuer tokens, TotpService totp,
+        TenantContext tenant, HttpContext http, IServiceScopeFactory scopeFactory,
+        IConfiguration config, CancellationToken ct)
+    {
+        var userId = totp.ReadChallenge(req.Challenge);
+        if (userId is null)
+            return Results.Json(new
+            {
+                error = "That sign-in attempt has expired. Enter your password again.",
+            }, statusCode: 401);
+
+        // Cross-tenant, like every pre-auth lookup here: the challenge carries
+        // a user id and nothing else.
+        var user = await db.Users.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(u => u.Id == userId, ct);
+
+        if (user is null || !user.MfaEnabled || user.MfaSecretRef is null)
+            return Results.Json(new { error = MfaFailure }, statusCode: 401);
+
+        if (user.LockedUntil is DateTimeOffset until && until > DateTimeOffset.UtcNow)
+        {
+            var minutes = Math.Max(1, (int)(until - DateTimeOffset.UtcNow).TotalMinutes);
+            return Results.Json(new
+            {
+                error = $"Too many failed attempts. Try again in {minutes} minute(s).",
+            }, statusCode: 429);
+        }
+
+        tenant.Set(user.TenantId, user.Id, user.Role);
+        await db.SyncTenantAsync(ct);
+
+        var code = (req.Code ?? "").Trim();
+        var accepted = false;
+
+        // A six-digit string is a TOTP code; anything else is treated as a
+        // recovery code. Trying both against the same input would let one
+        // attempt consume two guesses.
+        if (code.Count(char.IsDigit) == 6 && code.All(c => char.IsDigit(c) || char.IsWhiteSpace(c)))
+        {
+            var secret = totp.Unprotect(user.MfaSecretRef);
+            var step = secret is null ? null : totp.Verify(secret, code, user.MfaLastStep);
+            if (step is not null)
+            {
+                // Recorded so the same code cannot be replayed inside its window.
+                user.MfaLastStep = step;
+                accepted = true;
+            }
+        }
+        else
+        {
+            var hash = TotpService.HashRecoveryCode(code);
+            var match = await db.MfaRecoveryCodes
+                .FirstOrDefaultAsync(c => c.UserId == user.Id && c.CodeHash == hash && c.UsedAt == null, ct);
+
+            if (match is not null)
+            {
+                // Single use, marked before anything else can fail.
+                match.UsedAt = DateTimeOffset.UtcNow;
+                accepted = true;
+            }
+        }
+
+        if (!accepted)
+        {
+            user.FailedLoginCount++;
+            if (user.FailedLoginCount >= MaxFailedAttempts)
+            {
+                user.LockedUntil = DateTimeOffset.UtcNow.Add(LockoutDuration);
+                user.FailedLoginCount = 0;
+            }
+            await db.SaveChangesAsync(ct);
+            return Results.Json(new { error = MfaFailure }, statusCode: 401);
+        }
+
+        // Re-checked here, not carried from the first factor: a suspension
+        // applied in the seconds between password and code should still bite.
+        var org = await db.Tenants.FirstOrDefaultAsync(t => t.Id == user.TenantId, ct);
+        if (user.Status is "suspended" or "deleted" || org?.Status is "suspended" or "deleted")
+        {
+            await db.SaveChangesAsync(ct);
+            return Results.Json(new { error = GenericFailure }, statusCode: 401);
+        }
+
+        // totp deliberately omitted — the factor has just been checked, and
+        // passing it would challenge the same person a second time.
+        return await CompleteSignInAsync(user, org, db, tokens, http, scopeFactory, config, ct);
+    }
+
+    // =====================================================================
     //  FORGOT PASSWORD
     // =====================================================================
     //
@@ -1486,6 +1626,12 @@ public sealed record SwitchRequest(int Slot);
 /// </summary>
 public sealed record LogoutRequest(bool All = false, string? RefreshToken = null);
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
+
+/// <summary>
+/// The second half of a challenged sign-in. <paramref name="Code"/> is either
+/// six digits from the authenticator or a recovery code.
+/// </summary>
+public sealed record MfaVerifyRequest(string? Challenge, string? Code);
 
 // ---- forgot password ----
 public sealed record ForgotPasswordRequest(string? Email);

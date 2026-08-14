@@ -185,6 +185,61 @@ public sealed class TotpService(IConfiguration config)
     }
 
     // ---------------------------------------------------------------------
+    //  The sign-in challenge
+    // ---------------------------------------------------------------------
+    //
+    //  When MFA is on, the password gets you a CHALLENGE, not a session. The
+    //  challenge says "this password was correct, now prove possession" and is
+    //  worth nothing on its own.
+    //
+    //  Signed rather than stored, deliberately. A row in the database would
+    //  need a table, a cleanup job for the ones nobody completes, and a write
+    //  on every sign-in attempt — all to hold a value that is useless without
+    //  a TOTP code and expires in five minutes. An HMAC over (user, expiry)
+    //  gives the same guarantee with no state.
+    //
+    //  It is NOT a bearer token and cannot be used as one: it carries no
+    //  claims the API reads, and the middleware will not accept it. The only
+    //  thing that consumes it is the verify endpoint.
+
+    private static readonly TimeSpan ChallengeLifetime = TimeSpan.FromMinutes(5);
+
+    public string IssueChallenge(Guid userId)
+    {
+        var expires = DateTimeOffset.UtcNow.Add(ChallengeLifetime).ToUnixTimeSeconds();
+        var body = $"{userId:N}.{expires}";
+        var mac = Convert.ToHexString(
+            HMACSHA256.HashData(Key(), Encoding.UTF8.GetBytes($"mfa-challenge:{body}")));
+        return $"{body}.{mac.ToLowerInvariant()}";
+    }
+
+    /// <summary>The user the challenge is for, or null if it is forged or expired.</summary>
+    public Guid? ReadChallenge(string? challenge)
+    {
+        if (string.IsNullOrWhiteSpace(challenge)) return null;
+
+        var parts = challenge.Split('.');
+        if (parts.Length != 3) return null;
+        if (!Guid.TryParseExact(parts[0], "N", out var userId)) return null;
+        if (!long.TryParse(parts[1], out var expires)) return null;
+
+        var expected = Convert.ToHexString(
+            HMACSHA256.HashData(Key(), Encoding.UTF8.GetBytes($"mfa-challenge:{parts[0]}.{parts[1]}")))
+            .ToLowerInvariant();
+
+        // Fixed-time: a fast reject leaks how much of the MAC was right.
+        if (!CryptographicOperations.FixedTimeEquals(
+                Encoding.ASCII.GetBytes(expected), Encoding.ASCII.GetBytes(parts[2])))
+        {
+            return null;
+        }
+
+        // Expiry checked AFTER the signature, so an attacker cannot learn
+        // anything from how quickly a forged value is rejected.
+        return DateTimeOffset.UtcNow.ToUnixTimeSeconds() > expires ? null : userId;
+    }
+
+    // ---------------------------------------------------------------------
     //  Recovery codes
     // ---------------------------------------------------------------------
 
