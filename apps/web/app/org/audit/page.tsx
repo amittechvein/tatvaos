@@ -64,6 +64,13 @@ export default function OrgAuditPage() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
 
+  // "Who" offers the organisation's people; "Product" is the fixed set of
+  // things that write to the trail. Answers the two questions the trail is
+  // actually opened for: "what did THIS person do" and "who touched Mail".
+  const [people, setPeople] = useState<{ id: string; displayName: string }[]>([]);
+  const [actor, setActor] = useState('');
+  const [product, setProduct] = useState('');
+
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,9 +78,11 @@ export default function OrgAuditPage() {
 
   const query = useCallback((): AuditQuery => ({
     action: action || undefined,
+    actorUserId: actor || undefined,
+    productCode: product || undefined,
     from: dayStart(from),
     to: dayEnd(to),
-  }), [action, from, to]);
+  }), [action, actor, product, from, to]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -94,6 +103,11 @@ export default function OrgAuditPage() {
 
   useEffect(() => {
     void fetchAuditActions(authedFetch).then(setActions).catch(() => setActions([]));
+    void authedFetch('/org/users')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list: { id: string; displayName: string }[]) =>
+        setPeople(list.sort((a, b) => a.displayName.localeCompare(b.displayName))))
+      .catch(() => setPeople([]));
   }, [authedFetch]);
 
   async function loadMore() {
@@ -115,11 +129,13 @@ export default function OrgAuditPage() {
 
   function clearFilters() {
     setAction('');
+    setActor('');
+    setProduct('');
     setFrom('');
     setTo('');
   }
 
-  const filtered = action !== '' || from !== '' || to !== '';
+  const filtered = action !== '' || actor !== '' || product !== '' || from !== '' || to !== '';
 
   return (
     <AdminShell
@@ -130,7 +146,7 @@ export default function OrgAuditPage() {
       <Card>
         {/* Filters */}
         <div className="row g-2 align-items-end mb-3">
-          <div className="col-md-4">
+          <div className="col-md-3">
             <label className="form-label fs-12 text-muted mb-1">Action</label>
             <select
               className="form-select"
@@ -144,20 +160,48 @@ export default function OrgAuditPage() {
             </select>
           </div>
           <div className="col-md-3">
+            <label className="form-label fs-12 text-muted mb-1">Who</label>
+            <select
+              className="form-select"
+              value={actor}
+              onChange={(e) => setActor(e.target.value)}
+            >
+              <option value="">Anyone</option>
+              {people.map((p) => (
+                <option key={p.id} value={p.id}>{p.displayName}</option>
+              ))}
+            </select>
+          </div>
+          <div className="col-md-2">
+            <label className="form-label fs-12 text-muted mb-1">Product</label>
+            <select
+              className="form-select"
+              value={product}
+              onChange={(e) => setProduct(e.target.value)}
+            >
+              <option value="">All products</option>
+              {/* The set of things that write to the trail — a new product
+                  writing audits needs a line here to become filterable. */}
+              <option value="core">Core console</option>
+              <option value="mail">Mail</option>
+              <option value="drive">Space</option>
+            </select>
+          </div>
+          <div className="col-md-2">
             <label className="form-label fs-12 text-muted mb-1">From</label>
             <input type="date" className="form-control"
                    value={from} onChange={(e) => setFrom(e.target.value)} />
           </div>
-          <div className="col-md-3">
+          <div className="col-md-2">
             <label className="form-label fs-12 text-muted mb-1">To</label>
             <input type="date" className="form-control"
                    value={to} onChange={(e) => setTo(e.target.value)} />
           </div>
-          <div className="col-md-2">
-            {filtered && (
+          {filtered && (
+            <div className="col-auto">
               <Button variant="secondary" onClick={clearFilters}>Clear</Button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
         {error && <div className="alert alert-danger">{error}</div>}
@@ -194,7 +238,10 @@ export default function OrgAuditPage() {
                           <span className="ms-2"><Badge tone="warn">Sensitive</Badge></span>
                         )}
                       </div>
-                      <div className="fs-12 text-muted">{e.action}</div>
+                      <div className="fs-12 text-muted">
+                        {e.action}
+                        {e.productCode && e.productCode !== 'core' && ` · ${e.productCode}`}
+                      </div>
                     </Td>
                     <Td>
                       {e.actorName ?? e.actorEmail ?? (

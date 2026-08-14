@@ -81,6 +81,7 @@ public static class AuditEndpoints
     private static async Task<IResult> ListAsync(
         AppDbContext db, TenantContext tenant,
         string? action, string? targetType, Guid? actorUserId,
+        string? productCode,
         DateTimeOffset? from, DateTimeOffset? to,
         long? before, int? limit,
         CancellationToken ct)
@@ -106,6 +107,18 @@ public static class AuditEndpoints
 
         if (actorUserId is Guid actor)
             q = q.Where(e => e.ActorUserId == actor);
+
+        // "core" is the console itself — rows written before ProductCode
+        // existed are null, and they are all console actions, so the core
+        // filter deliberately matches BOTH. Anything else ("mail", "drive")
+        // matches exactly.
+        if (!string.IsNullOrWhiteSpace(productCode))
+        {
+            var p = productCode.Trim().ToLowerInvariant();
+            q = p == "core"
+                ? q.Where(e => e.ProductCode == null || e.ProductCode == "core")
+                : q.Where(e => e.ProductCode == p);
+        }
 
         // Inclusive of `from`, exclusive of `to`. A caller passing the same
         // date for both means "that day" only if the boundary is half-open;

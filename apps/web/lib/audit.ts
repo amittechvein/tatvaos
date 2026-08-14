@@ -45,6 +45,8 @@ export interface AuditQuery {
   action?: string;
   targetType?: string;
   actorUserId?: string;
+  /** "core" also matches rows from before products were stamped — all console. */
+  productCode?: string;
   /** Inclusive. */
   from?: string;
   /** Exclusive, so a single-day range does not swallow the next midnight. */
