@@ -29,6 +29,7 @@
 // ============================================================================
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import QRCode from 'qrcode';
 import { PhotoPicker } from '@/components/ui/PhotoPicker';
 import { avatarObjectUrl, bustAvatar } from '@/lib/avatars';
 
@@ -584,12 +585,13 @@ function InfoRow({ label, value, capitalize, last }: {
 //  codes appear in a modal that can be dismissed, and those are shown exactly
 //  once.
 //
-//  NO QR CODE YET, AND THAT IS DELIBERATE. The otpauth:// URI contains the
-//  secret, so a QR must be rendered in this browser — sending it to any image
-//  service hands the second factor to a third party. That needs a client-side
-//  generator (`pnpm add qrcode`), which is a dependency decision rather than
-//  something to slip in. Until then the secret is shown grouped for manual
-//  entry, which every authenticator app supports.
+//  THE QR IS GENERATED IN THIS BROWSER, and that is the whole reason the
+//  `qrcode` dependency exists. The otpauth:// URI contains the TOTP secret, so
+//  rendering it through any QR image service — however convenient — would hand
+//  the second factor to a third party. It never leaves the page.
+//
+//  The typed key stays below it. Cameras fail, desktop authenticators have no
+//  camera at all, and a scan-only flow strands those people.
 
 function MfaCard() {
   const { authedFetch } = useAuth();
@@ -599,6 +601,7 @@ function MfaCard() {
   const [codes, setCodes] = useState<string[] | null>(null);
 
   const [code, setCode] = useState('');
+  const [qr, setQr] = useState<string | null>(null);
   const [password, setPassword] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -614,6 +617,18 @@ function MfaCard() {
   }, [authedFetch]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Rendered locally from the provisioning URI. A failure here is not fatal —
+  // the typed key below still works — so it resolves to null rather than
+  // throwing into the card's error state.
+  useEffect(() => {
+    if (!setup) { setQr(null); return; }
+    let alive = true;
+    QRCode.toDataURL(setup.otpauthUri, { width: 200, margin: 1 })
+      .then((url) => { if (alive) setQr(url); })
+      .catch(() => { if (alive) setQr(null); });
+    return () => { alive = false; };
+  }, [setup]);
 
   async function run(fn: () => Promise<void>) {
     setBusy(true);
@@ -672,7 +687,20 @@ function MfaCard() {
             or Microsoft Authenticator all work.
           </li>
           <li className="mb-2">
-            Add an account by entering this key manually:
+            Scan this with the app:
+            {qr ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={qr} alt="QR code for your authenticator app"
+                   width={200} height={200}
+                   className="d-block my-2 border rounded bg-white p-2" />
+            ) : (
+              <div className="my-2 fs-13 text-muted">
+                The QR could not be drawn — use the key below instead.
+              </div>
+            )}
+          </li>
+          <li className="mb-2">
+            No camera? Enter this key by hand instead:
             <div className="font-monospace bg-light rounded p-3 my-2"
                  style={{ fontSize: 15, letterSpacing: '0.05em', wordBreak: 'break-all' }}>
               {groupSecret(setup.secret)}
