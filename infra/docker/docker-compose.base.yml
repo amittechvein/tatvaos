@@ -244,6 +244,11 @@ services:
       # empty site block; it simply matches nothing.
       MAIL_DOMAIN: ${MAIL_DOMAIN:-}
       FAMILY_DOMAIN: ${FAMILY_DOMAIN:-}
+      # Space. Blank default like the others: a variable with no matching
+      # conf.d file is harmless, while a conf.d file with no variable makes
+      # Caddy reject the WHOLE config and restart-loop — taking Core, Mail and
+      # Family down with it. Add the variable before the site file, never after.
+      SPACE_DOMAIN: ${SPACE_DOMAIN:-}
     ports:
       - "80:80"
       - "443:443"
