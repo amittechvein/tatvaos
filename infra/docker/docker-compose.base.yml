@@ -217,6 +217,12 @@ services:
       # the worker returns immediately. "report" logs what it would do and
       # writes nothing; "run" commits it. Set MAIL_THREAD_BACKFILL to use it.
       Mail__ThreadBackfill: ${MAIL_THREAD_BACKFILL:-}
+      # Over-quota mailboxes: anything but "enforce" only LOGS would-defer
+      # lines. Flip to enforce only after reading those logs shows no
+      # innocent mailbox would be hit — a 4xx defer makes senders queue and
+      # retry, which is recoverable, but still not something to switch on
+      # blind.
+      Mail__QuotaEnforcement: ${MAIL_QUOTA_ENFORCEMENT:-}
     # No healthcheck. The .NET runtime image has neither wget nor curl, so this
     # check could never pass - the container reported "unhealthy" while serving
     # traffic fine. See the reasoning in apps/api/Dockerfile; liveness is
