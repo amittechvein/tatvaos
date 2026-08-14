@@ -84,6 +84,9 @@ builder.Services.AddAuthorizationBuilder()
 // ---------------------------------------------------------------------------
 builder.Services.AddScoped<IPasswordHasher, Argon2PasswordHasher>();
 builder.Services.AddScoped<TokenIssuer>();
+// Two-step verification. Scoped for consistency with the other auth
+// services; it holds no state beyond the configured encryption key.
+builder.Services.AddScoped<TotpService>();
 builder.Services.AddScoped<StorageAllocator>();
 builder.Services.AddScoped<AuditWriter>();
 

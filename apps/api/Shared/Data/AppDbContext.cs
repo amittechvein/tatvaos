@@ -48,6 +48,13 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<StorageAllocation> StorageAllocations => Set<StorageAllocation>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+
+    /// <summary>
+    /// Two-step recovery codes. NO query filter, deliberately — they are
+    /// checked before the tenant is known, exactly like the refresh-token
+    /// lookup. See the entity comment.
+    /// </summary>
+    public DbSet<MfaRecoveryCode> MfaRecoveryCodes => Set<MfaRecoveryCode>();
     public DbSet<UserAvatar> UserAvatars => Set<UserAvatar>();
 
     /// <summary>
@@ -105,6 +112,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<StorageAllocation>().ToTable("storage_allocations", "core");
         b.Entity<AuditLog>().ToTable("audit_logs", "core");
         b.Entity<RefreshToken>().ToTable("refresh_tokens", "core");
+        b.Entity<MfaRecoveryCode>().ToTable("mfa_recovery_codes", "core");
         b.Entity<UserAvatar>().ToTable("user_avatars", "core");
         b.Entity<UserAvatar>().HasKey(a => a.UserId);
         b.Entity<SignupDraft>().ToTable("signup_drafts", "core");
@@ -313,6 +321,18 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<RefreshToken>()
             .HasOne<User>().WithMany()
             .HasForeignKey(t => t.UserId).OnDelete(DeleteBehavior.Cascade);
+
+        // Declared for the same reason every other relationship here is: EF
+        // orders inserts by the relationships it KNOWS about, and an undeclared
+        // one is how a row gets written before the row it references. That
+        // exact omission on refresh_tokens.replaced_by is what made every hard
+        // reload sign people out.
+        b.Entity<MfaRecoveryCode>()
+            .HasOne<User>().WithMany()
+            .HasForeignKey(c => c.UserId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<MfaRecoveryCode>()
+            .HasOne<Tenant>().WithMany()
+            .HasForeignKey(c => c.TenantId).OnDelete(DeleteBehavior.Cascade);
         // The avatar's UserId is BOTH its primary key and its foreign key to
         // the person. Declared so EF inserts the user before the photo and lets
         // the DB cascade the delete when a person is removed.

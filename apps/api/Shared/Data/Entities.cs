@@ -190,8 +190,30 @@ public class User
 
     /// <summary>Argon2id. Never any other scheme in production.</summary>
     [MaxLength(256)] public string? PasswordHash { get; set; }
+    /// <summary>
+    /// The TOTP secret, AES-GCM encrypted (see TotpService). Named "ref"
+    /// because the original design imagined a pointer into a key store; there
+    /// is no key store, so it holds the ciphertext. Never the plaintext — a
+    /// database dump alone would otherwise generate valid codes forever.
+    /// </summary>
     [MaxLength(256)] public string? MfaSecretRef { get; set; }
     public bool MfaEnabled { get; set; }
+
+    // ---- Two-step verification (24-mfa.sql) ------------------------------
+    /// <summary>
+    /// Scanned but not yet proven. Enabling on scan alone locks people out
+    /// whenever a scan silently fails, so the secret waits here until a code
+    /// from the app confirms it works.
+    /// </summary>
+    [MaxLength(256)] public string? MfaPendingSecret { get; set; }
+    public DateTimeOffset? MfaEnrolledAt { get; set; }
+
+    /// <summary>
+    /// The last TOTP step consumed. A code stays valid for its step plus the
+    /// drift window, so without this one observed code can be replayed for a
+    /// minute and a half.
+    /// </summary>
+    public long? MfaLastStep { get; set; }
 
     public Guid? DepartmentId { get; set; }
     [MaxLength(32)] public string Role { get; set; } = "employee";
@@ -239,6 +261,24 @@ public class User
 ///
 /// The stored value is a SHA-256 hash, never the token itself.
 /// </summary>
+/// <summary>
+/// A single-use way back in when the phone is gone.
+///
+/// Hashed, never stored readable. Deliberately NOT RLS-forced: it is checked
+/// before the tenant is known, on the same pre-auth path as the refresh token
+/// lookup. Safe because the only query is by (user_id, code_hash) — a 256-bit
+/// needle that tells you nothing about any other tenant.
+/// </summary>
+public class MfaRecoveryCode
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid UserId { get; set; }
+    public Guid TenantId { get; set; }
+    [MaxLength(64)] public required string CodeHash { get; set; }
+    public DateTimeOffset? UsedAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
 public class RefreshToken
 {
     public Guid Id { get; set; } = Guid.NewGuid();
