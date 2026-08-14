@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 
-import { useAuth } from '@/lib/auth';
+import { useAuth, type MfaChallenge } from '@/lib/auth';
 import { homeFor } from '@/components/RequireAuth';
 
 // ============================================================================
@@ -68,7 +68,7 @@ const ROADMAP = [
 ];
 
 function SignInForm() {
-  const { signIn, requestOtp, signInWithOtp, user, mustChangePassword, loading } = useAuth();
+  const { signIn, requestOtp, signInWithOtp, verifyMfa, user, mustChangePassword, loading } = useAuth();
   const router = useRouter();
   const params = useSearchParams();
 
@@ -102,6 +102,13 @@ function SignInForm() {
   // Where to land after sign-in. Persisted, because someone who lives in
   // their inbox should not pass through a dashboard every morning.
   const [startIn, setStartIn] = useState<'default' | 'mail'>('default');
+
+  // Set when the password (or SMS code) was right and the account has
+  // two-step verification on. Its presence replaces the whole form with the
+  // code step — the credential is already spent and re-showing the password
+  // field invites people to type it again into what looks like a failure.
+  const [challenge, setChallenge] = useState<MfaChallenge | null>(null);
+  const [mfaCode, setMfaCode] = useState('');
 
   useEffect(() => {
     try {
@@ -142,7 +149,8 @@ function SignInForm() {
         else localStorage.removeItem('tv_login_email');
         localStorage.setItem('tv_start_in', startIn);
       } catch { /* private browsing */ }
-      await signIn(email.trim(), password);
+      const pending = await signIn(email.trim(), password);
+      if (pending) { setChallenge(pending); setBusy(false); return; }
     } catch (err) {
       // The server returns one message for wrong password, unknown address and
       // suspended account, on purpose. Passing it straight through keeps that
@@ -174,7 +182,8 @@ function SignInForm() {
     setBusy(true);
     try {
       try { localStorage.setItem('tv_start_in', startIn); } catch { /* private */ }
-      await signInWithOtp(phone.trim(), otpCode.trim());
+      const pending = await signInWithOtp(phone.trim(), otpCode.trim());
+      if (pending) { setChallenge(pending); setBusy(false); return; }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign-in failed.');
       setBusy(false);
@@ -329,6 +338,74 @@ function SignInForm() {
             </span>
           </div>
 
+          {/* ------------------------------------------------------------
+              Two-step verification.
+
+              This REPLACES the form rather than appearing beneath it. The
+              password has already been accepted and spent; leaving the field
+              on screen invites someone to read the code error as a password
+              error and type it again, which is how people end up locked out
+              by their own retry.
+
+              There is no "back" — starting over means reloading the page and
+              entering the password again, which is correct: the challenge
+              expires in five minutes and a stale one is not worth a button.
+          ------------------------------------------------------------ */}
+          {challenge ? (
+            <>
+              <h1 className="mb-1" style={{ fontSize: 28, fontWeight: 600 }}>Two-step verification</h1>
+              <p className="fs-14 text-muted mb-3">{challenge.note}</p>
+
+              {error && <div className="alert alert-danger mb-3">{error}</div>}
+
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setError(null);
+                  setBusy(true);
+                  try {
+                    await verifyMfa(challenge.challenge, mfaCode.trim());
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : 'That code was not accepted.');
+                    setBusy(false);
+                  }
+                }}
+                noValidate
+              >
+                <div className="mb-3">
+                  <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-mfa">
+                    Code <span className="text-danger">*</span>
+                  </label>
+                  {/* Not restricted to digits, and not maxLength 6: a recovery
+                      code is accepted in the same box, and stripping letters
+                      would make it impossible to type the one thing that helps
+                      when the phone is gone. */}
+                  <input
+                    id="tv-mfa"
+                    className="form-control"
+                    autoFocus
+                    autoComplete="one-time-code"
+                    value={mfaCode}
+                    onChange={(e) => setMfaCode(e.target.value)}
+                  />
+                  <div className="form-text fs-12">
+                    Six digits from your authenticator app, or one of your recovery codes.
+                  </div>
+                </div>
+
+                <button type="submit" className="btn btn-primary btn-lg w-100"
+                        disabled={busy || mfaCode.trim().length === 0}>
+                  {busy ? 'Checking…' : 'Verify'}
+                </button>
+              </form>
+
+              <p className="fs-12 text-muted mt-4 mb-0" style={{ lineHeight: 1.7 }}>
+                Lost your phone and your recovery codes? Your organisation&apos;s administrator
+                can reset two-step verification for you. Techvein staff cannot.
+              </p>
+            </>
+          ) : (
+          <>
           <h1 className="mb-1" style={{ fontSize: 28, fontWeight: 600 }}>Welcome back</h1>
           <p className="fs-14 text-muted mb-3">Sign in to administer your organisation.</p>
 
@@ -518,6 +595,8 @@ function SignInForm() {
             it. Techvein staff cannot read your mail — administrative access never
             implies access to contents.
           </p>
+          </>
+          )}
         </div>
       </div>
     </div>

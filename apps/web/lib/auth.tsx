@@ -53,6 +53,19 @@ export interface SignedInUser {
   departmentId: string | null;
 }
 
+/**
+ * What a sign-in returns when the account has two-step verification on.
+ *
+ * The password (or SMS code) was correct — this is NOT a failure. The server
+ * has withheld the session until the second factor is proven, so the caller
+ * must collect a code and call verifyMfa. Nothing about the account has
+ * changed yet, including the failed-attempt counter.
+ */
+export interface MfaChallenge {
+  challenge: string;
+  note: string;
+}
+
 interface AuthState {
   user: SignedInUser | null;
   mustChangePassword: boolean;
@@ -60,12 +73,16 @@ interface AuthState {
   loading: boolean;
   /** Every account signed in on this browser, including signed-out ones. */
   accounts: AccountSlot[];
-  signIn: (email: string, password: string) => Promise<void>;
+  /** Resolves with a challenge when MFA is on, or null when signed in. */
+  signIn: (email: string, password: string) => Promise<MfaChallenge | null>;
   /** Request a sign-in code by SMS. Resolves with a dev code when the
    *  platform is in testing mode and the real send failed. */
   requestOtp: (phone: string) => Promise<{ devCode: string | null }>;
-  /** Sign in with the SMS code. Same session as a password sign-in. */
-  signInWithOtp: (phone: string, code: string) => Promise<void>;
+  /** Sign in with the SMS code. Same session as a password sign-in, and the
+   *  same MFA challenge if the account has it on. */
+  signInWithOtp: (phone: string, code: string) => Promise<MfaChallenge | null>;
+  /** Completes a challenged sign-in with a TOTP code or a recovery code. */
+  verifyMfa: (challenge: string, code: string) => Promise<void>;
   /** Signs out of the CURRENT account only; the others stay signed in. */
   signOut: (all?: boolean) => Promise<void>;
   /** Move to another account already signed in here. No password. */
@@ -189,7 +206,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // The response body also carries refreshToken. It is deliberately ignored
     // here — it exists for the mobile apps. The browser already has it as a
     // cookie no script can read, and storing a copy would undo that.
-    applyAuth(await res.json());
+    const body = await res.json();
+
+    // MFA on: a challenge, not a session. applyAuth would set a null user and
+    // the page would render as signed-in-but-broken.
+    if (body.mfaRequired) return { challenge: body.challenge, note: body.note };
+
+    applyAuth(body);
+    return null;
   }, [applyAuth]);
 
   const requestOtp = useCallback(async (phone: string) => {
@@ -216,6 +240,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // suspended account. Passed through untouched for the same reason the
     // password path does it.
     if (!res.ok) throw new Error(body.error ?? 'Sign-in failed.');
+
+    // The SMS code is a first factor here, not a second one — an account with
+    // MFA on is challenged after it, exactly as after a password.
+    if (body.mfaRequired) return { challenge: body.challenge, note: body.note };
+
+    applyAuth(body);
+    return null;
+  }, [applyAuth]);
+
+  const verifyMfa = useCallback(async (challenge: string, code: string) => {
+    const res = await fetch(`${API}/auth/mfa/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ challenge, code }),
+    });
+    const body = await res.json().catch(() => ({}));
+    // One message for a wrong app code and a wrong recovery code, passed
+    // through untouched — the server does not say which, on purpose.
+    if (!res.ok) throw new Error(body.error ?? 'That code was not accepted.');
     applyAuth(body);
   }, [applyAuth]);
 
@@ -337,10 +381,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<AuthState>(() => ({
     user, mustChangePassword, loading, accounts,
-    signIn, requestOtp, signInWithOtp,
+    signIn, requestOtp, signInWithOtp, verifyMfa,
     signOut, switchTo, forget, refreshAccounts, changePassword, authedFetch,
   }), [user, mustChangePassword, loading, accounts,
-       signIn, requestOtp, signInWithOtp,
+       signIn, requestOtp, signInWithOtp, verifyMfa,
        signOut, switchTo, forget, refreshAccounts, changePassword, authedFetch]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
