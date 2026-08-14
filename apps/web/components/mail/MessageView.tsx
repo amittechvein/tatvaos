@@ -116,6 +116,10 @@ export function MessageView({
 }) {
   const [menu, setMenu] = useState(false);
 
+  // Gmail's little ▾ next to "to …": the full envelope on demand — exact
+  // addresses, full date, subject — without spending header space on it.
+  const [details, setDetails] = useState(false);
+
   const isThread = !!threadMessages && threadMessages.length > 1;
 
   // Oldest first — a conversation reads downwards.
@@ -131,21 +135,45 @@ export function MessageView({
   const openRef = useRef<HTMLLIElement | null>(null);
   useEffect(() => {
     openRef.current?.scrollIntoView({ block: 'nearest' });
+    setDetails(false);
   }, [message.id]);
+
+  /** One row of the details card. Flex, not CSS grid — YZEN's .grid class
+   *  collides with Tailwind's and the fallout is invisible until runtime. */
+  const detailRow = (label: string, value: React.ReactNode) => (
+    <div className="flex gap-2">
+      <span className="w-14 shrink-0 text-right text-ink-faint">{label}</span>
+      <span className="min-w-0 break-words text-ink">{value}</span>
+    </div>
+  );
+
+  const addressList = (list: Address[]) =>
+    list.map((a) => (a.name ? `${a.name} <${a.email}>` : a.email)).join(', ');
 
   // The expanded message: ONE dense identity row, Gmail-style — who, to
   // whom, when — then the body.
   const senderHeader = (
-    <header className="flex items-center gap-2.5 px-4 py-2.5">
+    <header className="relative flex items-center gap-2.5 px-4 py-2.5">
       <Avatar address={message.from} size={34} />
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-baseline gap-2">
           <span className="truncate text-sm font-semibold text-ink">{displayName(message.from)}</span>
           <span className="hidden truncate text-xs text-ink-muted sm:inline">{message.from.email}</span>
         </div>
-        <div className="truncate text-xs text-ink-muted">
-          to {formatRecipients(message.to)}
-          {message.cc && message.cc.length > 0 && ` · cc ${formatRecipients(message.cc)}`}
+        <div className="flex min-w-0 items-center gap-1 text-xs text-ink-muted">
+          <span className="truncate">
+            to {formatRecipients(message.to)}
+            {message.cc && message.cc.length > 0 && ` · cc ${formatRecipients(message.cc)}`}
+          </span>
+          <button
+            type="button"
+            onClick={() => setDetails((v) => !v)}
+            aria-label="Show details"
+            title="Show details"
+            className="shrink-0 rounded p-0.5 text-ink-faint transition hover:bg-canvas hover:text-ink"
+          >
+            <Icon name="chevron-down" className="h-3.5 w-3.5" />
+          </button>
         </div>
       </div>
       <time className="shrink-0 text-xs text-ink-muted">
@@ -153,6 +181,25 @@ export function MessageView({
           day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit',
         })}
       </time>
+
+      {details && (
+        <>
+          {/* Transparent click-away layer, below the card, above the page. */}
+          <div className="fixed inset-0 z-10" onClick={() => setDetails(false)} aria-hidden="true" />
+          <div className="absolute left-12 top-full z-20 mt-1 max-w-[calc(100%-4rem)] space-y-1 rounded-xl border border-line bg-surface p-4 text-xs shadow-raised">
+            {detailRow('from:', message.from.name
+              ? `${message.from.name} <${message.from.email}>`
+              : message.from.email)}
+            {detailRow('to:', addressList(message.to))}
+            {message.cc && message.cc.length > 0 && detailRow('cc:', addressList(message.cc))}
+            {detailRow('date:', new Date(message.sentAt).toLocaleString(undefined, {
+              day: 'numeric', month: 'short', year: 'numeric',
+              hour: '2-digit', minute: '2-digit',
+            }))}
+            {detailRow('subject:', message.subject || '(no subject)')}
+          </div>
+        </>
+      )}
     </header>
   );
 
