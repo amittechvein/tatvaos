@@ -37,6 +37,10 @@ import { AppLauncher } from '@/components/shell/AppLauncher';
 import { AccountMenu } from '@/components/shell/AccountMenu';
 import { Button, Card } from '@/components/ui/Kit';
 import { useAuth } from '@/lib/auth';
+import {
+  beginMfa, confirmMfa, disableMfa, fetchMfaStatus, groupSecret,
+  regenerateRecoveryCodes, type MfaBegin, type MfaStatus,
+} from '@/lib/mfa';
 
 // ---------------------------------------------------------------------------
 //  Data shapes
@@ -441,16 +445,7 @@ function AccountHub() {
                       subtitle="Changing it signs out every session, including this one">
                   <Button variant="primary" href="/change-password">Change password</Button>
                 </Card>
-                <Card title="Two-step verification"
-                      subtitle={user?.mfaEnabled
-                        ? 'On — a code is required alongside your password'
-                        : 'Off'}>
-                  <p className="fs-14 text-muted mb-0">
-                    {user?.mfaEnabled
-                      ? 'Managed from your authenticator app.'
-                      : 'Coming to this page soon. Until then your password and your phone number (for OTP sign-in) protect this account.'}
-                  </p>
-                </Card>
+                <MfaCard />
                 <Card title="Where you are signed in"
                       subtitle="Every device holding a live session"
                       actions={
@@ -577,5 +572,227 @@ function InfoRow({ label, value, capitalize, last }: {
         </span>
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+//  Two-step verification
+// ---------------------------------------------------------------------------
+//
+//  Three states in one card: off, mid-enrolment, and on. Kept together because
+//  they are one story — splitting them across dialogs would mean the recovery
+//  codes appear in a modal that can be dismissed, and those are shown exactly
+//  once.
+//
+//  NO QR CODE YET, AND THAT IS DELIBERATE. The otpauth:// URI contains the
+//  secret, so a QR must be rendered in this browser — sending it to any image
+//  service hands the second factor to a third party. That needs a client-side
+//  generator (`pnpm add qrcode`), which is a dependency decision rather than
+//  something to slip in. Until then the secret is shown grouped for manual
+//  entry, which every authenticator app supports.
+
+function MfaCard() {
+  const { authedFetch } = useAuth();
+
+  const [status, setStatus] = useState<MfaStatus | null>(null);
+  const [setup, setSetup] = useState<MfaBegin | null>(null);
+  const [codes, setCodes] = useState<string[] | null>(null);
+
+  const [code, setCode] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setStatus(await fetchMfaStatus(authedFetch));
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not load your settings.');
+    }
+  }, [authedFetch]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function run(fn: () => Promise<void>) {
+    setBusy(true);
+    setError(null);
+    try {
+      await fn();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Something went wrong.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // The codes replace everything else while they are on screen. They cannot be
+  // shown again, so a card that also offers other buttons invites someone to
+  // click one and lose them.
+  if (codes) {
+    return (
+      <Card title="Save your recovery codes"
+            subtitle="Each one works once. They are the only way in if you lose your phone.">
+        <div className="alert alert-warning">
+          These are shown <strong>once</strong> and cannot be retrieved later.
+          Print them, or put them in a password manager — not in the same place
+          as your phone.
+        </div>
+
+        <ul className="list-unstyled font-monospace bg-light rounded p-3 mb-3"
+            style={{ columnCount: 2, columnGap: 24 }}>
+          {codes.map((c) => <li key={c} className="py-1">{c}</li>)}
+        </ul>
+
+        <div className="d-flex gap-2">
+          <Button variant="secondary"
+                  onClick={() => void navigator.clipboard.writeText(codes.join('\n'))}>
+            Copy all
+          </Button>
+          <Button variant="primary"
+                  onClick={() => { setCodes(null); setSetup(null); setCode(''); void load(); }}>
+            I have saved them
+          </Button>
+        </div>
+      </Card>
+    );
+  }
+
+  // Mid-enrolment: a secret exists, nothing is on yet.
+  if (setup) {
+    return (
+      <Card title="Set up two-step verification"
+            subtitle="Add TatvaOS to your authenticator app, then enter the code it shows">
+        {error && <div className="alert alert-danger">{error}</div>}
+
+        <ol className="ps-3 fs-14 mb-3">
+          <li className="mb-2">
+            Open your authenticator app — Google Authenticator, Authy, 1Password
+            or Microsoft Authenticator all work.
+          </li>
+          <li className="mb-2">
+            Add an account by entering this key manually:
+            <div className="font-monospace bg-light rounded p-3 my-2"
+                 style={{ fontSize: 15, letterSpacing: '0.05em', wordBreak: 'break-all' }}>
+              {groupSecret(setup.secret)}
+            </div>
+            <Button variant="ghost"
+                    onClick={() => void navigator.clipboard.writeText(setup.secret)}>
+              Copy key
+            </Button>
+          </li>
+          <li>Enter the six-digit code it shows.</li>
+        </ol>
+
+        <div className="mb-3" style={{ maxWidth: 220 }}>
+          <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-mfa-confirm">
+            Code from your app
+          </label>
+          <input
+            id="tv-mfa-confirm"
+            className="form-control"
+            inputMode="numeric"
+            maxLength={6}
+            autoComplete="one-time-code"
+            value={code}
+            onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+          />
+        </div>
+
+        <div className="d-flex gap-2">
+          <Button variant="ghost" disabled={busy}
+                  onClick={() => { setSetup(null); setCode(''); setError(null); }}>
+            Cancel
+          </Button>
+          <Button variant="primary" disabled={busy || code.length !== 6}
+                  onClick={() => void run(async () => {
+                    const done = await confirmMfa(authedFetch, code);
+                    setCodes(done.recoveryCodes);
+                  })}>
+            {busy ? 'Checking…' : 'Turn it on'}
+          </Button>
+        </div>
+      </Card>
+    );
+  }
+
+  // On.
+  if (status?.enabled) {
+    return (
+      <Card title="Two-step verification"
+            subtitle="On — a code from your app is required alongside your password">
+        {error && <div className="alert alert-danger">{error}</div>}
+
+        <p className="fs-14 text-muted">
+          {status.recoveryCodesRemaining === 0
+            ? 'You have no recovery codes left. Generate a new set — without one, losing your phone means asking an administrator to reset this.'
+            : `${status.recoveryCodesRemaining} recovery code${status.recoveryCodesRemaining === 1 ? '' : 's'} remaining.`}
+        </p>
+
+        <div className="mb-3" style={{ maxWidth: 320 }}>
+          <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-mfa-pw">
+            Your password
+          </label>
+          <input
+            id="tv-mfa-pw"
+            className="form-control"
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          {/* Asked for because a live session is not enough to weaken the
+              factor — a borrowed unlocked laptop is exactly what it defends
+              against. */}
+          <div className="form-text fs-12">Required to change these settings.</div>
+        </div>
+
+        <div className="d-flex gap-2 flex-wrap">
+          <Button variant="secondary" disabled={busy || password.length === 0}
+                  onClick={() => void run(async () => {
+                    const fresh = await regenerateRecoveryCodes(authedFetch, password);
+                    setPassword('');
+                    setCodes(fresh.recoveryCodes);
+                  })}>
+            New recovery codes
+          </Button>
+          <Button variant="ghost" disabled={busy || password.length === 0}
+                  onClick={() => void run(async () => {
+                    await disableMfa(authedFetch, password);
+                    setPassword('');
+                    await load();
+                  })}>
+            Turn off
+          </Button>
+        </div>
+      </Card>
+    );
+  }
+
+  // Off.
+  return (
+    <Card title="Two-step verification"
+          subtitle="Off — your password alone signs you in">
+      {error && <div className="alert alert-danger">{error}</div>}
+
+      <p className="fs-14 text-muted">
+        Ask for a code from your phone as well as your password. It means a
+        stolen password on its own is not enough to reach your account or your
+        mail.
+      </p>
+
+      {status?.enrolmentPending && (
+        <div className="alert alert-info py-2">
+          You started setting this up and did not finish. Starting again
+          replaces the earlier key.
+        </div>
+      )}
+
+      <Button variant="primary" disabled={busy}
+              onClick={() => void run(async () => setSetup(await beginMfa(authedFetch)))}>
+        {busy ? 'Starting…' : status?.enrolmentPending ? 'Start again' : 'Turn it on'}
+      </Button>
+    </Card>
   );
 }
