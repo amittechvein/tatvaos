@@ -696,6 +696,13 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
     );
   }
 
+  // One dialog, four sections, in the order questions actually arrive:
+  // who they are, what they can do, what they are using, and — separated
+  // below a visible line — the actions that end things.
+  const sectionTitle = (t: string) => (
+    <div className="fs-13 fw-semibold text-uppercase text-muted mb-2" style={{ letterSpacing: '0.04em' }}>{t}</div>
+  );
+
   return (
     <Modal
       title={`Edit ${person.displayName}`}
@@ -712,6 +719,8 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
         </>
       }
     >
+      {/* ---- Profile -------------------------------------------------- */}
+      {sectionTitle('Profile')}
       <div className="mb-3">
         <PhotoPicker
           preview={photo !== undefined ? photo : storedPhoto}
@@ -734,11 +743,40 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
           <option value="">No department — organisation defaults</option>
           {departments.map(({ d, depth }) => (
             <option key={d.id} value={d.id}>
-              {' '.repeat(depth * 3)}{depth > 0 ? '└ ' : ''}{d.name}
+              {' '.repeat(depth * 3)}{depth > 0 ? '└ ' : ''}{d.name}
             </option>
           ))}
         </select>
       </Field>
+
+      <hr className="my-4" />
+
+      {/* ---- Access --------------------------------------------------- */}
+      {sectionTitle('Access')}
+      {/* The facts an admin opens this dialog to check, previously not
+          shown anywhere: can they sign in, is a second factor protecting
+          the account, and when were they last here. */}
+      <div className="d-flex flex-wrap gap-4 mb-3">
+        <div>
+          <div className="fs-12 text-muted">Status</div>
+          <Badge tone={statusTone(person.status)}>{person.status}</Badge>
+        </div>
+        <div>
+          <div className="fs-12 text-muted">Two-step verification</div>
+          {person.mfaEnabled
+            ? <Badge tone="ok">On</Badge>
+            : <span className="fs-13">Off — their choice to enable</span>}
+        </div>
+        <div>
+          <div className="fs-12 text-muted">Last sign-in</div>
+          <span className="fs-13">
+            {person.lastLoginAt
+              ? new Date(person.lastLoginAt).toLocaleString(undefined,
+                  { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+              : 'Never'}
+          </span>
+        </div>
+      </div>
 
       <Field
         label="Role"
@@ -757,44 +795,71 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
         </select>
       </Field>
 
+      {!editingSelf && !targetLocked && person.status !== 'deleted' && (
+        <Button variant="ghost" disabled={busy}
+                onClick={() => void act('/reset-password', 'POST',
+                  (body) => { setTempPassword(String(body.temporaryPassword)); setBusy(false); })}>
+          Reset password
+        </Button>
+      )}
+
+      <hr className="my-4" />
+
+      {/* ---- Mail & storage ------------------------------------------- */}
+      {sectionTitle('Mail & storage')}
       {person.mailboxAddress ? (
-        <Field
-          label="Mailbox storage"
-          hint={`Currently using ${fmt(person.usedBytes)} — the quota will not shrink below that.`}
-        >
-          <div className="input-group">
-            <input
-              type="number"
-              className="form-control"
-              min={1}
-              max={5000}
-              value={quotaGb}
-              onChange={(e) => setQuotaGb(Math.max(1, Number(e.target.value)))}
-            />
-            <span className="input-group-text">GB</span>
+        <>
+          <div className="mb-2">
+            <div className="fs-12 text-muted">Mailbox</div>
+            <span className="fs-13 font-monospace">{person.mailboxAddress}</span>
           </div>
-        </Field>
+          <div className="mb-2" style={{ maxWidth: 320 }}>
+            <Meter used={person.usedBytes} total={person.quotaBytes} />
+            <div className="fs-12 text-muted mt-1">
+              Using {fmt(person.usedBytes)} of {fmt(person.quotaBytes)}
+            </div>
+          </div>
+          <Field
+            label="Storage quota"
+            hint="The quota will not shrink below what is already used."
+          >
+            <div className="input-group" style={{ maxWidth: 200 }}>
+              <input
+                type="number"
+                className="form-control"
+                min={1}
+                max={5000}
+                value={quotaGb}
+                onChange={(e) => setQuotaGb(Math.max(1, Number(e.target.value)))}
+              />
+              <span className="input-group-text">GB</span>
+            </div>
+          </Field>
+        </>
       ) : (
         <div className="alert alert-info mb-0">
           No mailbox — storage does not apply to this person.
         </div>
       )}
 
-      {/* ------------------------------------------------------------
-          Account actions. Not offered against yourself — suspending or
-          deleting the account you are signed in with is a support ticket
-          in the making, and the server refuses it anyway. */}
+      {/* ---- Leaving and removal -------------------------------------- */}
+      {/* Not offered against yourself — suspending or deleting the account
+          you are signed in with is a support ticket in the making, and the
+          server refuses it anyway. */}
       {!editingSelf && !targetLocked && (
         <>
           <hr className="my-4" />
-          <div className="fs-14 fw-semibold mb-1">Account</div>
-          <p className="fs-12 text-muted mb-3">
-            Status: <strong>{person.status}</strong>
-            {person.status === 'suspended' &&
-              ' — cannot sign in, mailbox rejecting mail, data retained'}
-            {person.status === 'deleted' &&
-              ' — this account is closed. Create the person again if they return.'}
-          </p>
+          {sectionTitle('Leaving and removal')}
+          {person.status === 'suspended' && (
+            <p className="fs-12 text-muted mb-3">
+              Suspended — cannot sign in, mailbox rejecting mail, data retained.
+            </p>
+          )}
+          {person.status === 'deleted' && (
+            <p className="fs-12 text-muted mb-3">
+              This account is closed. Create the person again if they return.
+            </p>
+          )}
 
           {person.status !== 'deleted' && (
           <div className="d-flex gap-2 flex-wrap">
@@ -812,11 +877,11 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
               </Button>
             )}
 
-            <Button variant="ghost" disabled={busy}
-                    onClick={() => void act('/reset-password', 'POST',
-                      (body) => { setTempPassword(String(body.temporaryPassword)); setBusy(false); })}>
-              Reset password
-            </Button>
+            {!offboarding && (
+              <Button variant="ghost" disabled={busy} onClick={() => setOffboarding(true)}>
+                Offboard&hellip;
+              </Button>
+            )}
 
             {/* Two clicks, both on the same button, second one labelled in
                 plain words. A nested confirm dialog gets clicked through;
@@ -831,12 +896,6 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
                 {armDelete ? 'Click again — this deletes their account' : 'Delete person'}
               </span>
             </Button>
-
-            {!offboarding && (
-              <Button variant="ghost" disabled={busy} onClick={() => setOffboarding(true)}>
-                Offboard&hellip;
-              </Button>
-            )}
           </div>
           )}
 
