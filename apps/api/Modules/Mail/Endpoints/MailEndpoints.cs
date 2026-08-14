@@ -44,6 +44,7 @@ public static class MailEndpoints
         g.MapPost("/messages/{id:guid}/move", MoveAsync);
         g.MapDelete("/messages/{id:guid}", DeleteAsync);
         g.MapGet("/messages/{id:guid}/attachments/{attachmentId:guid}", DownloadAttachmentAsync);
+        g.MapGet("/messages/{id:guid}/source", MessageSourceAsync);
         g.MapPost("/send", SendAsync);
         g.MapGet("/directory", DirectoryAsync);
 
@@ -1229,6 +1230,47 @@ public static class MailEndpoints
         // correspondent a stored-XSS page on our origin. Browsers download
         // octet-stream; they do not render it.
         return Results.File(buffer.ToArray(), "application/octet-stream", att.Filename);
+    }
+
+    // ------------------------------------------------------------------
+    //  The message exactly as it arrived.
+    //
+    //  The rendered view is an interpretation: MimeKit chose a body part, the
+    //  sanitiser dropped things, remote images were held back. On the day a
+    //  customer says "this email looks wrong", the difference between an
+    //  answer and a guess is the bytes that came off the wire - headers
+    //  included, which is where SPF, DKIM, DMARC and the routing history are.
+    //
+    //  Served as message/rfc822 named .eml, so what somebody downloads is the
+    //  thing a mail administrator asks for by name.
+    // ------------------------------------------------------------------
+    private static async Task<IResult> MessageSourceAsync(
+        Guid id, AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var box = await OwnMailboxAsync(db, tenant, ct);
+        if (box is null) return Results.NotFound();
+
+        // Scoped to the caller's own mailbox, like every handler in this file.
+        // A message id proves nothing, and raw source is the least redacted
+        // thing this API can hand anybody.
+        var msg = await db.Messages.AsNoTracking()
+            .FirstOrDefaultAsync(m => m.Id == id && m.MailboxId == box.Id, ct);
+        if (msg is null) return Results.NotFound();
+
+        if (string.IsNullOrEmpty(msg.RawBody))
+            return Results.NotFound(new
+            {
+                error = "The original source was not stored for this message."
+            });
+
+        // RawEncoding, not UTF-8. Latin-1 maps every byte to one char and back,
+        // so this returns the message byte for byte. UTF-8 would mangle any
+        // 8-bit content the sender used, and mangled source is worse than no
+        // source at all - it still looks authoritative.
+        return Results.File(
+            MailContent.RawEncoding.GetBytes(msg.RawBody),
+            "message/rfc822",
+            $"message-{msg.Id}.eml");
     }
 
     // ------------------------------------------------------------------
