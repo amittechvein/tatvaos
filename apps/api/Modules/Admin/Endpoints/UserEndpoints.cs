@@ -47,6 +47,7 @@ public static class UserEndpoints
         users.MapPost("/{id:guid}/reset-password", ResetPasswordAsync);
         users.MapPost("/{id:guid}/reset-app-password", ResetAppPasswordAsync);
         users.MapDelete("/{id:guid}", DeleteAsync);
+        users.MapPost("/{id:guid}/offboard", OffboardAsync);
 
         // Profile photos are SELF-SERVICE or admin-managed, so they cannot sit
         // in the OrgAdmin group — an ordinary employee setting their own photo
@@ -637,6 +638,118 @@ public static class UserEndpoints
     /// rejected at SMTP time so the sender knows immediately, while the stored
     /// mail is retained for whatever legal window applies.
     /// </summary>
+
+    /// <summary>
+    /// Offboarding: everything that leaving means, as ONE action.
+    ///
+    /// Before this existed, removing a leaver was four separate steps —
+    /// suspend, deactivate the mailbox, revoke access, remember to do
+    /// something about their address — and missing any one left either live
+    /// access or a black hole that bounces mail from customers who only know
+    /// the leaver's address. This endpoint is those steps in one transaction,
+    /// plus the piece none of them covered: FORWARDING.
+    ///
+    /// Forwarding is an alias row, which is what makes it real rather than
+    /// cosmetic: Postfix resolves recipients through mail.aliases, so mail to
+    /// the leaver's address — from colleagues AND from the outside world — is
+    /// delivered into the successor's mailbox from the moment this commits.
+    /// The leaver's own stored mail stays retained in their deactivated
+    /// mailbox, exactly as plain deletion leaves it.
+    /// </summary>
+    private static async Task<IResult> OffboardAsync(
+        Guid id, OffboardRequest req, AppDbContext db, TenantContext tenant,
+        AuditWriter audit, CancellationToken ct)
+    {
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id, ct);
+        if (user is null) return Results.NotFound();
+
+        if (user.Id == tenant.UserId)
+            return Results.BadRequest(new { error = "You cannot offboard your own account." });
+
+        if (GuardActOn(tenant, user) is IResult denied) return denied;
+
+        if (await WouldRemoveLastOwnerAsync(db, user, ct))
+            return Results.BadRequest(new
+            {
+                error = "This is the organisation's only active owner. " +
+                        "Make someone else an owner first.",
+            });
+
+        // Resolve the successor BEFORE changing anything, so a bad request
+        // leaves the leaver untouched rather than half-offboarded.
+        Mailbox? successorBox = null;
+        if (req.ForwardToUserId is Guid successorId)
+        {
+            if (successorId == id)
+                return Results.BadRequest(new { error = "Mail cannot be forwarded to the person who is leaving." });
+
+            var successorActive = await db.Users.AsNoTracking()
+                .AnyAsync(u => u.Id == successorId && u.Status == "active", ct);
+            successorBox = await db.Mailboxes
+                .FirstOrDefaultAsync(m => m.UserId == successorId && m.IsActive, ct);
+
+            if (!successorActive || successorBox is null)
+                return Results.BadRequest(new
+                {
+                    error = "The person to forward mail to needs an active account with a mailbox.",
+                });
+        }
+
+        user.Status = "deleted";
+
+        var mailboxes = await db.Mailboxes.Where(m => m.UserId == id).ToListAsync(ct);
+        foreach (var mb in mailboxes) mb.IsActive = false;
+
+        await db.ProductAccess
+            .Where(p => p.UserId == id && p.RevokedAt == null)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(p => p.RevokedAt, (DateTimeOffset?)DateTimeOffset.UtcNow), ct);
+
+        var forwarded = new List<string>();
+        if (successorBox is not null)
+        {
+            foreach (var mb in mailboxes)
+            {
+                // One alias per address the leaver held. Idempotent: a repeat
+                // offboard call must not stack duplicate alias rows.
+                var exists = await db.Aliases
+                    .AnyAsync(a => a.Address == mb.Address && a.IsActive, ct);
+                if (exists) continue;
+
+                db.Aliases.Add(new Alias
+                {
+                    TenantId = user.TenantId,
+                    DomainId = mb.DomainId,
+                    TargetMailboxId = successorBox.Id,
+                    Address = mb.Address,
+                });
+                forwarded.Add(mb.Address);
+            }
+        }
+
+        await db.SaveChangesAsync(ct);
+        await RevokeSessionsAsync(db, id, "account offboarded", ct);
+        await audit.WriteAsync("user.offboarded", "user", id.ToString(),
+            before: new { user.Email, user.Role },
+            after: new
+            {
+                mailboxesDeactivated = mailboxes.Count,
+                forwardedTo = req.ForwardToUserId,
+                forwardedAddresses = forwarded,
+            }, ct: ct);
+
+        return Results.Ok(new
+        {
+            user.Id,
+            user.Status,
+            mailboxesDeactivated = mailboxes.Count,
+            forwardedAddresses = forwarded,
+            note = forwarded.Count > 0
+                ? "Sign-in and access are closed. Mail to their address now reaches the person you chose; their own stored mail is retained."
+                : "Sign-in and access are closed. Their stored mail is retained; mail to their address will bounce.",
+        });
+    }
+
     private static async Task<IResult> SuspendAsync(
         Guid id, AppDbContext db, TenantContext tenant, AuditWriter audit, CancellationToken ct)
     {

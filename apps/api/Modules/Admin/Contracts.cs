@@ -134,3 +134,6 @@ public sealed record DomainVerificationResponse(
 
 public sealed record RequiredDnsRecord(
     string Type, string Host, string Value, string Purpose, bool Satisfied);
+
+/// <summary>Offboarding a leaver. Null means no forwarding — mail bounces.</summary>
+public sealed record OffboardRequest(Guid? ForwardToUserId);
