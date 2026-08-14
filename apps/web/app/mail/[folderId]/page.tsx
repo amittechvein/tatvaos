@@ -118,11 +118,20 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   }, [boot, folder, router]);
 
   // ---- Messages for the current folder --------------------------------
+  //
+  //  Keyed by the folder's ID, NOT the `folder` object. The object is rebuilt
+  //  every time the folders array changes — and bumpUnread rebuilds it on
+  //  every unread-count change. With the object as the dependency, opening an
+  //  unread message (which decrements the count) re-ran this effect, which
+  //  closed the reading pane the moment it opened and reloaded the list — the
+  //  "click three times to open a mail" bug. Only an actual navigation to a
+  //  different folder should reset the view.
+  const folderId = folder?.id;
   useEffect(() => {
-    if (!folder) return;
+    if (!folderId) return;
     setOpen(null);
-    void loadMessages(folder.id, 0);
-  }, [folder, loadMessages]);
+    void loadMessages(folderId, 0);
+  }, [folderId, loadMessages]);
 
   // ---- Search ---------------------------------------------------------
   //
