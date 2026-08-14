@@ -657,16 +657,12 @@ public static class MailEndpoints
     // ------------------------------------------------------------------
     private static IQueryable<Message> ApplySearch(IQueryable<Message> query, string q)
     {
-        var term = q.Trim();
-        var pattern = $"%{term}%";
-
-        return query.Where(m =>
-            (m.SearchVector != null
-             && m.SearchVector.Matches(EF.Functions.WebSearchToTsQuery("simple", term)))
-            || EF.Functions.ILike(m.Subject ?? "", pattern)
-            || EF.Functions.ILike(m.FromAddr ?? "", pattern)
-            || EF.Functions.ILike(m.FromName ?? "", pattern)
-            || EF.Functions.ILike(m.Snippet ?? "", pattern));
+        // Both halves described above now live in MailQuery, alongside the
+        // from: to: subject: has: is: after: before: operators - so the folder
+        // listing and the cross-folder search understand the same syntax from
+        // one parser. A query cannot mean one thing in search and another in
+        // a folder, because there is only one place that decides.
+        return MailQuery.Apply(query, q);
     }
 
     /// <summary>
