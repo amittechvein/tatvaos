@@ -74,6 +74,8 @@ export function MessageView({
   threadMessages,
   onOpenMessage,
   threadTotal,
+  expanded,
+  onToggleExpand,
 }: {
   message: Message;
   bodyLoading?: boolean;
@@ -107,6 +109,10 @@ export function MessageView({
   /** The untruncated count. A long thread is capped server-side; saying so is
    *  better than silently showing the first N. */
   threadTotal?: number;
+  /** Full-page reading: the list is hidden and the message takes the width. */
+  expanded?: boolean;
+  /** Absent hides the toggle — small screens are always full-page already. */
+  onToggleExpand?: () => void;
 }) {
   const [menu, setMenu] = useState(false);
   return (
@@ -120,6 +126,16 @@ export function MessageView({
         <ToolButton icon="envelope" label="Mark as unread" onClick={() => onMarkUnread(message)} />
         <ToolButton icon="print" label="Print" onClick={() => onPrint(message)} />
         <div className="ml-auto flex items-center gap-1">
+          {/* Gmail's split/full-page choice, as one toggle. */}
+          {onToggleExpand && (
+            <span className="hidden lg:block">
+              <ToolButton
+                icon={expanded ? 'collapse' : 'expand'}
+                label={expanded ? 'Show the message list' : 'Read full page'}
+                onClick={onToggleExpand}
+              />
+            </span>
+          )}
           <ToolButton icon="reply" label="Reply" onClick={() => onReply(message, 'reply')} />
           <ToolButton icon="reply-all" label="Reply all" onClick={() => onReply(message, 'replyAll')} />
           <ToolButton icon="forward" label="Forward" onClick={() => onReply(message, 'forward')} />
@@ -169,6 +185,22 @@ export function MessageView({
         </div>
       </div>
 
+
+      {/* Subject first, as the title of the whole view — Gmail's order. The
+          old layout spent three stacked blocks (identity header, subject,
+          recipients) before any body text was visible. */}
+      <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
+        <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-ink">
+          {message.subject || '(no subject)'}
+        </h1>
+        <ToolButton
+          icon="star"
+          label={message.isFlagged ? 'Unstar' : 'Star'}
+          filled={message.isFlagged}
+          tone={message.isFlagged ? 'warn' : 'default'}
+          onClick={() => onToggleFlag(message)}
+        />
+      </div>
 
       {/* ------------------------------------------------------------------
           The conversation.
@@ -222,42 +254,29 @@ export function MessageView({
         </details>
       )}
 
-      {/* Sender identity */}
-      <header className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3">
-        <Avatar address={message.from} size={40} />
+      {/* Sender identity — ONE dense row, Gmail-style: who, to whom, when. */}
+      <header className="flex items-center gap-2.5 border-b border-line px-4 py-2.5">
+        <Avatar address={message.from} size={34} />
         <div className="min-w-0 flex-1">
-          <h6 className="truncate text-sm font-semibold text-ink">{displayName(message.from)}</h6>
-          <span className="truncate text-xs text-ink-muted">{message.from.email}</span>
+          <div className="flex min-w-0 items-baseline gap-2">
+            <span className="truncate text-sm font-semibold text-ink">{displayName(message.from)}</span>
+            <span className="hidden truncate text-xs text-ink-muted sm:inline">{message.from.email}</span>
+          </div>
+          <div className="truncate text-xs text-ink-muted">
+            to {formatRecipients(message.to)}
+            {message.cc && message.cc.length > 0 && ` · cc ${formatRecipients(message.cc)}`}
+          </div>
         </div>
-        <ToolButton
-          icon="star"
-          label={message.isFlagged ? 'Unstar' : 'Star'}
-          filled={message.isFlagged}
-          tone={message.isFlagged ? 'warn' : 'default'}
-          onClick={() => onToggleFlag(message)}
-        />
+        <time className="shrink-0 text-xs text-ink-muted">
+          {new Date(message.sentAt).toLocaleString(undefined, {
+            day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit',
+          })}
+        </time>
       </header>
 
-      <div className="scroll-thin flex-1 overflow-y-auto p-6">
-        {/* Subject + date */}
-        <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
-          <h1 className="min-w-0 text-lg font-medium text-ink">
-            {message.subject || '(no subject)'}
-          </h1>
-          <time className="shrink-0 text-xs text-ink-muted">
-            {new Date(message.sentAt).toLocaleString(undefined, {
-              day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit',
-            })}
-          </time>
-        </div>
-
-        <div className="mb-1 text-xs text-ink-muted">to {formatRecipients(message.to)}</div>
-        {message.cc && message.cc.length > 0 && (
-          <div className="mb-3 text-xs text-ink-muted">cc {formatRecipients(message.cc)}</div>
-        )}
-
+      <div className="scroll-thin flex-1 overflow-y-auto px-6 py-4">
         {/* Body */}
-        <div className="mt-4">
+        <div>
           {message.bodyHtml ? (
             <SafeHtml html={message.bodyHtml} />
           ) : bodyLoading ? (

@@ -35,6 +35,11 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   const [open, setOpen] = useState<Message | null>(null);
   const [openLoading, setOpenLoading] = useState(false);
 
+  // Full-page reading: hides the list so the open message takes the whole
+  // width — Gmail's "no split" mode. Sticky across messages on purpose;
+  // someone who reads full-page reads full-page.
+  const [wide, setWide] = useState(false);
+
   // The open message's conversation, fetched when it carries a threadId.
   // Null while loading or for a lone message — the strip renders nothing for
   // either, which is the honest state.
@@ -406,8 +411,8 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     <div className="flex h-full gap-3 bg-canvas p-3">
       {/* ---- List ---- */}
       <section
-        className={`flex min-w-0 flex-col overflow-hidden rounded-card border border-line bg-surface lg:w-[420px] lg:shrink-0 ${
-          open ? 'hidden lg:flex' : 'flex flex-1'
+        className={`min-w-0 flex-col overflow-hidden rounded-card border border-line bg-surface lg:w-[420px] lg:shrink-0 ${
+          open ? (wide ? 'hidden' : 'hidden lg:flex') : 'flex flex-1'
         }`}
       >
         <header className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3">
@@ -543,6 +548,8 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
               threadMessages={thread ?? undefined}
               threadTotal={threadTotal}
               onOpenMessage={(id) => void handleOpen(id)}
+              expanded={wide}
+              onToggleExpand={() => setWide((v) => !v)}
             />
           </div>
         ) : (
