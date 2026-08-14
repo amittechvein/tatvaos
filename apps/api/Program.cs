@@ -127,6 +127,12 @@ builder.Services.AddHostedService<StorageReconcileWorker>();
 // refuses nothing until Mail:QuotaEnforcement is set to "enforce".
 builder.Services.AddHostedService<PostfixPolicyWorker>();
 
+// OFF unless Mail:ThreadBackfill says otherwise. A one-off repair that fills
+// thread_id on mail stored before threading existed - "report" to see what it
+// would do, "run" to commit it. Left unset it returns immediately, which is
+// how it should sit between the one time it is needed and every deploy after.
+builder.Services.AddHostedService<ThreadBackfillWorker>();
+
 builder.Services.AddOpenApi();
 
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p

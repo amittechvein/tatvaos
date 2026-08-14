@@ -212,6 +212,11 @@ services:
       Mail__SpfInclude: ${MAIL_SPF_INCLUDE:-_spf.tatvaos.com}
       # Zone new organisations get their free sign-in subdomain under.
       Mail__PlatformZone: ${MAIL_PLATFORM_ZONE:-tatvaos.com}
+      # One-off thread_id repair for mail stored before threading existed.
+      # Empty - the default, and where it belongs the rest of the time - means
+      # the worker returns immediately. "report" logs what it would do and
+      # writes nothing; "run" commits it. Set MAIL_THREAD_BACKFILL to use it.
+      Mail__ThreadBackfill: ${MAIL_THREAD_BACKFILL:-}
     # No healthcheck. The .NET runtime image has neither wget nor curl, so this
     # check could never pass - the container reported "unhealthy" while serving
     # traffic fine. See the reasoning in apps/api/Dockerfile; liveness is
