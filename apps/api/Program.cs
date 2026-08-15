@@ -10,6 +10,7 @@ using TatvaOS.Api.Modules.Core.Endpoints;
 using TatvaOS.Api.Modules.Mail.Endpoints;
 using TatvaOS.Api.Modules.Family;
 using TatvaOS.Api.Modules.Family.Endpoints;
+using TatvaOS.Api.Modules.Space.Endpoints;
 using TatvaOS.Api.Workers;
 using TatvaOS.Api.Shared.Notify;
 using TatvaOS.Api.Shared.Settings;
@@ -89,6 +90,13 @@ builder.Services.AddScoped<TokenIssuer>();
 builder.Services.AddScoped<TotpService>();
 builder.Services.AddScoped<StorageAllocator>();
 builder.Services.AddScoped<AuditWriter>();
+
+// Where Space's bytes live. Singleton — it holds only the root path; key
+// format and path validation live inside. Swapping to S3-compatible object
+// storage later is a new implementation of this interface, not an endpoint
+// change. The volume behind Space:BlobRoot must be writable by UID 5000.
+builder.Services.AddSingleton<TatvaOS.Api.Modules.Space.IBlobStore,
+                              TatvaOS.Api.Modules.Space.FileSystemBlobStore>();
 
 // Scoped: it writes through the request's AppDbContext and reads its
 // TenantContext. A singleton holding either would serve one tenant's scope to
@@ -181,6 +189,7 @@ app.MapStorageEndpoints();
 app.MapAuditEndpoints();
 app.MapMailEndpoints();
 app.MapFamilyEndpoints();
+app.MapSpaceEndpoints();
 
 // ---------------------------------------------------------------------------
 //  Bootstrap the first super admin

@@ -36,7 +36,7 @@ export const PANEL_WIDTH_ICONS = 72;
 export function Sidebar({ sections, brand, scope, footer }: {
   sections: NavSection[];
   brand: string;
-  scope: 'platform' | 'organisation' | 'mail' | 'family';
+  scope: 'platform' | 'organisation' | 'mail' | 'family' | 'space';
   /** Pinned to the bottom of the rail (Mail puts the storage meter here).
    *  Hidden while the rail is collapsed to icons — see overrides.css. */
   footer?: React.ReactNode;

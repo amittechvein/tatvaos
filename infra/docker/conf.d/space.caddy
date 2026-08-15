@@ -1,0 +1,49 @@
+# ============================================================================
+#  TatvaOS Space — space.tatvaos.com
+# ============================================================================
+#
+#  Modeled on mail.caddy: its own front door onto the same web container, so
+#  the product has the address customers expect without a second deployment.
+#  /api/* is proxied SAME-ORIGIN deliberately — the browser never makes a
+#  cross-origin call, so the refresh cookie stays first-party and the shared
+#  session (Domain=.tatvaos.com) just works. No Space login exists.
+#
+#  {$SPACE_DOMAIN} MUST be set in infra/docker/.env before this file is ever
+#  mounted. It already is (added 2026-08-14, wired through the caddy service
+#  in docker-compose.base.yml — do NOT add it a second time). If the variable
+#  were unset with this file mounted, Caddy would reject the ENTIRE config
+#  and crash-loop, taking Core, Mail and Family down with it.
+#
+#  Mounted by the PRODUCTION overlay only, like the other product doors.
+# ============================================================================
+
+{$SPACE_DOMAIN} {
+    encode zstd gzip
+
+    handle /api/* {
+        reverse_proxy api:8080
+    }
+
+    # Landing on the host should land in the file browser. The target is the
+    # frontend's to own — Core dev: adjust this path if the Space UI roots
+    # somewhere other than /space.
+    redir / /space
+
+    # Administration lives on Core and nowhere else; sign-in and /account
+    # stay valid here so a person signing in ON space is not bounced through
+    # another domain first. Mirrors mail.caddy exactly.
+    @consolepaths path /org /org/* /admin /admin/* /signup /signup/*
+    redir @consolepaths https://{$SITE_DOMAIN}{uri}
+
+    handle {
+        reverse_proxy web:3000
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+}

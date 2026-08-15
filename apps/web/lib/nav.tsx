@@ -89,8 +89,10 @@ export const RAIL_PRODUCTS: RailProduct[] = [
     live: true, colour: '#ff4c51', match: ['/mail'] },
   { code: 'family', label: 'Family', href: '/family/contacts', icon: <Icon d={PATHS.users} />,
     live: true, colour: '#00b8d9', match: ['/family'] },
-  { code: 'drive', label: 'Drive', href: '/drive', icon: <Icon d={PATHS.drive} />,
-    live: false, colour: '#28c76f', match: ['/drive'] },
+  // Product CODE stays 'drive' — the catalogue row, allocations and audit
+  // entries were bought under that code — but the product's NAME is Space.
+  { code: 'drive', label: 'Space', href: '/space/personal', icon: <Icon d={PATHS.drive} />,
+    live: true, colour: '#28c76f', match: ['/space'] },
   { code: 'people', label: 'People', href: '/people', icon: <Icon d={PATHS.people} />,
     live: false, colour: '#00cfe8', match: ['/people'] },
   { code: 'payroll', label: 'Payroll', href: '/payroll', icon: <Icon d={PATHS.payroll} />,
@@ -195,6 +197,23 @@ export function mailNav(): NavSection[] {
         // avatar menu and the app launcher instead.
         { href: '/mail/settings', label: 'Settings', icon: <Icon d={PATHS.gear} colour="#00cfe8" /> },
         { href: '/mail/filters', label: 'Filters and blocking', icon: <Icon d={PATHS.junk} colour="#fd4963" /> },
+      ],
+    },
+  ];
+}
+
+// ============================================================================
+//  Space — file storage.
+// ============================================================================
+export function spaceNav(): NavSection[] {
+  return [
+    {
+      heading: 'Space',
+      items: [
+        { href: '/space/personal', label: 'My Space', icon: <Icon d={PATHS.draft} colour="#0fbcf9" /> },
+        { href: '/space/organisational', label: 'Organisation', icon: <Icon d={PATHS.inbox} colour="#7367f0" /> },
+        { href: '/space/shared', label: 'Shared with me', icon: <Icon d={PATHS.sent} colour="#03b562" /> },
+        { href: '/space/trash', label: 'Trash', icon: <Icon d={PATHS.trash} colour="#98a2b8" /> },
       ],
     },
   ];

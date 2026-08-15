@@ -1,0 +1,203 @@
+// ============================================================================
+//  TatvaOS Space — API client
+// ============================================================================
+//
+//  Speaks the approved v1.1 contract (docs/SPACE_API.md) and nothing else.
+//  Two rules from that contract are load-bearing here:
+//
+//  UPLOAD FIELD ORDER IS PART OF THE PROTOCOL. sizeBytes must reach the
+//  server before the bytes do — quota is pre-checked against the claim, and
+//  the server refuses to read a `file` part that arrives first. FormData
+//  preserves append order, so upload() appends in the contract's order and
+//  nothing may "tidy" it alphabetically.
+//
+//  QUOTA REFUSAL IS 413 + reason, NEVER 5xx. The UI branches on `reason`
+//  (full | suspended | no_allocation | file_too_large), so upload errors
+//  carry it through rather than flattening everything to a sentence.
+// ============================================================================
+
+type AuthedFetch = (path: string, init?: RequestInit) => Promise<Response>;
+
+export type SpaceScope = 'personal' | 'organisational';
+export type SpacePermission = 'view' | 'comment' | 'edit' | 'owner';
+
+export interface SpaceFile {
+  id: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  folderId: string | null;
+  ownershipType: SpaceScope;
+  ownerUserId: string | null;
+  createdByUserId: string | null;
+  myPermission: SpacePermission;
+  isShared: boolean;
+  deletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SpaceFolder extends Omit<SpaceFile, 'mimeType' | 'sizeBytes'> {
+  parentFolderId: string | null;
+  childFolderCount: number;
+  fileCount: number;
+}
+
+export interface Crumb { id: string | null; name: string }
+
+export interface SpaceListing {
+  breadcrumb: Crumb[];
+  folder: SpaceFolder | null;
+  folders: SpaceFolder[];
+  files: SpaceFile[];
+  page: number;
+  pageSize: number;
+  totalFiles: number;
+}
+
+export interface SpaceShare {
+  id: string;
+  userId: string | null;
+  userDisplayName: string | null;
+  orgWide: boolean;
+  permission: Exclude<SpacePermission, 'owner'>;
+  sharedByUserId: string | null;
+  createdAt: string;
+}
+
+/** An upload refusal the UI can branch on. Everything else throws Error. */
+export class UploadRefusedError extends Error {
+  constructor(
+    message: string,
+    public readonly reason: 'full' | 'suspended' | 'no_allocation' | 'file_too_large',
+  ) {
+    super(message);
+  }
+}
+
+async function json<T>(res: Response, fallback: string): Promise<T> {
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? fallback);
+  }
+  return res.json() as Promise<T>;
+}
+
+/** folderId when inside a folder, scope at a root — exactly one, per contract. */
+function target(folderId: string | null, scope: SpaceScope): string {
+  return folderId ? `folderId=${folderId}` : `scope=${scope}`;
+}
+
+export const spaceApi = {
+  list: (f: AuthedFetch, folderId: string | null, scope: SpaceScope, page = 1) =>
+    f(`/space/list?${target(folderId, scope)}&page=${page}`)
+      .then((r) => json<SpaceListing>(r, 'Could not load this folder.')),
+
+  shared: (f: AuthedFetch) =>
+    f('/space/shared')
+      .then((r) => json<{ folders: SpaceFolder[]; files: SpaceFile[] }>(r, 'Could not load shared items.')),
+
+  trash: (f: AuthedFetch) =>
+    f('/space/trash')
+      .then((r) => json<{
+        folders: SpaceFolder[]; files: SpaceFile[]; retentionDays: number; trashBytes: number;
+      }>(r, 'Could not load the trash.')),
+
+  search: (f: AuthedFetch, q: string) =>
+    f(`/space/search?q=${encodeURIComponent(q)}`)
+      .then((r) => json<{ files: SpaceFile[]; total: number }>(r, 'Search failed.')),
+
+  upload: async (f: AuthedFetch, folderId: string | null, scope: SpaceScope, file: File) => {
+    const form = new FormData();
+    // Contract order — see the header comment. file is LAST.
+    if (folderId) form.append('folderId', folderId);
+    else form.append('scope', scope);
+    form.append('sizeBytes', String(file.size));
+    form.append('file', file, file.name);
+
+    const res = await f('/space/files', { method: 'POST', body: form });
+    if (res.status === 413) {
+      const body = await res.json().catch(() => ({}));
+      throw new UploadRefusedError(
+        (body as { error?: string }).error ?? 'There is no room for this file.',
+        (body as { reason?: UploadRefusedError['reason'] }).reason ?? 'full',
+      );
+    }
+    return json<SpaceFile>(res, 'The upload failed.');
+  },
+
+  /** Browser-native download; the server sets Content-Disposition. */
+  download: async (f: AuthedFetch, file: SpaceFile) => {
+    const res = await f(`/space/files/${file.id}/content`);
+    if (!res.ok) throw new Error('Could not download that file.');
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = file.name;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+
+  renameFile: (f: AuthedFetch, id: string, name: string) =>
+    f(`/space/files/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) })
+      .then((r) => json<SpaceFile>(r, 'Could not rename that file.')),
+
+  trashFile: (f: AuthedFetch, id: string) =>
+    f(`/space/files/${id}`, { method: 'DELETE' })
+      .then((r) => { if (!r.ok) throw new Error('Could not move that file to trash.'); }),
+
+  restoreFile: (f: AuthedFetch, id: string) =>
+    f(`/space/files/${id}/restore`, { method: 'POST' })
+      .then((r) => json<SpaceFile>(r, 'Could not restore that file.')),
+
+  purgeFile: (f: AuthedFetch, id: string) =>
+    f(`/space/files/${id}/permanent`, { method: 'DELETE' })
+      .then((r) => { if (!r.ok) throw new Error('Could not delete that file permanently.'); }),
+
+  createFolder: (f: AuthedFetch, name: string, parentFolderId: string | null, scope: SpaceScope) =>
+    f('/space/folders', {
+      method: 'POST',
+      body: JSON.stringify(parentFolderId ? { name, parentFolderId } : { name, parentFolderId: null, scope }),
+    }).then((r) => json<SpaceFolder>(r, 'Could not create the folder.')),
+
+  renameFolder: (f: AuthedFetch, id: string, name: string) =>
+    f(`/space/folders/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) })
+      .then((r) => json<SpaceFolder>(r, 'Could not rename that folder.')),
+
+  trashFolder: (f: AuthedFetch, id: string) =>
+    f(`/space/folders/${id}`, { method: 'DELETE' })
+      .then((r) => { if (!r.ok) throw new Error('Could not move that folder to trash.'); }),
+
+  restoreFolder: (f: AuthedFetch, id: string) =>
+    f(`/space/folders/${id}/restore`, { method: 'POST' })
+      .then((r) => json<SpaceFolder>(r, 'Could not restore that folder.')),
+
+  purgeFolder: (f: AuthedFetch, id: string) =>
+    f(`/space/folders/${id}/permanent`, { method: 'DELETE' })
+      .then((r) => { if (!r.ok) throw new Error('Could not delete that folder permanently.'); }),
+
+  shares: (f: AuthedFetch, kind: 'files' | 'folders', id: string) =>
+    f(`/space/${kind}/${id}/shares`)
+      .then((r) => json<{ shares: SpaceShare[] }>(r, 'Could not load who has access.'))
+      .then((b) => b.shares),
+
+  share: (
+    f: AuthedFetch, kind: 'files' | 'folders', id: string,
+    grant: { userId: string } | { orgWide: true }, permission: SpaceShare['permission'],
+  ) =>
+    f(`/space/${kind}/${id}/shares`, {
+      method: 'PUT',
+      body: JSON.stringify({ ...grant, permission }),
+    }).then((r) => json<SpaceShare>(r, 'Could not share that.')),
+
+  unshare: (f: AuthedFetch, kind: 'files' | 'folders', id: string, shareId: string) =>
+    f(`/space/${kind}/${id}/shares/${shareId}`, { method: 'DELETE' })
+      .then((r) => { if (!r.ok) throw new Error('Could not remove that access.'); }),
+};
+
+export function formatSize(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
+}

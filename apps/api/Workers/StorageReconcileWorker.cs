@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using TatvaOS.Api.Modules.Admin;
+using TatvaOS.Api.Modules.Space;
 using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Notify;
 using TatvaOS.Api.Shared.Tenancy;
@@ -63,6 +64,11 @@ public sealed class StorageReconcileWorker(
                 // entities for as long as the process runs.
                 using var scope = scopeFactory.CreateScope();
                 var storage = scope.ServiceProvider.GetRequiredService<StorageAllocator>();
+
+                // Space's trash purge runs FIRST, so the reconcile and the
+                // warnings below are judged on figures that reflect what was
+                // just freed rather than counting bytes already gone.
+                await PurgeSpaceTrashAsync(scope, ct);
 
                 var rows = await storage.ReconcileUsageAsync(null, ct);
 
@@ -207,6 +213,75 @@ public sealed class StorageReconcileWorker(
                 log.LogError(ex, "Storage warning failed for {Org}", org.Name);
             }
         }
+    }
+
+    // =====================================================================
+    //  SPACE'S 30-DAY TRASH PURGE
+    // =====================================================================
+    //
+    //  Trash counts toward quota until it is purged (the bytes are still on
+    //  the volume), so this pass is what makes "empty trash frees space" and
+    //  "30 days" both true. Riding this worker rather than a second timer was
+    //  agreed up front: one scope, one schedule, one place to look.
+    //
+    //  The database work happens through two SECURITY DEFINER functions
+    //  (26-space-purge.sql) because this worker has no user id and the space
+    //  RLS policies are built around a person — without them the purge would
+    //  silently skip every personal file and keep charging for it.
+    //
+    //  Blobs are deleted BEFORE rows. If ANY blob deletion fails, the row
+    //  purge is skipped this pass and the next tick retries — blob deletion
+    //  is idempotent, so the only cost of a retry is time. The reverse
+    //  failure ordering would orphan bytes forever.
+    // =====================================================================
+
+    private const int TrashRetentionDays = 30;
+
+    private sealed class PurgeRow
+    {
+        public Guid FileId { get; set; }
+        public string BlobKey { get; set; } = "";
+    }
+
+    private async Task PurgeSpaceTrashAsync(IServiceScope scope, CancellationToken ct)
+    {
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var blobs = scope.ServiceProvider.GetRequiredService<IBlobStore>();
+
+        var cutoff = DateTimeOffset.UtcNow.AddDays(-TrashRetentionDays);
+
+        var doomed = await db.Database.SqlQuery<PurgeRow>($"""
+            SELECT file_id AS "FileId", blob_key AS "BlobKey"
+              FROM space.purgeable_files({cutoff})
+            """).ToListAsync(ct);
+        if (doomed.Count == 0) return;
+
+        var failures = 0;
+        foreach (var row in doomed)
+        {
+            if (ct.IsCancellationRequested) return;
+            try
+            {
+                await blobs.DeleteAsync(row.BlobKey);
+            }
+            catch (Exception ex)
+            {
+                failures++;
+                log.LogWarning(ex, "Could not delete blob {BlobKey}; row purge deferred to next pass", row.BlobKey);
+            }
+        }
+
+        if (failures > 0)
+        {
+            log.LogWarning("Space purge: {Failures} blob deletion(s) failed; keeping rows and retrying next pass", failures);
+            return;
+        }
+
+        var removed = await db.Database.SqlQuery<int>($"""
+            SELECT space.purge_trash({cutoff}) AS "Value"
+            """).FirstOrDefaultAsync(ct);
+
+        log.LogInformation("Space purge removed {Files} file(s) past the {Days}-day retention", removed, TrashRetentionDays);
     }
 
     /// <summary>Human-readable size for the email body.</summary>
