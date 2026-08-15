@@ -256,6 +256,15 @@ public class User
 
     public Department? Department { get; set; }
     public Domain? Domain { get; set; }
+    /// <summary>
+    /// Total bytes this person may use across ALL products — mail, files, and
+    /// whatever ships next. NULL inherits from department, then organisation.
+    ///
+    /// One figure, not one per product: "you have 30 GB" has to be true of
+    /// something the customer can point at.
+    /// </summary>
+    public long? StorageQuotaBytes { get; set; }
+
 }
 
 /// <summary>

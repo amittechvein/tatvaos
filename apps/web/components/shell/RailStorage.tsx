@@ -1,42 +1,41 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
+import { fetchMyStorage, formatBytes, meterColour, type MyStorage } from '@/lib/myStorage';
 
 /**
- * The organisation's storage, pinned to the bottom of a rail — Drive's
- * cloud-pill meter. One shared component so every product's rail shows the
- * same figure the storage console manages.
+ * The person's storage, pinned under the nav in every product's rail.
  *
- * /org/storage is admin-gated, so for most employees the call 403s and the
- * meter simply does not render — an employee's rail loses nothing they could
- * act on, and rendering a broken meter would read as a fault. (Mail's rail
- * shows the personal mailbox meter instead, which everyone may know.)
+ * ONE meter, ONE number, everywhere. It used to differ per product — Mail
+ * showed the mailbox quota, Space showed the organisation's pool — so a
+ * customer sold "30 GB" could find neither figure and reasonably concluded
+ * one of them was wrong. This reads the account total: mail, files, and
+ * whatever ships next, against the single allowance.
+ *
+ * The whole block links to the account page, where the same number is broken
+ * down by product — because the question after "I am nearly full" is always
+ * "full of what".
  */
 export function RailStorage() {
   const { authedFetch } = useAuth();
-  const [s, setS] = useState<{ used: number; total: number } | null>(null);
+  const [s, setS] = useState<MyStorage | null>(null);
 
   useEffect(() => {
     let alive = true;
-    authedFetch('/org/storage')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((b: { usedBytes: number; totalBytes: number } | null) => {
-        if (alive && b) setS({ used: b.usedBytes, total: b.totalBytes });
-      })
+    fetchMyStorage(authedFetch)
+      .then((v) => { if (alive) setS(v); })
       .catch(() => { /* the rail renders with or without the meter */ });
     return () => { alive = false; };
   }, [authedFetch]);
 
-  if (!s || s.total <= 0) return null;
-  const pct = Math.min(100, (s.used / s.total) * 100);
-
-  const gb = (n: number) => n >= 1024 ** 4
-    ? `${(n / 1024 ** 4).toFixed(2)} TB`
-    : `${(n / 1024 ** 3).toFixed(2)} GB`;
+  if (!s || s.quotaBytes <= 0) return null;
+  const pct = Math.min(100, s.usedFraction * 100);
 
   return (
-    <div>
+    <Link href="/account" className="d-block text-decoration-none" style={{ color: 'inherit' }}
+          title="See what is using your space">
       <div className="d-inline-flex align-items-center gap-2 rounded-pill"
            style={{ background: 'rgba(255,255,255,0.10)', padding: '4px 14px 4px 10px', marginBottom: 8 }}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -45,16 +44,25 @@ export function RailStorage() {
         </svg>
         <span style={{ fontSize: 12, opacity: 0.9 }}>Storage</span>
       </div>
+
       <div style={{ height: 4, borderRadius: 999, background: 'rgba(255,255,255,0.14)', overflow: 'hidden' }}>
         <div style={{
           height: '100%', width: `${pct}%`, borderRadius: 999,
-          background: pct > 90 ? '#fd4963' : pct > 75 ? '#ffa909' : '#4285f4',
-          transition: 'width 200ms ease',
+          background: meterColour(s.usedFraction), transition: 'width 200ms ease',
         }} />
       </div>
+
       <div style={{ fontSize: 11, opacity: 0.7, marginTop: 6 }}>
-        {gb(s.used)} of {gb(s.total)} used
+        {formatBytes(s.usedBytes)} of {formatBytes(s.quotaBytes)} used
       </div>
-    </div>
+
+      {/* Said only when it matters. A warning on every screen every day is
+          furniture; a warning at 80% is information. */}
+      {s.isCritical && (
+        <div style={{ fontSize: 11, marginTop: 4, color: '#ffb4bd' }}>
+          Almost full — new mail and uploads will be refused.
+        </div>
+      )}
+    </Link>
   );
 }

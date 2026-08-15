@@ -38,6 +38,7 @@ import { AppLauncher } from '@/components/shell/AppLauncher';
 import { AccountMenu } from '@/components/shell/AccountMenu';
 import { Button, Card } from '@/components/ui/Kit';
 import { useAuth } from '@/lib/auth';
+import { fetchMyStorage, formatBytes, meterColour, type MyStorage } from '@/lib/myStorage';
 import {
   beginMfa, confirmMfa, disableMfa, fetchMfaStatus, groupSecret,
   regenerateRecoveryCodes, type MfaBegin, type MfaStatus,
@@ -122,7 +123,7 @@ function Spinner({ size = 22 }: { size?: number }) {
 //  would refetch what is already on screen to draw a different half of it.
 // ---------------------------------------------------------------------------
 
-type SectionId = 'home' | 'personal' | 'security' | 'devices' | 'accounts';
+type SectionId = 'home' | 'personal' | 'security' | 'devices' | 'accounts' | 'storage';
 
 const SECTIONS: {
   id: SectionId; label: string; tint: string; keywords: string; icon: React.ReactNode;
@@ -146,6 +147,11 @@ const SECTIONS: {
     id: 'devices', label: 'Your devices', tint: '#a855f7',
     keywords: 'devices sessions signed in browser sign out everywhere',
     icon: <><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></>,
+  },
+  {
+    id: 'storage', label: 'Storage', tint: '#4285f4',
+    keywords: 'storage space quota full mail files drive usage gb',
+    icon: <><path d="M17.5 19H7a5 5 0 1 1 .9-9.92A6 6 0 0 1 19.6 11a4 4 0 0 1-2.1 8z" /></>,
   },
   {
     id: 'accounts', label: 'Accounts on this browser', tint: '#0ca5a5',
@@ -502,6 +508,8 @@ function AccountHub() {
               </Card>
             )}
 
+            {section === 'storage' && <StorageSection />}
+
             {section === 'accounts' && (
               <Card subtitle="Switch between them from the avatar in the top right — no password needed">
                 {accounts.length <= 1 ? (
@@ -822,5 +830,80 @@ function MfaCard() {
         {busy ? 'Starting…' : status?.enrolmentPending ? 'Start again' : 'Turn it on'}
       </Button>
     </Card>
+  );
+}
+
+/**
+ * Where the one allowance is spent.
+ *
+ * The rails show a single number; this is the answer to the question that
+ * always follows it — "full of what". Per product, heaviest first, because
+ * somebody reading this is deciding what to delete.
+ */
+function StorageSection() {
+  const { authedFetch } = useAuth();
+  const [s, setS] = useState<MyStorage | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchMyStorage(authedFetch).then(setS).catch(() => setErr('Could not load your storage.'));
+  }, [authedFetch]);
+
+  if (err) return <Card title="Storage"><p className="fs-14 text-danger mb-0">{err}</p></Card>;
+  if (!s) return <Card title="Storage"><Spinner /></Card>;
+
+  const pct = Math.min(100, s.usedFraction * 100);
+
+  return (
+    <div className="d-flex flex-column gap-3">
+      <Card title="Your storage" subtitle={s.note}>
+        <div className="d-flex align-items-baseline gap-2 mb-2">
+          <span className="fs-24 fw-semibold">{formatBytes(s.usedBytes)}</span>
+          <span className="fs-14 text-muted">of {formatBytes(s.quotaBytes)} used</span>
+        </div>
+
+        <div style={{ height: 10, borderRadius: 999, background: 'rgba(0,0,0,.08)', overflow: 'hidden' }}>
+          <div style={{ height: '100%', width: `${pct}%`, borderRadius: 999,
+                        background: meterColour(s.usedFraction), transition: 'width 200ms ease' }} />
+        </div>
+
+        <p className="fs-13 text-muted mt-2 mb-0">
+          {formatBytes(s.availableBytes)} still free.
+          {s.isCritical
+            ? ' You are nearly out — new mail and uploads will be refused.'
+            : s.isWarning
+              ? ' Worth clearing some space before it runs out.'
+              : ''}
+        </p>
+      </Card>
+
+      <Card title="What is using it" subtitle="Heaviest first">
+        {s.products.length === 0 ? (
+          <p className="fs-14 text-muted mb-0">Nothing stored yet.</p>
+        ) : s.products.map((p) => {
+          const share = s.usedBytes > 0 ? (p.usedBytes / s.usedBytes) * 100 : 0;
+          return (
+            <div key={p.code} className="mb-3">
+              <div className="d-flex justify-content-between fs-14 mb-1">
+                <span className="fw-semibold">{p.name}</span>
+                <span className="text-muted">{formatBytes(p.usedBytes)}</span>
+              </div>
+              <div style={{ height: 6, borderRadius: 999, background: 'rgba(0,0,0,.06)', overflow: 'hidden' }}>
+                {/* Share of what is USED, not of the quota — this bar answers
+                    "which product should I clear out", and against a mostly
+                    empty quota every bar would otherwise look like nothing. */}
+                <div style={{ height: '100%', width: `${share}%`, borderRadius: 999,
+                              background: p.code === 'mail' ? '#ff4c51' : '#28c76f' }} />
+              </div>
+            </div>
+          );
+        })}
+
+        <p className="fs-12 text-muted mb-0">
+          Files in Space that are in the trash still take up room until they are
+          purged, thirty days after you delete them.
+        </p>
+      </Card>
+    </div>
   );
 }

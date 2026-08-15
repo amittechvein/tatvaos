@@ -203,6 +203,8 @@ app.MapAuditEndpoints();
 // Shared mailboxes are PROVISIONING — the same act as creating a person, so
 // Core owns it. Mail owns who may read one.
 app.MapSharedMailboxEndpoints();
+// "How much room do I have left?" — one answer for every product's meter.
+app.MapMyStorageEndpoints();
 app.MapMailEndpoints();
 app.MapFamilyEndpoints();
 app.MapSpaceEndpoints();

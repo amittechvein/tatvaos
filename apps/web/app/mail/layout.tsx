@@ -3,7 +3,7 @@
 import { RequireAuth } from '@/components/RequireAuth';
 import { AppShell } from '@/components/shell/AppShell';
 import { mailNav } from '@/lib/nav';
-import { MailRailStorage } from '@/components/mail/MailRailStorage';
+import { RailStorage } from '@/components/shell/RailStorage';
 import { MailboxProvider, MailboxSwitcher } from '@/components/mail/MailboxSwitcher';
 
 /**
@@ -27,7 +27,7 @@ export default function MailLayout({ children }: { children: React.ReactNode }) 
           brand="TatvaOS"
           sections={mailNav()}
           railHeader={<MailboxSwitcher />}
-          railFooter={<MailRailStorage />}
+          railFooter={<RailStorage />}
           bleed
         >
           {children}
