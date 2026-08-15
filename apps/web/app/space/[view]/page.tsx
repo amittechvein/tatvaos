@@ -362,24 +362,35 @@ function ShareDialog({ kind, item, onClose, onChanged }: {
 }) {
   const { authedFetch } = useAuth();
   const [shares, setShares] = useState<SpaceShare[] | null>(null);
-  const [people, setPeople] = useState<{ id: string; displayName: string }[]>([]);
-  const [userId, setUserId] = useState('');
-  const [level, setLevel] = useState<SpaceShare['permission']>('view');
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // ---- the chip picker ------------------------------------------------
+  const [term, setTerm] = useState('');
+  const [hits, setHits] = useState<{ id: string; displayName: string; email: string }[]>([]);
+  const [chips, setChips] = useState<{ id: string; displayName: string }[]>([]);
+  const [inviteLevel, setInviteLevel] = useState<SpaceShare['permission']>('view');
+
   const reload = useCallback(() => {
-    spaceApi.shares(authedFetch, kind, item.id).then(setShares).catch((e: Error) => setErr(e.message));
+    spaceApi.shares(authedFetch, kind, item.id)
+      .then(setShares)
+      .catch((e: Error) => setErr(e.message));
   }, [authedFetch, kind, item.id]);
 
   useEffect(() => { reload(); }, [reload]);
+
+  // Debounced directory search — a keystroke should not be a query.
   useEffect(() => {
-    void authedFetch('/org/users')
-      .then((r) => (r.ok ? r.json() : []))
-      .then((list: { id: string; displayName: string; status: string }[]) =>
-        setPeople(list.filter((p) => p.status === 'active')))
-      .catch(() => setPeople([]));
-  }, [authedFetch]);
+    const q = term.trim();
+    if (!q) { setHits([]); return; }
+    let cancelled = false;
+    const t = setTimeout(() => {
+      spaceApi.directory(authedFetch, q)
+        .then((people) => { if (!cancelled) setHits(people.filter((p) => !chips.some((c) => c.id === p.id))); })
+        .catch(() => { if (!cancelled) setHits([]); });
+    }, 200);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [term, authedFetch, chips]);
 
   async function run(fn: () => Promise<unknown>) {
     setBusy(true); setErr(null);
@@ -388,72 +399,173 @@ function ShareDialog({ kind, item, onClose, onChanged }: {
     finally { setBusy(false); }
   }
 
+  /** Send the invitations — every chip at the chosen level, in one go. */
+  async function invite() {
+    await run(async () => {
+      for (const c of chips) {
+        await spaceApi.share(authedFetch, kind, item.id, { userId: c.id }, inviteLevel);
+      }
+      setChips([]); setTerm('');
+    });
+  }
+
+  // General access: the org-wide row, if any. Named audiences live below it.
+  const orgShare = shares?.find((s) => s.orgWide) ?? null;
+  const named = shares?.filter((s) => !s.orgWide) ?? [];
+
   return (
     <>
       <div className="fixed inset-0 z-[1190] bg-black/40" onClick={onClose} aria-hidden="true" />
-      <div className="fixed left-1/2 top-1/2 z-[1200] w-[min(480px,92vw)] -translate-x-1/2 -translate-y-1/2 rounded-card border border-line bg-surface p-5 shadow-raised">
-        <h2 className="mb-1 text-base font-semibold text-ink">Share “{item.name}”</h2>
-        <p className="mb-3 text-xs text-ink-muted">
-          A folder share reaches everything inside it. Levels: view, comment, edit.
-        </p>
+      <div className="fixed left-1/2 top-1/2 z-[1200] w-[min(520px,94vw)] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-card border border-line bg-surface shadow-raised">
+        <div className="px-5 pt-5">
+          <h2 className="mb-3 truncate text-base font-semibold text-ink">
+            Share &ldquo;{item.name}&rdquo;
+          </h2>
 
-        {err && <p className="mb-2 text-sm text-danger">{err}</p>}
+          {err && <p className="mb-2 text-sm text-danger">{err}</p>}
 
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          {people.length > 0 ? (
-            <select value={userId} onChange={(e) => setUserId(e.target.value)}
-              className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-ink">
-              <option value="">Choose a person…</option>
-              {people.map((p) => <option key={p.id} value={p.id}>{p.displayName}</option>)}
-            </select>
-          ) : (
-            <span className="flex-1 text-xs text-ink-faint">
-              Person-by-person sharing needs the people list (admins only today) — use
-              org-wide below, or ask an admin.
-            </span>
-          )}
-          <select value={level} onChange={(e) => setLevel(e.target.value as SpaceShare['permission'])}
-            className="rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-ink">
-            <option value="view">view</option>
-            <option value="comment">comment</option>
-            <option value="edit">edit</option>
-          </select>
-          <button type="button" disabled={busy || !userId}
-            onClick={() => void run(() => spaceApi.share(authedFetch, kind, item.id, { userId }, level))}
-            className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50">
-            Share
-          </button>
-        </div>
+          {/* ---- Invite box: chips + a level for the whole invitation ---- */}
+          <div className="relative mb-1">
+            <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-line px-2 py-1.5">
+              {chips.map((c) => (
+                <span key={c.id}
+                      className="flex items-center gap-1 rounded-full bg-canvas px-2 py-0.5 text-xs text-ink">
+                  {c.displayName}
+                  <button type="button" aria-label={`Remove ${c.displayName}`}
+                          onClick={() => setChips((p) => p.filter((x) => x.id !== c.id))}
+                          className="text-ink-faint hover:text-danger">×</button>
+                </span>
+              ))}
+              <input
+                value={term}
+                onChange={(e) => setTerm(e.target.value)}
+                placeholder={chips.length === 0 ? 'Add people by name or email' : ''}
+                className="min-w-[8rem] flex-1 border-0 bg-transparent p-0 text-sm text-ink outline-none placeholder:text-ink-faint"
+              />
+              {chips.length > 0 && (
+                <select value={inviteLevel} disabled={busy}
+                        onChange={(e) => setInviteLevel(e.target.value as SpaceShare['permission'])}
+                        className="shrink-0 rounded-lg border border-line bg-surface px-2 py-1 text-xs text-ink">
+                  <option value="view">Viewer</option>
+                  <option value="comment">Commenter</option>
+                  <option value="edit">Editor</option>
+                </select>
+              )}
+            </div>
 
-        <button type="button" disabled={busy}
-          onClick={() => void run(() => spaceApi.share(authedFetch, kind, item.id, { orgWide: true }, level))}
-          className="mb-3 rounded-lg border border-line px-3 py-1.5 text-sm text-ink-muted transition hover:bg-canvas hover:text-ink">
-          Share with the whole organisation ({level})
-        </button>
+            {hits.length > 0 && (
+              <div className="absolute left-0 right-0 top-full z-[1400] mt-1 overflow-hidden rounded-xl border border-line bg-surface shadow-raised">
+                {hits.slice(0, 6).map((p) => (
+                  <button key={p.id} type="button"
+                          // mousedown, not click: click lands after blur and the
+                          // list would already be gone.
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setChips((c) => [...c, { id: p.id, displayName: p.displayName }]);
+                            setTerm(''); setHits([]);
+                          }}
+                          className="block w-full px-3 py-2 text-left text-sm hover:bg-canvas">
+                    <span className="block font-medium text-ink">{p.displayName}</span>
+                    <span className="block text-xs text-ink-muted">{p.email}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
-        <div className="max-h-52 overflow-y-auto border-t border-line pt-2">
-          {shares === null ? (
-            <p className="text-xs text-ink-faint">Loading…</p>
-          ) : shares.length === 0 ? (
-            <p className="text-xs text-ink-faint">Nobody else has access.</p>
-          ) : shares.map((s) => (
-            <div key={s.id} className="flex items-center gap-2 py-1.5 text-sm">
-              <span className="min-w-0 flex-1 truncate text-ink">
-                {s.orgWide ? 'Everyone in the organisation' : s.userDisplayName ?? s.userId}
-              </span>
-              <span className="shrink-0 text-xs text-ink-muted">{s.permission}</span>
-              <button type="button" disabled={busy}
-                onClick={() => void run(() => spaceApi.unshare(authedFetch, kind, item.id, s.id))}
-                className="shrink-0 text-xs text-danger hover:underline">
-                remove
+          {chips.length > 0 && (
+            <div className="mb-3 mt-2 flex justify-end">
+              <button type="button" disabled={busy} onClick={() => void invite()}
+                      className="rounded-full bg-brand-600 px-5 py-1.5 text-sm font-semibold text-white disabled:opacity-50">
+                {busy ? 'Sharing…' : 'Share'}
               </button>
             </div>
-          ))}
+          )}
+
+          {/* ---- People with access ---- */}
+          <h3 className="mb-1 mt-4 text-sm font-semibold text-ink">People with access</h3>
+          <div className="max-h-40 overflow-y-auto">
+            {shares === null ? (
+              <p className="py-1 text-xs text-ink-faint">Loading…</p>
+            ) : named.length === 0 ? (
+              <p className="py-1 text-xs text-ink-faint">
+                Only you. {item.ownershipType === 'organisational'
+                  ? 'This item belongs to the organisation, so colleagues may already reach it.'
+                  : 'Nobody else can open this.'}
+              </p>
+            ) : named.map((s) => (
+              <div key={s.id} className="flex items-center gap-2 py-1.5 text-sm">
+                <span className="min-w-0 flex-1 truncate text-ink">
+                  {s.userDisplayName ?? s.userId}
+                </span>
+                {/* Changing the level is an upsert on the same audience, so the
+                    select IS the edit — no separate save. */}
+                <select
+                  value={s.permission}
+                  disabled={busy}
+                  onChange={(e) => void run(() => spaceApi.share(
+                    authedFetch, kind, item.id, { userId: s.userId! },
+                    e.target.value as SpaceShare['permission']))}
+                  className="rounded-lg border border-line bg-surface px-2 py-1 text-xs text-ink"
+                >
+                  <option value="view">Viewer</option>
+                  <option value="comment">Commenter</option>
+                  <option value="edit">Editor</option>
+                </select>
+                <button type="button" disabled={busy}
+                        onClick={() => void run(() => spaceApi.unshare(authedFetch, kind, item.id, s.id))}
+                        className="text-xs text-danger hover:underline">
+                  remove
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {/* ---- General access ---- */}
+          <h3 className="mb-1 mt-4 text-sm font-semibold text-ink">General access</h3>
+          <div className="mb-1 flex items-center gap-2">
+            <select
+              value={orgShare ? 'org' : 'restricted'}
+              disabled={busy}
+              onChange={(e) => void run(() => e.target.value === 'org'
+                ? spaceApi.share(authedFetch, kind, item.id, { orgWide: true }, orgShare?.permission ?? 'view')
+                : spaceApi.unshare(authedFetch, kind, item.id, orgShare!.id))}
+              className="rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-ink"
+            >
+              <option value="restricted">Restricted</option>
+              <option value="org">Everyone in the organisation</option>
+            </select>
+
+            {orgShare && (
+              <select
+                value={orgShare.permission}
+                disabled={busy}
+                onChange={(e) => void run(() => spaceApi.share(
+                  authedFetch, kind, item.id, { orgWide: true },
+                  e.target.value as SpaceShare['permission']))}
+                className="ml-auto rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-ink"
+              >
+                <option value="view">Viewer</option>
+                <option value="comment">Commenter</option>
+                <option value="edit">Editor</option>
+              </select>
+            )}
+          </div>
+          <p className="mb-4 text-xs text-ink-muted">
+            {orgShare
+              ? `Anyone signed in to your organisation can ${
+                  orgShare.permission === 'view' ? 'view' : orgShare.permission === 'comment' ? 'comment on' : 'edit'
+                } this.`
+              : 'Only people added above can open this.'}
+            {/* No public links, deliberately: an audience is a colleague or the
+                organisation. A link anyone on the internet can open is a
+                different security decision and is not in this product yet. */}
+          </p>
         </div>
 
-        <div className="mt-4 text-right">
+        <div className="flex justify-end border-t border-line px-5 py-3">
           <button type="button" onClick={onClose}
-            className="rounded-lg border border-line px-4 py-1.5 text-sm text-ink-muted hover:bg-canvas hover:text-ink">
+                  className="rounded-full bg-brand-600 px-6 py-1.5 text-sm font-semibold text-white">
             Done
           </button>
         </div>

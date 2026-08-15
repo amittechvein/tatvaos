@@ -102,9 +102,14 @@ export function Sidebar({ sections, brand, scope, footer, header }: {
         </Link>
       </div>
 
-      {header && <div className="sidebar-context">{header}</div>}
-
+      {/* Both slots render INSIDE .main-sidebar, not as siblings of it.
+          YZEN gives that element a calculated height and its own scroll, so
+          anything placed outside it is pushed past the bottom of the rail and
+          silently invisible — which is exactly how the storage meter and the
+          mailbox switcher both shipped without ever being seen. */}
       <div className="main-sidebar" id="sidebar-scroll">
+        {header && <div className="sidebar-context">{header}</div>}
+
         <nav className="main-menu-container nav nav-pills flex-column sub-open">
           <ul className="main-menu">
             {sections.map((section) => (
@@ -167,9 +172,9 @@ export function Sidebar({ sections, brand, scope, footer, header }: {
             ))}
           </ul>
         </nav>
-      </div>
 
-      {footer && <div className="sidebar-footer">{footer}</div>}
+        {footer && <div className="sidebar-footer">{footer}</div>}
+      </div>
     </aside>
   );
 }

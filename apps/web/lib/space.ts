@@ -176,6 +176,17 @@ export const spaceApi = {
     f(`/space/folders/${id}/permanent`, { method: 'DELETE' })
       .then((r) => { if (!r.ok) throw new Error('Could not delete that folder permanently.'); }),
 
+  /**
+   * People in my organisation I can share with. Any signed-in caller — the
+   * org People API is admin-only, which is why non-admins could not name a
+   * colleague before this existed.
+   */
+  directory: (f: AuthedFetch, q: string) =>
+    f(`/space/directory?q=${encodeURIComponent(q)}`)
+      .then((r) => json<{ people: { id: string; displayName: string; email: string }[] }>(
+        r, 'Could not load your directory.'))
+      .then((b) => b.people),
+
   shares: (f: AuthedFetch, kind: 'files' | 'folders', id: string) =>
     f(`/space/${kind}/${id}/shares`)
       .then((r) => json<{ shares: SpaceShare[] }>(r, 'Could not load who has access.'))

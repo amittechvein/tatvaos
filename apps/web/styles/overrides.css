@@ -94,13 +94,17 @@
 }
 
 /* ============================================================================
-   Rail footer — the pinned block at the bottom of the sidebar
+   Rail footer — the block after the nav
    ----------------------------------------------------------------------------
-   Mail puts its storage meter here. Hidden while the rail is collapsed to the
-   icon strip: a progress bar with no label reads as a stray line, and the strip
-   is for icons only. It returns as soon as the rail expands on hover.
+   Mail puts its storage meter here. It lives INSIDE .main-sidebar (see
+   Sidebar.tsx): as a sibling of that element it sat below the rail's
+   calculated height and was never visible on any screen.
+
+   Hidden while the rail is collapsed to the icon strip: a progress bar with no
+   label reads as a stray line. It returns as soon as the rail expands.
    ============================================================================ */
 .app-sidebar .sidebar-footer {
+  margin-block-start: 1rem;
   padding: 0.75rem 1.25rem;
   border-block-start: 1px solid rgba(255, 255, 255, 0.1);
   color: #fff;
