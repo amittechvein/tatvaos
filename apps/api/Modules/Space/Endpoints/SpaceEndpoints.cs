@@ -91,13 +91,16 @@ public static class SpaceEndpoints
         string OwnershipType, Guid? OwnerUserId, Guid? CreatedByUserId,
         string MyPermission, bool IsShared,
         DateTimeOffset? DeletedAt, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
-        int ChildFolderCount, int FileCount);
+        int ChildFolderCount, int FileCount,
+        bool IsStarred = false, string? OwnerDisplayName = null, string? ParentName = null);
 
     public sealed record SpaceFileDto(
         Guid Id, string Name, string MimeType, long SizeBytes, Guid? FolderId,
         string OwnershipType, Guid? OwnerUserId, Guid? CreatedByUserId,
         string MyPermission, bool IsShared,
-        DateTimeOffset? DeletedAt, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
+        DateTimeOffset? DeletedAt, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
+        bool IsStarred = false, string? OwnerDisplayName = null, string? ParentName = null,
+        ActivityDto? Activity = null);
 
     public sealed record ShareDto(
         Guid Id, Guid? UserId, string? UserDisplayName, bool OrgWide,
@@ -107,6 +110,7 @@ public static class SpaceEndpoints
     public sealed record PatchRequest(string? Name, Guid? FolderId, Guid? ParentFolderId, string? Scope);
     public sealed record OwnershipRequest(string? OwnershipType);
     public sealed record ShareRequest(Guid? UserId, bool OrgWide, string? Permission);
+    public sealed record ActivityDto(string Action, DateTimeOffset OccurredAt);
 
     private static IResult Error(int status, string message, string? reason = null) =>
         reason is null
@@ -407,6 +411,15 @@ public static class SpaceEndpoints
                 folderDtos.Count, totalFiles);
         }
 
+        // Batched isStarred / ownerDisplayName for the whole page (contract
+        // v1.2). No parentName here — the breadcrumb answers location.
+        var decoAll = await SpaceDriveEndpoints.DecorateAsync(db, uid,
+            current is null ? folderDtos : [current, .. folderDtos],
+            fileDtos, withParentName: false, ct);
+        fileDtos = decoAll.Files;
+        if (current is null) folderDtos = decoAll.Folders;
+        else { current = decoAll.Folders[0]; folderDtos = decoAll.Folders.Skip(1).ToList(); }
+
         return Results.Ok(new
         {
             breadcrumb,
@@ -456,15 +469,14 @@ public static class SpaceEndpoints
             return p;
         }
 
-        return Results.Ok(new
-        {
-            folders = folders.Select(f => new SpaceFolderDto(
-                f.Id, f.Name, f.ParentFolderId,
-                f.OwnershipType, f.OwnerUserId, f.CreatedByUserId,
-                GrantMax(folderGrants[f.Id]), true,
-                f.DeletedAt, f.CreatedAt, f.UpdatedAt, 0, 0)).ToList(),
-            files = files.Select(f => FileDto(f, GrantMax(fileGrants[f.Id]), true)).ToList()
-        });
+        var folderDtos = folders.Select(f => new SpaceFolderDto(
+            f.Id, f.Name, f.ParentFolderId,
+            f.OwnershipType, f.OwnerUserId, f.CreatedByUserId,
+            GrantMax(folderGrants[f.Id]), true,
+            f.DeletedAt, f.CreatedAt, f.UpdatedAt, 0, 0)).ToList();
+        var fileDtos = files.Select(f => FileDto(f, GrantMax(fileGrants[f.Id]), true)).ToList();
+        var deco = await SpaceDriveEndpoints.DecorateAsync(db, uid, folderDtos, fileDtos, withParentName: true, ct);
+        return Results.Ok(new { folders = deco.Folders, files = deco.Files });
     }
 
     // ==================================================================
@@ -502,14 +514,17 @@ public static class SpaceEndpoints
                 OR f.folder_id IN (SELECT id FROM sub)
             """).FirstOrDefaultAsync(ct);
 
+        var folderDtos = folders.Select(f => new SpaceFolderDto(
+            f.Id, f.Name, f.ParentFolderId,
+            f.OwnershipType, f.OwnerUserId, f.CreatedByUserId,
+            f.OwnerUserId == uid ? "owner" : "edit", false,
+            f.DeletedAt, f.CreatedAt, f.UpdatedAt, 0, 0)).ToList();
+        var fileDtos = files.Select(f => FileDto(f, f.OwnerUserId == uid ? "owner" : "edit", false)).ToList();
+        var deco = await SpaceDriveEndpoints.DecorateAsync(db, uid, folderDtos, fileDtos, withParentName: false, ct);
         return Results.Ok(new
         {
-            folders = folders.Select(f => new SpaceFolderDto(
-                f.Id, f.Name, f.ParentFolderId,
-                f.OwnershipType, f.OwnerUserId, f.CreatedByUserId,
-                f.OwnerUserId == uid ? "owner" : "edit", false,
-                f.DeletedAt, f.CreatedAt, f.UpdatedAt, 0, 0)).ToList(),
-            files = files.Select(f => FileDto(f, f.OwnerUserId == uid ? "owner" : "edit", false)).ToList(),
+            folders = deco.Folders,
+            files = deco.Files,
             retentionDays = RetentionDays,
             trashBytes
         });
@@ -571,13 +586,9 @@ public static class SpaceEndpoints
             return p;
         }
 
-        return Results.Ok(new
-        {
-            files = ordered.Select(f => FileDto(f, PermOf(f), shared.Contains(f.Id))).ToList(),
-            page,
-            pageSize,
-            total
-        });
+        var fileDtos = ordered.Select(f => FileDto(f, PermOf(f), shared.Contains(f.Id))).ToList();
+        var deco = await SpaceDriveEndpoints.DecorateAsync(db, uid, [], fileDtos, withParentName: true, ct);
+        return Results.Ok(new { files = deco.Files, page, pageSize, total });
     }
 
     // ==================================================================
@@ -778,13 +789,15 @@ public static class SpaceEndpoints
                 };
                 db.SpaceFiles.Add(file);
                 await db.SaveChangesAsync(token);
+                await SpaceDriveEndpoints.RecordActivityAsync(db, tenant, file.Id, "created", token);
 
                 // True up the derived figure with what ACTUALLY landed — the
                 // declared size was a claim. Cheap: one GROUP BY, one tenant.
                 await allocator.ReconcileUsageAsync(tenant.TenantId, token);
 
                 var perm = file.OwnerUserId == uid ? "owner" : "edit";
-                return Results.Created($"/api/space/files/{file.Id}", FileDto(file, perm, false));
+                return Results.Created($"/api/space/files/{file.Id}",
+                    await SpaceDriveEndpoints.DecorateFileAsync(db, uid, FileDto(file, perm, false), token));
             },
             ct);
     }
@@ -827,13 +840,15 @@ public static class SpaceEndpoints
                 file.MimeType = part.ContentType;
                 file.UpdatedAt = DateTimeOffset.UtcNow;
                 await db.SaveChangesAsync(token);
+                await SpaceDriveEndpoints.RecordActivityAsync(db, tenant, file.Id, "modified", token);
 
                 try { await blobs.DeleteAsync(oldKey); }
                 catch { /* an orphaned blob costs bytes, not correctness */ }
 
                 await allocator.ReconcileUsageAsync(tenant.TenantId, token);
-                return Results.Ok(FileDto(file, await FilePermAsync(db, file, uid, token),
-                    await db.SpaceShares.AnyAsync(s => s.FileId == file.Id, token)));
+                return Results.Ok(await SpaceDriveEndpoints.DecorateFileAsync(db, uid,
+                    FileDto(file, await FilePermAsync(db, file, uid, token),
+                        await db.SpaceShares.AnyAsync(s => s.FileId == file.Id, token)), token));
             },
             ct);
     }
@@ -854,6 +869,10 @@ public static class SpaceEndpoints
 
         var stream = blobs.OpenRead(file.BlobKey);
         if (stream is null) return Error(404, "This file's content is missing from storage.");
+
+        // Genuine user download -> Recent. Machine reads (the gateway,
+        // thumbnails) do not come through this handler, by design.
+        await SpaceDriveEndpoints.RecordActivityAsync(db, tenant, file.Id, "opened", ct);
 
         return Results.File(stream, file.MimeType, file.Name, enableRangeProcessing: true);
     }
@@ -894,8 +913,9 @@ public static class SpaceEndpoints
 
         file.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
-        return Results.Ok(FileDto(file, await FilePermAsync(db, file, uid, ct),
-            await db.SpaceShares.AnyAsync(s => s.FileId == file.Id, ct)));
+        return Results.Ok(await SpaceDriveEndpoints.DecorateFileAsync(db, uid,
+            FileDto(file, await FilePermAsync(db, file, uid, ct),
+                await db.SpaceShares.AnyAsync(s => s.FileId == file.Id, ct)), ct));
     }
 
     // ==================================================================
@@ -949,8 +969,9 @@ public static class SpaceEndpoints
         // silently is how access disappears on the flip back and nobody can
         // say why. Removing one is an explicit DELETE by a human.
         await db.SaveChangesAsync(ct);
-        return Results.Ok(FileDto(file, await FilePermAsync(db, file, uid, ct),
-            await db.SpaceShares.AnyAsync(s => s.FileId == file.Id, ct)));
+        return Results.Ok(await SpaceDriveEndpoints.DecorateFileAsync(db, uid,
+            FileDto(file, await FilePermAsync(db, file, uid, ct),
+                await db.SpaceShares.AnyAsync(s => s.FileId == file.Id, ct)), ct));
     }
 
     // ==================================================================
@@ -997,8 +1018,9 @@ public static class SpaceEndpoints
         file.DeletedByUserId = null;
         file.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
-        return Results.Ok(FileDto(file, await FilePermAsync(db, file, uid, ct),
-            await db.SpaceShares.AnyAsync(s => s.FileId == file.Id, ct)));
+        return Results.Ok(await SpaceDriveEndpoints.DecorateFileAsync(db, uid,
+            FileDto(file, await FilePermAsync(db, file, uid, ct),
+                await db.SpaceShares.AnyAsync(s => s.FileId == file.Id, ct)), ct));
     }
 
     private static async Task<IResult> PurgeFileAsync(
@@ -1059,11 +1081,12 @@ public static class SpaceEndpoints
         db.SpaceFolders.Add(folder);
         await db.SaveChangesAsync(ct);
 
-        return Results.Created($"/api/space/folders/{folder.Id}", new SpaceFolderDto(
-            folder.Id, folder.Name, folder.ParentFolderId,
-            folder.OwnershipType, folder.OwnerUserId, folder.CreatedByUserId,
-            folder.OwnerUserId == uid ? "owner" : "edit", false,
-            folder.DeletedAt, folder.CreatedAt, folder.UpdatedAt, 0, 0));
+        return Results.Created($"/api/space/folders/{folder.Id}",
+            await SpaceDriveEndpoints.DecorateFolderAsync(db, uid, new SpaceFolderDto(
+                folder.Id, folder.Name, folder.ParentFolderId,
+                folder.OwnershipType, folder.OwnerUserId, folder.CreatedByUserId,
+                folder.OwnerUserId == uid ? "owner" : "edit", false,
+                folder.DeletedAt, folder.CreatedAt, folder.UpdatedAt, 0, 0), ct));
     }
 
     // ==================================================================
@@ -1132,12 +1155,12 @@ public static class SpaceEndpoints
         folder.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
 
-        return Results.Ok(new SpaceFolderDto(
+        return Results.Ok(await SpaceDriveEndpoints.DecorateFolderAsync(db, uid, new SpaceFolderDto(
             folder.Id, folder.Name, folder.ParentFolderId,
             folder.OwnershipType, folder.OwnerUserId, folder.CreatedByUserId,
             await FolderPermAsync(db, id, uid, ct),
             await db.SpaceShares.AnyAsync(s => s.FolderId == id, ct),
-            folder.DeletedAt, folder.CreatedAt, folder.UpdatedAt, 0, 0));
+            folder.DeletedAt, folder.CreatedAt, folder.UpdatedAt, 0, 0), ct));
     }
 
     // ==================================================================
@@ -1185,12 +1208,12 @@ public static class SpaceEndpoints
         folder.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
 
-        return Results.Ok(new SpaceFolderDto(
+        return Results.Ok(await SpaceDriveEndpoints.DecorateFolderAsync(db, uid, new SpaceFolderDto(
             folder.Id, folder.Name, folder.ParentFolderId,
             folder.OwnershipType, folder.OwnerUserId, folder.CreatedByUserId,
             await FolderPermAsync(db, id, uid, ct),
             await db.SpaceShares.AnyAsync(s => s.FolderId == id, ct),
-            folder.DeletedAt, folder.CreatedAt, folder.UpdatedAt, 0, 0));
+            folder.DeletedAt, folder.CreatedAt, folder.UpdatedAt, 0, 0), ct));
     }
 
     private static async Task<IResult> PurgeFolderAsync(

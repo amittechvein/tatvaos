@@ -142,3 +142,39 @@ public class SpaceShare
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
+
+/// <summary>
+/// The caller's latest touch on a file — ONE row per (user, file), upserted,
+/// latest action wins. Powers /recent and Home. Not an audit trail
+/// (core.audit_logs is that). Strictly per-user by RLS (29-space-drive.sql).
+/// Written only by genuine user paths — download/upload/overwrite — never by
+/// the SpaceContentGateway or thumbnails; see RecordActivityAsync.
+/// </summary>
+public class SpaceFileActivity
+{
+    public Guid TenantId { get; set; }
+    public Guid UserId { get; set; }
+    public Guid FileId { get; set; }
+
+    /// <summary>opened | created | modified — the latest wins.</summary>
+    [MaxLength(16)] public string Action { get; set; } = "opened";
+
+    public DateTimeOffset OccurredAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// A personal star on one object (file XOR folder, CHECKed). My stars are
+/// invisible to colleagues — per-user RLS, not application code. Unique per
+/// (user, object): starring twice is an upsert-shaped no-op.
+/// </summary>
+public class SpaceStar
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid UserId { get; set; }
+
+    public Guid? FileId { get; set; }
+    public Guid? FolderId { get; set; }
+
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
