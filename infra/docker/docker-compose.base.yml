@@ -230,6 +230,12 @@ services:
       # scanned and every row honestly stays "pending". Set it to clamav:3310
       # once the service below is running.
       Mail__ClamAv: ${MAIL_CLAMAV:-}
+      # Base URL of a LibreTranslate we run ourselves. Empty - the default -
+      # means the Translate control is reported as unavailable rather than
+      # offered and broken. Message bodies go to whatever this points at, so
+      # it should never point off this machine.
+      Translate__Endpoint: ${TRANSLATE_ENDPOINT:-}
+      Translate__ApiKey: ${TRANSLATE_API_KEY:-}
       # Over-quota mailboxes: anything but "enforce" only LOGS would-defer
       # lines. Flip to enforce only after reading those logs shows no
       # innocent mailbox would be hit — a 4xx defer makes senders queue and

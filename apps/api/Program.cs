@@ -154,6 +154,11 @@ builder.Services.AddHostedService<ThreadBackfillWorker>();
 builder.Services.AddScoped<ClamAvScanner>();
 builder.Services.AddHostedService<AttachmentScanWorker>();
 
+// Translates message bodies through a translator in our own stack. OFF
+// until Translate:Endpoint is set - the status endpoint says so plainly, so
+// the client hides the control rather than offering one that fails.
+builder.Services.AddScoped<TranslateService>();
+
 builder.Services.AddOpenApi();
 
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p

@@ -70,6 +70,94 @@ public static class MailEndpoints
         g.MapGet("/mailboxes/{id:guid}/permissions", ListPermissionsAsync);
         g.MapPost("/mailboxes/{id:guid}/permissions", GrantPermissionAsync);
         g.MapDelete("/mailboxes/{id:guid}/permissions/{userId:guid}/{permission}", RevokePermissionAsync);
+
+        g.MapGet("/translate/status", TranslateStatusAsync);
+        g.MapPost("/messages/{id:guid}/translate", TranslateMessageAsync);
+    }
+
+    // ------------------------------------------------------------------
+    //  Translation.
+    //
+    //  Runs against a translator in our own compose stack. Translating means
+    //  sending the whole message to whatever does the translating, and these
+    //  tenants are schools and hospitals - a commercial API would put a
+    //  child's medical letter in front of a third party to render a button.
+    //
+    //  PLAIN TEXT ONLY. The body is attacker-controlled; sending its HTML
+    //  through a translator and rendering the reply would reintroduce every
+    //  injection risk SafeHtml exists to remove, via a component with no idea
+    //  it is handling hostile input. Text in, text out, rendered as text.
+    //
+    //  Nothing is stored: a translation is a view of a message, not a second
+    //  copy of it.
+    // ------------------------------------------------------------------
+    private static async Task<IResult> TranslateStatusAsync(
+        TranslateService translate, CancellationToken ct)
+    {
+        if (!translate.Configured)
+            return Results.Ok(new { enabled = false, languages = Array.Empty<object>() });
+
+        // Configured but an empty list means it is set up and not answering,
+        // which a client should be able to show differently from "off".
+        var languages = await translate.LanguagesAsync(ct);
+        return Results.Ok(new
+        {
+            enabled = true,
+            maxCharacters = TranslateService.MaxCharacters,
+            languages = languages.Select(l => new { code = l.Code, name = l.Name }).ToList(),
+        });
+    }
+
+    public sealed record TranslateRequest(string Target);
+
+    private static async Task<IResult> TranslateMessageAsync(
+        Guid id, TranslateRequest req, Guid? mailboxId, AppDbContext db, TenantContext tenant,
+        TranslateService translate, CancellationToken ct)
+    {
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Read, ct);
+        if (box is null) return Results.NotFound();
+
+        var m = await db.Messages.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == id && x.MailboxId == box.Id, ct);
+        if (m is null) return Results.NotFound();
+
+        var target = (req.Target ?? "").Trim().ToLowerInvariant();
+        if (target.Length is < 2 or > 8)
+            return Results.BadRequest(new { error = "That is not a language code." });
+
+        // The stored plain-text body; failing that, the text part of the raw
+        // message; failing that, the preview. Never the HTML.
+        var source = m.BodyText;
+        if (string.IsNullOrWhiteSpace(source) && !string.IsNullOrEmpty(m.RawBody))
+        {
+            try { source = MailContent.Parse(m.RawBody).TextBody; }
+            catch { source = null; }
+        }
+        source ??= m.Snippet;
+
+        if (string.IsNullOrWhiteSpace(source))
+            return Results.Ok(new { error = "There is no text in this message to translate." });
+
+        var result = await translate.TranslateAsync(source, target, ct);
+        if (result.Error is string failure)
+            return Results.Ok(new { error = failure });
+
+        // The subject separately. A translated body under an untranslated
+        // subject reads as half a feature, and the subject is the part
+        // somebody scans first.
+        var subject = m.Subject ?? "";
+        var translatedSubject = subject.Length > 0
+            ? await translate.TranslateAsync(subject, target, ct)
+            : null;
+
+        return Results.Ok(new
+        {
+            target,
+            detectedLanguage = result.DetectedLanguage,
+            subject = translatedSubject is { Error: null } ok ? ok.Text : subject,
+            body = result.Text,
+            truncated = result.Truncated,
+        });
     }
 
     // ------------------------------------------------------------------
