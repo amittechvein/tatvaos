@@ -53,13 +53,18 @@ OUT="${DEST}/${STAMP}"
 
 # ---------------------------------------------------------------------------
 if [ "${1:-}" = "--install" ]; then
-    LINE="30 2 * * * cd $(pwd) && ./infra/scripts/backup.sh >> /var/log/tatvaos-backup.log 2>&1"
+    # The log lives beside the backups, NOT in /var/log: that directory is
+    # root-owned, the deploy user cannot create a file there, and cron would
+    # have failed on the redirect before the script ever ran — silently,
+    # every night, which is the worst way for a backup to be broken.
+    mkdir -p "$DEST"
+    LINE="30 2 * * * cd $(pwd) && ./infra/scripts/backup.sh >> ${DEST}/backup.log 2>&1"
     # Idempotent: re-running --install must not stack duplicate entries.
     if crontab -l 2>/dev/null | grep -Fq 'infra/scripts/backup.sh'; then
         ok "cron entry already installed"
     else
         (crontab -l 2>/dev/null; echo "$LINE") | crontab -
-        ok "installed: nightly at 02:30, logging to /var/log/tatvaos-backup.log"
+        ok "installed: nightly at 02:30, logging to ${DEST}/backup.log"
     fi
     crontab -l | grep -F 'backup.sh' | sed 's/^/   /'
     exit 0

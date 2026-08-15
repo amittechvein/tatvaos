@@ -26,6 +26,11 @@ cd /srv/tatvaos-production
 ./infra/scripts/backup.sh --install    # nightly cron at 02:30
 ```
 
+The cron logs to `$BACKUP_DIR/backup.log`, deliberately not `/var/log` — the
+deploy user cannot create a file there, and cron would fail on the redirect
+before the script ever ran. Check it the morning after installing: an empty
+or missing log means the job never fired.
+
 Set the off-box target before trusting any of it:
 
 ```bash
