@@ -1,0 +1,40 @@
+# ============================================================================
+#  TatvaOS Connect — connect.tatvaos.com
+# ============================================================================
+#
+#  The address exists BEFORE the product does, deliberately: DNS and the
+#  certificate want warming up, and a customer who tries the obvious hostname
+#  should meet an honest "not yet" rather than a browser error that looks like
+#  our infrastructure is broken.
+#
+#  /connect renders the coming-soon page today. When the product ships,
+#  nothing here changes.
+#
+#  Requires CONNECT_DOMAIN in the production environment file — see the
+#  warning in account.caddy about what a missing variable does.
+# ============================================================================
+
+{$CONNECT_DOMAIN} {
+    encode zstd gzip
+
+    handle /api/* {
+        reverse_proxy api:8080
+    }
+
+    redir / /connect
+
+    @consolepaths path /org /org/* /admin /admin/* /signup /signup/*
+    redir @consolepaths https://{$SITE_DOMAIN}{uri}
+
+    handle {
+        reverse_proxy web:3000
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+}

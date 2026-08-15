@@ -1,0 +1,48 @@
+# ============================================================================
+#  TatvaOS Account — account.tatvaos.com
+# ============================================================================
+#
+#  The personal hub: password, two-step verification, devices, storage, the
+#  accounts on this browser.
+#
+#  It has its own address because it belongs to the PERSON, not to a product.
+#  It used to be reached at mail.tatvaos.com/account, which said the opposite —
+#  that your password and your devices are a feature of your email — and it
+#  left someone with no mailbox no obvious way in at all.
+#
+#  Same-origin /api/* as every other front door: cross-origin would mean a
+#  preflight on every call and the refresh cookie in third-party territory,
+#  which Safari's ITP drops silently.
+#
+#  Requires ACCOUNT_DOMAIN in the production environment file. Mounted while
+#  unset, Caddy rejects the WHOLE config and restart-loops — taking Core, Mail
+#  and Space down with it. Every conf.d file needs its variable present.
+# ============================================================================
+
+{$ACCOUNT_DOMAIN} {
+    encode zstd gzip
+
+    handle /api/* {
+        reverse_proxy api:8080
+    }
+
+    # The host IS the account hub; the bare domain should not land on a
+    # dashboard the visitor did not ask for.
+    redir / /account
+
+    # Administration stays on Core, and the products keep their own doors.
+    @consolepaths path /org /org/* /admin /admin/* /signup /signup/*
+    redir @consolepaths https://{$SITE_DOMAIN}{uri}
+
+    handle {
+        reverse_proxy web:3000
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+}

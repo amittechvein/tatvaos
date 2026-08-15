@@ -273,6 +273,9 @@ services:
       # Caddy reject the WHOLE config and restart-loop — taking Core, Mail and
       # Family down with it. Add the variable before the site file, never after.
       SPACE_DOMAIN: ${SPACE_DOMAIN:-}
+      ACCOUNT_DOMAIN: ${ACCOUNT_DOMAIN:-}
+      CALENDAR_DOMAIN: ${CALENDAR_DOMAIN:-}
+      CONNECT_DOMAIN: ${CONNECT_DOMAIN:-}
     ports:
       - "80:80"
       - "443:443"

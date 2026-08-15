@@ -76,7 +76,8 @@ CREATE TABLE IF NOT EXISTS core.products (
 INSERT INTO core.products (code, name, description, is_available, sort_order) VALUES
     ('mail',     'TatvaOS Mail',     'Business email hosting',              true,  10),
     ('drive',    'TatvaOS Space',    'File storage and sharing',            true,  20),
-    ('calendar', 'TatvaOS Calendar', 'Scheduling, meetings and reminders',  false, 30)
+    ('calendar', 'TatvaOS Calendar', 'Scheduling, meetings and reminders',  false, 30),
+    ('connect',  'TatvaOS Connect',  'Video meetings',                      false, 40)
 ON CONFLICT (code) DO NOTHING;
 
 -- ============================================================================

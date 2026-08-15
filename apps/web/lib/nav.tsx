@@ -46,6 +46,7 @@ const PATHS = {
   // when one is actually started, its path comes back in the same commit as
   // its product row. An icon for a product nobody is building is dead code.
   calendar:  'M4 6h16v15H4zM4 10h16M8 3v4M16 3v4M8 14h3M8 17h3',
+  connect:   'M3 7h11v10H3zM14 11l7-4v10l-7-4',
   // Mail folder icons for the shell rail (mailNav).
   sent: 'M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z',
   draft: 'M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z',
@@ -98,6 +99,10 @@ export const RAIL_PRODUCTS: RailProduct[] = [
   // a wall of greyed tiles reads as a suite that does not exist.
   { code: 'calendar', label: 'Calendar', href: '/calendar', icon: <Icon d={PATHS.calendar} />,
     live: false, colour: '#4285f4', match: ['/calendar'] },
+  // Meetings. Not built; the tile and the address exist so the suite reads as
+  // a suite and the hostname answers honestly before launch day.
+  { code: 'connect', label: 'Connect', href: '/connect', icon: <Icon d={PATHS.connect} />,
+    live: false, colour: '#00b8d9', match: ['/connect'] },
   // Techvein only. The panel it opens is a different world from a customer's,
   // which is why it sits apart at the end rather than among the products.
   { code: 'platform', label: 'Platform admin', href: '/admin',

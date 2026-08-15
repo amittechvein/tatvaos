@@ -64,3 +64,11 @@ BEGIN
         END IF;
     END LOOP;
 END $$;
+
+-- ----------------------------------------------------------------------------
+--  Connect — video meetings. Added when its address was reserved, so the
+--  catalogue, the launcher and DNS agree about what the suite contains.
+-- ----------------------------------------------------------------------------
+INSERT INTO core.products (code, name, description, is_available, sort_order) VALUES
+    ('connect', 'TatvaOS Connect', 'Video meetings', false, 40)
+ON CONFLICT (code) DO NOTHING;
