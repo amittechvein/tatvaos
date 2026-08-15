@@ -20,6 +20,40 @@ export interface MailMailbox {
 }
 
 /**
+ * A mailbox this person can open: their own, plus any shared one they hold a
+ * grant on. `isOwn` is not cosmetic - a shared mailbox behaves differently
+ * enough (mail leaves as the mailbox, read state is shared with colleagues)
+ * that a client should be able to say which it is looking at.
+ */
+export interface MailboxChoice {
+  id: string;
+  address: string;
+  localPart: string;
+  type: 'user' | 'shared' | 'group';
+  isOwn: boolean;
+  /** What this person holds. 'full' implies the rest. */
+  permissions: MailboxPermission[];
+  quotaBytes: number;
+  usedBytes: number;
+}
+
+/**
+ * 'send_on_behalf' is in the database's CHECK constraint and is deliberately
+ * absent here: the API refuses to grant it, because it means something
+ * different on the wire and pretending otherwise would grant the opposite of
+ * what an administrator asked for.
+ */
+export type MailboxPermission = 'read' | 'send_as' | 'full';
+
+export interface MailboxGrant {
+  userId: string;
+  displayName: string;
+  email: string;
+  permission: MailboxPermission;
+  grantedAt: string;
+}
+
+/**
  * A mailbox's signature.
  *
  * Both representations are stored: outgoing mail is multipart/alternative, and
@@ -173,6 +207,34 @@ export const mailApi = {
     f('/mail/folders')
       .then((r) => json<{ folders: Folder[] }>(r, 'Could not load folders.'))
       .then((b) => b.folders),
+
+  /**
+   * Every mailbox this person can open. Own mailbox first.
+   *
+   * Reading and sending as a shared mailbox are not wired up yet - this lists
+   * what access exists so it can be granted, revoked and seen. A switcher
+   * built on it today would list mailboxes it cannot yet open, so don't.
+   */
+  mailboxes: (f: AuthedFetch) =>
+    f('/mail/mailboxes')
+      .then((r) => json<{ mailboxes: MailboxChoice[] }>(r, 'Could not load your mailboxes.'))
+      .then((b) => b.mailboxes),
+
+  /** Who has access to a mailbox. Requires 'full' on it, or an org admin. */
+  mailboxPermissions: (f: AuthedFetch, mailboxId: string) =>
+    f(`/mail/mailboxes/${mailboxId}/permissions`)
+      .then((r) => json<{ permissions: MailboxGrant[] }>(r, 'Could not load access for that mailbox.'))
+      .then((b) => b.permissions),
+
+  grantMailbox: (f: AuthedFetch, mailboxId: string, userId: string, permission: MailboxPermission) =>
+    f(`/mail/mailboxes/${mailboxId}/permissions`, {
+      method: 'POST',
+      body: JSON.stringify({ userId, permission }),
+    }).then((r) => json<{ userId: string; permission: MailboxPermission }>(r, 'Could not grant access.')),
+
+  revokeMailbox: (f: AuthedFetch, mailboxId: string, userId: string, permission: MailboxPermission) =>
+    f(`/mail/mailboxes/${mailboxId}/permissions/${userId}/${permission}`, { method: 'DELETE' })
+      .then((r) => json<{ revoked: boolean }>(r, 'Could not revoke access.')),
 
   messages: (f: AuthedFetch, folderId: string, opts?: { skip?: number; take?: number; q?: string }) => {
     const params = new URLSearchParams();

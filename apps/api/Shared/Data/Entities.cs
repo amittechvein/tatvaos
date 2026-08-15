@@ -622,6 +622,15 @@ public class Message
     public Guid MailboxId { get; set; }
     public Guid FolderId { get; set; }
     public Guid? ThreadId { get; set; }
+
+    /// <summary>
+    /// Which human pressed send, when the mailbox is shared. Mail goes out AS
+    /// the mailbox - admissions@ answers as admissions@ - so the person is in
+    /// no header the recipient sees. This is how "who actually sent this" stays
+    /// answerable. NULL for everything received, and for everything sent before
+    /// this column existed.
+    /// </summary>
+    public Guid? SentByUserId { get; set; }
     public long ImapUid { get; set; }
 
     [MaxLength(512)] public string? MessageIdHeader { get; set; }

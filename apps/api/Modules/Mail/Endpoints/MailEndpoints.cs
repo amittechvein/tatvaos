@@ -2,6 +2,7 @@ using MailKit.Net.Smtp;
 using MailKit.Security;
 using Microsoft.EntityFrameworkCore;
 using MimeKit;
+using TatvaOS.Api.Modules.Admin;
 using TatvaOS.Api.Modules.Family;
 using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Tenancy;
@@ -64,6 +65,192 @@ public static class MailEndpoints
         g.MapPost("/filters", CreateFilterAsync);
         g.MapPut("/filters/{id:guid}", UpdateFilterAsync);
         g.MapDelete("/filters/{id:guid}", DeleteFilterAsync);
+
+        g.MapGet("/mailboxes", MailboxesAsync);
+        g.MapGet("/mailboxes/{id:guid}/permissions", ListPermissionsAsync);
+        g.MapPost("/mailboxes/{id:guid}/permissions", GrantPermissionAsync);
+        g.MapDelete("/mailboxes/{id:guid}/permissions/{userId:guid}/{permission}", RevokePermissionAsync);
+    }
+
+    // ------------------------------------------------------------------
+    //  Shared mailboxes.
+    //
+    //  This delivery adds only the ability to SEE and MANAGE access. No
+    //  existing handler changes, so nothing about a personal mailbox behaves
+    //  differently today - reading and sending as a shared mailbox come next,
+    //  once these can be granted and revoked and watched.
+    //
+    //  Every permission decision goes through MailboxAccess. See that file for
+    //  why mail.mailbox_permissions having no tenant_id is nonetheless safe.
+    // ------------------------------------------------------------------
+    private static async Task<IResult> MailboxesAsync(
+        AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        if (tenant.UserId is not Guid uid)
+            return Results.Ok(new { mailboxes = Array.Empty<object>() });
+
+        var own = await db.Mailboxes.AsNoTracking()
+            .FirstOrDefaultAsync(m => m.UserId == uid && m.IsActive, ct);
+
+        var grants = await db.MailboxPermissions.AsNoTracking()
+            .Where(p => p.UserId == uid)
+            .Select(p => new { p.MailboxId, p.Permission })
+            .ToListAsync(ct);
+
+        var byMailbox = grants.ToLookup(g => g.MailboxId);
+        var ids = byMailbox
+            .Select(g => g.Key)
+            .Where(id => own is null || id != own.Id)
+            .ToList();
+
+        var shared = new List<Mailbox>();
+        if (ids.Count > 0)
+            shared = await db.Mailboxes.AsNoTracking()
+                .Where(m => ids.Contains(m.Id) && m.IsActive)
+                .OrderBy(m => m.Address)
+                .ToListAsync(ct);
+
+        var rows = new List<object>();
+
+        // Your own mailbox is always first and always full: it is yours, and
+        // it needs no grant to exist in this list.
+        if (own is not null)
+            rows.Add(Shape(own, true, [MailboxAccess.Full]));
+
+        foreach (var m in shared)
+            rows.Add(Shape(m, false, byMailbox[m.Id].Select(g => g.Permission).Order().ToArray()));
+
+        return Results.Ok(new { mailboxes = rows });
+
+        static object Shape(Mailbox m, bool isOwn, string[] permissions) => new
+        {
+            id = m.Id,
+            address = m.Address,
+            localPart = m.LocalPart,
+            type = m.Type,
+            isOwn,
+            permissions,
+            quotaBytes = m.QuotaBytes,
+            usedBytes = m.UsedBytes,
+        };
+    }
+
+    public sealed record GrantRequest(Guid UserId, string Permission);
+
+    private static async Task<IResult> ListPermissionsAsync(
+        Guid id, AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        // 404 rather than 403 throughout. Whether a mailbox exists is itself
+        // information, and this endpoint is reachable by id.
+        if (!await MailboxAccess.CanAdministerAsync(db, tenant, id, ct)) return Results.NotFound();
+
+        var rows = await (
+                from p in db.MailboxPermissions.AsNoTracking()
+                join u in db.Users.AsNoTracking() on p.UserId equals u.Id
+                where p.MailboxId == id
+                select new { p.UserId, u.DisplayName, u.Email, p.Permission, p.GrantedAt })
+            .ToListAsync(ct);
+
+        return Results.Ok(new
+        {
+            permissions = rows
+                .OrderBy(r => r.DisplayName)
+                .ThenBy(r => r.Permission)
+                .Select(r => new
+                {
+                    userId = r.UserId,
+                    displayName = r.DisplayName,
+                    email = r.Email,
+                    permission = r.Permission,
+                    grantedAt = r.GrantedAt,
+                })
+                .ToList(),
+        });
+    }
+
+    private static async Task<IResult> GrantPermissionAsync(
+        Guid id, GrantRequest req, AppDbContext db, TenantContext tenant,
+        AuditWriter audit, CancellationToken ct)
+    {
+        if (!await MailboxAccess.CanAdministerAsync(db, tenant, id, ct)) return Results.NotFound();
+
+        var permission = (req.Permission ?? "").Trim().ToLowerInvariant();
+
+        // Refused, not accepted-and-ignored. send_on_behalf puts the person in
+        // From and the mailbox in Sender, which is the opposite of what this
+        // platform does - and a grant that appears to work while conferring
+        // nothing is worse than one that was never made.
+        if (permission == MailboxAccess.SendOnBehalf)
+            return Results.BadRequest(new
+            {
+                error = "send_on_behalf is not implemented. Grant send_as if mail should go out as the mailbox itself.",
+            });
+
+        if (!MailboxAccess.Grantable.Contains(permission))
+            return Results.BadRequest(new { error = "Unknown permission." });
+
+        // db.Users is tenant-filtered, so this doubles as the check that the
+        // grantee belongs to this organisation at all.
+        var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == req.UserId, ct);
+        if (user is null)
+            return Results.BadRequest(new { error = "No such person in this organisation." });
+
+        var already = await db.MailboxPermissions.AnyAsync(
+            p => p.MailboxId == id && p.UserId == req.UserId && p.Permission == permission, ct);
+
+        if (!already)
+        {
+            db.MailboxPermissions.Add(new MailboxPermission
+            {
+                MailboxId = id,
+                UserId = req.UserId,
+                Permission = permission,
+            });
+            await db.SaveChangesAsync(ct);
+
+            // After the write, and by name: productCode sits after the
+            // CancellationToken on WriteAsync.
+            await audit.WriteAsync(
+                "mail.mailbox.permission.granted",
+                targetType: "mail.mailbox",
+                targetId: id.ToString(),
+                after: new { userId = req.UserId, permission },
+                ct: ct,
+                productCode: "mail");
+        }
+
+        // Idempotent: granting twice is the same state, not an error.
+        return Results.Ok(new { userId = req.UserId, permission });
+    }
+
+    private static async Task<IResult> RevokePermissionAsync(
+        Guid id, Guid userId, string permission, AppDbContext db, TenantContext tenant,
+        AuditWriter audit, CancellationToken ct)
+    {
+        if (!await MailboxAccess.CanAdministerAsync(db, tenant, id, ct)) return Results.NotFound();
+
+        var value = (permission ?? "").Trim().ToLowerInvariant();
+
+        var row = await db.MailboxPermissions.FirstOrDefaultAsync(
+            p => p.MailboxId == id && p.UserId == userId && p.Permission == value, ct);
+
+        if (row is not null)
+        {
+            db.MailboxPermissions.Remove(row);
+            await db.SaveChangesAsync(ct);
+
+            await audit.WriteAsync(
+                "mail.mailbox.permission.revoked",
+                targetType: "mail.mailbox",
+                targetId: id.ToString(),
+                before: new { userId, permission = value },
+                ct: ct,
+                productCode: "mail");
+        }
+
+        // Idempotent in the same way: revoking what was never granted is not
+        // a failure, it is the state the caller asked for.
+        return Results.Ok(new { revoked = true });
     }
 
     // ------------------------------------------------------------------
