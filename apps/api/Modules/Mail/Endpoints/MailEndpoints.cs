@@ -862,10 +862,10 @@ public static class MailEndpoints
     /// which folder each hit lives in, so the result can be opened.
     /// </summary>
     private static async Task<IResult> SearchAsync(
-        string? q, int? skip, int? take, AppDbContext db, TenantContext tenant,
+        string? q, int? skip, int? take, Guid? mailboxId, AppDbContext db, TenantContext tenant,
         CancellationToken ct)
     {
-        var box = await OwnMailboxAsync(db, tenant, ct);
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Read, ct);
         if (box is null) return Results.Ok(new { total = 0, messages = Array.Empty<object>() });
 
         var term = (q ?? "").Trim();
@@ -939,9 +939,9 @@ public static class MailEndpoints
     //  still in Trash and still in search: this hides it, it does not lose it.
     // ------------------------------------------------------------------
     private static async Task<IResult> ThreadAsync(
-        Guid threadId, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid threadId, Guid? mailboxId, AppDbContext db, TenantContext tenant, CancellationToken ct)
     {
-        var box = await OwnMailboxAsync(db, tenant, ct);
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Read, ct);
         // A thread id belonging to somebody else is not an error worth
         // reporting; it is a conversation this mailbox does not have.
         if (box is null)
@@ -1015,9 +1015,9 @@ public static class MailEndpoints
 
     // ------------------------------------------------------------------
     private static async Task<IResult> BootstrapAsync(
-        AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid? mailboxId, AppDbContext db, TenantContext tenant, CancellationToken ct)
     {
-        var box = await OwnMailboxAsync(db, tenant, ct);
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Read, ct);
         if (box is null)
             // 200 with null, not 404. "You have no mailbox" is an answer the
             // client renders, not a failure it retries.
@@ -1049,19 +1049,19 @@ public static class MailEndpoints
     }
 
     private static async Task<IResult> FoldersAsync(
-        AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid? mailboxId, AppDbContext db, TenantContext tenant, CancellationToken ct)
     {
-        var box = await OwnMailboxAsync(db, tenant, ct);
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Read, ct);
         if (box is null) return Results.Ok(new { folders = Array.Empty<object>() });
         return Results.Ok(new { folders = await FolderListAsync(db, box.Id, ct) });
     }
 
     // ------------------------------------------------------------------
     private static async Task<IResult> ListMessagesAsync(
-        Guid folderId, AppDbContext db, TenantContext tenant,
+        Guid folderId, Guid? mailboxId, AppDbContext db, TenantContext tenant,
         string? q, int? skip, int? take, CancellationToken ct)
     {
-        var box = await OwnMailboxAsync(db, tenant, ct);
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Read, ct);
         if (box is null) return Results.NotFound();
 
         var folder = await db.Folders.AsNoTracking()
@@ -1149,10 +1149,10 @@ public static class MailEndpoints
     //  sent in would be a strange thing to explain.
     // ------------------------------------------------------------------
     private static async Task<IResult> ListThreadsAsync(
-        Guid folderId, AppDbContext db, TenantContext tenant,
+        Guid folderId, Guid? mailboxId, AppDbContext db, TenantContext tenant,
         int? skip, int? take, CancellationToken ct)
     {
-        var box = await OwnMailboxAsync(db, tenant, ct);
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Read, ct);
         if (box is null) return Results.NotFound();
 
         var folder = await db.Folders.AsNoTracking()
@@ -1234,9 +1234,9 @@ public static class MailEndpoints
 
     // ------------------------------------------------------------------
     private static async Task<IResult> GetMessageAsync(
-        Guid id, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid id, Guid? mailboxId, AppDbContext db, TenantContext tenant, CancellationToken ct)
     {
-        var box = await OwnMailboxAsync(db, tenant, ct);
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Read, ct);
         if (box is null) return Results.NotFound();
 
         var m = await db.Messages.AsNoTracking()
@@ -1302,9 +1302,9 @@ public static class MailEndpoints
     public sealed record MoveRequest(Guid FolderId);
 
     private static async Task<IResult> SetReadAsync(
-        Guid id, SetReadRequest req, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid id, SetReadRequest req, Guid? mailboxId, AppDbContext db, TenantContext tenant, CancellationToken ct)
     {
-        var box = await OwnMailboxAsync(db, tenant, ct);
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Read, ct);
         if (box is null) return Results.NotFound();
 
         var m = await db.Messages.FirstOrDefaultAsync(x => x.Id == id && x.MailboxId == box.Id, ct);
@@ -1316,9 +1316,9 @@ public static class MailEndpoints
     }
 
     private static async Task<IResult> SetFlagAsync(
-        Guid id, SetFlagRequest req, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid id, SetFlagRequest req, Guid? mailboxId, AppDbContext db, TenantContext tenant, CancellationToken ct)
     {
-        var box = await OwnMailboxAsync(db, tenant, ct);
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Read, ct);
         if (box is null) return Results.NotFound();
 
         var m = await db.Messages.FirstOrDefaultAsync(x => x.Id == id && x.MailboxId == box.Id, ct);
@@ -1388,9 +1388,9 @@ public static class MailEndpoints
 
     // ------------------------------------------------------------------
     private static async Task<IResult> DownloadAttachmentAsync(
-        Guid id, Guid attachmentId, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid id, Guid attachmentId, Guid? mailboxId, AppDbContext db, TenantContext tenant, CancellationToken ct)
     {
-        var box = await OwnMailboxAsync(db, tenant, ct);
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Read, ct);
         if (box is null) return Results.NotFound();
 
         var m = await db.Messages.AsNoTracking()
@@ -1432,9 +1432,9 @@ public static class MailEndpoints
     //  thing a mail administrator asks for by name.
     // ------------------------------------------------------------------
     private static async Task<IResult> MessageSourceAsync(
-        Guid id, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid id, Guid? mailboxId, AppDbContext db, TenantContext tenant, CancellationToken ct)
     {
-        var box = await OwnMailboxAsync(db, tenant, ct);
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Read, ct);
         if (box is null) return Results.NotFound();
 
         // Scoped to the caller's own mailbox, like every handler in this file.
@@ -1476,7 +1476,8 @@ public static class MailEndpoints
 
     private static async Task<IResult> SendAsync(
         HttpRequest request, AppDbContext db, TenantContext tenant, IConfiguration config,
-        ILoggerFactory logFactory, ContactAutoSave autoSave, CancellationToken ct)
+        ILoggerFactory logFactory, ContactAutoSave autoSave, AuditWriter audit,
+        CancellationToken ct)
     {
         var log = logFactory.CreateLogger("MailSend");
 
@@ -1484,9 +1485,18 @@ public static class MailEndpoints
             return Results.BadRequest(new { error = "Send expects a multipart form." });
         var form = await request.ReadFormAsync(ct);
 
-        var box = await OwnMailboxAsync(db, tenant, ct);
+        // The mailbox being sent FROM, which need not be your own. send_as is
+        // the level required: a read grant lets somebody see a queue, not
+        // answer on its behalf.
+        var fromMailboxId = Guid.TryParse(form["mailboxId"], out var asked) ? asked : (Guid?)null;
+        var box = await MailboxAccess.ResolveAsync(db, tenant, fromMailboxId, MailboxAccess.SendAs, ct);
         if (box is null)
             return Results.BadRequest(new { error = "You have no mailbox to send from." });
+
+        // Whether this is somebody else's queue changes the display name and
+        // the audit trail. It changes nothing else: the message is built,
+        // submitted and filed through exactly the same path either way.
+        var isShared = box.UserId != tenant.UserId;
 
         var user = await db.Users.AsNoTracking()
             .FirstOrDefaultAsync(u => u.Id == tenant.UserId, ct);
@@ -1533,7 +1543,12 @@ public static class MailEndpoints
         }
 
         var mime = new MimeMessage();
-        mime.From.Add(new MailboxAddress(user?.DisplayName ?? box.LocalPart, box.Address));
+        // A reply from a shared queue goes out AS the queue, display name and
+        // all. Putting the individual's name here is how an answer comes back
+        // to one person's inbox and dies there the week they are on leave.
+        mime.From.Add(new MailboxAddress(
+            isShared ? box.LocalPart : user?.DisplayName ?? box.LocalPart,
+            box.Address));
         foreach (var a in to) mime.To.Add(a);
         foreach (var a in cc) mime.Cc.Add(a);
         mime.Subject = subject;
@@ -1621,7 +1636,7 @@ public static class MailEndpoints
             ThreadId = threadId,
             MessageIdHeader = mime.MessageId,
             FromAddr = box.Address,
-            FromName = user?.DisplayName,
+            FromName = isShared ? box.LocalPart : user?.DisplayName,
             ToAddrs = to.Select(a => a.Address).ToArray(),
             CcAddrs = cc.Count > 0 ? cc.Select(a => a.Address).ToArray() : null,
             Subject = mime.Subject,
@@ -1631,6 +1646,9 @@ public static class MailEndpoints
             BodyText = mime.TextBody ?? mime.HtmlBody,
             SentAt = DateTimeOffset.UtcNow,
             ReceivedAt = DateTimeOffset.UtcNow,
+            // Who pressed send. Recorded for every send, not only shared ones:
+            // one rule is easier to trust than "sometimes populated".
+            SentByUserId = tenant.UserId,
             SizeBytes = raw.Length,
             IsRead = true,
             HasAttachments = attParts.Count > 0,
@@ -1684,6 +1702,20 @@ public static class MailEndpoints
         // see ContactSettings.AutoSaveSent — and after the commit, because a
         // failure here must not lose a message that has already gone out.
         await autoSave.RecordAsync(db, tenant, box.UserId, [message], "recipient", ct);
+
+        // Audited only when the mailbox is not your own. The question this
+        // trail exists to answer is "who answered as admissions@"; a row for
+        // every personal send would bury it. After the commit, like the
+        // contact write above - a failure to record must never lose a message
+        // that has already gone out.
+        if (isShared)
+            await audit.WriteAsync(
+                "mail.sent_as",
+                targetType: "mail.mailbox",
+                targetId: box.Id.ToString(),
+                after: new { messageId = message.Id, from = box.Address, recipients = to.Count },
+                ct: ct,
+                productCode: "mail");
 
         return Results.Ok(new { id = message.Id, folderId = message.FolderId });
     }
