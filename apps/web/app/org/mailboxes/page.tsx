@@ -321,6 +321,16 @@ function AccessDialog({ box, people, onClose, onChanged, onError }: {
 
   useEffect(() => { void reload(); }, [reload]);
 
+  // Collapse the (person, level) rows into one line per person.
+  const byPerson = (grants ?? []).reduce<
+    { userId: string; displayName: string; email: string; levels: Grant['permission'][] }[]
+  >((acc, g) => {
+    const row = acc.find((x) => x.userId === g.userId);
+    if (row) row.levels.push(g.permission);
+    else acc.push({ userId: g.userId, displayName: g.displayName, email: g.email, levels: [g.permission] });
+    return acc;
+  }, []);
+
   async function run(fn: () => Promise<Response>) {
     setBusy(true);
     try {
@@ -336,6 +346,34 @@ function AccessDialog({ box, people, onClose, onChanged, onError }: {
     } finally {
       setBusy(false);
     }
+  }
+
+  /**
+   * Grant a level, then remove what that level makes redundant.
+   *
+   * The permission table is one row per (mailbox, person, level), which is
+   * right — but it means granting read, then send_as, then full leaves the
+   * same person listed three times, and 'full' already implies the other
+   * two. Nobody means "give them full AND read"; they mean their access IS
+   * full. So the redundant rows go, and the list shows one line per person.
+   */
+  async function grant() {
+    await run(async () => {
+      const res = await authedFetch(`/mail/mailboxes/${box.id}/permissions`, {
+        method: 'POST',
+        body: JSON.stringify({ userId, permission }),
+      });
+      if (res.ok && permission === 'full') {
+        // Best-effort: the grant itself succeeded, and a leftover redundant
+        // row is untidy rather than harmful.
+        await Promise.allSettled(
+          (['read', 'send_as'] as const).map((p) =>
+            authedFetch(`/mail/mailboxes/${box.id}/permissions/${userId}/${p}`,
+                        { method: 'DELETE' })),
+        );
+      }
+      return res;
+    });
   }
 
   return (
@@ -364,10 +402,7 @@ function AccessDialog({ box, people, onClose, onChanged, onError }: {
           </select>
         </div>
         <Button variant="primary" disabled={busy || !userId}
-                onClick={() => void run(() => authedFetch(`/mail/mailboxes/${box.id}/permissions`, {
-                  method: 'POST',
-                  body: JSON.stringify({ userId, permission }),
-                }))}>
+                onClick={() => void grant()}>
           Grant
         </Button>
       </div>
@@ -385,19 +420,27 @@ function AccessDialog({ box, people, onClose, onChanged, onError }: {
           <p className="fs-12 text-muted mb-0">
             Nobody has access. Mail sent here arrives where no one can read it.
           </p>
-        ) : grants.map((g) => (
-          <div key={`${g.userId}-${g.permission}`} className="d-flex align-items-center gap-2 py-2">
+        ) : byPerson.map((p) => (
+          <div key={p.userId} className="d-flex align-items-center gap-2 py-2">
             <span className="flex-fill min-w-0">
-              <span className="d-block fw-semibold text-truncate">{g.displayName}</span>
-              <span className="d-block fs-12 text-muted text-truncate">{g.email}</span>
+              <span className="d-block fw-semibold text-truncate">{p.displayName}</span>
+              <span className="d-block fs-12 text-muted text-truncate">{p.email}</span>
             </span>
-            <Badge tone="neutral">{g.permission}</Badge>
-            <button type="button" className="btn btn-sm btn-link text-danger" disabled={busy}
-                    onClick={() => void run(() => authedFetch(
-                      `/mail/mailboxes/${box.id}/permissions/${g.userId}/${g.permission}`,
-                      { method: 'DELETE' }))}>
-              remove
-            </button>
+            {/* One line per person; a level each, each removable on its own —
+                revoking someone's ability to answer should not also revoke
+                their ability to read. */}
+            {p.levels.map((lvl) => (
+              <span key={lvl} className="d-inline-flex align-items-center gap-1">
+                <Badge tone="neutral">{lvl}</Badge>
+                <button type="button" className="btn btn-sm btn-link text-danger p-0" disabled={busy}
+                        title={`Remove ${lvl}`} aria-label={`Remove ${lvl}`}
+                        onClick={() => void run(() => authedFetch(
+                          `/mail/mailboxes/${box.id}/permissions/${p.userId}/${lvl}`,
+                          { method: 'DELETE' }))}>
+                  ×
+                </button>
+              </span>
+            ))}
           </div>
         ))}
       </div>
