@@ -47,7 +47,7 @@ export function Sidebar({ sections, brand, scope, footer }: {
   // Each product with its own front door carries its own lockup; the console
   // (platform/organisation) falls back to Core. Files live in public/brand as
   // <scope>-logo.png and <scope>-name.png.
-  const logo = scope === 'mail' || scope === 'family' ? scope : 'core';
+  const logo = scope === 'mail' || scope === 'family' || scope === 'space' ? scope : 'core';
 
   // Longest match wins so "/org" does not light every page under it.
   const activeHref = sections

@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 
 import { AppShell } from '@/components/shell/AppShell';
+import { RailStorage } from '@/components/shell/RailStorage';
 import { familyNav } from '@/lib/nav';
 import { useAuth } from '@/lib/auth';
 import { familyApi, type ContactGroup } from '@/lib/family';
@@ -62,6 +63,7 @@ export function FamilyShell({ title, breadcrumb, actions, children }: {
         title={title}
         breadcrumb={[{ label: 'Family' }, ...(breadcrumb ? [{ label: breadcrumb }] : [])]}
         actions={actions}
+        railFooter={<RailStorage />}
       >
         {children}
       </AppShell>

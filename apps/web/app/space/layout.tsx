@@ -2,6 +2,7 @@
 
 import { RequireAuth } from '@/components/RequireAuth';
 import { AppShell } from '@/components/shell/AppShell';
+import { RailStorage } from '@/components/shell/RailStorage';
 import { spaceNav } from '@/lib/nav';
 
 /**
@@ -13,7 +14,7 @@ import { spaceNav } from '@/lib/nav';
 export default function SpaceLayout({ children }: { children: React.ReactNode }) {
   return (
     <RequireAuth>
-      <AppShell scope="space" brand="TatvaOS" sections={spaceNav()} bleed>
+      <AppShell scope="space" brand="TatvaOS" sections={spaceNav()} railFooter={<RailStorage />} bleed>
         {children}
       </AppShell>
     </RequireAuth>

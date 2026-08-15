@@ -1,6 +1,7 @@
 'use client';
 
 import { AppShell } from '@/components/shell/AppShell';
+import { RailStorage } from '@/components/shell/RailStorage';
 import { organisationNav, platformNav } from '@/lib/nav';
 
 /**
@@ -45,6 +46,9 @@ export function AdminShell({
         ...(subtitle ? [{ label: subtitle }] : []),
       ]}
       actions={actions}
+      // The organisation's pool, same meter as Space's rail. Platform admin
+      // manages every tenant, so a single organisation's figure would lie.
+      railFooter={isPlatform ? undefined : <RailStorage />}
     >
       {children}
     </AppShell>

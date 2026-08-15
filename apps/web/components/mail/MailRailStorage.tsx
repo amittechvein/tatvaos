@@ -41,9 +41,16 @@ export function MailRailStorage() {
 
   return (
     <div>
-      <div className="d-flex justify-content-between" style={{ fontSize: 11, opacity: 0.75, marginBottom: 6 }}>
-        <span>Storage</span>
-        <span>{pct}%</span>
+      {/* Same cloud-pill lockup as RailStorage, so every product's rail
+          reads the same — this one is the PERSONAL mailbox figure, which is
+          why it does not reuse the org-pool component. */}
+      <div className="d-inline-flex align-items-center gap-2 rounded-pill"
+           style={{ background: 'rgba(255,255,255,0.10)', padding: '4px 14px 4px 10px', marginBottom: 8 }}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.85 }}>
+          <path d="M17.5 19H7a5 5 0 1 1 .9-9.92A6 6 0 0 1 19.6 11a4 4 0 0 1-2.1 8z" />
+        </svg>
+        <span style={{ fontSize: 12, opacity: 0.9 }}>Storage</span>
       </div>
       <div style={{ height: 4, borderRadius: 999, background: 'rgba(255,255,255,0.14)', overflow: 'hidden' }}>
         <div
@@ -57,7 +64,7 @@ export function MailRailStorage() {
         />
       </div>
       <div style={{ fontSize: 11, opacity: 0.6, marginTop: 6 }}>
-        {formatBytes(box.used)} of {formatBytes(box.quota)}
+        {formatBytes(box.used)} of {formatBytes(box.quota)} used
       </div>
     </div>
   );
