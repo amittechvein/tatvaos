@@ -331,10 +331,29 @@ public static class MailEndpoints
     // ------------------------------------------------------------------
     public sealed record BlockRequest(string Address);
 
+    /// <summary>
+    /// Records a settings change made to a mailbox that is not the caller's
+    /// own. Silent for your own: this trail exists to answer "who changed
+    /// admissions@", and a row every time somebody edits their own signature
+    /// would bury exactly that.
+    /// </summary>
+    private static Task AuditMailboxSettingAsync(
+        AuditWriter audit, TenantContext tenant, Mailbox box,
+        string action, object? state, CancellationToken ct)
+        => box.UserId == tenant.UserId
+            ? Task.CompletedTask
+            : audit.WriteAsync(
+                action,
+                targetType: "mail.mailbox",
+                targetId: box.Id.ToString(),
+                after: state,
+                ct: ct,
+                productCode: "mail");
+
     private static async Task<IResult> ListBlockedAsync(
-        AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid? mailboxId, AppDbContext db, TenantContext tenant, CancellationToken ct)
     {
-        var box = await OwnMailboxAsync(db, tenant, ct);
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Full, ct);
         if (box is null) return Results.Ok(new { blocked = Array.Empty<object>() });
 
         var blocked = await db.BlockedSenders.AsNoTracking()
@@ -347,9 +366,10 @@ public static class MailEndpoints
     }
 
     private static async Task<IResult> BlockSenderAsync(
-        BlockRequest req, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        BlockRequest req, Guid? mailboxId, AppDbContext db, TenantContext tenant, AuditWriter audit,
+        CancellationToken ct)
     {
-        var box = await OwnMailboxAsync(db, tenant, ct);
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Full, ct);
         if (box is null) return Results.BadRequest(new { error = "You have no mailbox." });
 
         if (!MailboxAddress.TryParse(req.Address?.Trim() ?? "", out var parsed))
@@ -378,13 +398,17 @@ public static class MailEndpoints
         db.BlockedSenders.Add(row);
         await db.SaveChangesAsync(ct);
 
+        await AuditMailboxSettingAsync(
+            audit, tenant, box, "mail.blocked_sender.added", new { address = row.Address }, ct);
+
         return Results.Ok(new { id = row.Id, address = row.Address });
     }
 
     private static async Task<IResult> UnblockSenderAsync(
-        Guid id, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid id, Guid? mailboxId, AppDbContext db, TenantContext tenant, AuditWriter audit,
+        CancellationToken ct)
     {
-        var box = await OwnMailboxAsync(db, tenant, ct);
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Full, ct);
         if (box is null) return Results.NotFound();
 
         var row = await db.BlockedSenders
@@ -393,6 +417,9 @@ public static class MailEndpoints
 
         db.BlockedSenders.Remove(row);
         await db.SaveChangesAsync(ct);
+        await AuditMailboxSettingAsync(
+            audit, tenant, box, "mail.blocked_sender.removed", new { address = row.Address }, ct);
+
         return Results.Ok(new { unblocked = true });
     }
 
@@ -416,9 +443,9 @@ public static class MailEndpoints
     };
 
     private static async Task<IResult> GetSignatureAsync(
-        AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid? mailboxId, AppDbContext db, TenantContext tenant, CancellationToken ct)
     {
-        var box = await OwnMailboxAsync(db, tenant, ct);
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Full, ct);
         if (box is null) return Results.Ok(ShapeSignature(null));
 
         var sig = await db.Signatures.AsNoTracking()
@@ -427,9 +454,10 @@ public static class MailEndpoints
     }
 
     private static async Task<IResult> SaveSignatureAsync(
-        SignatureRequest req, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        SignatureRequest req, Guid? mailboxId, AppDbContext db, TenantContext tenant, AuditWriter audit,
+        CancellationToken ct)
     {
-        var box = await OwnMailboxAsync(db, tenant, ct);
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Full, ct);
         if (box is null) return Results.BadRequest(new { error = "You have no mailbox." });
 
         // This is the person's own content going into their own outgoing mail,
@@ -456,6 +484,9 @@ public static class MailEndpoints
         sig.UpdatedAt = DateTimeOffset.UtcNow;
 
         await db.SaveChangesAsync(ct);
+        await AuditMailboxSettingAsync(
+            audit, tenant, box, "mail.signature.saved", new { enabled = sig.Enabled, includeOnReply = sig.IncludeOnReply }, ct);
+
         return Results.Ok(ShapeSignature(sig));
     }
 
@@ -651,9 +682,9 @@ public static class MailEndpoints
     };
 
     private static async Task<IResult> ListFiltersAsync(
-        AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid? mailboxId, AppDbContext db, TenantContext tenant, CancellationToken ct)
     {
-        var box = await OwnMailboxAsync(db, tenant, ct);
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Full, ct);
         if (box is null) return Results.Ok(new { filters = Array.Empty<object>() });
 
         var rules = await db.FilterRules.AsNoTracking()
@@ -692,9 +723,10 @@ public static class MailEndpoints
     }
 
     private static async Task<IResult> CreateFilterAsync(
-        FilterRequest req, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        FilterRequest req, Guid? mailboxId, AppDbContext db, TenantContext tenant, AuditWriter audit,
+        CancellationToken ct)
     {
-        var box = await OwnMailboxAsync(db, tenant, ct);
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Full, ct);
         if (box is null) return Results.BadRequest(new { error = "You have no mailbox." });
 
         var error = await ValidateFilterAsync(req, box.Id, db, ct);
@@ -716,13 +748,17 @@ public static class MailEndpoints
 
         db.FilterRules.Add(rule);
         await db.SaveChangesAsync(ct);
+        await AuditMailboxSettingAsync(
+            audit, tenant, box, "mail.filter.created", new { id = rule.Id, name = rule.Name }, ct);
+
         return Results.Ok(ShapeFilter(rule));
     }
 
     private static async Task<IResult> UpdateFilterAsync(
-        Guid id, FilterRequest req, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid id, FilterRequest req, Guid? mailboxId, AppDbContext db, TenantContext tenant, AuditWriter audit,
+        CancellationToken ct)
     {
-        var box = await OwnMailboxAsync(db, tenant, ct);
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Full, ct);
         if (box is null) return Results.NotFound();
 
         var rule = await db.FilterRules
@@ -742,13 +778,17 @@ public static class MailEndpoints
         rule.Actions = MailFilters.Serialise(req.Actions);
 
         await db.SaveChangesAsync(ct);
+        await AuditMailboxSettingAsync(
+            audit, tenant, box, "mail.filter.updated", new { id = rule.Id, name = rule.Name }, ct);
+
         return Results.Ok(ShapeFilter(rule));
     }
 
     private static async Task<IResult> DeleteFilterAsync(
-        Guid id, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid id, Guid? mailboxId, AppDbContext db, TenantContext tenant, AuditWriter audit,
+        CancellationToken ct)
     {
-        var box = await OwnMailboxAsync(db, tenant, ct);
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Full, ct);
         if (box is null) return Results.NotFound();
 
         var rule = await db.FilterRules
@@ -757,6 +797,9 @@ public static class MailEndpoints
 
         db.FilterRules.Remove(rule);
         await db.SaveChangesAsync(ct);
+        await AuditMailboxSettingAsync(
+            audit, tenant, box, "mail.filter.deleted", new { id = rule.Id, name = rule.Name }, ct);
+
         return Results.Ok(new { deleted = true });
     }
 
