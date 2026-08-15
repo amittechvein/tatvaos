@@ -10,6 +10,7 @@ import DOMPurify from 'dompurify';
 import { MessageList } from '@/components/mail/MessageList';
 import { MessageView } from '@/components/mail/MessageView';
 import { Composer, type ComposeMode } from '@/components/mail/Composer';
+import { useMailbox } from '@/components/mail/MailboxSwitcher';
 import { Icon } from '@/components/ui/Icon';
 
 const PAGE_SIZE = 50;
@@ -26,6 +27,9 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   const { folderId: folderParam } = use(params);
   const router = useRouter();
   const { authedFetch } = useAuth();
+  // Undefined for my own mailbox — every call below then behaves exactly as
+  // it did before shared mailboxes existed.
+  const { mailboxId, isShared, canSend, current: openMailbox } = useMailbox();
 
   const [boot, setBoot] = useState<MailBootstrap | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -77,18 +81,18 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
 
   const refreshFolders = useCallback(async () => {
     try {
-      const folders = await mailApi.folders(authedFetch);
+      const folders = await mailApi.folders(authedFetch, mailboxId);
       setBoot((prev) => (prev ? { ...prev, folders } : prev));
     } catch {
       /* counts refresh is best-effort; the next navigation corrects them */
     }
-  }, [authedFetch]);
+  }, [authedFetch, mailboxId]);
 
   const loadMessages = useCallback(
     async (folderId: string, skipTo: number) => {
       setListError(null);
       try {
-        const page = await mailApi.messages(authedFetch, folderId, { skip: skipTo, take: PAGE_SIZE });
+        const page = await mailApi.messages(authedFetch, folderId, { skip: skipTo, take: PAGE_SIZE, mailboxId });
         setMessages(page.messages);
         setTotal(page.total);
         setSkip(skipTo);
@@ -97,14 +101,14 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
         setListError(e instanceof Error ? e.message : 'Could not load messages.');
       }
     },
-    [authedFetch],
+    [authedFetch, mailboxId],
   );
 
   // ---- Initial load: mailbox + folders --------------------------------
   useEffect(() => {
     let cancelled = false;
     mailApi
-      .bootstrap(authedFetch)
+      .bootstrap(authedFetch, mailboxId)
       .then((b) => {
         if (cancelled) return;
         setBoot(b);
@@ -118,7 +122,9 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     return () => {
       cancelled = true;
     };
-  }, [authedFetch]);
+    // Re-boots on a mailbox switch: folders, ids and counts are all per
+    // mailbox, so the whole view has to come from the new one.
+  }, [authedFetch, mailboxId]);
 
   // ---- Unknown folder in the URL → the inbox --------------------------
   useEffect(() => {
@@ -158,7 +164,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
       if (document.visibilityState !== 'visible') return;
       if (query.trim()) return;
       try {
-        const page = await mailApi.messages(authedFetch, folderId, { skip, take: PAGE_SIZE });
+        const page = await mailApi.messages(authedFetch, folderId, { skip, take: PAGE_SIZE, mailboxId });
         setMessages(page.messages);
         setTotal(page.total);
       } catch { /* transient; the next tick retries */ }
@@ -166,7 +172,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     };
     const t = setInterval(() => void tick(), 30_000);
     return () => clearInterval(t);
-  }, [folderId, skip, query, authedFetch, refreshFolders]);
+  }, [folderId, skip, query, authedFetch, refreshFolders, mailboxId]);
 
   // ---- Search ---------------------------------------------------------
   //
@@ -186,7 +192,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     let cancelled = false;
     setSearching(true);
     const t = setTimeout(() => {
-      mailApi.search(authedFetch, term, { take: PAGE_SIZE })
+      mailApi.search(authedFetch, term, { take: PAGE_SIZE, mailboxId })
         .then((page) => {
           if (cancelled) return;
           setSearchHits(page.messages);
@@ -197,7 +203,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     }, 250);
 
     return () => { cancelled = true; clearTimeout(t); };
-  }, [query, authedFetch]);
+  }, [query, authedFetch, mailboxId]);
 
   // What the list renders: search results when searching, else the folder page.
   const filtered: Message[] = searchHits ?? messages;
@@ -230,6 +236,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
    * never refuses mail at SMTP; it only changes where it lands.
    */
   async function handleBlockSender(m: Message) {
+    if (isShared) { setListError(sharedBlock); return; }
     try {
       await mailApi.blockSender(authedFetch, m.from.email);
       await handleArchive(m.id);
@@ -250,7 +257,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     if (!row.isRead) {
       patchMessage(id, { isRead: true });
       if (folder) bumpUnread(folder.id, -1);
-      void mailApi.setRead(authedFetch, id, true);
+      void mailApi.setRead(authedFetch, id, true, mailboxId);
     }
 
     setOpen({ ...row, isRead: true });
@@ -261,7 +268,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     if (row.threadId && !(thread && thread.some((m) => m.id === id))) {
       setThread(null);
       const tid = row.threadId;
-      void mailApi.thread(authedFetch, tid).then(
+      void mailApi.thread(authedFetch, tid, mailboxId).then(
         (page) => setOpen((prev) => {
           if (prev && prev.threadId === tid) {
             setThread(page.messages);
@@ -277,7 +284,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     }
 
     try {
-      const full = await mailApi.message(authedFetch, id);
+      const full = await mailApi.message(authedFetch, id, mailboxId);
       setOpen((prev) => (prev && prev.id === id ? { ...full, isRead: true } : prev));
     } catch {
       /* the summary stays on screen; body shows the snippet */
@@ -291,7 +298,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     if (!target) return;
     const next = !target.isFlagged;
     patchMessage(id, { isFlagged: next });
-    void mailApi.setFlag(authedFetch, id, next);
+    void mailApi.setFlag(authedFetch, id, next, mailboxId);
   }
 
   const removeFromList = useCallback(
@@ -310,7 +317,15 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     [folder, bumpUnread],
   );
 
+  // Move and delete were deliberately excluded from the shared-mailbox API:
+  // destructive actions in somebody else's queue are their own decision, and
+  // the handlers still resolve to MY mailbox. Calling them while a shared
+  // mailbox is open would act on the wrong mail entirely, so they are refused
+  // here rather than sent and hoped about.
+  const sharedBlock = 'Deleting and filing in a shared mailbox are not available yet.';
+
   async function handleDelete(id: string) {
+    if (isShared) { setListError(sharedBlock); return; }
     const wasUnread = messages.find((m) => m.id === id)?.isRead === false;
     try {
       await mailApi.delete(authedFetch, id);
@@ -322,6 +337,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   }
 
   async function handleArchive(id: string) {
+    if (isShared) { setListError(sharedBlock); return; }
     const junk = boot?.folders.find((f) => f.slug === 'junk');
     if (!junk || junk.id === folder?.id) return;
     const wasUnread = messages.find((m) => m.id === id)?.isRead === false;
@@ -352,6 +368,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   }
 
   async function bulkDelete() {
+    if (isShared) { setListError(sharedBlock); return; }
     const ids = [...selectedIds];
     setSelectedIds(new Set());
     await Promise.allSettled(ids.map((id) => mailApi.delete(authedFetch, id)));
@@ -369,13 +386,13 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
         if (folder) bumpUnread(folder.id, isRead ? -1 : 1);
       }
     });
-    await Promise.allSettled(ids.map((id) => mailApi.setRead(authedFetch, id, isRead)));
+    await Promise.allSettled(ids.map((id) => mailApi.setRead(authedFetch, id, isRead, mailboxId)));
   }
 
   function handleMarkUnread(m: Message) {
     patchMessage(m.id, { isRead: false });
     if (folder) bumpUnread(folder.id, 1);
-    void mailApi.setRead(authedFetch, m.id, false);
+    void mailApi.setRead(authedFetch, m.id, false, mailboxId);
     setOpen(null);
   }
 
@@ -401,6 +418,10 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   }
 
   function startCompose(m: Message | null, m2: ComposeMode) {
+    if (isShared && !canSend) {
+      setListError('You have read access to this mailbox, not permission to send from it.');
+      return;
+    }
     setComposers((prev) => {
       // Three is what a 1080p-wide window fits. The fourth request is
       // ignored rather than evicting someone's half-written draft.
@@ -412,7 +433,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
 
   const downloadAttachment = (messageId: string, attachmentId: string, filename: string) =>
     void mailApi
-      .downloadAttachment(authedFetch, messageId, attachmentId, filename)
+      .downloadAttachment(authedFetch, messageId, attachmentId, filename, mailboxId)
       .catch(() => {/* download failure shows as no file; retry is a click */});
 
   // ---- Render ---------------------------------------------------------
@@ -442,7 +463,23 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   const allSelected = selectedIds.size > 0 && selectedIds.size === filtered.length;
 
   return (
-    <div className="flex h-full gap-3 bg-canvas p-3">
+    <div className="flex h-full flex-col gap-2 bg-canvas p-3">
+      {/* Which queue am I in — across the WHOLE view, not inside the list
+          column, because on a phone the list is hidden while a message is
+          open and that is exactly when "who am I about to answer as" matters. */}
+      {isShared && openMailbox && (
+        <div className="flex items-center gap-2 rounded-lg border border-warn/30 bg-warn/10 px-3 py-1.5 text-xs">
+          <Icon name="reply-all" className="h-4 w-4 shrink-0 text-warn" />
+          <span className="min-w-0 text-ink">
+            You are reading <strong>{openMailbox.address}</strong>
+            {canSend
+              ? ' — replies go out as this mailbox, not as you.'
+              : ' — read only. You cannot answer from this mailbox.'}
+          </span>
+        </div>
+      )}
+
+      <div className="flex min-h-0 flex-1 gap-3">
       {/* ---- List ---- */}
       <section
         className={`min-w-0 flex-col overflow-hidden rounded-card border border-line bg-surface lg:w-[420px] lg:shrink-0 ${
@@ -595,6 +632,8 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
         )}
       </section>
 
+      </div>
+
       {composers.map((c, i) => (
         <Composer
           key={c.key}
@@ -607,6 +646,8 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
           onSend={async (draft) => {
             await mailApi.send(authedFetch, {
               ...draft,
+              // Answering from a shared queue goes out AS the mailbox.
+              mailboxId,
               inReplyToId: c.mode === 'reply' || c.mode === 'replyAll' ? c.replyTo?.id : undefined,
             });
             void refreshFolders();

@@ -199,21 +199,41 @@ async function json<T>(res: Response, fallbackError: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export const mailApi = {
-  bootstrap: (f: AuthedFetch) =>
-    f('/mail/bootstrap').then((r) => json<MailBootstrap>(r, 'Could not load your mailbox.')),
+/**
+ * The mailbox a read is against.
+ *
+ * Absent means "my own", which is what every call did before shared
+ * mailboxes existed and what the server still defaults to — so passing
+ * undefined anywhere below is exactly the old behaviour, not a degraded one.
+ * Present means a mailbox the caller holds a grant on; the server re-checks
+ * the grant on every call and 404s a mailbox that is not visible.
+ */
+function mb(mailboxId?: string): string {
+  return mailboxId ? `mailboxId=${mailboxId}` : '';
+}
 
-  folders: (f: AuthedFetch) =>
-    f('/mail/folders')
+function withMb(base: string, mailboxId?: string): string {
+  const q = mb(mailboxId);
+  if (!q) return base;
+  return base.includes('?') ? `${base}&${q}` : `${base}?${q}`;
+}
+
+export const mailApi = {
+  bootstrap: (f: AuthedFetch, mailboxId?: string) =>
+    f(withMb('/mail/bootstrap', mailboxId))
+      .then((r) => json<MailBootstrap>(r, 'Could not load your mailbox.')),
+
+  folders: (f: AuthedFetch, mailboxId?: string) =>
+    f(withMb('/mail/folders', mailboxId))
       .then((r) => json<{ folders: Folder[] }>(r, 'Could not load folders.'))
       .then((b) => b.folders),
 
   /**
    * Every mailbox this person can open. Own mailbox first.
    *
-   * Reading and sending as a shared mailbox are not wired up yet - this lists
-   * what access exists so it can be granted, revoked and seen. A switcher
-   * built on it today would list mailboxes it cannot yet open, so don't.
+   * Reading and sending as a shared mailbox both work: every read takes
+   * ?mailboxId= and send takes it as a form field. This list is what the
+   * switcher offers.
    */
   mailboxes: (f: AuthedFetch) =>
     f('/mail/mailboxes')
@@ -236,11 +256,13 @@ export const mailApi = {
     f(`/mail/mailboxes/${mailboxId}/permissions/${userId}/${permission}`, { method: 'DELETE' })
       .then((r) => json<{ revoked: boolean }>(r, 'Could not revoke access.')),
 
-  messages: (f: AuthedFetch, folderId: string, opts?: { skip?: number; take?: number; q?: string }) => {
+  messages: (f: AuthedFetch, folderId: string,
+             opts?: { skip?: number; take?: number; q?: string; mailboxId?: string }) => {
     const params = new URLSearchParams();
     if (opts?.skip) params.set('skip', String(opts.skip));
     if (opts?.take) params.set('take', String(opts.take));
     if (opts?.q) params.set('q', opts.q);
+    if (opts?.mailboxId) params.set('mailboxId', opts.mailboxId);
     const qs = params.size > 0 ? `?${params}` : '';
     return f(`/mail/folders/${folderId}/messages${qs}`).then((r) =>
       json<MessagePage>(r, 'Could not load messages.'),
@@ -271,7 +293,8 @@ export const mailApi = {
    * searched the ~50 rows on screen in the current folder: a search for older
    * mail returned nothing and looked exactly like "no such message".
    */
-  search: (f: AuthedFetch, q: string, opts?: { skip?: number; take?: number }) => {
+  search: (f: AuthedFetch, q: string,
+           opts?: { skip?: number; take?: number; mailboxId?: string }) => {
     const params = new URLSearchParams({ q });
     if (opts?.skip) params.set('skip', String(opts.skip));
     if (opts?.take) params.set('take', String(opts.take));
@@ -286,12 +309,13 @@ export const mailApi = {
    * one it is in. `total` is the untruncated count - a very long thread is
    * capped server-side, and the strip should say so rather than just stop.
    */
-  thread: (f: AuthedFetch, threadId: string) =>
-    f(`/mail/threads/${threadId}/messages`)
+  thread: (f: AuthedFetch, threadId: string, mailboxId?: string) =>
+    f(withMb(`/mail/threads/${threadId}/messages`, mailboxId))
       .then((r) => json<SearchPage>(r, 'Could not load this conversation.')),
 
-  message: (f: AuthedFetch, id: string) =>
-    f(`/mail/messages/${id}`).then((r) => json<Message>(r, 'Could not load the message.')),
+  message: (f: AuthedFetch, id: string, mailboxId?: string) =>
+    f(withMb(`/mail/messages/${id}`, mailboxId))
+      .then((r) => json<Message>(r, 'Could not load the message.')),
 
   /**
    * The message exactly as it arrived - headers, boundaries, encodings, all
@@ -389,11 +413,13 @@ export const mailApi = {
     f(`/mail/filters/${id}`, { method: 'DELETE' })
       .then((r) => json<{ deleted: boolean }>(r, 'Could not delete the filter.')),
 
-  setRead: (f: AuthedFetch, id: string, isRead: boolean) =>
-    f(`/mail/messages/${id}/read`, { method: 'POST', body: JSON.stringify({ isRead }) }),
+  setRead: (f: AuthedFetch, id: string, isRead: boolean, mailboxId?: string) =>
+    f(withMb(`/mail/messages/${id}/read`, mailboxId),
+      { method: 'POST', body: JSON.stringify({ isRead }) }),
 
-  setFlag: (f: AuthedFetch, id: string, isFlagged: boolean) =>
-    f(`/mail/messages/${id}/flag`, { method: 'POST', body: JSON.stringify({ isFlagged }) }),
+  setFlag: (f: AuthedFetch, id: string, isFlagged: boolean, mailboxId?: string) =>
+    f(withMb(`/mail/messages/${id}/flag`, mailboxId),
+      { method: 'POST', body: JSON.stringify({ isFlagged }) }),
 
   move: (f: AuthedFetch, id: string, folderId: string) =>
     f(`/mail/messages/${id}/move`, { method: 'POST', body: JSON.stringify({ folderId }) }),
@@ -417,6 +443,11 @@ export const mailApi = {
       files?: File[];
       /** The draft this was composed from; the server deletes it after send. */
       draftId?: string;
+      /**
+       * Send AS this mailbox. Requires a send_as grant, re-checked server
+       * side. Absent = my own mailbox, which is every existing caller.
+       */
+      mailboxId?: string;
     },
   ) => {
     // Multipart, not JSON — the send endpoint now carries file attachments.
@@ -428,6 +459,7 @@ export const mailApi = {
     if (payload.bodyHtml) fd.append('bodyHtml', payload.bodyHtml);
     if (payload.inReplyToId) fd.append('inReplyToId', payload.inReplyToId);
     if (payload.draftId) fd.append('draftId', payload.draftId);
+    if (payload.mailboxId) fd.append('mailboxId', payload.mailboxId);
     for (const file of payload.files ?? []) fd.append('files', file, file.name);
     return f('/mail/send', { method: 'POST', body: fd }).then((r) =>
       json<{ id: string | null }>(r, 'The message could not be sent.'),
@@ -438,8 +470,9 @@ export const mailApi = {
    * Attachment download. fetch + blob rather than a plain <a href>, because
    * the endpoint needs the Authorization header a bare link cannot carry.
    */
-  downloadAttachment: async (f: AuthedFetch, messageId: string, attachmentId: string, filename: string) => {
-    const res = await f(`/mail/messages/${messageId}/attachments/${attachmentId}`);
+  downloadAttachment: async (f: AuthedFetch, messageId: string, attachmentId: string,
+                             filename: string, mailboxId?: string) => {
+    const res = await f(withMb(`/mail/messages/${messageId}/attachments/${attachmentId}`, mailboxId));
     if (!res.ok) throw new Error('Could not download the attachment.');
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
