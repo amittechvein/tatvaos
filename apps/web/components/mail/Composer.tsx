@@ -5,6 +5,7 @@ import { formatBytes } from '@tatvaos/core';
 import type { Message } from '@tatvaos/types';
 import { Icon } from '../ui/Icon';
 import { ContactPicker } from '@/components/family/ContactPicker';
+import { useAuth } from '@/lib/auth';
 
 /** Comma- or semicolon-separated addresses → a clean list. */
 function splitAddresses(raw: string): string[] {
@@ -92,6 +93,7 @@ export function Composer({
   onSaveDraft,
   onClose,
   onSend,
+  offset = 0,
 }: {
   replyTo?: Message | null;
   mode?: ComposeMode;
@@ -115,6 +117,12 @@ export function Composer({
     bodyHtml?: string;
     files?: File[];
   }) => Promise<unknown>;
+  /**
+   * Which docked slot this window occupies, 0 = rightmost. Several composers
+   * can be open at once; each sits one slot further left, Gmail-style. Full
+   * screen ignores it — only one thing can be the task.
+   */
+  offset?: number;
 }) {
   const editorRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -129,6 +137,113 @@ export function Composer({
   // The contenteditable does not drive React state, so typing in the body would
   // otherwise never re-run the autosave timer. This counter is the signal.
   const [bodyEdits, setBodyEdits] = useState(0);
+
+  // ---- @-mention -------------------------------------------------------
+  //
+  //  Type @ and a name in the body; pick a colleague; their name lands in
+  //  the text as a mailto link AND they land in To — a mention that does not
+  //  put the person on the message is a trap that reads like it worked.
+  //  Rich editor only: the plain-text mode is a deliberate no-frills surface.
+  //
+  //  The person shape is declared inline rather than imported from lib/mail,
+  //  for the same reason as the signature type above: the composer keeps no
+  //  dependency on the mail client module.
+  const { authedFetch } = useAuth();
+  const [mention, setMention] = useState<{ query: string; x: number; y: number } | null>(null);
+  const [mentionHits, setMentionHits] = useState<{ email: string; name: string }[]>([]);
+  const [mentionIdx, setMentionIdx] = useState(0);
+
+  /** Is the caret right after "@something"? Then that something is the query. */
+  function detectMention() {
+    const sel = window.getSelection();
+    const node = sel?.anchorNode;
+    if (!sel || !sel.isCollapsed || !node || node.nodeType !== Node.TEXT_NODE
+        || !editorRef.current?.contains(node)) {
+      setMention(null);
+      return;
+    }
+    // Start-of-text or whitespace before the @, so typed email addresses in
+    // the middle of a sentence do not open the picker on their own @.
+    const upto = (node.textContent ?? '').slice(0, sel.anchorOffset);
+    const m = /(?:^|\s)@([\w.-]{1,64})$/.exec(upto);
+    const query = m?.[1];
+    if (query === undefined) {
+      setMention(null);
+      return;
+    }
+    const rect = sel.getRangeAt(0).getBoundingClientRect();
+    setMention({ query, x: rect.left, y: rect.bottom });
+  }
+
+  useEffect(() => {
+    if (!mention) {
+      setMentionHits([]);
+      return;
+    }
+    let cancelled = false;
+    // Debounced: a keystroke should not be a query.
+    const t = setTimeout(() => {
+      authedFetch(`/mail/directory?q=${encodeURIComponent(mention.query)}`)
+        .then((r) => (r.ok ? r.json() : { people: [] }))
+        .then((b: { people: { email: string; name: string }[] }) => {
+          if (cancelled) return;
+          setMentionHits((b.people ?? []).slice(0, 6));
+          setMentionIdx(0);
+        })
+        .catch(() => { if (!cancelled) setMentionHits([]); });
+    }, 180);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [mention, authedFetch]);
+
+  function pickMention(p: { email: string; name: string }) {
+    const sel = window.getSelection();
+    const node = sel?.anchorNode;
+    if (sel && node && node.nodeType === Node.TEXT_NODE && editorRef.current?.contains(node)) {
+      const upto = (node.textContent ?? '').slice(0, sel.anchorOffset);
+      const m = /(?:^|\s)@([\w.-]{0,64})$/.exec(upto);
+      const typed = m?.[1];
+      if (typed !== undefined) {
+        // Replace "@quer" with a mailto link — HTML mail renders it as a
+        // name anyone can click, and receivers that strip HTML still see
+        // the name as text.
+        const range = document.createRange();
+        range.setStart(node, upto.length - typed.length - 1);
+        range.setEnd(node, sel.anchorOffset);
+        range.deleteContents();
+        const a = document.createElement('a');
+        a.href = `mailto:${p.email}`;
+        a.textContent = p.name || p.email;
+        range.insertNode(a);
+        const space = document.createTextNode(' ');
+        a.after(space);
+        sel.collapse(space, 1);
+        setBodyEdits((n) => n + 1);
+      }
+    }
+    setTo((prev) => {
+      const have = splitAddresses(prev).some((x) => x.toLowerCase() === p.email.toLowerCase());
+      return have ? prev : prev.trim() ? `${prev.trim()}, ${p.email}` : p.email;
+    });
+    setMention(null);
+  }
+
+  /** Arrow keys walk the suggestions; Enter/Tab picks; Escape dismisses. */
+  function onEditorKeyDown(e: React.KeyboardEvent) {
+    if (!mention || mentionHits.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setMentionIdx((i) => (i + 1) % mentionHits.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setMentionIdx((i) => (i - 1 + mentionHits.length) % mentionHits.length);
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      const hit = mentionHits[mentionIdx];
+      if (hit) pickMention(hit);
+    } else if (e.key === 'Escape') {
+      setMention(null);
+    }
+  }
   const [subject, setSubject] = useState(() => {
     if (!replyTo) return '';
     const base = replyTo.subject;
@@ -338,8 +453,18 @@ export function Composer({
             // .app-sidebar at 103, so at Tailwind's z-50 the header covered the
             // composer's own title bar — and with it the close button.
             ? 'fixed inset-0 z-[1200] flex items-center justify-center p-4 sm:p-6'
-            : 'fixed inset-x-0 bottom-0 z-[1200] flex justify-center sm:inset-x-auto sm:right-5 sm:justify-end'
+            // Slots beyond the first are hidden on phones — there is no room
+            // for two panels, and the hidden draft stays mounted, so nothing
+            // typed is lost; rotate a tablet or close the front one to reach it.
+            : `fixed inset-x-0 bottom-0 z-[1200] justify-center sm:inset-x-auto sm:justify-end ${
+                offset > 0 ? 'hidden sm:flex' : 'flex'
+              }`
         }
+        // Each open composer sits one 580px slot further left, Gmail-style.
+        // An inline style because slot arithmetic is not a class; harmless on
+        // phones, where inset-x-0 pins both edges for offset 0 and the rest
+        // are hidden above.
+        style={pane === 'full' ? undefined : { right: 20 + offset * 580 }}
       >
         <div
           className={`flex w-full flex-col overflow-hidden bg-surface shadow-raised ${
@@ -376,15 +501,20 @@ export function Composer({
               >
                 <Icon name={minimised ? 'expand' : 'minimise'} className="h-4 w-4" />
               </button>
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); setPane(pane === 'full' ? 'docked' : 'full'); }}
-                aria-label={pane === 'full' ? 'Exit full screen' : 'Full screen'}
-                title={pane === 'full' ? 'Exit full screen' : 'Full screen'}
-                className="rounded p-1 text-rail-text hover:text-white"
-              >
-                <Icon name={pane === 'full' ? 'collapse' : 'expand'} className="h-4 w-4" />
-              </button>
+              {/* Hidden while minimised: restore is the only sensible action
+                  there, and next to it this button showed the SAME expand
+                  icon — two identical icons doing different things. */}
+              {!minimised && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setPane(pane === 'full' ? 'docked' : 'full'); }}
+                  aria-label={pane === 'full' ? 'Exit full screen' : 'Full screen'}
+                  title={pane === 'full' ? 'Exit full screen' : 'Full screen'}
+                  className="rounded p-1 text-rail-text hover:text-white"
+                >
+                  <Icon name={pane === 'full' ? 'collapse' : 'expand'} className="h-4 w-4" />
+                </button>
+              )}
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); onClose(); }}
@@ -503,9 +633,42 @@ export function Composer({
             suppressContentEditableWarning
             spellCheck={spell}
             data-placeholder="Write your message"
-            onInput={() => setBodyEdits((n) => n + 1)}
+            onInput={() => { setBodyEdits((n) => n + 1); detectMention(); }}
+            onKeyDown={onEditorKeyDown}
+            // The popup is positioned at the caret; a scrolled editor moves
+            // the caret out from under it, so close rather than drift.
+            onScroll={() => setMention(null)}
+            onBlur={() => setMention(null)}
             className="composer-body scroll-thin min-h-[220px] flex-1 overflow-y-auto px-4 py-3 text-sm leading-relaxed text-ink outline-none"
           />
+        )}
+
+        {/* The @-mention suggestions, at the caret. */}
+        {mention && mentionHits.length > 0 && (
+          <div
+            className="fixed z-[1400] w-72 overflow-hidden rounded-xl border border-line bg-surface py-1 shadow-raised"
+            style={{
+              left: Math.min(mention.x, typeof window !== 'undefined' ? window.innerWidth - 300 : mention.x),
+              top: mention.y + 4,
+            }}
+          >
+            {mentionHits.map((p, i) => (
+              <button
+                key={p.email}
+                type="button"
+                // mousedown, not click: click fires after blur, and the blur
+                // handler above would have closed the popup first.
+                onMouseDown={(e) => { e.preventDefault(); pickMention(p); }}
+                onMouseEnter={() => setMentionIdx(i)}
+                className={`flex w-full items-baseline gap-2 px-3 py-2 text-left text-sm ${
+                  i === mentionIdx ? 'bg-canvas text-ink' : 'text-ink-muted'
+                }`}
+              >
+                <span className="shrink-0 font-medium text-ink">{p.name}</span>
+                <span className="min-w-0 truncate text-xs">{p.email}</span>
+              </button>
+            ))}
+          </div>
         )}
 
         {/* Attachment chips */}

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { use, useCallback, useEffect, useMemo, useState } from 'react';
+import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Attachment, Folder, Message } from '@tatvaos/types';
 import { useAuth } from '@/lib/auth';
 import { mailApi, resolveFolder, type MailBootstrap, type SearchHit } from '@/lib/mail';
@@ -49,9 +49,13 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   const [searchHits, setSearchHits] = useState<SearchHit[] | null>(null);
   const [searchTotal, setSearchTotal] = useState(0);
   const [searching, setSearching] = useState(false);
-  const [composing, setComposing] = useState(false);
-  const [replyTo, setReplyTo] = useState<Message | null>(null);
-  const [composeMode, setComposeMode] = useState<ComposeMode>('new');
+  // Open composer windows, oldest first — the first sits rightmost and new
+  // ones dock to its left, Gmail-style. A list, not a boolean: a reply mid-
+  // draft should not evict the draft.
+  const [composers, setComposers] = useState<
+    { key: number; replyTo: Message | null; mode: ComposeMode }[]
+  >([]);
+  const composerKey = useRef(0);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const searchParams = useSearchParams();
@@ -397,9 +401,13 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   }
 
   function startCompose(m: Message | null, m2: ComposeMode) {
-    setReplyTo(m);
-    setComposeMode(m2);
-    setComposing(true);
+    setComposers((prev) => {
+      // Three is what a 1080p-wide window fits. The fourth request is
+      // ignored rather than evicting someone's half-written draft.
+      if (prev.length >= 3) return prev;
+      composerKey.current += 1;
+      return [...prev, { key: composerKey.current, replyTo: m, mode: m2 }];
+    });
   }
 
   const downloadAttachment = (messageId: string, attachmentId: string, filename: string) =>
@@ -587,23 +595,25 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
         )}
       </section>
 
-      {composing && (
+      {composers.map((c, i) => (
         <Composer
-          replyTo={replyTo}
-          mode={composeMode}
+          key={c.key}
+          offset={i}
+          replyTo={c.replyTo}
+          mode={c.mode}
           selfAddress={mailbox.address}
           fromAddress={mailbox.address}
-          onClose={() => setComposing(false)}
+          onClose={() => setComposers((prev) => prev.filter((x) => x.key !== c.key))}
           onSend={async (draft) => {
             await mailApi.send(authedFetch, {
               ...draft,
-              inReplyToId: composeMode === 'reply' || composeMode === 'replyAll' ? replyTo?.id : undefined,
+              inReplyToId: c.mode === 'reply' || c.mode === 'replyAll' ? c.replyTo?.id : undefined,
             });
             void refreshFolders();
             if (folder?.slug === 'sent') void loadMessages(folder.id, 0);
           }}
         />
-      )}
+      ))}
     </div>
   );
 }
