@@ -208,11 +208,18 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-step "Starting services"
-$COMPOSE up -d --remove-orphans 2>&1 | tail -12 | sed 's/^/   /'
-
+# SCHEMA BEFORE SERVICES — the order is the point.
+#
+# This used to start everything and then apply schema, which gave every
+# deploy carrying an additive column a window where the NEW api was serving
+# requests against the OLD database: SELECTs naming a column that does not
+# exist yet, 500s until psql caught up. Additive migrations are written to be
+# safe in the other direction — old code ignores a new column — so the safe
+# order is database first, app second. (Credit: the Mail dev, who noticed
+# every one of his columns rode that window.)
 # ---------------------------------------------------------------------------
-step "Applying schema"
+step "Starting the database"
+$COMPOSE up -d postgres 2>&1 | tail -3 | sed 's/^/   /'
 
 # Wait for Postgres to accept connections rather than sleeping and hoping.
 # A fixed sleep is either too short on a cold first deploy or wasted on every
@@ -221,6 +228,9 @@ for i in $(seq 1 30); do
     $COMPOSE exec -T postgres pg_isready -U postgres >/dev/null 2>&1 && break
     sleep 2
 done
+
+# ---------------------------------------------------------------------------
+step "Applying schema"
 
 schema_failed=0
 for f in local/postgres/init/*.sql; do
@@ -252,8 +262,14 @@ done
 # columns under load.
 [ "$schema_failed" -eq 0 ] || {
     bad "schema did not apply cleanly — stopping"
+    # The app containers were NOT recreated: the old images keep serving the
+    # old (still-valid) schema, which is the least-broken place to stop.
     exit 1
 }
+
+# ---------------------------------------------------------------------------
+step "Starting services"
+$COMPOSE up -d --remove-orphans 2>&1 | tail -12 | sed 's/^/   /'
 
 # ---------------------------------------------------------------------------
 step "Reloading the reverse proxy"

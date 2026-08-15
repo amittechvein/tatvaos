@@ -65,13 +65,18 @@ CREATE TABLE IF NOT EXISTS core.products (
     sort_order   int NOT NULL DEFAULT 100
 );
 
+-- Only products that EXIST or are being built. A catalogue full of things
+-- nobody has started shows up in the console's product lists and in the
+-- launcher as permanently greyed tiles, which teaches customers the suite is
+-- mostly vapour. Adding one back is a single INSERT the day work begins.
+--
+-- 'drive' is the code TatvaOS SPACE ships under: allocations, access rows and
+-- audit entries were all written against it long before the product was
+-- named, and a primary key is not worth rewriting to fix a label.
 INSERT INTO core.products (code, name, description, is_available, sort_order) VALUES
-    ('mail',    'TatvaOS Mail',    'Business email hosting',        true,  10),
-    ('drive',   'TatvaOS Drive',   'File storage and sharing',      false, 20),
-    ('people',  'TatvaOS People',  'HR and employee records',       false, 30),
-    ('payroll', 'TatvaOS Payroll', 'Salary and compliance',         false, 40),
-    ('sheet',   'TatvaOS Sheet',   'Spreadsheets',                  false, 50),
-    ('word',    'TatvaOS Word',    'Documents',                     false, 60)
+    ('mail',     'TatvaOS Mail',     'Business email hosting',              true,  10),
+    ('drive',    'TatvaOS Space',    'File storage and sharing',            true,  20),
+    ('calendar', 'TatvaOS Calendar', 'Scheduling, meetings and reminders',  false, 30)
 ON CONFLICT (code) DO NOTHING;
 
 -- ============================================================================

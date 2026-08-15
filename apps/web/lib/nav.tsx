@@ -42,10 +42,10 @@ const PATHS = {
   gear:      'M10.3 3h3.4l.5 2.3 1.9 1.1 2.2-.8 1.7 3-1.7 1.6v2.2l1.7 1.6-1.7 3-2.2-.8-1.9 1.1-.5 2.3h-3.4l-.5-2.3-1.9-1.1-2.2.8-1.7-3 1.7-1.6v-2.2L4 8.6l1.7-3 2.2.8 1.9-1.1.5-2.3zM12 14.6a2.6 2.6 0 100-5.2 2.6 2.6 0 000 5.2z',
   mail:      'M3 7l9 6 9-6M3 7h18v10H3z',
   drive:     'M12 3l8 14H4L12 3zM9 17l-3 4M15 17l3 4',
-  people:    'M12 12a4 4 0 100-8 4 4 0 000 8zM4 21v-1a6 6 0 016-6h4a6 6 0 016 6v1',
-  payroll:   'M12 2v20M17 6H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6',
-  sheet:     'M4 4h16v16H4zM4 10h16M10 4v16',
-  word:      'M6 3h9l5 5v13H6zM15 3v5h5M9 13h6M9 17h6',
+  // People, Payroll, Sheet and Word left the catalogue with their tiles —
+  // when one is actually started, its path comes back in the same commit as
+  // its product row. An icon for a product nobody is building is dead code.
+  calendar:  'M4 6h16v15H4zM4 10h16M8 3v4M16 3v4M8 14h3M8 17h3',
   // Mail folder icons for the shell rail (mailNav).
   sent: 'M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z',
   draft: 'M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z',
@@ -93,14 +93,11 @@ export const RAIL_PRODUCTS: RailProduct[] = [
   // entries were bought under that code — but the product's NAME is Space.
   { code: 'drive', label: 'Space', href: '/space/personal', icon: <Icon d={PATHS.drive} />,
     live: true, colour: '#28c76f', match: ['/space'] },
-  { code: 'people', label: 'People', href: '/people', icon: <Icon d={PATHS.people} />,
-    live: false, colour: '#00cfe8', match: ['/people'] },
-  { code: 'payroll', label: 'Payroll', href: '/payroll', icon: <Icon d={PATHS.payroll} />,
-    live: false, colour: '#ff9f43', match: ['/payroll'] },
-  { code: 'sheet', label: 'Sheet', href: '/sheet', icon: <Icon d={PATHS.sheet} />,
-    live: false, colour: '#1e9e63', match: ['/sheet'] },
-  { code: 'word', label: 'Word', href: '/word', icon: <Icon d={PATHS.word} />,
-    live: false, colour: '#2f6fed', match: ['/word'] },
+  // Being built. It stays in the grid because it is genuinely next and the
+  // tile sets the expectation; products nobody has STARTED were removed —
+  // a wall of greyed tiles reads as a suite that does not exist.
+  { code: 'calendar', label: 'Calendar', href: '/calendar', icon: <Icon d={PATHS.calendar} />,
+    live: false, colour: '#4285f4', match: ['/calendar'] },
   // Techvein only. The panel it opens is a different world from a customer's,
   // which is why it sits apart at the end rather than among the products.
   { code: 'platform', label: 'Platform admin', href: '/admin',
