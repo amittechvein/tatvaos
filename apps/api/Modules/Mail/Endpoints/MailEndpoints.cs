@@ -1607,7 +1607,10 @@ public static class MailEndpoints
         // all. Putting the individual's name here is how an answer comes back
         // to one person's inbox and dies there the week they are on leave.
         mime.From.Add(new MailboxAddress(
-            isShared ? box.LocalPart : user?.DisplayName ?? box.LocalPart,
+            // The mailbox's own name when it has one ("Admissions Office"),
+            // falling back to the local part for mailboxes created before
+            // display names existed.
+            isShared ? box.DisplayName ?? box.LocalPart : user?.DisplayName ?? box.LocalPart,
             box.Address));
         foreach (var a in to) mime.To.Add(a);
         foreach (var a in cc) mime.Cc.Add(a);
@@ -1696,7 +1699,7 @@ public static class MailEndpoints
             ThreadId = threadId,
             MessageIdHeader = mime.MessageId,
             FromAddr = box.Address,
-            FromName = isShared ? box.LocalPart : user?.DisplayName,
+            FromName = isShared ? box.DisplayName ?? box.LocalPart : user?.DisplayName,
             ToAddrs = to.Select(a => a.Address).ToArray(),
             CcAddrs = cc.Count > 0 ? cc.Select(a => a.Address).ToArray() : null,
             Subject = mime.Subject,

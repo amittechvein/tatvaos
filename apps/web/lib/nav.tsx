@@ -149,6 +149,7 @@ export function organisationNav(): NavSection[] {
           ],
         },
         { href: '/org/domains', label: 'Domains', icon: <Icon d={PATHS.globe} /> },
+        { href: '/org/mailboxes', label: 'Shared mailboxes', icon: <Icon d={PATHS.mail} /> },
         { href: '/org/storage', label: 'Storage', icon: <Icon d={PATHS.database} /> },
         { href: '/org/audit', label: 'Audit trail', icon: <Icon d={PATHS.audit} /> },
         { href: '/org/billing', label: 'Billing', icon: <Icon d={PATHS.card} /> },
