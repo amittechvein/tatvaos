@@ -98,6 +98,12 @@ builder.Services.AddScoped<AuditWriter>();
 builder.Services.AddSingleton<TatvaOS.Api.Modules.Space.IBlobStore,
                               TatvaOS.Api.Modules.Space.FileSystemBlobStore>();
 
+// The surface OTHER PRODUCTS call to read and store Space content — Mail's
+// "attach from Space", Family's photos. Scoped: it runs on the caller's
+// TenantContext, so every read is permission-checked as the signed-in user.
+// Contract: docs/SPACE_ATTACH.md.
+builder.Services.AddScoped<TatvaOS.Api.Modules.Space.SpaceContentGateway>();
+
 // Scoped: it writes through the request's AppDbContext and reads its
 // TenantContext. A singleton holding either would serve one tenant's scope to
 // whichever request arrived next.
@@ -134,12 +140,6 @@ builder.Services.AddHostedService<StorageReconcileWorker>();
 // still leaves the message with the sender. Starts in observe-only mode and
 // refuses nothing until Mail:QuotaEnforcement is set to "enforce".
 builder.Services.AddHostedService<PostfixPolicyWorker>();
-
-// OFF unless Mail:ThreadBackfill says otherwise. A one-off repair that fills
-// thread_id on mail stored before threading existed - "report" to see what it
-// would do, "run" to commit it. Left unset it returns immediately, which is
-// how it should sit between the one time it is needed and every deploy after.
-builder.Services.AddHostedService<ThreadBackfillWorker>();
 
 builder.Services.AddOpenApi();
 
@@ -178,7 +178,6 @@ app.UseAuthorization();
 TatvaOS.Api.Modules.Auth.Endpoints.AuthEndpoints.ConfigureCookies(app.Configuration);
 
 app.MapAuthEndpoints();
-app.MapMfaEndpoints();
 app.MapOrganisationEndpoints();
 app.MapUserEndpoints();
 app.MapDomainEndpoints();
