@@ -78,6 +78,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<BlockedSender> BlockedSenders => Set<BlockedSender>();
     public DbSet<FilterRule> FilterRules => Set<FilterRule>();
     public DbSet<Signature> Signatures => Set<Signature>();
+    public DbSet<VacationResponder> VacationResponders => Set<VacationResponder>();
+    public DbSet<VacationSend> VacationSends => Set<VacationSend>();
 
     // ---- family. RLS enabled and forced; see 19-family-schema.sql ----
     public DbSet<Contact> Contacts => Set<Contact>();
@@ -133,6 +135,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<BlockedSender>().ToTable("blocked_senders", "mail");
         b.Entity<FilterRule>().ToTable("filter_rules", "mail");
         b.Entity<Signature>().ToTable("signatures", "mail");
+        b.Entity<VacationResponder>().ToTable("vacation_responders", "mail");
+        b.Entity<VacationSend>().ToTable("vacation_sends", "mail");
 
         b.Entity<Contact>().ToTable("contacts", "family");
         b.Entity<ContactEmail>().ToTable("contact_emails", "family");
@@ -204,6 +208,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<BlockedSender>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<FilterRule>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Signature>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<VacationResponder>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<VacationSend>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<DkimKey>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
 
         // Family. The contact filter carries the OWNERSHIP test as well as the
@@ -269,6 +275,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         // duplicate is.
         b.Entity<BlockedSender>().HasIndex(x => new { x.MailboxId, x.Address }).IsUnique();
         b.Entity<Signature>().HasIndex(s => s.MailboxId).IsUnique();
+        b.Entity<VacationResponder>().HasIndex(v => v.MailboxId).IsUnique();
+        // Composite key, matching the table: one row per mailbox per
+        // correspondent is the whole point of it.
+        b.Entity<VacationSend>().HasKey(v => new { v.MailboxId, v.Address });
 
         b.Entity<ContactGroup>().HasIndex(g => new { g.TenantId, g.Name }).IsUnique();
         b.Entity<ContactSetting>().HasIndex(s => new { s.TenantId, s.UserId }).IsUnique();

@@ -216,6 +216,14 @@ public class User
     public long? MfaLastStep { get; set; }
 
     public Guid? DepartmentId { get; set; }
+
+    /// <summary>
+    /// IANA name, e.g. "Asia/Kolkata". Null means the platform default, which
+    /// the API owns - a default written down in two places drifts. Read when a
+    /// date-based rule needs to know when midnight is.
+    /// </summary>
+    [MaxLength(64)] public string? Timezone { get; set; }
+
     [MaxLength(32)] public string Role { get; set; } = "employee";
     [MaxLength(32)] public string Status { get; set; } = "pending";
 
@@ -559,6 +567,13 @@ public class Mailbox
     [MaxLength(16)]  public string Type { get; set; } = "user";
 
     /// <summary>
+    /// What recipients see in From for a SHARED mailbox — "Admissions Office"
+    /// rather than "admissions". Null on a personal mailbox, which takes its
+    /// name from the person behind it.
+    /// </summary>
+    [MaxLength(128)] public string? DisplayName { get; set; }
+
+    /// <summary>
     /// For IMAP and SMTP clients that cannot do OAuth. Deliberately separate
     /// from the Core password: an app password is scoped and revocable on its
     /// own, so revoking Thunderbird does not lock the person out of Payroll.
@@ -631,6 +646,14 @@ public class Message
     /// this column existed.
     /// </summary>
     public Guid? SentByUserId { get; set; }
+
+    /// <summary>
+    /// Set only on a message waiting in the Scheduled folder. It is the single
+    /// thing that separates a scheduled message from a draft, which is why a
+    /// scheduled message is a message in a folder rather than a table of its
+    /// own - same reasoning as drafts.
+    /// </summary>
+    public DateTimeOffset? ScheduledAt { get; set; }
     public long ImapUid { get; set; }
 
     [MaxLength(512)] public string? MessageIdHeader { get; set; }
@@ -786,4 +809,50 @@ public class Signature
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// One mailbox's out-of-office reply.
+///
+/// The window is DATES, not instants: "first day 15 August" has to begin at
+/// midnight where the person actually is, and storing a timestamp would freeze
+/// the answer to "when is midnight" at the moment it was saved. The owner's
+/// timezone is read when a message arrives.
+/// </summary>
+public class VacationResponder
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid MailboxId { get; set; }
+
+    public bool Enabled { get; set; }
+    public DateOnly FirstDay { get; set; }
+    /// <summary>Null is "until I turn it off", which is how most people use it.</summary>
+    public DateOnly? LastDay { get; set; }
+
+    public string Subject { get; set; } = "";
+    public string BodyText { get; set; } = "";
+    public string BodyHtml { get; set; } = "";
+
+    public bool ContactsOnly { get; set; }
+    public bool OrgOnly { get; set; }
+
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// Who this mailbox has already told that its owner is away.
+///
+/// This is the rate limit and the loop-stopper in one row. Without it, a
+/// correspondent who sends three messages in a thread gets three identical
+/// replies, and two autoresponders pointed at each other never stop.
+/// </summary>
+public class VacationSend
+{
+    public Guid TenantId { get; set; }
+    public Guid MailboxId { get; set; }
+    /// <summary>Lowercased on write, so the check is plain equality.</summary>
+    [MaxLength(320)] public required string Address { get; set; }
+    public DateTimeOffset LastSentAt { get; set; } = DateTimeOffset.UtcNow;
 }
