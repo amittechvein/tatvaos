@@ -87,9 +87,9 @@ export function MailboxProvider({ children }: { children: React.ReactNode }) {
 /**
  * The switcher itself, for the rail.
  *
- * Renders NOTHING when there is only one mailbox, which is almost everybody.
- * A picker with one option is furniture that teaches people to ignore the
- * area it sits in.
+ * Always names the open mailbox; only offers a menu when there is somewhere
+ * to switch to. Naming it is not furniture — "which mailbox am I answering
+ * from" is the question this whole feature exists to keep answerable.
  */
 export function MailboxSwitcher() {
   const { mailboxes, current, isShared, select } = useMailbox();
@@ -97,13 +97,24 @@ export function MailboxSwitcher() {
 
   const close = useCallback(() => setOpen(false), []);
 
-  if (mailboxes.length < 2 || !current) return null;
+  // Renders from ONE mailbox, not two.
+  //
+  // The original rule was "hide unless there is something to switch to",
+  // which is right in principle and wrong in practice: when the switcher did
+  // not appear there was no way to tell whether the component was broken,
+  // the layout was wrong, or the API had simply returned one mailbox. A
+  // control that renders nothing is indistinguishable from a control that is
+  // not there. Showing "My mailbox" costs one quiet line and makes the state
+  // legible — and it is where people will look for the mailbox they are in.
+  if (!current) return null;
+  const soleMailbox = mailboxes.length < 2;
 
   return (
     <div className="position-relative" style={{ marginBottom: 10 }}>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => { if (!soleMailbox) setOpen((v) => !v); }}
+        disabled={soleMailbox}
         className="d-flex align-items-center gap-2 w-100 rounded"
         style={{
           background: isShared ? 'rgba(255,169,9,0.18)' : 'rgba(255,255,255,0.08)',
@@ -116,10 +127,10 @@ export function MailboxSwitcher() {
         <span className="flex-fill text-truncate" style={{ fontSize: 12 }}>
           {current.isOwn ? 'My mailbox' : current.localPart}
         </span>
-        <Icon name="chevron-down" className="h-3 w-3 shrink-0" />
+        {!soleMailbox && <Icon name="chevron-down" className="h-3 w-3 shrink-0" />}
       </button>
 
-      {open && (
+      {open && !soleMailbox && (
         <>
           {/* Click-away, below the menu and above the page. */}
           <div className="position-fixed" style={{ inset: 0, zIndex: 1390 }}
