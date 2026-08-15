@@ -203,6 +203,7 @@ app.MapAuditEndpoints();
 app.MapMailEndpoints();
 app.MapFamilyEndpoints();
 app.MapSpaceEndpoints();
+app.MapSpaceDriveEndpoints();
 
 // ---------------------------------------------------------------------------
 //  Bootstrap the first super admin

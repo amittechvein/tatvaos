@@ -95,6 +95,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<SpaceFolder> SpaceFolders => Set<SpaceFolder>();
     public DbSet<SpaceFile> SpaceFiles => Set<SpaceFile>();
     public DbSet<SpaceShare> SpaceShares => Set<SpaceShare>();
+    public DbSet<SpaceFileActivity> SpaceFileActivities => Set<SpaceFileActivity>();
+    public DbSet<SpaceStar> SpaceStars => Set<SpaceStar>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -148,6 +150,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<SpaceFolder>().ToTable("folders", "space");
         b.Entity<SpaceFile>().ToTable("files", "space");
         b.Entity<SpaceShare>().ToTable("shares", "space");
+        b.Entity<SpaceFileActivity>().ToTable("file_activity", "space");
+        b.Entity<SpaceStar>().ToTable("stars", "space");
 
         // ---- Column types Npgsql cannot infer ----------------------------
         // A string property maps to text by default, and PostgreSQL has no
@@ -182,6 +186,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<StorageAllocation>().HasKey(s => new { s.TenantId, s.ProductCode });
         b.Entity<MailboxPermission>().HasKey(p => new { p.MailboxId, p.UserId, p.Permission });
         b.Entity<ContactGroupMember>().HasKey(m => new { m.GroupId, m.ContactId });
+        b.Entity<SpaceFileActivity>().HasKey(a => new { a.UserId, a.FileId });
 
         // ---- Global tenant filters ---------------------------------------
         // Everything carrying a TenantId. Tenants are the boundary itself;
@@ -236,6 +241,13 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<SpaceFolder>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<SpaceFile>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<SpaceShare>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        // Activity and stars are PER-USER, and unlike the tables above their
+        // EF filters can say so fully — no share/ancestor walk involved. The
+        // RLS policies (29-space-drive.sql) repeat the same test underneath.
+        b.Entity<SpaceFileActivity>().HasQueryFilter(e =>
+            e.TenantId == tenant.TenantId && e.UserId == tenant.UserId);
+        b.Entity<SpaceStar>().HasQueryFilter(e =>
+            e.TenantId == tenant.TenantId && e.UserId == tenant.UserId);
 
         // ---- Uniqueness ---------------------------------------------------
         // Domains are unique across the WHOLE platform, not per tenant. Two
@@ -494,6 +506,22 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             .HasForeignKey(s => s.SharedByUserId).OnDelete(DeleteBehavior.SetNull);
         b.Entity<SpaceShare>().HasOne<User>().WithMany()
             .HasForeignKey(s => s.SharedWithUserId).OnDelete(DeleteBehavior.Cascade);
+
+        b.Entity<SpaceFileActivity>().HasOne<Tenant>().WithMany()
+            .HasForeignKey(a => a.TenantId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<SpaceFileActivity>().HasOne<User>().WithMany()
+            .HasForeignKey(a => a.UserId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<SpaceFileActivity>().HasOne<SpaceFile>().WithMany()
+            .HasForeignKey(a => a.FileId).OnDelete(DeleteBehavior.Cascade);
+
+        b.Entity<SpaceStar>().HasOne<Tenant>().WithMany()
+            .HasForeignKey(s => s.TenantId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<SpaceStar>().HasOne<User>().WithMany()
+            .HasForeignKey(s => s.UserId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<SpaceStar>().HasOne<SpaceFile>().WithMany()
+            .HasForeignKey(s => s.FileId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<SpaceStar>().HasOne<SpaceFolder>().WithMany()
+            .HasForeignKey(s => s.FolderId).OnDelete(DeleteBehavior.Cascade);
 
         base.OnModelCreating(b);
 
