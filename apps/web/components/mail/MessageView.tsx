@@ -76,6 +76,7 @@ export function MessageView({
   threadTotal,
   expanded,
   onToggleExpand,
+  autoLoadImages = false,
 }: {
   message: Message;
   bodyLoading?: boolean;
@@ -113,6 +114,13 @@ export function MessageView({
   expanded?: boolean;
   /** Absent hides the toggle — small screens are always full-page already. */
   onToggleExpand?: () => void;
+  /**
+   * Remote images load without asking. On for normal folders — the banner on
+   * every message taxed everyone to inconvenience trackers — and OFF for
+   * Junk, where auto-loading a tracking pixel confirms to a spammer that
+   * the address is read.
+   */
+  autoLoadImages?: boolean;
 }) {
   const [menu, setMenu] = useState(false);
 
@@ -206,7 +214,9 @@ export function MessageView({
   const body = (
     <div>
       {message.bodyHtml ? (
-        <SafeHtml html={message.bodyHtml} />
+        // Keyed by message: allow-images is per MESSAGE, not per pane — without
+        // the key, one "Show images" click would carry to every mail after it.
+        <SafeHtml key={message.id} html={message.bodyHtml} allowRemoteInitially={autoLoadImages} />
       ) : bodyLoading ? (
         <p className="text-sm text-ink-faint">Loading…</p>
       ) : (

@@ -576,6 +576,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
               onOpenMessage={(id) => void handleOpen(id)}
               expanded={wide}
               onToggleExpand={() => setWide((v) => !v)}
+              autoLoadImages={folder?.slug !== 'junk'}
             />
           </div>
         ) : (
