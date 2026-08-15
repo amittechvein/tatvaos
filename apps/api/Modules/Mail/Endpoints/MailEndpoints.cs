@@ -1744,7 +1744,11 @@ public static class MailEndpoints
         // Offer the recipients to the sender's address book. Off by default —
         // see ContactSettings.AutoSaveSent — and after the commit, because a
         // failure here must not lose a message that has already gone out.
-        await autoSave.RecordAsync(db, tenant, box.UserId, [message], "recipient", ct);
+        // tenant.UserId, NOT box.UserId: recipients learned from a send belong
+        // to the HUMAN who pressed send. For a personal mailbox the two are the
+        // same id; for a shared mailbox box.UserId is NULL, and passing it made
+        // every delegated send silently skip contact auto-save.
+        await autoSave.RecordAsync(db, tenant, tenant.UserId, [message], "recipient", ct);
 
         // Audited only when the mailbox is not your own. The question this
         // trail exists to answer is "who answered as admissions@"; a row for
