@@ -1141,7 +1141,7 @@ public static class MailEndpoints
         var chips = (await db.Attachments.AsNoTracking()
                 .Where(a => pageIds.Contains(a.MessageId))
                 .OrderBy(a => a.PartIndex)
-                .Select(a => new { a.MessageId, a.Id, a.Filename, a.ContentType, a.SizeBytes })
+                .Select(a => new { a.MessageId, a.Id, a.Filename, a.ContentType, a.SizeBytes, a.ScanStatus })
                 .ToListAsync(ct))
             .ToLookup(a => a.MessageId);
 
@@ -1167,6 +1167,7 @@ public static class MailEndpoints
                 contentType = a.ContentType ?? "application/octet-stream",
                 sizeBytes = a.SizeBytes,
                 isInline = false,
+                scanStatus = a.ScanStatus,
             }).ToArray(),
         });
 
@@ -1314,6 +1315,7 @@ public static class MailEndpoints
                 contentType = a.ContentType ?? "application/octet-stream",
                 sizeBytes = a.SizeBytes,
                 isInline = false,
+                scanStatus = a.ScanStatus,
             })
             .ToListAsync(ct);
 
@@ -1443,6 +1445,21 @@ public static class MailEndpoints
         var att = await db.Attachments.AsNoTracking()
             .FirstOrDefaultAsync(a => a.Id == attachmentId && a.MessageId == m.Id, ct);
         if (att?.PartIndex is not int index) return Results.NotFound();
+
+        // Refused, not hidden. Somebody sent an infected file should be able to
+        // see that it arrived and that it was stopped; a chip that silently
+        // vanishes teaches nothing and reads as mail going missing.
+        //
+        // "pending" still downloads. Blocking everything the scanner has not
+        // reached yet would mean an outage in the scanner becomes an outage in
+        // the mail client, and until today nothing was scanned at all - this
+        // change is meant to add a refusal for a known-bad file, not a new way
+        // for good files to become unreachable.
+        if (att.ScanStatus == "infected")
+            return Results.BadRequest(new
+            {
+                error = "This attachment was found to contain malware and cannot be downloaded.",
+            });
 
         var parts = MailContent.AttachmentParts(MailContent.Parse(m.RawBody));
         if (index < 0 || index >= parts.Count) return Results.NotFound();

@@ -7,6 +7,7 @@ using TatvaOS.Api.Modules.Admin.Endpoints;
 using TatvaOS.Api.Modules.Auth.Endpoints;
 using TatvaOS.Api.Modules.Core;
 using TatvaOS.Api.Modules.Core.Endpoints;
+using TatvaOS.Api.Modules.Mail;
 using TatvaOS.Api.Modules.Mail.Endpoints;
 using TatvaOS.Api.Modules.Family;
 using TatvaOS.Api.Modules.Family.Endpoints;

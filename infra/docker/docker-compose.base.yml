@@ -226,6 +226,10 @@ services:
       # the worker returns immediately. "report" logs what it would do and
       # writes nothing; "run" commits it. Set MAIL_THREAD_BACKFILL to use it.
       Mail__ThreadBackfill: ${MAIL_THREAD_BACKFILL:-}
+      # host:port of a clamd. Empty - the default - means attachments are not
+      # scanned and every row honestly stays "pending". Set it to clamav:3310
+      # once the service below is running.
+      Mail__ClamAv: ${MAIL_CLAMAV:-}
       # Over-quota mailboxes: anything but "enforce" only LOGS would-defer
       # lines. Flip to enforce only after reading those logs shows no
       # innocent mailbox would be hit — a 4xx defer makes senders queue and
