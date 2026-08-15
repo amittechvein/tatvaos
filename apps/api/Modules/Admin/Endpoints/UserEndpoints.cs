@@ -32,6 +32,9 @@ namespace TatvaOS.Api.Modules.Admin.Endpoints;
 /// </summary>
 public static class UserEndpoints
 {
+    /// <summary>One person's storage across every product, for the list page.</summary>
+    private sealed record UserUsageRow(Guid UserId, long UsedBytes, long? QuotaBytes);
+
     public static void MapUserEndpoints(this IEndpointRouteBuilder app)
     {
         var users = app.MapGroup("/api/org/users")
@@ -173,6 +176,19 @@ public static class UserEndpoints
             .Select(a => a.UserId)
             .ToListAsync(ct)).ToHashSet();
 
+        // Usage across ALL products, one query for the whole page rather than
+        // a function call per row. The people list is built for four hundred
+        // people and a per-row call is four hundred round trips.
+        var usageRows = await db.Database
+            .SqlQuery<UserUsageRow>($@"
+                SELECT u.id AS ""UserId"",
+                       COALESCE((SELECT SUM(x.used_bytes) FROM core.user_storage_usage(u.id) x), 0)::bigint AS ""UsedBytes"",
+                       u.storage_quota_bytes AS ""QuotaBytes""
+                  FROM core.users u
+                 WHERE u.id = ANY({ids})")
+            .ToListAsync(ct);
+        var usageByUser = usageRows.ToDictionary(r => r.UserId);
+
         var boxByUser = boxes.GroupBy(b => b.UserId).ToDictionary(g => g.Key, g => g.First());
         var productsByUser = access.GroupBy(a => a.UserId)
             .ToDictionary(g => g.Key, g => g.Select(a => a.ProductCode).ToArray());
@@ -186,8 +202,13 @@ public static class UserEndpoints
                 r.DepartmentId, r.DepartmentName,
                 r.Role, r.Status,
                 productsByUser.TryGetValue(r.Id, out var p) ? p : [],
-                box?.QuotaBytes ?? 0,
-                box?.UsedBytes ?? 0,
+                // The person's allowance and what they are using across every
+                // product — NOT the mailbox's. Falls back to the mailbox
+                // figures for anyone provisioned before the allowance existed.
+                usageByUser.TryGetValue(r.Id, out var use) && use.QuotaBytes is long qb
+                    ? qb : box?.QuotaBytes ?? 0,
+                usageByUser.TryGetValue(r.Id, out var use2)
+                    ? use2.UsedBytes : box?.UsedBytes ?? 0,
                 r.MfaEnabled, r.LastLoginAt, r.CreatedAt,
                 withAvatar.Contains(r.Id));
         }).ToList();
@@ -280,6 +301,12 @@ public static class UserEndpoints
             // aloud. It is a handover credential, not the person's password.
             MustChangePassword = true,
         };
+        // The person's allowance across every product. Resolved the same way
+        // the mailbox quota was — explicit value, else department, else org —
+        // so nothing about provisioning changes except where it is recorded.
+        user.StorageQuotaBytes = await storage.ResolveQuotaAsync(
+            tenant.TenantId, req.DepartmentId, req.QuotaBytes, "mail", ct);
+
         db.Users.Add(user);
 
         foreach (var code in products.Distinct())
@@ -442,20 +469,32 @@ public static class UserEndpoints
             user.Role = role;
         }
 
-        // Quota applies to the mailbox, not the person — a Payroll-only user
-        // has no mailbox and this is quietly a no-op for them.
+        // The allowance is the PERSON's, across every product — mail, files,
+        // and whatever ships next. It used to be written onto the mailbox,
+        // which is why "you have 30 GB" was only ever true of email.
+        //
+        // A Payroll-only user with no mailbox still gets one: they will have
+        // files, and the number has to mean something before the product they
+        // use exists.
         long? newQuota = null;
         if (req.QuotaBytes is long q && q > 0)
         {
+            // Never below what is already stored. An allowance under current
+            // usage refuses everything the moment it is saved — incoming mail
+            // included — which an admin adjusting a number almost never means.
+            var usedRows = await db.Database
+                .SqlQuery<long>($"SELECT COALESCE(SUM(used_bytes),0)::bigint AS \"Value\" FROM core.user_storage_usage({id})")
+                .ToListAsync(ct);
+            var used = usedRows.FirstOrDefault();
+
+            user.StorageQuotaBytes = Math.Max(q, used);
+            newQuota = user.StorageQuotaBytes;
+
+            // The mailbox quota column is kept in step so the mail edge, which
+            // reads mailboxes directly and knows nothing about core.users,
+            // does not enforce a stale smaller number.
             var mailboxes = await db.Mailboxes.Where(m => m.UserId == id).ToListAsync(ct);
-            foreach (var mb in mailboxes)
-            {
-                // Never shrink below what is already stored. A quota under
-                // current usage makes the mailbox reject all incoming mail
-                // immediately, which the admin almost never intends.
-                mb.QuotaBytes = Math.Max(q, mb.UsedBytes);
-                newQuota = mb.QuotaBytes;
-            }
+            foreach (var mb in mailboxes) mb.QuotaBytes = user.StorageQuotaBytes.Value;
         }
 
         await db.SaveChangesAsync(ct);

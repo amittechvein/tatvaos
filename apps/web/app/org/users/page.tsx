@@ -623,8 +623,9 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
             ? (departmentId === '' ? '00000000-0000-0000-0000-000000000000' : departmentId)
             : null,
           role: role !== person.role ? role : null,
-          quotaBytes: person.mailboxAddress && quotaGb * GB !== person.quotaBytes
-            ? quotaGb * GB : null,
+          // No mailbox check: a person with no email still has an allowance,
+          // because they will have files.
+          quotaBytes: quotaGb * GB !== person.quotaBytes ? quotaGb * GB : null,
         }),
       });
       const body = await res.json().catch(() => ({}));
@@ -814,40 +815,41 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
 
       {/* ---- Mail & storage ------------------------------------------- */}
       {sectionTitle('Mail & storage')}
-      {person.mailboxAddress ? (
-        <>
-          <div className="mb-2">
-            <div className="fs-12 text-muted">Mailbox</div>
-            <span className="fs-13 font-monospace">{person.mailboxAddress}</span>
-          </div>
-          <div className="mb-2" style={{ maxWidth: 320 }}>
-            <Meter used={person.usedBytes} total={person.quotaBytes} />
-            <div className="fs-12 text-muted mt-1">
-              Using {fmt(person.usedBytes)} of {fmt(person.quotaBytes)}
-            </div>
-          </div>
-          <Field
-            label="Storage quota"
-            hint="The quota will not shrink below what is already used."
-          >
-            <div className="input-group" style={{ maxWidth: 200 }}>
-              <input
-                type="number"
-                className="form-control"
-                min={1}
-                max={5000}
-                value={quotaGb}
-                onChange={(e) => setQuotaGb(Math.max(1, Number(e.target.value)))}
-              />
-              <span className="input-group-text">GB</span>
-            </div>
-          </Field>
-        </>
-      ) : (
-        <div className="alert alert-info mb-0">
-          No mailbox — storage does not apply to this person.
+      <div className="mb-2">
+        <div className="fs-12 text-muted">Mailbox</div>
+        {person.mailboxAddress
+          ? <span className="fs-13 font-monospace">{person.mailboxAddress}</span>
+          : <span className="fs-13 text-muted">None — this person has no email</span>}
+      </div>
+
+      {/* ONE allowance, spent across every product. It used to be the
+          mailbox's quota, which is why "you have 30 GB" was only ever true of
+          email — their files were counted somewhere else entirely. */}
+      <div className="mb-2" style={{ maxWidth: 320 }}>
+        <Meter used={person.usedBytes} total={person.quotaBytes} />
+        <div className="fs-12 text-muted mt-1">
+          Using {fmt(person.usedBytes)} of {fmt(person.quotaBytes)} across all products
         </div>
-      )}
+      </div>
+
+      <Field
+        label="Storage allowance"
+        hint="Their total for mail, files and everything else. It will not shrink
+              below what they already use. Shared mailboxes and organisation
+              files are not counted against a person."
+      >
+        <div className="input-group" style={{ maxWidth: 200 }}>
+          <input
+            type="number"
+            className="form-control"
+            min={1}
+            max={5000}
+            value={quotaGb}
+            onChange={(e) => setQuotaGb(Math.max(1, Number(e.target.value)))}
+          />
+          <span className="input-group-text">GB</span>
+        </div>
+      </Field>
       </div>
       </div>
 
