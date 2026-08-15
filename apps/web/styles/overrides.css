@@ -129,3 +129,26 @@
 .app-sidebar li {
   list-style: none;
 }
+
+/* ============================================================================
+   Rail context block — sits under the brand, above the nav
+   ----------------------------------------------------------------------------
+   Mail's mailbox switcher lives here rather than in the footer. Which mailbox
+   is open changes what every folder below it means, so it belongs ABOVE them —
+   and the footer is off-screen on a short window, which is how the switcher
+   shipped invisible the first time.
+
+   Hidden with the labels when the rail collapses to the icon strip, same rule
+   as the footer: a control whose whole content is a name is meaningless as a
+   nameless sliver.
+   ============================================================================ */
+.app-sidebar .sidebar-context {
+  padding: 0.75rem 1rem 0;
+  color: #fff;
+}
+
+@media (min-width: 992px) {
+  [data-vertical-style=overlay][data-toggled=icon-overlay-close]:not([data-icon-overlay=open]) .app-sidebar .sidebar-context {
+    display: none;
+  }
+}

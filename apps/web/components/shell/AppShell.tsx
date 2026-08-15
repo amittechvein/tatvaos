@@ -24,6 +24,7 @@ export function AppShell({
   children,
   bleed = false,
   railFooter,
+  railHeader,
 }: {
   scope: 'platform' | 'organisation' | 'mail' | 'family' | 'space';
   brand: string;
@@ -37,11 +38,13 @@ export function AppShell({
   bleed?: boolean;
   /** Rendered at the bottom of the rail. */
   railFooter?: React.ReactNode;
+  /** Rendered at the TOP of the rail, under the brand. */
+  railHeader?: React.ReactNode;
 }) {
   return (
     <div className="page">
       <Topbar scope={scope} />
-      <Sidebar sections={sections} brand={brand} scope={scope} footer={railFooter} />
+      <Sidebar sections={sections} brand={brand} scope={scope} footer={railFooter} header={railHeader} />
 
       <div className={`main-content app-content${bleed ? ' app-content--bleed' : ''}`}>
         {bleed ? (

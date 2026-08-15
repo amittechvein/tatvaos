@@ -33,13 +33,16 @@ export interface NavSection {
 export const PANEL_WIDTH = 262;
 export const PANEL_WIDTH_ICONS = 72;
 
-export function Sidebar({ sections, brand, scope, footer }: {
+export function Sidebar({ sections, brand, scope, footer, header }: {
   sections: NavSection[];
   brand: string;
   scope: 'platform' | 'organisation' | 'mail' | 'family' | 'space';
   /** Pinned to the bottom of the rail (Mail puts the storage meter here).
    *  Hidden while the rail is collapsed to icons — see overrides.css. */
   footer?: React.ReactNode;
+  /** Rendered directly under the brand, ABOVE the nav — for context that
+   *  changes what the nav beneath it means (Mail's mailbox switcher). */
+  header?: React.ReactNode;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState<string | null>(null);
@@ -98,6 +101,8 @@ export function Sidebar({ sections, brand, scope, footer }: {
           <img className="brand-name" src={`/brand/${logo}-name.png`} alt={brand} />
         </Link>
       </div>
+
+      {header && <div className="sidebar-context">{header}</div>}
 
       <div className="main-sidebar" id="sidebar-scroll">
         <nav className="main-menu-container nav nav-pills flex-column sub-open">

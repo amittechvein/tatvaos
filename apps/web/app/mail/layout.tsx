@@ -26,7 +26,8 @@ export default function MailLayout({ children }: { children: React.ReactNode }) 
           scope="mail"
           brand="TatvaOS"
           sections={mailNav()}
-          railFooter={<><MailboxSwitcher /><MailRailStorage /></>}
+          railHeader={<MailboxSwitcher />}
+          railFooter={<MailRailStorage />}
           bleed
         >
           {children}
