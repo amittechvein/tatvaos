@@ -261,10 +261,16 @@ function MiniMonth({ anchor, onPick }: { anchor: Date; onPick: (d: Date) => void
         </button>
       </div>
 
-      <div className="grid grid-cols-7 gap-px text-center">
+      {/* Flex, not grid-cols-7: YZEN's .grid utility overrides Tailwind's
+          column classes unless each count is re-declared in overrides.css,
+          and a layout that depends on remembering that is a layout that
+          breaks the next time somebody adds a view. */}
+      <div className="flex text-center">
         {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => (
-          <span key={i} className="text-[10px] text-ink-faint">{d}</span>
+          <span key={i} className="flex-1 text-[10px] text-ink-faint">{d}</span>
         ))}
+      </div>
+      <div className="flex flex-wrap text-center">
         {Array.from({ length: 42 }, (_, i) => addDays(grid, i)).map((d) => {
           const outside = d.getMonth() !== shown.getMonth();
           const isToday = sameDay(d, today);
@@ -279,6 +285,7 @@ function MiniMonth({ anchor, onPick }: { anchor: Date; onPick: (d: Date) => void
                   : isToday ? 'font-bold text-brand-600 hover:bg-canvas'
                   : outside ? 'text-ink-faint hover:bg-canvas'
                   : 'text-ink hover:bg-canvas'}`}
+              style={{ width: 'calc(100% / 7)' }}
             >
               {d.getDate()}
             </button>
@@ -423,46 +430,83 @@ function MonthGrid({ from, anchor, events, onOpen, onPick }: {
   const cells = Array.from({ length: 42 }, (_, i) => addDays(from, i));
   const today = new Date();
 
+  // Flex rows rather than a 6-row CSS grid. The month is the one place row
+  // height has to be equal AND bounded — a grid row sized by its content lets
+  // a busy Tuesday stretch the whole week and push the last row off screen.
+  const weeks = Array.from({ length: 6 }, (_, w) => cells.slice(w * 7, w * 7 + 7));
+
   return (
     <div className="flex h-full flex-col">
-      <div className="grid grid-cols-7 border-b border-line">
+      <div className="flex border-b border-line">
         {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => (
-          <div key={d} className="px-2 py-1.5 text-center text-xs text-ink-muted">{d}</div>
+          <div key={d} className="flex-1 px-2 py-2 text-center text-xs font-medium text-ink-muted">
+            {d}
+          </div>
         ))}
       </div>
-      <div className="grid flex-1 grid-cols-7 grid-rows-6">
-        {cells.map((day) => {
-          const dayEvents = events.filter((e) => sameDay(new Date(e.startsAt), day));
-          const outside = day.getMonth() !== anchor.getMonth();
-          return (
-            <div key={day.toISOString()}
-                 className={`min-h-0 overflow-hidden border-b border-l border-line/60 p-1 ${
-                   outside ? 'bg-canvas/40' : ''}`}>
-              <button type="button" onClick={() => onPick(day)}
-                      className={`mb-0.5 block w-full text-left text-xs ${
-                        sameDay(day, today)
-                          ? 'font-bold text-brand-600'
-                          : outside ? 'text-ink-faint' : 'text-ink-muted'}`}>
-                {day.getDate()}
-              </button>
-              {/* Three, then a count. A cell that lists ten is unreadable and
-                  the row heights start fighting each other. */}
-              {dayEvents.slice(0, 3).map((e) => (
-                <button key={`${e.id}-${e.occurrenceStartsAt ?? ''}`} type="button"
-                        onClick={() => onOpen(e)}
-                        className="mb-0.5 block w-full truncate rounded px-1 text-left text-[11px] text-white"
-                        style={{ background: e.colour, opacity: e.myResponse === 'declined' ? 0.45 : 1 }}>
-                  {e.title}
-                </button>
-              ))}
-              {dayEvents.length > 3 && (
-                <span className="px-1 text-[10px] text-ink-faint">
-                  +{dayEvents.length - 3} more
-                </span>
-              )}
-            </div>
-          );
-        })}
+
+      <div className="flex min-h-0 flex-1 flex-col">
+        {weeks.map((week, wi) => (
+          <div key={wi} className="flex min-h-0 flex-1 border-b border-line/60 last:border-0">
+            {week.map((day) => {
+              const dayEvents = events
+                .filter((e) => sameDay(new Date(e.startsAt), day))
+                .sort((a, b) => +new Date(a.startsAt) - +new Date(b.startsAt));
+              const outside = day.getMonth() !== anchor.getMonth();
+              const isToday = sameDay(day, today);
+
+              return (
+                <div key={day.toISOString()}
+                     className={`flex min-w-0 flex-1 flex-col overflow-hidden border-l border-line/60 first:border-l-0 ${
+                       outside ? 'bg-canvas/40' : ''}`}>
+                  {/* The date, and clicking empty space in the cell starts an
+                      event on that day — the gesture people expect. */}
+                  <button type="button" onClick={() => onPick(day)}
+                          className="flex shrink-0 justify-center pt-1"
+                          aria-label={`Add an event on ${day.toDateString()}`}>
+                    <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs transition ${
+                      isToday ? 'bg-brand-600 font-semibold text-white'
+                        : outside ? 'text-ink-faint hover:bg-canvas'
+                        : 'text-ink hover:bg-canvas'}`}>
+                      {day.getDate()}
+                    </span>
+                  </button>
+
+                  <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-1 pb-1">
+                    {dayEvents.map((e) => {
+                      const declined = e.myResponse === 'declined';
+                      return (
+                        <button
+                          key={`${e.id}-${e.occurrenceStartsAt ?? ''}`}
+                          type="button"
+                          onClick={() => onOpen(e)}
+                          title={`${e.title} · ${hhmm(e.startsAt)}`}
+                          className="mb-0.5 flex w-full items-center gap-1 rounded px-1 py-[1px] text-left text-[11px] transition hover:brightness-95"
+                          style={{
+                            background: declined ? 'transparent' : e.colour,
+                            color: declined ? e.colour : '#fff',
+                            textDecoration: declined ? 'line-through' : undefined,
+                          }}
+                        >
+                          {/* The time first, dimmed — scanning a month is
+                              "when", and a wall of titles hides it. */}
+                          {!e.isAllDay && (
+                            <span className="shrink-0 opacity-80">
+                              {new Date(e.startsAt).getHours()}
+                              {new Date(e.startsAt).getMinutes() > 0
+                                ? `:${String(new Date(e.startsAt).getMinutes()).padStart(2, '0')}` : ''}
+                            </span>
+                          )}
+                          <span className="min-w-0 flex-1 truncate">{e.title}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ))}
       </div>
     </div>
   );

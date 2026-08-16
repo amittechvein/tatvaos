@@ -34,6 +34,14 @@
 .grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 
+/* Seven columns: a week. Calendar's month grid and its mini month both use
+   this, and both rendered as ONE COLUMN until it was added — the exact
+   failure the note above predicts for any count not listed here. Six rows
+   likewise: a month grid is 6x7 and the rows must be equal height or the
+   last week collapses to nothing. */
+.grid-cols-7 { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.grid-rows-6 { grid-template-rows: repeat(6, minmax(0, 1fr)); }
+
 @media (min-width: 640px) {
   .sm\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .sm\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }

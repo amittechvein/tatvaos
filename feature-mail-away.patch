@@ -14,7 +14,7 @@ diff --git a/apps/api/Modules/Mail/Endpoints/MailEndpoints.cs b/apps/api/Modules
 +    //  Out of office.
 +    //
 +    //  A mailbox setting, so it needs full access - running a shared queue
-+    //  includes deciding what it says while nobody is reading it. Reading and
++    //  includes deciding what it says while nobody is reading it. Read and
 +    //  send_as do not reach this, the same as filters and the signature.
 +    //
 +    //  The window is stored as DATES. Which midnight they mean is decided when
@@ -112,7 +112,7 @@ diff --git a/apps/api/Modules/Mail/Endpoints/MailEndpoints.cs b/apps/api/Modules
 diff --git a/apps/api/Program.cs b/apps/api/Program.cs
 --- a/apps/api/Program.cs
 +++ b/apps/api/Program.cs
-@@ -154,6 +154,11 @@ builder.Services.AddHostedService<ThreadBackfillWorker>();
+@@ -155,6 +155,11 @@ builder.Services.AddHostedService<ThreadBackfillWorker>();
  builder.Services.AddScoped<ClamAvScanner>();
  builder.Services.AddHostedService<AttachmentScanWorker>();
  
@@ -121,9 +121,9 @@ diff --git a/apps/api/Program.cs b/apps/api/Program.cs
 +// bounce. Read the block at the top before relaxing any of them.
 +builder.Services.AddHostedService<VacationReplyWorker>();
 +
- builder.Services.AddOpenApi();
- 
- builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
+ // Calendar reminders. Polls every minute and records every send, rather than
+ // scheduling in-memory timers that a deploy would silently swallow.
+ builder.Services.AddHostedService<CalendarReminderWorker>();
 
 diff --git a/apps/web/lib/mail.ts b/apps/web/lib/mail.ts
 --- a/apps/web/lib/mail.ts

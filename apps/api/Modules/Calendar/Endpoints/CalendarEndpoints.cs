@@ -186,7 +186,11 @@ public static class CalendarEndpoints
 
             foreach (var occ in Recurrence.Expand(e.StartsAt, e.RecurrenceRule, e.Timezone, start, end))
             {
-                var ex = skip.FirstOrDefault(x => x.OccurrenceStartsAt == occ);
+                // Tolerant match for the same reason the write path is
+                // canonicalised: an exact instant comparison across JSON,
+                // a query string and Postgres is a coin toss.
+                var ex = skip.FirstOrDefault(
+                    x => Math.Abs((x.OccurrenceStartsAt - occ).TotalSeconds) < 1);
                 if (ex is not null && ex.IsCancelled) continue;
 
                 var s = ex?.StartsAt ?? occ;
@@ -430,8 +434,36 @@ public static class CalendarEndpoints
 
         // Cancelling one occurrence of a series is an exception row, not a
         // deletion — "not this week" must not remove every other week.
-        if (occurrenceStartsAt is DateTimeOffset occ && ev.RecurrenceRule is not null)
+        if (occurrenceStartsAt is DateTimeOffset asked && ev.RecurrenceRule is not null)
         {
+            // THE OCCURRENCE IS RESOLVED SERVER-SIDE, NOT TRUSTED AS SENT.
+            //
+            // The exception row is matched against expanded occurrences on
+            // every read, so the two instants have to be identical to the
+            // tick. A value that has been through JSON, a query string and
+            // Postgres can differ from the expanded one by sub-second dust —
+            // and then the row is written, the delete reports success, and
+            // the occurrence still appears. Which is exactly what happened.
+            //
+            // So: expand a window around what was asked for, take the
+            // occurrence that matches within a second, and store THAT. The
+            // stored key is now by construction the same value the read path
+            // will produce.
+            var canonical = Recurrence
+                .Expand(ev.StartsAt, ev.RecurrenceRule, ev.Timezone,
+                        asked.AddMinutes(-1), asked.AddMinutes(1))
+                .Cast<DateTimeOffset?>()
+                .FirstOrDefault(o => Math.Abs((o!.Value - asked).TotalSeconds) < 1);
+
+            // Said out loud rather than silently doing nothing. A delete that
+            // reports success and changes nothing is the worst answer here.
+            if (canonical is not DateTimeOffset occ)
+                return Results.BadRequest(new
+                {
+                    error = "That occurrence is not part of this repeating event. "
+                          + "Reload the calendar and try again.",
+                });
+
             var ex = await db.CalendarEventExceptions
                 .FirstOrDefaultAsync(x => x.EventId == ev.Id && x.OccurrenceStartsAt == occ, ct);
             if (ex is null)
@@ -442,7 +474,12 @@ public static class CalendarEndpoints
             else ex.IsCancelled = true;
 
             await db.SaveChangesAsync(ct);
-            return Results.Ok(new { cancelled = "occurrence" });
+
+            await audit.WriteAsync("calendar.occurrence.cancelled", "calendar.event",
+                ev.Id.ToString(), before: new { ev.Title, occurrence = occ },
+                ct: ct, productCode: "calendar");
+
+            return Results.Ok(new { cancelled = "occurrence", occurrence = occ });
         }
 
         ev.DeletedAt = DateTimeOffset.UtcNow;
