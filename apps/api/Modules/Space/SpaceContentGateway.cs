@@ -128,19 +128,18 @@ public sealed class SpaceContentGateway(
         }
 
         var maxBytes = config.GetValue<long?>("Space:MaxFileBytes") ?? 2L * 1024 * 1024 * 1024;
-        if (declaredBytes > maxBytes)
-            return new(null, $"Files are limited to {maxBytes / (1024 * 1024)} MB each.", "file_too_large");
 
-        var status = await db.Tenants.AsNoTracking()
-            .Where(t => t.Id == tenant.TenantId).Select(t => t.Status).FirstOrDefaultAsync(ct);
-        if (status == "suspended")
-            return new(null, "This organisation is suspended, so new files cannot be added.", "suspended");
-
-        var cap = await allocator.GetCapacityAsync(tenant.TenantId, "drive", ct);
-        if (cap.TotalBytes <= 0)
-            return new(null, "No storage is allocated to Space.", "no_allocation");
-        if (cap.UsedBytes + Math.Max(0, declaredBytes) > cap.TotalBytes)
-            return new(null, "There is not enough Space storage left for this file.", "full");
+        // THE SAME GATE the upload endpoint uses — one-allowance-per-person
+        // (docs/STORAGE_MODEL.md): personal content checks the owning person
+        // via core.user_storage(), organisational content checks the org
+        // pool. One implementation, deliberately: two versions of "is there
+        // room" eventually disagree, and the one that refuses is the one the
+        // customer notices.
+        var verdict = await Endpoints.SpaceEndpoints.EvaluateStorageAsync(
+            db, allocator, tenant.TenantId, ownership, owner, uid,
+            declaredBytes, declaredBytes, maxBytes, ct);
+        if (!verdict.Ok)
+            return new(null, verdict.Message, verdict.Reason);
 
         var name = Path.GetFileName(fileName ?? "").Trim();
         if (string.IsNullOrEmpty(name)) name = "Untitled";

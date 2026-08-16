@@ -626,29 +626,112 @@ public static class SpaceEndpoints
     }
 
     /// <summary>
-    /// The storage gate, before any byte is read. Numbers come from
-    /// StorageAllocator against product 'drive' — Space owns no quota. One
-    /// status (413) for every refusal; the caller branches on reason.
+    /// The storage gate, before any byte is read — the ONE-ALLOWANCE-PER-
+    /// PERSON model (docs/STORAGE_MODEL.md, migration 31).
+    ///
+    /// PERSONAL content is charged to the person who will OWN the file — the
+    /// caller, except inside a colleague's shared personal tree, where the
+    /// bytes land on the folder owner's meter. The gate checks whoever the
+    /// meter will charge, or enforcement and metering disagree. The figure
+    /// comes from core.user_storage(), the single definition of "how full is
+    /// this person" — NEVER a SUM in application code, which would be the
+    /// second implementation and therefore the bug.
+    ///
+    /// ORGANISATIONAL content stays on the org pool: data with no owner is
+    /// never charged to a human.
+    ///
+    /// Shared with SpaceContentGateway so the API and the cross-product save
+    /// path cannot drift apart. One status (413) for every refusal; the
+    /// caller branches on reason, and "full" now names WHOSE storage is full
+    /// because the fix is different in each case.
     /// </summary>
-    private static async Task<IResult?> CheckQuotaAsync(
+    internal sealed record QuotaVerdict(string? Message, string? Reason)
+    {
+        public bool Ok => Message is null;
+    }
+
+    private sealed class UserStorageRow
+    {
+        public long? QuotaBytes { get; set; }
+        public long UsedBytes { get; set; }
+    }
+
+    internal static async Task<QuotaVerdict> EvaluateStorageAsync(
         AppDbContext db, StorageAllocator allocator, Guid tenantId,
+        string ownershipType, Guid? ownerUserId, Guid callerId,
         long deltaBytes, long declaredBytes, long maxFileBytes, CancellationToken ct)
     {
         if (declaredBytes > maxFileBytes)
-            return Error(413, $"Files are limited to {maxFileBytes / (1024 * 1024)} MB each.", "file_too_large");
+            return new($"Files are limited to {maxFileBytes / (1024 * 1024)} MB each.", "file_too_large");
 
         var status = await db.Tenants.AsNoTracking()
             .Where(t => t.Id == tenantId).Select(t => t.Status).FirstOrDefaultAsync(ct);
         if (status == "suspended")
-            return Error(413, "This organisation is suspended, so new files cannot be added.", "suspended");
+            return new("This organisation is suspended, so new files cannot be added.", "suspended");
 
+        if (ownershipType == "personal")
+        {
+            if (ownerUserId is not Guid owner)
+                // Retained, owner-less destination: nobody's meter can take
+                // the charge. An admin reassigns it or hands it to the org.
+                return new("This folder's owner has been removed, so nothing can be added here until an administrator reassigns it.", "no_allocation");
+
+            var row = await db.Database.SqlQuery<UserStorageRow>($"""
+                SELECT quota_bytes AS "QuotaBytes", used_bytes AS "UsedBytes"
+                  FROM core.user_storage({owner})
+                """).FirstOrDefaultAsync(ct);
+            if (row is null)
+                return new("This account's storage could not be determined.", "no_allocation");
+
+            // NULL allowance = inherit — department default, then the
+            // organisation's, through the same resolver mailbox quotas have
+            // always used. An explicit personal figure wins outright.
+            long quota;
+            if (row.QuotaBytes is long explicitQuota)
+            {
+                quota = explicitQuota;
+            }
+            else
+            {
+                var deptId = await db.Users.AsNoTracking()
+                    .Where(u => u.Id == owner).Select(u => u.DepartmentId).FirstOrDefaultAsync(ct);
+                quota = await allocator.ResolveQuotaAsync(tenantId, deptId, null, "drive", ct);
+            }
+            if (quota <= 0)
+                return new("No storage allowance is set for this account. An administrator can set one.", "no_allocation");
+
+            if (row.UsedBytes + Math.Max(0, deltaBytes) > quota)
+                return owner == callerId
+                    ? new($"You have used all {HumanBytes(quota)} of your storage. Empty your trash or ask an administrator for more.", "full")
+                    : new("The owner of this folder has no storage left for new files.", "full");
+
+            return new(null, null);
+        }
+
+        // Organisational content draws on the org pool, exactly as before.
         var cap = await allocator.GetCapacityAsync(tenantId, "drive", ct);
         if (cap.TotalBytes <= 0)
-            return Error(413, "No storage is allocated to Space. An administrator can allocate some on the storage page.", "no_allocation");
+            return new("No storage is allocated to Space. An administrator can allocate some on the storage page.", "no_allocation");
         if (cap.UsedBytes + Math.Max(0, deltaBytes) > cap.TotalBytes)
-            return Error(413, "There is not enough Space storage left for this file. Free some space or raise the allocation.", "full");
+            return new("Your organisation's Space storage is full. An administrator can free space or raise the allocation.", "full");
 
-        return null;
+        return new(null, null);
+    }
+
+    private static string HumanBytes(long b)
+    {
+        const long GB = 1024L * 1024 * 1024;
+        return b >= GB ? $"{b / (double)GB:0.#} GB" : $"{b / (1024.0 * 1024):0} MB";
+    }
+
+    private static async Task<IResult?> CheckQuotaAsync(
+        AppDbContext db, StorageAllocator allocator, Guid tenantId,
+        string ownershipType, Guid? ownerUserId, Guid callerId,
+        long deltaBytes, long declaredBytes, long maxFileBytes, CancellationToken ct)
+    {
+        var v = await EvaluateStorageAsync(db, allocator, tenantId,
+            ownershipType, ownerUserId, callerId, deltaBytes, declaredBytes, maxFileBytes, ct);
+        return v.Ok ? null : Error(413, v.Message!, v.Reason);
     }
 
     private static long MaxFileBytes(IConfiguration config)
@@ -770,6 +853,7 @@ public static class SpaceEndpoints
                 dest = (ownership, owner, fid);
 
                 var quotaErr = await CheckQuotaAsync(db, allocator, tenant.TenantId,
+                    dest.OwnershipType, dest.OwnerUserId, uid,
                     declared, declared, MaxFileBytes(config), token);
                 return (quotaErr, declared);
             },
@@ -827,6 +911,7 @@ public static class SpaceEndpoints
             {
                 // Quota on the DELTA — replacing 1 GB with 1 GB costs nothing.
                 var quotaErr = await CheckQuotaAsync(db, allocator, tenant.TenantId,
+                    file.OwnershipType, file.OwnerUserId, uid,
                     declared - oldSize, declared, MaxFileBytes(config), token);
                 return (quotaErr, declared - oldSize);
             },
