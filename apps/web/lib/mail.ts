@@ -144,6 +144,26 @@ export interface ThreadPage {
 }
 
 /** An address this mailbox has blocked. Blocked mail is filed to Junk, not refused. */
+/**
+ * A mailbox's out-of-office reply.
+ *
+ * `firstDay` and `lastDay` are plain dates (YYYY-MM-DD), not instants. Which
+ * midnight they mean is decided when a message arrives, against the mailbox
+ * owner's timezone - so do not turn these into Date objects and back.
+ */
+export interface MailAway {
+  enabled: boolean;
+  firstDay: string;
+  lastDay?: string | null;
+  subject: string;
+  bodyText: string;
+  bodyHtml: string;
+  /** Only answer people already in the owner's contacts. */
+  contactsOnly: boolean;
+  /** Only answer people with an address inside this organisation. */
+  orgOnly: boolean;
+}
+
 export interface BlockedSender {
   id: string;
   address: string;
@@ -367,6 +387,18 @@ export const mailApi = {
       .then((r) => json<{ deleted: boolean }>(r, 'Could not discard the draft.')),
 
   /** This mailbox's signature. Also included in the bootstrap response. */
+  /**
+   * The out-of-office settings. Requires full access to the mailbox, so a
+   * colleague with read or send_as gets the empty shape back rather than an
+   * error - the control simply is not theirs.
+   */
+  away: (f: AuthedFetch) =>
+    f('/mail/away').then((r) => json<MailAway>(r, 'Could not load your away message.')),
+
+  saveAway: (f: AuthedFetch, away: MailAway) =>
+    f('/mail/away', { method: 'PUT', body: JSON.stringify(away) })
+      .then((r) => json<MailAway>(r, 'Could not save your away message.')),
+
   signature: (f: AuthedFetch) =>
     f('/mail/signature').then((r) => json<MailSignature>(r, 'Could not load your signature.')),
 
