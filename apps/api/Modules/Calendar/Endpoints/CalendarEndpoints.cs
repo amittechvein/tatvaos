@@ -174,7 +174,7 @@ public static class CalendarEndpoints
             .Where(c => visible.Contains(c.Id))
             .ToDictionaryAsync(c => c.Id, c => new { c.Colour, c.Name }, ct);
 
-        var rows = new List<object>();
+        var rows = new List<(DateTimeOffset Start, object Row)>();
 
         foreach (var e in plain)
             rows.Add(Shape(e, e.StartsAt, e.EndsAt, null));
@@ -195,12 +195,16 @@ public static class CalendarEndpoints
             }
         }
 
+        // Ordered by the KEY carried alongside each row, not by reflecting
+        // into an anonymous type through `dynamic`. Anonymous types are
+        // internal, the runtime binder can refuse them, and the failure would
+        // arrive at request time looking like "the calendar is broken".
         return Results.Ok(new
         {
-            events = rows.OrderBy(r => ((dynamic)r).startsAt).ToList(),
+            events = rows.OrderBy(r => r.Start).Select(r => r.Row).ToList(),
         });
 
-        object Shape(CalendarEvent e, DateTimeOffset s, DateTimeOffset f,
+        (DateTimeOffset Start, object Row) Shape(CalendarEvent e, DateTimeOffset s, DateTimeOffset f,
                      DateTimeOffset? occurrenceOf, string? title = null, string? location = null)
         {
             var cal = colours.GetValueOrDefault(e.CalendarId);
@@ -210,7 +214,7 @@ public static class CalendarEndpoints
             // that sharing a calendar means surrendering every detail on it.
             var hide = e.Visibility == "private" && !mine;
 
-            return new
+            return (s, new
             {
                 e.Id,
                 calendarId = e.CalendarId,
@@ -237,7 +241,7 @@ public static class CalendarEndpoints
                 attendees = hide ? [] : (attendeesByEvent.GetValueOrDefault(e.Id) ?? [])
                     .Select(a => new { a.Email, a.DisplayName, a.Role, a.Status })
                     .ToList(),
-            };
+            });
         }
     }
 

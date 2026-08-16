@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import {
@@ -42,6 +43,7 @@ export default function CalendarPage({ params }: { params: Promise<{ view: strin
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [composing, setComposing] = useState<{ start: Date; end: Date } | null>(null);
   const [open, setOpen] = useState<CalendarEvent | null>(null);
 
@@ -95,7 +97,7 @@ export default function CalendarPage({ params }: { params: Promise<{ view: strin
       {/* ---- Toolbar ---- */}
       <header className="flex flex-wrap items-center gap-2 rounded-card border border-line bg-surface px-4 py-2.5">
         <button type="button" onClick={() => setAnchor(startOfDay(new Date()))}
-                className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink-muted transition hover:bg-canvas hover:text-ink">
+                className="rounded-lg border border-line px-3 py-1.5 text-sm font-medium text-ink-muted transition hover:bg-canvas hover:text-ink">
           Today
         </button>
         <span className="flex items-center">
@@ -108,51 +110,83 @@ export default function CalendarPage({ params }: { params: Promise<{ view: strin
             <Icon name="chevron-right" className="h-4 w-4" />
           </button>
         </span>
-        <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-ink">{heading}</h1>
+        <h1 className="min-w-0 flex-1 truncate text-lg font-semibold text-ink">{heading}</h1>
+
+        {/* The view switcher belongs in the toolbar, not only in the rail:
+            day/week/month is the control people reach for constantly, and
+            making them cross the screen for it is a tax on every glance. */}
+        <div className="hidden items-center rounded-lg border border-line p-0.5 sm:flex">
+          {(['day', 'week', 'month', 'agenda'] as const).map((v) => (
+            <Link key={v} href={`/calendar/${v}`}
+                  className={`rounded-md px-3 py-1 text-sm capitalize transition ${
+                    v === view ? 'bg-brand-600 text-white' : 'text-ink-muted hover:text-ink'}`}>
+              {v}
+            </Link>
+          ))}
+        </div>
 
         <button type="button"
                 onClick={() => {
-                  // A new event defaults to the next whole hour, one hour long
-                  // — the overwhelmingly common shape, and it saves two edits.
                   const s = new Date();
                   s.setMinutes(0, 0, 0);
                   s.setHours(s.getHours() + 1);
                   setComposing({ start: s, end: new Date(s.getTime() + 60 * 60 * 1000) });
                 }}
-                className="rounded-full bg-brand-600 px-5 py-1.5 text-sm font-semibold text-white transition hover:bg-brand-700">
-          Create
+                className="flex items-center gap-1.5 rounded-full bg-brand-600 px-5 py-1.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700">
+          <span className="text-base leading-none">+</span> Create
         </button>
       </header>
 
+      {/* Failures are SHOWN. The delete bug was invisible for exactly this
+          reason: the request 400'd, the catch swallowed it, and the event
+          stayed on screen looking like nothing had happened. */}
       {error && (
-        <p className="rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-sm text-danger">{error}</p>
+        <div className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-sm text-danger">
+          <span className="flex-1">{error}</span>
+          <button type="button" onClick={() => setError(null)} aria-label="Dismiss"
+                  className="shrink-0 opacity-60 hover:opacity-100">×</button>
+        </div>
+      )}
+      {notice && (
+        <div className="flex items-start gap-2 rounded-lg border border-brand-600/30 bg-brand-50 px-3 py-2 text-sm text-ink">
+          <span className="flex-1">{notice}</span>
+          <button type="button" onClick={() => setNotice(null)} aria-label="Dismiss"
+                  className="shrink-0 opacity-60 hover:opacity-100">×</button>
+        </div>
       )}
 
       <div className="flex min-h-0 flex-1 gap-3">
         {/* ---- Calendar list ---- */}
-        <aside className="hidden w-56 shrink-0 flex-col overflow-y-auto rounded-card border border-line bg-surface p-3 lg:flex">
-          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
-            My calendars
+        <aside className="hidden w-60 shrink-0 flex-col gap-4 overflow-y-auto rounded-card border border-line bg-surface p-3 lg:flex">
+          {/* A mini month: jumping three weeks ahead should not mean clicking
+              "next" three times, which is what the arrows alone forced. */}
+          <MiniMonth anchor={anchor} onPick={(d) => setAnchor(d)} />
+
+          <div>
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
+              My calendars
+            </div>
+            {calendars.map((c) => (
+              <label key={c.id}
+                     className="mb-1 flex cursor-pointer items-center gap-2 rounded-lg px-1.5 py-1 text-sm text-ink transition hover:bg-canvas">
+                <input
+                  type="checkbox"
+                  checked={!hidden.has(c.id)}
+                  onChange={() => setHidden((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(c.id)) next.delete(c.id); else next.add(c.id);
+                    return next;
+                  })}
+                  className="h-3.5 w-3.5 shrink-0"
+                  style={{ accentColor: c.colour }}
+                />
+                <span className="min-w-0 flex-1 truncate">{c.name}</span>
+                {c.kind === 'resource' && (
+                  <span className="shrink-0 rounded bg-canvas px-1 text-[10px] text-ink-faint">room</span>
+                )}
+              </label>
+            ))}
           </div>
-          {calendars.map((c) => (
-            <label key={c.id} className="mb-1.5 flex cursor-pointer items-center gap-2 text-sm text-ink">
-              <input
-                type="checkbox"
-                checked={!hidden.has(c.id)}
-                onChange={() => setHidden((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(c.id)) next.delete(c.id); else next.add(c.id);
-                  return next;
-                })}
-                className="h-3.5 w-3.5 shrink-0"
-                style={{ accentColor: c.colour }}
-              />
-              <span className="min-w-0 truncate">{c.name}</span>
-              {c.kind === 'resource' && (
-                <span className="shrink-0 text-[10px] text-ink-faint">room</span>
-              )}
-            </label>
-          ))}
         </aside>
 
         {/* ---- The view ---- */}
@@ -193,9 +227,64 @@ export default function CalendarPage({ params }: { params: Promise<{ view: strin
         <EventDetail
           event={open}
           onClose={() => setOpen(null)}
-          onChanged={async () => { setOpen(null); await load(); }}
+          onChanged={async (msg) => { setOpen(null); if (msg) setNotice(msg); await load(); }}
         />
       )}
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+//  Mini month — jumping about
+// ---------------------------------------------------------------------------
+function MiniMonth({ anchor, onPick }: { anchor: Date; onPick: (d: Date) => void }) {
+  const [shown, setShown] = useState(() => new Date(anchor.getFullYear(), anchor.getMonth(), 1));
+  const grid = startOfMonthGrid(shown);
+  const today = new Date();
+
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between">
+        <button type="button" aria-label="Previous month"
+                onClick={() => setShown((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))}
+                className="flex h-6 w-6 items-center justify-center rounded text-ink-faint hover:bg-canvas hover:text-ink">
+          <Icon name="chevron-left" className="h-3.5 w-3.5" />
+        </button>
+        <span className="text-xs font-semibold text-ink">
+          {shown.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
+        </span>
+        <button type="button" aria-label="Next month"
+                onClick={() => setShown((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))}
+                className="flex h-6 w-6 items-center justify-center rounded text-ink-faint hover:bg-canvas hover:text-ink">
+          <Icon name="chevron-right" className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      <div className="grid grid-cols-7 gap-px text-center">
+        {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => (
+          <span key={i} className="text-[10px] text-ink-faint">{d}</span>
+        ))}
+        {Array.from({ length: 42 }, (_, i) => addDays(grid, i)).map((d) => {
+          const outside = d.getMonth() !== shown.getMonth();
+          const isToday = sameDay(d, today);
+          const isAnchor = sameDay(d, anchor);
+          return (
+            <button
+              key={d.toISOString()}
+              type="button"
+              onClick={() => onPick(startOfDay(d))}
+              className={`h-6 rounded-full text-[11px] transition ${
+                isAnchor ? 'bg-brand-600 font-semibold text-white'
+                  : isToday ? 'font-bold text-brand-600 hover:bg-canvas'
+                  : outside ? 'text-ink-faint hover:bg-canvas'
+                  : 'text-ink hover:bg-canvas'}`}
+            >
+              {d.getDate()}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -267,28 +356,48 @@ function TimeGrid({ days, from, events, onOpen, onPick }: {
                   />
                 ))}
 
+                {/* The current-time line, on today's column only. It is the
+                    single most-read thing on a calendar — "am I late" — and a
+                    grid without one makes you compute it from the hour
+                    labels. */}
+                {sameDay(day, today) && (
+                  <div className="pointer-events-none absolute left-0 right-0 z-10"
+                       style={{ top: (today.getHours() + today.getMinutes() / 60) * HOUR_PX }}>
+                    <div className="relative h-px bg-danger">
+                      <span className="absolute -left-1 -top-[3px] h-[7px] w-[7px] rounded-full bg-danger" />
+                    </div>
+                  </div>
+                )}
+
                 {dayEvents.map((e) => {
                   const s = new Date(e.startsAt);
                   const f = new Date(e.endsAt);
                   const top = (s.getHours() + s.getMinutes() / 60 - DAY_START) * HOUR_PX;
-                  const height = Math.max(18, ((f.getTime() - s.getTime()) / 3600000) * HOUR_PX);
+                  const height = Math.max(20, ((f.getTime() - s.getTime()) / 3600000) * HOUR_PX);
+                  const declined = e.myResponse === 'declined';
                   return (
                     <button
                       key={`${e.id}-${e.occurrenceStartsAt ?? ''}`}
                       type="button"
                       onClick={() => onOpen(e)}
-                      title={`${e.title} · ${hhmm(e.startsAt)}`}
-                      className="absolute left-1 right-1 overflow-hidden rounded px-1.5 py-0.5 text-left text-[11px] text-white"
+                      title={`${e.title} · ${hhmm(e.startsAt)}–${hhmm(e.endsAt)}`}
+                      className="absolute left-1 right-1 overflow-hidden rounded-md px-1.5 py-0.5 text-left text-[11px] shadow-sm transition hover:brightness-95"
                       style={{
                         top, height,
-                        background: e.colour,
-                        // A declined meeting still shows — you may want to
-                        // change your mind — but it stops shouting.
-                        opacity: e.myResponse === 'declined' ? 0.45 : 1,
+                        // Declined meetings keep their place — you may change
+                        // your mind — but stop shouting: outlined, not filled.
+                        background: declined ? 'transparent' : e.colour,
+                        border: `1px solid ${e.colour}`,
+                        color: declined ? e.colour : '#fff',
+                        textDecoration: declined ? 'line-through' : undefined,
                       }}
                     >
                       <span className="block truncate font-semibold">{e.title}</span>
-                      {height > 32 && <span className="block truncate">{hhmm(e.startsAt)}</span>}
+                      {height > 34 && (
+                        <span className="block truncate opacity-90">
+                          {hhmm(e.startsAt)}{e.location ? ` · ${e.location}` : ''}
+                        </span>
+                      )}
                     </button>
                   );
                 })}
@@ -569,30 +678,36 @@ function EventDialog({ start, end, calendars, onClose, onSaved }: {
 function EventDetail({ event, onClose, onChanged }: {
   event: CalendarEvent;
   onClose: () => void;
-  onChanged: () => Promise<void>;
+  onChanged: (notice?: string) => Promise<void>;
 }) {
   const { authedFetch } = useAuth();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  async function run(fn: () => Promise<unknown>) {
+  async function run(fn: () => Promise<unknown>, notice?: string) {
     setBusy(true); setErr(null);
-    try { await fn(); await onChanged(); }
+    try { await fn(); await onChanged(notice); }
+    // The error is SHOWN and the dialog stays open. Silently closing on a
+    // failure is what made the broken delete look like a working one.
     catch (e) { setErr(e instanceof Error ? e.message : 'That did not work.'); setBusy(false); }
   }
 
-  async function remove() {
-    // A series and one occurrence are different deletions, and getting it
-    // wrong destroys a recurring meeting. So ask, rather than assume.
-    if (event.isRecurring && event.occurrenceStartsAt) {
-      const justThis = window.confirm(
-        'Delete only this occurrence?\n\nOK — just this one.\nCancel — the whole repeating event.');
-      await run(() => calendarApi.remove(authedFetch, event.id,
-        justThis ? event.occurrenceStartsAt! : undefined));
-      return;
-    }
-    if (!window.confirm(`Delete "${event.title}"?`)) return;
-    await run(() => calendarApi.remove(authedFetch, event.id));
+  /**
+   * Deleting a recurring event is TWO different actions and the wrong one
+   * destroys a standing meeting, so it is a real choice with named buttons —
+   * not a confirm() whose OK and Cancel mean "this one" and "all of them",
+   * which is a coin toss dressed as a question.
+   */
+  const [confirming, setConfirming] = useState(false);
+
+  async function removeSeries() {
+    await run(() => calendarApi.remove(authedFetch, event.id),
+              `"${event.title}" deleted.`);
+  }
+
+  async function removeOccurrence() {
+    await run(() => calendarApi.remove(authedFetch, event.id, event.occurrenceStartsAt!),
+              'That occurrence was removed. The rest of the series is unchanged.');
   }
 
   return (
@@ -657,18 +772,45 @@ function EventDetail({ event, onClose, onChanged }: {
           )}
         </div>
 
-        <div className="flex justify-between border-t border-line px-5 py-3">
-          {event.isOrganiser ? (
-            <button type="button" disabled={busy} onClick={() => void remove()}
-                    className="text-sm text-danger hover:underline">
-              Delete
+        {confirming ? (
+          <div className="border-t border-line bg-canvas/60 px-5 py-3">
+            <p className="mb-2 text-sm text-ink">
+              {event.isRecurring && event.occurrenceStartsAt
+                ? 'This event repeats. What should be deleted?'
+                : `Delete "${event.title}"?`}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {event.isRecurring && event.occurrenceStartsAt && (
+                <button type="button" disabled={busy} onClick={() => void removeOccurrence()}
+                        className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink hover:bg-surface">
+                  Only this one
+                </button>
+              )}
+              <button type="button" disabled={busy} onClick={() => void removeSeries()}
+                      className="rounded-lg bg-danger px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50">
+                {event.isRecurring ? 'The whole series' : 'Delete'}
+              </button>
+              <button type="button" disabled={busy} onClick={() => setConfirming(false)}
+                      className="rounded-lg px-3 py-1.5 text-sm text-ink-muted hover:text-ink">
+                Keep it
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between border-t border-line px-5 py-3">
+            {event.isOrganiser ? (
+              <button type="button" disabled={busy} onClick={() => setConfirming(true)}
+                      className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-danger transition hover:bg-danger/10">
+                <Icon name="trash" className="h-4 w-4" />
+                Delete
+              </button>
+            ) : <span />}
+            <button type="button" onClick={onClose}
+                    className="rounded-lg border border-line px-4 py-1.5 text-sm text-ink-muted hover:bg-canvas hover:text-ink">
+              Close
             </button>
-          ) : <span />}
-          <button type="button" onClick={onClose}
-                  className="rounded-lg border border-line px-4 py-1.5 text-sm text-ink-muted hover:bg-canvas hover:text-ink">
-            Close
-          </button>
-        </div>
+          </div>
+        )}
       </div>
     </>
   );

@@ -100,7 +100,12 @@ export const calendarApi = {
       .then((r) => json<unknown>(r, 'Could not save the change.')),
 
   remove: (f: AuthedFetch, id: string, occurrenceStartsAt?: string) =>
-    f(`/calendar/events/${id}` + (occurrenceStartsAt ? `?occurrenceStartsAt=${occurrenceStartsAt}` : ''),
+    // encodeURIComponent is NOT decoration: an ISO timestamp contains "+05:30",
+    // and a bare "+" in a query string means SPACE. The server was receiving
+    // "...T10:00:00 05:30", failing to bind, and refusing every
+    // single-occurrence delete with a 400 the UI swallowed.
+    f(`/calendar/events/${id}`
+      + (occurrenceStartsAt ? `?occurrenceStartsAt=${encodeURIComponent(occurrenceStartsAt)}` : ''),
       { method: 'DELETE' })
       .then((r) => json<{ cancelled: string }>(r, 'Could not delete the event.')),
 
