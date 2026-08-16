@@ -178,3 +178,45 @@ public class SpaceStar
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
+
+/// <summary>
+/// A public download link — a CAPABILITY, treated like a credential. The
+/// token itself is never stored: TokenHash is SHA-256 of it, and the
+/// plaintext exists exactly once, in the create response. Expiry is
+/// required; revocation is a stamp so the count and audit story survive.
+/// PasswordHash is reserved for v2 and unused. See
+/// SPACE_API_PUBLIC_LINKS_ADDENDUM.md and 20260816-space-public-links.sql.
+/// </summary>
+public class SpacePublicLink
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid FileId { get; set; }
+
+    [MaxLength(64)] public required string TokenHash { get; set; }
+
+    public Guid? CreatedByUserId { get; set; }
+
+    public DateTimeOffset ExpiresAt { get; set; }
+    public int? MaxDownloads { get; set; }
+    public int DownloadCount { get; set; }
+
+    /// <summary>Reserved for v2 password protection. Unused.</summary>
+    [MaxLength(200)] public string? PasswordHash { get; set; }
+
+    public DateTimeOffset? RevokedAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// Space's own per-tenant policy — NOT core.tenants, which is the identity
+/// table and not a junk drawer for product flags. An absent row means the
+/// defaults. allow_public_links=false closes the TAP: existing links 404
+/// immediately (the resolve predicate checks it), reversibly.
+/// </summary>
+public class SpaceTenantSetting
+{
+    public Guid TenantId { get; set; }
+    public bool AllowPublicLinks { get; set; } = true;
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}

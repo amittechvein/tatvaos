@@ -1347,7 +1347,7 @@ public static class SpaceEndpoints
     /// personal items, edit on organisational. view/comment callers get a
     /// 403 — who else can see a thing is not theirs to know.
     /// </summary>
-    private static async Task<(IResult? Error, string Ownership, Guid? Owner)>
+    internal static async Task<(IResult? Error, string Ownership, Guid? Owner)>
         ShareGateAsync(Guid id, bool isFile, AppDbContext db, Guid uid, CancellationToken ct)
     {
         string ownership;
