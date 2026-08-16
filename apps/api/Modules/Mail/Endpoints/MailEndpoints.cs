@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using MimeKit;
 using TatvaOS.Api.Modules.Admin;
 using TatvaOS.Api.Modules.Family;
+using TatvaOS.Api.Modules.Space;
 using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Tenancy;
 
@@ -48,6 +49,7 @@ public static class MailEndpoints
         g.MapGet("/messages/{id:guid}/source", MessageSourceAsync);
         g.MapPost("/send", SendAsync);
         g.MapGet("/directory", DirectoryAsync);
+        g.MapPost("/attachments/to-space", AttachToSpaceAsync);
 
         g.MapGet("/blocked", ListBlockedAsync);
         g.MapPost("/blocked", BlockSenderAsync);
@@ -252,6 +254,107 @@ public static class MailEndpoints
         // a failure, it is the state the caller asked for.
         return Results.Ok(new { revoked = true });
     }
+
+    // ------------------------------------------------------------------
+    //  Large attachments - park the file in Space and mail a link instead.
+    //
+    //  This endpoint does the PARKING only. It returns a file id; it does not
+    //  return a URL, because a link an outsider can open does not exist yet -
+    //  space.shares can only address a person in this tenant or the whole
+    //  tenant, so a link mailed to a customer would land them on a sign-in
+    //  wall. Space is building a public token; the composer should not offer
+    //  "send as link" until it does.
+    //
+    //  IT GOES THROUGH SpaceContentGateway, not a file path of Mail's own.
+    //  That is what makes the quota gate the SAME one every upload uses -
+    //  core.user_storage() for a person, the org pool for organisational
+    //  content. A second implementation of "is there room" would eventually
+    //  disagree with the first, and the one that refuses is the one the
+    //  customer notices.
+    //
+    //  NO MAILBOX IS RESOLVED. The file lands in the signed-in person's own
+    //  Space, whichever mailbox they happen to be composing from - resolving
+    //  one here would wrongly refuse somebody writing from a shared queue.
+    // ------------------------------------------------------------------
+    private static async Task<IResult> AttachToSpaceAsync(
+        HttpRequest request, AppDbContext db, TenantContext tenant,
+        SpaceContentGateway space, CancellationToken ct)
+    {
+        if (!request.HasFormContentType)
+            return Results.BadRequest(new { ok = false, reason = "bad_request", error = "Expected a multipart form." });
+
+        var form = await request.ReadFormAsync(ct);
+        var file = form.Files.GetFile("file") ?? form.Files.FirstOrDefault();
+        if (file is null || file.Length <= 0)
+            return Results.BadRequest(new { ok = false, reason = "bad_request", error = "No file was sent." });
+
+        await using var stream = file.OpenReadStream();
+
+        var outcome = await space.SaveAsync(
+            stream,
+            file.FileName,
+            file.ContentType,
+            file.Length,
+            folderId: await MailAttachmentsFolderAsync(space, ct),
+            scope: "personal",
+            ct: ct);
+
+        if (outcome.Ok)
+            return Results.Ok(new
+            {
+                ok = true,
+                fileId = outcome.File!.Id,
+                name = outcome.File.Name,
+                sizeBytes = outcome.File.SizeBytes,
+            });
+
+        // Core's reason codes and Core's wording, passed straight through: the
+        // compose UI already branches on these from the Space upload path, and
+        // a second vocabulary for the same refusals would mean two places to
+        // fix the day one of them changes.
+        var reason = outcome.Reason ?? "error";
+        var body = new Dictionary<string, object?>
+        {
+            ["ok"] = false,
+            ["reason"] = reason,
+            ["error"] = outcome.Error ?? "The file could not be saved to Space.",
+        };
+
+        // The figures, so the refusal can say "you have 1.2 GB free" rather
+        // than only that you are full.
+        if (reason == "full" && tenant.UserId is Guid uid)
+        {
+            var rows = await db.Set<UserStorageRow>()
+                .FromSqlRaw("SELECT quota_bytes, used_bytes FROM core.user_storage({0})", uid)
+                .AsNoTracking()
+                .ToListAsync(ct);
+
+            if (rows.Count > 0 && rows[0].QuotaBytes is long quota)
+            {
+                body["quotaBytes"] = quota;
+                body["usedBytes"] = rows[0].UsedBytes;
+                body["freeBytes"] = Math.Max(0, quota - rows[0].UsedBytes);
+            }
+        }
+
+        // 413 for the two the browser should treat as "too big for storage",
+        // matching Space's own contract so the client's existing branch works.
+        return reason is "full" or "file_too_large"
+            ? Results.Json(body, statusCode: StatusCodes.Status413PayloadTooLarge)
+            : Results.BadRequest(body);
+    }
+
+    /// <summary>
+    /// The person's "Email attachments" folder in Space.
+    ///
+    /// Null for now, which means the file lands in their personal root. The
+    /// gateway has no folder-creation call yet - Core is adding
+    /// EnsureFolderAsync - and creating space.folders rows from Mail would put
+    /// Space's ownership rules in two places, which is the exact thing the
+    /// gateway exists to prevent. One line changes here when it lands.
+    /// </summary>
+    private static Task<Guid?> MailAttachmentsFolderAsync(
+        SpaceContentGateway space, CancellationToken ct) => Task.FromResult<Guid?>(null);
 
     // ------------------------------------------------------------------
     //  Directory - who you can address inside your own organisation.
