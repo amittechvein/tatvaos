@@ -3,7 +3,7 @@
 import { use, useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import {
-  spaceApi, formatSize,
+  spaceApi, formatSize, linkApi, type PublicLink,
   type SpaceFile, type SpaceFolder, type SpaceListing, type SpaceScope, type SpaceShare,
 } from '@/lib/space';
 import { Icon } from '@/components/ui/Icon';
@@ -584,6 +584,8 @@ function ShareDialog({ kind, item, onClose, onChanged }: {
                 organisation. A link anyone on the internet can open is a
                 different security decision and is not in this product yet. */}
           </p>
+          {/* ---- Anyone with the link (files only) ---- */}
+          {kind === 'files' && <PublicLinkSection fileId={item.id} />}
         </div>
 
         <div className="flex justify-end border-t border-line px-5 py-3">
@@ -593,6 +595,124 @@ function ShareDialog({ kind, item, onClose, onChanged }: {
           </button>
         </div>
       </div>
+    </>
+  );
+}
+
+
+/**
+ * "Anyone with the link" — the third audience, files only.
+ *
+ * The URL is shown ONCE, at creation: the server stores only a hash, so it
+ * cannot be re-displayed later, the same rule as MFA recovery codes. The list
+ * that follows shows that links exist, when they die, and how to revoke them
+ * — everything except the secret.
+ *
+ * Degrades to silence while the backend endpoint does not exist yet: a
+ * feature that is not deployed should be absent, not broken.
+ */
+function PublicLinkSection({ fileId }: { fileId: string }) {
+  const { authedFetch } = useAuth();
+  const [links, setLinks] = useState<PublicLink[] | 'unsupported' | null>(null);
+  const [freshUrl, setFreshUrl] = useState<string | null>(null);
+  const [expiry, setExpiry] = useState(30);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const reload = useCallback(() => {
+    authedFetch(`/space/files/${fileId}/links`)
+      .then(async (r) => {
+        if (r.status === 404) { setLinks('unsupported'); return; }
+        const b = await r.json().catch(() => ({ links: [] }));
+        setLinks(b.links ?? []);
+      })
+      .catch(() => setLinks('unsupported'));
+  }, [authedFetch, fileId]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  if (links === 'unsupported' || links === null) return null;
+
+  const live = links.filter((l) => !l.revokedAt);
+
+  return (
+    <>
+      <h3 className="mb-1 mt-4 text-sm font-semibold text-ink">Anyone with the link</h3>
+
+      {freshUrl ? (
+        <div className="mb-2 rounded-lg border border-brand-600/40 bg-brand-50 p-2.5">
+          <p className="mb-1.5 text-xs text-ink">
+            Link created. <strong>Copy it now</strong> — for safety it cannot be
+            shown again.
+          </p>
+          <div className="flex items-center gap-2">
+            <code className="min-w-0 flex-1 truncate rounded bg-surface px-2 py-1 text-xs text-ink">
+              {freshUrl}
+            </code>
+            <button type="button"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(freshUrl);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 1500);
+                    }}
+                    className="shrink-0 rounded-lg bg-brand-600 px-3 py-1 text-xs font-semibold text-white">
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="mb-2 flex items-center gap-2">
+          <select value={expiry} disabled={busy}
+                  onChange={(e) => setExpiry(Number(e.target.value))}
+                  className="rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-ink">
+            <option value={7}>Expires in 7 days</option>
+            <option value={30}>Expires in 30 days</option>
+            <option value={90}>Expires in 90 days</option>
+            <option value={365}>Expires in 1 year</option>
+          </select>
+          <button type="button" disabled={busy}
+                  onClick={() => {
+                    setBusy(true);
+                    linkApi.create(authedFetch, fileId, expiry)
+                      .then((l) => { setFreshUrl(l.url); reload(); })
+                      .catch(() => {/* the section stays; the button re-enables */})
+                      .finally(() => setBusy(false));
+                  }}
+                  className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink-muted transition hover:bg-canvas hover:text-ink disabled:opacity-50">
+            {busy ? 'Creating…' : 'Create link'}
+          </button>
+        </div>
+      )}
+
+      {live.length > 0 && (
+        <div className="mb-1">
+          {live.map((l) => (
+            <div key={l.id} className="flex items-center gap-2 py-1 text-xs text-ink-muted">
+              <span className="min-w-0 flex-1 truncate">
+                Expires {new Date(l.expiresAt).toLocaleDateString(undefined,
+                  { day: 'numeric', month: 'short', year: 'numeric' })}
+                {l.downloadCount > 0 && ` · downloaded ${l.downloadCount}×`}
+              </span>
+              <button type="button" disabled={busy}
+                      onClick={() => {
+                        setBusy(true);
+                        linkApi.revoke(authedFetch, fileId, l.id)
+                          .then(() => { if (freshUrl) setFreshUrl(null); reload(); })
+                          .catch(() => {})
+                          .finally(() => setBusy(false));
+                      }}
+                      className="shrink-0 text-danger hover:underline">
+                revoke
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <p className="mb-1 text-xs text-ink-muted">
+        Anyone on the internet with the link can download this file until it
+        expires or you revoke it. Nothing else in Space is reachable from it.
+      </p>
     </>
   );
 }

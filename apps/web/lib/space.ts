@@ -206,6 +206,60 @@ export const spaceApi = {
       .then((r) => { if (!r.ok) throw new Error('Could not remove that access.'); }),
 };
 
+// ---------------------------------------------------------------------------
+//  Public links — "anyone with the link"
+//
+//  Built against docs/plans/LARGE_ATTACHMENTS.md. The management calls are
+//  authenticated; resolving a link is NOT — that endpoint is the doorstep for
+//  people with no account, and the landing page fetches it with plain fetch.
+// ---------------------------------------------------------------------------
+
+export interface PublicLink {
+  id: string;
+  /** Absent everywhere except the CREATE response — the token is shown once. */
+  url?: string;
+  expiresAt: string;
+  downloadCount: number;
+  maxDownloads: number | null;
+  createdAt: string;
+  revokedAt: string | null;
+}
+
+export const linkApi = {
+  create: (f: AuthedFetch, fileId: string, expiresInDays: number) =>
+    f(`/space/files/${fileId}/link`, {
+      method: 'POST',
+      body: JSON.stringify({ expiresInDays }),
+    }).then((r) => json<PublicLink & { url: string }>(r, 'Could not create the link.')),
+
+  list: (f: AuthedFetch, fileId: string) =>
+    f(`/space/files/${fileId}/links`)
+      .then((r) => json<{ links: PublicLink[] }>(r, 'Could not load the links.'))
+      .then((b) => b.links),
+
+  revoke: (f: AuthedFetch, fileId: string, linkId: string) =>
+    f(`/space/files/${fileId}/links/${linkId}`, { method: 'DELETE' })
+      .then((r) => { if (!r.ok) throw new Error('Could not revoke the link.'); }),
+};
+
+/**
+ * The landing page's metadata read. PLAIN fetch, no auth — the whole point is
+ * that the reader has no account. Errors collapse to null: expired, revoked
+ * and unknown are all the same "this link does not work" to a stranger, by
+ * design (no oracle).
+ */
+export async function fetchLinkInfo(token: string): Promise<{
+  name: string; sizeBytes: number; sharedBy: string | null; expiresAt: string;
+} | null> {
+  try {
+    const res = await fetch(`/api/space/l/${encodeURIComponent(token)}/info`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 export function formatSize(bytes: number): string {
   if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
   if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
