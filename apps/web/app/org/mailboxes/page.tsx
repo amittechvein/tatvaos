@@ -309,19 +309,65 @@ function AccessDialog({ box, people, onClose, onChanged, onError }: {
 }) {
   const { authedFetch } = useAuth();
   const [grants, setGrants] = useState<Grant[] | null>(null);
-  const [userId, setUserId] = useState('');
-  const [permission, setPermission] = useState<Grant['permission']>('read');
   const [busy, setBusy] = useState(false);
+
+  // Three boxes, one per level — Google Groups' shape, and it fits ours
+  // exactly because our three levels ARE three jobs:
+  //
+  //   Members  read     they answer nothing, they watch the queue
+  //   Managers send_as  they answer as the mailbox
+  //   Owners   full     they also decide who else gets in, and own its
+  //                     filters and signature
+  //
+  // The previous screen was one person-picker plus a level dropdown, which
+  // asked the admin to translate "who runs support@" into a permission name
+  // before they could act. This asks the question they already have.
+  const [picked, setPicked] = useState<Record<Grant['permission'], string[]>>({
+    read: [], send_as: [], full: [],
+  });
 
   const reload = useCallback(async () => {
     const res = await authedFetch(`/mail/mailboxes/${box.id}/permissions`);
-    if (res.ok) setGrants((await res.json()).permissions ?? []);
-    else setGrants([]);
+    setGrants(res.ok ? (await res.json()).permissions ?? [] : []);
   }, [authedFetch, box.id]);
 
   useEffect(() => { void reload(); }, [reload]);
 
-  // Collapse the (person, level) rows into one line per person.
+  async function run(fn: () => Promise<unknown>) {
+    setBusy(true);
+    try { await fn(); await reload(); await onChanged(); }
+    catch (e) { onError(e instanceof Error ? e.message : 'That did not work.'); }
+    finally { setBusy(false); }
+  }
+
+  /** Grant everything picked, then clear the boxes. */
+  async function addAll() {
+    await run(async () => {
+      for (const level of ['read', 'send_as', 'full'] as const) {
+        for (const userId of picked[level]) {
+          const res = await authedFetch(`/mail/mailboxes/${box.id}/permissions`, {
+            method: 'POST',
+            body: JSON.stringify({ userId, permission: level }),
+          });
+          if (!res.ok) {
+            const b = await res.json().catch(() => ({}));
+            throw new Error(b.error ?? 'Could not grant access.');
+          }
+          // 'full' implies the other two, so the rows they would duplicate go.
+          if (level === 'full') {
+            await Promise.allSettled((['read', 'send_as'] as const).map((p) =>
+              authedFetch(`/mail/mailboxes/${box.id}/permissions/${userId}/${p}`,
+                          { method: 'DELETE' })));
+          }
+        }
+      }
+      setPicked({ read: [], send_as: [], full: [] });
+    });
+  }
+
+  const anyPicked = picked.read.length + picked.send_as.length + picked.full.length > 0;
+
+  // One line per person; their levels as chips.
   const byPerson = (grants ?? []).reduce<
     { userId: string; displayName: string; email: string; levels: Grant['permission'][] }[]
   >((acc, g) => {
@@ -331,119 +377,157 @@ function AccessDialog({ box, people, onClose, onChanged, onError }: {
     return acc;
   }, []);
 
-  async function run(fn: () => Promise<Response>) {
-    setBusy(true);
-    try {
-      const res = await fn();
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error ?? 'That did not work.');
-      }
-      await reload();
-      await onChanged();
-    } catch (e) {
-      onError(e instanceof Error ? e.message : 'That did not work.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  /**
-   * Grant a level, then remove what that level makes redundant.
-   *
-   * The permission table is one row per (mailbox, person, level), which is
-   * right — but it means granting read, then send_as, then full leaves the
-   * same person listed three times, and 'full' already implies the other
-   * two. Nobody means "give them full AND read"; they mean their access IS
-   * full. So the redundant rows go, and the list shows one line per person.
-   */
-  async function grant() {
-    await run(async () => {
-      const res = await authedFetch(`/mail/mailboxes/${box.id}/permissions`, {
-        method: 'POST',
-        body: JSON.stringify({ userId, permission }),
-      });
-      if (res.ok && permission === 'full') {
-        // Best-effort: the grant itself succeeded, and a leftover redundant
-        // row is untidy rather than harmful.
-        await Promise.allSettled(
-          (['read', 'send_as'] as const).map((p) =>
-            authedFetch(`/mail/mailboxes/${box.id}/permissions/${userId}/${p}`,
-                        { method: 'DELETE' })),
-        );
-      }
-      return res;
-    });
-  }
-
   return (
     <Modal
       title={`Access to ${box.address}`}
       subtitle={box.displayName ?? undefined}
       onClose={onClose}
       busy={busy}
-      footer={<Button variant="primary" onClick={onClose}>Done</Button>}
+      size="lg"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Close</Button>
+          <Button variant="primary" onClick={() => void addAll()} disabled={busy || !anyPicked}>
+            {busy ? 'Adding…' : 'Add people'}
+          </Button>
+        </>
+      }
     >
-      <div className="d-flex gap-2 align-items-end mb-3 flex-wrap">
-        <div className="flex-fill" style={{ minWidth: 180 }}>
-          <label className="form-label fs-12 text-muted mb-1">Person</label>
-          <select className="form-select" value={userId} onChange={(e) => setUserId(e.target.value)}>
-            <option value="">Choose someone…</option>
-            {people.map((p) => <option key={p.id} value={p.id}>{p.displayName}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="form-label fs-12 text-muted mb-1">May</label>
-          <select className="form-select" value={permission}
-                  onChange={(e) => setPermission(e.target.value as Grant['permission'])}>
-            <option value="read">read</option>
-            <option value="send_as">send as</option>
-            <option value="full">full — read, send, and manage it</option>
-          </select>
-        </div>
-        <Button variant="primary" disabled={busy || !userId}
-                onClick={() => void grant()}>
-          Grant
-        </Button>
-      </div>
+      <PickerBox
+        label="Members"
+        hint="Can read this mailbox. They cannot answer from it."
+        people={people}
+        picked={picked.read}
+        onChange={(ids) => setPicked((p) => ({ ...p, read: ids }))}
+      />
+      <PickerBox
+        label="Managers"
+        hint="Can read and answer as this mailbox. Replies go out as the mailbox, so they come back to the queue."
+        people={people}
+        picked={picked.send_as}
+        onChange={(ids) => setPicked((p) => ({ ...p, send_as: ids }))}
+      />
+      <PickerBox
+        label="Owners"
+        hint="Everything a manager can do, plus deciding who else has access and managing the mailbox's own filters and signature."
+        people={people}
+        picked={picked.full}
+        onChange={(ids) => setPicked((p) => ({ ...p, full: ids }))}
+      />
 
-      <p className="fs-12 text-muted">
-        Reading and sending are separate. Someone with <strong>read</strong> can
-        see the queue but cannot answer it; <strong>send as</strong> lets them
-        answer without reading. Grant both, or <strong>full</strong>.
-      </p>
+      <hr className="my-4" />
 
-      <div className="border-top pt-2" style={{ maxHeight: 240, overflowY: 'auto' }}>
-        {grants === null ? (
-          <p className="fs-12 text-muted">Loading…</p>
-        ) : grants.length === 0 ? (
-          <p className="fs-12 text-muted mb-0">
-            Nobody has access. Mail sent here arrives where no one can read it.
-          </p>
-        ) : byPerson.map((p) => (
-          <div key={p.userId} className="d-flex align-items-center gap-2 py-2">
-            <span className="flex-fill min-w-0">
-              <span className="d-block fw-semibold text-truncate">{p.displayName}</span>
-              <span className="d-block fs-12 text-muted text-truncate">{p.email}</span>
-            </span>
-            {/* One line per person; a level each, each removable on its own —
-                revoking someone's ability to answer should not also revoke
-                their ability to read. */}
-            {p.levels.map((lvl) => (
-              <span key={lvl} className="d-inline-flex align-items-center gap-1">
-                <Badge tone="neutral">{lvl}</Badge>
-                <button type="button" className="btn btn-sm btn-link text-danger p-0" disabled={busy}
-                        title={`Remove ${lvl}`} aria-label={`Remove ${lvl}`}
-                        onClick={() => void run(() => authedFetch(
-                          `/mail/mailboxes/${box.id}/permissions/${p.userId}/${lvl}`,
-                          { method: 'DELETE' }))}>
-                  ×
-                </button>
+      <div className="fs-14 fw-semibold mb-2">Who has access now</div>
+      {grants === null ? (
+        <p className="fs-12 text-muted mb-0">Loading…</p>
+      ) : byPerson.length === 0 ? (
+        <p className="fs-12 text-muted mb-0">
+          Nobody yet. Mail sent here arrives where no one can read it.
+        </p>
+      ) : (
+        <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+          {byPerson.map((p) => (
+            <div key={p.userId} className="d-flex align-items-center gap-2 py-2 border-bottom">
+              <span className="flex-fill min-w-0">
+                <span className="d-block fw-semibold text-truncate">{p.displayName}</span>
+                <span className="d-block fs-12 text-muted text-truncate">{p.email}</span>
               </span>
+              {p.levels.map((lvl) => (
+                <span key={lvl} className="d-inline-flex align-items-center gap-1">
+                  <Badge tone="neutral">{LEVEL_LABEL[lvl]}</Badge>
+                  {/* Each level removable on its own: taking away someone's
+                      ability to answer should not also stop them reading. */}
+                  <button type="button" className="btn btn-sm btn-link text-danger p-0"
+                          disabled={busy} title={`Remove ${LEVEL_LABEL[lvl]}`}
+                          aria-label={`Remove ${LEVEL_LABEL[lvl]}`}
+                          onClick={() => void run(() => authedFetch(
+                            `/mail/mailboxes/${box.id}/permissions/${p.userId}/${lvl}`,
+                            { method: 'DELETE' }))}>
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+const LEVEL_LABEL: Record<Grant['permission'], string> = {
+  read: 'member', send_as: 'manager', full: 'owner',
+};
+
+/**
+ * One labelled box that collects people as chips — the Groups pattern.
+ *
+ * Deliberately not a <select multiple>: those hide what is selected behind a
+ * scrollbar and lose the selection on a mis-click, which is a bad way to
+ * discover you granted the wrong person access to a mailbox.
+ */
+function PickerBox({ label, hint, people, picked, onChange }: {
+  label: string;
+  hint: string;
+  people: Person[];
+  picked: string[];
+  onChange: (ids: string[]) => void;
+}) {
+  const [term, setTerm] = useState('');
+
+  const chosen = picked
+    .map((id) => people.find((p) => p.id === id))
+    .filter((p): p is Person => !!p);
+
+  const hits = term.trim()
+    ? people.filter((p) =>
+        !picked.includes(p.id)
+        && (p.displayName.toLowerCase().includes(term.trim().toLowerCase())
+            || p.email.toLowerCase().includes(term.trim().toLowerCase())))
+      .slice(0, 6)
+    : [];
+
+  return (
+    <div className="mb-3">
+      <label className="form-label fs-13 fw-semibold mb-1">{label}</label>
+      <div className="position-relative">
+        <div className="form-control d-flex flex-wrap align-items-center gap-1"
+             style={{ minHeight: 72, alignContent: 'flex-start', paddingTop: 8 }}>
+          {chosen.map((p) => (
+            <span key={p.id} className="d-inline-flex align-items-center gap-1 rounded-pill bg-light px-2 py-1"
+                  style={{ fontSize: 12 }}>
+              {p.displayName}
+              <button type="button" aria-label={`Remove ${p.displayName}`}
+                      className="btn btn-sm btn-link p-0 text-danger"
+                      onClick={() => onChange(picked.filter((id) => id !== p.id))}>×</button>
+            </span>
+          ))}
+          <input
+            value={term}
+            onChange={(e) => setTerm(e.target.value)}
+            placeholder={chosen.length === 0 ? 'Type a name or address' : ''}
+            className="border-0 flex-fill"
+            style={{ outline: 'none', minWidth: 140, fontSize: 13 }}
+          />
+        </div>
+
+        {hits.length > 0 && (
+          <div className="position-absolute w-100 bg-white border rounded shadow-sm"
+               style={{ zIndex: 1400, top: '100%', marginTop: 2, overflow: 'hidden' }}>
+            {hits.map((p) => (
+              <button key={p.id} type="button"
+                      // mousedown: click fires after blur, by which time the
+                      // list has gone.
+                      onMouseDown={(e) => { e.preventDefault(); onChange([...picked, p.id]); setTerm(''); }}
+                      className="d-block w-100 text-start border-0 bg-transparent px-3 py-2">
+                <span className="d-block fw-semibold" style={{ fontSize: 13 }}>{p.displayName}</span>
+                <span className="d-block text-muted" style={{ fontSize: 11 }}>{p.email}</span>
+              </button>
             ))}
           </div>
-        ))}
+        )}
       </div>
-    </Modal>
+      <div className="fs-12 text-muted mt-1">{hint}</div>
+    </div>
   );
 }

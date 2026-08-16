@@ -1,0 +1,25 @@
+diff --git a/apps/api/Program.cs b/apps/api/Program.cs
+--- a/apps/api/Program.cs
++++ b/apps/api/Program.cs
+@@ -128,3 +128,9 @@
+ builder.Services.AddHostedService<PostfixPolicyWorker>();
+ 
++// OFF unless Mail:ThreadBackfill says otherwise. A one-off repair that fills
++// thread_id on mail stored before threading existed - "report" to see what it
++// would do, "run" to commit it. Left unset it returns immediately, which is
++// how it should sit between the one time it is needed and every deploy after.
++builder.Services.AddHostedService<ThreadBackfillWorker>();
++
+ builder.Services.AddOpenApi();
+diff --git a/infra/docker/docker-compose.base.yml b/infra/docker/docker-compose.base.yml
+--- a/infra/docker/docker-compose.base.yml
++++ b/infra/docker/docker-compose.base.yml
+@@ -213,3 +213,8 @@
+       # Zone new organisations get their free sign-in subdomain under.
+       Mail__PlatformZone: ${MAIL_PLATFORM_ZONE:-tatvaos.com}
++      # One-off thread_id repair for mail stored before threading existed.
++      # Empty - the default, and where it belongs the rest of the time - means
++      # the worker returns immediately. "report" logs what it would do and
++      # writes nothing; "run" commits it. Set MAIL_THREAD_BACKFILL to use it.
++      Mail__ThreadBackfill: ${MAIL_THREAD_BACKFILL:-}
+     # No healthcheck. The .NET runtime image has neither wget nor curl, so this

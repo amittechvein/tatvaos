@@ -12,6 +12,7 @@ using TatvaOS.Api.Modules.Mail.Endpoints;
 using TatvaOS.Api.Modules.Family;
 using TatvaOS.Api.Modules.Family.Endpoints;
 using TatvaOS.Api.Modules.Space.Endpoints;
+using TatvaOS.Api.Modules.Calendar.Endpoints;
 using TatvaOS.Api.Workers;
 using TatvaOS.Api.Shared.Notify;
 using TatvaOS.Api.Shared.Settings;
@@ -154,6 +155,10 @@ builder.Services.AddHostedService<ThreadBackfillWorker>();
 builder.Services.AddScoped<ClamAvScanner>();
 builder.Services.AddHostedService<AttachmentScanWorker>();
 
+// Calendar reminders. Polls every minute and records every send, rather than
+// scheduling in-memory timers that a deploy would silently swallow.
+builder.Services.AddHostedService<CalendarReminderWorker>();
+
 builder.Services.AddOpenApi();
 
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
@@ -205,6 +210,9 @@ app.MapAuditEndpoints();
 app.MapSharedMailboxEndpoints();
 // "How much room do I have left?" — one answer for every product's meter.
 app.MapMyStorageEndpoints();
+// Calendar. Recurrence is expanded at read time, never stored — see
+// Modules/Calendar/Recurrence.cs.
+app.MapCalendarEndpoints();
 app.MapMailEndpoints();
 app.MapFamilyEndpoints();
 app.MapSpaceEndpoints();

@@ -1,0 +1,82 @@
+diff --git a/apps/api/Modules/Mail/Endpoints/MailEndpoints.cs b/apps/api/Modules/Mail/Endpoints/MailEndpoints.cs
+--- a/apps/api/Modules/Mail/Endpoints/MailEndpoints.cs
++++ b/apps/api/Modules/Mail/Endpoints/MailEndpoints.cs
+@@ -1141,7 +1141,7 @@ public static class MailEndpoints
+         var chips = (await db.Attachments.AsNoTracking()
+                 .Where(a => pageIds.Contains(a.MessageId))
+                 .OrderBy(a => a.PartIndex)
+-                .Select(a => new { a.MessageId, a.Id, a.Filename, a.ContentType, a.SizeBytes })
++                .Select(a => new { a.MessageId, a.Id, a.Filename, a.ContentType, a.SizeBytes, a.ScanStatus })
+                 .ToListAsync(ct))
+             .ToLookup(a => a.MessageId);
+ 
+@@ -1167,6 +1167,7 @@ public static class MailEndpoints
+                 contentType = a.ContentType ?? "application/octet-stream",
+                 sizeBytes = a.SizeBytes,
+                 isInline = false,
++                scanStatus = a.ScanStatus,
+             }).ToArray(),
+         });
+ 
+@@ -1314,6 +1315,7 @@ public static class MailEndpoints
+                 contentType = a.ContentType ?? "application/octet-stream",
+                 sizeBytes = a.SizeBytes,
+                 isInline = false,
++                scanStatus = a.ScanStatus,
+             })
+             .ToListAsync(ct);
+ 
+@@ -1444,6 +1446,21 @@ public static class MailEndpoints
+             .FirstOrDefaultAsync(a => a.Id == attachmentId && a.MessageId == m.Id, ct);
+         if (att?.PartIndex is not int index) return Results.NotFound();
+ 
++        // Refused, not hidden. Somebody sent an infected file should be able to
++        // see that it arrived and that it was stopped; a chip that silently
++        // vanishes teaches nothing and reads as mail going missing.
++        //
++        // "pending" still downloads. Blocking everything the scanner has not
++        // reached yet would mean an outage in the scanner becomes an outage in
++        // the mail client, and until today nothing was scanned at all - this
++        // change is meant to add a refusal for a known-bad file, not a new way
++        // for good files to become unreachable.
++        if (att.ScanStatus == "infected")
++            return Results.BadRequest(new
++            {
++                error = "This attachment was found to contain malware and cannot be downloaded.",
++            });
++
+         var parts = MailContent.AttachmentParts(MailContent.Parse(m.RawBody));
+         if (index < 0 || index >= parts.Count) return Results.NotFound();
+ 
+
+diff --git a/apps/api/Program.cs b/apps/api/Program.cs
+--- a/apps/api/Program.cs
++++ b/apps/api/Program.cs
+@@ -141,6 +141,12 @@ builder.Services.AddHostedService<PostfixPolicyWorker>();
+ // how it should sit between the one time it is needed and every deploy after.
+ builder.Services.AddHostedService<ThreadBackfillWorker>();
+ 
++// Scans stored attachments against clamd and records what it actually said.
++// OFF until Mail:ClamAv points at a scanner: no configuration, no scanning,
++// and never a fallback to "clean" - that assumption is the bug it removes.
++builder.Services.AddScoped<ClamAvScanner>();
++builder.Services.AddHostedService<AttachmentScanWorker>();
++
+ builder.Services.AddOpenApi();
+ 
+ builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
+
+diff --git a/infra/docker/docker-compose.base.yml b/infra/docker/docker-compose.base.yml
+--- a/infra/docker/docker-compose.base.yml
++++ b/infra/docker/docker-compose.base.yml
+@@ -226,6 +226,10 @@ services:
+       # the worker returns immediately. "report" logs what it would do and
+       # writes nothing; "run" commits it. Set MAIL_THREAD_BACKFILL to use it.
+       Mail__ThreadBackfill: ${MAIL_THREAD_BACKFILL:-}
++      # host:port of a clamd. Empty - the default - means attachments are not
++      # scanned and every row honestly stays "pending". Set it to clamav:3310
++      # once the service below is running.
++      Mail__ClamAv: ${MAIL_CLAMAV:-}
+       # Over-quota mailboxes: anything but "enforce" only LOGS would-defer
+       # lines. Flip to enforce only after reading those logs shows no
+       # innocent mailbox would be hit — a 4xx defer makes senders queue and

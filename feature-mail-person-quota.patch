@@ -1,0 +1,135 @@
+diff --git a/apps/api/Workers/PostfixPolicyWorker.cs b/apps/api/Workers/PostfixPolicyWorker.cs
+--- a/apps/api/Workers/PostfixPolicyWorker.cs
++++ b/apps/api/Workers/PostfixPolicyWorker.cs
+@@ -197,7 +197,44 @@ public sealed class PostfixPolicyWorker(
+             var allocator = scope.ServiceProvider.GetRequiredService<StorageAllocator>();
+             var result = await allocator.EvaluateAcceptAsync(mailbox.Id, size, ct);
+ 
+-            return Map(result, address);
++            // Everything that is not a question about space stays exactly as
++            // Core decided it: suspended, closed, gone. Only "is there room"
++            // moves to the person.
++            if (result.Decision is not (StorageAllocator.AcceptDecision.Accept
++                                     or StorageAllocator.AcceptDecision.Full))
++                return Map(result, address);
++
++            // A shared mailbox has no owner. Its bytes belong to the
++            // organisation, so the mailbox figure is still the right question -
++            // charging support@ to whoever last answered it would move a
++            // colleague's remaining space and orphan the queue's storage the
++            // day that person leaves.
++            if (mailbox.UserId is not Guid owner || mailbox.Type == "shared")
++                return Map(result, address);
++
++            var person = await PersonStorageAsync(db, allocator, mailbox, owner, ct);
++            if (person is null)
++            {
++                // We could not establish the person's allowance. Fail open, in
++                // keeping with the rest of this worker: refusing mail on a
++                // figure we could not read is the worse of the two mistakes.
++                log.LogWarning("No storage figure for the owner of {Address}; accepting", address);
++                return Dunno;
++            }
++
++            var (quota, used) = person.Value;
++
++            // Zero or negative means unbounded, not full.
++            if (quota <= 0) return Dunno;
++
++            if (used + Math.Max(0, size) <= quota)
++                return Dunno;
++
++            return Map(
++                new StorageAllocator.AcceptResult(
++                    StorageAllocator.AcceptDecision.Full,
++                    $"person over allowance: {used} + {Math.Max(0, size)} > {quota} bytes"),
++                address);
+         }
+         catch (Exception ex)
+         {
+@@ -206,6 +243,44 @@ public sealed class PostfixPolicyWorker(
+         }
+     }
+ 
++    /// <summary>
++    /// The recipient owner's allowance and usage, or null if either cannot be
++    /// established.
++    ///
++    /// ONE SQL FUNCTION ANSWERS THIS, for this lane and for Space both. The
++    /// storage model names the trap directly: two implementations of "is there
++    /// room" will disagree, and the one that refuses is the one the customer
++    /// notices. If this method ever grows a SUM over used_bytes, that is the
++    /// second implementation and it is the bug.
++    ///
++    /// A NULL allowance means the person inherits, so inheritance is resolved
++    /// through Core's own resolver rather than guessed at here.
++    /// </summary>
++    private static async Task<(long Quota, long Used)?> PersonStorageAsync(
++        AppDbContext db, StorageAllocator allocator, Mailbox mailbox, Guid owner, CancellationToken ct)
++    {
++        var rows = await db.Set<UserStorageRow>()
++            .FromSqlRaw("SELECT quota_bytes, used_bytes FROM core.user_storage({0})", owner)
++            .AsNoTracking()
++            .ToListAsync(ct);
++
++        if (rows.Count == 0) return null;
++        var row = rows[0];
++
++        if (row.QuotaBytes is long explicitQuota && explicitQuota > 0)
++            return (explicitQuota, row.UsedBytes);
++
++        var departmentId = await db.Users.IgnoreQueryFilters().AsNoTracking()
++            .Where(u => u.Id == owner)
++            .Select(u => u.DepartmentId)
++            .FirstOrDefaultAsync(ct);
++
++        var inherited = await allocator.ResolveQuotaAsync(
++            mailbox.TenantId, departmentId, null, "mail", ct);
++
++        return (inherited, row.UsedBytes);
++    }
++
+     /// <summary>
+     /// Decision to wire response. The mapping is Core's, recorded in
+     /// StorageAllocator.AcceptDecision — read that before changing anything here.
+
+diff --git a/apps/api/Shared/Data/Entities.cs b/apps/api/Shared/Data/Entities.cs
+--- a/apps/api/Shared/Data/Entities.cs
++++ b/apps/api/Shared/Data/Entities.cs
+@@ -828,6 +828,20 @@ public class Signature
+ /// the answer to "when is midnight" at the moment it was saved. The owner's
+ /// timezone is read when a message arrives.
+ /// </summary>
++/// <summary>
++/// One row of core.user_storage(): a person's allowance and what they are
++/// using across every product. Keyless - it is a function result, not a table,
++/// and nothing here ever writes it.
++///
++/// QuotaBytes is NULL when the person has no explicit allowance. That is not a
++/// zero and must never be treated as one; the caller resolves inheritance.
++/// </summary>
++public class UserStorageRow
++{
++    public long? QuotaBytes { get; set; }
++    public long UsedBytes { get; set; }
++}
++
+ public class VacationResponder
+ {
+     public Guid Id { get; set; } = Guid.NewGuid();
+
+diff --git a/apps/api/Shared/Data/AppDbContext.cs b/apps/api/Shared/Data/AppDbContext.cs
+--- a/apps/api/Shared/Data/AppDbContext.cs
++++ b/apps/api/Shared/Data/AppDbContext.cs
+@@ -140,6 +140,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
+         b.Entity<VacationResponder>().ToTable("vacation_responders", "mail");
+         b.Entity<VacationSend>().ToTable("vacation_sends", "mail");
+ 
++        // core.user_storage() is a function, not a table. Keyless and viewless:
++        // it is only ever reached through FromSqlRaw, and mapping it to a table
++        // would invite somebody to write to it.
++        b.Entity<UserStorageRow>().HasNoKey().ToView(null);
++
+         b.Entity<Contact>().ToTable("contacts", "family");
+         b.Entity<ContactEmail>().ToTable("contact_emails", "family");
+         b.Entity<ContactPhone>().ToTable("contact_phones", "family");

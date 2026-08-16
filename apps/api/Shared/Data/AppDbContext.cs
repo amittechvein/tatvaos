@@ -96,6 +96,15 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     // ---- space. RLS enabled and forced; see 25-space-schema.sql ----
     public DbSet<SpaceFolder> SpaceFolders => Set<SpaceFolder>();
     public DbSet<SpaceFile> SpaceFiles => Set<SpaceFile>();
+
+    // ---- Calendar --------------------------------------------------------
+    public DbSet<CalendarCalendar> Calendars => Set<CalendarCalendar>();
+    public DbSet<CalendarMember> CalendarMembers => Set<CalendarMember>();
+    public DbSet<CalendarEvent> CalendarEvents => Set<CalendarEvent>();
+    public DbSet<CalendarEventException> CalendarEventExceptions => Set<CalendarEventException>();
+    public DbSet<CalendarAttendee> CalendarAttendees => Set<CalendarAttendee>();
+    public DbSet<CalendarReminder> CalendarReminders => Set<CalendarReminder>();
+    public DbSet<CalendarReminderSend> CalendarReminderSends => Set<CalendarReminderSend>();
     public DbSet<SpaceShare> SpaceShares => Set<SpaceShare>();
     public DbSet<SpaceFileActivity> SpaceFileActivities => Set<SpaceFileActivity>();
     public DbSet<SpaceStar> SpaceStars => Set<SpaceStar>();
@@ -140,6 +149,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<VacationResponder>().ToTable("vacation_responders", "mail");
         b.Entity<VacationSend>().ToTable("vacation_sends", "mail");
 
+        // core.user_storage() is a function, not a table. Keyless and viewless:
+        // it is only ever reached through FromSqlRaw, and mapping it to a table
+        // would invite somebody to write to it.
+        b.Entity<UserStorageRow>().HasNoKey().ToView(null);
+
         b.Entity<Contact>().ToTable("contacts", "family");
         b.Entity<ContactEmail>().ToTable("contact_emails", "family");
         b.Entity<ContactPhone>().ToTable("contact_phones", "family");
@@ -153,6 +167,40 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
 
         b.Entity<SpaceFolder>().ToTable("folders", "space");
         b.Entity<SpaceFile>().ToTable("files", "space");
+
+        // ---- Calendar ----------------------------------------------------
+        b.Entity<CalendarCalendar>().ToTable("calendars", "calendar");
+        b.Entity<CalendarMember>().ToTable("calendar_members", "calendar");
+        b.Entity<CalendarEvent>().ToTable("events", "calendar");
+        b.Entity<CalendarEventException>().ToTable("event_exceptions", "calendar");
+        b.Entity<CalendarAttendee>().ToTable("event_attendees", "calendar");
+        b.Entity<CalendarReminder>().ToTable("event_reminders", "calendar");
+        b.Entity<CalendarReminderSend>().ToTable("reminder_sends", "calendar");
+
+        b.Entity<CalendarMember>().HasKey(m => new { m.CalendarId, m.UserId });
+        b.Entity<CalendarReminderSend>().HasKey(r => new { r.ReminderId, r.OccurrenceStartsAt });
+
+        // FKs declared so EF orders inserts correctly. An undeclared FK has
+        // broken insert ordering here before — the parent went in after the
+        // child and the whole SaveChanges failed on a constraint.
+        b.Entity<CalendarMember>()
+            .HasOne<CalendarCalendar>().WithMany()
+            .HasForeignKey(m => m.CalendarId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<CalendarEvent>()
+            .HasOne<CalendarCalendar>().WithMany()
+            .HasForeignKey(e => e.CalendarId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<CalendarAttendee>()
+            .HasOne<CalendarEvent>().WithMany()
+            .HasForeignKey(a => a.EventId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<CalendarReminder>()
+            .HasOne<CalendarEvent>().WithMany()
+            .HasForeignKey(r => r.EventId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<CalendarEventException>()
+            .HasOne<CalendarEvent>().WithMany()
+            .HasForeignKey(x => x.EventId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<CalendarReminderSend>()
+            .HasOne<CalendarReminder>().WithMany()
+            .HasForeignKey(s => s.ReminderId).OnDelete(DeleteBehavior.Cascade);
         b.Entity<SpaceShare>().ToTable("shares", "space");
         b.Entity<SpaceFileActivity>().ToTable("file_activity", "space");
         b.Entity<SpaceStar>().ToTable("stars", "space");

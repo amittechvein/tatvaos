@@ -12,6 +12,24 @@ WORKDIR /app
 COPY --from=build /app .
 
 # ---------------------------------------------------------------------------
+#  libfontconfig1 — for SkiaSharp (Space thumbnails).
+#
+#  SkiaSharp.NativeAssets.Linux ships libSkiaSharp.so, which links against
+#  fontconfig. The .NET runtime images are deliberately slim and do not carry
+#  it, so without this line the native library fails to load — and it fails at
+#  PROCESS START, not on the first thumbnail request, because the assembly is
+#  resolved eagerly. The whole API would refuse to boot, with a DllNotFound
+#  message that says nothing about thumbnails.
+#
+#  Thumbnails need no fonts; fontconfig is simply an unconditional dependency
+#  of the Skia build. Installed with --no-install-recommends and the apt lists
+#  removed in the same layer, which keeps the addition to a couple of MB.
+# ---------------------------------------------------------------------------
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libfontconfig1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
 #  Never run as root. A container escape should not land on a root shell.
 #
 #  Uses the non-root user Microsoft already ships in the runtime image (app,

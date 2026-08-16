@@ -97,8 +97,8 @@ export const RAIL_PRODUCTS: RailProduct[] = [
   // Being built. It stays in the grid because it is genuinely next and the
   // tile sets the expectation; products nobody has STARTED were removed —
   // a wall of greyed tiles reads as a suite that does not exist.
-  { code: 'calendar', label: 'Calendar', href: '/calendar', icon: <Icon d={PATHS.calendar} />,
-    live: false, colour: '#4285f4', match: ['/calendar'] },
+  { code: 'calendar', label: 'Calendar', href: '/calendar/week', icon: <Icon d={PATHS.calendar} />,
+    live: true, colour: '#4285f4', match: ['/calendar'] },
   // Meetings. Not built; the tile and the address exist so the suite reads as
   // a suite and the hostname answers honestly before launch day.
   { code: 'connect', label: 'Connect', href: '/connect', icon: <Icon d={PATHS.connect} />,
@@ -200,6 +200,23 @@ export function mailNav(): NavSection[] {
         // avatar menu and the app launcher instead.
         { href: '/mail/settings', label: 'Settings', icon: <Icon d={PATHS.gear} colour="#00cfe8" /> },
         { href: '/mail/filters', label: 'Filters and blocking', icon: <Icon d={PATHS.junk} colour="#fd4963" /> },
+      ],
+    },
+  ];
+}
+
+// ============================================================================
+//  Calendar.
+// ============================================================================
+export function calendarNav(): NavSection[] {
+  return [
+    {
+      heading: 'Calendar',
+      items: [
+        { href: '/calendar/day', label: 'Day', icon: <Icon d={PATHS.calendar} colour="#4285f4" /> },
+        { href: '/calendar/week', label: 'Week', icon: <Icon d={PATHS.calendar} colour="#03b562" /> },
+        { href: '/calendar/month', label: 'Month', icon: <Icon d={PATHS.calendar} colour="#7367f0" /> },
+        { href: '/calendar/agenda', label: 'Agenda', icon: <Icon d={PATHS.inbox} colour="#ffa909" /> },
       ],
     },
   ];

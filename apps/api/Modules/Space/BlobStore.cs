@@ -36,8 +36,34 @@ public interface IBlobStore
     /// <summary>
     /// Remove the blob. Idempotent — a missing blob is not an error, because
     /// the purge path must be safe to re-run after a crash mid-pass.
+    ///
+    /// Removes any DERIVED files alongside it (thumbnails). A derived file
+    /// that outlives its blob is a thumbnail of a document that no longer
+    /// exists — which is exactly the artefact a purge is supposed to destroy.
     /// </summary>
     Task DeleteAsync(string blobKey);
+
+    // ---- Derived artefacts ------------------------------------------------
+    //
+    //  Thumbnails and anything else generated FROM a blob. They live beside it
+    //  as "{key}.{suffix}" for one reason: the blob key is the cache key, and
+    //  a new blob key is written on every overwrite — so a stale derived file
+    //  is structurally impossible rather than a cache-invalidation problem
+    //  somebody has to remember.
+    //
+    //  Suffixes are constrained to [a-z0-9.] by the implementation: this is
+    //  the one place a caller supplies part of a path, and it is not going to
+    //  become the place a "../" gets in.
+
+    /// <summary>The derived file, or null if it has not been generated yet.</summary>
+    Stream? OpenReadAux(string blobKey, string suffix);
+
+    /// <summary>
+    /// Write a derived file. Best-effort by contract: the caller already has
+    /// the bytes it needs, so a failure here costs a cache entry, never the
+    /// response.
+    /// </summary>
+    Task WriteAuxAsync(string blobKey, string suffix, byte[] bytes, CancellationToken ct);
 }
 
 /// <summary>The stream outgrew the cap. Caught by the upload endpoint → 413.</summary>
@@ -147,6 +173,55 @@ public sealed partial class FileSystemBlobStore : IBlobStore
     {
         var path = MapPath(blobKey);
         if (File.Exists(path)) File.Delete(path);
+
+        // Derived files go with it. Directory.EnumerateFiles on the blob's own
+        // name plus a wildcard, so this cannot reach anything that is not this
+        // blob's artefact.
+        var dir = Path.GetDirectoryName(path);
+        if (dir is not null && Directory.Exists(dir))
+        {
+            foreach (var aux in Directory.EnumerateFiles(dir, Path.GetFileName(path) + ".*"))
+            {
+                try { File.Delete(aux); } catch { /* debris, not a failure */ }
+            }
+        }
+
         return Task.CompletedTask;
+    }
+
+    [GeneratedRegex("^[a-z0-9.]{1,32}$")]
+    private static partial Regex AuxSuffixShape();
+
+    private string MapAuxPath(string blobKey, string suffix)
+    {
+        // The ONLY place a caller contributes to a path. Constrained hard:
+        // no separators, no dots-dots, no length to hide anything in. The
+        // blob key itself is already shape-checked by MapPath.
+        if (!AuxSuffixShape().IsMatch(suffix))
+            throw new ArgumentException("Malformed derived-file suffix.", nameof(suffix));
+
+        return MapPath(blobKey) + "." + suffix;
+    }
+
+    public Stream? OpenReadAux(string blobKey, string suffix)
+    {
+        var path = MapAuxPath(blobKey, suffix);
+        return File.Exists(path)
+            ? new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
+                             bufferSize: 81920, useAsync: true)
+            : null;
+    }
+
+    public async Task WriteAuxAsync(string blobKey, string suffix, byte[] bytes, CancellationToken ct)
+    {
+        var path = MapAuxPath(blobKey, suffix);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+
+        // Same .part-then-move as a real blob: two requests can generate the
+        // same thumbnail at once, and a half-written cache file that looks
+        // complete would be served to somebody.
+        var part = path + ".part";
+        await File.WriteAllBytesAsync(part, bytes, ct);
+        File.Move(part, path, overwrite: true);
     }
 }

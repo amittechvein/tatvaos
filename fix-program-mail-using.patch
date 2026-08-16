@@ -1,0 +1,9 @@
+diff --git a/apps/api/Program.cs b/apps/api/Program.cs
+--- a/apps/api/Program.cs
++++ b/apps/api/Program.cs
+@@ -8,4 +8,5 @@
+ using TatvaOS.Api.Modules.Core;
+ using TatvaOS.Api.Modules.Core.Endpoints;
++using TatvaOS.Api.Modules.Mail;
+ using TatvaOS.Api.Modules.Mail.Endpoints;
+ using TatvaOS.Api.Modules.Family;

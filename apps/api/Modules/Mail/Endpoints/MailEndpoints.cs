@@ -1375,9 +1375,13 @@ public static class MailEndpoints
     }
 
     private static async Task<IResult> MoveAsync(
-        Guid id, MoveRequest req, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid id, MoveRequest req, Guid? mailboxId, AppDbContext db, TenantContext tenant,
+        CancellationToken ct)
     {
-        var box = await OwnMailboxAsync(db, tenant, ct);
+        // Filing is queue work. Anyone who can read a shared mailbox can put
+        // its mail where it belongs - that is most of what working a queue is,
+        // and it is reversible.
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Read, ct);
         if (box is null) return Results.NotFound();
 
         var m = await db.Messages.FirstOrDefaultAsync(x => x.Id == id && x.MailboxId == box.Id, ct);
@@ -1401,9 +1405,11 @@ public static class MailEndpoints
     /// is ever permanently removed by a single click from the inbox.
     /// </summary>
     private static async Task<IResult> DeleteAsync(
-        Guid id, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid id, Guid? mailboxId, AppDbContext db, TenantContext tenant, CancellationToken ct)
     {
-        var box = await OwnMailboxAsync(db, tenant, ct);
+        // Read is enough to bin something: moving to Trash is reversible and is
+        // ordinary queue work. Emptying Trash is not, and is checked below.
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Read, ct);
         if (box is null) return Results.NotFound();
 
         var m = await db.Messages.FirstOrDefaultAsync(x => x.Id == id && x.MailboxId == box.Id, ct);
@@ -1414,6 +1420,18 @@ public static class MailEndpoints
 
         if (currentFolder?.SpecialUse == "\\Trash")
         {
+            // Destroying the only copy is administration, not queue work, so it
+            // needs whoever RUNS the mailbox. Reversible actions belong to
+            // everyone working it; irreversible ones do not.
+            //
+            // Your own mailbox is unaffected: the resolver returns it whatever
+            // level is asked for, because it is yours.
+            if (await MailboxAccess.ResolveAsync(db, tenant, box.Id, MailboxAccess.Full, ct) is null)
+                return Results.BadRequest(new
+                {
+                    error = "Deleting for good from a shared mailbox needs full access to it.",
+                });
+
             db.Messages.Remove(m);
             // Attachments cascade in the database; the quota ledger does not.
             box.UsedBytes = Math.Max(0, box.UsedBytes - m.SizeBytes);

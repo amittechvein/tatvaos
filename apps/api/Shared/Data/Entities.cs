@@ -828,6 +828,20 @@ public class Signature
 /// the answer to "when is midnight" at the moment it was saved. The owner's
 /// timezone is read when a message arrives.
 /// </summary>
+/// <summary>
+/// One row of core.user_storage(): a person's allowance and what they are
+/// using across every product. Keyless - it is a function result, not a table,
+/// and nothing here ever writes it.
+///
+/// QuotaBytes is NULL when the person has no explicit allowance. That is not a
+/// zero and must never be treated as one; the caller resolves inheritance.
+/// </summary>
+public class UserStorageRow
+{
+    public long? QuotaBytes { get; set; }
+    public long UsedBytes { get; set; }
+}
+
 public class VacationResponder
 {
     public Guid Id { get; set; } = Guid.NewGuid();

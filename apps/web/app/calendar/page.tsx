@@ -1,14 +1,6 @@
-import { ComingSoon } from '@/components/ComingSoon';
+import { redirect } from 'next/navigation';
 
-export const metadata = { title: 'TatvaOS Calendar' };
-
-export default function CalendarComingSoon() {
-  return (
-    <ComingSoon
-      product="Calendar"
-      blurb="Meetings, shared team calendars, room booking and reminders — with
-             invitations that arrive in TatvaOS Mail and attendees drawn from
-             your own directory."
-    />
-  );
+/** The week is the working default — a day is too narrow, a month too coarse. */
+export default function CalendarIndex() {
+  redirect('/calendar/week');
 }
