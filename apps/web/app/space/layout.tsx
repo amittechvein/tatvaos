@@ -4,6 +4,7 @@ import { RequireAuth } from '@/components/RequireAuth';
 import { AppShell } from '@/components/shell/AppShell';
 import { RailStorage } from '@/components/shell/RailStorage';
 import { spaceNav } from '@/lib/nav';
+import { UploadProvider } from '@/components/space/UploadTray';
 
 /**
  * Space inside the same shell as everything else: the icon rail carries the
@@ -14,9 +15,14 @@ import { spaceNav } from '@/lib/nav';
 export default function SpaceLayout({ children }: { children: React.ReactNode }) {
   return (
     <RequireAuth>
-      <AppShell scope="space" brand="TatvaOS" sections={spaceNav()} railFooter={<RailStorage />} bleed>
-        {children}
-      </AppShell>
+      {/* The provider wraps the shell, so the tray outlives every navigation
+          INSIDE Space. An upload that dies when somebody opens another folder
+          is an upload people re-start, which is where duplicates come from. */}
+      <UploadProvider>
+        <AppShell scope="space" brand="TatvaOS" sections={spaceNav()} railFooter={<RailStorage />} bleed>
+          {children}
+        </AppShell>
+      </UploadProvider>
     </RequireAuth>
   );
 }

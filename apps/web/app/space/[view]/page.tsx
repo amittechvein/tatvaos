@@ -3,10 +3,11 @@
 import { use, useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import {
-  spaceApi, formatSize, UploadRefusedError,
+  spaceApi, formatSize,
   type SpaceFile, type SpaceFolder, type SpaceListing, type SpaceScope, type SpaceShare,
 } from '@/lib/space';
 import { Icon } from '@/components/ui/Icon';
+import { useUploads } from '@/components/space/UploadTray';
 
 /**
  * The Space client: personal and organisational browsing, shared-with-me,
@@ -38,6 +39,7 @@ export default function SpacePage({ params }: { params: Promise<{ view: string }
   const scope: SpaceScope = view === 'organisational' ? 'organisational' : 'personal';
 
   const { authedFetch } = useAuth();
+  const { upload, jobs, drainCompleted } = useUploads();
 
   const [folderId, setFolderId] = useState<string | null>(null);
   const [listing, setListing] = useState<SpaceListing | null>(null);
@@ -52,7 +54,6 @@ export default function SpacePage({ params }: { params: Promise<{ view: string }
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
   const [sharing, setSharing] = useState<{ kind: 'files' | 'folders'; item: SpaceFile | SpaceFolder } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -101,30 +102,31 @@ export default function SpacePage({ params }: { params: Promise<{ view: string }
     }
   }
 
-  async function handleUpload(files: FileList | null) {
-    if (!files || files.length === 0) return;
-    setUploading(true);
-    setError(null);
-    try {
-      for (const f of Array.from(files)) {
-        await spaceApi.upload(authedFetch, folderId, scope, f);
-      }
-      setNotice(files.length === 1 ? `${files[0]?.name} uploaded.` : `${files.length} files uploaded.`);
-      await load();
-    } catch (e) {
-      if (e instanceof UploadRefusedError) {
-        // The reason is machine-readable on purpose — say the right thing.
-        setError(e.reason === 'full'
-          ? `${e.message} Free space in the trash, or ask an admin to raise the allocation.`
-          : e.message);
-      } else {
-        setError(e instanceof Error ? e.message : 'The upload failed.');
-      }
-    } finally {
-      setUploading(false);
-      if (fileInput.current) fileInput.current.value = '';
-    }
+  function handleUpload(files: FileList | File[] | null) {
+    if (!files) return;
+    const list = Array.from(files);
+    if (list.length === 0) return;
+
+    // Handed to the tray and forgotten. The page no longer waits: uploading
+    // used to block this component, so the listing froze, navigation felt
+    // broken, and a large file made Space look hung.
+    upload(list, folderId, scope);
+    if (fileInput.current) fileInput.current.value = '';
   }
+
+  // Finished uploads appear in the listing as they land, without a refetch —
+  // the API returns the completed FileDto, so there is nothing left to ask.
+  useEffect(() => {
+    const done = drainCompleted();
+    if (done.length === 0) return;
+    const here = done.filter((f) => f.folderId === folderId);
+    if (here.length === 0) return;
+    setListing((prev) => prev && ({
+      ...prev,
+      files: [...here, ...prev.files.filter((f) => !here.some((d) => d.id === f.id))],
+      totalFiles: prev.totalFiles + here.length,
+    }));
+  }, [jobs, drainCompleted, folderId]);
 
   async function newFolder() {
     const name = window.prompt('Folder name');
@@ -225,8 +227,29 @@ export default function SpacePage({ params }: { params: Promise<{ view: string }
   const files = hits ?? (browsing ? listing?.files ?? [] : view === 'shared' ? shared?.files ?? [] : trash?.files ?? []);
   const empty = !loading && folders.length === 0 && files.length === 0;
 
+  const [dragging, setDragging] = useState(false);
+
   return (
-    <div className="flex h-full flex-col bg-canvas p-3">
+    <div
+      className="relative flex h-full flex-col bg-canvas p-3"
+      // Dropping files onto the folder is the gesture everyone tries first.
+      // dragOver must preventDefault or the browser navigates to the file.
+      onDragOver={(e) => { if (browsing) { e.preventDefault(); setDragging(true); } }}
+      onDragLeave={(e) => { if (e.currentTarget === e.target) setDragging(false); }}
+      onDrop={(e) => {
+        if (!browsing) return;
+        e.preventDefault();
+        setDragging(false);
+        handleUpload(e.dataTransfer.files);
+      }}
+    >
+      {dragging && browsing && (
+        <div className="pointer-events-none absolute inset-3 z-10 flex items-center justify-center rounded-card border-2 border-dashed border-brand-600 bg-brand-50/80">
+          <span className="text-sm font-semibold text-brand-600">
+            Drop to upload to {listing?.folder?.name ?? (scope === 'personal' ? 'My Space' : 'Organisation')}
+          </span>
+        </div>
+      )}
       <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-card border border-line bg-surface">
         {/* Header: breadcrumb (or view title), search, actions */}
         <header className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3">
@@ -272,12 +295,12 @@ export default function SpacePage({ params }: { params: Promise<{ view: string }
                 className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink-muted transition hover:bg-canvas hover:text-ink">
                 New folder
               </button>
-              <button type="button" disabled={uploading} onClick={() => fileInput.current?.click()}
-                className="rounded-lg bg-brand-600 px-4 py-1.5 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:opacity-50">
-                {uploading ? 'Uploading…' : 'Upload'}
+              <button type="button" onClick={() => fileInput.current?.click()}
+                className="rounded-lg bg-brand-600 px-4 py-1.5 text-sm font-semibold text-white transition hover:bg-brand-700">
+                Upload
               </button>
               <input ref={fileInput} type="file" multiple hidden
-                onChange={(e) => void handleUpload(e.target.files)} />
+                onChange={(e) => handleUpload(e.target.files)} />
             </>
           )}
         </header>

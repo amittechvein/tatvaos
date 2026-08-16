@@ -93,6 +93,11 @@ interface AuthState {
   changePassword: (current: string, next: string) => Promise<void>;
   /** fetch() that attaches the token and retries once after a silent refresh. */
   authedFetch: (path: string, init?: RequestInit) => Promise<Response>;
+  /** POST a FormData with upload-progress callbacks. See the note on the
+   *  implementation for why this is XHR and not fetch. */
+  authedUpload: <T>(path: string, form: FormData,
+                    onProgress?: (fraction: number) => void,
+                    signal?: AbortSignal) => Promise<T>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -188,6 +193,73 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (res.status === 401 && await doRefresh()) res = await call();
 
     return res;
+  }, [doRefresh]);
+
+  /**
+   * An upload that reports progress.
+   *
+   * XHR, not fetch, and not by preference: fetch cannot report UPLOAD
+   * progress at all — there is no event for bytes sent, and the duplex
+   * streaming that would allow it is not supported by Safari. XHR's
+   * upload.onprogress is the only thing every browser implements, so a
+   * progress bar means XHR.
+   *
+   * Lives here rather than in a product's lib because the access token is a
+   * ref inside this provider and must not be handed out: a component holding
+   * a token is a component that can leak one into a log or a URL.
+   */
+  const authedUpload = useCallback(<T,>(
+    path: string,
+    form: FormData,
+    onProgress?: (fraction: number) => void,
+    signal?: AbortSignal,
+  ): Promise<T> => {
+    const send = (): Promise<{ status: number; body: string }> =>
+      new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${API}${path}`);
+        xhr.withCredentials = true;
+        if (accessToken.current) {
+          xhr.setRequestHeader('Authorization', `Bearer ${accessToken.current}`);
+        }
+        // Content-Type is deliberately NOT set: the browser adds it with the
+        // multipart boundary, and setting it by hand strips the boundary and
+        // the server cannot parse the upload.
+
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+        };
+        xhr.onload = () => resolve({ status: xhr.status, body: xhr.responseText });
+        xhr.onerror = () => reject(new Error('The connection dropped during the upload.'));
+        xhr.onabort = () => reject(new DOMException('Upload cancelled', 'AbortError'));
+
+        signal?.addEventListener('abort', () => xhr.abort(), { once: true });
+        xhr.send(form);
+      });
+
+    return (async () => {
+      let res = await send();
+
+      // Same one-retry-after-refresh rule as authedFetch: access tokens last
+      // fifteen minutes and a long upload can outlive one.
+      if (res.status === 401 && await doRefresh()) res = await send();
+
+      if (res.status < 200 || res.status >= 300) {
+        let parsed: { error?: string; reason?: string } = {};
+        try { parsed = JSON.parse(res.body); } catch { /* not JSON */ }
+        const err = new Error(parsed.error ?? 'The upload failed.') as Error & {
+          status?: number; reason?: string;
+        };
+        // Carried through so the caller can branch on WHY — the storage
+        // refusals (full, suspended, no_allocation, file_too_large) each need
+        // a different thing said to the person.
+        err.status = res.status;
+        err.reason = parsed.reason;
+        throw err;
+      }
+
+      return JSON.parse(res.body) as T;
+    })();
   }, [doRefresh]);
 
   const signIn = useCallback(async (email: string, password: string) => {
@@ -382,10 +454,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<AuthState>(() => ({
     user, mustChangePassword, loading, accounts,
     signIn, requestOtp, signInWithOtp, verifyMfa,
-    signOut, switchTo, forget, refreshAccounts, changePassword, authedFetch,
+    signOut, switchTo, forget, refreshAccounts, changePassword, authedFetch, authedUpload,
   }), [user, mustChangePassword, loading, accounts,
        signIn, requestOtp, signInWithOtp, verifyMfa,
-       signOut, switchTo, forget, refreshAccounts, changePassword, authedFetch]);
+       signOut, switchTo, forget, refreshAccounts, changePassword, authedFetch, authedUpload]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
