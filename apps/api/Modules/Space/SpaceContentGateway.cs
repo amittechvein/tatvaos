@@ -174,4 +174,48 @@ public sealed class SpaceContentGateway(
         await allocator.ReconcileUsageAsync(tenant.TenantId, ct);
         return new(file, null, null);
     }
+
+    /// <summary>
+    /// Find-or-create a ROOT-LEVEL folder by exact name — Mail's "Email
+    /// attachments", Family's future needs. Idempotent: the oldest live
+    /// match wins (Drive allows duplicate names, so a concurrent double-
+    /// create resolves the way two humans clicking at once would — the
+    /// next call settles on the oldest). Creation follows the standard
+    /// ownership rules, which is the whole point: products call this so
+    /// those rules never get a second implementation elsewhere.
+    /// </summary>
+    public async Task<Guid> EnsureFolderAsync(
+        string name, string scope = "personal", CancellationToken ct = default)
+    {
+        if (tenant.UserId is not Guid uid)
+            throw new InvalidOperationException("There is no signed-in person to own the folder.");
+        if (scope is not ("personal" or "organisational"))
+            throw new ArgumentException("scope must be personal or organisational.", nameof(scope));
+
+        name = name.Trim();
+        if (name.Length is 0 or > 300)
+            throw new ArgumentException("A folder name is required (max 300 chars).", nameof(name));
+
+        var query = scope == "organisational"
+            ? db.SpaceFolders.Where(f => f.ParentFolderId == null && f.DeletedAt == null
+                                         && f.OwnershipType == "organisational" && f.Name == name)
+            : db.SpaceFolders.Where(f => f.ParentFolderId == null && f.DeletedAt == null
+                                         && f.OwnershipType == "personal"
+                                         && f.OwnerUserId == uid && f.Name == name);
+
+        var existing = await query.OrderBy(f => f.CreatedAt).FirstOrDefaultAsync(ct);
+        if (existing is not null) return existing.Id;
+
+        var folder = new SpaceFolder
+        {
+            TenantId = tenant.TenantId,
+            CreatedByUserId = uid,
+            OwnershipType = scope,
+            OwnerUserId = scope == "personal" ? uid : null,
+            Name = name,
+        };
+        db.SpaceFolders.Add(folder);
+        await db.SaveChangesAsync(ct);
+        return folder.Id;
+    }
 }

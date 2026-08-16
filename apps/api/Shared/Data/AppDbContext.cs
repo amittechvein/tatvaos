@@ -108,6 +108,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<SpaceShare> SpaceShares => Set<SpaceShare>();
     public DbSet<SpaceFileActivity> SpaceFileActivities => Set<SpaceFileActivity>();
     public DbSet<SpaceStar> SpaceStars => Set<SpaceStar>();
+    public DbSet<SpacePublicLink> SpacePublicLinks => Set<SpacePublicLink>();
+    public DbSet<SpaceTenantSetting> SpaceTenantSettings => Set<SpaceTenantSetting>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -204,6 +206,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<SpaceShare>().ToTable("shares", "space");
         b.Entity<SpaceFileActivity>().ToTable("file_activity", "space");
         b.Entity<SpaceStar>().ToTable("stars", "space");
+        b.Entity<SpacePublicLink>().ToTable("public_links", "space");
+        b.Entity<SpaceTenantSetting>().ToTable("tenant_settings", "space");
 
         // ---- Column types Npgsql cannot infer ----------------------------
         // A string property maps to text by default, and PostgreSQL has no
@@ -239,6 +243,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<MailboxPermission>().HasKey(p => new { p.MailboxId, p.UserId, p.Permission });
         b.Entity<ContactGroupMember>().HasKey(m => new { m.GroupId, m.ContactId });
         b.Entity<SpaceFileActivity>().HasKey(a => new { a.UserId, a.FileId });
+        b.Entity<SpaceTenantSetting>().HasKey(s => s.TenantId);
+        // One token hash, one link — mirrors uq_space_public_links_token.
+        b.Entity<SpacePublicLink>().HasIndex(l => l.TokenHash).IsUnique();
 
         // ---- Global tenant filters ---------------------------------------
         // Everything carrying a TenantId. Tenants are the boundary itself;
@@ -302,6 +309,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             e.TenantId == tenant.TenantId && e.UserId == tenant.UserId);
         b.Entity<SpaceStar>().HasQueryFilter(e =>
             e.TenantId == tenant.TenantId && e.UserId == tenant.UserId);
+        b.Entity<SpacePublicLink>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<SpaceTenantSetting>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
 
         // ---- Uniqueness ---------------------------------------------------
         // Domains are unique across the WHOLE platform, not per tenant. Two
@@ -580,6 +589,15 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             .HasForeignKey(s => s.FileId).OnDelete(DeleteBehavior.Cascade);
         b.Entity<SpaceStar>().HasOne<SpaceFolder>().WithMany()
             .HasForeignKey(s => s.FolderId).OnDelete(DeleteBehavior.Cascade);
+
+        b.Entity<SpacePublicLink>().HasOne<Tenant>().WithMany()
+            .HasForeignKey(l => l.TenantId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<SpacePublicLink>().HasOne<SpaceFile>().WithMany()
+            .HasForeignKey(l => l.FileId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<SpacePublicLink>().HasOne<User>().WithMany()
+            .HasForeignKey(l => l.CreatedByUserId).OnDelete(DeleteBehavior.SetNull);
+        b.Entity<SpaceTenantSetting>().HasOne<Tenant>().WithOne()
+            .HasForeignKey<SpaceTenantSetting>(s => s.TenantId).OnDelete(DeleteBehavior.Cascade);
 
         base.OnModelCreating(b);
 

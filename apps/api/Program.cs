@@ -1,5 +1,7 @@
 using System.Text;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using TatvaOS.Api.Modules.Admin;
@@ -159,6 +161,30 @@ builder.Services.AddHostedService<AttachmentScanWorker>();
 // scheduling in-memory timers that a deploy would silently swallow.
 builder.Services.AddHostedService<CalendarReminderWorker>();
 
+// The public-link resolve is the one anonymous, internet-reachable route
+// on the platform. Per-IP fixed window. Behind Caddy the peer address is
+// the proxy, so the client is the LAST entry of X-Forwarded-For — Caddy
+// appends the real peer there; anything earlier is client-supplied and
+// spoofable, which is why [^1] and not [0].
+builder.Services.AddRateLimiter(o =>
+{
+    o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    o.AddPolicy("space-public-links", httpContext =>
+    {
+        var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();
+        var client = string.IsNullOrEmpty(xff)
+            ? httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"
+            : xff.Split(',')[^1].Trim();
+        return RateLimitPartition.GetFixedWindowLimiter(client,
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 60,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            });
+    });
+});
+
 builder.Services.AddOpenApi();
 
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
@@ -189,6 +215,7 @@ app.UseAuthentication();
 // BEFORE the endpoints — they hit the database and need the context set.
 app.UseMiddleware<TenantMiddleware>();
 app.UseAuthorization();
+app.UseRateLimiter();
 
 // Reads Auth:CookieDomain. Unset locally and on staging (one host serves
 // everything); ".tatvaos.com" in production, so a session started in Core is
@@ -217,6 +244,7 @@ app.MapMailEndpoints();
 app.MapFamilyEndpoints();
 app.MapSpaceEndpoints();
 app.MapSpaceDriveEndpoints();
+app.MapSpaceLinkEndpoints();
 
 // ---------------------------------------------------------------------------
 //  Bootstrap the first super admin
