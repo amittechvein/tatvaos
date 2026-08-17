@@ -78,7 +78,7 @@ rtc:
 #  exactly this reason; rotate both together or neither.
 # ----------------------------------------------------------------------------
 webhook:
-  api_key: PASTE_THE_VALUE_HERE
+  api_key: 3f345f9b5cfe9e00
   urls:
     - http://api:8080/api/connect/webhooks/livekit
 
