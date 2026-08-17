@@ -107,16 +107,69 @@ else
 fi
 
 echo "== LiveKit is configured to call us back =="
-# grep -c, not grep -q: -q exits on the first match and SIGPIPEs the producer,
-# which under pipefail reads as a failure. Same bug, same fix, as the Phase 0
-# coturn check.
-c=$("${COMPOSE[@]}" exec -T livekit sh -c \
-      'grep -c "api:8080/api/connect/webhooks/livekit" /etc/livekit.yaml' 2>/dev/null | tr -d '[:space:]')
-if [ "${c:-0}" -gt 0 ] 2>/dev/null; then
-    ok "webhook url present in livekit.yaml"
+# Three separate questions, because they have three different answers and
+# three different fixes. Collapsing them into one check is how "attendance
+# silently does not exist" hides.
+#
+# grep -c, not grep -q, throughout: -q exits on the first match and SIGPIPEs
+# the producer, which under pipefail reads as a failure. Same bug, same fix,
+# as the Phase 0 coturn check.
+
+# (1) Is the file on disk right? The api_key must be a LITERAL that matches
+#     LIVEKIT_API_KEY. LiveKit does not expand ${VAR} in its config, and a
+#     webhook block whose api_key names no configured key returns
+#     ErrWebHookMissingAPIKey — the server does not start at all.
+HOSTFILE=infra/docker/livekit.yaml
+c=$(grep -c 'api:8080/api/connect/webhooks/livekit' "$HOSTFILE" 2>/dev/null || true)
+KEY_IN_YAML=$(awk '/^webhook:/{f=1} f && /^[[:space:]]+api_key:/{print $2; exit}' "$HOSTFILE" 2>/dev/null)
+KEY_IN_ENV=$(grep -E '^LIVEKIT_API_KEY=' "$ENV_FILE" | tail -1 | cut -d= -f2- | tr -d "\"' ")
+if [ "${c:-0}" -eq 0 ]; then
+    bad "$HOSTFILE has no webhook url — attendance will never record"
+elif [ -z "$KEY_IN_YAML" ]; then
+    bad "$HOSTFILE has a webhook block with no api_key — LiveKit will refuse to start"
+elif [ "$KEY_IN_YAML" != "$KEY_IN_ENV" ]; then
+    bad "webhook.api_key in $HOSTFILE does not match LIVEKIT_API_KEY in $ENV_FILE.
+        LiveKit will NOT BOOT: it looks the name up in its key map, finds nothing,
+        and returns ErrWebHookMissingAPIKey. Do not recreate the container until
+        these agree. In the yaml: '${KEY_IN_YAML}'"
 else
-    bad "livekit.yaml has no webhook url — meetings will work but attendance will never record.
-        The container must be RECREATED, not restarted, for a compose change to land."
+    ok "webhook url + a matching literal api_key in $HOSTFILE"
+fi
+
+# (2) Is the RUNNING container using that file? ./livekit.yaml:/etc/livekit.yaml
+#     is a single-FILE bind mount, and docker binds it by inode. git pull does
+#     not edit files in place — it writes a new one and renames — so the inode
+#     changes and the running container keeps the copy it started with. The
+#     contents can be perfect on disk and stale inside the container, with
+#     nothing anywhere reporting a problem.
+#
+#     `compose cp` rather than `exec grep`, so this answers the same way
+#     whether or not the image ships a shell.
+TMP=$(mktemp)
+if "${COMPOSE[@]}" cp livekit:/etc/livekit.yaml "$TMP" >/dev/null 2>&1; then
+    c=$(grep -c 'api:8080/api/connect/webhooks/livekit' "$TMP" 2>/dev/null || true)
+    if [ "${c:-0}" -gt 0 ]; then
+        ok "the running container has the current livekit.yaml"
+    else
+        bad "the container is running an OLDER livekit.yaml than the one on disk.
+        A single-file bind mount follows the inode, and git pull replaced it.
+        Fix the file first, then: docker compose ... up -d --force-recreate livekit"
+    fi
+else
+    bad "could not read /etc/livekit.yaml out of the livekit container"
+fi
+rm -f "$TMP"
+
+# (3) Did it actually stay up? restart: unless-stopped turns a config the
+#     server rejects into a crash loop rather than a stopped container, and a
+#     crash loop still prints something reassuring in most places you'd look.
+cid=$("${COMPOSE[@]}" ps -q livekit 2>/dev/null | head -1)
+st=$(docker inspect --format '{{.State.Status}}' "$cid" 2>/dev/null)
+rc=$(docker inspect --format '{{.RestartCount}}' "$cid" 2>/dev/null)
+if [ "$st" = "running" ] && [ "${rc:-0}" -lt 3 ]; then
+    ok "livekit is up and not crash-looping (restarts: ${rc:-0})"
+else
+    bad "livekit status '${st:-unknown}', ${rc:-?} restarts — read: docker compose logs --tail 40 livekit"
 fi
 
 echo "== the guest doorstep answers, and answers the same way for anything unknown =="

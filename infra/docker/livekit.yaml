@@ -49,12 +49,36 @@ rtc:
 #  it a meeting can run perfectly and leave no record that it did.
 #
 #  Delivered INSIDE the compose network, so the traffic never touches the
-#  public internet. api_key names which key signs the request; the API rejects
-#  anything whose signature or body hash does not check out, so reachability
-#  is not the control — verification is.
+#  public internet. Reachability is not the control — verification is: the API
+#  rejects anything whose signature or body hash does not check out.
+#
+#  ── api_key is a LITERAL, and it has to be. ──────────────────────────────
+#
+#  LiveKit does NOT expand ${VAR} inside this file. pkg/config/config.go
+#  unmarshals the YAML as-is; the only os.ExpandEnv call in it is for the
+#  key_file path. A "${LIVEKIT_API_KEY}" written here is read as those
+#  nineteen characters, and then:
+#
+#      secret := provider.GetSecret(wc.APIKey)      // "" — no such key
+#      if secret == "" && len(wc.URLs) > 0 {
+#          return nil, ErrWebHookMissingAPIKey      // server does NOT start
+#      }
+#
+#  So the placeholder does not merely disable webhooks — it stops LiveKit
+#  booting, which takes every meeting down with it.
+#
+#  Putting the value here leaks nothing. This is the key IDENTIFIER, not the
+#  secret: it names WHICH of the pairs in LIVEKIT_KEYS signs the callback.
+#  The signing secret stays in infra/docker/.env and never enters the repo.
+#  The identifier is already public by design — it is the `iss` claim of
+#  every join token the API hands to every browser, which anyone can decode.
+#
+#  IT MUST EQUAL LIVEKIT_API_KEY IN infra/docker/.env. If the two ever drift,
+#  LiveKit refuses to start. connect-phase1-verify.sh compares them for
+#  exactly this reason; rotate both together or neither.
 # ----------------------------------------------------------------------------
 webhook:
-  api_key: ${LIVEKIT_API_KEY}
+  api_key: PASTE_THE_VALUE_HERE
   urls:
     - http://api:8080/api/connect/webhooks/livekit
 

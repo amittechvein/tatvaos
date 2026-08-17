@@ -166,16 +166,81 @@ Watch for three things in the output:
    `20260816-calendar.sql` in the same pass, which is why the
    `calendar_event_id` foreign key resolves even on a database that had never
    seen the calendar schema.
-3. **`Starting services`** → LiveKit must be listed as **Recreated**, not
-   `Running`. `docker compose up -d` only recreates a container when its
-   *definition* changes; the webhook block lives in the mounted
-   `livekit.yaml`, and patch 0002 also changed the api service's environment,
-   so both should recreate. If LiveKit says `Running`, force it:
+3. **`Starting services`** → LiveKit will say `Running`, not `Recreated`, and
+   that is not a cosmetic difference. See B2 — do **not** force-recreate it
+   until B2 is done.
 
-   ```bash
-   cd /srv/tatvaos-production
-   docker compose -f infra/docker/docker-compose.base.yml -f infra/docker/docker-compose.production.yml --env-file infra/docker/.env up -d --force-recreate livekit
-   ```
+### B2. The LiveKit webhook — read before recreating anything
+
+Two independent things go wrong here, and both were found on the first
+production deploy (2026-08-17).
+
+**First: `docker compose up -d` will not pick up a changed `livekit.yaml`.**
+It only recreates a container when the container's *definition* changes —
+image, env, ports, the mount set. `./livekit.yaml:/etc/livekit.yaml:ro` is a
+single-**file** bind mount, and docker binds it by inode. `git pull` does not
+edit a file in place; it writes a new one and renames it over the old, so the
+inode changes and the running container keeps the copy it started with. The
+file is perfect on disk and stale inside the container, and nothing anywhere
+says so. (This is the Caddyfile lesson in `deploy.sh`, one degree worse: with
+Caddy the contents at least updated.)
+
+**Second, and it must be fixed before the recreate: LiveKit does not expand
+`${VAR}` in its config file.** `pkg/config/config.go` unmarshals the YAML
+as-is — the single `os.ExpandEnv` in it is for the `key_file` path. So
+`api_key: ${LIVEKIT_API_KEY}` is read as those nineteen literal characters,
+and then:
+
+```go
+secret := provider.GetSecret(wc.APIKey)   // "" — no key by that name
+if secret == "" && len(wc.URLs) > 0 {
+    return nil, ErrWebHookMissingAPIKey   // server does NOT start
+}
+```
+
+That is not "webhooks are off". That is **LiveKit refusing to boot**, on a
+`restart: unless-stopped` container, which turns into a crash loop that takes
+every meeting down. Recreating before fixing the file would have done exactly
+that.
+
+The fix is a literal value, and it costs nothing to write one down:
+`webhook.api_key` is the key **identifier**, not the secret. It names which of
+the pairs in `LIVEKIT_KEYS` signs the callback. The signing secret stays in
+`infra/docker/.env`. The identifier is already public by design — it is the
+`iss` claim of every join token the API hands to every browser, decodable by
+anyone who joins a meeting. It must equal `LIVEKIT_API_KEY` exactly; if the two
+drift, LiveKit will not start.
+
+**On the server**, read the identifier:
+
+```bash
+grep -E '^LIVEKIT_API_KEY=' /srv/tatvaos-production/infra/docker/.env
+```
+
+**On Windows**, put it in the file, then commit and push:
+
+```powershell
+cd C:\Users\amitd\Downloads\tatvaOS
+(Get-Content infra\docker\livekit.yaml) -replace 'REPLACE_ME_WITH_LIVEKIT_API_KEY','<the value>' | Set-Content infra\docker\livekit.yaml
+git add infra/docker/livekit.yaml infra/scripts/connect-phase1-verify.sh docs/CONNECT_PHASE1_STEPS.md
+git commit -m "Connect: literal webhook api_key — LiveKit does not expand vars in its config"
+git push
+```
+
+**On the server**, pull and recreate — and check it survived:
+
+```bash
+cd /srv/tatvaos-production
+git pull
+bash infra/scripts/connect-phase1-verify.sh          # must pass the api_key check FIRST
+docker compose -f infra/docker/docker-compose.base.yml -f infra/docker/docker-compose.production.yml --env-file infra/docker/.env up -d --force-recreate livekit
+docker compose -f infra/docker/docker-compose.base.yml -f infra/docker/docker-compose.production.yml --env-file infra/docker/.env logs --tail 30 livekit
+bash infra/scripts/connect-phase1-verify.sh
+```
+
+If LiveKit does crash-loop anyway, the way back is to empty the `urls:` list —
+`ErrWebHookMissingAPIKey` only fires when URLs are configured — recreate, and
+Connect is serving again while you work out the key.
 
 **If the schema step fails**, the deploy has already stopped and the old
 containers are still serving the old, still-valid schema. Read the psql error
@@ -197,7 +262,7 @@ creates no fixtures, deletes nothing. It proves the same properties the
 isolation suite proves, from the other side: by reading the catalogue for the
 policies themselves rather than by inserting rows to bounce off them.
 
-It checks twelve things:
+It checks fourteen things:
 
 - 4 tables, 3 `SECURITY DEFINER` functions, and both added columns
   (`core.tenants.allow_connect_guests`, `connect.meetings.calendar_event_id`)
@@ -210,12 +275,16 @@ It checks twelve things:
   an error**, with `app.tenant_id = ''`
 - `tatvaos_app` is still `NOBYPASSRLS`
 - the api container actually has `LiveKit__ApiKey`
-- `livekit.yaml` inside the running container carries the webhook URL
+- **three separate webhook questions**, because they have three different
+  answers and three different fixes: the file on disk has the URL *and* a
+  literal `api_key` matching `LIVEKIT_API_KEY`; the **running container** has
+  that same file rather than a pre-`git pull` inode; and LiveKit is up and not
+  crash-looping
 - an unknown code and a malformed code get a **byte-identical** answer from
   `/api/connect/g/...`, and that answer is *ours* — identical-but-generic would
   mean the guest routes never registered
 
-Expected: `12 ok, 0 failed`.
+Expected: `14 ok, 0 failed`.
 
 ---
 
