@@ -1,0 +1,45 @@
+# ============================================================================
+#  LiveKit server configuration — Connect's media SFU.
+# ============================================================================
+#
+#  Keys are NOT here. The container reads LIVEKIT_KEYS from the environment
+#  (docker-compose.base.yml), so this file can live in the repo without
+#  carrying a credential — the same reason the Postfix .cf files say
+#  dev_mail_pw and the entrypoint renders the real one.
+#
+#  Port choices are load-bearing: rtc.port_range_* must equal the range the
+#  livekit service publishes, and must not overlap coturn's relay range
+#  (49160–49999). Change them together or not at all.
+# ============================================================================
+
+# Signalling websocket + HTTP API. Deliberately not published on the host —
+# Caddy proxies it as connect.tatvaos.com/rtc, and compose-network
+# neighbours (the API, for room service calls and webhooks in Phase 1)
+# reach it as livekit:7880.
+port: 7880
+
+rtc:
+  # Media over UDP — one port per transport, advertised 1:1.
+  port_range_start: 50000
+  port_range_end: 50199
+  # ICE over TCP for networks that drop UDP but allow outbound TCP.
+  tcp_port: 7881
+  # The container sits behind docker's bridge NAT; this makes the server
+  # discover the box's public address (via STUN) and put THAT in its ICE
+  # candidates instead of a 172.x bridge IP nobody outside can reach.
+  use_external_ip: true
+
+# TURN is deliberately NOT configured here. Static credentials in this file
+# would put a secret in the repo, so in Phase 0 the throwaway test page
+# supplies the coturn credential by hand (the Force TURN checkbox), and in
+# Phase 1 the API hands each client short-lived TURN credentials next to its
+# LiveKit token. docs/CONNECT_PHASE0.md records the follow-up.
+
+# Simulcast needs no server switch: livekit-client publishes layered video
+# by default, which is what keeps the outbound-bandwidth math in
+# docs/CONNECT_PHASE0.md honest. Only keys the server documents belong in
+# this file — an unknown key is a boot failure, and a boot failure here is
+# a failed deploy health gate.
+
+logging:
+  level: info

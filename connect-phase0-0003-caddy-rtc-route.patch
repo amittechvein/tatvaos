@@ -1,0 +1,29 @@
+diff --git a/infra/docker/conf.d/connect.caddy b/infra/docker/conf.d/connect.caddy
+index 86609ae..a9f13fc 100644
+--- a/infra/docker/conf.d/connect.caddy
++++ b/infra/docker/conf.d/connect.caddy
+@@ -8,7 +8,10 @@
+ #  our infrastructure is broken.
+ #
+ #  /connect renders the coming-soon page today. When the product ships,
+-#  nothing here changes.
++#  nothing here changes — except /rtc below, added in Phase 0: it carries
++#  LiveKit's signalling websocket so wss:// rides this hostname's existing
++#  certificate. MEDIA does not pass through Caddy; it flows over the UDP
++#  ports the livekit service publishes itself (docs/CONNECT_PHASE0.md).
+ #
+ #  Requires CONNECT_DOMAIN in the production environment file — see the
+ #  warning in account.caddy about what a missing variable does.
+@@ -17,6 +20,12 @@
+ {$CONNECT_DOMAIN} {
+     encode zstd gzip
+ 
++    # LiveKit signalling only — see the header note. Websockets upgrade
++    # automatically; no extra directives needed.
++    handle /rtc* {
++        reverse_proxy livekit:7880
++    }
++
+     handle /api/* {
+         reverse_proxy api:8080
+     }

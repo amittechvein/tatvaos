@@ -285,6 +285,68 @@ services:
       - caddyconfig:/config
     networks: [mailnet]
 
+  # --------------------------------------------------------------------------
+  #  Connect's media path — Phase 0. Two services, both infrastructure:
+  #  business logic stays in the API monolith (docs/CONNECT_BRIEF.md §2).
+  #  Ports, ranges and the no-overlap rule are documented in
+  #  infra/docker/livekit.yaml and docs/CONNECT_PHASE0.md.
+  # --------------------------------------------------------------------------
+
+  livekit:
+    # Floating tag so review is not blocked on guessing a release; pin the
+    # digest on the box in the follow-up commit (see docs/CONNECT_PHASE0.md).
+    image: livekit/livekit-server:latest
+    restart: unless-stopped
+    command: ["--config", "/etc/livekit.yaml"]
+    environment:
+      # "key: secret" — the ONLY place the LiveKit credential pair exists.
+      # The API reads the same two variables later to mint room-scoped
+      # tokens; a browser only ever sees short-lived JWTs (brief §7).
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:?LIVEKIT_API_KEY must be set}: ${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET must be set}"
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      # Media over UDP, 1:1 with rtc.port_range_* in livekit.yaml — the
+      # server advertises the box's public IP (use_external_ip), so the
+      # mapping must not renumber. Signalling (7880) is NOT published:
+      # Caddy proxies it at connect.tatvaos.com/rtc under the existing
+      # certificate, and media never passes through Caddy at all.
+      - "50000-50199:50000-50199/udp"
+      # ICE over TCP — fallback for networks that drop UDP outright.
+      - "7881:7881"
+    networks: [mailnet]
+
+  coturn:
+    image: coturn/coturn:alpine
+    restart: unless-stopped
+    # Host networking, deliberately: a TURN relay allocates from its whole
+    # relay range on demand, and publishing hundreds of UDP ports through
+    # the docker proxy one by one is the overhead this skips. The relay
+    # range 49160–49999 must NOT overlap LiveKit's 50000–50199 above —
+    # change either only together.
+    network_mode: host
+    command: [
+      "-n",
+      "--log-file=stdout",
+      "--fingerprint",
+      "--lt-cred-mech",
+      "--no-cli",
+      "--no-multicast-peers",
+      "--realm=tatvaos.com",
+      "--listening-port=3478",
+      "--min-port=49160",
+      "--max-port=49999",
+      # Static credential for Phase 0; values live in .env, never here —
+      # the postgres-password rule. Rotating use-auth-secret is the
+      # follow-up recorded in docs/CONNECT_PHASE0.md.
+      "--user=${TURN_USERNAME:?TURN_USERNAME must be set}:${TURN_PASSWORD:?TURN_PASSWORD must be set}",
+      # The box's public IPv4. TURN writes it into relay candidates, and a
+      # wrong value fails at call time rather than at start — so it is
+      # required, not defaulted.
+      "--external-ip=${TURN_EXTERNAL_IP:?TURN_EXTERNAL_IP must be set}",
+    ]
+
+
 networks:
   mailnet:
     driver: bridge

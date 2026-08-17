@@ -1,0 +1,21 @@
+diff --git a/infra/docker/docker-compose.production.yml b/infra/docker/docker-compose.production.yml
+index 705a761..de4f18e 100644
+--- a/infra/docker/docker-compose.production.yml
++++ b/infra/docker/docker-compose.production.yml
+@@ -86,3 +86,16 @@ services:
+   web:
+     environment:
+       NEXT_PUBLIC_ENVIRONMENT: production
++
++  livekit:
++    deploy:
++      resources:
++        limits: { memory: 1G }
++    logging:
++      driver: json-file
++      options: { max-size: "50m", max-file: "5" }
++
++  coturn:
++    logging:
++      driver: json-file
++      options: { max-size: "50m", max-file: "5" }
