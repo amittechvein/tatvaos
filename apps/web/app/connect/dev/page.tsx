@@ -78,6 +78,7 @@ type RoomEventNames = {
   ConnectionStateChanged: string;
   ParticipantConnected: string;
   ParticipantDisconnected: string;
+  TrackPublished: string;
   TrackSubscribed: string;
   TrackUnsubscribed: string;
   Disconnected: string;
@@ -160,8 +161,13 @@ export default function ConnectDevPage() {
     document.head.appendChild(script);
   }, []);
 
-  function tile(element: HTMLMediaElement, label: string): HTMLElement {
+  function tile(element: HTMLMediaElement, label: string, identity: string): HTMLElement {
     const wrap = document.createElement('div');
+    // Tagged so a departing participant's tiles can be removed by identity.
+    // TrackUnsubscribed alone is not enough: a participant who drops leaves a
+    // black rectangle behind, which reads as "their video broke" when in fact
+    // they left. Phase 1's room screen has the same obligation.
+    wrap.dataset.identity = identity;
     wrap.style.cssText =
       'flex:1 1 320px;max-width:640px;aspect-ratio:16/9;position:relative;' +
       'background:#12151c;border:1px solid #2a2f3a;border-radius:8px;overflow:hidden';
@@ -199,14 +205,29 @@ export default function ConnectDevPage() {
       log(`connection: ${String(state)}`);
     });
     room.on(events.ParticipantConnected, (p: ParticipantLike) => log(`joined: ${p.identity}`));
-    room.on(events.ParticipantDisconnected, (p: ParticipantLike) => log(`left: ${p.identity}`));
+    room.on(events.ParticipantDisconnected, (p: ParticipantLike) => {
+      log(`left: ${p.identity}`);
+      remoteRef.current
+        ?.querySelectorAll(`[data-identity="${p.identity}"]`)
+        .forEach((el) => el.remove());
+    });
+    // Fires when a remote participant publishes, BEFORE we subscribe. The gap
+    // between this line and the next one is the difference between "they never
+    // turned their camera on" and "we failed to receive it" — a distinction
+    // that cost an afternoon to establish from server logs instead.
+    room.on(events.TrackPublished, (_pub: PublicationLike, p: ParticipantLike) =>
+      log(`${p.identity} published a track`),
+    );
     room.on(
       events.TrackSubscribed,
       (track: MediaTrackLike, _pub: PublicationLike, p: ParticipantLike) => {
         log(`subscribed ${track.kind} from ${p.identity}`);
         const element = track.attach();
-        if (track.kind === 'video') remoteRef.current?.appendChild(tile(element, p.identity));
-        else document.body.appendChild(element); // audio elements are invisible
+        if (track.kind === 'video') {
+          remoteRef.current?.appendChild(tile(element, p.identity, p.identity));
+        } else {
+          document.body.appendChild(element); // audio elements are invisible
+        }
       },
     );
     room.on(events.TrackUnsubscribed, (track: MediaTrackLike) => {
@@ -225,7 +246,7 @@ export default function ConnectDevPage() {
     });
     room.on(events.LocalTrackPublished, (pub: PublicationLike) => {
       if (pub.kind === 'video' && pub.track && localRef.current) {
-        localRef.current.replaceChildren(tile(pub.track.attach(), 'you'));
+        localRef.current.replaceChildren(tile(pub.track.attach(), 'you', 'self'));
       }
     });
 
