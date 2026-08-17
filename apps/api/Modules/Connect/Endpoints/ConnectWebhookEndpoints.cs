@@ -23,10 +23,16 @@ namespace TatvaOS.Api.Modules.Connect.Endpoints;
 ///  duplicate is a no-op rather than an error — otherwise a retry storm turns
 ///  into an attendance report nobody can trust.
 ///
-///  TENANCY: a webhook has no user and no JWT of ours, so RLS would fail
-///  closed. The meeting id comes out of the room name, the tenant comes from
-///  the meeting, and the tenant context is set before anything is written —
-///  the same ordering the guest path uses.
+///  TENANCY: a webhook has no user and no JWT of ours, so app.tenant_id is
+///  unset — and that is when forced RLS is at its MOST absolute, not its
+///  least. The first read therefore goes through a SECURITY DEFINER function
+///  (connect.webhook_meeting_tenant), the same pattern as every guest-path
+///  read, and the tenant it returns is entered before anything is written.
+///  An earlier version of this file believed the opposite — "RLS is not in
+///  play yet" — read zero rows through an ordinary query, and acknowledged
+///  every event with 200 while writing none of them. LiveKit's log said
+///  delivered; the attendance table said nothing happened. Do not reintroduce
+///  that query.
 /// ─────────────────────────────────────────────────────────────────────────
 /// </summary>
 public static class ConnectWebhookEndpoints
@@ -80,12 +86,16 @@ public static class ConnectWebhookEndpoints
 
         if (!TryMeetingId(root, out var meetingId)) return Results.Ok();
 
-        // The meeting is read WITHOUT tenant context, so RLS is not in play
-        // yet — hence a definer-free, deliberately narrow lookup that returns
-        // only the tenant. Everything after this runs scoped.
+        // No tenant is set yet, so this CANNOT be an ordinary query — forced
+        // RLS would return zero rows for a meeting that exists, and this
+        // handler would acknowledge the event while recording nothing (it did
+        // exactly that once; see the header). The definer function is the
+        // narrowest possible read: one column, keyed by primary key, granted
+        // only to the app role. AS "Value" is EF's required alias for scalar
+        // SqlQuery — same as every other scalar SqlQuery in this codebase.
         var tenantIds = await db.Database
             .SqlQuery<Guid>($"""
-                SELECT tenant_id FROM connect.meetings WHERE id = {meetingId}
+                SELECT tenant_id AS "Value" FROM connect.webhook_meeting_tenant({meetingId})
                 """)
             .ToListAsync(ct);
         if (tenantIds.Count == 0) return Results.Ok();

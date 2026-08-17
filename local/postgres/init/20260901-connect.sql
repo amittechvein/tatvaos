@@ -384,3 +384,43 @@ $$;
 
 REVOKE ALL ON FUNCTION connect.claim_lobby_admission(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION connect.claim_lobby_admission(text) TO tatvaos_app;
+
+-- ----------------------------------------------------------------------------
+--  THE WEBHOOK'S FIRST READ — added 2026-08-17, after the first headless
+--  webhook test on production.
+--
+--  A LiveKit callback is authenticated by signature, not by a person: it
+--  carries no JWT of ours, so app.tenant_id is unset and forced RLS hides
+--  every row of connect.meetings — the same fail-closed behaviour the guest
+--  path was built around, and the reason its reads go through the functions
+--  above.
+--
+--  The webhook handler's original lookup was an ordinary query, on the theory
+--  that "RLS is not in play yet" before a tenant is set. That theory was
+--  BACKWARDS: before a tenant is set is precisely when RLS is at its most
+--  absolute. The handler read zero rows, concluded the meeting did not exist,
+--  and acknowledged every event with 200 while writing nothing — LiveKit's
+--  log showed three webhooks delivered, status 200, and the attendance table
+--  stayed empty. Delivery, signature and parsing all worked; the lookup was
+--  the hole.
+--
+--  Deliberately the narrowest function in this file: one column out, keyed by
+--  primary key, STABLE, no joins. It reveals which tenant a meeting id
+--  belongs to — to code that already holds a message signed by OUR LiveKit
+--  about that very room. Everything after this lookup runs inside the tenant
+--  it returns, under ordinary RLS.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION connect.webhook_meeting_tenant(p_meeting_id uuid)
+RETURNS TABLE (tenant_id uuid)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = connect, pg_temp
+AS $$
+    SELECT m.tenant_id
+      FROM connect.meetings m
+     WHERE m.id = p_meeting_id;
+$$;
+
+REVOKE ALL ON FUNCTION connect.webhook_meeting_tenant(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION connect.webhook_meeting_tenant(uuid) TO tatvaos_app;

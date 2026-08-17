@@ -55,9 +55,12 @@ echo "== the migration landed =="
 n=$(q "SELECT count(*) FROM information_schema.tables WHERE table_schema='connect'")
 [ "${n:-0}" -eq 4 ] && ok "4 connect tables" || bad "expected 4 connect tables, found ${n:-0}"
 
+# Four: the guest path's three, plus webhook_meeting_tenant — added when the
+# first headless webhook test proved the handler's ordinary lookup read zero
+# rows under forced RLS and acknowledged every event while writing nothing.
 n=$(q "SELECT count(*) FROM pg_proc p JOIN pg_namespace ns ON ns.oid=p.pronamespace
         WHERE ns.nspname='connect' AND p.prosecdef")
-[ "${n:-0}" -eq 3 ] && ok "3 SECURITY DEFINER functions" || bad "expected 3 definer functions, found ${n:-0}"
+[ "${n:-0}" -eq 4 ] && ok "4 SECURITY DEFINER functions" || bad "expected 4 definer functions, found ${n:-0} — a count of 3 means the webhook fix's migration has not applied"
 
 # The two columns this migration adds to tables it does not own. If either is
 # missing the deploy applied an older copy of the file.

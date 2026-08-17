@@ -232,10 +232,13 @@ migration): `meetings` gets the direct `tenant_id` policy USING + WITH CHECK;
 
 ### The anonymous path's database access
 
-Guest requests carry no JWT, so `app.tenant_id` is empty and RLS fails
-closed. Exactly two `SECURITY DEFINER` functions with pinned `search_path`
-exist for this path — the Space public-links rule — and the API issues no
-other query before tenant context is established:
+Anonymous requests carry no JWT, so `app.tenant_id` is empty and RLS fails
+closed. Exactly four `SECURITY DEFINER` functions with pinned `search_path`
+exist for the anonymous paths — the Space public-links rule — and the API
+issues no other query before tenant context is established. Three serve the
+guest path; the fourth (`webhook_meeting_tenant`, listed with the webhook
+section below) serves the LiveKit callback, which is anonymous in exactly the
+same way and was originally — wrongly — given an ordinary query instead:
 
 ```sql
 connect.resolve_meeting_code(p_code text)
@@ -296,7 +299,14 @@ deduplicated on `webhook_id` (unique index — replays are no-ops). Handled
 events: `room_started` → meeting `active` + `started_at`;
 `room_finished` → `ended` + `ended_at`; `participant_joined` /
 `participant_left` → a `meeting_events` row + participant
-`first_joined_at`/`last_seen_at`. LiveKit is configured to deliver to
+`first_joined_at`/`last_seen_at`. Tenancy: the handler's first read runs
+before any tenant is set, where forced RLS returns nothing, so it goes
+through `connect.webhook_meeting_tenant(p_meeting_id uuid)` — SECURITY
+DEFINER, one column out, keyed by primary key, granted only to
+`tatvaos_app`; the tenant it returns is entered before anything is written.
+(Found the hard way: the original ordinary query read zero rows and the
+handler acknowledged every event while recording none.) LiveKit is
+configured to deliver to
 `http://api:8080/...` inside the compose network; the route is also reachable
 through Caddy and is safe there because verification, not reachability, is
 the control.

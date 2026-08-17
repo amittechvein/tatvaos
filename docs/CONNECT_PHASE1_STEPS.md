@@ -25,7 +25,7 @@ matter here:
 | A C# compile error | **CI `backend`** — `dotnet build -c Release`, warnings-as-errors. |
 | An ESLint or type error | **CI `frontend`** — `pnpm typecheck`, `pnpm lint`, `pnpm build`. `no-explicit-any` is a build-failing error here; that cost a deploy cycle on 2026-08-17. |
 | RLS not actually holding on real rows | **CI `isolation`**, plus the six new Connect assertions from patch 0003 — cross-tenant read, own-tenant read, child-table scoping, no-context, the empty-string trap, and a forged INSERT. |
-| **The migration is not idempotent** — fine on a fresh database, fails on the *second* deploy | **Nothing in CI.** CI always starts from an empty database, so it can only ever prove the first run. I closed this by hand: applied the file **twice** against a real PostgreSQL, second run exit 0, and afterwards still 4 policies, 4 forced tables, 3 definer functions. |
+| **The migration is not idempotent** — fine on a fresh database, fails on the *second* deploy | **Nothing in CI.** CI always starts from an empty database, so it can only ever prove the first run. I closed this by hand: applied the file **twice** against a real PostgreSQL, second run exit 0, and afterwards still 4 policies, 4 forced tables, 4 definer functions. |
 | **An EF LINQ query EF cannot translate to SQL** | **Nothing, until the endpoint is first called.** This is the one real residual risk. |
 
 That last row is the whole cost of skipping local, and it is confined to
@@ -264,7 +264,7 @@ policies themselves rather than by inserting rows to bounce off them.
 
 It checks fourteen things:
 
-- 4 tables, 3 `SECURITY DEFINER` functions, and both added columns
+- 4 tables, 4 `SECURITY DEFINER` functions, and both added columns
   (`core.tenants.allow_connect_guests`, `connect.meetings.calendar_event_id`)
 - RLS **ENABLE *and* FORCE** on all four tables — a table with ENABLE but not
   FORCE is still fully readable by its owner, which looks identical in every
@@ -398,7 +398,7 @@ that commit deploys, section 0's argument for skipping local no longer holds.
 
 1. **Core must review the guest path line by line before it is deployed** —
    brief §8, the same rule Space's public links followed. The files are
-   `ConnectGuestEndpoints.cs`, the three `SECURITY DEFINER` functions in the
+   `ConnectGuestEndpoints.cs`, the four `SECURITY DEFINER` functions in the
    migration, and the `connect-guest` limiter in the Program.cs patch.
 
    The routes ship in this deploy and are reachable, which is deliberate — the
