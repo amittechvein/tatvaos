@@ -2,10 +2,18 @@
 # ============================================================================
 #  Connect Phase 1 — the signed-in checks, which no automated gate can fake.
 #
-#      bash infra/scripts/connect-phase1-handcheck.sh you@yourdomain.com
+#      bash infra/scripts/connect-phase1-handcheck.sh
 #
-#  Prompts for the password. It is never echoed, never written to disk, and
-#  never passed on a command line where `ps` could read it.
+#  Run it with NO arguments. It asks for the email and then the password.
+#
+#  That is deliberate. A usage line reading `<email>` invites pasting the
+#  placeholder, which happened twice on this box in one afternoon — once into
+#  a PowerShell -replace that put PASTE_THE_VALUE_HERE into livekit.yaml and
+#  crash-looped the media server, and once into this script. Nothing here
+#  should ever need a human to substitute a word before running it.
+#
+#  The password is never echoed, never written to disk, and never passed on a
+#  command line where `ps` could read it.
 #
 #  ─────────────────────────────────────────────────────────────────────────
 #   THIS ONE WRITES. It creates ONE real meeting in your own tenant — which
@@ -26,7 +34,21 @@ set -uo pipefail
 cd "$(dirname "$0")/../.."
 
 EMAIL="${1:-}"
-[ -n "$EMAIL" ] || { echo "usage: bash infra/scripts/connect-phase1-handcheck.sh <email>"; exit 2; }
+if [ -z "$EMAIL" ]; then
+    printf 'Your TatvaOS email: '
+    read -r EMAIL
+fi
+# Refuse the obvious placeholders rather than spending a login attempt — and
+# rather than reporting "wrong password" for something that was never an
+# address. Failed logins are rate-limited and audited; do not burn them here.
+case "$EMAIL" in
+    ''|you@*|user@*|*@yourdomain.com|*@example.com|*@example.org)
+        echo "  That is a placeholder, not your address."
+        echo "  Run it again with no arguments and type the real one."
+        exit 2 ;;
+    *@*.*) : ;;
+    *)  echo "  '$EMAIL' does not look like an email address."; exit 2 ;;
+esac
 
 ENV_FILE=infra/docker/.env
 DOM=$(grep -E '^CONNECT_DOMAIN=' "$ENV_FILE" | tail -1 | cut -d= -f2- | tr -d "\"' ")
