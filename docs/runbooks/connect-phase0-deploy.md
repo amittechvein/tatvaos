@@ -163,6 +163,23 @@ checkbox is the instrument:
   this runbook reaches the box only via commit **and push**.
 - **Confirm:** `git log --oneline -1` on both sides shows the same SHA.
 
+### LiveKit logs `path=/rtc/rtc/v1  invalid authorization token`
+
+**Met for real on 2026-08-17, during the first browser test.**
+
+- **Diagnosis:** the path is doubled. `livekit-client` appends the
+  signalling path to whatever base URL you hand it — `createV0RtcUrl()`
+  appends `rtc`, then `v1` for the versioned path — so a base ending in
+  `/rtc` yields `/rtc/rtc/v1`, which LiveKit rejects. The token is fine;
+  the URL is not.
+- **Fix:** give the client the **origin only** —
+  `wss://connect.tatvaos.com`, no path. Caddy's `handle /rtc*` covers
+  `/rtc`, `/rtc/v1` and `/rtc/v1/validate` alike, so nothing changes
+  server-side. (The dev page's default was corrected on 2026-08-17; anyone
+  typing a URL by hand should still know this.)
+- **Confirm:** the LiveKit log shows `/rtc/v1` — single `rtc` — and the
+  page's state goes to `connected`.
+
 ### The page says "connecting…" then errors before any state change
 
 - **Diagnosis:** the wss URL. `curl -s -o /dev/null -w '%{http_code}\n'

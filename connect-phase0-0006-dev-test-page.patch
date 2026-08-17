@@ -1,9 +1,9 @@
 diff --git a/apps/web/app/connect/dev/page.tsx b/apps/web/app/connect/dev/page.tsx
 new file mode 100644
-index 0000000..30fe0f7
+index 0000000..4db1b12
 --- /dev/null
 +++ b/apps/web/app/connect/dev/page.tsx
-@@ -0,0 +1,390 @@
+@@ -0,0 +1,395 @@
 +'use client';
 +
 +/**
@@ -128,7 +128,12 @@ index 0000000..30fe0f7
 +
 +export default function ConnectDevPage() {
 +  const [sdkReady, setSdkReady] = useState(false);
-+  const [wsUrl, setWsUrl] = useState('wss://connect.tatvaos.com/rtc');
++  // The ORIGIN only — no /rtc suffix. livekit-client appends the signalling
++  // path itself (createV0RtcUrl appends 'rtc', then 'v1' for the versioned
++  // path), so a base ending in /rtc produces /rtc/rtc/v1 and LiveKit answers
++  // 401. Caddy's `handle /rtc*` on this hostname covers /rtc, /rtc/v1 and
++  // /rtc/v1/validate alike.
++  const [wsUrl, setWsUrl] = useState('wss://connect.tatvaos.com');
 +  const [token, setToken] = useState('');
 +  const [forceTurn, setForceTurn] = useState(false);
 +  const [turnUrl, setTurnUrl] = useState('turn:connect.tatvaos.com:3478');

@@ -122,7 +122,12 @@ const buttonStyle: CSSProperties = {
 
 export default function ConnectDevPage() {
   const [sdkReady, setSdkReady] = useState(false);
-  const [wsUrl, setWsUrl] = useState('wss://connect.tatvaos.com/rtc');
+  // The ORIGIN only — no /rtc suffix. livekit-client appends the signalling
+  // path itself (createV0RtcUrl appends 'rtc', then 'v1' for the versioned
+  // path), so a base ending in /rtc produces /rtc/rtc/v1 and LiveKit answers
+  // 401. Caddy's `handle /rtc*` on this hostname covers /rtc, /rtc/v1 and
+  // /rtc/v1/validate alike.
+  const [wsUrl, setWsUrl] = useState('wss://connect.tatvaos.com');
   const [token, setToken] = useState('');
   const [forceTurn, setForceTurn] = useState(false);
   const [turnUrl, setTurnUrl] = useState('turn:connect.tatvaos.com:3478');
