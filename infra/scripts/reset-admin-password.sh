@@ -90,6 +90,18 @@ case "$row" in
         exit 1 ;;
 esac
 
+# A live lockout is usually the whole story: sign-in answers 429, not 401, and
+# the screen shows a failure that looks exactly like a wrong password. Say so
+# plainly — the reset below clears it, so this is information, not a blocker.
+if [ "$(psqlc "SELECT locked_until > now() FROM core.users WHERE email = $(sqlq "$EMAIL")")" = "t" ]; then
+    echo
+    echo "  NOTE  This account is LOCKED OUT right now. Sign-in has been answering"
+    echo "        429 'too many failed attempts', which on the screen is hard to"
+    echo "        tell from a wrong password — so the password you were typing may"
+    echo "        well have been correct. Completing this reset clears the lockout"
+    echo "        and the failed-attempt counter along with it."
+fi
+
 # ---------------------------------------------------------------------------
 printf 'New password (12+ chars, not echoed): '
 stty -echo 2>/dev/null; read -r P1; stty echo 2>/dev/null; echo
@@ -109,14 +121,25 @@ TOKEN=$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')
 # Convert.ToHexString(SHA256.HashData(...)).ToLowerInvariant()
 HASH=$(printf '%s' "$TOKEN" | sha256sum | cut -d' ' -f1)
 
-n=$(psqlc "UPDATE core.users
-              SET password_reset_hash = $(sqlq "$HASH"),
-                  password_reset_sent_at = now(),
-                  password_reset_attempts = 0,
-                  password_reset_channel = 'email'
-            WHERE email = $(sqlq "$EMAIL")
-        RETURNING 1")
-[ "$n" = "1" ] || { echo "  Could not stage the reset token — is postgres up?"; exit 1; }
+# Wrapped in a CTE so the whole statement is a SELECT, and psql prints ONE
+# line. A bare `UPDATE ... RETURNING 1` under -tA prints the returned row and
+# THEN the command tag:
+#     1
+#     UPDATE 1
+# so tail -n1 reads "UPDATE 1" and the update looks like it failed when it
+# succeeded. Note the tag lands AFTER the rows here but BEFORE them for a
+# leading SET — which is why neither head nor tail is a general fix, and
+# making the statement a SELECT is.
+n=$(psqlc "WITH upd AS (
+             UPDATE core.users
+                SET password_reset_hash = $(sqlq "$HASH"),
+                    password_reset_sent_at = now(),
+                    password_reset_attempts = 0,
+                    password_reset_channel = 'email'
+              WHERE email = $(sqlq "$EMAIL")
+          RETURNING 1)
+           SELECT count(*) FROM upd")
+[ "$n" = "1" ] || { echo "  Could not stage the reset token (matched '${n:-nothing}') — is postgres up?"; exit 1; }
 
 # ---------------------------------------------------------------------------
 # Spend it. The password goes to curl on stdin, never in argv where `ps`
@@ -144,11 +167,22 @@ r=$(printf '{"email":"%s","password":"%s"}' "$EMAIL" "$P1" |
          -H 'Content-Type: application/json' --data-binary @- "$API/auth/login")
 unset P1
 code=$(printf '%s' "$r" | tail -n1)
+payload=$(printf '%s' "$r" | sed '$d')
 
-case "$code" in
-    200) echo "  OK    signed in with the new password"; echo; echo "Done. https://${SITE}" ;;
-    *)   echo "  NOTE  sign-in returned $code."
-         echo "        If this mentions MFA, that is correct — the password is reset and MFA"
-         echo "        is still on. Finish in the browser at https://${SITE}"
-         printf '        %s\n' "$(printf '%s' "$r" | sed '$d' | head -c 300)" ;;
-esac
+# 200 alone is NOT proof of a sign-in. An account with MFA answers 200 with
+# {"mfaRequired":true} and no session at all, so checking only the status code
+# reports success for a login that did not happen.
+if [ "$code" = "200" ] && printf '%s' "$payload" | grep -q '"accessToken"'; then
+    echo "  OK    signed in with the new password"
+    echo
+    echo "Done. https://${SITE}"
+elif [ "$code" = "200" ] && printf '%s' "$payload" | grep -q 'mfaRequired'; then
+    echo "  OK    the password is correct — and MFA is on, so this is a challenge,"
+    echo "        not a session. That is right: a password reset must never strip"
+    echo "        a second factor. Finish at https://${SITE} with your"
+    echo "        authenticator code."
+else
+    echo "  NOTE  the reset succeeded, but signing in returned $code."
+    printf '        %s\n' "$(printf '%s' "$payload" | head -c 300)"
+    echo "        Run: bash infra/scripts/diagnose-login.sh"
+fi
