@@ -109,6 +109,60 @@ checkbox is the instrument:
 
 - **Confirm:** protocol steps 2 and 3 pass from a phone on mobile data.
 
+### `deploy.sh` stops at "Pulling and building" — `next build` exit 1
+
+**Met for real on 2026-08-17.** The tail deploy.sh prints shows only ESLint
+*warnings*, which is misleading: the fatal lines scrolled past above it.
+
+- **Diagnosis:** `eslint.config.mjs` extends `next/typescript`, so
+  `@typescript-eslint/no-explicit-any` is an **error**, and any error fails
+  `next build`. ESLint prints files alphabetically, so an offender under
+  `app/connect/…` appears well before `app/mail/…`. Read the real cause with:
+  ```
+  $COMPOSE build web 2>&1 | grep -iE "error|Failed to compile" | head -30
+  ```
+- **Fix:** type the offending code. Do **not** reach for
+  `eslint.ignoreDuringBuilds` or a blanket disable comment — that turns a
+  one-file problem into a platform-wide blind spot.
+- **Confirm:** the same grep is empty and the build proceeds past ~50s.
+- **Prevention:** `pnpm typecheck` at the repo root catches types but **not**
+  lint. Before committing a new page, also run
+  `pnpm --filter @tatvaos/web exec eslint <file>`.
+- **Production is safe throughout:** deploy.sh builds *before* it recreates
+  anything, so a failed build leaves the running containers untouched.
+
+### Force TURN fails, or works only sometimes, while direct works
+
+- **Diagnosis:** coturn left to itself discovers *every* local address and
+  will allocate a relay on a docker bridge (`172.17.0.1`, `172.18.0.1`).
+  Such a relay is unreachable from the internet, and because `--external-ip`
+  rewrites the candidate handed to the client, the allocation fails
+  **silently**. Check with `ss -uln | grep 3478`: bridge addresses in that
+  list mean the pinning below is missing.
+- **Fix:** `--listening-ip` and `--relay-ip` pinned to the public address in
+  `docker-compose.base.yml` (both present since 2026-08-17). Then
+  `$COMPOSE up -d coturn`.
+- **Confirm:** `ss -uln | grep 3478` lists **only** the public IP, and the
+  smoke test says `UDP 3478 bound on <public ip>`.
+
+### coturn logs `no-cli option is deprecated` or `Unknown argument:`
+
+- **Diagnosis:** the image ships coturn **4.17.2**, where the CLI is off by
+  default and `--no-cli` is deprecated (removed here on 2026-08-17). The
+  empty `Unknown argument:` comes from the image's own
+  `docker-entrypoint.sh` appending an unset variable as one empty argument —
+  coturn ignores it and starts normally.
+- **Fix:** none needed for the empty argument. It is noise, not a fault;
+  bypassing the entrypoint would trade known noise for unknown behaviour.
+- **Confirm:** the log reaches `Total relay threads:` / `Total auth threads:`
+  and `ss` shows the listener.
+
+### `git pull` on the box says "Already up to date" but you expected a change
+
+- **Diagnosis:** the commit is still local on the dev machine. Every fix in
+  this runbook reaches the box only via commit **and push**.
+- **Confirm:** `git log --oneline -1` on both sides shows the same SHA.
+
 ### The page says "connecting…" then errors before any state change
 
 - **Diagnosis:** the wss URL. `curl -s -o /dev/null -w '%{http_code}\n'
@@ -141,15 +195,32 @@ other product's service definition.
 
 ---
 
-## What was validated before this runbook was written (2026-08-16, off-box)
+## Validation record
 
-Patches applied cleanly to the live working tree; both compose files and
-`livekit.yaml` parse; **coturn 4.6.1 boot-tested with the exact flag set**
-from the compose file (full startup sequence, all flags accepted); the
-token script's JWT **verified with the official `livekit-server-sdk` 2.17.0
-verifier** — claim-for-claim identical to the SDK's own output; the dev
-page parses. Not testable off-box (sandbox has no route to Docker Hub):
-booting the actual `livekit/livekit-server` image against `livekit.yaml`,
-and the two floating image tags — which is why the preflight, the smoke
-test, and the livekit entry above exist, and why step 8 pins digests once
-the images are proven on the box.
+**2026-08-16, off-box.** Patches applied cleanly to the working tree; both
+compose files and `livekit.yaml` parse; coturn boot-tested with the exact
+flag set; the token script's JWT verified with the official
+`livekit-server-sdk` 2.17.0 verifier — claim-for-claim identical to the
+SDK's own output. Not testable off-box (no route to Docker Hub from the
+build sandbox): booting the real LiveKit image, and the floating tags.
+
+**2026-08-17, first deploy on the box — what is now proven:**
+
+- `deploy.sh production` completes; **all 10 services running**.
+- LiveKit answers on the compose network, and
+  `https://connect.tatvaos.com/rtc/validate` returns **401** through public
+  TLS — signalling reaches LiveKit, which correctly refuses an
+  unauthenticated request.
+- coturn 4.17.2 starts and binds UDP 3478.
+- Schema application, pre-deploy backup and Caddy reload all unaffected by
+  Connect's additions.
+
+**Two bugs found and fixed on the day** (both recorded above): the dev page
+failed the build on `no-explicit-any`, and coturn was binding docker bridge
+addresses. A third was mine in the tooling — `preflight`/`smoke` used
+`grep -q` under `set -o pipefail`, so a match SIGPIPEd `ss` and the check
+reported the opposite of the truth, *intermittently*. Both scripts now use
+`grep -c`, which reads to EOF. If you write another check here, do the same.
+
+**Still to prove:** the four-step browser protocol (two networks, Force
+TURN, five minutes, deliberate drop) and image digest pinning.

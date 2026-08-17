@@ -1,8 +1,7 @@
 # Connect Phase 0 — prove the media path
 
-**Status: BUILT AND APPLIED TO THE WORKING TREE (2026-08-16). Deploy-day
-work is box-side only** — commit + push, five `.env` values, firewall, one
-deploy, one test protocol. The short version lives in
+**Status: DEPLOYED TO PRODUCTION 2026-08-17. Servers are up and routed; the
+browser protocol is the remaining proof.** The short version lives in
 `docs/runbooks/connect-phase0-deploy.md`; this document is the reasoning.
 
 Deliverable, from the brief: *two people, two networks (one on mobile data),
@@ -166,18 +165,41 @@ math stands. Two consequences, both asks rather than surprises:
    hostname + certificate story — and on `turn.`/`rtc.` subdomains vs the
    `/rtc` path.
 
-## Validated off-box, 2026-08-16 (so deploy day holds fewer surprises)
+## What the first deploy proved, and what it cost (2026-08-17)
 
-All six patches applied cleanly to the live working tree. Both compose
-files and `livekit.yaml` parse. **coturn 4.6.1 was boot-tested with the
-exact flag set from the compose file** — every flag accepted, full startup
-sequence completed. **The token script's JWT was verified with the official
-`livekit-server-sdk` 2.17.0 verifier** and is claim-for-claim identical to
-the SDK's own AccessToken output. The dev page parses. Not testable
-off-box (no route to Docker Hub from the sandbox): booting the actual
-LiveKit image against `livekit.yaml`, and the existence of the two floating
-tags — which is exactly what the preflight, the smoke test, and the
-runbook's livekit entry are for.
+**Proven on the box:** `deploy.sh production` completes with all 10 services
+running; LiveKit answers inside the compose network; `/rtc/validate` returns
+**401 over public TLS**, so signalling reaches LiveKit through Caddy on the
+existing certificate exactly as designed; coturn 4.17.2 binds UDP 3478.
+Schema application, the pre-deploy backup and the Caddy reload were
+untouched by Connect's additions. **Remaining:** the four-step browser
+protocol, then digest pinning.
+
+**Three bugs, all worth the phase existing.** The dev page failed the build
+on `@typescript-eslint/no-explicit-any` — `next/typescript` makes it an
+error, and `pnpm typecheck` cannot see lint, which is why the check now
+belongs in the pre-commit habit. coturn was binding docker bridge addresses
+and would have allocated relays unreachable from the internet, failing
+*silently* because `--external-ip` rewrites the candidate — found by reading
+the startup log rather than by any test, and the reason the flag set now
+pins `--listening-ip` and `--relay-ip`. And the preflight/smoke port checks
+used `grep -q` under `set -o pipefail`, where a match SIGPIPEs `ss` and the
+pipeline reports failure — so the check returned the opposite of the truth,
+*intermittently*. That last one is the instructive one: a check that lies is
+worse than no check, and it lied in both directions on different runs.
+
+**Off-box validation that did hold up (2026-08-16):** compose and
+`livekit.yaml` parsing, coturn's flag set boot-tested, and the token
+script's JWT verified against the official `livekit-server-sdk` verifier —
+that last one meant tokens worked first time on the box.
+
+## Note on the patch files
+
+`connect-phase0-000{1..6}-*.patch` at the repo root are the review record of
+what Phase 0 introduced, kept in step with the tree (0001 and 0006 were
+regenerated after the 2026-08-17 fixes). **Git history is the source of
+truth**; the patches exist because this platform exchanges cross-lane work
+as patches, and a patch that no longer matches its file is a trap.
 
 ## Not in this phase, deliberately
 

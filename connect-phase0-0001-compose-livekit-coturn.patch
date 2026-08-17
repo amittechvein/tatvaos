@@ -1,8 +1,8 @@
 diff --git a/infra/docker/docker-compose.base.yml b/infra/docker/docker-compose.base.yml
-index c8210e7..65b317c 100644
+index c8210e7..a0418ad 100644
 --- a/infra/docker/docker-compose.base.yml
 +++ b/infra/docker/docker-compose.base.yml
-@@ -285,6 +285,68 @@ services:
+@@ -285,6 +285,75 @@ services:
        - caddyconfig:/config
      networks: [mailnet]
  
@@ -51,10 +51,17 @@ index c8210e7..65b317c 100644
 +      "--log-file=stdout",
 +      "--fingerprint",
 +      "--lt-cred-mech",
-+      "--no-cli",
 +      "--no-multicast-peers",
 +      "--realm=tatvaos.com",
 +      "--listening-port=3478",
++      # Pin BOTH to the public address. Left to itself coturn discovers every
++      # local address and will happily allocate a relay on a docker bridge
++      # (172.17.0.1, 172.18.0.1) — unreachable from the internet, and with
++      # --external-ip rewriting the candidate the client is told to use, that
++      # allocation fails SILENTLY instead of loudly. Pinning makes every
++      # allocation reachable, and stops coturn listening on the bridges.
++      "--listening-ip=${TURN_EXTERNAL_IP:?TURN_EXTERNAL_IP must be set}",
++      "--relay-ip=${TURN_EXTERNAL_IP:?TURN_EXTERNAL_IP must be set}",
 +      "--min-port=49160",
 +      "--max-port=49999",
 +      # Static credential for Phase 0; values live in .env, never here —
