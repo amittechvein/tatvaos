@@ -1,8 +1,10 @@
 # Connect Phase 0 — prove the media path
 
-**Status: DEPLOYED TO PRODUCTION 2026-08-17. Servers are up and routed; the
-browser protocol is the remaining proof.** The short version lives in
-`docs/runbooks/connect-phase0-deploy.md`; this document is the reasoning.
+**Status: COMPLETE — 2026-08-17. Deployed to production and the four-step
+protocol passed.** Connect's media path is proven on our own infrastructure.
+The short version lives in `docs/runbooks/connect-phase0-deploy.md`; this
+document is the reasoning. Phase 1 begins when Core has reviewed
+`docs/CONNECT_API.md`.
 
 Deliverable, from the brief: *two people, two networks (one on mobile data),
 audio and video both directions, through TURN, five minutes without
@@ -164,6 +166,24 @@ math stands. Two consequences, both asks rather than surprises:
 4. Later, with no urgency: a decision on TURN-over-TLS (5349) — needs a
    hostname + certificate story — and on `turn.`/`rtc.` subdomains vs the
    `/rtc` path.
+
+## Result — the protocol, run 2026-08-17
+
+The deliverable this phase existed for, met in full:
+
+| Step | Result |
+|---|---|
+| 1. Two browsers in a room, audio + video both ways | **PASS** — Windows/Chrome laptop and Android/Samsung Internet phone, each subscribing to the other's audio and video |
+| 2. Two different networks, one on mobile data | **PASS** — phone on carrier data with wifi off |
+| 3. Relay-only (`iceTransportPolicy: 'relay'`) through coturn | **PASS** — so the ~15–20% of real connections that cannot go direct are covered, not assumed |
+| 4. Five minutes, then a deliberate network drop | **PASS** — reconnected on its own, no black rectangle |
+
+LiveKit reported `connectionType: "udp"` with sub-500 ms connect times
+throughout. **Connect's media never leaves TatvaOS infrastructure**, which is
+the property the whole architecture was chosen for.
+
+Left over, both small: pin the two image digests (see step 6 below), and
+delete `/connect/dev` the day the real room screen exists.
 
 ## What the first deploy proved, and what it cost (2026-08-17)
 

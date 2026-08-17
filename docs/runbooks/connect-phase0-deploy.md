@@ -266,5 +266,26 @@ addresses. A third was mine in the tooling — `preflight`/`smoke` used
 reported the opposite of the truth, *intermittently*. Both scripts now use
 `grep -c`, which reads to EOF. If you write another check here, do the same.
 
-**Still to prove:** the four-step browser protocol (two networks, Force
-TURN, five minutes, deliberate drop) and image digest pinning.
+**2026-08-17, the four-step protocol — ALL PASSED.** Laptop (Windows/Chrome)
+and phone (Android/Samsung Internet) in a room with audio and video both
+ways; phone on mobile data with wifi off, so two genuinely separate
+networks; relay-only through coturn with **Force TURN** ticked on both;
+five minutes connected, then a deliberate wifi drop that reconnected by
+itself. `connectionType: "udp"`, connect times under 500 ms.
+
+**Phase 0 is complete.** Outstanding: pin the two image digests, and delete
+`/connect/dev` when the real room screen lands.
+
+### Bugs found by the protocol itself, worth knowing before Phase 1
+
+- **Camera blocked platform-wide** by `Permissions-Policy: camera=()` — no
+  prompt, no site setting, on every browser. Entry above.
+- **A browser that was denied stays denied.** After the header was fixed,
+  Samsung Internet still refused until its remembered site permission was
+  cleared. A fresh browser (Chrome on the phone) prompts normally. Expect
+  this from customers who decline once — the Phase 1 room screen needs a
+  visible "camera blocked, here's how to allow it" state, not silence.
+- **A departed participant left a black tile.** `TrackUnsubscribed` alone
+  does not clean up; tiles must be keyed by identity and removed on
+  `ParticipantDisconnected`. Fixed in the dev page; the same obligation
+  applies to the real room screen.
