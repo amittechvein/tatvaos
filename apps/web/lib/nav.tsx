@@ -223,6 +223,30 @@ export function calendarNav(): NavSection[] {
 }
 
 // ============================================================================
+//  Connect — meetings.
+//
+//  "New meeting" is an action rather than a destination, so it is a real link
+//  to a real page (/connect/new) instead of a button that opens a modal from
+//  the rail. Middle-click and deep-link both behave, which is the same reason
+//  Mail's Compose links to ?compose=1 rather than firing a handler.
+//
+//  There is no "Join" item. Joining starts from a link somebody sent you or
+//  from the code box on /connect — a rail entry for it would be a rail entry
+//  that always leads to the same empty field.
+// ============================================================================
+export function connectNav(): NavSection[] {
+  return [
+    {
+      heading: 'Connect',
+      items: [
+        { href: '/connect/new', label: 'New meeting', icon: <Icon d={PATHS.compose} colour="#03b562" /> },
+        { href: '/connect', label: 'Meetings', icon: <Icon d={PATHS.connect} colour="#00b8d9" /> },
+      ],
+    },
+  ];
+}
+
+// ============================================================================
 //  Space — file storage.
 // ============================================================================
 export function spaceNav(): NavSection[] {

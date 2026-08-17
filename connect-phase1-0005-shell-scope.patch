@@ -1,0 +1,100 @@
+Connect Phase 1 — register the `connect` scope in the shared shell.
+
+FOUR files, and it has to be all four. The scope union appears in AppShell,
+Sidebar and Topbar independently; missing one is a type error at that file
+only, which reads as "Connect is broken" rather than "one union is stale".
+
+The fourth change is the one that fails SILENTLY: Sidebar's `logo` ternary
+picks the brand lockup by scope and falls back to Core. Add the scope to the
+union but not the ternary and Connect compiles, runs, and quietly wears the
+Core logo — which is exactly the bug docs/CONNECT_BRIEF.md §6 warns about.
+
+lib/nav.tsx gains connectNav() only. RAIL_PRODUCTS.connect is deliberately
+LEFT at live:false — flipping it is the launch switch and belongs in the
+commit that has Amit's logo pair and Core's sign-off on the guest path, not
+in this one.
+
+Needs from Amit before that flip:
+  - apps/web/public/brand/connect-logo.png  (mark, 32px)
+  - apps/web/public/brand/connect-name.png  (wordmark, dark on transparent, 30px)
+  - a tile colour that is not #00b8d9 — Family already owns that cyan, and
+    tile colour is how people find an app in a grid without reading it.
+
+Apply from the repo root:  git apply connect-phase1-0005-shell-scope.patch
+
+--- a/apps/web/components/shell/AppShell.tsx
++++ b/apps/web/components/shell/AppShell.tsx
+@@ -26,7 +26,7 @@
+   railFooter,
+   railHeader,
+ }: {
+-  scope: 'platform' | 'organisation' | 'mail' | 'family' | 'space' | 'calendar';
++  scope: 'platform' | 'organisation' | 'mail' | 'family' | 'space' | 'calendar' | 'connect';
+   brand: string;
+   sections: NavSection[];
+   title?: string;
+--- a/apps/web/components/shell/Sidebar.tsx
++++ b/apps/web/components/shell/Sidebar.tsx
+@@ -36,7 +36,7 @@
+ export function Sidebar({ sections, brand, scope, footer, header }: {
+   sections: NavSection[];
+   brand: string;
+-  scope: 'platform' | 'organisation' | 'mail' | 'family' | 'space' | 'calendar';
++  scope: 'platform' | 'organisation' | 'mail' | 'family' | 'space' | 'calendar' | 'connect';
+   /** Pinned to the bottom of the rail (Mail puts the storage meter here).
+    *  Hidden while the rail is collapsed to icons — see overrides.css. */
+   footer?: React.ReactNode;
+@@ -50,7 +50,8 @@
+   // Each product with its own front door carries its own lockup; the console
+   // (platform/organisation) falls back to Core. Files live in public/brand as
+   // <scope>-logo.png and <scope>-name.png.
+-  const logo = scope === 'mail' || scope === 'family' || scope === 'space' || scope === 'calendar'
++  const logo = scope === 'mail' || scope === 'family' || scope === 'space'
++    || scope === 'calendar' || scope === 'connect'
+     ? scope : 'core';
+ 
+   // Longest match wins so "/org" does not light every page under it.
+--- a/apps/web/components/shell/Topbar.tsx
++++ b/apps/web/components/shell/Topbar.tsx
+@@ -18,7 +18,7 @@
+ //  control, and it lives right here.
+ // ============================================================================
+ 
+-export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' | 'family' | 'space' | 'calendar' }) {
++export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' | 'family' | 'space' | 'calendar' | 'connect' }) {
+   const { user } = useAuth();
+   const { mode, setMode } = useAppearance();
+   const [anchor, setAnchor] = useState<null | HTMLElement>(null);
+--- a/apps/web/lib/nav.tsx
++++ b/apps/web/lib/nav.tsx
+@@ -223,6 +223,30 @@
+ }
+ 
+ // ============================================================================
++//  Connect — meetings.
++//
++//  "New meeting" is an action rather than a destination, so it is a real link
++//  to a real page (/connect/new) instead of a button that opens a modal from
++//  the rail. Middle-click and deep-link both behave, which is the same reason
++//  Mail's Compose links to ?compose=1 rather than firing a handler.
++//
++//  There is no "Join" item. Joining starts from a link somebody sent you or
++//  from the code box on /connect — a rail entry for it would be a rail entry
++//  that always leads to the same empty field.
++// ============================================================================
++export function connectNav(): NavSection[] {
++  return [
++    {
++      heading: 'Connect',
++      items: [
++        { href: '/connect/new', label: 'New meeting', icon: <Icon d={PATHS.compose} colour="#03b562" /> },
++        { href: '/connect', label: 'Meetings', icon: <Icon d={PATHS.connect} colour="#00b8d9" /> },
++      ],
++    },
++  ];
++}
++
++// ============================================================================
+ //  Space — file storage.
+ // ============================================================================
+ export function spaceNav(): NavSection[] {

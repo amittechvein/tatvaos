@@ -26,7 +26,7 @@ export function AppShell({
   railFooter,
   railHeader,
 }: {
-  scope: 'platform' | 'organisation' | 'mail' | 'family' | 'space' | 'calendar';
+  scope: 'platform' | 'organisation' | 'mail' | 'family' | 'space' | 'calendar' | 'connect';
   brand: string;
   sections: NavSection[];
   title?: string;

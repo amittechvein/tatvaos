@@ -38,6 +38,10 @@ public static class ConnectEndpoints
 
         g.MapGet("/meetings", ListMeetingsAsync);
         g.MapPost("/meetings", CreateMeetingAsync);
+        // BEFORE the {id:guid} route, and constrained, so "by-code" can never
+        // be read as an id. It is only unambiguous because :guid rejects it —
+        // an unconstrained {id} route would swallow this path instead.
+        g.MapGet("/meetings/by-code/{code}", GetByCodeAsync);
         g.MapGet("/meetings/{id:guid}", GetMeetingAsync);
         g.MapPatch("/meetings/{id:guid}", UpdateMeetingAsync);
         g.MapDelete("/meetings/{id:guid}", CancelMeetingAsync);
@@ -156,6 +160,40 @@ public static class ConnectEndpoints
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
         var meeting = await FindAsync(db, id, ct);
+        if (meeting is null) return NotFound();
+
+        var role = await RoleOfAsync(db, meeting.Id, uid, ct);
+        return Results.Ok(Shape(meeting, role));
+    }
+
+    /// <summary>
+    /// Resolve a meeting CODE for somebody who is signed in.
+    ///
+    /// A shareable link carries the code, never the id — so a colleague who
+    /// clicks one arrives at /connect/room/{code} holding the wrong kind of
+    /// handle for every authenticated route, all of which key on the id. This
+    /// closes that gap and is the only reason it exists.
+    ///
+    /// It is NOT the guest doorstep and must not grow into it. This route is
+    /// inside the authorised group, so RLS scopes it to the caller's own
+    /// organisation: a code belonging to another tenant is simply not visible
+    /// and answers 404 — the same answer as a code that never existed, which
+    /// is what keeps it from becoming an oracle. Guests continue to use
+    /// /api/connect/g/{code}, which applies the guest predicate (allow_guests,
+    /// the org kill-switch, tenant status) that this deliberately does not.
+    /// </summary>
+    private static async Task<IResult> GetByCodeAsync(
+        string code, AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        if (tenant.UserId is not Guid uid) return Results.Unauthorized();
+
+        // Shape check first, so a scanner costs no query — the same order the
+        // guest path uses, and what keeps its rate limit meaningful.
+        if (!ConnectCodes.IsWellFormed(code)) return NotFound();
+
+        var meeting = await db.ConnectMeetings
+            .Where(m => m.Code == code)
+            .FirstOrDefaultAsync(ct);
         if (meeting is null) return NotFound();
 
         var role = await RoleOfAsync(db, meeting.Id, uid, ct);
