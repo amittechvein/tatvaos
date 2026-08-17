@@ -236,7 +236,21 @@ export default function ConnectDevPage() {
       await room.localParticipant.enableCameraAndMicrophone();
       log('camera + microphone on');
     } catch (error) {
-      log(`ERROR: ${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      log(`ERROR: ${message}`);
+      if (/permission|denied|notallowed/i.test(message)) {
+        log('camera/mic blocked by the browser — allow it in the address-bar icon, then Join again');
+      }
+      // connect() may well have SUCCEEDED and the failure be in
+      // enableCameraAndMicrophone(). Leaving that room attached would strand a
+      // live session under this identity, and the next Join would connect a
+      // second one — LiveKit evicts the older duplicate and the page looks
+      // broken for reasons that have nothing to do with the media path.
+      try {
+        await room.disconnect();
+      } catch {
+        // already gone; nothing to clean up
+      }
       roomRef.current = null;
     }
   }

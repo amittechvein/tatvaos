@@ -59,13 +59,43 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_BUILD_TIME: BUILD_TIME,
   },
   async headers() {
+    // ONE Permissions-Policy header per response, and exactly one. Browsers
+    // COMBINE multiple policy headers restrictively, so adding a second
+    // header saying camera=(self) next to camera=() still blocks the camera.
+    // The two sources below are complementary — every path matches exactly
+    // one of them, verified against path-to-regexp.
+    const common = [
+      { key: 'X-Content-Type-Options', value: 'nosniff' },
+      { key: 'X-Frame-Options', value: 'DENY' },
+      { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+    ];
     return [
       {
-        source: '/:path*',
+        // TatvaOS Connect is the ONLY product allowed to reach the camera,
+        // the microphone or the screen, and only from its own origin.
+        //
+        // Without this the browser refuses getUserMedia outright: no
+        // permission prompt, no site setting to change, just "Permission
+        // denied" that reads like a broken device. It cost an afternoon on
+        // 2026-08-17. display-capture is included now because Phase 1 adds
+        // screen sharing and would hit the identical wall.
+        source: '/connect/:path*',
         headers: [
-          { key: 'X-Content-Type-Options', value: 'nosniff' },
-          { key: 'X-Frame-Options', value: 'DENY' },
-          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          ...common,
+          {
+            key: 'Permissions-Policy',
+            value: 'camera=(self), microphone=(self), display-capture=(self), geolocation=()',
+          },
+        ],
+      },
+      {
+        // Every other product keeps the platform default — no camera, no
+        // microphone, no geolocation, for any origin. The negative lookahead
+        // excludes /connect and /connect/* and nothing else: /connectivity,
+        // for instance, still lands here.
+        source: '/((?!connect(?:/|$)).*)',
+        headers: [
+          ...common,
           { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
         ],
       },

@@ -163,6 +163,33 @@ checkbox is the instrument:
   this runbook reaches the box only via commit **and push**.
 - **Confirm:** `git log --oneline -1` on both sides shows the same SHA.
 
+### "Permission denied" from the camera, with NO browser prompt, on every device
+
+**Met for real on 2026-08-17** — Chrome on a laptop and Samsung Internet on a
+phone, both with no permission prompt and no site setting to change.
+
+- **Diagnosis:** not a browser setting. `apps/web/next.config.ts` sends
+  `Permissions-Policy: camera=(), microphone=(), geolocation=()` on every
+  response. An empty allowlist means *no origin at all*, including this one,
+  so the browser refuses `getUserMedia` before it ever asks the person.
+  Confirm with:
+  ```
+  curl -sI https://connect.tatvaos.com/connect/dev | grep -i permissions-policy
+  ```
+- **Fix:** scope the header — Connect's routes get
+  `camera=(self), microphone=(self), display-capture=(self)`, every other
+  path keeps the restrictive default. `next.config.ts` is **Core's file**, so
+  this travels as a patch for review, not as an edit
+  (`connect-phase0-0008-permissions-policy.patch`). A full
+  `deploy.sh production` is required: it rebuilds the web image.
+- **Why not one blanket header:** browsers **combine** multiple
+  Permissions-Policy headers restrictively, so adding a permissive header
+  next to the restrictive one still blocks. There must be exactly one per
+  response, which is why the two `source` patterns are complementary rather
+  than overlapping.
+- **Confirm:** the curl above shows `camera=(self)` on `/connect/…` and
+  `camera=()` on `/mail/…`; the browser then prompts normally.
+
 ### LiveKit logs `path=/rtc/rtc/v1  invalid authorization token`
 
 **Met for real on 2026-08-17, during the first browser test.**
