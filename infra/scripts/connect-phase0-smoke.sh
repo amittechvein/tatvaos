@@ -44,8 +44,22 @@ case "$code" in
 esac
 
 echo "== coturn is bound on the host =="
-if ss -ulnH 2>/dev/null | grep -qE '[:.]3478\b'; then ok "UDP 3478 bound"
-else bad "nothing listening on UDP 3478 — docker compose logs coturn"; fi
+# grep -c, not grep -q: -q exits on the first match, SIGPIPEs ss, and
+# `set -o pipefail` then calls the whole pipeline failed — which is exactly
+# how this reported "not bound" while coturn was serving on every address.
+EIP=$(grep -E '^TURN_EXTERNAL_IP=' "$ENV_FILE" | tail -1 | cut -d= -f2-)
+any3478=$(ss -uln 2>/dev/null | grep -cE "[:.]3478[[:space:]]" || true)
+pub3478=$(ss -uln 2>/dev/null | grep -cE "(^|[^0-9.])${EIP}:3478[[:space:]]" || true)
+if [ "${pub3478:-0}" -gt 0 ]; then
+    ok "UDP 3478 bound on ${EIP}"
+elif [ "${any3478:-0}" -gt 0 ]; then
+    # A relay allocated on a docker bridge address is unreachable from the
+    # internet, and --external-ip rewriting makes it fail silently rather
+    # than loudly. Pin --listening-ip/--relay-ip to the public address.
+    bad "UDP 3478 is bound, but NOT on ${EIP} — coturn is only on private/bridge addresses"
+else
+    bad "nothing listening on UDP 3478 — docker compose logs coturn"
+fi
 
 echo "== recent error lines (context, not a verdict) =="
 "${COMPOSE[@]}" logs --since 15m livekit 2>&1 | grep -iE 'error|fatal' | tail -5 || true

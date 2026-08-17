@@ -50,8 +50,13 @@ for f in infra/docker/livekit.yaml infra/docker/conf.d/connect.caddy; do
 done
 
 echo "== host port collisions =="
+# grep -c, not grep -q: -q exits on the first match, which SIGPIPEs ss, and
+# `set -o pipefail` then reports the whole pipeline as failed. That silently
+# turned "port in use" into "port free" — a check that could never fire.
+# -c reads to EOF, and `|| true` survives grep's exit 1 on no match.
 for p in 3478 7881; do
-    if ss -tulnH 2>/dev/null | grep -qE "[:.]$p\b"; then bad "port $p is already in use on the host"
+    hits=$(ss -tuln 2>/dev/null | grep -cE "[:.]${p}[[:space:]]" || true)
+    if [ "${hits:-0}" -gt 0 ]; then bad "port $p is already in use on the host"
     else ok "port $p free"; fi
 done
 
