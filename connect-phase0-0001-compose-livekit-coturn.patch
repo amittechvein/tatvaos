@@ -1,8 +1,8 @@
 diff --git a/infra/docker/docker-compose.base.yml b/infra/docker/docker-compose.base.yml
-index c8210e7..a0418ad 100644
+index c8210e7..2383134 100644
 --- a/infra/docker/docker-compose.base.yml
 +++ b/infra/docker/docker-compose.base.yml
-@@ -285,6 +285,75 @@ services:
+@@ -285,6 +285,80 @@ services:
        - caddyconfig:/config
      networks: [mailnet]
  
@@ -14,9 +14,12 @@ index c8210e7..a0418ad 100644
 +  # --------------------------------------------------------------------------
 +
 +  livekit:
-+    # Floating tag so review is not blocked on guessing a release; pin the
-+    # digest on the box in the follow-up commit (see docs/CONNECT_PHASE0.md).
-+    image: livekit/livekit-server:latest
++    # Pinned by digest 2026-08-17, after the Phase 0 protocol passed against
++    # exactly this image. The tag stays for readability; the digest is what
++    # docker resolves, so a later `compose pull` cannot swap the media server
++    # out from under a deployment that is known to work. Re-pin deliberately,
++    # by re-running the protocol — never by deleting the digest.
++    image: livekit/livekit-server:latest@sha256:3497163e15c48fef6e7830c78716f9e9d5edc28abf7aa90b61c86e93bbc306b1
 +    restart: unless-stopped
 +    command: ["--config", "/etc/livekit.yaml"]
 +    environment:
@@ -38,7 +41,9 @@ index c8210e7..a0418ad 100644
 +    networks: [mailnet]
 +
 +  coturn:
-+    image: coturn/coturn:alpine
++    # Pinned by digest 2026-08-17 — coturn 4.17.2, the build the relay-only
++    # leg of the Phase 0 protocol was proven on. Same rule as livekit above.
++    image: coturn/coturn:alpine@sha256:771a95d04cb97bbc5bfc672e5fdf455591c7d2b2a15f02bb9ceda3e27561695f
 +    restart: unless-stopped
 +    # Host networking, deliberately: a TURN relay allocates from its whole
 +    # relay range on demand, and publishing hundreds of UDP ports through

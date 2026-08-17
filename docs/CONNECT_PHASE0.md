@@ -182,8 +182,13 @@ LiveKit reported `connectionType: "udp"` with sub-500 ms connect times
 throughout. **Connect's media never leaves TatvaOS infrastructure**, which is
 the property the whole architecture was chosen for.
 
-Left over, both small: pin the two image digests (see step 6 below), and
-delete `/connect/dev` the day the real room screen exists.
+Both images are now **pinned by digest** to exactly the builds the protocol
+ran against — `livekit/livekit-server@sha256:3497163e…` and
+`coturn/coturn@sha256:771a95d0…` (coturn 4.17.2). The readable tag stays
+beside the digest; docker resolves the digest. Re-pin only by re-running the
+protocol, never by deleting the digest to "get the latest".
+
+One thing left: delete `/connect/dev` the day the real room screen exists.
 
 ## What the first deploy proved, and what it cost (2026-08-17)
 
