@@ -41,5 +41,22 @@ rtc:
 # this file — an unknown key is a boot failure, and a boot failure here is
 # a failed deploy health gate.
 
+# ----------------------------------------------------------------------------
+#  Webhooks — how the database learns what actually happened.
+#
+#  Attendance is computed from these events (connect.meeting_events), never
+#  from a running "is present" flag, so this delivery is not optional: without
+#  it a meeting can run perfectly and leave no record that it did.
+#
+#  Delivered INSIDE the compose network, so the traffic never touches the
+#  public internet. api_key names which key signs the request; the API rejects
+#  anything whose signature or body hash does not check out, so reachability
+#  is not the control — verification is.
+# ----------------------------------------------------------------------------
+webhook:
+  api_key: ${LIVEKIT_API_KEY}
+  urls:
+    - http://api:8080/api/connect/webhooks/livekit
+
 logging:
   level: info

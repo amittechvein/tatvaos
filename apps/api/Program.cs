@@ -15,6 +15,7 @@ using TatvaOS.Api.Modules.Family;
 using TatvaOS.Api.Modules.Family.Endpoints;
 using TatvaOS.Api.Modules.Space.Endpoints;
 using TatvaOS.Api.Modules.Calendar.Endpoints;
+using TatvaOS.Api.Modules.Connect.Endpoints;
 using TatvaOS.Api.Workers;
 using TatvaOS.Api.Shared.Notify;
 using TatvaOS.Api.Shared.Settings;
@@ -108,6 +109,14 @@ builder.Services.AddSingleton<TatvaOS.Api.Modules.Space.IBlobStore,
 // Contract: docs/SPACE_ATTACH.md.
 builder.Services.AddScoped<TatvaOS.Api.Modules.Space.SpaceContentGateway>();
 
+// Connect. The token service is the ONLY holder of the LiveKit API secret —
+// a browser never receives anything but a short-lived, room-scoped JWT it
+// mints. Singleton because it holds configuration and no request state; the
+// room client is typed-HttpClient so host controls are decided server-side
+// rather than trusted from a caller's token.
+builder.Services.AddSingleton<TatvaOS.Api.Modules.Connect.LiveKitTokenService>();
+builder.Services.AddHttpClient<TatvaOS.Api.Modules.Connect.LiveKitRoomClient>();
+
 // Scoped: it writes through the request's AppDbContext and reads its
 // TenantContext. A singleton holding either would serve one tenant's scope to
 // whichever request arrived next.
@@ -169,6 +178,25 @@ builder.Services.AddHostedService<CalendarReminderWorker>();
 builder.Services.AddRateLimiter(o =>
 {
     o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    // Connect's guest join is the SECOND anonymous, internet-reachable route
+    // on the platform, and it gets the same treatment for the same reasons —
+    // including the [^1] on X-Forwarded-For. Same numbers deliberately: two
+    // limits that drift apart are two behaviours to reason about.
+    o.AddPolicy("connect-guest", httpContext =>
+    {
+        var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();
+        var client = string.IsNullOrEmpty(xff)
+            ? httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"
+            : xff.Split(',')[^1].Trim();
+        return RateLimitPartition.GetFixedWindowLimiter($"connect:{client}",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 60,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            });
+    });
+
     o.AddPolicy("space-public-links", httpContext =>
     {
         var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();
@@ -245,6 +273,15 @@ app.MapFamilyEndpoints();
 app.MapSpaceEndpoints();
 app.MapSpaceDriveEndpoints();
 app.MapSpaceLinkEndpoints();
+
+// Connect. Meetings live in this monolith; only the MEDIA is a separate
+// container. The guest group and the LiveKit webhook are anonymous and
+// rate-limited — see the header of ConnectGuestEndpoints.cs, and note that
+// docs/CONNECT_BRIEF.md §8 requires Core's line-by-line review of that path
+// before it is deployed.
+app.MapConnectEndpoints();
+app.MapConnectGuestEndpoints();
+app.MapConnectWebhookEndpoints();
 
 // ---------------------------------------------------------------------------
 //  Bootstrap the first super admin

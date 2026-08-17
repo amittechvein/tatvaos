@@ -1,0 +1,40 @@
+diff --git a/apps/api/Shared/Tenancy/TenantContext.cs b/apps/api/Shared/Tenancy/TenantContext.cs
+index 61cf127..70582f0 100644
+--- a/apps/api/Shared/Tenancy/TenantContext.cs
++++ b/apps/api/Shared/Tenancy/TenantContext.cs
+@@ -55,6 +55,35 @@ public sealed class TenantContext
+         _isPlatformScope = false;
+     }
+ 
++    /// <summary>
++    /// Enter a tenant with NO user — a stranger, or the platform itself.
++    ///
++    /// Connect needs this twice: a guest joining by meeting link, and the
++    /// LiveKit webhook, which is authenticated by signature rather than by a
++    /// person. Both must run scoped to exactly one tenant, and neither has a
++    /// user id to offer.
++    ///
++    /// UserId is left NULL rather than Guid.Empty, deliberately. The
++    /// connection interceptor writes an unset user as an EMPTY STRING, which
++    /// nullif(current_setting('app.user_id', true), '')::uuid reads back as
++    /// NULL — so personal rows stay unreachable while organisational rows do
++    /// not, which is exactly right for someone with no account. Guid.Empty
++    /// would instead present as a real-looking user whose id happens to be all
++    /// zeros: the same silent wrongness TenantId's comment above rejects.
++    ///
++    /// This does NOT widen anything. RLS still applies in full; the caller has
++    /// simply proved which tenant it may act within — a guest by resolving a
++    /// meeting code through a SECURITY DEFINER function, the webhook by a
++    /// signature over its body.
++    /// </summary>
++    public void EnterAnonymousScope(Guid tenantId, string role)
++    {
++        _tenantId = tenantId;
++        UserId = null;
++        Role = role;
++        _isPlatformScope = false;
++    }
++
+     /// <summary>
+     /// Enter platform scope for a single tenant.
+     ///

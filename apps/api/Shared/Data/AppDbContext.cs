@@ -105,6 +105,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<CalendarAttendee> CalendarAttendees => Set<CalendarAttendee>();
     public DbSet<CalendarReminder> CalendarReminders => Set<CalendarReminder>();
     public DbSet<CalendarReminderSend> CalendarReminderSends => Set<CalendarReminderSend>();
+
+    // ---- Connect. RLS enabled and forced; see 20260901-connect.sql -------
+    public DbSet<TatvaOS.Api.Modules.Connect.ConnectMeeting> ConnectMeetings
+        => Set<TatvaOS.Api.Modules.Connect.ConnectMeeting>();
+    public DbSet<TatvaOS.Api.Modules.Connect.ConnectParticipant> ConnectParticipants
+        => Set<TatvaOS.Api.Modules.Connect.ConnectParticipant>();
+    public DbSet<TatvaOS.Api.Modules.Connect.ConnectLobbyRequest> ConnectLobbyRequests
+        => Set<TatvaOS.Api.Modules.Connect.ConnectLobbyRequest>();
+    public DbSet<TatvaOS.Api.Modules.Connect.ConnectMeetingEvent> ConnectMeetingEvents
+        => Set<TatvaOS.Api.Modules.Connect.ConnectMeetingEvent>();
     public DbSet<SpaceShare> SpaceShares => Set<SpaceShare>();
     public DbSet<SpaceFileActivity> SpaceFileActivities => Set<SpaceFileActivity>();
     public DbSet<SpaceStar> SpaceStars => Set<SpaceStar>();
@@ -178,6 +188,14 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<CalendarAttendee>().ToTable("event_attendees", "calendar");
         b.Entity<CalendarReminder>().ToTable("event_reminders", "calendar");
         b.Entity<CalendarReminderSend>().ToTable("reminder_sends", "calendar");
+
+        // ---- Connect -----------------------------------------------------
+        // Explicit schema on every one, like everything else here: a default
+        // is exactly how a Mail table once silently landed in core.
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeeting>().ToTable("meetings", "connect");
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectParticipant>().ToTable("participants", "connect");
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectLobbyRequest>().ToTable("lobby_requests", "connect");
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingEvent>().ToTable("meeting_events", "connect");
 
         b.Entity<CalendarMember>().HasKey(m => new { m.CalendarId, m.UserId });
         b.Entity<CalendarReminderSend>().HasKey(r => new { r.ReminderId, r.OccurrenceStartsAt });

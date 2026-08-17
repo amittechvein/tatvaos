@@ -1,0 +1,51 @@
+diff --git a/infra/docker/docker-compose.base.yml b/infra/docker/docker-compose.base.yml
+index 2383134..618069f 100644
+--- a/infra/docker/docker-compose.base.yml
++++ b/infra/docker/docker-compose.base.yml
+@@ -230,6 +230,19 @@ services:
+       # scanned and every row honestly stays "pending". Set it to clamav:3310
+       # once the service below is running.
+       Mail__ClamAv: ${MAIL_CLAMAV:-}
++      # Connect. The API mints LiveKit tokens and verifies LiveKit's webhook
++      # signatures, so it needs the SAME key pair the media server boots with —
++      # which until now only the livekit container had. The secret still never
++      # leaves the server: browsers receive only short-lived, room-scoped JWTs
++      # this key signs.
++      LiveKit__ApiKey: ${LIVEKIT_API_KEY:?LIVEKIT_API_KEY must be set}
++      LiveKit__ApiSecret: ${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET must be set}
++      # What the BROWSER connects to — the origin only. livekit-client appends
++      # /rtc/v1 itself; a value ending in /rtc produces /rtc/rtc/v1 and a 401.
++      LiveKit__PublicUrl: wss://${CONNECT_DOMAIN:-connect.tatvaos.com}
++      # Where the API reaches LiveKit's server API, inside the compose network.
++      # Not public, and deliberately not the same value as PublicUrl.
++      LiveKit__InternalUrl: http://livekit:7880
+       # Over-quota mailboxes: anything but "enforce" only LOGS would-defer
+       # lines. Flip to enforce only after reading those logs shows no
+       # innocent mailbox would be hit — a 4xx defer makes senders queue and
+diff --git a/infra/docker/livekit.yaml b/infra/docker/livekit.yaml
+index 5e15f2a..fda0399 100644
+--- a/infra/docker/livekit.yaml
++++ b/infra/docker/livekit.yaml
+@@ -41,5 +41,22 @@ rtc:
+ # this file — an unknown key is a boot failure, and a boot failure here is
+ # a failed deploy health gate.
+ 
++# ----------------------------------------------------------------------------
++#  Webhooks — how the database learns what actually happened.
++#
++#  Attendance is computed from these events (connect.meeting_events), never
++#  from a running "is present" flag, so this delivery is not optional: without
++#  it a meeting can run perfectly and leave no record that it did.
++#
++#  Delivered INSIDE the compose network, so the traffic never touches the
++#  public internet. api_key names which key signs the request; the API rejects
++#  anything whose signature or body hash does not check out, so reachability
++#  is not the control — verification is.
++# ----------------------------------------------------------------------------
++webhook:
++  api_key: ${LIVEKIT_API_KEY}
++  urls:
++    - http://api:8080/api/connect/webhooks/livekit
++
+ logging:
+   level: info

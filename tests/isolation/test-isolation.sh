@@ -120,6 +120,63 @@ leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM core.storage_pools WHERE tena
 [ "${leak:-1}" -eq 0 ] && pass "Techvein cannot see ABC School's storage pool" \
                        || fail "LEAK: storage pool visible across tenants"
 
+hdr "Connect meetings are isolated"
+
+# Connect ships its own fixture rather than relying on the seed, because a
+# meeting is created by a person at runtime and the seed has none. Inserted as
+# postgres (superuser bypasses RLS), asserted as tatvaos_app, removed at the
+# end — so a failing run leaves no rows behind to confuse the next one.
+run_as postgres "
+    INSERT INTO connect.meetings (id, tenant_id, code, title, status)
+    VALUES ('dddddddd-0000-0000-0000-00000000dddd','$TECHVEIN','ISOTESTtechveinXXXXXXX','iso-techvein','active'),
+           ('eeeeeeee-0000-0000-0000-00000000eeee','$SCHOOL','ISOTESTschoolXXXXXXXXX','iso-school','active')
+    ON CONFLICT (id) DO NOTHING;
+    INSERT INTO connect.participants (meeting_id, display_name, identity)
+    VALUES ('dddddddd-0000-0000-0000-00000000dddd','iso','user:iso-t'),
+           ('eeeeeeee-0000-0000-0000-00000000eeee','iso','user:iso-s')
+    ON CONFLICT DO NOTHING;" >/dev/null 2>&1
+
+leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM connect.meetings WHERE tenant_id = '$SCHOOL'")
+[ "${leak:-1}" -eq 0 ] && pass "Techvein cannot see ABC School's meetings" \
+                       || fail "LEAK: $leak ABC School meeting(s) visible to Techvein"
+
+own=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM connect.meetings WHERE title = 'iso-techvein'")
+[ "${own:-0}" -ge 1 ] && pass "Techvein sees its own meeting" \
+                      || fail "Techvein sees nothing - RLS too strict, or the migration did not run"
+
+# The child tables carry no tenant_id and are scoped through the meeting. A
+# policy that forgot the EXISTS would show every tenant's participants while
+# connect.meetings itself still looked correctly isolated.
+leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM connect.participants WHERE identity = 'user:iso-s'")
+[ "${leak:-1}" -eq 0 ] && pass "participants are scoped through the meeting" \
+                       || fail "LEAK: another tenant's participant row is visible"
+
+n=$(no_context "SELECT count(*) FROM connect.meetings")
+[ "${n:-1}" -eq 0 ] && pass "no tenant context returns zero meetings" \
+                    || fail "DANGEROUS: ${n} meeting(s) visible with no tenant set"
+
+# The empty-string trap: the connection interceptor sends an unset tenant as
+# '' and a bare ::uuid cast on that THROWS, taking the request with it. This
+# asserts the query answers rather than errors.
+empty=$(scalar_as tatvaos_app "SET app.tenant_id = ''; SELECT count(*) FROM connect.meetings")
+[ "${empty:-x}" = "0" ] && pass "empty tenant string returns zero, does not throw" \
+                        || fail "empty app.tenant_id did not return 0 (got '${empty}') - check the nullif()"
+
+forge_out=$(run_as tatvaos_app \
+    "SET app.tenant_id = '$TECHVEIN';
+     INSERT INTO connect.meetings (tenant_id, code, title)
+     VALUES ('$SCHOOL','ISOTESTforgedXXXXXXXXX','forged-by-isolation-test');" 2>&1)
+forge_rc=$?
+if [ "$forge_rc" -ne 0 ] && printf '%s' "$forge_out" | grep -qi 'row-level security\|violates'; then
+    pass "cross-tenant meeting INSERT blocked by WITH CHECK"
+else
+    fail "LEAK: Techvein wrote a meeting tagged as ABC School - WITH CHECK is missing"
+fi
+
+run_as postgres "
+    DELETE FROM connect.meetings
+     WHERE title IN ('iso-techvein','iso-school','forged-by-isolation-test');" >/dev/null 2>&1
+
 hdr "Writes cannot be forged into another tenant"
 
 forge_out=$(run_as tatvaos_app \

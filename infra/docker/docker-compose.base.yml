@@ -230,6 +230,19 @@ services:
       # scanned and every row honestly stays "pending". Set it to clamav:3310
       # once the service below is running.
       Mail__ClamAv: ${MAIL_CLAMAV:-}
+      # Connect. The API mints LiveKit tokens and verifies LiveKit's webhook
+      # signatures, so it needs the SAME key pair the media server boots with —
+      # which until now only the livekit container had. The secret still never
+      # leaves the server: browsers receive only short-lived, room-scoped JWTs
+      # this key signs.
+      LiveKit__ApiKey: ${LIVEKIT_API_KEY:?LIVEKIT_API_KEY must be set}
+      LiveKit__ApiSecret: ${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET must be set}
+      # What the BROWSER connects to — the origin only. livekit-client appends
+      # /rtc/v1 itself; a value ending in /rtc produces /rtc/rtc/v1 and a 401.
+      LiveKit__PublicUrl: wss://${CONNECT_DOMAIN:-connect.tatvaos.com}
+      # Where the API reaches LiveKit's server API, inside the compose network.
+      # Not public, and deliberately not the same value as PublicUrl.
+      LiveKit__InternalUrl: http://livekit:7880
       # Over-quota mailboxes: anything but "enforce" only LOGS would-defer
       # lines. Flip to enforce only after reading those logs shows no
       # innocent mailbox would be hit — a 4xx defer makes senders queue and
