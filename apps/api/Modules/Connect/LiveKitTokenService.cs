@@ -136,6 +136,55 @@ public sealed class LiveKitTokenService(IConfiguration config, ILogger<LiveKitTo
     }
 
     /// <summary>
+    /// Mint the token the API uses to command LiveKit's EGRESS service.
+    ///
+    /// ─────────────────────────────────────────────────────────────────────
+    ///  THIS ONE IS NOT ROOM-SCOPED, AND IT CANNOT BE.
+    ///
+    ///  Every other token this class produces names exactly one room, because
+    ///  "a token that grants 'any room' is a token that joins any customer's
+    ///  board meeting". LiveKit's roomRecord permission has no room field —
+    ///  it is service-wide in its model — so this is the single exception,
+    ///  and it is contained rather than justified:
+    ///
+    ///   • it is minted per HTTP call and lives ten minutes;
+    ///   • it carries roomRecord and NOTHING else — no roomJoin, no room, no
+    ///     publish, no subscribe, so it cannot enter a meeting even though it
+    ///     can ask for one to be recorded;
+    ///   • it is used only on the hop to livekit:7880 INSIDE the compose
+    ///     network, and there is no code path that returns it to a caller.
+    ///
+    ///  If a future change ever hands this to a browser, the browser can
+    ///  record any meeting on the platform. There is no second control.
+    /// ─────────────────────────────────────────────────────────────────────
+    /// </summary>
+    internal string MintRecordToken()
+    {
+        if (!IsConfigured)
+            throw new InvalidOperationException("LiveKit is not configured; refusing to mint a token.");
+
+        var now = DateTimeOffset.UtcNow;
+        var claims = new TokenClaims
+        {
+            Issuer = _options.ApiKey,
+            Subject = "tatvaos-api",
+            Name = "TatvaOS",
+            NotBefore = now.AddSeconds(-10).ToUnixTimeSeconds(),
+            Expires = now.AddMinutes(_options.TokenMinutes).ToUnixTimeSeconds(),
+            Video = new VideoGrant
+            {
+                // Everything else is left at its default and SERIALISES AS
+                // false — roomJoin:false, room:"", canPublish:false,
+                // canSubscribe:false, canPublishData:false. Written out rather
+                // than omitted on purpose: an explicit false is a claim a
+                // reviewer can see, where an absent field has to be looked up.
+                RoomRecord = true,
+            },
+        };
+        return Sign(claims);
+    }
+
+    /// <summary>
     /// Verify an inbound LiveKit webhook.
     ///
     /// LiveKit signs the request with the same key pair: the Authorization
@@ -238,5 +287,8 @@ public sealed class LiveKitTokenService(IConfiguration config, ILogger<LiveKitTo
         // Null rather than false so the claim is absent for ordinary
         // participants, matching what the LiveKit SDKs emit.
         [JsonPropertyName("roomAdmin")] public bool? RoomAdmin { get; set; }
+        // Egress. Nullable for the same reason: absent on every join token
+        // ever minted, present only on the internal record token above.
+        [JsonPropertyName("roomRecord")] public bool? RoomRecord { get; set; }
     }
 }

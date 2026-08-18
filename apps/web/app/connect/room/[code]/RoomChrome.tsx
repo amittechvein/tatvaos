@@ -41,8 +41,25 @@ export const CSS = `
   border:1px solid var(--cx-line);transition:border-color .18s,box-shadow .18s}
 .cx-tile--big{flex:1 1 100%;max-width:none;height:100%;aspect-ratio:auto}
 .cx-tile.is-speaking{border-color:var(--cx-good);box-shadow:0 0 0 3px rgba(46,204,113,.22)}
+
+/* cover is right for a FACE and wrong for a SCREEN.
+   A camera tile crops to fill and nobody minds losing the edges of a room. A
+   shared screen cropped to fill loses whatever is at the edges — and what is
+   at the edges is usually the thing being pointed at. The first live share
+   this shipped into was a sign-in page, in a stage box about 4:1, and the
+   Sign in button was sliced in half by the bottom of the tile.
+   contain letterboxes instead: smaller, complete, and legible. */
 .cx-video{width:100%;height:100%;object-fit:cover;display:block;background:#000}
+.cx-video--screen{object-fit:contain}
 .cx-video--self{transform:scaleX(-1)}
+
+/* Full screen. A shared screen inside a 460px-tall stage is never comfortable
+   however it is fitted, because the browser's own chrome, the sharing bar and
+   the taskbar are eating half the display. Going full screen on the whole room
+   — not just the tile — reclaims all of that AND keeps the control bar, so you
+   can still mute or leave without coming back out. */
+.cx-root:fullscreen{background:var(--cx-bg)}
+.cx-root:fullscreen .cx-top{padding:8px 16px}
 .cx-off{position:absolute;inset:0;display:grid;place-items:center;
   background:radial-gradient(circle at 50% 40%,#1c1c25,#0d0d12)}
 .cx-initial{width:76px;height:76px;border-radius:50%;display:grid;place-items:center;
@@ -111,6 +128,20 @@ export const CSS = `
 .cx-banner{flex:0 0 auto;padding:9px 16px;font-size:13px;text-align:center}
 .cx-banner--warn{background:rgba(255,169,9,.16);color:#ffd591}
 .cx-banner--bad{background:rgba(239,71,87,.18);color:#ffb3bb}
+
+/* Recording. Deliberately the loudest thing on the screen after the video
+   itself, and with NO dismiss control — a notice people can make go away is
+   a notice they will make go away. Red, because that is the colour every
+   recording indicator has been for fifty years and nobody has to learn it. */
+.cx-banner--rec{background:rgba(239,71,87,.22);color:#ffc2c8;font-weight:600;
+  display:flex;align-items:center;justify-content:center}
+.cx-recdot{width:9px;height:9px;border-radius:50%;background:#ef4757;
+  box-shadow:0 0 0 0 rgba(239,71,87,.7);animation:cx-recpulse 1.6s infinite}
+@keyframes cx-recpulse{70%{box-shadow:0 0 0 8px rgba(239,71,87,0)}
+  100%{box-shadow:0 0 0 0 rgba(239,71,87,0)}}
+/* The host's own button while it is running: red, like the notice, so the
+   control and the state read as the same thing rather than two. */
+.cx-btn.is-rec{background:rgba(239,71,87,.22);border-color:rgba(239,71,87,.55);color:#ffc2c8}
 
 .cx-centre{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;
   justify-content:center;text-align:center;padding:24px;background:#0a0a0e;color:#f2f2f5}

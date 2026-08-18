@@ -51,16 +51,29 @@ qapp() {
         2>/dev/null | tail -n1 | tr -d '[:space:]'
 }
 
+# ─────────────────────────────────────────────────────────────────────────
+#  THE COUNTS BELOW MOVED ON 2026-08-18, WHEN 20260902-connect-recording.sql
+#  ADDED recordings, transcripts AND meeting_notes.
+#
+#  They are still EXACT rather than "at least", deliberately. An exact count
+#  catches a table or a function that should not be there — a half-applied
+#  migration, or an object left behind by an experiment — and that is the
+#  whole reason to assert a number instead of a truthy check. Update them
+#  when a migration adds something; do not relax them.
+# ─────────────────────────────────────────────────────────────────────────
 echo "== the migration landed =="
 n=$(q "SELECT count(*) FROM information_schema.tables WHERE table_schema='connect'")
-[ "${n:-0}" -eq 4 ] && ok "4 connect tables" || bad "expected 4 connect tables, found ${n:-0}"
+[ "${n:-0}" -eq 7 ] && ok "7 connect tables" \
+                    || bad "expected 7 connect tables, found ${n:-0} — 4 means 20260902-connect-recording.sql has not applied"
 
-# Four: the guest path's three, plus webhook_meeting_tenant — added when the
+# Twelve: the guest path's three, webhook_meeting_tenant — added when the
 # first headless webhook test proved the handler's ordinary lookup read zero
-# rows under forced RLS and acknowledged every event while writing nothing.
+# rows under forced RLS and acknowledged every event while writing nothing —
+# and the recording lane's eight, which are the notes worker's pre-tenant
+# reads and the storage functions.
 n=$(q "SELECT count(*) FROM pg_proc p JOIN pg_namespace ns ON ns.oid=p.pronamespace
         WHERE ns.nspname='connect' AND p.prosecdef")
-[ "${n:-0}" -eq 4 ] && ok "4 SECURITY DEFINER functions" || bad "expected 4 definer functions, found ${n:-0} — a count of 3 means the webhook fix's migration has not applied"
+[ "${n:-0}" -eq 12 ] && ok "12 SECURITY DEFINER functions" || bad "expected 12 definer functions, found ${n:-0} — 3 means the webhook fix has not applied, 4 means the recording migration has not"
 
 # The two columns this migration adds to tables it does not own. If either is
 # missing the deploy applied an older copy of the file.
@@ -73,11 +86,11 @@ n=$(q "SELECT count(*) FROM information_schema.columns
 echo "== RLS is enabled AND forced on every connect table =="
 n=$(q "SELECT count(*) FROM pg_class c JOIN pg_namespace ns ON ns.oid=c.relnamespace
         WHERE ns.nspname='connect' AND c.relrowsecurity AND c.relforcerowsecurity")
-[ "${n:-0}" -eq 4 ] && ok "all 4 tables ENABLE + FORCE row level security" \
-                    || bad "only ${n:-0} of 4 tables are forced — a table without FORCE is readable by its owner"
+[ "${n:-0}" -eq 7 ] && ok "all 7 tables ENABLE + FORCE row level security" \
+                    || bad "only ${n:-0} of 7 tables are forced — a table without FORCE is readable by its owner"
 
 n=$(q "SELECT count(*) FROM pg_policies WHERE schemaname='connect' AND policyname='tenant_isolation'")
-[ "${n:-0}" -eq 4 ] && ok "4 tenant_isolation policies" || bad "expected 4 policies, found ${n:-0}"
+[ "${n:-0}" -eq 7 ] && ok "7 tenant_isolation policies" || bad "expected 7 policies, found ${n:-0}"
 
 echo "== the nullif() guard is present in every policy =="
 # Without it an unset tenant sends '' and a bare ::uuid cast THROWS, taking the

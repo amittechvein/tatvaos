@@ -115,6 +115,14 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         => Set<TatvaOS.Api.Modules.Connect.ConnectLobbyRequest>();
     public DbSet<TatvaOS.Api.Modules.Connect.ConnectMeetingEvent> ConnectMeetingEvents
         => Set<TatvaOS.Api.Modules.Connect.ConnectMeetingEvent>();
+    // ---- Connect recording. RLS enabled and forced; see
+    //      20260902-connect-recording.sql -----------------------------------
+    public DbSet<TatvaOS.Api.Modules.Connect.ConnectRecording> ConnectRecordings
+        => Set<TatvaOS.Api.Modules.Connect.ConnectRecording>();
+    public DbSet<TatvaOS.Api.Modules.Connect.ConnectTranscript> ConnectTranscripts
+        => Set<TatvaOS.Api.Modules.Connect.ConnectTranscript>();
+    public DbSet<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes> ConnectMeetingNotes
+        => Set<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>();
     public DbSet<SpaceShare> SpaceShares => Set<SpaceShare>();
     public DbSet<SpaceFileActivity> SpaceFileActivities => Set<SpaceFileActivity>();
     public DbSet<SpaceStar> SpaceStars => Set<SpaceStar>();
@@ -196,6 +204,23 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectParticipant>().ToTable("participants", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectLobbyRequest>().ToTable("lobby_requests", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingEvent>().ToTable("meeting_events", "connect");
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecording>().ToTable("recordings", "connect");
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectTranscript>().ToTable("transcripts", "connect");
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>().ToTable("meeting_notes", "connect");
+
+        // jsonb, not text. Npgsql maps a string property to `text` by default,
+        // and `text` does not implicitly cast to `jsonb` on INSERT — the write
+        // fails with 42804. Stated once, here, for the six json columns.
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectTranscript>()
+            .Property(t => t.Segments).HasColumnType("jsonb");
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>()
+            .Property(n => n.KeyPoints).HasColumnType("jsonb");
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>()
+            .Property(n => n.Decisions).HasColumnType("jsonb");
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>()
+            .Property(n => n.ActionItems).HasColumnType("jsonb");
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>()
+            .Property(n => n.Speakers).HasColumnType("jsonb");
 
         b.Entity<CalendarMember>().HasKey(m => new { m.CalendarId, m.UserId });
         b.Entity<CalendarReminderSend>().HasKey(r => new { r.ReminderId, r.OccurrenceStartsAt });

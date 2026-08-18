@@ -18,6 +18,14 @@
 
 type AuthedFetch = (path: string, init?: RequestInit) => Promise<Response>;
 
+/**
+ * The API origin. Declared here rather than beside the guest calls that first
+ * needed it, because recordingApi.fileUrl below also builds a URL from it and
+ * a const referenced above its own declaration is a temporal-dead-zone trap
+ * waiting for the day somebody calls it during module evaluation.
+ */
+const API = process.env.NEXT_PUBLIC_API_URL ?? '/api';
+
 export type MeetingStatus = 'scheduled' | 'active' | 'ended' | 'cancelled';
 export type WaitingRoom = 'off' | 'guests' | 'everyone';
 export type MeetingRole = 'host' | 'cohost' | 'participant';
@@ -238,14 +246,142 @@ export const connectApi = {
 };
 
 // ---------------------------------------------------------------------------
+//  Recording, transcripts and notes
+//
+//  Everything here is signed-in only. A guest can be IN a recorded meeting —
+//  and is told so by the room, from LiveKit's own recording flag — but has no
+//  route to the file afterwards.
+// ---------------------------------------------------------------------------
+export type RecordingMode = 'audio' | 'video';
+
+export type RecordingStatus =
+  | 'starting' | 'recording' | 'processing' | 'ready' | 'failed' | 'aborted' | 'deleted';
+
+export interface Recording {
+  id: string;
+  meetingId: string;
+  mode: RecordingMode;
+  status: RecordingStatus;
+  sizeBytes: number;
+  durationMs: number | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  transcribe: boolean;
+  error: string | null;
+  hasFile: boolean;
+  createdAt: string;
+}
+
+/**
+ * 'unavailable' is NOT a failure — it means nobody configured a transcription
+ * service. The screen says so in those words, because "something went wrong"
+ * would send somebody looking for a bug that is really an unset variable.
+ */
+export type TranscriptStatus = 'queued' | 'running' | 'ready' | 'failed' | 'unavailable';
+
+export interface RecordingListItem {
+  recording: Recording;
+  transcript: { status: TranscriptStatus; language: string | null } | null;
+}
+
+export interface RecordingList {
+  /** False when this server has no egress deployed. Distinguishes "recording
+   *  is off here" from "nobody has recorded this meeting", which an empty
+   *  list cannot. */
+  enabled: boolean;
+  transcription: boolean;
+  items: RecordingListItem[];
+}
+
+export interface TranscriptSegment {
+  start: number;
+  end: number;
+  text: string;
+  /** Reserved. Always null today: a room-composite recording is one mixed
+   *  stream and there is nothing in it to attribute. */
+  speaker: string | null;
+}
+
+export interface SpeakerTime { name: string; seconds: number; turns: number }
+
+export interface MeetingNotes {
+  status: 'queued' | 'running' | 'ready' | 'failed';
+  /** 'digest' was assembled from the transcript on the server with no model
+   *  involved; 'model' was written by a language model. The UI says which. */
+  kind: 'digest' | 'model';
+  model: string | null;
+  summary: string | null;
+  keyPoints: string[];
+  decisions: string[];
+  actionItems: string[];
+  speakers: SpeakerTime[];
+  error: string | null;
+  generatedAt: string | null;
+}
+
+export interface NotesPayload {
+  recordingEnabled: boolean;
+  transcriptionConfigured: boolean;
+  notesModelConfigured: boolean;
+  transcript: {
+    status: TranscriptStatus;
+    language: string | null;
+    provider: string | null;
+    error: string | null;
+    text: string | null;
+    segments: TranscriptSegment[];
+  } | null;
+  notes: MeetingNotes | null;
+}
+
+export const recordingApi = {
+  list: (f: AuthedFetch, meetingId: string) =>
+    f(`/connect/meetings/${meetingId}/recordings`)
+      .then((r) => json<RecordingList>(r, 'Could not load the recordings.')),
+
+  /**
+   * Audio by default, everywhere, and not as a shortcut: LiveKit prices a
+   * video room composite at 4 CPU against 1 for audio, on a box that is also
+   * running the SFU.
+   */
+  start: (f: AuthedFetch, meetingId: string, mode: RecordingMode = 'audio', transcribe = true) =>
+    f(`/connect/meetings/${meetingId}/recordings`, {
+      method: 'POST', body: JSON.stringify({ mode, transcribe }),
+    }).then((r) => json<Recording>(r, 'Could not start recording.')),
+
+  stop: (f: AuthedFetch, meetingId: string, recordingId: string) =>
+    f(`/connect/meetings/${meetingId}/recordings/${recordingId}/stop`, { method: 'POST' })
+      .then((r) => json<Recording>(r, 'Could not stop the recording.')),
+
+  remove: (f: AuthedFetch, meetingId: string, recordingId: string) =>
+    f(`/connect/meetings/${meetingId}/recordings/${recordingId}`, { method: 'DELETE' })
+      .then((r) => { if (!r.ok) throw new Error('Could not delete that recording.'); }),
+
+  /**
+   * The download URL. Built rather than fetched because the browser has to
+   * navigate to it — and it deliberately carries the recording ID, never the
+   * stored file name, so nothing on this side can be talked into building a
+   * path.
+   */
+  fileUrl: (meetingId: string, recordingId: string) =>
+    `${API}/connect/meetings/${meetingId}/recordings/${recordingId}/file`,
+
+  notes: (f: AuthedFetch, meetingId: string) =>
+    f(`/connect/meetings/${meetingId}/notes`)
+      .then((r) => json<NotesPayload>(r, 'Could not load the notes.')),
+
+  regenerate: (f: AuthedFetch, meetingId: string) =>
+    f(`/connect/meetings/${meetingId}/notes/regenerate`, { method: 'POST' })
+      .then((r) => { if (!r.ok) throw new Error('Could not ask for the notes again.'); }),
+};
+
+// ---------------------------------------------------------------------------
 //  The guest path — no session, no token, no Authorization header.
 //
 //  Deliberately plain fetch() rather than authedFetch: a guest has no session
 //  to attach, and routing these through the authed client would trigger its
 //  silent-refresh retry on the 404s this path returns by design.
 // ---------------------------------------------------------------------------
-const API = process.env.NEXT_PUBLIC_API_URL ?? '/api';
-
 async function guestJson<T>(res: Response): Promise<T> {
   // 404 is the door saying no, for every reason it might say no. It is never
   // elaborated on here, because the whole point is that the reasons are
@@ -302,6 +438,28 @@ export function whenLabel(m: Meeting): string {
   if (m.status === 'cancelled') return 'Cancelled';
   if (!m.scheduledStart) return 'Any time';
   return timeLabel(m.scheduledStart);
+}
+
+/** Bytes as a person reads them. Binary units, because that is what the
+ *  storage pool is measured in. */
+export function sizeLabel(bytes: number): string {
+  if (bytes <= 0) return '—';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit += 1; }
+  return `${value < 10 && unit > 0 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+}
+
+/** A duration in milliseconds as h:mm:ss / m:ss. */
+export function durationLabel(ms: number | null): string {
+  if (!ms || ms <= 0) return '—';
+  const total = Math.round(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
 export function timeLabel(iso: string): string {

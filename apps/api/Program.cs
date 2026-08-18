@@ -117,6 +117,18 @@ builder.Services.AddScoped<TatvaOS.Api.Modules.Space.SpaceContentGateway>();
 builder.Services.AddSingleton<TatvaOS.Api.Modules.Connect.LiveKitTokenService>();
 builder.Services.AddHttpClient<TatvaOS.Api.Modules.Connect.LiveKitRoomClient>();
 
+// Connect recording. The options object is read ONCE at start and shared, like
+// LiveKitOptions — a setting that can change under a running request is a
+// setting two requests can disagree about.
+builder.Services.AddSingleton(
+    TatvaOS.Api.Modules.Connect.ConnectRecordingOptions.Read(builder.Configuration));
+// Typed HttpClients: the egress client speaks Twirp to livekit:7880, and the
+// other two speak to whatever transcription and notes endpoints are
+// configured — which is nothing at all by default, so neither is ever called.
+builder.Services.AddHttpClient<TatvaOS.Api.Modules.Connect.LiveKitEgressClient>();
+builder.Services.AddHttpClient<TatvaOS.Api.Modules.Connect.ConnectTranscriber>();
+builder.Services.AddHttpClient<TatvaOS.Api.Modules.Connect.ConnectNotesComposer>();
+
 // Scoped: it writes through the request's AppDbContext and reads its
 // TenantContext. A singleton holding either would serve one tenant's scope to
 // whichever request arrived next.
@@ -169,6 +181,14 @@ builder.Services.AddHostedService<AttachmentScanWorker>();
 // Calendar reminders. Polls every minute and records every send, rather than
 // scheduling in-memory timers that a deploy would silently swallow.
 builder.Services.AddHostedService<CalendarReminderWorker>();
+
+// Connect's recordings become transcripts, and transcripts become notes.
+// Hosted service, not scoped — it creates its own scope per meeting because
+// tenant context must change between them, and it returns immediately when
+// Connect:Recording:Enabled is false. It also REPAIRS: anything LiveKit never
+// finished telling us about is asked about directly, so a lost webhook costs
+// a delay rather than a recording that never appears.
+builder.Services.AddHostedService<ConnectNotesWorker>();
 
 // The public-link resolve is the one anonymous, internet-reachable route
 // on the platform. Per-IP fixed window. Behind Caddy the peer address is
@@ -282,6 +302,10 @@ app.MapSpaceLinkEndpoints();
 app.MapConnectEndpoints();
 app.MapConnectGuestEndpoints();
 app.MapConnectWebhookEndpoints();
+// Recording, transcripts and automatic notes. Signed-in only, and gated
+// three times over — the organisation, the person, and the disk. See the
+// header of ConnectRecordingEndpoints.cs.
+app.MapConnectRecordingEndpoints();
 
 // ---------------------------------------------------------------------------
 //  Bootstrap the first super admin

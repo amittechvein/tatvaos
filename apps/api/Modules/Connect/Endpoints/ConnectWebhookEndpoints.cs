@@ -79,6 +79,13 @@ public static class ConnectWebhookEndpoints
             "participant_left" => "participant_left",
             "recording_started" => "recording_started",
             "recording_finished" => "recording_finished",
+            // Egress — how a recording learns it exists, finished, or failed.
+            // egress_updated is stored and otherwise ignored; it still has to
+            // be STORABLE, because "ignore it" would otherwise mean 500 and be
+            // retried forever (the kind CHECK is widened in 20260902).
+            "egress_started" => "egress_started",
+            "egress_updated" => "egress_updated",
+            "egress_ended" => "egress_ended",
             _ => null,
         };
         // Unknown events are acknowledged and dropped: answering anything else
@@ -172,9 +179,54 @@ public static class ConnectWebhookEndpoints
             }
         }
 
+        // ------------------------------------------------------------------
+        //  Egress: what a recording row learns from the media server.
+        //
+        //  The row is created by ConnectRecordingEndpoints when LiveKit
+        //  accepts the request; this only ever UPDATES one. If it is missing,
+        //  the callback simply ran ahead of our own commit — a few
+        //  milliseconds is normal — and nothing is invented here, because a
+        //  row built from a webhook would have no mode, no requester and no
+        //  transcribe flag. ConnectNotesWorker asks LiveKit directly about
+        //  anything left stuck, so a lost callback costs a delay, not a
+        //  recording.
+        // ------------------------------------------------------------------
+        var reconcileStorage = false;
+        if (kind is "egress_started" or "egress_updated" or "egress_ended" && TryEgress(root, out var egressInfo))
+        {
+            var state = LiveKitEgressClient.ReadEgress(egressInfo);
+            if (state.EgressId is { Length: > 0 } egressId)
+            {
+                var recording = await db.ConnectRecordings
+                    .Where(r => r.EgressId == egressId)
+                    .FirstOrDefaultAsync(ct);
+
+                if (recording is not null && recording.Status != "deleted")
+                {
+                    var next = MapEgressStatus(state.Status, state.FileName);
+                    if (next is not null) recording.Status = next;
+
+                    if (state.FileName is { Length: > 0 } file) recording.FileName = file;
+                    if (state.SizeBytes > 0) recording.SizeBytes = state.SizeBytes;
+                    if (state.DurationMs is long ms) recording.DurationMs = ms;
+                    if (state.StartedAt is { } startedAt) recording.StartedAt ??= startedAt;
+                    if (state.EndedAt is { } endedAt) recording.EndedAt ??= endedAt;
+                    if (state.Error is { Length: > 0 } err) recording.Error = err;
+                    recording.UpdatedAt = DateTimeOffset.UtcNow;
+
+                    // Derived, never incremented — see the migration header.
+                    // Only when the size can actually have moved.
+                    reconcileStorage = recording.Status is "ready" or "failed" or "aborted";
+                }
+            }
+        }
+
         try
         {
             await db.SaveChangesAsync(ct);
+            if (reconcileStorage)
+                await db.Database.ExecuteSqlInterpolatedAsync(
+                    $"SELECT connect.reconcile_recording_storage({tenantIds[0]})", ct);
         }
         catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: "23505" })
         {
@@ -219,17 +271,66 @@ public static class ConnectWebhookEndpoints
     /// The room name is m-{meetingId} and that is the only place the meeting
     /// id appears. A room LiveKit knows about but we do not — anything not
     /// matching the shape — is ignored rather than guessed at.
+    ///
+    /// An EGRESS event carries no `room` object at all: the room name lives on
+    /// `egressInfo.roomName` instead. Both are checked, because a handler that
+    /// looked only at `room` would drop every recording callback on the floor
+    /// and answer 200, which is precisely the failure this file's header is
+    /// about.
     /// </summary>
     private static bool TryMeetingId(JsonElement root, out Guid meetingId)
     {
         meetingId = Guid.Empty;
-        if (!root.TryGetProperty("room", out var room) || room.ValueKind != JsonValueKind.Object)
-            return false;
 
-        var name = Text(room, "name");
+        string? name = null;
+        if (root.TryGetProperty("room", out var room) && room.ValueKind == JsonValueKind.Object)
+            name = Text(room, "name");
+
+        if (string.IsNullOrEmpty(name) && TryEgress(root, out var egress))
+            // protojson emits lowerCamelCase; the snake_case spelling is
+            // accepted too rather than betting on which one arrives.
+            name = Text(egress, "roomName") ?? Text(egress, "room_name");
+
         if (string.IsNullOrEmpty(name) || !name.StartsWith("m-", StringComparison.Ordinal))
             return false;
 
         return Guid.TryParse(name[2..], out meetingId);
+    }
+
+    /// <summary>
+    /// LiveKit's egress status to ours.
+    ///
+    /// EGRESS_COMPLETE without a file is 'failed', not 'ready'. A complete
+    /// egress that wrote nothing happens — the room emptied before a single
+    /// frame, or the output path was not writable — and calling that ready
+    /// would put a download button on screen that answers 404. The database
+    /// also refuses it: recordings_ready_has_file.
+    ///
+    /// An unrecognised status returns null and the row is LEFT ALONE. LiveKit
+    /// may add states; guessing at one and moving a live recording to a wrong
+    /// status is worse than ignoring it, because the worker's repair pass
+    /// reads the real state from LiveKit anyway.
+    /// </summary>
+    private static string? MapEgressStatus(string? status, string? fileName) => status switch
+    {
+        "EGRESS_STARTING" => "starting",
+        "EGRESS_ACTIVE" => "recording",
+        "EGRESS_ENDING" => "processing",
+        "EGRESS_COMPLETE" or "EGRESS_LIMIT_REACHED"
+            => string.IsNullOrEmpty(fileName) ? "failed" : "ready",
+        "EGRESS_FAILED" => "failed",
+        "EGRESS_ABORTED" => "aborted",
+        _ => null,
+    };
+
+    private static bool TryEgress(JsonElement root, out JsonElement egress)
+    {
+        if (root.ValueKind == JsonValueKind.Object
+            && (root.TryGetProperty("egressInfo", out egress)
+                || root.TryGetProperty("egress_info", out egress))
+            && egress.ValueKind == JsonValueKind.Object)
+            return true;
+        egress = default;
+        return false;
     }
 }

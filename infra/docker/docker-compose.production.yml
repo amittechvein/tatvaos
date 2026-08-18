@@ -99,3 +99,15 @@ services:
     logging:
       driver: json-file
       options: { max-size: "50m", max-file: "5" }
+
+  egress:
+    deploy:
+      resources:
+        # 2G because Chrome is in this image and a video composite will use
+        # it. An audio-only recording sits far below this; the limit is here
+        # so a video recording cannot take the box down, not because it is
+        # expected to be reached.
+        limits: { memory: 2G }
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "5" }

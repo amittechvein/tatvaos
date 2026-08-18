@@ -178,6 +178,19 @@ services:
       #   docker run --rm -v tatvaos_spaceblobs:/b alpine chown 5000:5000 /b
       # (same one-time step dkimkeys needed; see the deploy checklist).
       - spaceblobs:/var/lib/space/blobs
+      # Connect's recordings. NOT read-only, unlike the maildir — the API is
+      # not the writer here (egress is), but it is the only thing that
+      # DELETES, and unlinking needs write on the directory. It never writes
+      # a byte of content: one writer per store still holds.
+      #
+      # ONE-TIME OWNERSHIP STEP, like spaceblobs above. Egress runs as uid
+      # 1000 and this container as 5000, so the directory must be owned by
+      # egress and group-owned by the API, with setgid so new files inherit
+      # the group:
+      #   docker run --rm -v tatvaos_connectrec:/r alpine \
+      #     sh -c 'chown 1000:5000 /r && chmod 2775 /r'
+      # connect-recording-verify.sh checks this and says so if it is missing.
+      - connectrec:/var/lib/connect/recordings
     environment:
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-tatvaos_mail};Username=tatvaos_app;Password=${APP_DB_PASSWORD:?APP_DB_PASSWORD must be set};Pooling=true"
       Jwt__SigningKey: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set}
@@ -249,6 +262,34 @@ services:
       # retry, which is recoverable, but still not something to switch on
       # blind.
       Mail__QuotaEnforcement: ${MAIL_QUOTA_ENFORCEMENT:-}
+      # ---- Connect recording and automatic notes ----------------------
+      # OFF by default. Recording needs the egress service above; with this
+      # false every recording endpoint answers "not switched on for this
+      # server" rather than failing somewhere deeper.
+      Connect__Recording__Enabled: ${CONNECT_RECORDING_ENABLED:-false}
+      # Both containers mount the same volume; the two settings exist because
+      # they are free to mount it at different paths, and assuming they match
+      # is the kind of assumption that survives review and fails at 3 a.m.
+      Connect__Recording__OutputDirectory: /var/lib/connect/recordings
+      Connect__Recording__ReadDirectory: /var/lib/connect/recordings
+      # An OpenAI-compatible /v1/audio/transcriptions endpoint. EMPTY BY
+      # DEFAULT AND THAT IS THE POINT: with nothing set, no audio leaves this
+      # server and transcripts are honestly marked 'unavailable'. Connect's
+      # customers are schools and clinics; "the audio of every lesson was sent
+      # abroad" is not a thing to switch on by shipping.
+      Connect__Recording__TranscriptionUrl: ${CONNECT_TRANSCRIPTION_URL:-}
+      Connect__Recording__TranscriptionKey: ${CONNECT_TRANSCRIPTION_KEY:-}
+      Connect__Recording__TranscriptionModel: ${CONNECT_TRANSCRIPTION_MODEL:-whisper-1}
+      # Worth setting for a school that teaches in one language — automatic
+      # detection is the main source of nonsense on short or noisy audio.
+      Connect__Recording__TranscriptionLanguage: ${CONNECT_TRANSCRIPTION_LANGUAGE:-}
+      # An OpenAI-compatible /v1/chat/completions endpoint. Empty means notes
+      # are assembled on this box from the transcript with no model involved,
+      # and are labelled 'digest' so nobody mistakes them for a written
+      # summary.
+      Connect__Recording__NotesUrl: ${CONNECT_NOTES_URL:-}
+      Connect__Recording__NotesKey: ${CONNECT_NOTES_KEY:-}
+      Connect__Recording__NotesModel: ${CONNECT_NOTES_MODEL:-}
     # No healthcheck. The .NET runtime image has neither wget nor curl, so this
     # check could never pass - the container reported "unhealthy" while serving
     # traffic fine. See the reasoning in apps/api/Dockerfile; liveness is
@@ -319,6 +360,22 @@ services:
       # The API reads the same two variables later to mint room-scoped
       # tokens; a browser only ever sees short-lived JWTs (brief §7).
       LIVEKIT_KEYS: "${LIVEKIT_API_KEY:?LIVEKIT_API_KEY must be set}: ${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET must be set}"
+      # Egress reaches the SFU over a Redis message bus (psrpc), so the two
+      # must share one. Set through the ENVIRONMENT rather than livekit.yaml
+      # because that file does not expand ${VAR} — see its own header — and a
+      # literal password there would put a secret in the repo. livekit-server
+      # reads REDIS_HOST/REDIS_PASSWORD as CLI flags with env sources, the
+      # same path LIVEKIT_KEYS above already takes.
+      #
+      # Harmless when egress is not deployed: the SFU simply uses Redis for
+      # its own room state instead of memory, which for a single node is the
+      # same behaviour with one more hop.
+      REDIS_HOST: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    depends_on:
+      # Without the bus the SFU starts and works, but no egress can ever
+      # register with it — and the failure is silent from the SFU's side.
+      redis: { condition: service_healthy }
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
     ports:
@@ -371,6 +428,78 @@ services:
       "--external-ip=${TURN_EXTERNAL_IP:?TURN_EXTERNAL_IP must be set}",
     ]
 
+  # --------------------------------------------------------------------------
+  #  Recording. Egress joins a room as a hidden participant and writes a file.
+  #
+  #  ── THE IMAGE IS NOT PINNED YET, AND THAT IS A KNOWN DEBT. ───────────────
+  #  livekit and coturn above are pinned by digest, with the reasoning in
+  #  their comments. This one is a tag, because the digest could not be
+  #  resolved from the machine that wrote this file. PIN IT after the first
+  #  recording completes successfully:
+  #
+  #    docker inspect --format='{{index .RepoDigests 0}}' livekit/egress:latest
+  #    # then replace the image line with  livekit/egress:latest@sha256:...
+  #
+  #  connect-recording-verify.sh FAILS while this is unpinned, deliberately —
+  #  an unpinned image means `compose pull` can swap the recorder under a
+  #  deployment that works.
+  #
+  #  ── COST. ────────────────────────────────────────────────────────────────
+  #  LiveKit's own admission controller prices an AUDIO-only room composite at
+  #  1 CPU and a VIDEO one at 4, because audio-only with no layout takes the
+  #  SDK path and never launches Chrome. The API defaults to audio for exactly
+  #  that reason. On this box, two concurrent VIDEO recordings would contend
+  #  with the SFU for the whole machine.
+  # --------------------------------------------------------------------------
+  egress:
+    image: livekit/egress:latest
+    restart: unless-stopped
+    depends_on:
+      redis:   { condition: service_healthy }
+      livekit: { condition: service_started }
+    environment:
+      # The WHOLE config as a string, which is what EGRESS_CONFIG_BODY is for
+      # (cmd/server/main.go). Compose interpolates ${...} here, so the secrets
+      # come from infra/docker/.env at render time and never sit in a file in
+      # the repo — the same rule the Postfix .cf files follow.
+      #
+      # The values are single-quoted because this is YAML inside YAML: a
+      # password containing a colon or a '#' would otherwise end the scalar
+      # early and produce a config that parses to something else. A password
+      # containing a single quote would still break it — generate these with
+      # hex or base64url, as the existing scripts do.
+      EGRESS_CONFIG_BODY: |
+        redis:
+          address: redis:6379
+          password: '${REDIS_PASSWORD:?REDIS_PASSWORD must be set}'
+        api_key: '${LIVEKIT_API_KEY:?LIVEKIT_API_KEY must be set}'
+        api_secret: '${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET must be set}'
+        ws_url: ws://livekit:7880
+        health_port: 9090
+        # The SFU is reached over plain ws:// INSIDE the compose network, which
+        # Chrome refuses by default. Media never crosses the public internet
+        # on this hop — Caddy terminates TLS at the edge and nothing else can
+        # reach livekit:7880.
+        insecure: true
+        # Chrome's own sandbox needs SYS_ADMIN, which is a large capability to
+        # hand a container that renders arbitrary meeting video. Off, which is
+        # also the upstream default.
+        enable_chrome_sandbox: false
+        logging:
+          level: info
+    volumes:
+      # Where the files land. The API mounts the same volume to read and to
+      # delete them; see the ownership note on the volume itself below.
+      - connectrec:/var/lib/connect/recordings
+    # Chrome shares memory through /dev/shm and the docker default of 64 MB is
+    # not enough to composite a meeting — it crashes mid-recording rather than
+    # refusing to start, which is the worst way to find out.
+    shm_size: 1gb
+    # No healthcheck: the image has no curl or wget, the same reason the api
+    # service has none. Liveness is restart:unless-stopped plus the worker's
+    # repair pass, which asks LiveKit directly about anything stuck.
+    networks: [mailnet]
+
 
 networks:
   mailnet:
@@ -378,6 +507,7 @@ networks:
 
 volumes:
   dkimkeys:
+  connectrec:
   spaceblobs:
   pgdata:
   redisdata:

@@ -8,6 +8,7 @@ import {
   connectApi, prettyCode, timeLabel, whenLabel,
   type LobbyEntry, type Meeting, type Participant,
 } from '@/lib/connect';
+import Recordings from './Recordings';
 
 // ============================================================================
 //  One meeting — the organiser's view
@@ -230,6 +231,15 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
               </Table>
             )}
           </Card>
+
+          {/* Recordings, transcript and notes. Visible to anybody who was in
+              the meeting — RLS scopes it to the organisation and the API
+              additionally requires a participant row, so a recording of a
+              leadership meeting is not readable by everyone who works there.
+              Only a HOST may delete: stopping a recording and destroying one
+              are not the same act. */}
+          <Recordings meetingId={meeting.id} isHost={isHost}
+                      canDelete={meeting.myRole === 'host'} />
         </div>
 
         <div className="col-xl-4">

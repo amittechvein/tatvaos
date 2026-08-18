@@ -8,7 +8,10 @@ import {
   type RemoteParticipant,
 } from 'livekit-client';
 import { useAuth } from '@/lib/auth';
-import { connectApi, type LobbyEntry, type Meeting, type Seat } from '@/lib/connect';
+import {
+  connectApi, recordingApi,
+  type LobbyEntry, type Meeting, type Recording, type Seat,
+} from '@/lib/connect';
 import { CSS, Centre, Spinner, initialOf } from './RoomChrome';
 
 const LOBBY_POLL_MS = 3000;
@@ -48,6 +51,33 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
   const [copied, setCopied] = useState(false);
   const [why, setWhy] = useState<DisconnectReason | undefined>(undefined);
 
+  // ---- Recording -------------------------------------------------------
+  //
+  // TWO SEPARATE PIECES OF STATE, AND THE DIFFERENCE MATTERS.
+  //
+  // `beingRecorded` is LiveKit's own room flag. It is what EVERY participant,
+  // guest included, is told — and it arrives on the same signalling channel as
+  // the media, so a client cannot decline to be told. That is what drives the
+  // notice on screen.
+  //
+  // `recording` is OUR row, and only a host has one. It exists because
+  // stopping needs an id, and the id is ours, not LiveKit's room flag.
+  //
+  // Driving the notice from our row instead would mean a guest — who never
+  // calls that endpoint — sat in a recorded meeting with nothing on screen.
+  // Full screen. The element, and whether we are in it — read from the
+  // DOCUMENT rather than tracked ourselves, because Esc and the browser's own
+  // controls exit it without going through our button, and a boolean we set
+  // on click alone would be wrong the moment somebody presses Esc.
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [full, setFull] = useState(false);
+  const [canFull, setCanFull] = useState(false);
+
+  const [beingRecorded, setBeingRecorded] = useState(false);
+  const [recording, setRecording] = useState<Recording | null>(null);
+  const [recBusy, setRecBusy] = useState(false);
+  const [recOff, setRecOff] = useState(false);   // no egress on this server
+
   const isHost = meeting?.myRole === 'host' || meeting?.myRole === 'cohost';
 
   // The SDK handlers are registered once, so they close over the FIRST render's
@@ -62,7 +92,13 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
     roomRef.current = r;
     setRoom(r);
 
-    r.on(RoomEvent.Connected, () => { setConnState('live'); rerender(); })
+    // isRecording is read on Connected as well as on the event, because the
+    // event only fires on a CHANGE. Somebody joining a meeting that was
+    // already being recorded would otherwise never be told — which is the one
+    // case where being told matters most.
+    r.on(RoomEvent.Connected, () => {
+      setConnState('live'); setBeingRecorded(r.isRecording); rerender();
+    })
       // The REASON is kept, not just the fact. Telling somebody the host
       // removed them "you have left the meeting" is a lie they will argue with.
       .on(RoomEvent.Disconnected, (reason?: DisconnectReason) => {
@@ -73,6 +109,9 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
       // ended" here makes people rejoin a call they never left.
       .on(RoomEvent.Reconnecting, () => { setConnState('reconnecting'); rerender(); })
       .on(RoomEvent.Reconnected, () => { setConnState('live'); rerender(); })
+      // The server tells everyone in the room, including guests. This is the
+      // ONLY input to the notice on screen — see the state comment above.
+      .on(RoomEvent.RecordingStatusChanged, (on: boolean) => { setBeingRecorded(on); rerender(); })
       .on(RoomEvent.ParticipantConnected, rerender)
       // Remove the tile by identity, or a black rectangle sits there looking
       // like a broken camera while everyone waits for somebody who has left.
@@ -183,6 +222,92 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
   }
 
   // ---------------------------------------------------------------------
+  //  Full screen.
+  //
+  //  Not decoration. On a laptop the browser's tab strip, the "Sharing … to
+  //  this tab" bar and the taskbar together take roughly a third of the
+  //  display, and what is left has to hold a header, a filmstrip and a control
+  //  bar before the shared screen gets any of it. The first live share went
+  //  into a stage box about four times wider than it was tall.
+  // ---------------------------------------------------------------------
+  useEffect(() => {
+    // Hidden rather than broken where it is not supported — iOS Safari allows
+    // full screen on a <video> element only, never on a container, so a button
+    // that silently did nothing would read as a bug.
+    setCanFull(typeof document !== 'undefined' && document.fullscreenEnabled);
+    const onChange = () => setFull(document.fullscreenElement !== null);
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+
+  const toggleFull = useCallback(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => { /* already out */ });
+    } else {
+      // A rejected request is normal — a permissions policy, or a gesture the
+      // browser did not count. Silent, because there is nothing the person can
+      // do about it and the meeting is unaffected.
+      void el.requestFullscreen().catch(() => { /* not permitted */ });
+    }
+  }, []);
+
+  // ---------------------------------------------------------------------
+  //  Recording — the host's half.
+  //
+  //  Asked for ONCE on joining, not polled. Two states matter and both are
+  //  already covered without a timer: whether the room is being recorded comes
+  //  from LiveKit on its own channel, and this host's own start/stop replies
+  //  carry the row back. A poll would add a request every few seconds per open
+  //  tab to learn something nothing is changing.
+  // ---------------------------------------------------------------------
+  useEffect(() => {
+    if (!isHost || !meeting) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const list = await recordingApi.list(authedFetch, meeting.id);
+        if (!alive) return;
+        if (!list.enabled) { setRecOff(true); return; }
+        // A host who reloads mid-recording must get the STOP button back, and
+        // that needs the id of the recording already running.
+        const live = list.items.find(
+          (i) => i.recording.status === 'starting' || i.recording.status === 'recording');
+        setRecording(live?.recording ?? null);
+      } catch {
+        // Not worth a banner. The button will say what went wrong the moment
+        // somebody presses it, which is when they actually care.
+      }
+    })();
+    return () => { alive = false; };
+  }, [isHost, meeting, authedFetch]);
+
+  async function toggleRecording() {
+    if (!meeting || recBusy) return;
+    setRecBusy(true);
+    try {
+      if (recording) {
+        const stopped = await recordingApi.stop(authedFetch, meeting.id, recording.id);
+        // Keep the row only while it is still live. 'processing' means LiveKit
+        // is finalising the file and there is nothing left to stop.
+        setRecording(stopped.status === 'starting' || stopped.status === 'recording'
+          ? stopped : null);
+      } else {
+        // Audio, always, from this button. Video costs LiveKit four times the
+        // CPU on a box that is also running the SFU, so it is not something to
+        // start by tapping the obvious control — it is offered on the meeting
+        // page, where there is room to say what it costs.
+        setRecording(await recordingApi.start(authedFetch, meeting.id, 'audio', true));
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not change the recording.');
+    } finally {
+      setRecBusy(false);
+    }
+  }
+
+  // ---------------------------------------------------------------------
   // Read fresh every render rather than memoised: the input is a mutable SDK
   // object, so a dependency array could only be a guess about when it changed
   // — and a stale guess shows people who have left.
@@ -278,7 +403,7 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
   return (
     <>
       <style>{CSS}</style>
-      <div className="cx-root">
+      <div className="cx-root" ref={rootRef}>
         <header className="cx-top">
           <div style={{ minWidth: 0 }}>
             <div className="cx-title">{meeting?.title ?? 'Meeting'}</div>
@@ -297,6 +422,21 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
           </div>
         </header>
 
+        {/* Everyone in the room, guests included, and NOT dismissible.
+            Driven by LiveKit's room flag rather than by our own state, so it
+            is true for people who joined after recording began and cannot be
+            suppressed by a client that would rather not show it.
+
+            This is a NOTICE, not consent. Several places Connect will run
+            require the latter; that is a product decision and it is written
+            up in docs/CONNECT_RECORDING_AND_NOTES.md rather than assumed. */}
+        {beingRecorded && (
+          <div className="cx-banner cx-banner--rec" role="status" aria-live="polite">
+            <span className="cx-recdot" aria-hidden="true" />
+            <span className="ms-2">This meeting is being recorded.</span>
+          </div>
+        )}
+
         {connState === 'reconnecting' && (
           <div className="cx-banner cx-banner--warn" role="status">
             <Spinner /> <span className="ms-2">Connection lost — reconnecting. Stay on this page.</span>
@@ -311,7 +451,12 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
           </div>
         )}
 
-        <div className="cx-stage">
+        {/* Double-click anywhere on the stage toggles full screen. The
+            gesture every video player has had for twenty years, so it needs
+            no discovery — the button below is for the people who never learnt
+            it. */}
+        <div className="cx-stage"
+             onDoubleClick={canFull ? toggleFull : undefined}>
           {shown.map((p) => (
             <Tile key={p.identity} p={p} big={view === 'speaker'}
                   local={p === room?.localParticipant}
@@ -361,6 +506,15 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
             {view === 'gallery' ? 'Gallery' : 'Speaker'}
           </button>
 
+          {canFull && (
+            <button type="button" className={`cx-btn ${full ? 'is-on' : ''}`}
+                    onClick={toggleFull} aria-pressed={full}
+                    title={full ? 'Leave full screen (Esc)' : 'Full screen'}>
+              <i className={full ? 'ri-fullscreen-exit-line' : 'ri-fullscreen-line'} />
+              {full ? 'Exit' : 'Full'}
+            </button>
+          )}
+
           <span className="cx-btnwrap">
             <button type="button" className={`cx-btn ${panel === 'people' ? 'is-on' : ''}`}
                     onClick={() => openPanel('people')} title="People">
@@ -381,6 +535,21 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
                   onClick={() => openPanel('devices')} title="Settings">
             <i className="ri-settings-3-line" />Settings
           </button>
+
+          {/* Hidden entirely when this server has no egress, rather than shown
+              and refusing. A control that is always there and never works is
+              read as a broken product, not as an unconfigured one. */}
+          {isHost && meeting && !recOff && (
+            <button type="button" className={`cx-btn ${recording ? 'is-rec' : ''}`}
+                    onClick={() => void toggleRecording()} disabled={recBusy}
+                    aria-pressed={recording !== null}
+                    title={recording
+                      ? 'Stop recording'
+                      : 'Record the audio of this meeting'}>
+              <i className={recording ? 'ri-stop-circle-fill' : 'ri-record-circle-line'} />
+              {recBusy ? '…' : recording ? 'Stop rec' : 'Record'}
+            </button>
+          )}
 
           {isHost && meeting && (
             <button type="button" className="cx-btn"
@@ -581,9 +750,14 @@ function Tile({ p, big, local, showScreen, canHost, onMute, onRemove }: {
   return (
     <div className={`cx-tile${big ? ' cx-tile--big' : ''}${p.isSpeaking ? ' is-speaking' : ''}`}>
       <video ref={videoRef} autoPlay playsInline muted={local}
-             // Mirrored for yourself only, and never for a shared screen —
-             // reading mirrored text is the definition of unusable.
-             className={`cx-video${local && !showScreen ? ' cx-video--self' : ''}`}
+             // Two things a screen share must not do, for the same underlying
+             // reason — you have to be able to READ it.
+             //   --self   mirrors, and mirrored text is unusable.
+             //   --screen switches object-fit to contain, because the default
+             //            cover CROPS, and it crops off exactly whatever is at
+             //            the edge of the thing somebody is presenting.
+             className={`cx-video${local && !showScreen ? ' cx-video--self' : ''}`
+               + `${showScreen ? ' cx-video--screen' : ''}`}
              style={{ display: camOff ? 'none' : 'block' }} />
       {!local && <audio ref={audioRef} autoPlay />}
 
