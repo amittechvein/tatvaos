@@ -146,10 +146,32 @@ fi
 
 echo
 echo "== the recordings volume =="
-# Egress WRITES as uid 1000; the API READS and DELETES as 5000. The directory
+# Egress WRITES as its own uid; the API READS and DELETES as 5000. The directory
 # must therefore be owned by egress, group-owned by the API, and setgid so new
 # files inherit the group. This is a ONE-TIME step, like spaceblobs, and it is
 # invisible until the first recording fails to appear.
+# ─────────────────────────────────────────────────────────────────────────
+#  ASK EGRESS WHAT UID IT IS. DO NOT ASSUME ONE.
+#
+#  This block used to assert the directory was owned by uid 1000, a number
+#  read out of LiveKit's Dockerfile — `useradd` with no explicit uid — and
+#  assumed to land on the Debian default. It does not. The check passed,
+#  because it compared the directory against the constant it had itself been
+#  told to write, and the first real recording died with
+#
+#      Local upload failed: open /var/lib/connect/recordings/....ogg:
+#      permission denied
+#
+#  after running for 52 seconds. A check that asserts a constant proves
+#  nothing; a check that compares two things which must agree proves the
+#  thing you care about. So the uid comes from the container.
+# ─────────────────────────────────────────────────────────────────────────
+EGUID=$("${COMPOSE[@]}" exec -T egress id -u 2>/dev/null | tr -d '[:space:]')
+[ -n "$EGUID" ] && ok "egress runs as uid $EGUID" \
+                || warn "could not ask the egress container for its uid — is it running?"
+
+FIXCMD="docker run --rm -v tatvaos_connectrec:/r alpine sh -c 'chown ${EGUID:-<egress-uid>}:5000 /r && chmod 2775 /r'"
+
 perm=$("${COMPOSE[@]}" exec -T api sh -c 'stat -c "%u %g %a" /var/lib/connect/recordings' 2>/dev/null | tr -d '\r')
 if [ -z "$perm" ]; then
     bad "the api container cannot see /var/lib/connect/recordings — is the volume mounted?"
@@ -157,13 +179,36 @@ else
     set -- $perm
     owner=$1; group=$2; mode=$3
     [ "$group" = "5000" ] && ok "recordings dir is group-owned by the api (gid 5000)" \
-        || bad "recordings dir gid is $group, expected 5000 — the API will not be able to delete recordings. Fix: docker run --rm -v tatvaos_connectrec:/r alpine sh -c 'chown 1000:5000 /r && chmod 2775 /r'"
+        || bad "recordings dir gid is $group, expected 5000 — the API will not be able to delete recordings. Fix: $FIXCMD"
     case "$mode" in
         2775|2777|3775) ok "recordings dir is setgid and group-writable (mode $mode)" ;;
-        *) bad "recordings dir mode is $mode, expected 2775 — without setgid, files egress writes will not be readable by the API. Fix: docker run --rm -v tatvaos_connectrec:/r alpine sh -c 'chown 1000:5000 /r && chmod 2775 /r'" ;;
+        *) bad "recordings dir mode is $mode, expected 2775 — without setgid, files egress writes will not be readable by the API. Fix: $FIXCMD" ;;
     esac
-    [ "$owner" = "1000" ] && ok "recordings dir is owned by egress (uid 1000)" \
-        || warn "recordings dir uid is $owner, expected 1000 — egress may not be able to write. Check its logs after the first recording"
+    # FAIL, not warn. This is the difference between recording and not
+    # recording, and it fails ~52 seconds AFTER somebody has finished
+    # talking — the most expensive moment to find out.
+    if [ -z "$EGUID" ]; then
+        warn "recordings dir uid is $owner; could not confirm egress's own uid"
+    elif [ "$owner" = "$EGUID" ] || [ "$EGUID" = "0" ]; then
+        ok "recordings dir is owned by egress (uid $owner)"
+    else
+        bad "recordings dir uid is $owner but EGRESS RUNS AS $EGUID — it cannot write, and the recording will fail at the end with 'permission denied'. Fix: $FIXCMD"
+    fi
+fi
+
+# The proof that beats all of the above: actually write a file as egress.
+# Everything else is inference about permissions; this is the permission.
+if [ -n "$EGUID" ]; then
+    probe=".verify-write-probe"
+    if "${COMPOSE[@]}" exec -T egress sh -c "touch /var/lib/connect/recordings/$probe" >/dev/null 2>&1; then
+        ok "egress can actually create a file in the recordings directory"
+        # Tidy up as the API, which is the container that owns deletion.
+        "${COMPOSE[@]}" exec -T api sh -c "rm -f /var/lib/connect/recordings/$probe" >/dev/null 2>&1 \
+            && ok "the api can delete it again" \
+            || bad "the api could NOT delete that file — recordings can be made but never removed. Fix: $FIXCMD"
+    else
+        bad "egress CANNOT create a file in the recordings directory. Every recording will run to completion and then fail. Fix: $FIXCMD"
+    fi
 fi
 
 echo
