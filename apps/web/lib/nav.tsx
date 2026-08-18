@@ -99,10 +99,17 @@ export const RAIL_PRODUCTS: RailProduct[] = [
   // a wall of greyed tiles reads as a suite that does not exist.
   { code: 'calendar', label: 'Calendar', href: '/calendar/week', icon: <Icon d={PATHS.calendar} />,
     live: true, colour: '#4285f4', match: ['/calendar'] },
-  // Meetings. Not built; the tile and the address exist so the suite reads as
-  // a suite and the hostname answers honestly before launch day.
+  // Meetings. BUILT, not yet launched: live stays false until Core has read
+  // the guest path line by line (brief §8). Flipping it is the launch switch
+  // — it puts the tile in every person's launcher — so it belongs in the same
+  // commit that deletes /connect/dev, and not before.
+  //
+  // Deep blue, sampled from the darkest stop of the mark's own gradient. NOT
+  // the cyan end: that is #00b8d9, which is Family's exactly — and tile colour
+  // is how people find an app in a grid without reading it, so two products
+  // sharing one is the same as neither having one.
   { code: 'connect', label: 'Connect', href: '/connect', icon: <Icon d={PATHS.connect} />,
-    live: false, colour: '#00b8d9', match: ['/connect'] },
+    live: false, colour: '#003cf0', match: ['/connect'] },
   // Techvein only. The panel it opens is a different world from a customer's,
   // which is why it sits apart at the end rather than among the products.
   { code: 'platform', label: 'Platform admin', href: '/admin',
@@ -240,7 +247,7 @@ export function connectNav(): NavSection[] {
       heading: 'Connect',
       items: [
         { href: '/connect/new', label: 'New meeting', icon: <Icon d={PATHS.compose} colour="#03b562" /> },
-        { href: '/connect', label: 'Meetings', icon: <Icon d={PATHS.connect} colour="#00b8d9" /> },
+        { href: '/connect', label: 'Meetings', icon: <Icon d={PATHS.connect} colour="#003cf0" /> },
       ],
     },
   ];
