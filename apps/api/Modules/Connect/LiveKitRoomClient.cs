@@ -28,10 +28,25 @@ public sealed class LiveKitRoomClient(
 {
     /// <summary>Everyone LiveKit currently has in the room, with their tracks.</summary>
     public async Task<IReadOnlyList<LkParticipant>> ListParticipantsAsync(Guid meetingId, CancellationToken ct)
+        => await TryListParticipantsAsync(meetingId, ct) ?? [];
+
+    /// <summary>
+    /// The same read, but able to say "I could not ask".
+    ///
+    /// NULL means LiveKit was unreachable or refused. An EMPTY LIST means it
+    /// answered and the room really is empty. ListParticipantsAsync flattens
+    /// the two to [], which is right for the host controls — you cannot mute
+    /// anybody either way — and wrong for anything that makes a DECISION out
+    /// of the emptiness. The recording gate does exactly that, and telling a
+    /// host "nobody has joined" when the media server is down would send them
+    /// looking in entirely the wrong place.
+    /// </summary>
+    public async Task<IReadOnlyList<LkParticipant>?> TryListParticipantsAsync(
+        Guid meetingId, CancellationToken ct)
     {
         var response = await CallAsync(meetingId, "ListParticipants",
             new { room = ConnectCodes.RoomName(meetingId) }, ct);
-        if (response is null) return [];
+        if (response is null) return null;
 
         var parsed = await response.Content.ReadFromJsonAsync<LkParticipantList>(ct);
         return parsed?.Participants ?? [];

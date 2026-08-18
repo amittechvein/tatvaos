@@ -315,18 +315,20 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
     ? [room.localParticipant as LKParticipant, ...Array.from(room.remoteParticipants.values())]
     : [];
 
+  // ── A SCREEN SHARE IS ITS OWN TILE. IT IS NOT A MODE OF SOMEBODY'S FACE. ──
+  //
+  // This used to make `speaker` the sharer and then render that one tile with
+  // showScreen, so the moment anybody shared, THEIR CAMERA DISAPPEARED — the
+  // person presenting became a screen and stopped having a face. It is the
+  // person talking you most want to see while they present.
+  //
+  // Now: the share is a tile of its own on the stage, and every participant,
+  // sharer included, keeps a camera tile in the strip below.
   const screenSharer = participants.find(
     (p) => p.getTrackPublication(Track.Source.ScreenShare)?.videoTrack,
   );
-  const speaker = screenSharer
-    ?? participants.find((p) => p.isSpeaking && p !== room?.localParticipant)
+  const speaker = participants.find((p) => p.isSpeaking && p !== room?.localParticipant)
     ?? participants[0];
-
-  // Keyed on identity, not the object: the object is rebuilt every render, so
-  // depending on it would pin the view to speaker and undo every click on
-  // Gallery on the next frame.
-  const sharerId = screenSharer?.identity ?? null;
-  useEffect(() => { if (sharerId) setView('speaker'); }, [sharerId]);
 
   // ---------------------------------------------------------------------
   async function toggleCam() {
@@ -397,8 +399,15 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
     );
   }
 
-  const shown = view === 'speaker' && speaker ? [speaker] : participants;
-  const others = view === 'speaker' ? participants.filter((p) => p !== speaker) : [];
+  // While somebody is sharing, the share owns the stage and EVERYONE — the
+  // sharer too — is in the strip. The Gallery/Speaker choice is deliberately
+  // ignored for the duration: there is one thing being presented, and a
+  // layout that put it in a quarter of the screen next to three faces would
+  // be nobody's idea of presenting.
+  const shown = screenSharer ? [] : (view === 'speaker' && speaker ? [speaker] : participants);
+  const others = screenSharer
+    ? participants
+    : (view === 'speaker' ? participants.filter((p) => p !== speaker) : []);
 
   return (
     <>
@@ -457,10 +466,19 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
             it. */}
         <div className="cx-stage"
              onDoubleClick={canFull ? toggleFull : undefined}>
+          {/* The share, as a tile in its own right. Keyed separately from the
+              sharer's camera tile below so React never reuses one <video> for
+              both tracks. */}
+          {screenSharer && (
+            <Tile key={`screen-${screenSharer.identity}`} p={screenSharer} big
+                  local={screenSharer === room?.localParticipant}
+                  showScreen canHost={false} onMute={() => {}} onRemove={() => {}} />
+          )}
+
           {shown.map((p) => (
             <Tile key={p.identity} p={p} big={view === 'speaker'}
                   local={p === room?.localParticipant}
-                  showScreen={p === screenSharer}
+                  showScreen={false}
                   canHost={isHost && meeting !== null && p !== room?.localParticipant}
                   onMute={() => void hostAction(() =>
                     connectApi.mute(authedFetch, meeting?.id ?? '', p.identity))}
@@ -748,7 +766,10 @@ function Tile({ p, big, local, showScreen, canHost, onMute, onRemove }: {
   }, [audioTrack, local]);
 
   return (
-    <div className={`cx-tile${big ? ' cx-tile--big' : ''}${p.isSpeaking ? ' is-speaking' : ''}`}>
+    // The speaking ring belongs on a FACE. On a screen tile it would mean the
+    // presenter's slides are talking.
+    <div className={`cx-tile${big ? ' cx-tile--big' : ''}`
+      + `${p.isSpeaking && !showScreen ? ' is-speaking' : ''}`}>
       <video ref={videoRef} autoPlay playsInline muted={local}
              // Two things a screen share must not do, for the same underlying
              // reason — you have to be able to READ it.
@@ -768,8 +789,15 @@ function Tile({ p, big, local, showScreen, canHost, onMute, onRemove }: {
       )}
 
       <div className="cx-name">
-        {audioPub?.isMuted !== false && <i className="ri-mic-off-line" aria-label="Muted" />}
-        <span>{local ? `${name} (you)` : name}</span>
+        {/* No mic icon on a screen tile — the microphone belongs to the
+            person, and their camera tile in the strip already says so. */}
+        {!showScreen && audioPub?.isMuted !== false
+          && <i className="ri-mic-off-line" aria-label="Muted" />}
+        <span>
+          {showScreen
+            ? `${local ? 'Your' : `${name}'s`} screen`
+            : (local ? `${name} (you)` : name)}
+        </span>
       </div>
 
       {canHost && (

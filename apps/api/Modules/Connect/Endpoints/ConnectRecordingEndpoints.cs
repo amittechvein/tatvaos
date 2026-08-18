@@ -126,7 +126,7 @@ public static class ConnectRecordingEndpoints
     // ==================================================================
     private static async Task<IResult> StartAsync(
         Guid id, StartRecordingRequest? req, AppDbContext db, TenantContext tenant,
-        LiveKitEgressClient egress, ConnectRecordingOptions options,
+        LiveKitEgressClient egress, LiveKitRoomClient rooms, ConnectRecordingOptions options,
         AuditWriter audit, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
@@ -151,12 +151,33 @@ public static class ConnectRecordingEndpoints
                       + "An administrator can turn it on.",
             }, statusCode: 403);
 
-        // LiveKit can only record a room that exists. Asking it to record a
-        // meeting nobody has joined produces an egress that fails a few
-        // seconds later, which reads to the host as "recording is broken".
-        if (meeting.Status != "active")
-            return Results.Json(new { error = "Start the meeting before recording it." },
-                statusCode: 409);
+        // A meeting somebody has deliberately finished is not recordable, and
+        // that IS worth reading from our own row: the status only says
+        // 'cancelled' or 'ended' because something positively set it.
+        if (meeting.Status is "cancelled" or "ended")
+            return Results.Json(new { error = "That meeting is over." }, statusCode: 409);
+
+        // ── WHETHER THE MEETING IS RUNNING IS LIVEKIT'S ANSWER, NOT OURS. ──
+        //
+        // This used to be `if (meeting.Status != "active")`, and it was wrong
+        // in the way that matters: meetings.status only becomes 'active' when
+        // the room_started WEBHOOK arrives. A webhook can be lost — this
+        // module's event log sat empty for a day — and when it is, two people
+        // are visibly in a room, talking, while the database still says
+        // 'scheduled' and the host is told to "start the meeting" they are
+        // plainly already in. That is a status field being used as if it were
+        // an observation.
+        //
+        // LiveKit knows who is in the room because it is holding their media.
+        // Ask it.
+        var present = await rooms.TryListParticipantsAsync(id, ct);
+        if (present is null)
+            return Results.Problem("The media server could not be reached.", statusCode: 502);
+        if (present.Count == 0)
+            return Results.Json(new
+            {
+                error = "Nobody has joined this meeting yet. Join it first, then start recording.",
+            }, statusCode: 409);
 
         var already = await db.ConnectRecordings
             .Where(r => r.MeetingId == id && (r.Status == "starting" || r.Status == "recording"))
