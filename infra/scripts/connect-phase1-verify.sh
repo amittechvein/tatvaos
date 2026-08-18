@@ -89,8 +89,8 @@ n=$(q "SELECT count(*) FROM pg_class c JOIN pg_namespace ns ON ns.oid=c.relnames
 [ "${n:-0}" -eq 7 ] && ok "all 7 tables ENABLE + FORCE row level security" \
                     || bad "only ${n:-0} of 7 tables are forced — a table without FORCE is readable by its owner"
 
-n=$(q "SELECT count(*) FROM pg_policies WHERE schemaname='connect' AND policyname='tenant_isolation'")
-[ "${n:-0}" -eq 7 ] && ok "7 tenant_isolation policies" || bad "expected 7 policies, found ${n:-0}"
+POLICIES=$(q "SELECT count(*) FROM pg_policies WHERE schemaname='connect' AND policyname='tenant_isolation'")
+[ "${POLICIES:-0}" -eq 7 ] && ok "7 tenant_isolation policies" || bad "expected 7 policies, found ${POLICIES:-0}"
 
 echo "== the nullif() guard is present in every policy =="
 # Without it an unset tenant sends '' and a bare ::uuid cast THROWS, taking the
@@ -98,9 +98,18 @@ echo "== the nullif() guard is present in every policy =="
 # ILIKE, not LIKE: Postgres re-renders the expression and prints NULLIF in
 # upper case, so a case-sensitive match silently reports zero — which is what
 # it did the first time this check was written.
+#
+# COMPARED AGAINST THE POLICY COUNT, NOT AGAINST A NUMBER.
+#
+# This line used to say 4. When 20260902 added three tables the four counts
+# above were updated and this fifth one was missed, so a correct database
+# reported "only 7 of 4 policies use nullif" — a red FAIL on a healthy box,
+# which is the fastest way to teach somebody to skim past this script's
+# output. Deriving it from POLICIES means the two can never disagree again,
+# whatever the next migration adds.
 n=$(q "SELECT count(*) FROM pg_policies WHERE schemaname='connect' AND qual ILIKE '%nullif%'")
-[ "${n:-0}" -eq 4 ] && ok "every policy uses nullif(current_setting(...), '')" \
-                    || bad "only ${n:-0} of 4 policies use nullif — check the migration"
+[ "${n:-0}" -eq "${POLICIES:-0}" ] && ok "all ${n} policies use nullif(current_setting(...), '')" \
+                    || bad "only ${n:-0} of ${POLICIES:-0} policies use nullif — check the migration"
 
 echo "== the app role cannot read across tenants without context =="
 n=$(qapp "SELECT count(*) FROM connect.meetings")
