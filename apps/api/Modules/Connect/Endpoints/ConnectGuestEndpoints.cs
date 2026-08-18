@@ -129,6 +129,10 @@ public static class ConnectGuestEndpoints
         // and everything below is scoped exactly as a signed-in request would
         // be. Role 'guest' is not an authorisation — nothing grants on it.
         tenant.EnterAnonymousScope(row.TenantId, "guest");
+        // The C# scope is only half of it — app.tenant_id is what RLS reads,
+        // and the connection opened for the definer lookup above carries none.
+        // Without this the participant INSERT below is refused by the policy.
+        await db.SyncTenantAsync(ct);
 
         // The password is verified against the row, never against anything the
         // definer function returned: it reports only WHETHER one exists.
@@ -234,6 +238,7 @@ public static class ConnectGuestEndpoints
                 if (claimed is null) return Gone();
 
                 tenant.EnterAnonymousScope(claimed.TenantId, "guest");
+                await db.SyncTenantAsync(ct);
                 var person = await db.ConnectParticipants.AsNoTracking()
                     .Where(p => p.MeetingId == claimed.MeetingId
                              && p.IsGuest

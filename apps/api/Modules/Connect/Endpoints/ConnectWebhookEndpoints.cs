@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Tenancy;
 
@@ -101,6 +102,16 @@ public static class ConnectWebhookEndpoints
         if (tenantIds.Count == 0) return Results.Ok();
         tenant.EnterAnonymousScope(tenantIds[0], "system");
 
+        // AND PUSH IT INTO THE DATABASE SESSION. EnterAnonymousScope changes a
+        // C# object; app.tenant_id is what RLS actually reads, and the
+        // interceptor only sets it when a connection OPENS. A connection
+        // already opened for the lookup above still carries no tenant, so the
+        // INSERT below fails its RLS check — as a DbUpdateException, which
+        // this handler used to swallow. Every other module in this codebase
+        // (Auth, Admin — sixteen sites) calls this on the line after changing
+        // scope. Connect was the only one that did not.
+        await db.SyncTenantAsync(ct);
+
         var webhookId = Text(root, "id");
         if (!string.IsNullOrEmpty(webhookId))
         {
@@ -165,12 +176,27 @@ public static class ConnectWebhookEndpoints
         {
             await db.SaveChangesAsync(ct);
         }
-        catch (DbUpdateException)
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: "23505" })
         {
-            // The unique index on webhook_id is the real guard against a
-            // replay that arrives while the first copy is still in flight.
-            // Losing that race is the correct outcome, not an error.
+            // 23505, unique_violation, on the webhook_id index: a replay that
+            // arrived while the first copy was still in flight. Losing that
+            // race is the correct outcome, not an error.
             log.LogDebug("Duplicate LiveKit webhook {WebhookId} ignored", webhookId);
+        }
+        catch (DbUpdateException ex)
+        {
+            // ANYTHING ELSE IS LOUD. This catch used to swallow every
+            // DbUpdateException, which meant an RLS refusal — the row silently
+            // not being written — looked identical to a harmless replay, and
+            // we answered 200. LiveKit never retries a 200, so each of those
+            // events was lost for good and the attendance table stayed empty
+            // while every log said delivered.
+            //
+            // 500 is deliberate: it is visible, and it makes LiveKit retry.
+            log.LogError(ex,
+                "Could not record LiveKit webhook {Kind} for meeting {MeetingId}. "
+                + "The event is LOST unless LiveKit retries.", kind, meetingId);
+            return Results.StatusCode(500);
         }
 
         return Results.Ok();

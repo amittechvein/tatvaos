@@ -295,7 +295,7 @@ public static class ConnectEndpoints
             Id = Guid.NewGuid(),
             MeetingId = meeting.Id,
             UserId = uid,
-            DisplayName = "Host",
+            DisplayName = await NameOfAsync(db, uid, ct),
             Role = "host",
             IsGuest = false,
             Identity = ConnectCodes.IdentityForUser(uid),
@@ -434,7 +434,7 @@ public static class ConnectEndpoints
                 Id = Guid.NewGuid(),
                 MeetingId = id,
                 UserId = uid,
-                DisplayName = "Participant",
+                DisplayName = await NameOfAsync(db, uid, ct),
                 Role = "participant",
                 IsGuest = false,
                 Identity = identity,
@@ -637,6 +637,25 @@ public static class ConnectEndpoints
     private static IResult NotFound() => Results.NotFound(new { error = "That meeting does not exist." });
     private static IResult Forbidden() => Results.Json(
         new { error = "Only the host can do that." }, statusCode: 403);
+
+    /// <summary>
+    /// The person's own name, for the tile everyone else reads.
+    ///
+    /// This used to be the literal "Host" / "Participant". It shipped, and the
+    /// organiser's own tile in a live meeting said "Host (you)" — a role where
+    /// a name belongs. The name is copied onto the participant row at join
+    /// time rather than joined at read time, deliberately: a guest has no user
+    /// to join to, and attendance has to keep reading correctly years later
+    /// even after somebody leaves the organisation and their row is gone.
+    /// </summary>
+    private static async Task<string> NameOfAsync(AppDbContext db, Guid userId, CancellationToken ct)
+    {
+        var name = await db.Users.AsNoTracking()
+            .Where(u => u.Id == userId)
+            .Select(u => u.DisplayName)
+            .FirstOrDefaultAsync(ct);
+        return string.IsNullOrWhiteSpace(name) ? "Someone" : name;
+    }
 
     private static Task<ConnectMeeting?> FindAsync(AppDbContext db, Guid id, CancellationToken ct)
         => db.ConnectMeetings.Where(m => m.Id == id).FirstOrDefaultAsync(ct);
