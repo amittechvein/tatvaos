@@ -49,6 +49,9 @@ public sealed class ConnectNotesComposer(
 {
     public sealed record SpeakerTime(string Name, long Seconds, int Turns);
 
+    /// <summary>One person's attendance, as connect.attendance() returns it.</summary>
+    public sealed record Attendee(string Name, bool Guest, long Seconds, int Joins);
+
     public sealed record Notes(
         string Kind,                 // digest | model
         string? Provider,
@@ -57,25 +60,63 @@ public sealed class ConnectNotesComposer(
         IReadOnlyList<string> KeyPoints,
         IReadOnlyList<string> Decisions,
         IReadOnlyList<string> ActionItems,
-        IReadOnlyList<SpeakerTime> Speakers);
+        IReadOnlyList<SpeakerTime> Speakers,
+        IReadOnlyList<Attendee> Attendance);
 
     /// <summary>Roughly four characters to a token. Deliberately conservative:
     /// running out of context produces a 400 the user cannot act on.</summary>
     private const int MaxTranscriptChars = 48_000;
 
     public async Task<Notes> ComposeAsync(
-        string meetingTitle, IReadOnlyList<ConnectTranscriber.Segment> segments, CancellationToken ct)
+        string meetingTitle,
+        IReadOnlyList<ConnectTranscriber.Segment> segments,
+        IReadOnlyList<Attendee> attendance,
+        CancellationToken ct)
     {
         var speakers = SpeakerTimes(segments);
 
+        // ── NOTES EXIST WITHOUT A TRANSCRIPT. ────────────────────────────
+        // This used to be called only for a meeting that HAD one, and a
+        // transcript needs a transcription service, which is off by default
+        // because audio must not leave the box until somebody decides it may.
+        // The result was an automatic-notes feature that produced nothing at
+        // all on a fresh deployment. Who attended and for how long is a
+        // meeting record in its own right — for a school marking a register
+        // it is THE record — so it is written either way, and a model is
+        // never asked about a meeting there is no transcript for.
+        if (segments.Count == 0) return AttendanceOnly(meetingTitle, attendance);
+
         if (options.NotesModelConfigured)
         {
-            var written = await AskModelAsync(meetingTitle, segments, speakers, ct);
+            var written = await AskModelAsync(meetingTitle, segments, speakers, attendance, ct);
             if (written is not null) return written;
             log.LogWarning("Notes model did not answer usefully; falling back to the digest");
         }
 
-        return Digest(meetingTitle, segments, speakers);
+        return Digest(meetingTitle, segments, speakers, attendance);
+    }
+
+    /// <summary>
+    /// A meeting with no transcript. Not a failure and not empty: it says who
+    /// came, how long they stayed, and why there is nothing else — which is
+    /// three facts more than the blank screen this replaced.
+    /// </summary>
+    private static Notes AttendanceOnly(string meetingTitle, IReadOnlyList<Attendee> attendance)
+    {
+        var longest = attendance.Count == 0 ? 0 : attendance.Max(a => a.Seconds);
+        var summary = new StringBuilder()
+            .Append(meetingTitle).Append(". ")
+            .Append(attendance.Count switch
+            {
+                0 => "Nobody joined.",
+                1 => "One person joined.",
+                _ => $"{attendance.Count} people joined.",
+            })
+            .Append(longest > 0 ? $" Longest attendance {Describe(TimeSpan.FromSeconds(longest))}." : "")
+            .Append(" This meeting was not transcribed, so there are no notes on what was said.")
+            .ToString();
+
+        return new Notes("digest", null, null, summary, [], [], [], [], attendance);
     }
 
     // ==================================================================
@@ -84,7 +125,8 @@ public sealed class ConnectNotesComposer(
     private static Notes Digest(
         string meetingTitle,
         IReadOnlyList<ConnectTranscriber.Segment> segments,
-        IReadOnlyList<SpeakerTime> speakers)
+        IReadOnlyList<SpeakerTime> speakers,
+        IReadOnlyList<Attendee> attendance)
     {
         var sentences = Sentences(segments);
 
@@ -110,12 +152,14 @@ public sealed class ConnectNotesComposer(
             .Append("Assembled from the transcript of ").Append(meetingTitle).Append(". ")
             .Append(Describe(spoken)).Append(", about ")
             .Append(words.ToString("N0", CultureInfo.InvariantCulture)).Append(" words")
+            .Append(attendance.Count > 0 ? $", {attendance.Count} attended" : "")
             .Append(speakers.Count > 0 ? $", {speakers.Count} identified speaker(s)" : "")
             .Append(". This is a mechanical digest, not a written summary — ")
             .Append("configure a notes model to have one written.")
             .ToString();
 
-        return new Notes("digest", null, null, summary, points, decisions, actions, speakers);
+        return new Notes("digest", null, null, summary, points, decisions, actions,
+            speakers, attendance);
     }
 
     private static string Describe(TimeSpan t) =>
@@ -188,6 +232,7 @@ public sealed class ConnectNotesComposer(
         string meetingTitle,
         IReadOnlyList<ConnectTranscriber.Segment> segments,
         IReadOnlyList<SpeakerTime> speakers,
+        IReadOnlyList<Attendee> attendance,
         CancellationToken ct)
     {
         var (transcript, truncated) = Fit(ConnectTranscriber.Render(segments));
@@ -202,8 +247,15 @@ public sealed class ConnectNotesComposer(
             + "return an empty list rather than inventing one. "
             + "Attribute an action to a person only when the transcript names them.";
 
+        // Who was in the room, so the model can attribute an action to a
+        // name that was actually there instead of inventing a plausible one.
+        var who = attendance.Count == 0
+            ? ""
+            : "Present: " + string.Join(", ", attendance.Select(a => a.Name)) + "\n";
+
         var user = new StringBuilder()
             .Append("Meeting: ").AppendLine(meetingTitle)
+            .Append(who)
             .AppendLine(truncated
                 ? "NOTE: this transcript is truncated; say so in the summary."
                 : "")
@@ -253,7 +305,7 @@ public sealed class ConnectNotesComposer(
             if (string.IsNullOrWhiteSpace(summary)) return null;
 
             return new Notes("model", Host(options.NotesUrl), options.NotesModel,
-                summary, points, decisions, actions, speakers);
+                summary, points, decisions, actions, speakers, attendance);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {

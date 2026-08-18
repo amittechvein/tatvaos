@@ -136,13 +136,13 @@ git pull
 
 ### 2. The one-time ownership step
 
-Egress writes as uid **1000**; the API reads and deletes as **5000**. The
+Egress writes as uid **1001**; the API reads and deletes as **5000**. The
 directory must be owned by egress, group-owned by the API, and **setgid** so
 files egress creates inherit the API's group:
 
 ```bash
 docker run --rm -v tatvaos_connectrec:/r alpine \
-  sh -c 'chown 1000:5000 /r && chmod 2775 /r'
+  sh -c 'chown 1001:5000 /r && chmod 2775 /r'
 ```
 
 Same shape as the `spaceblobs` step in the compose file, and invisible until

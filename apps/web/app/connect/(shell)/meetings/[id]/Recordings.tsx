@@ -109,14 +109,25 @@ export default function Recordings({ meetingId, isHost, canDelete }: {
 
   // Recording needs a container that may simply not be deployed. Saying so is
   // better than an empty card that looks like a missing feature.
+  //
+  // The NOTES card is still rendered underneath, because notes no longer
+  // depend on recording at all — attendance comes from the API's own rows and
+  // the event log. This branch used to return early and hid them.
   if (!list.enabled) {
     return (
-      <Card title="Recording" className="mt-3">
-        <Empty
-          title="Recording is not switched on for this server"
-          hint="The recorder is a separate service. Once it is deployed, hosts can record a meeting's audio and have notes written from it automatically."
-        />
-      </Card>
+      <>
+        <Card title="Recording" className="mt-3">
+          <Empty
+            title="Recording is not switched on for this server"
+            hint="The recorder is a separate service. Once it is deployed, hosts can record a meeting's audio and have what was said written up automatically."
+          />
+        </Card>
+        <NotesCard notes={notes} isHost={isHost}
+                   show={showTranscript} onToggle={() => setShowTranscript((s) => !s)}
+                   onRegenerate={() => void act('notes', () =>
+                     recordingApi.regenerate(authedFetch, meetingId))}
+                   busy={busyId === 'notes'} />
+      </>
     );
   }
 
@@ -239,17 +250,13 @@ function NotesCard({ notes, isHost, show, onToggle, onRegenerate, busy }: {
   const n = notes.notes;
   const t = notes.transcript;
 
-  // Four different reasons for an empty card, four different sentences.
+  // Several different reasons for an empty card, several different sentences.
   if (!n || n.status !== 'ready') {
     let title = 'No notes yet';
-    let hint = 'Notes are written automatically once a recording has been transcribed.';
+    let hint = 'Notes are written automatically a minute or so after a meeting ends — '
+      + 'who attended and for how long, and what was said if it was recorded.';
 
-    if (!notes.transcriptionConfigured) {
-      title = 'Transcription is not configured';
-      hint = 'Notes are written from a transcript, and this server has no transcription '
-        + 'service set. Nothing is sent anywhere until one is configured — see '
-        + 'docs/CONNECT_RECORDING_AND_NOTES.md for the three ways to do it.';
-    } else if (t?.status === 'failed') {
+    if (t?.status === 'failed') {
       title = 'The transcript failed';
       hint = t.error ?? 'The transcription service could not be reached.';
     } else if (t?.status === 'running' || t?.status === 'queued') {
@@ -279,7 +286,9 @@ function NotesCard({ notes, isHost, show, onToggle, onRegenerate, busy }: {
       // way to tell, is worse than either one honestly labelled.
       subtitle={n.kind === 'model'
         ? `Written by ${n.model ?? 'a language model'}${n.generatedAt ? ` · ${timeLabel(n.generatedAt)}` : ''}`
-        : 'Assembled from the transcript on this server — no model was involved'}
+        : n.hadTranscript
+          ? 'Assembled from the transcript on this server — no model was involved'
+          : 'From attendance only — this meeting was not recorded'}
       className="mt-3"
       actions={isHost ? (
         <Button disabled={busy} onClick={onRegenerate}>
@@ -292,6 +301,40 @@ function NotesCard({ notes, isHost, show, onToggle, onRegenerate, busy }: {
       <Points title="Decisions" items={n.decisions} />
       <Points title="Follow-ups" items={n.actionItems} />
       <Points title="Points raised" items={n.keyPoints} />
+
+      {/* Attendance first. For most meetings it is the ONLY thing here, and
+          for a school marking a register it is the thing they came for. */}
+      {n.attendance.length > 0 && (
+        <>
+          <h6 className="fs-13 text-muted">Who attended ({n.attendance.length})</h6>
+          <div className="table-responsive mb-3">
+            <table className="table table-sm text-nowrap mb-0">
+              <tbody>
+                {n.attendance.map((a) => (
+                  <tr key={a.identity}>
+                    <td className="fs-13">
+                      {a.name}
+                      {a.guest && <span className="badge bg-secondary-transparent ms-2">Guest</span>}
+                    </td>
+                    <td className="fs-13 text-muted">
+                      {a.joinedAt ? timeLabel(a.joinedAt) : '—'}
+                    </td>
+                    <td className="fs-13 text-muted">
+                      {/* 0 seconds means the API saw them join but the media
+                          server never reported it. Saying "0:00" would read as
+                          "they were not there", which is not what we know. */}
+                      {a.seconds > 0 ? durationLabel(a.seconds * 1000) : 'not recorded'}
+                    </td>
+                    <td className="fs-13 text-muted">
+                      {a.joins > 1 ? `rejoined ${a.joins - 1}×` : ''}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
 
       {n.speakers.length > 0 && (
         <>

@@ -221,6 +221,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             .Property(n => n.ActionItems).HasColumnType("jsonb");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>()
             .Property(n => n.Speakers).HasColumnType("jsonb");
+        // Added by 20260903-connect-notes-attendance: who came, and for how
+        // long. Same jsonb rule as the five above — Npgsql maps a string to
+        // `text` by default and `text` does not implicitly cast to `jsonb`.
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>()
+            .Property(n => n.Attendance).HasColumnType("jsonb");
 
         b.Entity<CalendarMember>().HasKey(m => new { m.CalendarId, m.UserId });
         b.Entity<CalendarReminderSend>().HasKey(r => new { r.ReminderId, r.OccurrenceStartsAt });

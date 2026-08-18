@@ -403,6 +403,11 @@ public static class ConnectRecordingEndpoints
                 decisions = Json(notes.Decisions),
                 actionItems = Json(notes.ActionItems),
                 speakers = Json(notes.Speakers),
+                // Who attended. Present whether or not the meeting was ever
+                // recorded — the API and the event log know this without any
+                // media being involved.
+                attendance = Json(notes.Attendance),
+                notes.HadTranscript,
                 notes.Error,
                 notes.GeneratedAt,
             },
@@ -416,10 +421,13 @@ public static class ConnectRecordingEndpoints
         if (await db.ConnectMeetings.AnyAsync(m => m.Id == id, ct) is false) return NotFound();
         if (await RoleOfAsync(db, id, uid, ct) is not ("host" or "cohost")) return Forbidden();
 
-        var ready = await db.ConnectTranscripts
-            .AnyAsync(t => t.MeetingId == id && t.Status == "ready", ct);
-        if (!ready)
-            return Results.Json(new { error = "There is no transcript to write notes from yet." },
+        // No transcript required. Notes are written from attendance alone for
+        // a meeting that was never recorded, so refusing here would refuse to
+        // regenerate the only notes most meetings will ever have.
+        var ended = await db.ConnectMeetings
+            .AnyAsync(m => m.Id == id && m.Status == "ended", ct);
+        if (!ended)
+            return Results.Json(new { error = "Notes are written once the meeting has ended." },
                 statusCode: 409);
 
         var notes = await db.ConnectMeetingNotes

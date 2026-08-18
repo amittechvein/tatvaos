@@ -166,7 +166,7 @@ takes longer than usual.
 
 ## 2.3 The volume — the step that, skipped, makes recordings silently vanish
 
-Egress writes as uid **1000**. The API reads and deletes as **5000**. So the
+Egress writes as uid **1001**. The API reads and deletes as **5000**. So the
 directory has to be owned by egress, group-owned by the API, and **setgid** so
 files egress creates inherit the API's group rather than egress's.
 
@@ -179,10 +179,10 @@ that use it.
 
 ```bash
 docker run --rm -v tatvaos_connectrec:/r alpine \
-  sh -c 'chown 1000:5000 /r && chmod 2775 /r && ls -ldn /r'
+  sh -c 'chown 1001:5000 /r && chmod 2775 /r && ls -ldn /r'
 ```
 
-Expect `drwxrwsr-x ... 1000 5000`. The **`s`** in the group position is the
+Expect `drwxrwsr-x ... 1001 5000`. The **`s`** in the group position is the
 setgid bit — without it, egress's files land in egress's group and the API
 cannot delete them.
 
@@ -316,7 +316,7 @@ $C exec -T egress sh -c 'echo "$EGRESS_CONFIG_BODY"' | head -5
 $C exec -T api sh -c 'ls -ln /var/lib/connect/recordings; stat -c "%u %g %a" /var/lib/connect/recordings'
 ```
 
-Want `1000 5000 2775`.
+Want `1001 5000 2775` — 1001 is what egress actually reports on this box; confirm with `$C exec -T egress id -u` rather than trusting the number.
 
 **Roll back the recorder without rolling back anything else.** The rest of
 Connect does not depend on it:

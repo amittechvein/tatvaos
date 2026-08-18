@@ -304,6 +304,19 @@ export interface TranscriptSegment {
 
 export interface SpeakerTime { name: string; seconds: number; turns: number }
 
+/** Who actually attended. Present for every ended meeting — this comes from
+ *  the API's own participant rows and the media server's event log, so it
+ *  exists whether or not anything was ever recorded. */
+export interface Attendee {
+  identity: string;
+  name: string;
+  guest: boolean;
+  joinedAt: string | null;
+  leftAt: string | null;
+  seconds: number;
+  joins: number;
+}
+
 export interface MeetingNotes {
   status: 'queued' | 'running' | 'ready' | 'failed';
   /** 'digest' was assembled from the transcript on the server with no model
@@ -315,6 +328,10 @@ export interface MeetingNotes {
   decisions: string[];
   actionItems: string[];
   speakers: SpeakerTime[];
+  attendance: Attendee[];
+  /** Whether there was a transcript to work from. Lets the screen say "this
+   *  meeting was not recorded" — normal — rather than implying a failure. */
+  hadTranscript: boolean;
   error: string | null;
   generatedAt: string | null;
 }

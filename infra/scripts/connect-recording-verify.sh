@@ -100,6 +100,37 @@ n=$(q "SELECT count(*) FROM pg_constraint con
                     || bad "the kind CHECK has not been widened — every egress webhook will 500"
 
 echo
+echo "== notes without a transcript =="
+n=$(q "SELECT count(*) FROM information_schema.columns
+        WHERE table_schema='connect' AND table_name='meeting_notes'
+          AND column_name IN ('attendance','had_transcript')")
+[ "${n:-0}" -eq 2 ] && ok "meeting_notes carries attendance and had_transcript" \
+                    || bad "expected both columns, found ${n:-0} — 20260903-connect-notes-attendance.sql has not applied"
+
+n=$(q "SELECT count(*) FROM pg_proc p JOIN pg_namespace ns ON ns.oid=p.pronamespace
+        WHERE ns.nspname='connect' AND p.proname='attendance'")
+[ "${n:-0}" -eq 1 ] && ok "connect.attendance() present" || bad "connect.attendance() is missing"
+
+# pending_notes must no longer require a transcript. Checked by reading the
+# definition rather than by running it, because running it on production would
+# mean asserting against real customers' meetings.
+if q "SELECT pg_get_functiondef(p.oid) FROM pg_proc p
+       JOIN pg_namespace ns ON ns.oid=p.pronamespace
+      WHERE ns.nspname='connect' AND p.proname='pending_notes'" | grep -q "status = 'ended'"; then
+    ok "pending_notes covers every ended meeting, not only transcribed ones"
+else
+    bad "pending_notes still requires a transcript — notes will never appear for meetings that were not recorded"
+fi
+
+# How much has actually been produced. Not an assertion — a number to look at.
+meetings=$(q "SELECT count(*) FROM connect.meetings WHERE status='ended'")
+noted=$(q "SELECT count(*) FROM connect.meeting_notes WHERE status='ready'")
+echo "  ..    ${noted:-0} set(s) of notes for ${meetings:-0} ended meeting(s)"
+if [ "${meetings:-0}" -gt 0 ] && [ "${noted:-0}" -eq 0 ]; then
+    warn "meetings have ended and none has notes. The worker runs a minute after start and once a minute after that — check: $(printf '%s' "${COMPOSE[*]}") logs --tail 50 api | grep -i notes"
+fi
+
+echo
 echo "== the org pool, not the person =="
 # Recordings must NOT appear in core.user_storage_usage. Charging the host
 # would move a colleague's remaining space when somebody else records.

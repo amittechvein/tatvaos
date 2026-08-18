@@ -68,6 +68,20 @@ export const CSS = `
   background:rgba(0,0,0,.55);backdrop-filter:blur(6px);padding:4px 10px;border-radius:8px;
   font-size:12px;max-width:calc(100% - 20px)}
 .cx-name span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Feature 62. Top LEFT, opposite the host actions, so a raised hand is never
+   hidden behind the Mute/Remove pills that appear on hover. */
+.cx-hand{position:absolute;left:10px;top:10px;font-size:18px;line-height:1;
+  background:rgba(255,169,9,.9);color:#3a2600;border-radius:9px;padding:4px 7px;
+  animation:cx-raise .4s ease-out}
+@keyframes cx-raise{from{transform:translateY(6px) scale(.85);opacity:0}to{transform:none;opacity:1}}
+
+/* Feature 49. Appears only when the connection is poor or lost — see the
+   Quality component for why an always-on indicator is worse than none. */
+.cx-qual{position:absolute;right:10px;bottom:10px;display:flex;align-items:center;gap:5px;
+  background:rgba(255,169,9,.9);color:#3a2600;border-radius:8px;padding:3px 8px;
+  font-size:11px;font-weight:600}
+.cx-qual.is-lost{background:rgba(239,71,87,.92);color:#fff}
+
 .cx-tileacts{position:absolute;right:10px;top:10px;display:flex;gap:6px;opacity:0;transition:opacity .15s}
 .cx-tile:hover .cx-tileacts,.cx-tile:focus-within .cx-tileacts{opacity:1}
 .cx-pill{border:none;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer;

@@ -119,6 +119,20 @@ public sealed class ConnectMeetingNotes
     public string ActionItems { get; set; } = "[]";
     public string Speakers { get; set; } = "[]";
 
+    /// <summary>
+    /// Who attended: names from connect.participants, timings from
+    /// connect.meeting_events. Present for every ended meeting, with or
+    /// without a recording — see 20260903-connect-notes-attendance.sql.
+    /// </summary>
+    public string Attendance { get; set; } = "[]";
+
+    /// <summary>
+    /// Whether there was a transcript to work from. Lets the screen tell
+    /// "this meeting was not recorded" — normal — from "it was recorded and
+    /// the transcript failed" — a fault. Those need different sentences.
+    /// </summary>
+    public bool HadTranscript { get; set; }
+
     public string? Error { get; set; }
     public DateTimeOffset? GeneratedAt { get; set; }
 

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
-  Room, RoomEvent, Track, DisconnectReason,
+  Room, RoomEvent, Track, DisconnectReason, ConnectionQuality,
   type Participant as LKParticipant,
   type RemoteParticipant,
 } from 'livekit-client';
@@ -12,6 +12,10 @@ import {
   connectApi, recordingApi,
   type LobbyEntry, type Meeting, type Recording, type Seat,
 } from '@/lib/connect';
+import {
+  documentPipSupported, onAutoPip, openPipWindow, pipSupported, videoPipSupported,
+  type PipHandles,
+} from '@/lib/pip';
 import { CSS, Centre, Spinner, initialOf } from './RoomChrome';
 
 const LOBBY_POLL_MS = 3000;
@@ -46,10 +50,40 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
   const [draft, setDraft] = useState('');
   const [cams, setCams] = useState<MediaDeviceInfo[]>([]);
   const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
+  // Feature 42. The Settings panel had camera and microphone and stopped
+  // there, which looks finished and is not: anybody on a headset needs to
+  // choose where the sound COMES OUT, and hits this on day one.
+  const [outs, setOuts] = useState<MediaDeviceInfo[]>([]);
+  // Feature 62. Rides the existing data channel; no backend, no schema.
+  // Keyed by identity because that is what survives a rejoin.
+  const [hands, setHands] = useState<Record<string, boolean>>({});
+  const [myHand, setMyHand] = useState(false);
+  // Feature 64. Pointless with four people and the only usable way through a
+  // class of forty, which is the room this product is actually for.
+  const [find, setFind] = useState('');
   const [knocking, setKnocking] = useState<LobbyEntry[]>([]);
   const [deciding, setDeciding] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [why, setWhy] = useState<DisconnectReason | undefined>(undefined);
+
+  // ---- Full screen -----------------------------------------------------
+  //
+  // Whether we are in it is read from the DOCUMENT rather than tracked here,
+  // because Esc and the browser's own controls leave full screen without
+  // going through our button — and a boolean we set on click alone would be
+  // wrong the moment somebody presses Esc.
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [full, setFull] = useState(false);
+  const [canFull, setCanFull] = useState(false);
+
+  // ---- Picture-in-Picture ----------------------------------------------
+  //
+  // The handles live in a REF rather than state because the mediaSession
+  // handler Chrome calls is registered once and would otherwise close over
+  // the first render's value for the life of the meeting.
+  const pipRef = useRef<PipHandles | null>(null);
+  const [pipOpen, setPipOpen] = useState(false);
+  const [canPip, setCanPip] = useState(false);
 
   // ---- Recording -------------------------------------------------------
   //
@@ -65,14 +99,6 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
   //
   // Driving the notice from our row instead would mean a guest — who never
   // calls that endpoint — sat in a recorded meeting with nothing on screen.
-  // Full screen. The element, and whether we are in it — read from the
-  // DOCUMENT rather than tracked ourselves, because Esc and the browser's own
-  // controls exit it without going through our button, and a boolean we set
-  // on click alone would be wrong the moment somebody presses Esc.
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const [full, setFull] = useState(false);
-  const [canFull, setCanFull] = useState(false);
-
   const [beingRecorded, setBeingRecorded] = useState(false);
   const [recording, setRecording] = useState<Recording | null>(null);
   const [recBusy, setRecBusy] = useState(false);
@@ -122,10 +148,31 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
       .on(RoomEvent.TrackUnmuted, rerender)
       .on(RoomEvent.LocalTrackPublished, rerender)
       .on(RoomEvent.ActiveSpeakersChanged, rerender)
+      // Feature 49. LiveKit publishes this for every participant and nothing
+      // was listening. It is what turns "the call is bad" into a support
+      // ticket with data in it rather than an argument.
+      .on(RoomEvent.ConnectionQualityChanged, rerender)
+      // Somebody left with their hand up. Clearing it here rather than leaving
+      // a raised hand for a person who is not in the room.
+      .on(RoomEvent.ParticipantDisconnected, (participant: RemoteParticipant) => {
+        setHands((h) => { const { [participant.identity]: _gone, ...rest } = h; return rest; });
+      })
       .on(RoomEvent.DataReceived, (payload: Uint8Array, participant?: RemoteParticipant) => {
         try {
           const parsed: unknown = JSON.parse(new TextDecoder().decode(payload));
-          if (typeof parsed !== 'object' || parsed === null || !('text' in parsed)) return;
+          if (typeof parsed !== 'object' || parsed === null) return;
+
+          // Feature 62, on the same channel as chat. A separate key rather
+          // than a magic chat message, so a hand can never be mistaken for
+          // something somebody typed.
+          if ('hand' in parsed) {
+            const up = (parsed as { hand?: unknown }).hand === true;
+            const who = participant?.identity;
+            if (who) setHands((h) => ({ ...h, [who]: up }));
+            return;
+          }
+
+          if (!('text' in parsed)) return;
           const text = String((parsed as { text?: unknown }).text ?? '');
           if (text.length === 0) return;
           setChat((c) => [...c, {
@@ -171,6 +218,9 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
       try {
         setCams(await Room.getLocalDevices('videoinput'));
         setMics(await Room.getLocalDevices('audioinput'));
+        // Its own try: Firefox does not implement audiooutput enumeration and
+        // throws. One missing list must not empty the other two.
+        try { setOuts(await Room.getLocalDevices('audiooutput')); } catch { setOuts([]); }
       } catch { /* enumeration can fail; the toggles still work */ }
     })();
   }, [camOn, micOn]);
@@ -254,6 +304,89 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
   }, []);
 
   // ---------------------------------------------------------------------
+  //  Picture-in-Picture.
+  //
+  //  See lib/pip.ts for why the auto-open goes through mediaSession and not
+  //  through visibilitychange: switching away from a tab is not a gesture in
+  //  that tab, so requestWindow() from a visibilitychange handler is refused
+  //  every time. Chrome calls the "enterpictureinpicture" action for pages
+  //  that are capturing camera or microphone, and a meeting always is.
+  // ---------------------------------------------------------------------
+  useEffect(() => { setCanPip(pipSupported()); }, []);
+
+  const closePip = useCallback(() => {
+    const handles = pipRef.current;
+    pipRef.current = null;
+    setPipOpen(false);
+    if (handles) { try { handles.window.close(); } catch { /* already gone */ } }
+    // The video-element fallback lives in the page's own document.
+    if (typeof document !== 'undefined' && document.pictureInPictureElement) {
+      void document.exitPictureInPicture().catch(() => { /* already out */ });
+    }
+  }, []);
+
+  const openPip = useCallback(async () => {
+    if (pipRef.current) return;
+
+    if (documentPipSupported()) {
+      const handles = await openPipWindow({
+        // Read the microphone's state from the SDK, not from React state.
+        // This handler is created once and would otherwise close over the
+        // first render's micOn for the life of the meeting — so the button
+        // would mute correctly once and then toggle the wrong way.
+        onToggleMute: () => {
+          const r = roomRef.current;
+          if (!r) return;
+          const on = r.localParticipant.isMicrophoneEnabled;
+          void r.localParticipant.setMicrophoneEnabled(!on)
+            .then(() => setMicOn(!on))
+            .catch(() => { /* device gone; the room UI will show it */ });
+        },
+        onReturn: () => { closePip(); try { window.focus(); } catch { /* denied */ } },
+        onClosed: () => { pipRef.current = null; setPipOpen(false); },
+      });
+      if (handles) { pipRef.current = handles; setPipOpen(true); }
+      return;
+    }
+
+    // Safari and Firefox: one <video>, no arbitrary DOM. Take whichever the
+    // stage is currently showing biggest, which is the first one in it.
+    if (videoPipSupported()) {
+      const el = rootRef.current?.querySelector('.cx-stage video');
+      if (el instanceof HTMLVideoElement) {
+        try { await el.requestPictureInPicture(); setPipOpen(true); }
+        catch { /* denied, or the element has no frames yet */ }
+      }
+    }
+  }, [closePip]);
+
+  // Chrome's automatic trigger. Registered once; the handlers above read live
+  // state rather than closing over it.
+  useEffect(() => onAutoPip(() => { void openPip(); }), [openPip]);
+
+  // Coming back to the tab should put the meeting back where it belongs.
+  useEffect(() => {
+    const onVisible = () => { if (!document.hidden) closePip(); };
+    document.addEventListener('visibilitychange', onVisible);
+    document.addEventListener('leavepictureinpicture', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      document.removeEventListener('leavepictureinpicture', onVisible);
+    };
+  }, [closePip]);
+
+  // The effect that keeps the window showing the RIGHT thing lives further
+  // down, immediately after the values it depends on are computed. A
+  // dependency array is evaluated during render, so referencing them from up
+  // here would read a const before its initialiser and throw.
+
+  useEffect(() => { pipRef.current?.setMuted(!micOn); }, [micOn, pipOpen]);
+
+  // Leaving the meeting must not leave a floating window behind showing a
+  // room nobody is in.
+  useEffect(() => { if (connState === 'over') closePip(); }, [connState, closePip]);
+
+  // ---------------------------------------------------------------------
   //  Recording — the host's half.
   //
   //  Asked for ONCE on joining, not polled. Two states matter and both are
@@ -324,11 +457,53 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
   //
   // Now: the share is a tile of its own on the stage, and every participant,
   // sharer included, keeps a camera tile in the strip below.
-  const screenSharer = participants.find(
+  // Feature 71. This used to be .find(), so a SECOND person sharing was
+  // silently invisible — worse than refusing them, because nobody could tell
+  // it had happened. LiveKit publishes as many screen tracks as there are
+  // sharers; show all of them.
+  const screenSharers = participants.filter(
     (p) => p.getTrackPublication(Track.Source.ScreenShare)?.videoTrack,
   );
+  const screenSharer = screenSharers[0];
   const speaker = participants.find((p) => p.isSpeaking && p !== room?.localParticipant)
     ?? participants[0];
+
+  // ---------------------------------------------------------------------
+  //  Picture-in-Picture — what the floating window should be showing.
+  //
+  //  Whatever the meeting is ABOUT: a shared screen if there is one, the
+  //  person talking otherwise. Plain values, so the effect can depend on the
+  //  track's SID — a stable string — rather than on the SDK objects, which
+  //  are rebuilt every render and would make it re-run forever.
+  //
+  //  ABOVE the "you have left the meeting" early return, deliberately. This
+  //  block first sat below it, and the room-of-hooks lint caught what would
+  //  have been a crash the first time somebody was removed from a call: a
+  //  hook that runs on some renders and not others.
+  // ---------------------------------------------------------------------
+  const pipKind: 'cam' | 'screen' = screenSharer ? 'screen' : 'cam';
+  const pipOwner = screenSharer ?? speaker;
+  const pipPub = pipOwner?.getTrackPublication(
+    pipKind === 'screen' ? Track.Source.ScreenShare : Track.Source.Camera);
+  const pipTrack = (pipPub?.isMuted === true ? undefined : pipPub?.videoTrack) ?? null;
+  const pipSid = pipPub?.trackSid ?? '';
+  const pipWho = pipOwner ? (pipOwner.name && pipOwner.name.length > 0
+    ? pipOwner.name : pipOwner.identity) : '';
+  const pipLabel = pipKind === 'screen' ? `${pipWho} — screen` : pipWho;
+
+  // Keep the floating window showing the right thing. Attaching a track to a
+  // SECOND element is supported by the SDK, so the page keeps its own copy and
+  // nothing is moved or stolen from the stage.
+  useEffect(() => {
+    const handles = pipRef.current;
+    if (!handles || !pipOpen) return;
+    handles.setKind(pipKind);
+    handles.setLabel(pipLabel);
+    handles.setHasVideo(pipTrack !== null);
+    if (!pipTrack) return;
+    pipTrack.attach(handles.video);
+    return () => { pipTrack.detach(handles.video); };
+  }, [pipOpen, pipSid, pipKind, pipLabel, pipTrack]);
 
   // ---------------------------------------------------------------------
   async function toggleCam() {
@@ -343,9 +518,30 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
   }
   async function toggleShare() {
     const r = roomRef.current; if (!r) return;
-    try { await r.localParticipant.setScreenShareEnabled(!sharing); setSharing(!sharing); }
+    try {
+      // Feature 69. audio: true asks the browser to offer "also share tab
+      // audio" in its picker. Without it, sharing a video is SILENT, which
+      // everybody reports as broken rather than as missing.
+      //
+      // Chrome offers it for a tab or a whole screen; Safari does not support
+      // it at all and simply ignores the flag rather than refusing the share.
+      await r.localParticipant.setScreenShareEnabled(!sharing, { audio: true });
+      setSharing(!sharing);
+    }
     catch { setSharing(false); }  // cancelling the picker throws; that is a decision, not a fault
   }
+  function toggleHand() {
+    const r = roomRef.current;
+    if (!r) return;
+    const up = !myHand;
+    setMyHand(up);
+    // Your own hand goes in the same map as everybody else's, so the list and
+    // the tiles have ONE source rather than a special case for yourself.
+    setHands((h) => ({ ...h, [r.localParticipant.identity]: up }));
+    void r.localParticipant.publishData(
+      new TextEncoder().encode(JSON.stringify({ hand: up })), { reliable: true });
+  }
+
   async function switchDevice(kind: MediaDeviceKind, deviceId: string) {
     const r = roomRef.current; if (!r) return;
     try { await r.switchActiveDevice(kind, deviceId); }
@@ -404,10 +600,22 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
   // ignored for the duration: there is one thing being presented, and a
   // layout that put it in a quarter of the screen next to three faces would
   // be nobody's idea of presenting.
-  const shown = screenSharer ? [] : (view === 'speaker' && speaker ? [speaker] : participants);
-  const others = screenSharer
+  // Raised hands to the top, then the filter. Sorting here rather than in the
+  // panel so the count on the button and the list can never disagree.
+  const needle = find.trim().toLowerCase();
+  const listed = participants
+    .filter((p) => needle.length === 0
+      || (p.name ?? '').toLowerCase().includes(needle)
+      || p.identity.toLowerCase().includes(needle))
+    .slice()
+    .sort((a, b) => Number(hands[b.identity] === true) - Number(hands[a.identity] === true));
+
+  const presenting = screenSharers.length > 0;
+  const shown = presenting ? [] : (view === 'speaker' && speaker ? [speaker] : participants);
+  const others = presenting
     ? participants
     : (view === 'speaker' ? participants.filter((p) => p !== speaker) : []);
+
 
   return (
     <>
@@ -469,16 +677,17 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
           {/* The share, as a tile in its own right. Keyed separately from the
               sharer's camera tile below so React never reuses one <video> for
               both tracks. */}
-          {screenSharer && (
-            <Tile key={`screen-${screenSharer.identity}`} p={screenSharer} big
-                  local={screenSharer === room?.localParticipant}
-                  showScreen canHost={false} onMute={() => {}} onRemove={() => {}} />
-          )}
+          {screenSharers.map((p) => (
+            <Tile key={`screen-${p.identity}`} p={p} big={screenSharers.length === 1}
+                  local={p === room?.localParticipant}
+                  showScreen canHost={false} onMute={() => {}} onRemove={() => {}}
+                  hand={false} />
+          ))}
 
           {shown.map((p) => (
             <Tile key={p.identity} p={p} big={view === 'speaker'}
                   local={p === room?.localParticipant}
-                  showScreen={false}
+                  showScreen={false} hand={hands[p.identity] === true}
                   canHost={isHost && meeting !== null && p !== room?.localParticipant}
                   onMute={() => void hostAction(() =>
                     connectApi.mute(authedFetch, meeting?.id ?? '', p.identity))}
@@ -491,7 +700,8 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
           <div className="cx-strip">
             {others.map((p) => (
               <Tile key={p.identity} p={p} big={false} local={p === room?.localParticipant}
-                    showScreen={false} canHost={false} onMute={() => {}} onRemove={() => {}} />
+                    showScreen={false} hand={hands[p.identity] === true}
+                    canHost={false} onMute={() => {}} onRemove={() => {}} />
             ))}
           </div>
         )}
@@ -533,12 +743,33 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
             </button>
           )}
 
+          {canPip && (
+            <button type="button" className={`cx-btn ${pipOpen ? 'is-on' : ''}`}
+                    onClick={() => (pipOpen ? closePip() : void openPip())}
+                    aria-pressed={pipOpen}
+                    title="Keep the meeting in a small floating window while you work elsewhere">
+              <i className="ri-picture-in-picture-exit-line" />
+              {pipOpen ? 'Close' : 'Mini'}
+            </button>
+          )}
+
+          <button type="button" className={`cx-btn ${myHand ? 'is-on' : ''}`}
+                  onClick={toggleHand} aria-pressed={myHand}
+                  title={myHand ? 'Lower your hand' : 'Raise your hand'}>
+            <i className="ri-hand" />
+            {myHand ? 'Lower' : 'Hand'}
+          </button>
+
           <span className="cx-btnwrap">
             <button type="button" className={`cx-btn ${panel === 'people' ? 'is-on' : ''}`}
                     onClick={() => openPanel('people')} title="People">
               <i className="ri-group-line" />People
             </button>
-            {knocking.length > 0 && <span className="cx-count">{knocking.length}</span>}
+            {(knocking.length + Object.values(hands).filter(Boolean).length) > 0 && (
+              <span className="cx-count">
+                {knocking.length + Object.values(hands).filter(Boolean).length}
+              </span>
+            )}
           </span>
 
           <span className="cx-btnwrap">
@@ -634,23 +865,43 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
                 <div className="cx-sub" style={{ margin: '16px 0 6px' }}>IN THE MEETING</div>
               </>
             )}
-            {participants.map((p) => {
+            {participants.length > 6 && (
+              <input className="cx-field" style={{ marginBottom: 10 }} value={find}
+                     placeholder="Find someone"
+                     onChange={(e) => setFind(e.target.value)} />
+            )}
+
+            {listed.map((p) => {
               const nm = p.name && p.name.length > 0 ? p.name : p.identity;
               const muted = p.getTrackPublication(Track.Source.Microphone)?.isMuted !== false;
+              const up = hands[p.identity] === true;
               return (
                 <div className="cx-row" key={p.identity}>
                   <span className="cx-av">{initialOf(nm)}</span>
                   <div className="cx-grow">
                     <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {up && <span aria-label="Hand raised" title="Hand raised">✋ </span>}
                       {nm}{p === room?.localParticipant ? ' (you)' : ''}
                     </div>
-                    <div className="cx-sub">{muted ? 'Muted' : 'Speaking'}</div>
+                    {/* 'Speaking' used to show for anybody merely UNMUTED, so a
+                        silent room read as everybody talking at once. */}
+                    <div className="cx-sub">
+                      {muted ? 'Muted' : p.isSpeaking ? 'Speaking' : 'Unmuted'}
+                    </div>
                   </div>
                   {isHost && meeting && p !== room?.localParticipant && (
                     <>
                       <button type="button" className="cx-pill"
                               onClick={() => void hostAction(() =>
                                 connectApi.mute(authedFetch, meeting.id, p.identity))}>Mute</button>
+                      {/* Feature 58. The API has taken kind: 'audio' | 'video'
+                          since it was written and the UI only ever sent audio —
+                          one argument away the whole time. */}
+                      <button type="button" className="cx-pill"
+                              onClick={() => void hostAction(() =>
+                                connectApi.mute(authedFetch, meeting.id, p.identity, 'video'))}>
+                        Camera
+                      </button>
                       <button type="button" className="cx-pill cx-pill--bad"
                               onClick={() => void hostAction(() =>
                                 connectApi.remove(authedFetch, meeting.id, p.identity))}>Remove</button>
@@ -659,6 +910,9 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
                 </div>
               );
             })}
+            {listed.length === 0 && (
+              <div className="cx-sub">Nobody here matches “{find}”.</div>
+            )}
           </Panel>
         )}
 
@@ -696,10 +950,28 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
               {cams.map((d) => <option key={d.deviceId} value={d.deviceId}>{d.label || 'Camera'}</option>)}
             </select>
             <label className="cx-label" htmlFor="cx-mic">Microphone</label>
-            <select id="cx-mic" className="cx-field"
+            <select id="cx-mic" className="cx-field" style={{ marginBottom: 16 }}
                     onChange={(e) => void switchDevice('audioinput', e.target.value)}>
               {mics.map((d) => <option key={d.deviceId} value={d.deviceId}>{d.label || 'Microphone'}</option>)}
             </select>
+
+            {/* Feature 42. switchActiveDevice('audiooutput', …) calls setSinkId
+                on every audio element the SDK manages, so this moves the whole
+                meeting to the chosen speaker rather than one track. */}
+            <label className="cx-label" htmlFor="cx-out">Speaker</label>
+            {outs.length > 0 ? (
+              <select id="cx-out" className="cx-field"
+                      onChange={(e) => void switchDevice('audiooutput', e.target.value)}>
+                {outs.map((d) => (
+                  <option key={d.deviceId} value={d.deviceId}>{d.label || 'Speaker'}</option>
+                ))}
+              </select>
+            ) : (
+              <div className="cx-sub">
+                This browser does not let a page choose the speaker. Change it in
+                your system sound settings.
+              </div>
+            )}
             {cams.length === 0 && mics.length === 0 && (
               <div className="cx-sub" style={{ marginTop: 12 }}>
                 Device names appear once the browser has granted the camera or microphone.
@@ -709,6 +981,31 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
         )}
       </div>
     </>
+  );
+}
+
+// ===========================================================================
+/**
+ * Feature 49 — the connection indicator.
+ *
+ * Shown ONLY when the connection is actually poor or lost. An indicator that
+ * is green 99% of the time teaches people to stop looking at it, and then it
+ * is not there on the day it matters. Silence means fine.
+ *
+ * Not rendered for yourself: your own quality as the SERVER sees it is not
+ * what your screen can tell you, and a warning about your own connection
+ * belongs in the reconnecting banner, which already exists.
+ */
+function Quality({ p }: { p: LKParticipant }) {
+  const q = p.connectionQuality;
+  if (q !== ConnectionQuality.Poor && q !== ConnectionQuality.Lost) return null;
+  const lost = q === ConnectionQuality.Lost;
+  return (
+    <div className={`cx-qual ${lost ? 'is-lost' : ''}`}
+         title={lost ? 'Connection lost' : 'Weak connection'}>
+      <i className={lost ? 'ri-wifi-off-line' : 'ri-signal-wifi-line'} />
+      <span>{lost ? 'Lost' : 'Weak'}</span>
+    </div>
   );
 }
 
@@ -729,11 +1026,12 @@ function Panel({ title, onClose, children, foot }: {
 }
 
 // ===========================================================================
-function Tile({ p, big, local, showScreen, canHost, onMute, onRemove }: {
+function Tile({ p, big, local, showScreen, hand, canHost, onMute, onRemove }: {
   p: LKParticipant;
   big: boolean;
   local: boolean;
   showScreen: boolean;
+  hand: boolean;
   canHost: boolean;
   onMute: () => void;
   onRemove: () => void;
@@ -787,6 +1085,16 @@ function Tile({ p, big, local, showScreen, canHost, onMute, onRemove }: {
           <div className="cx-initial">{initialOf(name)}</div>
         </div>
       )}
+
+      {/* Feature 62. On the tile as well as in the People list: a hand raised
+          only in a panel nobody has open is a hand nobody sees. */}
+      {hand && !showScreen && (
+        <div className="cx-hand" title="Hand raised" aria-label="Hand raised">✋</div>
+      )}
+
+      {/* Feature 49. Only when it is worth saying — a bar that is always
+          green is furniture, and furniture is not read. */}
+      {!showScreen && !local && <Quality p={p} />}
 
       <div className="cx-name">
         {/* No mic icon on a screen tile — the microphone belongs to the
