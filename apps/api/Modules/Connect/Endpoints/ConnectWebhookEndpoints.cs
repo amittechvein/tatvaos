@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
@@ -45,7 +46,47 @@ public static class ConnectWebhookEndpoints
            .WithTags("Connect");
     }
 
+    /// <summary>
+    /// The outer wrapper exists because of one line inside.
+    ///
+    /// A JsonElement.TryGetInt64 against a String throws rather than returning
+    /// false, and that exception went unhandled: Kestrel answered 500, LiveKit
+    /// retried five times and gave up, and the ONLY visible symptom was an
+    /// empty table. Nothing in this module said a word — the honest 500-on-
+    /// DbUpdateException added earlier never fired, because the throw happened
+    /// long before SaveChanges and was not a DbUpdateException.
+    ///
+    /// So anything unexpected in here is now caught, LOGGED AS AN ERROR with
+    /// the event kind, and answered 200.
+    ///
+    /// 200, not 500, and the choice matters. An unhandled exception here is a
+    /// BUG IN THIS CODE, and a bug does not become less true on the second
+    /// attempt: LiveKit would retry five times per event, fail five times, and
+    /// bury the one useful log line under four useless ones while the queue
+    /// backed up behind it. The alarm is the log, which now names the event.
+    /// A TRANSIENT failure — the database being briefly unreachable — is still
+    /// answered 500 further down, where it can be told apart, because there a
+    /// retry genuinely helps.
+    /// </summary>
     private static async Task<IResult> ReceiveAsync(
+        HttpContext http, AppDbContext db, TenantContext tenant,
+        LiveKitTokenService tokens, ILogger<LiveKitTokenService> log, CancellationToken ct)
+    {
+        try
+        {
+            return await HandleAsync(http, db, tenant, tokens, log, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            log.LogError(ex,
+                "LiveKit webhook handler threw. THIS IS A BUG IN ConnectWebhookEndpoints, "
+                + "not a transient failure — the event is dropped rather than retried, "
+                + "because retrying will fail identically.");
+            return Results.Ok();
+        }
+    }
+
+    private static async Task<IResult> HandleAsync(
         HttpContext http, AppDbContext db, TenantContext tenant,
         LiveKitTokenService tokens, ILogger<LiveKitTokenService> log, CancellationToken ct)
     {
@@ -129,8 +170,11 @@ public static class ConnectWebhookEndpoints
 
         var identity = ParticipantText(root, "identity");
         var displayName = ParticipantText(root, "name");
-        var occurredAt = root.TryGetProperty("createdAt", out var created)
-                         && created.TryGetInt64(out var unix)
+
+        // createdAt arrives as a STRING, not a number. See UnixSeconds below —
+        // this one line, written the obvious way, threw on every webhook this
+        // handler actually processed, for the entire life of the module.
+        var occurredAt = UnixSeconds(root, "createdAt") is long unix
             ? DateTimeOffset.FromUnixTimeSeconds(unix)
             : DateTimeOffset.UtcNow;
 
@@ -266,6 +310,56 @@ public static class ConnectWebhookEndpoints
         root.TryGetProperty("participant", out var p) && p.ValueKind == JsonValueKind.Object
             ? Text(p, name)
             : null;
+
+    /// <summary>
+    /// A unix timestamp from LiveKit, which sends it as a JSON STRING.
+    ///
+    /// ─────────────────────────────────────────────────────────────────────
+    ///  THE BUG THIS FUNCTION EXISTS TO HAVE FIXED, WRITTEN DOWN SO IT IS
+    ///  NEVER REINTRODUCED.
+    ///
+    ///  protojson — which is what LiveKit serialises every webhook with —
+    ///  renders int64 as a STRING, because JSON numbers cannot carry 64 bits
+    ///  precisely. So `createdAt` is "1787074610", not 1787074610.
+    ///
+    ///  This was originally written as
+    ///
+    ///      root.TryGetProperty("createdAt", out var c) && c.TryGetInt64(out var u)
+    ///
+    ///  and JsonElement.TryGetInt64 DOES NOT RETURN FALSE for a String — it
+    ///  THROWS InvalidOperationException. A TryGet that throws is a trap, and
+    ///  this one was fatal: the exception was unhandled, Kestrel answered 500,
+    ///  LiveKit retried five times and gave up.
+    ///
+    ///  Every event this handler PROCESSES reaches that line. Every event it
+    ///  ignores (track_published and friends) returns before it. So the log
+    ///  read: track events 200 OK in 3ms, participant_joined / participant_left
+    ///  / room_finished / egress_* all "giving up after 5 attempt(s)" — for
+    ///  the entire life of this module. connect.meeting_events stayed empty,
+    ///  meetings.started_at stayed null, no meeting ever reached 'ended', and
+    ///  therefore attendance, meeting history and the notes worker were all
+    ///  built on a table that could never have a row in it.
+    ///
+    ///  The rule was already written down, in LiveKitEgressClient, which reads
+    ///  every number through a tolerant helper for exactly this reason. It was
+    ///  applied there and not here, in the file next to it.
+    /// ─────────────────────────────────────────────────────────────────────
+    /// </summary>
+    private static long? UnixSeconds(JsonElement root, string name)
+    {
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty(name, out var v))
+            return null;
+        return v.ValueKind switch
+        {
+            JsonValueKind.String => long.TryParse(v.GetString(), NumberStyles.Integer,
+                CultureInfo.InvariantCulture, out var s) ? s : null,
+            // Accepted too. A future LiveKit, or a hand-written test payload,
+            // may well send a real number, and refusing it would be a second
+            // version of the same mistake in the opposite direction.
+            JsonValueKind.Number => v.TryGetInt64(out var n) ? n : null,
+            _ => null,
+        };
+    }
 
     /// <summary>
     /// The room name is m-{meetingId} and that is the only place the meeting

@@ -103,11 +103,34 @@ if [ "${after:-0}" -gt "${before:-0}" ]; then
     exit 0
 fi
 
-echo "  NOTHING ARRIVED. In order, the three things that cause this:"
+echo "  NOTHING ARRIVED."
 echo
-echo "  1. The client never actually joined — read the CLI output above. A"
+# ─────────────────────────────────────────────────────────────────────────
+#  THE API'S OWN EXCEPTIONS COME FIRST, AND THAT ORDERING IS THE LESSON.
+#
+#  The first time this test reported zero, LiveKit's log was full of
+#  "sent webhook ... status: 200 OK" and that was read as the delivery
+#  working. It was not: those 200s were the track_published events this
+#  handler deliberately IGNORES and answers before touching anything. The
+#  events that mattered were in the same log saying "giving up after 5
+#  attempt(s)", and the reason was an unhandled exception in the API that
+#  nobody looked at for a day.
+#
+#  So: ask the API what it threw, before showing anything else.
+# ─────────────────────────────────────────────────────────────────────────
+echo "  1. WHAT THE API THREW — if anything appears here, this is your answer:"
+if "${COMPOSE[@]}" logs --since 3m api 2>&1 \
+     | grep -iE 'ConnectWebhookEndpoints|unverifiable|webhook handler threw' \
+     | grep -viE 'Executed DbCommand|^ *SELECT|^ *FROM|^ *WHERE' | tail -12; then :; fi
+echo
+echo "  2. WHAT LIVEKIT SAW. Read the STATUS on each line, and mind which"
+echo "     EVENT it belongs to — a 200 on track_published proves nothing,"
+echo "     because that event is ignored before any work happens."
+"${COMPOSE[@]}" logs --since 3m livekit 2>&1 \
+    | grep -iE 'failed to send|giving up|sent webhook' | tail -10
+echo
+echo "  3. The client never actually joined — read the CLI output above. A"
 echo "     token or connection error there means this test never ran."
-"${COMPOSE[@]}" logs --since 3m livekit 2>&1 | grep -iE 'room_started|participant|webhook|error' | tail -8
 echo
 echo "  2. LiveKit joined but sent nothing: the webhook block is not in the"
 echo "     RUNNING process. The file can be right on disk and in the container"
