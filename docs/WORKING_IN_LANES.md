@@ -99,7 +99,8 @@ and adopted because he is right**:
 |---|---|
 | `components/shell/*`, `components/ui/*`, `lib/theme.tsx`, `styles/*`, `app/layout.tsx` | **Core** — the design system and the frame |
 | `components/mail/*`, `app/mail/*`, `lib/mail.ts` | **Mail** — product behaviour inside that frame |
-| `components/space/*`, `app/space/*`, `lib/space.ts` | **Core** — Space's client is Core-built |
+| `components/space/*`, `app/space/*` | **Core** — Space's screens are Core-built |
+| `lib/space.ts` | **Space** — see below |
 | `app/connect/*`, `lib/connect.ts` | **Connect** |
 
 **The condition that makes this safe:** inside your own files you use existing
@@ -108,13 +109,33 @@ feature needs a component that is not already in `components/ui/*`, that is a
 request to Core, not something a product lane invents. A lane owning its
 screens is not a lane owning the design system.
 
+**The API client belongs with the API, not with the screens.** `lib/mail.ts`
+is Mail's; `lib/space.ts` is Space's, for the same reason. When a lane changes
+its endpoint the client must change with it, and routing that through a
+cross-lane request adds a round trip and buys nothing — the lane that moved
+the route is the only one that knows it moved.
+
+That row said Core for a day, and the day cost us this: Space opened
+`GET /api/space/settings` to ordinary users and added a `settingsApi` wrapper;
+Core had independently added a `spaceSettingsApi` wrapper to the same file for
+the admin toggle. **The two branches merge CLEANLY** — git puts both in the
+file, two exported clients for one endpoint, one of them on a trailing-slash
+path, with no conflict marker to make anyone look.
+
+A clean merge that produces a duplicate is more dangerous than a conflict.
+A conflict stops a person; this only stops a person who happens to read the
+file. Owning the client where the endpoint lives makes the duplicate
+impossible rather than merely unlikely.
+
 Check yourself before pushing:
 
 ```
 git diff --name-only main...HEAD
 ```
 
-If a path outside your rows appears, it goes over as a patch instead.
+If a path outside your rows appears, it goes over as a patch instead. And if
+two lanes have touched the same file this week, read it after merging even
+when git said nothing.
 
 **6. Only ONE lane runs the local Docker stack at a time.** Compose derives its
 project name from the directory, so each folder would get its own containers,
