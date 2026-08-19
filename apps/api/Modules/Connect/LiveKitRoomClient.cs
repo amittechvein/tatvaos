@@ -102,8 +102,17 @@ public sealed class LiveKitRoomClient(
         var person = participants.FirstOrDefault(p => p.Identity == identity);
         if (person is null) return false;
 
-        var track = person.Tracks?.FirstOrDefault(t =>
-            string.Equals(t.Type, kind, StringComparison.OrdinalIgnoreCase) && !t.Muted);
+        // 'screen' targets the SOURCE, not the media type: a screen share is a
+        // VIDEO track like a camera is, and matching on type alone would stop
+        // the presenter's face when the host meant to stop their slides.
+        var track = kind == "screen"
+            ? person.Tracks?.FirstOrDefault(t =>
+                string.Equals(t.Source, "SCREEN_SHARE", StringComparison.OrdinalIgnoreCase) && !t.Muted)
+            : person.Tracks?.FirstOrDefault(t =>
+                string.Equals(t.Type, kind, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(t.Source, "SCREEN_SHARE", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(t.Source, "SCREEN_SHARE_AUDIO", StringComparison.OrdinalIgnoreCase)
+                && !t.Muted);
         if (track is null) return true;
 
         var response = await CallAsync(meetingId, "MutePublishedTrack", new
@@ -123,6 +132,45 @@ public sealed class LiveKitRoomClient(
         {
             room = ConnectCodes.RoomName(meetingId),
             identity,
+        }, ct);
+        return response is not null;
+    }
+
+    /// <summary>
+    /// Change what one CONNECTED participant may publish, live, without
+    /// disconnecting them. This is how a share-policy change reaches people
+    /// already in the room — their token was minted under the old policy and
+    /// tokens cannot be recalled.
+    ///
+    /// `sources` follows the same convention as the token grant: NULL means
+    /// "all sources". The spelling differs, though, and the difference is a
+    /// protojson rule worth writing down: the JWT grant carries TrackSource as
+    /// lower_snake strings ("screen_share"), but the Twirp API's
+    /// ParticipantPermission.can_publish_sources is a protobuf ENUM, which
+    /// protojson serialises by its NAME — "SCREEN_SHARE". Same concept, two
+    /// spellings, chosen by which wire you are on.
+    ///
+    /// UpdateParticipant REPLACES the whole permission object rather than
+    /// merging, so canPublish/canSubscribe/canPublishData are restated every
+    /// time. Omitting them here would revoke a participant's microphone as a
+    /// side effect of changing who may share — silently, mid-sentence.
+    /// </summary>
+    public async Task<bool> SetPublishSourcesAsync(
+        Guid meetingId, string identity, string[]? sources, CancellationToken ct)
+    {
+        var enumNames = sources?.Select(s => s.ToUpperInvariant()).ToArray();
+        var response = await CallAsync(meetingId, "UpdateParticipant", new
+        {
+            room = ConnectCodes.RoomName(meetingId),
+            identity,
+            permission = new
+            {
+                can_subscribe = true,
+                can_publish = true,
+                can_publish_data = true,
+                // Empty/absent = all sources, matching the token grant's rule.
+                can_publish_sources = enumNames ?? [],
+            },
         }, ct);
         return response is not null;
     }
@@ -206,5 +254,9 @@ public sealed class LkTrack
     [JsonPropertyName("sid")] public string? Sid { get; set; }
     /// <summary>"AUDIO" or "VIDEO" in LiveKit's JSON enum rendering.</summary>
     [JsonPropertyName("type")] public string? Type { get; set; }
+    /// <summary>"CAMERA", "MICROPHONE", "SCREEN_SHARE", "SCREEN_SHARE_AUDIO" —
+    /// protojson renders the TrackSource enum by NAME. What tells a camera
+    /// from a screen share, which the type field cannot.</summary>
+    [JsonPropertyName("source")] public string? Source { get; set; }
     [JsonPropertyName("muted")] public bool Muted { get; set; }
 }

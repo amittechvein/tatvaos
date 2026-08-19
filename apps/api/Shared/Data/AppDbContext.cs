@@ -129,6 +129,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     // only in the browsers that were open is not a record of anything.
     public DbSet<TatvaOS.Api.Modules.Connect.ConnectMeetingChat> ConnectMeetingChat
         => Set<TatvaOS.Api.Modules.Connect.ConnectMeetingChat>();
+    // Who a host removed, so Remove survives a rejoin. RLS forced, scoped
+    // through the meeting; see 20260905-connect-host-controls.sql.
+    public DbSet<TatvaOS.Api.Modules.Connect.ConnectMeetingBlock> ConnectMeetingBlocks
+        => Set<TatvaOS.Api.Modules.Connect.ConnectMeetingBlock>();
     public DbSet<SpaceShare> SpaceShares => Set<SpaceShare>();
     public DbSet<SpaceFileActivity> SpaceFileActivities => Set<SpaceFileActivity>();
     public DbSet<SpaceStar> SpaceStars => Set<SpaceStar>();
@@ -214,6 +218,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectTranscript>().ToTable("transcripts", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>().ToTable("meeting_notes", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingChat>().ToTable("meeting_chat", "connect");
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingBlock>().ToTable("meeting_blocks", "connect");
 
         // jsonb, not text. Npgsql maps a string property to `text` by default,
         // and `text` does not implicitly cast to `jsonb` on INSERT — the write

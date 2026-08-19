@@ -70,11 +70,13 @@ public static class ConnectWebhookEndpoints
     /// </summary>
     private static async Task<IResult> ReceiveAsync(
         HttpContext http, AppDbContext db, TenantContext tenant,
-        LiveKitTokenService tokens, ILogger<LiveKitTokenService> log, CancellationToken ct)
+        LiveKitTokenService tokens, LiveKitEgressClient egress,
+        ConnectRecordingOptions recOptions,
+        ILogger<LiveKitTokenService> log, CancellationToken ct)
     {
         try
         {
-            return await HandleAsync(http, db, tenant, tokens, log, ct);
+            return await HandleAsync(http, db, tenant, tokens, egress, recOptions, log, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -88,7 +90,9 @@ public static class ConnectWebhookEndpoints
 
     private static async Task<IResult> HandleAsync(
         HttpContext http, AppDbContext db, TenantContext tenant,
-        LiveKitTokenService tokens, ILogger<LiveKitTokenService> log, CancellationToken ct)
+        LiveKitTokenService tokens, LiveKitEgressClient egress,
+        ConnectRecordingOptions recOptions,
+        ILogger<LiveKitTokenService> log, CancellationToken ct)
     {
         if (!tokens.IsConfigured) return Results.StatusCode(503);
 
@@ -254,9 +258,11 @@ public static class ConnectWebhookEndpoints
             }
         }
 
+        var saved = false;
         try
         {
             await db.SaveChangesAsync(ct);
+            saved = true;
             if (reconcileStorage)
                 await db.Database.ExecuteSqlInterpolatedAsync(
                     $"SELECT connect.reconcile_recording_storage({tenantIds[0]})", ct);
@@ -265,7 +271,9 @@ public static class ConnectWebhookEndpoints
         {
             // 23505, unique_violation, on the webhook_id index: a replay that
             // arrived while the first copy was still in flight. Losing that
-            // race is the correct outcome, not an error.
+            // race is the correct outcome, not an error — and `saved` stays
+            // false, because the failed INSERT is still in the change tracker
+            // and any later SaveChanges on this context would replay it.
             log.LogDebug("Duplicate LiveKit webhook {WebhookId} ignored", webhookId);
         }
         catch (DbUpdateException ex)
@@ -284,7 +292,113 @@ public static class ConnectWebhookEndpoints
             return Results.StatusCode(500);
         }
 
+        // ── AUTO-RECORD, after the event is safely written. ────────────────
+        //
+        // The flag was the host's request at creation time; the room starting
+        // is the moment it is acted on, because that is when the media server
+        // says the meeting exists. Kept OUT of the transaction above and
+        // failure-isolated below: a recording that cannot start must cost a
+        // recording, never the event — the event log sitting empty for the
+        // module's whole life is how this file learned that priority.
+        if (saved && kind == "room_started" && meeting is { AutoRecord: true })
+            await TryAutoRecordAsync(db, egress, recOptions, meeting, tenantIds[0], log, ct);
+
         return Results.Ok();
+    }
+
+    /// <summary>
+    /// Start the recording the host asked for at creation time.
+    ///
+    /// The THREE GATES from ConnectRecordingEndpoints.StartAsync, re-checked
+    /// NOW rather than trusted from when the meeting was made: the org flag
+    /// (switching recording off must stop auto-record on meetings that already
+    /// carry the flag) and the storage pool. The who-may-command gate is the
+    /// flag itself — only a host could set it. The "is anybody in the room"
+    /// gate needs no LiveKit round-trip here: room_started IS the media server
+    /// saying so.
+    ///
+    /// Every refusal is a LOG LINE, not a failure — there is no request to
+    /// answer and nobody to show a sentence to. The log names the reason so
+    /// "my meeting did not record itself" is a grep, not an investigation.
+    /// </summary>
+    private static async Task TryAutoRecordAsync(
+        AppDbContext db, LiveKitEgressClient egress, ConnectRecordingOptions recOptions,
+        ConnectMeeting meeting, Guid tenantId,
+        ILogger<LiveKitTokenService> log, CancellationToken ct)
+    {
+        try
+        {
+            if (!egress.IsConfigured)
+            {
+                log.LogWarning("Auto-record for {MeetingId}: no egress on this server", meeting.Id);
+                return;
+            }
+
+            var allowed = await db.Database
+                .SqlQuery<bool>($"""SELECT connect.recording_allowed({tenantId}) AS "Value" """)
+                .FirstOrDefaultAsync(ct);
+            if (!allowed)
+            {
+                log.LogInformation(
+                    "Auto-record for {MeetingId}: recording is switched off for the organisation",
+                    meeting.Id);
+                return;
+            }
+
+            // A retried room_started, or a host who beat the webhook to the
+            // button, must not become a second egress.
+            var already = await db.ConnectRecordings
+                .Where(r => r.MeetingId == meeting.Id
+                         && (r.Status == "starting" || r.Status == "recording"))
+                .AnyAsync(ct);
+            if (already) return;
+
+            var headroom = await db.Database
+                .SqlQuery<long>($"""SELECT connect.storage_headroom({tenantId}) AS "Value" """)
+                .FirstOrDefaultAsync(ct);
+            if (headroom >= 0 && headroom < recOptions.MinimumFreeBytes)
+            {
+                log.LogWarning(
+                    "Auto-record for {MeetingId}: the organisation's storage pool is full",
+                    meeting.Id);
+                return;
+            }
+
+            // Audio, the measured default everywhere in this module — 1 CPU
+            // against 4, on the box that is also running the SFU.
+            var fileName = $"{meeting.Id:N}-{ConnectCodes.New()[..12]}.ogg";
+            var started = await egress.StartAsync(meeting.Id, "audio", fileName, ct);
+            if (started?.EgressId is not { Length: > 0 } egressId)
+            {
+                log.LogWarning("Auto-record for {MeetingId}: LiveKit did not start the egress",
+                    meeting.Id);
+                return;
+            }
+
+            db.ConnectRecordings.Add(new ConnectRecording
+            {
+                Id = Guid.NewGuid(),
+                MeetingId = meeting.Id,
+                EgressId = egressId,
+                Mode = "audio",
+                Status = "starting",
+                FileName = fileName,
+                ContentType = "audio/ogg",
+                // Nobody pressed the button. The row says so honestly rather
+                // than crediting the host with an act they scheduled.
+                RequestedByUserId = null,
+                Transcribe = true,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The event above is already committed; auto-record failing may
+            // cost the recording and nothing else.
+            log.LogError(ex, "Auto-record for {MeetingId} threw", meeting.Id);
+        }
     }
 
 }

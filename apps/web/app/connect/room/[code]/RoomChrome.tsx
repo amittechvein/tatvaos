@@ -170,6 +170,33 @@ export const CSS = `
 .cx-cta:hover{filter:brightness(1.08)}
 .cx-cta[disabled]{opacity:.55;cursor:not-allowed}
 @media (max-width:640px){.cx-btn{min-width:52px;font-size:0;padding:11px}.cx-btn i{font-size:20px}}
+
+/* The pre-join screen. The preview mirrors like the self tile does — people
+   expect a mirror before a meeting, and un-mirrored feels like a stranger. */
+.cx-preview{position:relative;aspect-ratio:16/9;background:#000;border-radius:14px;
+  overflow:hidden;border:1px solid #26262f}
+.cx-preview-video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1);display:block}
+.cx-preview-off{position:absolute;inset:0;display:grid;place-items:center;
+  background:radial-gradient(circle at 50% 40%,#1c1c25,#0d0d12)}
+.cx-meter{position:absolute;left:10px;right:10px;bottom:8px;height:5px;border-radius:99px;
+  background:rgba(255,255,255,.14);overflow:hidden}
+.cx-meter-fill{height:100%;background:var(--cx-good,#2ecc71);border-radius:99px;
+  transition:width .08s linear}
+
+/* The one modal this screen has — the host deciding what their leaving means.
+   Over everything, because it IS the question of the moment. */
+.cx-modal-back{position:fixed;inset:0;z-index:1300;background:rgba(0,0,0,.6);
+  display:grid;place-items:center;padding:20px}
+.cx-modal{width:100%;max-width:400px;background:#15151c;border:1px solid #26262f;
+  border-radius:16px;padding:20px;box-shadow:0 18px 60px rgba(0,0,0,.6)}
+.cx-modal h2{font-size:16px;font-weight:600;margin:0 0 6px}
+.cx-choice{display:block;width:100%;text-align:left;margin-top:10px;padding:12px 14px;
+  border-radius:11px;border:1px solid #26262f;background:rgba(255,255,255,.05);
+  color:#f2f2f5;cursor:pointer;font-size:14px}
+.cx-choice:hover{background:rgba(255,255,255,.11)}
+.cx-choice--bad{border-color:rgba(239,71,87,.5);background:rgba(239,71,87,.12);color:#ffb3bb}
+.cx-choice--bad:hover{background:rgba(239,71,87,.2)}
+.cx-choice[disabled]{opacity:.5;cursor:not-allowed}
 `;
 
 export function Centre({ children }: { children: React.ReactNode }) {

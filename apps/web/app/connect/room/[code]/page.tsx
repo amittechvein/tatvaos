@@ -9,6 +9,7 @@ import {
   type Doorstep, type JoinResult, type Meeting, type Seat,
 } from '@/lib/connect';
 import { Centre, Spinner } from './RoomChrome';
+import PreJoin, { type JoinPrefs } from './PreJoin';
 
 // ============================================================================
 //  The meeting room
@@ -61,7 +62,11 @@ type Phase =
   | { kind: 'resolving' }
   | { kind: 'door'; door: Doorstep; meeting: Meeting | null }
   | { kind: 'waiting'; waitToken: string }
-  | { kind: 'live'; seat: Seat; meeting: Meeting | null }
+  // The seat is already minted — it is a ten-minute join WINDOW, so the time
+  // spent checking a camera here costs nothing. The room does not know about
+  // you until Stage connects.
+  | { kind: 'prejoin'; seat: Seat; meeting: Meeting | null }
+  | { kind: 'live'; seat: Seat; meeting: Meeting | null; prefs: JoinPrefs }
   | { kind: 'denied' }
   | { kind: 'gone'; message: string };
 
@@ -105,7 +110,7 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
           if (!alive) return;
           setPhase(res.status === 'waiting'
             ? { kind: 'waiting', waitToken: res.waitToken }
-            : { kind: 'live', seat: res, meeting });
+            : { kind: 'prejoin', seat: res, meeting });
           return;
         }
 
@@ -132,7 +137,7 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
         const res = await guestApi.wait(token);
         if (!alive) return;
         if (res.status === 'denied') { setPhase({ kind: 'denied' }); return; }
-        if (res.status !== 'waiting') setPhase({ kind: 'live', seat: res, meeting: null });
+        if (res.status !== 'waiting') setPhase({ kind: 'prejoin', seat: res, meeting: null });
       } catch (e) {
         if (!alive) return;
         // A 404 is the token spent, expired, or never valid — one answer for
@@ -196,14 +201,26 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
         onSeat={(res, meeting) => {
           setPhase(res.status === 'waiting'
             ? { kind: 'waiting', waitToken: res.waitToken }
-            : { kind: 'live', seat: res, meeting });
+            : { kind: 'prejoin', seat: res, meeting });
         }}
         onGone={(m) => setPhase({ kind: 'gone', message: m })}
       />
     );
   }
 
-  return <Stage seat={phase.seat} meeting={phase.meeting} />;
+  if (phase.kind === 'prejoin') {
+    const seat = phase.seat;
+    const meeting = phase.meeting;
+    return (
+      <PreJoin
+        title={meeting?.title ?? 'Meeting'}
+        name={user?.displayName ?? 'You'}
+        onJoin={(prefs) => setPhase({ kind: 'live', seat, meeting, prefs })}
+      />
+    );
+  }
+
+  return <Stage seat={phase.seat} meeting={phase.meeting} prefs={phase.prefs} />;
 }
 
 // ===========================================================================

@@ -134,14 +134,19 @@ public static class ConnectGuestEndpoints
         // Without this the participant INSERT below is refused by the policy.
         await db.SyncTenantAsync(ct);
 
-        // The password is verified against the row, never against anything the
-        // definer function returned: it reports only WHETHER one exists.
+        // One read now that ordinary RLS applies: the password hash (verified
+        // against the ROW, never against anything the definer function
+        // returned — it reports only WHETHER one exists) and the share policy
+        // the token below is minted under.
+        var meeting = await db.ConnectMeetings.AsNoTracking()
+            .Where(m => m.Id == row.MeetingId)
+            .Select(m => new { m.PasswordHash, m.SharePolicy })
+            .FirstOrDefaultAsync(ct);
+        if (meeting is null) return Gone();
+
         if (row.HasPassword)
         {
-            var meeting = await db.ConnectMeetings.AsNoTracking()
-                .Where(m => m.Id == row.MeetingId)
-                .FirstOrDefaultAsync(ct);
-            if (meeting?.PasswordHash is not { } hash) return Gone();
+            if (meeting.PasswordHash is not { } hash) return Gone();
 
             // A wrong password after a VALID code answers 403, not 404: the
             // code-holder already knows the meeting exists, so a distinct
@@ -181,7 +186,10 @@ public static class ConnectGuestEndpoints
         {
             status = "joined",
             token = tokens.MintJoinToken(new LiveKitGrantOptions(
-                ConnectCodes.RoomName(row.MeetingId), participant.Identity, name)),
+                ConnectCodes.RoomName(row.MeetingId), participant.Identity, name,
+                // A guest is a 'participant' for the share policy — the same
+                // rule a signed-in participant gets, read from the same column.
+                CanPublishSources: ConnectShare.SourcesFor(meeting.SharePolicy, "participant"))),
             wsUrl = tokens.PublicUrl,
             identity = participant.Identity,
         });
@@ -239,18 +247,42 @@ public static class ConnectGuestEndpoints
 
                 tenant.EnterAnonymousScope(claimed.TenantId, "guest");
                 await db.SyncTenantAsync(ct);
-                var person = await db.ConnectParticipants.AsNoTracking()
-                    .Where(p => p.MeetingId == claimed.MeetingId
-                             && p.IsGuest
-                             && p.DisplayName == claimed.DisplayName)
+
+                // A SIGNED-IN colleague lands here too: waiting_room =
+                // 'everyone' parks colleagues, and they poll this same route.
+                // The lookup used to assume IsGuest and answered Gone() to
+                // every admitted colleague — so their admission read as "this
+                // meeting link does not work". Their lobby row carries the
+                // user_id; a guest's does not, and the display-name lookup is
+                // only for them.
+                var lobbyUser = await db.ConnectLobbyRequests.AsNoTracking()
+                    .Where(r => r.Id == claimed.RequestId)
+                    .Select(r => r.UserId)
                     .FirstOrDefaultAsync(ct);
+                var person = lobbyUser is Guid parkedUid
+                    ? await db.ConnectParticipants.AsNoTracking()
+                        .Where(p => p.MeetingId == claimed.MeetingId && p.UserId == parkedUid)
+                        .FirstOrDefaultAsync(ct)
+                    : await db.ConnectParticipants.AsNoTracking()
+                        .Where(p => p.MeetingId == claimed.MeetingId
+                                 && p.IsGuest
+                                 && p.DisplayName == claimed.DisplayName)
+                        .FirstOrDefaultAsync(ct);
                 if (person is null) return Gone();
+
+                // The policy AT ADMISSION, not at the original knock — a host
+                // who tightened sharing while this guest waited means it.
+                var sharePolicy = await db.ConnectMeetings.AsNoTracking()
+                    .Where(m => m.Id == claimed.MeetingId)
+                    .Select(m => m.SharePolicy)
+                    .FirstOrDefaultAsync(ct) ?? ConnectShare.PolicyEveryone;
 
                 return Results.Ok(new
                 {
                     status = "admitted",
                     token = tokens.MintJoinToken(new LiveKitGrantOptions(
-                        ConnectCodes.RoomName(claimed.MeetingId), person.Identity, person.DisplayName)),
+                        ConnectCodes.RoomName(claimed.MeetingId), person.Identity, person.DisplayName,
+                        CanPublishSources: ConnectShare.SourcesFor(sharePolicy, "participant"))),
                     wsUrl = tokens.PublicUrl,
                     identity = person.Identity,
                 });

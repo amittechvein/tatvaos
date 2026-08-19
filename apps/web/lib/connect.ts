@@ -29,6 +29,9 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? '/api';
 export type MeetingStatus = 'scheduled' | 'active' | 'ended' | 'cancelled';
 export type WaitingRoom = 'off' | 'guests' | 'everyone';
 export type MeetingRole = 'host' | 'cohost' | 'participant';
+/** Who may share a screen. Enforced server-side in the LiveKit token; the UI
+ *  reads it only to decide what to show. */
+export type SharePolicy = 'host' | 'cohost' | 'everyone';
 
 export interface Meeting {
   id: string;
@@ -46,6 +49,10 @@ export interface Meeting {
   waitingRoom: WaitingRoom;
   allowGuests: boolean;
   locked: boolean;
+  /** A request, not a guarantee: the room_started webhook re-checks the org's
+   *  recording flag and the storage gate at the moment the room starts. */
+  autoRecord: boolean;
+  sharePolicy: SharePolicy;
   createdByUserId: string | null;
   myRole: MeetingRole | null;
   createdAt: string;
@@ -111,6 +118,8 @@ export interface CreateMeeting {
   password?: string | null;
   waitingRoom?: WaitingRoom;
   allowGuests?: boolean;
+  autoRecord?: boolean;
+  sharePolicy?: SharePolicy;
 }
 
 export type UpdateMeeting = Partial<CreateMeeting & { locked: boolean }>;
@@ -226,7 +235,8 @@ export const connectApi = {
 
   // --- host controls. Each one reaches LiveKit; a failure here means the
   // person is still in the room, so none of them may be reported optimistically.
-  mute: (f: AuthedFetch, id: string, identity: string, kind: 'audio' | 'video' = 'audio') =>
+  /** 'screen' stops a share without touching the person's camera. */
+  mute: (f: AuthedFetch, id: string, identity: string, kind: 'audio' | 'video' | 'screen' = 'audio') =>
     f(`/connect/meetings/${id}/participants/${encodeURIComponent(identity)}/mute`, {
       method: 'POST', body: JSON.stringify({ kind }),
     }).then((r) => { if (!r.ok) throw new Error('Could not mute them. They are still unmuted.'); }),
@@ -239,6 +249,22 @@ export const connectApi = {
     f(`/connect/meetings/${id}/participants/${encodeURIComponent(identity)}/role`, {
       method: 'PUT', body: JSON.stringify({ role }),
     }).then((r) => { if (!r.ok) throw new Error('Could not change their role.'); }),
+
+  /**
+   * Hand the meeting to somebody else — the "Leave and assign a new host"
+   * path. Distinct from setRole, which deliberately refuses 'host'. The old
+   * host becomes a cohost; the caller should disconnect AFTER this resolves,
+   * because a failure here means the meeting still has no other host.
+   */
+  transferHost: async (f: AuthedFetch, id: string, identity: string) => {
+    const r = await f(`/connect/meetings/${id}/host`, {
+      method: 'POST', body: JSON.stringify({ identity }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => null) as { error?: string } | null;
+      throw new Error(body?.error ?? 'Could not hand the meeting over.');
+    }
+  },
 
   end: (f: AuthedFetch, id: string) =>
     f(`/connect/meetings/${id}/end`, { method: 'POST' })

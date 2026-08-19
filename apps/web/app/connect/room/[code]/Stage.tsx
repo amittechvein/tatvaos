@@ -10,8 +10,9 @@ import {
 import { useAuth } from '@/lib/auth';
 import {
   connectApi, minutesApi, recordingApi,
-  type LobbyEntry, type Meeting, type Recording, type Seat,
+  type LobbyEntry, type Meeting, type Recording, type Seat, type SharePolicy,
 } from '@/lib/connect';
+import type { JoinPrefs } from './PreJoin';
 import {
   documentPipSupported, onAutoPip, openPipWindow, pipSupported, videoPipSupported,
   type PipHandles, type PipTile,
@@ -26,9 +27,14 @@ const LOBBY_POLL_MS = 3000;
 interface ChatLine { id: number; who: string; text: string; mine: boolean }
 type PanelKind = 'people' | 'chat' | 'devices' | null;
 
-export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting | null }) {
+export default function Stage({ seat, meeting, prefs }: {
+  seat: Seat; meeting: Meeting | null; prefs?: JoinPrefs;
+}) {
   const { authedFetch } = useAuth();
   const roomRef = useRef<Room | null>(null);
+  // What the person decided on the pre-join screen. A ref because it is fixed
+  // for the life of this mount and must not churn the connect effect's deps.
+  const prefsRef = useRef<JoinPrefs | undefined>(prefs);
 
   const [room, setRoom] = useState<Room | null>(null);
   // livekit-client mutates its Room in place; React cannot see that. Every SDK
@@ -65,6 +71,22 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
   const [deciding, setDeciding] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [why, setWhy] = useState<DisconnectReason | undefined>(undefined);
+
+  // ---- Host leave, roles and the share policy --------------------------
+  //
+  // `leaveAsk` is the dialog: a HOST clicking Leave has to decide what their
+  // leaving means, and until they have, they have not left.
+  //
+  // `roles` is OUR database's answer (connectApi.participants), fetched when
+  // the People panel opens. LiveKit knows who is connected; it has no idea
+  // who is a cohost, and the metadata on its participants is not trusted for
+  // anything — the same rule the server enforces.
+  const [leaveAsk, setLeaveAsk] = useState(false);
+  const [leaveBusy, setLeaveBusy] = useState(false);
+  const [handover, setHandover] = useState('');
+  const [roles, setRoles] = useState<Record<string, string>>({});
+  const [sharePolicy, setSharePolicy] = useState<SharePolicy>(
+    meeting?.sharePolicy ?? 'everyone');
 
   // ---- Full screen -----------------------------------------------------
   //
@@ -122,7 +144,16 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
 
   // ---------------------------------------------------------------------
   useEffect(() => {
-    const r = new Room({ adaptiveStream: true, dynacast: true });
+    const chosen = prefsRef.current;
+    const r = new Room({
+      adaptiveStream: true,
+      dynacast: true,
+      // The devices picked on the pre-join screen. Set as capture defaults
+      // rather than switched after connect, so the FIRST frame anybody sees is
+      // already from the right camera.
+      audioCaptureDefaults: chosen?.micId ? { deviceId: chosen.micId } : undefined,
+      videoCaptureDefaults: chosen?.camId ? { deviceId: chosen.camId } : undefined,
+    });
     roomRef.current = r;
     setRoom(r);
 
@@ -154,7 +185,18 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
       .on(RoomEvent.TrackUnsubscribed, rerender)
       .on(RoomEvent.TrackMuted, rerender)
       .on(RoomEvent.TrackUnmuted, rerender)
+      // The host tightened (or loosened) who may share while people were
+      // already in the room — the server pushes new permissions through
+      // UpdateParticipant, and this is that change arriving.
+      .on(RoomEvent.ParticipantPermissionsChanged, rerender)
       .on(RoomEvent.LocalTrackPublished, rerender)
+      // A share can end WITHOUT the button: the browser's own "Stop sharing"
+      // bar, or the server revoking the permission mid-share. The button must
+      // follow the truth rather than its own last click.
+      .on(RoomEvent.LocalTrackUnpublished, (pub) => {
+        if (pub.source === Track.Source.ScreenShare) setSharing(false);
+        rerender();
+      })
       .on(RoomEvent.ActiveSpeakersChanged, rerender)
       // Feature 49. LiveKit publishes this for every participant and nothing
       // was listening. It is what turns "the call is bad" into a support
@@ -233,11 +275,17 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
         await r.connect(seat.wsUrl, seat.token);
         // Mic and camera are attempted separately and each failure survivable:
         // joining audio-only because the camera is busy is a normal way to
-        // attend a meeting.
-        try { await r.localParticipant.setMicrophoneEnabled(true); setMicOn(true); }
-        catch (e) { noteBlocked(e, setBlocked); }
-        try { await r.localParticipant.setCameraEnabled(true); setCamOn(true); }
-        catch (e) { noteBlocked(e, setBlocked); }
+        // attend a meeting. The pre-join screen's choices are honoured here —
+        // somebody who said "camera off" joins with it off, not with a camera
+        // that flashes on and then obeys.
+        if (chosen?.mic !== false) {
+          try { await r.localParticipant.setMicrophoneEnabled(true); setMicOn(true); }
+          catch (e) { noteBlocked(e, setBlocked); }
+        }
+        if (chosen?.cam !== false) {
+          try { await r.localParticipant.setCameraEnabled(true); setCamOn(true); }
+          catch (e) { noteBlocked(e, setBlocked); }
+        }
         rerender();
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Could not connect to the meeting.');
@@ -290,6 +338,45 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
     const t = setInterval(() => void tick(), LOBBY_POLL_MS);
     return () => { alive = false; clearInterval(t); };
   }, [lobbyLive, meeting, authedFetch]);
+
+  // Roles, from OUR rows, fetched when a host opens the People panel or the
+  // leave dialog — the two places a role is about to be read or changed.
+  const rolesLive = (panel === 'people' || leaveAsk) && isHost && meeting !== null;
+  useEffect(() => {
+    if (!rolesLive || !meeting) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const r = await connectApi.participants(authedFetch, meeting.id);
+        if (alive) {
+          setRoles(Object.fromEntries(r.participants.map((p) => [p.identity, p.role])));
+        }
+      } catch { /* the panel still works; the badges just stay generic */ }
+    })();
+    return () => { alive = false; };
+  }, [rolesLive, meeting, authedFetch]);
+
+  async function changeRole(identity: string, role: 'cohost' | 'participant') {
+    if (!meeting) return;
+    try {
+      await connectApi.setRole(authedFetch, meeting.id, identity, role);
+      setRoles((r) => ({ ...r, [identity]: role }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not change their role.');
+    }
+  }
+
+  async function changeSharePolicy(next: SharePolicy) {
+    if (!meeting) return;
+    const previous = sharePolicy;
+    setSharePolicy(next);   // optimistic: the select should not lag its click
+    try {
+      await connectApi.update(authedFetch, meeting.id, { sharePolicy: next });
+    } catch (e) {
+      setSharePolicy(previous);
+      setError(e instanceof Error ? e.message : 'Could not change who may share.');
+    }
+  }
 
   async function decide(entry: LobbyEntry, admit: boolean) {
     if (!meeting) return;
@@ -627,7 +714,18 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
       await r.localParticipant.setScreenShareEnabled(!sharing, { audio: true });
       setSharing(!sharing);
     }
-    catch { setSharing(false); }  // cancelling the picker throws; that is a decision, not a fault
+    catch (e) {
+      setSharing(false);
+      // Cancelling the browser's picker throws NotAllowedError — a decision,
+      // not a fault, and it gets no banner. A refusal from the SERVER is a
+      // different thing: the share policy said no, and a guest (who cannot
+      // read the policy) deserves the reason in words rather than a button
+      // that silently does nothing.
+      if (e instanceof Error && e.name !== 'NotAllowedError'
+          && /permission|insufficient|not allowed/i.test(e.message)) {
+        setError('The host has limited who can share their screen in this meeting.');
+      }
+    }
   }
   function toggleHand() {
     const r = roomRef.current;
@@ -694,7 +792,52 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
     setPanel(panel === k ? null : k);
     if (k === 'chat') setUnread(0);
   }
-  function leave() { void roomRef.current?.disconnect(); setConnState('over'); }
+  function leave() {
+    // The HOST does not get to leave by accident. Their leaving is a decision
+    // about everybody else's meeting — end it, or hand it over — and the
+    // dialog is where that decision is made. A cohost or participant leaving
+    // decides nothing, so they just leave. myRole is read from OUR meeting
+    // row, not from anything the client could edit; the server would refuse
+    // a fake host's /end anyway — this is UX, not the control.
+    if (meeting?.myRole === 'host' && connState !== 'over') {
+      setLeaveAsk(true);
+      return;
+    }
+    void roomRef.current?.disconnect();
+    setConnState('over');
+  }
+
+  function justLeave() {
+    setLeaveAsk(false);
+    void roomRef.current?.disconnect();
+    setConnState('over');
+  }
+
+  async function endForEveryone() {
+    if (!meeting) { justLeave(); return; }
+    setLeaveBusy(true);
+    try {
+      await connectApi.end(authedFetch, meeting.id);
+      justLeave();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not end the meeting.');
+      setLeaveBusy(false);
+    }
+  }
+
+  async function handOverAndLeave() {
+    if (!meeting || handover.length === 0) return;
+    setLeaveBusy(true);
+    try {
+      // Transfer FIRST, leave after it resolves: if this fails the meeting
+      // still has no other host, and leaving anyway would orphan it.
+      await connectApi.transferHost(authedFetch, meeting.id, handover);
+      justLeave();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not hand the meeting over.');
+      setLeaveBusy(false);
+    }
+  }
 
   // ---------------------------------------------------------------------
   if (connState === 'over') {
@@ -739,6 +882,22 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
   const others = presenting
     ? participants
     : (view === 'speaker' ? participants.filter((p) => p !== speaker) : []);
+
+  // Who could take the meeting over: signed-in people other than you. A guest
+  // cannot host — every host control keys on a user account they do not have.
+  const eligibleHosts = participants.filter(
+    (p) => p !== room?.localParticipant && p.identity.startsWith('user:'));
+
+  // What the SHARE BUTTON should say, from the policy and OUR role. This is
+  // display logic only — the token and UpdateParticipant are the enforcement,
+  // so a client that edits this away gets a refusal from the server instead
+  // of a hidden button. Guests have a null meeting and keep the button; if
+  // the policy stops them the SDK's refusal is turned into a sentence in
+  // toggleShare above.
+  const mayShare = meeting === null
+    || sharePolicy === 'everyone'
+    || (sharePolicy === 'cohost' && (meeting.myRole === 'host' || meeting.myRole === 'cohost'))
+    || (sharePolicy === 'host' && meeting.myRole === 'host');
 
 
   return (
@@ -846,7 +1005,11 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
           </button>
 
           <button type="button" className={`cx-btn ${sharing ? 'is-on' : ''}`}
-                  onClick={() => void toggleShare()} aria-pressed={sharing} title="Share your screen">
+                  onClick={() => void toggleShare()} aria-pressed={sharing}
+                  disabled={!mayShare && !sharing}
+                  title={mayShare || sharing
+                    ? 'Share your screen'
+                    : 'The host has limited who can share in this meeting'}>
             <i className="ri-computer-line" />
             {sharing ? 'Stop' : 'Share'}
           </button>
@@ -937,6 +1100,67 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
           </button>
         </div>
 
+        {/* The host deciding what their leaving means. The two answers the
+            brief names — end it for everyone, or hand it to somebody — plus
+            the honest third case: a room with nobody who CAN host, where
+            leaving-with-it-running is stated in words rather than implied. */}
+        {leaveAsk && (
+          <div className="cx-modal-back" role="dialog" aria-modal="true"
+               aria-label="Leaving the meeting">
+            <div className="cx-modal">
+              <h2>You are the host</h2>
+              <p className="cx-sub" style={{ margin: '0 0 4px' }}>
+                Decide what happens to the meeting before you go.
+              </p>
+
+              <button type="button" className="cx-choice cx-choice--bad"
+                      disabled={leaveBusy} onClick={() => void endForEveryone()}>
+                <strong>End the meeting for everyone</strong>
+                <div className="cx-sub">Everybody is disconnected. Notes and minutes follow.</div>
+              </button>
+
+              {eligibleHosts.length > 0 ? (
+                <>
+                  <div style={{ marginTop: 14 }}>
+                    <label className="cx-label" htmlFor="cx-handover">Hand the meeting to</label>
+                    <select id="cx-handover" className="cx-field" value={handover}
+                            onChange={(e) => setHandover(e.target.value)}>
+                      <option value="">Choose someone…</option>
+                      {eligibleHosts.map((p) => (
+                        <option key={p.identity} value={p.identity}>
+                          {(p.name && p.name.length > 0 ? p.name : p.identity)
+                            + (roles[p.identity] === 'cohost' ? ' (co-host)' : '')}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button type="button" className="cx-choice"
+                          disabled={leaveBusy || handover.length === 0}
+                          onClick={() => void handOverAndLeave()}>
+                    <strong>Leave, and they host</strong>
+                    <div className="cx-sub">You become a co-host; the meeting carries on.</div>
+                  </button>
+                </>
+              ) : (
+                <button type="button" className="cx-choice" disabled={leaveBusy}
+                        onClick={justLeave}>
+                  <strong>Leave with the meeting running</strong>
+                  <div className="cx-sub">
+                    Everyone else here is a guest, so nobody can take over as host.
+                    The room stays open until it empties or you end it from the
+                    meeting page.
+                  </div>
+                </button>
+              )}
+
+              <button type="button" className="cx-choice" disabled={leaveBusy}
+                      onClick={() => setLeaveAsk(false)}>
+                Stay in the meeting
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Somebody at the door, over the video. A request that only lives in a
             panel is a person left standing outside. */}
         {knocking.length > 0 && (
@@ -970,6 +1194,20 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
 
         {panel === 'people' && (
           <Panel title={`People (${participants.length})`} onClose={() => setPanel(null)}>
+            {isHost && meeting && (
+              <div style={{ marginBottom: 14 }}>
+                <label className="cx-label" htmlFor="cx-share-policy">Who can share their screen</label>
+                <select id="cx-share-policy" className="cx-field" value={sharePolicy}
+                        onChange={(e) => void changeSharePolicy(e.target.value as SharePolicy)}>
+                  <option value="everyone">Everyone</option>
+                  <option value="cohost">Only the host and co-hosts</option>
+                  <option value="host">Only the host</option>
+                </select>
+                <div className="cx-sub" style={{ marginTop: 4 }}>
+                  Applies to everyone already here, immediately.
+                </div>
+              </div>
+            )}
             {isHost && knocking.length > 0 && (
               <>
                 <div className="cx-sub" style={{ marginBottom: 6 }}>WAITING</div>
@@ -999,6 +1237,13 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
               const nm = p.name && p.name.length > 0 ? p.name : p.identity;
               const muted = p.getTrackPublication(Track.Source.Microphone)?.isMuted !== false;
               const up = hands[p.identity] === true;
+              const role = roles[p.identity];
+              const isSharing = p.getTrackPublication(Track.Source.ScreenShare)?.videoTrack !== undefined;
+              // Only a signed-in person can hold controls — the same rule the
+              // server enforces — and only the HOST hands roles out.
+              const roleable = meeting?.myRole === 'host'
+                && p !== room?.localParticipant
+                && p.identity.startsWith('user:');
               return (
                 <div className="cx-row" key={p.identity}>
                   <span className="cx-av">{initialOf(nm)}</span>
@@ -1010,11 +1255,31 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
                     {/* 'Speaking' used to show for anybody merely UNMUTED, so a
                         silent room read as everybody talking at once. */}
                     <div className="cx-sub">
+                      {role === 'host' ? 'Host · ' : role === 'cohost' ? 'Co-host · ' : ''}
                       {muted ? 'Muted' : p.isSpeaking ? 'Speaking' : 'Unmuted'}
+                      {isSharing ? ' · Sharing' : ''}
                     </div>
                   </div>
                   {isHost && meeting && p !== room?.localParticipant && (
                     <>
+                      {roleable && role !== 'host' && (
+                        <button type="button" className="cx-pill"
+                                title={role === 'cohost'
+                                  ? 'Take away their co-host controls'
+                                  : 'Let them help run the meeting'}
+                                onClick={() => void changeRole(p.identity,
+                                  role === 'cohost' ? 'participant' : 'cohost')}>
+                          {role === 'cohost' ? 'Demote' : 'Co-host'}
+                        </button>
+                      )}
+                      {isSharing && (
+                        <button type="button" className="cx-pill"
+                                title="Stop their screen share; their camera stays on"
+                                onClick={() => void hostAction(() =>
+                                  connectApi.mute(authedFetch, meeting.id, p.identity, 'screen'))}>
+                          Stop share
+                        </button>
+                      )}
                       <button type="button" className="cx-pill"
                               onClick={() => void hostAction(() =>
                                 connectApi.mute(authedFetch, meeting.id, p.identity))}>Mute</button>
@@ -1027,6 +1292,7 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
                         Camera
                       </button>
                       <button type="button" className="cx-pill cx-pill--bad"
+                              title="Remove them. A removed colleague cannot rejoin this meeting."
                               onClick={() => void hostAction(() =>
                                 connectApi.remove(authedFetch, meeting.id, p.identity))}>Remove</button>
                     </>
