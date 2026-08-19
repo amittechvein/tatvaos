@@ -1,0 +1,100 @@
+diff --git a/apps/api/Modules/Connect/LiveKitRoomClient.cs b/apps/api/Modules/Connect/LiveKitRoomClient.cs
+index c879105..41020ff 100644
+--- a/apps/api/Modules/Connect/LiveKitRoomClient.cs
++++ b/apps/api/Modules/Connect/LiveKitRoomClient.cs
+@@ -202,13 +202,29 @@ public sealed class LiveKitRoomClient(
+             return null;
+         }
+ 
+-        var admin = tokens.MintJoinToken(new LiveKitGrantOptions(
+-            RoomName: ConnectCodes.RoomName(meetingId),
+-            Identity: "tatvaos-api",
+-            DisplayName: "TatvaOS",
+-            CanPublish: false,
+-            CanSubscribe: false,
+-            RoomAdmin: true));
++        // Two different grants, because LiveKit checks two different ones.
++        //
++        // roomAdmin authorises operations on the PEOPLE in a room — mute,
++        // remove, update, list. Room LIFECYCLE — CreateRoom, DeleteRoom,
++        // ListRooms — is checked against roomCreate instead, and a token
++        // carrying only roomAdmin is answered:
++        //
++        //     status 401, "permissions denied", code "unauthenticated"
++        //
++        // which is precisely what "End the meeting for everyone" did, in
++        // production, while every other host control worked. The failure was
++        // invisible from our side: EndAsync saw a null response and answered
++        // 502 with a sentence, and the reason was only ever in LiveKit's log.
++        var lifecycle = method is "DeleteRoom" or "CreateRoom" or "ListRooms";
++        var admin = lifecycle
++            ? tokens.MintRoomLifecycleToken()
++            : tokens.MintJoinToken(new LiveKitGrantOptions(
++                RoomName: ConnectCodes.RoomName(meetingId),
++                Identity: "tatvaos-api",
++                DisplayName: "TatvaOS",
++                CanPublish: false,
++                CanSubscribe: false,
++                RoomAdmin: true));
+ 
+         using var request = new HttpRequestMessage(HttpMethod.Post,
+             $"{tokens.InternalUrl.TrimEnd('/')}/twirp/livekit.RoomService/{method}")
+diff --git a/apps/api/Modules/Connect/LiveKitTokenService.cs b/apps/api/Modules/Connect/LiveKitTokenService.cs
+index f538f02..5373f93 100644
+--- a/apps/api/Modules/Connect/LiveKitTokenService.cs
++++ b/apps/api/Modules/Connect/LiveKitTokenService.cs
+@@ -166,6 +166,36 @@ public sealed class LiveKitTokenService(IConfiguration config, ILogger<LiveKitTo
+     ///  record any meeting on the platform. There is no second control.
+     /// ─────────────────────────────────────────────────────────────────────
+     /// </summary>
++    /// <summary>
++    /// Room lifecycle — the token DeleteRoom actually needs.
++    ///
++    /// roomAdmin authorises operations on the people in a room. Ending the
++    /// room is not one of them: LiveKit checks roomCreate for CreateRoom,
++    /// DeleteRoom and ListRooms, and answers 401 "permissions denied" without
++    /// it. The admin token carried roomAdmin, so mute and remove worked and
++    /// "End the meeting for everyone" never did.
++    ///
++    /// Same containment as MintRecordToken, for the same reason — roomCreate
++    /// is service-wide, not scoped to one room: minted per HTTP call, ten
++    /// minutes, carries nothing else, never returned to a caller.
++    /// </summary>
++    internal string MintRoomLifecycleToken()
++    {
++        if (!IsConfigured)
++            throw new InvalidOperationException("LiveKit is not configured; refusing to mint a token.");
++
++        var now = DateTimeOffset.UtcNow;
++        return Sign(new TokenClaims
++        {
++            Issuer = _options.ApiKey,
++            Subject = "tatvaos-api",
++            Name = "TatvaOS",
++            NotBefore = now.AddSeconds(-10).ToUnixTimeSeconds(),
++            Expires = now.AddMinutes(10).ToUnixTimeSeconds(),
++            Video = new VideoGrant { RoomCreate = true },
++        });
++    }
++
+     internal string MintRecordToken()
+     {
+         if (!IsConfigured)
+@@ -305,6 +335,17 @@ public sealed class LiveKitTokenService(IConfiguration config, ILogger<LiveKitTo
+         // Egress. Nullable for the same reason: absent on every join token
+         // ever minted, present only on the internal record token above.
+         [JsonPropertyName("roomRecord")] public bool? RoomRecord { get; set; }
++        // Room LIFECYCLE — CreateRoom, DeleteRoom, ListRooms. Distinct from
++        // roomAdmin, which covers operations on the people INSIDE a room
++        // (mute, remove, update) and does not authorise deleting one. That
++        // distinction is why "End the meeting for everyone" answered 401
++        // "permissions denied" while mute and remove worked: the admin token
++        // carried roomAdmin and DeleteRoom wanted this.
++        //
++        // Service-wide in LiveKit's model, exactly like roomRecord, so it gets
++        // the same treatment: minted for one internal call, ten minutes, never
++        // handed to a client.
++        [JsonPropertyName("roomCreate")] public bool? RoomCreate { get; set; }
+         // Null = absent = "all sources" in LiveKit's reading, which keeps every
+         // pre-share-policy token exactly as it was. Only ever narrowed, never
+         // widened: the widest this can say is what an absent claim already says.

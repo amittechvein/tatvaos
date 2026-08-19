@@ -222,7 +222,24 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
 
         // jsonb, not text. Npgsql maps a string property to `text` by default,
         // and `text` does not implicitly cast to `jsonb` on INSERT — the write
-        // fails with 42804. Stated once, here, for the six json columns.
+        // fails with 42804. Stated once, here, for the SEVEN json columns.
+        //
+        // It said six, and there were seven. connect.meeting_events.payload is
+        // jsonb in 20260901-connect.sql and was never mapped, so EVERY insert
+        // into that table failed with 42804 from the day the module shipped.
+        // The webhook handler answered 500, LiveKit retried five times and
+        // gave up, and connect.meeting_events stayed empty for the module's
+        // entire life — which meant no attendance, no meeting ever reaching
+        // 'active' or 'ended', and a notes worker reading a table that could
+        // not have a row in it.
+        //
+        // It was invisible because the events the handler IGNORES answer 200
+        // in two milliseconds, so LiveKit's log was full of healthy 200s. The
+        // same trap as the one recorded in CONNECT_HANDOVER.md §5.5, one layer
+        // down. If you add a jsonb column, add it here in the same commit, and
+        // count the list against the schema rather than trusting the comment.
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingEvent>()
+            .Property(e => e.Payload).HasColumnType("jsonb");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectTranscript>()
             .Property(t => t.Segments).HasColumnType("jsonb");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>()
