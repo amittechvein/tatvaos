@@ -363,17 +363,19 @@ app.MapFamilyEndpoints();
 app.MapSpaceEndpoints();
 app.MapSpaceDriveEndpoints();
 app.MapSpaceLinkEndpoints();
+app.MapSpaceThumbnailEndpoints();
 
 // Connect. Meetings live in this monolith; only the MEDIA is a separate
 // container. The guest group and the LiveKit webhook are anonymous and
-// rate-limited — see the header of ConnectGuestEndpoints.cs, and note that
-// docs/CONNECT_BRIEF.md §8 requires Core's line-by-line review of that path
-// before it is deployed.
+// rate-limited - see the header of ConnectGuestEndpoints.cs. Core's
+// line-by-line review of that path is docs/reviews/CONNECT_GUEST_PATH.md
+// (pass, three findings, all closed). Note for the record that it shipped
+// BEFORE that review rather than after, which the brief required.
 app.MapConnectEndpoints();
 app.MapConnectGuestEndpoints();
 app.MapConnectWebhookEndpoints();
 // Recording, transcripts and automatic notes. Signed-in only, and gated
-// three times over — the organisation, the person, and the disk. See the
+// three times over - the organisation, the person, and the disk. See the
 // header of ConnectRecordingEndpoints.cs.
 app.MapConnectRecordingEndpoints();
 
