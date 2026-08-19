@@ -22,9 +22,20 @@
 --  lines: the RETURNS TABLE signature and the RETURNING list. Nothing about
 --  what qualifies as a valid link has moved.
 --
+--  The DROP and the CREATE are wrapped in a transaction. DDL is transactional
+--  in Postgres, so the swap is atomic and there is never an instant when the
+--  function does not exist. That matters more than it first looks: deploy.sh
+--  re-runs every file in this directory on EVERY deploy, so an unwrapped drop
+--  would reopen that window each time rather than once — and a public-link
+--  resolve landing inside it would get a Postgres error instead of the single
+--  404 the contract promises. The grants are inside the transaction too, so
+--  the function is never briefly present but un-executable by tatvaos_app.
+--
 --  Independent of 20260819-space-link-refund.sql; neither depends on the
 --  other, so their relative order does not matter.
 -- ============================================================================
+
+BEGIN;
 
 DROP FUNCTION IF EXISTS space.consume_public_link(text);
 
@@ -53,9 +64,12 @@ AS $$
     RETURNING f.blob_key, f.name, f.mime_type, f.size_bytes, l.id, f.id
 $$;
 
--- Re-granted because DROP took the old grants with it.
+-- Re-granted because DROP took the old grants with it. Inside the same
+-- transaction as the CREATE, so the function is never visible without them.
 REVOKE ALL ON FUNCTION space.consume_public_link(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION space.consume_public_link(text) TO tatvaos_app;
+
+COMMIT;
 
 DO $$
 BEGIN
