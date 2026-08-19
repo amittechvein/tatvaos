@@ -56,6 +56,10 @@ public static class ConnectEndpoints
         g.MapPost("/meetings/{id:guid}/participants/{identity}/mute", MuteAsync);
         g.MapDelete("/meetings/{id:guid}/participants/{identity}", RemoveAsync);
         g.MapPut("/meetings/{id:guid}/participants/{identity}/role", SetRoleAsync);
+        // Handing the meeting itself to somebody else — distinct from /role,
+        // which deliberately refuses 'host'. Two different acts: /role shares
+        // the controls, this one gives them away.
+        g.MapPost("/meetings/{id:guid}/host", TransferHostAsync);
         g.MapPost("/meetings/{id:guid}/end", EndAsync);
     }
 
@@ -65,16 +69,18 @@ public static class ConnectEndpoints
     public sealed record CreateMeetingRequest(
         string? Title, string? Kind,
         DateTimeOffset? ScheduledStart, DateTimeOffset? ScheduledEnd,
-        string? Timezone, string? Password, string? WaitingRoom, bool? AllowGuests);
+        string? Timezone, string? Password, string? WaitingRoom, bool? AllowGuests,
+        bool? AutoRecord, string? SharePolicy);
 
     public sealed record UpdateMeetingRequest(
         string? Title, DateTimeOffset? ScheduledStart, DateTimeOffset? ScheduledEnd,
         string? Timezone, string? Password, string? WaitingRoom,
-        bool? AllowGuests, bool? Locked);
+        bool? AllowGuests, bool? Locked, bool? AutoRecord, string? SharePolicy);
 
     public sealed record JoinRequest(string? Password);
     public sealed record MuteRequest(string? Kind);
     public sealed record RoleRequest(string? Role);
+    public sealed record TransferHostRequest(string? Identity);
 
     private const string PublicBase = "https://connect.tatvaos.com";
 
@@ -95,6 +101,8 @@ public static class ConnectEndpoints
         m.WaitingRoom,
         m.AllowGuests,
         m.Locked,
+        m.AutoRecord,
+        m.SharePolicy,
         m.CreatedByUserId,
         myRole,
         m.CreatedAt,
@@ -269,6 +277,10 @@ public static class ConnectEndpoints
         if (req.Password is { Length: > 0 } p && (p.Length < 4 || p.Length > 100))
             return Results.BadRequest(new { error = "A meeting password is between 4 and 100 characters." });
 
+        var share = (req.SharePolicy ?? ConnectShare.PolicyEveryone).Trim().ToLowerInvariant();
+        if (!ConnectShare.IsValidPolicy(share))
+            return Results.BadRequest(new { error = "Sharing is open to the host, the host and co-hosts, or everyone." });
+
         var meeting = new ConnectMeeting
         {
             TenantId = tenant.TenantId,
@@ -283,6 +295,12 @@ public static class ConnectEndpoints
             PasswordHash = string.IsNullOrEmpty(req.Password) ? null : hasher.Hash(req.Password),
             WaitingRoom = waiting,
             AllowGuests = req.AllowGuests ?? true,
+            // A request, not a bypass — the room_started webhook re-checks the
+            // org's recording flag and the storage gate when the room actually
+            // starts. Accepted here even if recording is off right now, because
+            // "on for the org by Monday's meeting" is a normal sequence.
+            AutoRecord = req.AutoRecord ?? false,
+            SharePolicy = share,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow,
         };
@@ -312,7 +330,7 @@ public static class ConnectEndpoints
 
     private static async Task<IResult> UpdateMeetingAsync(
         Guid id, UpdateMeetingRequest req, AppDbContext db, TenantContext tenant,
-        IPasswordHasher hasher, AuditWriter audit, CancellationToken ct)
+        IPasswordHasher hasher, LiveKitRoomClient rooms, AuditWriter audit, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
         var meeting = await FindAsync(db, id, ct);
@@ -360,12 +378,56 @@ public static class ConnectEndpoints
         var lockChanged = req.Locked is bool l && l != meeting.Locked;
         if (req.Locked is bool lk) meeting.Locked = lk;
 
+        if (req.AutoRecord is bool ar) meeting.AutoRecord = ar;
+
+        var shareChanged = false;
+        if (req.SharePolicy is { } sp)
+        {
+            var share = sp.Trim().ToLowerInvariant();
+            if (!ConnectShare.IsValidPolicy(share))
+                return Results.BadRequest(new { error = "Sharing is open to the host, the host and co-hosts, or everyone." });
+            shareChanged = share != meeting.SharePolicy;
+            meeting.SharePolicy = share;
+        }
+
         meeting.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
 
         if (lockChanged)
             await audit.WriteAsync(meeting.Locked ? "connect.meeting.locked" : "connect.meeting.unlocked",
                 "connect.meeting", meeting.Id.ToString(), ct: ct, productCode: "connect");
+
+        // ── A POLICY CHANGE REACHES THE ROOM, NOT JUST THE NEXT JOINER. ────
+        //
+        // Tokens already minted cannot be recalled, so everyone currently
+        // connected is re-permissioned through UpdateParticipant. Best effort,
+        // after the save: the row is the truth and the next join reads it; a
+        // LiveKit hiccup here costs one participant the live update, and they
+        // pick up the policy on their next token. Roles come from OUR rows,
+        // never from what LiveKit believes.
+        if (shareChanged)
+        {
+            var present = await rooms.TryListParticipantsAsync(id, ct);
+            if (present is { Count: > 0 })
+            {
+                var roles = await db.ConnectParticipants.AsNoTracking()
+                    .Where(p => p.MeetingId == id)
+                    .Select(p => new { p.Identity, p.Role })
+                    .ToListAsync(ct);
+                var roleOf = roles.ToDictionary(r => r.Identity, r => r.Role);
+
+                foreach (var person in present)
+                {
+                    if (person.Identity is not { Length: > 0 } who) continue;
+                    var sources = ConnectShare.SourcesFor(
+                        meeting.SharePolicy, roleOf.GetValueOrDefault(who));
+                    await rooms.SetPublishSourcesAsync(id, who, sources, ct);
+                }
+            }
+            await audit.WriteAsync("connect.meeting.share_policy", "connect.meeting",
+                meeting.Id.ToString(), after: new { meeting.SharePolicy },
+                ct: ct, productCode: "connect");
+        }
 
         return Results.Ok(Shape(meeting, role));
     }
@@ -410,6 +472,20 @@ public static class ConnectEndpoints
 
         var role = await RoleOfAsync(db, id, uid, ct);
         var isHost = role is "host" or "cohost";
+
+        // Removed means removed. Checked before the lock and the password so a
+        // blocked person learns nothing about either. 403 with a plain
+        // sentence, not 404: they were IN this meeting, so its existence is
+        // not a secret from them, and "the link is broken" would send them to
+        // the host asking for a new link that will not work either.
+        if (!isHost)
+        {
+            var blocked = await db.ConnectMeetingBlocks.AsNoTracking()
+                .AnyAsync(x => x.MeetingId == id && x.UserId == uid, ct);
+            if (blocked)
+                return Results.Json(
+                    new { error = "The host removed you from this meeting." }, statusCode: 403);
+        }
 
         // A lock keeps latecomers out; it must not lock the host out of their
         // own meeting.
@@ -457,7 +533,11 @@ public static class ConnectEndpoints
         {
             status = "joined",
             token = tokens.MintJoinToken(new LiveKitGrantOptions(
-                ConnectCodes.RoomName(id), identity, participant.DisplayName, RoomAdmin: isHost)),
+                ConnectCodes.RoomName(id), identity, participant.DisplayName, RoomAdmin: isHost,
+                // The share policy, decided here from the role in OUR row.
+                // null = all sources; ["camera","microphone"] keeps them off
+                // screen share without touching their face or voice.
+                CanPublishSources: ConnectShare.SourcesFor(meeting.SharePolicy, role))),
             wsUrl = tokens.PublicUrl,
             identity,
             role = role ?? "participant",
@@ -519,6 +599,21 @@ public static class ConnectEndpoints
         // must not un-deny someone.
         if (request.Status != "waiting") return Results.NoContent();
 
+        // A removed person cannot be waved back in from the lobby. 409 with a
+        // sentence rather than silently denying: the host clicked Admit and
+        // deserves to know why nothing happened. (Guests carry no user_id and
+        // are not blockable — for them the lobby itself is the control.)
+        if (decision == "admitted" && request.UserId is Guid ruid)
+        {
+            var blocked = await db.ConnectMeetingBlocks.AsNoTracking()
+                .AnyAsync(x => x.MeetingId == id && x.UserId == ruid, ct);
+            if (blocked)
+                return Results.Json(new
+                {
+                    error = "That person was removed from this meeting and cannot rejoin.",
+                }, statusCode: 409);
+        }
+
         request.Status = decision;
         request.DecidedByUserId = uid;
         request.DecidedAt = DateTimeOffset.UtcNow;
@@ -540,9 +635,12 @@ public static class ConnectEndpoints
         var guard = await HostGuardAsync(db, tenant, id, identity, ct);
         if (guard is not null) return guard;
 
+        // 'screen' stops a share without touching the person's camera — the
+        // host control the share policy does not cover: policy says who MAY
+        // share, this says "not this, not now".
         var kind = (req?.Kind ?? "audio").Trim().ToLowerInvariant();
-        if (kind is not ("audio" or "video"))
-            return Results.BadRequest(new { error = "Mute either audio or video." });
+        if (kind is not ("audio" or "video" or "screen"))
+            return Results.BadRequest(new { error = "Mute audio, video, or a screen share." });
 
         if (!await rooms.MuteAsync(id, identity, kind, ct))
             return Results.Problem("The media server did not accept that.", statusCode: 502);
@@ -569,6 +667,35 @@ public static class ConnectEndpoints
             .Where(r => r.MeetingId == id && r.Status == "admitted")
             .ToListAsync(ct);
         foreach (var r in pending) r.Status = "cancelled";
+
+        // And removal must survive a REJOIN. The block row is what the join
+        // path and the admit path read. Keyed on user_id — the only stable
+        // handle; a guest's identity is minted fresh at every door, so for
+        // guests the waiting room is the control and this row is audit only.
+        // The host and any cohost are not blockable: /role and /host are how
+        // their standing changes, not the Remove button.
+        var removed = await db.ConnectParticipants.AsNoTracking()
+            .Where(p => p.MeetingId == id && p.Identity == identity)
+            .FirstOrDefaultAsync(ct);
+        if (removed is not null && removed.Role == "participant")
+        {
+            var already = removed.UserId is Guid ruid
+                && await db.ConnectMeetingBlocks.AsNoTracking()
+                    .AnyAsync(x => x.MeetingId == id && x.UserId == ruid, ct);
+            if (!already)
+            {
+                db.ConnectMeetingBlocks.Add(new ConnectMeetingBlock
+                {
+                    Id = Guid.NewGuid(),
+                    MeetingId = id,
+                    UserId = removed.UserId,
+                    Identity = removed.Identity,
+                    DisplayName = removed.DisplayName,
+                    BlockedByUserId = tenant.UserId,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                });
+            }
+        }
         await db.SaveChangesAsync(ct);
 
         await audit.WriteAsync("connect.participant.removed", "connect.meeting", id.ToString(),
@@ -578,10 +705,11 @@ public static class ConnectEndpoints
 
     private static async Task<IResult> SetRoleAsync(
         Guid id, string identity, RoleRequest req, AppDbContext db, TenantContext tenant,
-        AuditWriter audit, CancellationToken ct)
+        LiveKitRoomClient rooms, AuditWriter audit, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
-        if (await FindAsync(db, id, ct) is null) return NotFound();
+        var meeting = await FindAsync(db, id, ct);
+        if (meeting is null) return NotFound();
 
         // Promotion is the HOST's alone. A cohost who could appoint cohosts
         // could hand the meeting away.
@@ -597,14 +725,78 @@ public static class ConnectEndpoints
         if (person is null) return NotFound();
         if (person.Role == "host")
             return Results.BadRequest(new { error = "The host cannot be demoted." });
+        // A guest cannot hold controls: every control keys on user_id, and a
+        // guest has none — a cohost who cannot actually call any host endpoint
+        // is a title, not a role.
+        if (role == "cohost" && person.UserId is null)
+            return Results.BadRequest(new { error = "A guest cannot be a co-host." });
 
         person.Role = role;
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("connect.participant.role_changed", "connect.meeting", id.ToString(),
             after: new { identity, role }, ct: ct, productCode: "connect");
 
-        // The change takes effect on their next token; LiveKit's roomAdmin
-        // grant is a client convenience, and every control is enforced here.
+        // Server-side controls read the row and are correct immediately. The
+        // one grant a role change moves NOW is publishing: under a 'cohost'
+        // share policy, promotion should let them share this minute, not on
+        // their next token. Best effort — the row is already the truth.
+        await rooms.SetPublishSourcesAsync(id, identity,
+            ConnectShare.SourcesFor(meeting.SharePolicy, role), ct);
+
+        return Results.NoContent();
+    }
+
+    /// <summary>
+    /// Hand the meeting to somebody else. This is the endpoint behind
+    /// "Leave and assign a new host" — the dialog's other button is /end.
+    ///
+    /// Host only; the target must be a SIGNED-IN participant of this meeting.
+    /// The old host becomes a cohost rather than a participant: they were
+    /// trusted with the room a moment ago, and stripping every control on the
+    /// way out serves nobody — the new host can demote them if it matters.
+    /// </summary>
+    private static async Task<IResult> TransferHostAsync(
+        Guid id, TransferHostRequest req, AppDbContext db, TenantContext tenant,
+        LiveKitRoomClient rooms, AuditWriter audit, CancellationToken ct)
+    {
+        if (tenant.UserId is not Guid uid) return Results.Unauthorized();
+        var meeting = await FindAsync(db, id, ct);
+        if (meeting is null) return NotFound();
+        if (await RoleOfAsync(db, id, uid, ct) != "host") return Forbidden();
+
+        var identity = (req.Identity ?? "").Trim();
+        if (identity.Length == 0)
+            return Results.BadRequest(new { error = "Say who the new host is." });
+
+        var target = await db.ConnectParticipants
+            .Where(p => p.MeetingId == id && p.Identity == identity)
+            .FirstOrDefaultAsync(ct);
+        if (target is null) return NotFound();
+        if (target.UserId is null)
+            return Results.BadRequest(new { error = "A guest cannot host a meeting." });
+        if (target.UserId == uid)
+            return Results.BadRequest(new { error = "You are already the host." });
+
+        var me = await db.ConnectParticipants
+            .Where(p => p.MeetingId == id && p.UserId == uid)
+            .FirstOrDefaultAsync(ct);
+        if (me is null) return Forbidden();
+
+        // Both rows in ONE SaveChanges: a meeting with two hosts or none is
+        // not a state that may exist between two commits.
+        target.Role = "host";
+        me.Role = "cohost";
+        await db.SaveChangesAsync(ct);
+
+        await audit.WriteAsync("connect.meeting.host_transferred", "connect.meeting", id.ToString(),
+            after: new { from = me.Identity, to = target.Identity }, ct: ct, productCode: "connect");
+
+        // Live publish grants for both, same best-effort rule as SetRoleAsync.
+        await rooms.SetPublishSourcesAsync(id, target.Identity,
+            ConnectShare.SourcesFor(meeting.SharePolicy, "host"), ct);
+        await rooms.SetPublishSourcesAsync(id, me.Identity,
+            ConnectShare.SourcesFor(meeting.SharePolicy, "cohost"), ct);
+
         return Results.NoContent();
     }
 

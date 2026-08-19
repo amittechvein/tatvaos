@@ -225,6 +225,54 @@ if [ "${stuck:-0}" -gt 0 ]; then
 fi
 
 echo
+echo "== host controls (20260905) =="
+# The 20260904 lesson, applied on the day rather than a day late: the newest
+# migration gets its section BEFORE it ships, so a green run can never mean
+# "everything I was told about last time is fine".
+n=$(q "SELECT count(*) FROM information_schema.columns
+        WHERE table_schema='connect' AND table_name='meetings'
+          AND column_name IN ('auto_record','share_policy')")
+[ "${n:-0}" -eq 2 ] && ok "meetings carries auto_record and share_policy" \
+                    || bad "expected 2 host-control columns on meetings, found ${n:-0} — 20260905 has not applied"
+
+n=$(q "SELECT count(*) FROM pg_constraint
+        WHERE conname='meetings_share_policy_check'
+          AND conrelid='connect.meetings'::regclass")
+[ "${n:-0}" -eq 1 ] && ok "share_policy has its CHECK constraint" \
+                    || bad "share_policy is unconstrained — a typo'd policy would silently mean 'everyone'"
+
+n=$(q "SELECT count(*) FROM information_schema.tables
+        WHERE table_schema='connect' AND table_name='meeting_blocks'")
+if [ "${n:-0}" -ne 1 ]; then
+    bad "connect.meeting_blocks is missing — Remove does not survive a rejoin"
+else
+    ok "connect.meeting_blocks"
+
+    n=$(q "SELECT count(*) FROM pg_class c JOIN pg_namespace ns ON ns.oid=c.relnamespace
+            WHERE ns.nspname='connect' AND c.relname='meeting_blocks'
+              AND c.relrowsecurity AND c.relforcerowsecurity")
+    [ "${n:-0}" -eq 1 ] && ok "meeting_blocks has ENABLE + FORCE row level security" \
+                        || bad "meeting_blocks RLS is not forced — readable by its owner"
+
+    n=$(q "SELECT count(*) FROM pg_policies
+            WHERE schemaname='connect' AND tablename='meeting_blocks'
+              AND qual ILIKE '%meetings%'")
+    [ "${n:-0}" -ge 1 ] && ok "its policy scopes through connect.meetings" \
+                        || bad "meeting_blocks has no meeting-scoped policy"
+
+    n=$(q "SELECT count(*) FROM pg_indexes
+            WHERE schemaname='connect' AND tablename='meeting_blocks'
+              AND indexdef ILIKE '%UNIQUE%' AND indexdef ILIKE '%user_id%'")
+    [ "${n:-0}" -ge 1 ] && ok "the (meeting_id, user_id) index is UNIQUE — re-removing is a no-op" \
+                        || bad "no unique index on meeting_blocks.user_id"
+fi
+
+# A number to look at, not an assertion: rooms carrying the auto-record flag.
+autorec=$(q "SELECT count(*) FROM connect.meetings WHERE auto_record" 2>/dev/null)
+blocks=$(q "SELECT count(*) FROM connect.meeting_blocks" 2>/dev/null)
+echo "  ..    ${autorec:-0} meeting(s) set to auto-record, ${blocks:-0} block row(s)"
+
+echo
 echo "== the org pool, not the person =="
 # Recordings must NOT appear in core.user_storage_usage. Charging the host
 # would move a colleague's remaining space when somebody else records.

@@ -241,6 +241,52 @@ builder.Services.AddRateLimiter(o =>
             });
     });
 
+    // F1 from Core's guest-path review (docs/reviews/CONNECT_GUEST_PATH.md):
+    // /wait/{waitToken} polls every ~2 seconds, so a per-IP window rate-limits
+    // a shared office NAT off its own admission — three waiting guests behind
+    // one firewall exceed 60/min while doing exactly what the page told them
+    // to do. The wait TOKEN is the better key: a bearer credential unique to
+    // one waiting person, so it caps the individual poller, cannot be shared
+    // by an office, and cannot be inflated by a stranger who does not hold it.
+    //
+    // Keyed by the token's SHA-256, not its plaintext: partition keys sit in
+    // memory and can surface in diagnostics, and the plaintext of a bearer
+    // credential is stored nowhere on this platform — ConnectCodes' rule.
+    //
+    // A request with NO well-formed token falls back to the per-IP key, or a
+    // scanner spraying garbage would get a fresh bucket per request. (A
+    // well-formed RANDOM token does get its own bucket; each such probe costs
+    // one indexed hash lookup answering the one failure sentence, against a
+    // 128-bit token space. Bounded by the shape check, that is accepted.)
+    o.AddPolicy("connect-wait", httpContext =>
+    {
+        var token = httpContext.GetRouteValue("waitToken")?.ToString();
+        if (TatvaOS.Api.Modules.Connect.ConnectCodes.IsWellFormed(token))
+        {
+            return RateLimitPartition.GetFixedWindowLimiter(
+                $"connect-wait:tok:{TatvaOS.Api.Modules.Connect.ConnectCodes.HashToken(token!)}",
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    // The page's own cadence is ~30/minute; the rest is
+                    // headroom for retries, never a second poller.
+                    PermitLimit = 45,
+                    Window = TimeSpan.FromMinutes(1),
+                    QueueLimit = 0,
+                });
+        }
+        var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();
+        var client = string.IsNullOrEmpty(xff)
+            ? httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"
+            : xff.Split(',')[^1].Trim();
+        return RateLimitPartition.GetFixedWindowLimiter($"connect-wait:ip:{client}",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 60,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            });
+    });
+
     o.AddPolicy("space-public-links", httpContext =>
     {
         var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();

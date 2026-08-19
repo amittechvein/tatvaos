@@ -62,7 +62,14 @@ public sealed record LiveKitGrantOptions(
     string DisplayName,
     bool CanPublish = true,
     bool CanSubscribe = true,
-    bool RoomAdmin = false);
+    bool RoomAdmin = false,
+    // NULL means the claim is ABSENT, which LiveKit reads as "all sources" —
+    // today's behaviour for every caller that does not pass one. A non-null
+    // array narrows publishing to exactly those sources; the share policy uses
+    // ["camera","microphone"] to keep a participant off screen share while
+    // leaving their face and voice alone. Spellings are LiveKit's TrackSource
+    // strings (lower_snake); see ConnectShare.
+    string[]? CanPublishSources = null);
 
 public sealed class LiveKitTokenService(IConfiguration config, ILogger<LiveKitTokenService> log)
 {
@@ -116,6 +123,7 @@ public sealed class LiveKitTokenService(IConfiguration config, ILogger<LiveKitTo
             CanSubscribe = grant.CanSubscribe,
             CanPublishData = true,          // in-meeting chat rides the data channel
             RoomAdmin = grant.RoomAdmin ? true : null,
+            CanPublishSources = grant.CanPublishSources,
         };
 
         var claims = new TokenClaims
@@ -297,5 +305,9 @@ public sealed class LiveKitTokenService(IConfiguration config, ILogger<LiveKitTo
         // Egress. Nullable for the same reason: absent on every join token
         // ever minted, present only on the internal record token above.
         [JsonPropertyName("roomRecord")] public bool? RoomRecord { get; set; }
+        // Null = absent = "all sources" in LiveKit's reading, which keeps every
+        // pre-share-policy token exactly as it was. Only ever narrowed, never
+        // widened: the widest this can say is what an absent claim already says.
+        [JsonPropertyName("canPublishSources")] public string[]? CanPublishSources { get; set; }
     }
 }

@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { Button, Card } from '@/components/ui/Kit';
-import { connectApi, type WaitingRoom } from '@/lib/connect';
+import { connectApi, type SharePolicy, type WaitingRoom } from '@/lib/connect';
 
 // ============================================================================
 //  Schedule a meeting
@@ -50,6 +50,8 @@ export default function NewMeetingPage() {
   const [waitingRoom, setWaitingRoom] = useState<WaitingRoom>('guests');
   const [allowGuests, setAllowGuests] = useState(true);
   const [password, setPassword] = useState('');
+  const [autoRecord, setAutoRecord] = useState(false);
+  const [sharePolicy, setSharePolicy] = useState<SharePolicy>('everyone');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -82,6 +84,8 @@ export default function NewMeetingPage() {
         waitingRoom,
         allowGuests,
         password: password.length > 0 ? password : null,
+        autoRecord,
+        sharePolicy,
       });
       router.push(`/connect/meetings/${m.id}`);
     } catch (err) {
@@ -150,6 +154,32 @@ export default function NewMeetingPage() {
                 </label>
                 <div className="form-text">
                   Turn this off and only signed-in colleagues can get in, whoever has the link.
+                </div>
+              </div>
+
+              <div className="mb-3">
+                <label className="form-label" htmlFor="share">Who can share their screen</label>
+                <select id="share" className="form-select" value={sharePolicy}
+                        onChange={(e) => setSharePolicy(e.target.value as SharePolicy)}>
+                  <option value="everyone">Everyone</option>
+                  <option value="cohost">Only the host and co-hosts</option>
+                  <option value="host">Only the host</option>
+                </select>
+                <div className="form-text">
+                  You can change this during the meeting from the People panel.
+                </div>
+              </div>
+
+              <div className="form-check mb-3">
+                <input className="form-check-input" type="checkbox" id="autorec"
+                       checked={autoRecord} onChange={(e) => setAutoRecord(e.target.checked)} />
+                <label className="form-check-label" htmlFor="autorec">
+                  Start recording automatically when the meeting starts
+                </label>
+                <div className="form-text">
+                  Audio recording, started when the first person joins. It still needs
+                  recording to be switched on for your organisation — if it is off,
+                  the meeting simply runs unrecorded.
                 </div>
               </div>
 
