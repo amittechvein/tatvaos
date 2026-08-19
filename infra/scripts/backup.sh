@@ -123,6 +123,32 @@ step "DKIM keys"
 backup_volume tatvaos_dkimkeys dkimkeys
 
 # ---------------------------------------------------------------------------
+step "Meeting recordings"
+#
+#  Connect's recordings live in tatvaos_connectrec and were in no backup at
+#  all until this was written — a new volume arrived with a new product and
+#  nothing swept it up.
+#
+#  They are NOT backed up by default, and that is a judgement rather than an
+#  oversight: nothing expires a recording yet, so this volume grows without
+#  limit, and a nightly tar of unbounded video would eventually take longer
+#  than a night and fill the disk it is protecting against. Retention is
+#  decided (7/30/90/180/365, default 90 - docs/CONNECT_DECISIONS.md) but not
+#  built. Turn this on once it is.
+#
+#  What it does unconditionally is REPORT THE SIZE, every night, so the gap
+#  is visible rather than silently absent. A backup that quietly covers less
+#  than you think is the failure mode this whole script exists to avoid.
+# ---------------------------------------------------------------------------
+rec_size=$(docker run --rm -v tatvaos_connectrec:/v alpine du -sh /v 2>/dev/null | cut -f1)
+if [ "${BACKUP_RECORDINGS:-}" = "1" ]; then
+    backup_volume tatvaos_connectrec connectrec
+else
+    note "recordings NOT backed up (${rec_size:-unknown} in tatvaos_connectrec)."
+    note "Set BACKUP_RECORDINGS=1 once retention is enforced."
+fi
+
+# ---------------------------------------------------------------------------
 step "Environment"
 # The one file that is deliberately never committed, and without which none of
 # the above can be brought back up.
