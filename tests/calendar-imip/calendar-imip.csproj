@@ -1,0 +1,59 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ═══════════════════════════════════════════════════════════════════════
+     THE iMIP TESTS.
+
+     Calendar invitations have to be right the FIRST time they reach a real
+     recipient, because the failure mode is silent and asymmetric: Gmail is
+     forgiving and Outlook is not, so a payload that renders buttons here can
+     be rejected outright there, and nobody finds out until a customer says
+     "the invitation didn't come through" about a meeting they missed.
+
+     Three things this project exists to pin, all of them cheap to get wrong
+     and invisible when you do:
+
+       FOLDING IS OCTETS, NOT CHARACTERS. RFC 5545 caps a line at 75 octets.
+       Devanagari is three bytes a character, so a perfectly ordinary Hindi
+       meeting title breaks the object — for our customers, not for us.
+
+       TEXT ESCAPING is backslash, semicolon, comma, newline — and NOT the
+       colon. An unescaped comma truncates a LOCATION at the comma, because
+       comma is the list separator.
+
+       CRLF EVERYWHERE. Bare LF is accepted by Gmail and rejected by
+       Exchange: it works in testing and fails at the customer who bought
+       the product for Outlook.
+
+     Same two choices as tests/connect-wire, for the same reasons:
+
+     1. Imip.cs and CalendarEntities.cs are LINKED, not copied. These tests
+        compile the exact files that run in production; a copy drifts and
+        goes on passing against code nobody ships.
+
+     2. No test framework. A console app with an exit code needs no restore,
+        so it runs on a box with no network, in CI and on a laptop
+        identically. `dotnet run` and read the last line.
+    ═══════════════════════════════════════════════════════════════════════
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TatvaOS.Tests.CalendarImip</RootNamespace>
+    <AssemblyName>calendar-imip-test</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The production files themselves. Not copies. -->
+    <Compile Include="../../apps/api/Modules/Calendar/Imip.cs" Link="Imip.cs" />
+    <Compile Include="../../apps/api/Shared/Data/CalendarEntities.cs" Link="CalendarEntities.cs" />
+  </ItemGroup>
+
+</Project>

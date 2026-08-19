@@ -206,6 +206,19 @@ builder.Services.AddHostedService<VacationReplyWorker>();
 // scheduling in-memory timers that a deploy would silently swallow.
 builder.Services.AddHostedService<CalendarReminderWorker>();
 
+// iMIP: what Mail's ingest calls when a delivered message carries a calendar
+// reply (docs/MAIL_IMIP_SEAM.md §4). Scoped, because it runs inside the
+// ingest worker's own scope and reads its TenantContext and DbContext.
+//
+// Registered NOW, in the same commit as the class, rather than when Mail's
+// patch starts calling it. An unregistered service is not a compile error in
+// this codebase — the minimal-API binder infers it as a request body, and on
+// a GET that throws while the endpoint graph is built, before any request,
+// taking the whole API down. That happened on 19 August. Register when you
+// write, not when you wire.
+builder.Services.AddScoped<TatvaOS.Api.Modules.Calendar.ICalendarImipSink,
+                           TatvaOS.Api.Modules.Calendar.CalendarImipSink>();
+
 // Connect's recordings become transcripts, and transcripts become notes.
 // Hosted service, not scoped — it creates its own scope per meeting because
 // tenant context must change between them, and it returns immediately when
