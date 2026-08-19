@@ -87,6 +87,13 @@ public sealed class ConnectNotesWorker(
                 {
                     await RepairStuckAsync(stopping);
                     await TranscribeAsync(stopping);
+                    // Retention, AFTER repair: a recording the repair pass is
+                    // about to mark ready must not be aged out by a sweep
+                    // that saw it mid-flight. expired_recordings only offers
+                    // 'ready' rows, so the ordering is belt and braces — but
+                    // braces are cheap and the failure is a customer's
+                    // recording.
+                    await SweepExpiredRecordingsAsync(stopping);
                 }
                 await WriteNotesAsync(stopping);
 
@@ -172,12 +179,124 @@ public sealed class ConnectNotesWorker(
             if (state.Error is { Length: > 0 } err) recording.Error = err;
             recording.UpdatedAt = DateTimeOffset.UtcNow;
 
+            // The repaired recording may have landed AFTER notes were written
+            // believing there was none — same mirror as the webhook path.
+            if (next == "ready")
+            {
+                var staleNotes = await db.ConnectMeetingNotes
+                    .Where(n => n.MeetingId == recording.MeetingId
+                             && n.Status == "ready" && !n.HadRecording)
+                    .FirstOrDefaultAsync(ct);
+                if (staleNotes is not null)
+                {
+                    staleNotes.Status = "queued";
+                    staleNotes.UpdatedAt = DateTimeOffset.UtcNow;
+                }
+            }
+
             await db.SaveChangesAsync(ct);
             await db.Database.ExecuteSqlInterpolatedAsync(
                 $"SELECT connect.reconcile_recording_storage({tenantId})", ct);
 
             log.LogInformation(
                 "Repaired recording {Recording} from LiveKit: now {Status}", recordingId, next);
+        }
+    }
+
+    // ==================================================================
+    //  1b. Retention — the sweep that makes the 90-day promise true.
+    //
+    //  Decided 19 August; spec in docs/CONNECT_DECISIONS.md §1. The
+    //  candidates come from connect.expired_recordings — SECURITY DEFINER,
+    //  ids only, 'ready' rows past the org's retention with no keep_until_at
+    //  exemption. The deletion itself mirrors the host's own Delete button,
+    //  deliberately: file first, row to 'deleted' only if the file actually
+    //  went, storage reconciled, audit row written. A retention policy that
+    //  frees no disk is decoration, and one that cannot say where a
+    //  recording went is a shrug.
+    //
+    //  WHAT GOES AND WHAT STAYS — one ruling made here, flagged for Amit:
+    //  the recording's TRANSCRIPT rows go with it (they are the words,
+    //  verbatim — keeping them would defeat the reason an organisation
+    //  shortens retention), but the NOTES stay. Notes are the meeting's
+    //  record — summary, decisions, attendance — and they were already
+    //  emailed to the room; deleting minutes because their audio aged out
+    //  would surprise everyone who filed them. The spec's sentence "the
+    //  transcript and notes follow the same rule" is read here as "follow
+    //  the recording's lifecycle rule" for the transcript and NOT for the
+    //  notes; if Amit means notes too, this method is the one place to
+    //  change.
+    //
+    //  BOUNDED PER PASS. Ten per tick, so a first run against a year of
+    //  recordings drains over hours rather than saturating the disk queue
+    //  on a box that is also delivering mail — the spec's own requirement.
+    // ==================================================================
+    private const int SweepBatch = 10;
+
+    private async Task SweepExpiredRecordingsAsync(CancellationToken ct)
+    {
+        using var scope = scopes.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var tenant = scope.ServiceProvider.GetRequiredService<TenantContext>();
+        var audit = scope.ServiceProvider.GetRequiredService<TatvaOS.Api.Modules.Admin.AuditWriter>();
+
+        var expired = await db.Database.SqlQuery<Guid>($"""
+            SELECT recording_id AS "Value" FROM connect.expired_recordings({SweepBatch})
+            """).ToListAsync(ct);
+
+        foreach (var recordingId in expired)
+        {
+            if (await TenantOfRecordingAsync(db, recordingId, ct) is not Guid tenantId) continue;
+
+            tenant.EnterAnonymousScope(tenantId, "system");
+            await db.SyncTenantAsync(ct);          // and push it into the DB session
+
+            var recording = await db.ConnectRecordings
+                .Where(r => r.Id == recordingId && r.Status == "ready")
+                .FirstOrDefaultAsync(ct);
+            if (recording is null) continue;
+
+            // The file first, and a failure leaves the ROW alone: 'deleted'
+            // with bytes still on disk is a lie that becomes a wrong bill —
+            // the same rule as the host's Delete button.
+            if (Modules.Connect.Endpoints.ConnectRecordingEndpoints
+                    .ResolvePath(options, recording.FileName) is { } path)
+            {
+                try { if (File.Exists(path)) File.Delete(path); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    log.LogError(ex,
+                        "Retention could not delete recording file {File}; row left as ready",
+                        recording.FileName);
+                    continue;
+                }
+            }
+
+            recording.Status = "deleted";
+            recording.SizeBytes = 0;
+            recording.FileName = null;
+            recording.UpdatedAt = DateTimeOffset.UtcNow;
+
+            // The verbatim words go with the audio; the notes stay. See the
+            // ruling in this method's header.
+            var transcripts = await db.ConnectTranscripts
+                .Where(t => t.RecordingId == recordingId)
+                .ToListAsync(ct);
+            db.ConnectTranscripts.RemoveRange(transcripts);
+
+            await db.SaveChangesAsync(ct);
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT connect.reconcile_recording_storage({tenantId})", ct);
+
+            // "Where did my recording go" must be answerable with a row.
+            await audit.WriteAsync("connect.recording.expired",
+                "connect.meeting", recording.MeetingId.ToString(),
+                after: new { recording.Id, retention = true },
+                ct: ct, productCode: "connect");
+
+            log.LogInformation(
+                "Retention swept recording {Recording} (meeting {Meeting})",
+                recordingId, recording.MeetingId);
         }
     }
 
@@ -399,6 +518,12 @@ public sealed class ConnectNotesWorker(
             // something.
             row.Attendance = attendanceJson;
             row.HadTranscript = segments.Count > 0;
+            // pending_notes has already waited for every recording to settle,
+            // so this is a fact, not a race: either a usable recording exists
+            // now or it never will. 'ready' only — a failed egress produced
+            // nothing anybody can check the minutes against.
+            row.HadRecording = await db.ConnectRecordings.AsNoTracking()
+                .AnyAsync(r => r.MeetingId == meetingId && r.Status == "ready", ct);
             row.Error = null;
             row.GeneratedAt = DateTimeOffset.UtcNow;
             row.UpdatedAt = DateTimeOffset.UtcNow;

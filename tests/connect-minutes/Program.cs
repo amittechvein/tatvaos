@@ -27,10 +27,12 @@ ConnectMinutes.Input Make(
     bool hadTranscript = true,
     int unreachable = 0,
     string title = "Fee structure for 2026-27",
-    string tz = "Asia/Kolkata")
+    string tz = "Asia/Kolkata",
+    bool hadRecording = false)
     => new(title, start, end, "Asha Nair", tz, notes,
            chat ?? [], hadTranscript, unreachable,
-           "https://connect.tatvaos.com", Guid.Parse("3f2b7c58-9a41-4d0e-b6c2-71a5d8e40915"));
+           "https://connect.tatvaos.com", Guid.Parse("3f2b7c58-9a41-4d0e-b6c2-71a5d8e40915"),
+           hadRecording);
 
 var full = new ConnectNotesModel.Notes(
     "model", "openai", "gpt-4o-mini",
@@ -74,6 +76,21 @@ Ok("a digest says nothing here was written by a person",
    digest.Contains("Nothing here was written by a person"));
 Ok("and says plainly the meeting was not recorded",
    digest.Contains("this meeting was not recorded"));
+// The third sentence, learned on the module's first proven run: a Ready
+// recording with transcription off used to render "this meeting was not
+// recorded" — a false statement sitting beside the recordings list.
+var recordedNoTranscript = ConnectMinutes.Html(
+    Make(bare, hadTranscript: false, hadRecording: true));
+Ok("recorded-but-untranscribed says the meeting WAS recorded",
+   recordedNoTranscript.Contains("the meeting was recorded, but no transcript"));
+Ok("and does NOT claim it was not recorded",
+   !recordedNoTranscript.Contains("this meeting was not recorded"));
+// Asserted WITHOUT the apostrophe: the renderer HTML-encodes everything,
+// so "meeting's" arrives as "meeting&#39;s" and a raw-apostrophe substring
+// can never match. (Found the honest way — this assertion failed.)
+Ok("a transcript still wins over both",
+   ConnectMinutes.Html(Make(bare, hadTranscript: true, hadRecording: true))
+       .Contains("recording and transcript"));
 Ok("an empty summary produces no Summary block at all, not an empty one",
    !digest.Contains(">Summary<"));
 Ok("empty lists produce no headings",

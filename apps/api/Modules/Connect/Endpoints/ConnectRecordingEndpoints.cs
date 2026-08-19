@@ -59,6 +59,10 @@ public static class ConnectRecordingEndpoints
         // asks for a ticket, and the anonymous route below trades it for the
         // bytes. See ConnectDownloadTicket for why that is the shape.
         g.MapGet("/meetings/{id:guid}/recordings/{recordingId:guid}/ticket", TicketAsync);
+        // "Keep this one" — exempt a recording from the retention sweep.
+        // The spec's own prediction (docs/CONNECT_DECISIONS.md §1) is that
+        // the first support ticket is a board meeting that got swept.
+        g.MapPut("/meetings/{id:guid}/recordings/{recordingId:guid}/keep", KeepAsync);
 
         g.MapGet("/meetings/{id:guid}/notes", NotesAsync);
         g.MapPost("/meetings/{id:guid}/notes/regenerate", RegenerateAsync);
@@ -82,6 +86,11 @@ public static class ConnectRecordingEndpoints
 
     public sealed record StartRecordingRequest(string? Mode, bool? Transcribe);
 
+    /// <summary>Days is one of a short list, like the retention setting
+    /// itself — a free-form date invites 'keep until 2099'. Null clears the
+    /// exemption and the org policy applies again.</summary>
+    public sealed record KeepRequest(int? Days);
+
     // ==================================================================
     //  Shapes
     // ==================================================================
@@ -96,6 +105,7 @@ public static class ConnectRecordingEndpoints
         r.StartedAt,
         r.EndedAt,
         r.Transcribe,
+        r.KeepUntilAt,
         r.Error,
         // Not r.FileName — the name is an internal key and telling a browser
         // about it invites somebody to try building a URL out of it. The
@@ -287,6 +297,45 @@ public static class ConnectRecordingEndpoints
 
         await audit.WriteAsync("connect.recording.stopped", "connect.meeting", id.ToString(),
             after: new { recording.Id }, ct: ct, productCode: "connect");
+
+        return Results.Ok(Shape(recording));
+    }
+
+    // ==================================================================
+    //  Keeping — the retention exemption
+    // ==================================================================
+    private static async Task<IResult> KeepAsync(
+        Guid id, Guid recordingId, KeepRequest? req, AppDbContext db, TenantContext tenant,
+        AuditWriter audit, CancellationToken ct)
+    {
+        if (tenant.UserId is not Guid uid) return Results.Unauthorized();
+        if (await db.ConnectMeetings.AnyAsync(m => m.Id == id, ct) is false) return NotFound();
+        // Host only, like Delete: deciding a recording outlives the org's
+        // policy is the same weight of act as destroying one.
+        if (await RoleOfAsync(db, id, uid, ct) != "host") return Forbidden();
+
+        var recording = await db.ConnectRecordings
+            .Where(r => r.Id == recordingId && r.MeetingId == id && r.Status == "ready")
+            .FirstOrDefaultAsync(ct);
+        if (recording is null) return NotFound();
+
+        // The same shape as the retention options themselves. Null clears.
+        if (req?.Days is int d && d is not (30 or 90 or 180 or 365))
+            return Results.BadRequest(new
+            {
+                error = "Keep a recording for 30, 90, 180 or 365 more days — or clear the hold.",
+            });
+
+        recording.KeepUntilAt = req?.Days is int days
+            ? DateTimeOffset.UtcNow.AddDays(days)
+            : null;
+        recording.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+
+        await audit.WriteAsync(
+            recording.KeepUntilAt is null ? "connect.recording.keep_cleared" : "connect.recording.kept",
+            "connect.meeting", id.ToString(),
+            after: new { recording.Id, recording.KeepUntilAt }, ct: ct, productCode: "connect");
 
         return Results.Ok(Shape(recording));
     }
@@ -500,6 +549,7 @@ public static class ConnectRecordingEndpoints
                 // media being involved.
                 attendance = Json(notes.Attendance),
                 notes.HadTranscript,
+                notes.HadRecording,
                 notes.Error,
                 notes.GeneratedAt,
             },
@@ -599,7 +649,11 @@ public static class ConnectRecordingEndpoints
     /// comparison and the failure mode is reading an arbitrary file off the
     /// container as an authenticated user.
     /// </summary>
-    private static string? ResolvePath(ConnectRecordingOptions options, string? fileName)
+    /// <summary>Internal, not private: the retention sweep in
+    /// ConnectNotesWorker deletes files too, and a second copy of "turn a
+    /// stored name into a path, refusing anything that is not a bare name"
+    /// would be a second place for the path-traversal guard to drift.</summary>
+    internal static string? ResolvePath(ConnectRecordingOptions options, string? fileName)
     {
         if (string.IsNullOrWhiteSpace(fileName)) return null;
         if (fileName.Contains('/') || fileName.Contains('\\')) return null;

@@ -256,6 +256,7 @@ public static class ConnectMinutesEndpoints
             Notes: Read(notes),
             Chat: chat,
             HadTranscript: notes.HadTranscript,
+            HadRecording: notes.HadRecording,
             UnreachableAttendees: unreachable,
             BaseUrl: BaseUrl(config),
             MeetingId: meeting.Id);

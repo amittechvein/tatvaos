@@ -273,6 +273,69 @@ blocks=$(q "SELECT count(*) FROM connect.meeting_blocks" 2>/dev/null)
 echo "  ..    ${autorec:-0} meeting(s) set to auto-record, ${blocks:-0} block row(s)"
 
 echo
+echo "== notes timing and retention (20260906, 20260907) =="
+# The on-the-day rule again: the newest migrations get their section before
+# they ship, so a green run can never mean "everything I was told about last
+# time is fine".
+n=$(q "SELECT count(*) FROM information_schema.columns
+        WHERE table_schema='connect' AND table_name='meeting_notes'
+          AND column_name='had_recording'")
+[ "${n:-0}" -eq 1 ] && ok "meeting_notes.had_recording present" \
+                    || bad "had_recording missing — minutes cannot tell 'not recorded' from 'not transcribed'"
+
+# The check that would have caught the first proven run's wrong sentence:
+# pending_notes must defer on RECORDINGS, not only transcripts. Asked of the
+# function's actual definition, not of a comment about it.
+n=$(q "SELECT count(*) FROM pg_proc p JOIN pg_namespace ns ON ns.oid=p.pronamespace
+        WHERE ns.nspname='connect' AND p.proname='pending_notes'
+          AND pg_get_functiondef(p.oid) ILIKE '%connect.recordings%'")
+[ "${n:-0}" -eq 1 ] && ok "pending_notes defers while a recording is still settling" \
+                    || bad "pending_notes ignores recordings — notes will claim 'not recorded' beside a processing egress"
+
+n=$(q "SELECT count(*) FROM information_schema.columns
+        WHERE table_schema='core' AND table_name='tenants'
+          AND column_name='connect_recording_retention_days'")
+if [ "${n:-0}" -ne 1 ]; then
+    bad "core.tenants.connect_recording_retention_days is missing — 20260907 has not applied"
+else
+    ok "retention column present"
+
+    n=$(q "SELECT count(*) FROM pg_constraint
+            WHERE conname='tenants_connect_retention_check'
+              AND conrelid='core.tenants'::regclass")
+    [ "${n:-0}" -eq 1 ] && ok "retention is constrained to 7/30/90/180/365" \
+                        || bad "retention is unconstrained — a free-form day count is somebody's bad day"
+
+    # Reported per org, loudly when SHORT: a 7-day retention that nobody
+    # remembers choosing is a bulk delete on a timer.
+    short=$(q "SELECT count(*) FROM core.tenants WHERE connect_recording_retention_days < 90")
+    if [ "${short:-0}" -gt 0 ]; then
+        names=$(q "SELECT string_agg(name || ' (' || connect_recording_retention_days || 'd)', ', ')
+                     FROM core.tenants WHERE connect_recording_retention_days < 90")
+        warn "retention shorter than the 90-day default for: ${names}"
+    else
+        ok "no organisation below the 90-day default"
+    fi
+fi
+
+n=$(q "SELECT count(*) FROM information_schema.columns
+        WHERE table_schema='connect' AND table_name='recordings'
+          AND column_name='keep_until_at'")
+[ "${n:-0}" -eq 1 ] && ok "recordings.keep_until_at (the 'keep this one' exemption) present" \
+                    || bad "keep_until_at missing — the sweep has no exemption and the first board meeting it eats is a ticket"
+
+n=$(q "SELECT count(*) FROM pg_proc p JOIN pg_namespace ns ON ns.oid=p.pronamespace
+        WHERE ns.nspname='connect' AND p.prosecdef AND p.proname='expired_recordings'
+          AND pg_get_functiondef(p.oid) ILIKE '%search_path%'")
+[ "${n:-0}" -eq 1 ] && ok "expired_recordings is SECURITY DEFINER with a pinned search_path" \
+                    || bad "expired_recordings missing or unpinned — the sweep has no queue"
+
+# Numbers to look at, not assertions.
+kept=$(q "SELECT count(*) FROM connect.recordings WHERE keep_until_at IS NOT NULL" 2>/dev/null)
+due=$(q "SELECT count(*) FROM connect.expired_recordings(50)" 2>/dev/null)
+echo "  ..    ${kept:-0} recording(s) under a keep hold, ${due:-0} currently due for the sweep"
+
+echo
 echo "== the org pool, not the person =="
 # Recordings must NOT appear in core.user_storage_usage. Charging the host
 # would move a colleague's remaining space when somebody else records.

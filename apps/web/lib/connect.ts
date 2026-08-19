@@ -293,6 +293,9 @@ export interface Recording {
   startedAt: string | null;
   endedAt: string | null;
   transcribe: boolean;
+  /** "Keep this one": the retention sweep will not touch this recording
+   *  before this instant. Null = the organisation's retention applies. */
+  keepUntilAt: string | null;
   error: string | null;
   hasFile: boolean;
   createdAt: string;
@@ -358,6 +361,10 @@ export interface MeetingNotes {
   /** Whether there was a transcript to work from. Lets the screen say "this
    *  meeting was not recorded" — normal — rather than implying a failure. */
   hadTranscript: boolean;
+  /** Whether a READY recording existed when the notes were written. With
+   *  hadTranscript this picks one of three true sentences — "no transcript"
+   *  alone cannot say WHY there is none. */
+  hadRecording: boolean;
   error: string | null;
   generatedAt: string | null;
 }
@@ -415,6 +422,17 @@ export const recordingApi = {
    * browser navigate to a URL carrying it. Same shape as every object store's
    * pre-signed URL.
    */
+  /**
+   * "Keep this one" — exempt a recording from the retention sweep for a
+   * further 30/90/180/365 days, or pass null to clear the hold and let the
+   * organisation's retention apply again. Host only, like delete.
+   */
+  keep: (f: AuthedFetch, meetingId: string, recordingId: string,
+         days: 30 | 90 | 180 | 365 | null) =>
+    f(`/connect/meetings/${meetingId}/recordings/${recordingId}/keep`, {
+      method: 'PUT', body: JSON.stringify({ days }),
+    }).then((r) => json<Recording>(r, 'Could not change how long that recording is kept.')),
+
   ticket: (f: AuthedFetch, meetingId: string, recordingId: string) =>
     f(`/connect/meetings/${meetingId}/recordings/${recordingId}/ticket`)
       .then((r) => json<{ ticket: string }>(r, 'Could not prepare that download.')),
