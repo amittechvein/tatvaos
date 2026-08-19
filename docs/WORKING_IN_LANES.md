@@ -79,6 +79,80 @@ now refuses to run unless you have staged something yourself.
 `next.config.ts` and the shell components are Core's. The Connect developer got
 this right on day one — copy him.
 
+### 5a. Where the frontend boundary actually is
+
+**A boundary you cannot check with `git diff --name-only` is not a boundary.**
+
+`docs/plans/LARGE_ATTACHMENTS.md` said "the Mail client UI is Core's" and, in
+the same document, assigned the compose-time pre-check and the on-send body
+block to Mail. Both are compose-UI work — a pre-check that must fire "at
+attach time" can only live in the file picker's handler. Two developers read
+one document, reached opposite conclusions, and one day of work was built
+twice. Neither misread it. It said both.
+
+The rule that failed was the prose one, and it failed because it describes an
+intent with no test attached. Every rule on this platform that people actually
+follow is a file list. So this one is too — **proposed by the Mail developer,
+and adopted because he is right**:
+
+| Path | Owner |
+|---|---|
+| `components/shell/*`, `components/ui/*`, `lib/theme.tsx`, `styles/*`, `app/layout.tsx` | **Core** — the design system and the frame |
+| `components/mail/*`, `app/mail/*`, `lib/mail.ts` | **Mail** — product behaviour inside that frame |
+| `components/space/*`, `app/space/*` | **Core** — Space's screens are Core-built |
+| `lib/space.ts` | **Space** — see below |
+| `app/connect/*`, `lib/connect.ts` | **Connect** |
+
+**The condition that makes this safe:** inside your own files you use existing
+tokens and existing primitives, and introduce no new visual language. If a
+feature needs a component that is not already in `components/ui/*`, that is a
+request to Core, not something a product lane invents. A lane owning its
+screens is not a lane owning the design system.
+
+**The API client belongs with the API, not with the screens.** `lib/mail.ts`
+is Mail's; `lib/space.ts` is Space's, for the same reason. When a lane changes
+its endpoint the client must change with it, and routing that through a
+cross-lane request adds a round trip and buys nothing — the lane that moved
+the route is the only one that knows it moved.
+
+That row said Core for a day, and the day cost us this: Space opened
+`GET /api/space/settings` to ordinary users and added a `settingsApi` wrapper;
+Core had independently added a `spaceSettingsApi` wrapper to the same file for
+the admin toggle. **The two branches merge CLEANLY** — git puts both in the
+file, two exported clients for one endpoint, one of them on a trailing-slash
+path, with no conflict marker to make anyone look.
+
+A clean merge that produces a duplicate is more dangerous than a conflict.
+A conflict stops a person; this only stops a person who happens to read the
+file. Owning the client where the endpoint lives makes the duplicate
+impossible rather than merely unlikely.
+
+Check yourself before pushing:
+
+```
+git diff --name-only main...HEAD
+```
+
+If a path outside your rows appears, it goes over as a patch instead.
+
+**And before any merge into main, run:**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File infra\scripts\lane-overlap.ps1
+```
+
+It lists every file that two *different* lanes are both editing across the
+unmerged branches. Same-lane overlap is ordinary work and is not reported.
+
+It tells you **where to look, never what is wrong** — it cannot read the file
+and cannot tell a duplicate from two unrelated edits. A name on that list
+means one thing: open it after merging and read it, looking for two things
+doing one job. Two wrappers for an endpoint, two helpers under different
+names, the same constant twice.
+
+It exits 0 even when it finds something, on purpose. Making it fail a merge
+would train people to skip it, and most overlaps are entirely fine.
+
 **6. Only ONE lane runs the local Docker stack at a time.** Compose derives its
 project name from the directory, so each folder would get its own containers,
 volumes and database — but they would all want ports 5432, 3000 and 25 on the

@@ -163,6 +163,10 @@ export function organisationNav(): NavSection[] {
         { href: '/org/domains', label: 'Domains', icon: <Icon d={PATHS.globe} /> },
         { href: '/org/mailboxes', label: 'Shared mailboxes', icon: <Icon d={PATHS.mail} /> },
         { href: '/org/storage', label: 'Storage', icon: <Icon d={PATHS.database} /> },
+        // Org-wide policy over what leaves by link. One switch today (Space's
+        // public links); Connect's recording-retention choice lands here next,
+        // which is why it is a page and not a checkbox on the Storage screen.
+        { href: '/org/sharing', label: 'Sharing', icon: <Icon d={PATHS.sent} /> },
         { href: '/org/audit', label: 'Audit trail', icon: <Icon d={PATHS.audit} /> },
         { href: '/org/billing', label: 'Billing', icon: <Icon d={PATHS.card} /> },
       ],
