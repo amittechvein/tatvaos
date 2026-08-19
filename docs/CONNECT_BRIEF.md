@@ -1,5 +1,28 @@
 # TatvaOS Connect — developer brief
 
+> ## ⚠ SUPERSEDED IN PART — read this box first
+>
+> This document was written on **16 August 2026, before Connect existed**. It
+> is the brief that was handed to the developer who then built the module.
+>
+> **Connect is now built and live.** For the current state of the code, what
+> works, what is unproven, and what to do next, read
+> **`docs/CONNECT_HANDOVER.md`** — that is the authority, and it wins wherever
+> the two disagree.
+>
+> What is still worth reading here, and is still accurate:
+>
+> - **§0** — the platform, the products, the team, how lanes cooperate.
+> - **§3** — the platform rules (RLS, migrations, deploy, storage).
+> - **§6** — the frontend shell: rail, logo, top bar, CSS traps.
+> - **Appendix A** — Amit's full feature list with phase tags, which is still
+>   the product roadmap. Note that much of Phases 1–3 is now done; the
+>   handover's §7 is the live list.
+>
+> What is now history rather than instruction: §1 (the LiveKit decision — it
+> was made, and it was LiveKit), §2, §4 (the build order — Phases 0–2 are
+> largely complete), and §5.
+
 **For the developer taking Connect end to end: backend, frontend, and
 deployment at `connect.tatvaos.com`.**
 

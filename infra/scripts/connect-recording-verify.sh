@@ -137,6 +137,94 @@ if [ "${meetings:-0}" -gt 0 ] && [ "${noted:-0}" -eq 0 ]; then
 fi
 
 echo
+echo "== minutes of meeting (20260904) =="
+# ─────────────────────────────────────────────────────────────────────────
+#  THIS SECTION EXISTS BECAUSE ITS ABSENCE WAS NOTICED THE HARD WAY.
+#
+#  20260904 was deployed and this script reported 25 ok, 0 failed without
+#  looking at a single thing the migration added. A verification script that
+#  is silent about the newest migration is worse than no script for it: the
+#  green line reads as "everything is fine" and it means "everything I was
+#  told about in August is fine".
+# ─────────────────────────────────────────────────────────────────────────
+n=$(q "SELECT count(*) FROM information_schema.tables
+        WHERE table_schema='connect' AND table_name='meeting_chat'")
+if [ "${n:-0}" -ne 1 ]; then
+    bad "connect.meeting_chat is missing — 20260904-connect-minutes.sql has not applied"
+else
+    ok "connect.meeting_chat"
+
+    n=$(q "SELECT count(*) FROM pg_class c JOIN pg_namespace ns ON ns.oid=c.relnamespace
+            WHERE ns.nspname='connect' AND c.relname='meeting_chat'
+              AND c.relrowsecurity AND c.relforcerowsecurity")
+    [ "${n:-0}" -eq 1 ] && ok "meeting_chat has ENABLE + FORCE row level security" \
+                        || bad "meeting_chat is not FORCED — the owning role would bypass the policy"
+
+    # Scoped through the parent meeting, like recordings and notes: a chat line
+    # must be exactly as reachable as the meeting it belongs to and no more.
+    n=$(q "SELECT count(*) FROM pg_policies
+            WHERE schemaname='connect' AND tablename='meeting_chat'
+              AND qual ILIKE '%connect.meetings%' AND qual ILIKE '%app.tenant_id%'")
+    [ "${n:-0}" -ge 1 ] && ok "its policy scopes through connect.meetings" \
+                        || bad "meeting_chat's policy does not scope through the meeting"
+
+    # The de-duplication. Without this UNIQUE index the ON CONFLICT clause in
+    # the endpoint has nothing to conflict on and every client that saw a
+    # guest's line stores its own copy of it.
+    n=$(q "SELECT count(*) FROM pg_indexes
+            WHERE schemaname='connect' AND tablename='meeting_chat'
+              AND indexdef ILIKE '%UNIQUE%' AND indexdef ILIKE '%client_id%'")
+    [ "${n:-0}" -ge 1 ] && ok "the (meeting_id, client_id) index is UNIQUE — one line, one row" \
+                        || bad "no unique index on client_id — a guest's chat line will be stored once per client that saw it"
+fi
+
+n=$(q "SELECT count(*) FROM information_schema.columns
+        WHERE table_schema='connect' AND table_name='meeting_notes'
+          AND column_name IN ('emailed_at','email_attempts','email_error','email_recipients')")
+[ "${n:-0}" -eq 4 ] && ok "meeting_notes records where the minutes email got to" \
+                    || bad "expected 4 email columns on meeting_notes, found ${n:-0}"
+
+n=$(q "SELECT count(*) FROM pg_proc p JOIN pg_namespace ns ON ns.oid=p.pronamespace
+        WHERE ns.nspname='connect' AND p.prosecdef AND p.proname IN
+          ('pending_minutes_email','notes_tenant','minutes_recipients',
+           'minutes_unreachable','meeting_chat_lines')")
+[ "${n:-0}" -eq 5 ] && ok "5 more definer functions for the minutes worker" \
+                    || bad "expected 5 minutes functions, found ${n:-0}"
+
+# ── The switch, and whether anybody is actually being emailed. ─────────────
+#
+# Reported either way, and loudly when it is ON. Outbound mail about what was
+# said in a meeting, to people including guests, is not something anybody
+# should discover by receiving it.
+n=$(q "SELECT count(*) FROM information_schema.columns
+        WHERE table_schema='core' AND table_name='tenants'
+          AND column_name='connect_email_minutes'")
+if [ "${n:-0}" -ne 1 ]; then
+    bad "core.tenants.connect_email_minutes is missing"
+else
+    on=$(q "SELECT count(*) FROM core.tenants WHERE connect_email_minutes")
+    if [ "${on:-0}" -eq 0 ]; then
+        ok "minutes email is OFF for every organisation (the default)"
+    else
+        names=$(q "SELECT string_agg(name, ', ') FROM core.tenants WHERE connect_email_minutes")
+        ok "minutes email is ON for ${on} organisation(s): ${names}"
+    fi
+fi
+
+# Numbers to look at, not assertions.
+chat=$(q "SELECT count(*) FROM connect.meeting_chat" 2>/dev/null)
+sent=$(q "SELECT count(*) FROM connect.meeting_notes WHERE emailed_at IS NOT NULL")
+echo "  ..    ${chat:-0} chat line(s) kept, ${sent:-0} set(s) of minutes emailed"
+
+# Three strikes and the worker stops offering the row. Worth surfacing,
+# because nothing else will ever mention it again.
+stuck=$(q "SELECT count(*) FROM connect.meeting_notes
+            WHERE emailed_at IS NULL AND email_attempts >= 3")
+if [ "${stuck:-0}" -gt 0 ]; then
+    warn "${stuck} set(s) of minutes gave up after 3 send attempts — see meeting_notes.email_error"
+fi
+
+echo
 echo "== the org pool, not the person =="
 # Recordings must NOT appear in core.user_storage_usage. Charging the host
 # would move a colleague's remaining space when somebody else records.

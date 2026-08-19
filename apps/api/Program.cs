@@ -129,6 +129,25 @@ builder.Services.AddHttpClient<TatvaOS.Api.Modules.Connect.LiveKitEgressClient>(
 builder.Services.AddHttpClient<TatvaOS.Api.Modules.Connect.ConnectTranscriber>();
 builder.Services.AddHttpClient<TatvaOS.Api.Modules.Connect.ConnectNotesComposer>();
 
+// The signed download ticket. Singleton because it derives one HMAC key from
+// configuration and holds no request state.
+//
+// ─────────────────────────────────────────────────────────────────────────
+//  THIS LINE'S ABSENCE TOOK THE WHOLE API DOWN, and it is worth knowing how.
+//
+//  ConnectDownloadTicket was written, built and unit-tested without ever
+//  being registered. An unregistered type is not an error to ASP.NET's
+//  minimal-API binder: it cannot resolve it as a service, so it INFERS it as
+//  the request BODY. On the POST routes that would merely have failed at
+//  request time. The download route is a GET, a GET may not have an inferred
+//  body, and that is thrown while the endpoint graph is being built — before
+//  a single request, taking mail, calendar and space down with it.
+//
+//  Nothing in a normal build catches this. `dotnet build` is happy, and so is
+//  every unit test, because the binder only runs when the app starts.
+// ─────────────────────────────────────────────────────────────────────────
+builder.Services.AddSingleton<TatvaOS.Api.Modules.Connect.ConnectDownloadTicket>();
+
 // Scoped: it writes through the request's AppDbContext and reads its
 // TenantContext. A singleton holding either would serve one tenant's scope to
 // whichever request arrived next.
