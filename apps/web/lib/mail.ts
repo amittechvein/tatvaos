@@ -10,6 +10,19 @@ import type { Folder, Message } from '@tatvaos/types';
 
 type AuthedFetch = (path: string, init?: RequestInit) => Promise<Response>;
 
+/**
+ * The XHR upload from lib/auth — progress, cancellation, and a token refresh
+ * mid-flight. Taken as a PARAMETER rather than reached for directly so this
+ * module keeps knowing nothing about the auth provider, exactly as
+ * AuthedFetch does.
+ */
+type AuthedUpload = <T>(
+  path: string,
+  form: FormData,
+  onProgress?: (fraction: number) => void,
+  signal?: AbortSignal,
+) => Promise<T>;
+
 export interface MailMailbox {
   id: string;
   address: string;
@@ -237,6 +250,45 @@ function withMb(base: string, mailboxId?: string): string {
   if (!q) return base;
   return base.includes('?') ? `${base}&${q}` : `${base}?${q}`;
 }
+
+/**
+ * Parking an oversize attachment in Space — the success half.
+ *
+ * `name` is what Space ACTUALLY STORED, not the local filename: Space strips
+ * any path, trims, falls back to `Untitled` and truncates at 500 characters.
+ * Render this one, or the composer shows a name the recipient will not find
+ * when they follow the link.
+ */
+export interface SpaceParkOk {
+  ok: true;
+  fileId: string;
+  name: string;
+  sizeBytes: number;
+}
+
+/**
+ * The refusal half.
+ *
+ * Every `reason` here is CORE'S, shared verbatim with the Space upload path,
+ * so the two surfaces cannot drift into two vocabularies for one refusal, and
+ * `error` is written to be shown to the person rather than logged.
+ *
+ * The three figures arrive only on `full`, and only when the allowance could
+ * be resolved — they are ABSENT, not zero, otherwise. Branch on presence, or
+ * a person whose quota is unreadable is told they have 0 bytes of 0.
+ */
+export interface SpaceParkRefusal {
+  ok: false;
+  reason:
+    | 'full' | 'file_too_large' | 'no_allocation' | 'suspended'
+    | 'no_user' | 'no_folder' | 'no_access' | 'bad_request' | 'error';
+  error: string;
+  quotaBytes?: number;
+  usedBytes?: number;
+  freeBytes?: number;
+}
+
+export type SpaceParkResult = SpaceParkOk | SpaceParkRefusal;
 
 export const mailApi = {
   bootstrap: (f: AuthedFetch, mailboxId?: string) =>
@@ -496,6 +548,56 @@ export const mailApi = {
     return f('/mail/send', { method: 'POST', body: fd }).then((r) =>
       json<{ id: string | null }>(r, 'The message could not be sent.'),
     );
+  },
+
+  /**
+   * Park ONE oversize attachment in the sender's own Space.
+   *
+   * THIS GOES THROUGH authedUpload, NOT authedFetch, and that is not a style
+   * choice. This is the one call in the mail client that can be carrying half
+   * a gigabyte. fetch() gives no progress, so the composer would show a
+   * button that does nothing for four minutes — which is indistinguishable
+   * from broken, and the second click is the one that makes it worse. XHR
+   * also survives an access token expiring mid-upload, which at these sizes
+   * is a real event rather than a theoretical one, and can be cancelled.
+   *
+   * REFUSALS COME BACK AS DATA, NOT EXCEPTIONS. Somebody out of storage is
+   * not an error condition, it is Tuesday, and the composer needs the reason
+   * to say something useful. Cancellation is the exception to the exception:
+   * an AbortError is rethrown, because the person stopping their own upload
+   * must not be reported to them as a failure.
+   *
+   * NO mailboxId is sent, deliberately. The file lands in the signed-in
+   * person's own Space whichever mailbox they are composing from — resolving
+   * one here would refuse somebody writing from a shared queue because the
+   * queue's owner is full, which is not their problem to fix.
+   */
+  attachToSpace: async (
+    upload: AuthedUpload,
+    file: File,
+    onProgress?: (fraction: number) => void,
+    signal?: AbortSignal,
+  ): Promise<SpaceParkResult> => {
+    const fd = new FormData();
+    fd.append('file', file, file.name);
+
+    try {
+      const ok = await upload<SpaceParkOk>(
+        '/mail/attachments/to-space', fd, onProgress, signal);
+      return { ...ok, ok: true };
+    } catch (e) {
+      const err = e as Error & { status?: number; reason?: string };
+      if (err.name === 'AbortError') throw err;
+
+      // `reason` is Core's code, carried through by authedUpload; `message` is
+      // Core's sentence, written to be shown. A refusal with neither is still
+      // a refusal — never a silent success with no file behind it.
+      return {
+        ok: false,
+        reason: (err.reason as SpaceParkRefusal['reason']) ?? 'error',
+        error: err.message || 'The file could not be saved to Space.',
+      };
+    }
   },
 
   /**
