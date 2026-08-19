@@ -252,9 +252,22 @@ export async function fetchLinkInfo(token: string): Promise<{
   name: string; sizeBytes: number; sharedBy: string | null; expiresAt: string;
 } | null> {
   try {
-    const res = await fetch(`/api/space/l/${encodeURIComponent(token)}/info`);
+    // The route is /meta, not /info — see SpaceLinkEndpoints.MetaAsync. It was
+    // /info here, and because every failure collapses to null by design (no
+    // oracle for a stranger), a working link was indistinguishable from a dead
+    // one: every landing page showed "this link does not work".
+    const res = await fetch(`/api/space/l/${encodeURIComponent(token)}/meta`);
     if (!res.ok) return null;
-    return await res.json();
+    const body = await res.json();
+    // The wire calls it sharedByDisplayName; the page calls it sharedBy.
+    // Mapped here, which is what a data layer is for — the landing page needs
+    // no change.
+    return {
+      name: body.name,
+      sizeBytes: body.sizeBytes,
+      sharedBy: body.sharedByDisplayName ?? null,
+      expiresAt: body.expiresAt,
+    };
   } catch {
     return null;
   }
