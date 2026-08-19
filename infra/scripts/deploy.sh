@@ -181,7 +181,13 @@ fi
 #  hand-edits was the correct call — during an outage, service first. What is
 #  not acceptable is not knowing.
 # ---------------------------------------------------------------------------
-DIRTY=$(git status --porcelain 2>/dev/null)
+# TRACKED files only. Untracked files cannot put unreproducible code into the
+# containers - the images are built from what git tracks - and the box
+# legitimately accumulates local artifacts: .environment (the checkout marker
+# this script itself requires), backups/, .env backups, and the occasional
+# junk file from a badly pasted command. Day one of this guard, it flagged
+# all four alongside the one real drift and buried the signal.
+DIRTY=$(git status --porcelain --untracked-files=no 2>/dev/null)
 if [ -n "$DIRTY" ]; then
     bad "This checkout has uncommitted changes."
     printf '%s\n' "$DIRTY" | sed 's/^/      /'
