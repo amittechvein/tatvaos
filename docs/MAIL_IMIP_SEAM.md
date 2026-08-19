@@ -217,3 +217,87 @@ they carry has already been proven.
 If any of the above is wrong for reasons inside Mail that I cannot see —
 especially §2's signature and §4's placement — say so and I will rework it.
 You know that code and I do not.
+
+---
+
+# v1.2 — §2 and §4 corrected by Mail, 19 August 2026
+
+They were wrong, and wrong in the same way: both described code that does not
+exist. I wrote them from an assumed shape of the Mail module instead of
+reading it. **Mail's versions below supersede them; §1, §3, §5, §6 and §7 are
+unchanged and agreed.**
+
+Verified in the source before accepting, because a correction deserves the
+same check as a claim:
+
+- Three separate `SmtpClient` users (`MailEndpoints`, `Shared/Notify/Notify.cs`,
+  `VacationReplyWorker`) plus `ConnectMinutesMailer` building its own message.
+  There is no shared internal send, so v1.1 §2's "one optional parameter" had
+  nothing to attach to.
+- `MaildirIngestWorker.IngestMailboxAsync` opens `using var scope =
+  scopeFactory.CreateScope()` and commits inside it.
+- `AttachmentScanWorker` is a `while` loop with `Task.Delay` selecting
+  `ScanStatus == "pending"`. Nothing at ingest triggers it, so v1.1 §4's
+  "the same place your attachment scanner is kicked off" pointed at nothing.
+
+## §2 (corrected) — Mail extracts a shared sender first
+
+Mail builds `MailSubmission` and every sender moves onto it. Calendar calls
+that. Three differences from v1.1, each forced by what the code does:
+
+- **`FromAddress`, not `fromMailbox`.** Mail takes the address and resolves
+  the mailbox itself, because resolution is where the DKIM domain, the Sent
+  copy and the quota gate come from. Correct — Calendar should not be
+  reaching into mailbox identity.
+- **Threading is a parameter** (`InReplyToMessageId`, `References`). v1.1 §3
+  required the chain and gave no way to pass it. My omission.
+- **`Cc` exists.** An invitation with optional participants wants one.
+
+**Implementation note that is not a detail:** MimeKit's `BodyBuilder` emits
+`multipart/alternative` from Text/Html and cannot take a third sibling, so
+carrying the calendar part means assembling the multipart by hand on that
+branch. That is a change to how the body is built, not a parameter passed
+through — worth knowing at review time.
+
+## §4 (corrected) — awaited inside the worker's own scope
+
+Not fire-and-forget. v1.1 §4 borrowed the sign-in-alert pattern
+(`IServiceScopeFactory` + detach) without noticing that pattern exists to
+outlive an **endpoint's** request scope. Ingest is a background worker that
+already owns its scope; a detached task would race `using` disposing the
+`DbContext` out from under it — intermittently, under load, looking like the
+sink failing at random.
+
+```csharp
+try { await sink.HandleReplyAsync(payload, fromAddress, ct); }
+catch (Exception ex) { log.LogWarning(ex, "iMIP reply not consumed"); }
+```
+
+Awaited, swallowed, same guarantee — a reply that fails to parse never
+affects delivery — without the race.
+
+Of the three conditions, (3) "delivered to a mailbox on this deployment" is
+free: the ingest worker only reads maildirs for local mailboxes, so it holds
+by construction.
+
+## Open for Mail to choose — what crosses the seam
+
+Given Mail must hand-assemble the multipart anyway, `MimeEntity CalendarPart`
+means Calendar builds a part whose headers Mail then places — two owners of
+one part's headers, and the `method=` content-type parameter is load-bearing.
+
+The alternative keeps the split the seam already claims (*Calendar builds the
+content, Mail carries it*):
+
+```csharp
+string? ICalendar,     // the VCALENDAR text
+string? ICalendarMethod // "REQUEST" | "CANCEL" | "REPLY"
+```
+
+Mail builds both carriages from those two, sets
+`text/calendar; method={method}; charset=utf-8` on the alternative sibling and
+`invite.ics` on the attachment, and the header can no longer drift from the
+METHOD inside the body because one caller sets both.
+
+**Mail's call, not mine** — whichever is easier against the code as it
+actually is. Calendar produces either with no difference in effort.
