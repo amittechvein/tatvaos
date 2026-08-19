@@ -243,6 +243,28 @@ export const linkApi = {
 };
 
 /**
+ * The organisation's Space policy.
+ *
+ * `get` is readable by ANY signed-in person, deliberately: the mail composer
+ * has to know whether links are allowed before it uploads 40 MB it may not be
+ * able to link, and the share dialog needs it to decide whether to offer the
+ * option. `set` is OrgAdmin only.
+ *
+ * Lives here rather than in each caller so there is one client for one
+ * contract — Mail calls this, the composer calls this, the admin console
+ * calls this.
+ */
+export const settingsApi = {
+  get: (f: AuthedFetch) =>
+    f('/space/settings')
+      .then((r) => json<{ allowPublicLinks: boolean }>(r, 'Could not load the sharing policy.')),
+
+  set: (f: AuthedFetch, allowPublicLinks: boolean) =>
+    f('/space/settings', { method: 'PUT', body: JSON.stringify({ allowPublicLinks }) })
+      .then((r) => json<{ allowPublicLinks: boolean }>(r, 'Could not update the sharing policy.')),
+};
+
+/**
  * The landing page's metadata read. PLAIN fetch, no auth — the whole point is
  * that the reader has no account. Errors collapse to null: expired, revoked
  * and unknown are all the same "this link does not work" to a stranger, by
