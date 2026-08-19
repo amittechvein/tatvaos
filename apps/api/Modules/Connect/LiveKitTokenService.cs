@@ -166,6 +166,36 @@ public sealed class LiveKitTokenService(IConfiguration config, ILogger<LiveKitTo
     ///  record any meeting on the platform. There is no second control.
     /// ─────────────────────────────────────────────────────────────────────
     /// </summary>
+    /// <summary>
+    /// Room lifecycle — the token DeleteRoom actually needs.
+    ///
+    /// roomAdmin authorises operations on the people in a room. Ending the
+    /// room is not one of them: LiveKit checks roomCreate for CreateRoom,
+    /// DeleteRoom and ListRooms, and answers 401 "permissions denied" without
+    /// it. The admin token carried roomAdmin, so mute and remove worked and
+    /// "End the meeting for everyone" never did.
+    ///
+    /// Same containment as MintRecordToken, for the same reason — roomCreate
+    /// is service-wide, not scoped to one room: minted per HTTP call, ten
+    /// minutes, carries nothing else, never returned to a caller.
+    /// </summary>
+    internal string MintRoomLifecycleToken()
+    {
+        if (!IsConfigured)
+            throw new InvalidOperationException("LiveKit is not configured; refusing to mint a token.");
+
+        var now = DateTimeOffset.UtcNow;
+        return Sign(new TokenClaims
+        {
+            Issuer = _options.ApiKey,
+            Subject = "tatvaos-api",
+            Name = "TatvaOS",
+            NotBefore = now.AddSeconds(-10).ToUnixTimeSeconds(),
+            Expires = now.AddMinutes(10).ToUnixTimeSeconds(),
+            Video = new VideoGrant { RoomCreate = true },
+        });
+    }
+
     internal string MintRecordToken()
     {
         if (!IsConfigured)
@@ -305,6 +335,17 @@ public sealed class LiveKitTokenService(IConfiguration config, ILogger<LiveKitTo
         // Egress. Nullable for the same reason: absent on every join token
         // ever minted, present only on the internal record token above.
         [JsonPropertyName("roomRecord")] public bool? RoomRecord { get; set; }
+        // Room LIFECYCLE — CreateRoom, DeleteRoom, ListRooms. Distinct from
+        // roomAdmin, which covers operations on the people INSIDE a room
+        // (mute, remove, update) and does not authorise deleting one. That
+        // distinction is why "End the meeting for everyone" answered 401
+        // "permissions denied" while mute and remove worked: the admin token
+        // carried roomAdmin and DeleteRoom wanted this.
+        //
+        // Service-wide in LiveKit's model, exactly like roomRecord, so it gets
+        // the same treatment: minted for one internal call, ten minutes, never
+        // handed to a client.
+        [JsonPropertyName("roomCreate")] public bool? RoomCreate { get; set; }
         // Null = absent = "all sources" in LiveKit's reading, which keeps every
         // pre-share-policy token exactly as it was. Only ever narrowed, never
         // widened: the widest this can say is what an absent claim already says.
