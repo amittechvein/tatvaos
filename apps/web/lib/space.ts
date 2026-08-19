@@ -242,6 +242,28 @@ export const linkApi = {
       .then((r) => { if (!r.ok) throw new Error('Could not revoke the link.'); }),
 };
 
+// ---------------------------------------------------------------------------
+//  Org policy — the public-links kill switch.
+//
+//  OrgAdmin-gated on the server (GET/PUT /api/space/settings). Turning it off
+//  closes the TAP, not the handle: the anonymous resolve predicate checks the
+//  flag, so every existing link stops working immediately — and reversibly,
+//  because the link rows survive. The server audits the change; the UI's job
+//  is only to make the consequence unmistakable before the click.
+// ---------------------------------------------------------------------------
+
+export const spaceSettingsApi = {
+  get: (f: AuthedFetch) =>
+    f('/space/settings')
+      .then((r) => json<{ allowPublicLinks: boolean }>(r, 'Could not load the sharing policy.')),
+
+  set: (f: AuthedFetch, allowPublicLinks: boolean) =>
+    f('/space/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ allowPublicLinks }),
+    }).then((r) => json<{ allowPublicLinks: boolean }>(r, 'Could not save the sharing policy.')),
+};
+
 /**
  * The organisation's Space policy.
  *
