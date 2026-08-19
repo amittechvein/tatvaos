@@ -71,11 +71,11 @@ public static class SpaceEndpoints
 
         // Shares
         g.MapGet("/files/{id:guid}/shares", (Guid id, AppDbContext db, TenantContext t, CancellationToken ct) => ListSharesAsync(id, isFile: true, db, t, ct));
-        g.MapPut("/files/{id:guid}/shares", (Guid id, ShareRequest r, AppDbContext db, TenantContext t, CancellationToken ct) => PutShareAsync(id, isFile: true, r, db, t, ct));
-        g.MapDelete("/files/{id:guid}/shares/{shareId:guid}", (Guid id, Guid shareId, AppDbContext db, TenantContext t, CancellationToken ct) => DeleteShareAsync(id, shareId, isFile: true, db, t, ct));
+        g.MapPut("/files/{id:guid}/shares", (Guid id, ShareRequest r, AppDbContext db, TenantContext t, TatvaOS.Api.Modules.Admin.AuditWriter audit, CancellationToken ct) => PutShareAsync(id, isFile: true, r, db, t, audit, ct));
+        g.MapDelete("/files/{id:guid}/shares/{shareId:guid}", (Guid id, Guid shareId, AppDbContext db, TenantContext t, TatvaOS.Api.Modules.Admin.AuditWriter audit, CancellationToken ct) => DeleteShareAsync(id, shareId, isFile: true, db, t, audit, ct));
         g.MapGet("/folders/{id:guid}/shares", (Guid id, AppDbContext db, TenantContext t, CancellationToken ct) => ListSharesAsync(id, isFile: false, db, t, ct));
-        g.MapPut("/folders/{id:guid}/shares", (Guid id, ShareRequest r, AppDbContext db, TenantContext t, CancellationToken ct) => PutShareAsync(id, isFile: false, r, db, t, ct));
-        g.MapDelete("/folders/{id:guid}/shares/{shareId:guid}", (Guid id, Guid shareId, AppDbContext db, TenantContext t, CancellationToken ct) => DeleteShareAsync(id, shareId, isFile: false, db, t, ct));
+        g.MapPut("/folders/{id:guid}/shares", (Guid id, ShareRequest r, AppDbContext db, TenantContext t, TatvaOS.Api.Modules.Admin.AuditWriter audit, CancellationToken ct) => PutShareAsync(id, isFile: false, r, db, t, audit, ct));
+        g.MapDelete("/folders/{id:guid}/shares/{shareId:guid}", (Guid id, Guid shareId, AppDbContext db, TenantContext t, TatvaOS.Api.Modules.Admin.AuditWriter audit, CancellationToken ct) => DeleteShareAsync(id, shareId, isFile: false, db, t, audit, ct));
     }
 
     private const int RetentionDays = 30;
@@ -1008,7 +1008,8 @@ public static class SpaceEndpoints
     // ==================================================================
 
     private static async Task<IResult> FileOwnershipAsync(
-        Guid id, OwnershipRequest req, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid id, OwnershipRequest req, AppDbContext db, TenantContext tenant,
+        TatvaOS.Api.Modules.Admin.AuditWriter audit, CancellationToken ct)
     {
         if (!TryCaller(tenant, out var uid)) return Results.Unauthorized();
         if (req.OwnershipType is not ("personal" or "organisational"))
@@ -1054,6 +1055,12 @@ public static class SpaceEndpoints
         // silently is how access disappears on the flip back and nobody can
         // say why. Removing one is an explicit DELETE by a human.
         await db.SaveChangesAsync(ct);
+
+        // The "whose is this" trail — the one place ownership changes hands.
+        await audit.WriteAsync("space.file.ownership_changed",
+            targetType: "space_file", targetId: file.Id.ToString(),
+            after: new { ownershipType = file.OwnershipType, ownerUserId = file.OwnerUserId },
+            ct: ct, productCode: "drive");
         return Results.Ok(await SpaceDriveEndpoints.DecorateFileAsync(db, uid,
             FileDto(file, await FilePermAsync(db, file, uid, ct),
                 await db.SpaceShares.AnyAsync(s => s.FileId == file.Id, ct)), ct));
@@ -1110,7 +1117,8 @@ public static class SpaceEndpoints
 
     private static async Task<IResult> PurgeFileAsync(
         Guid id, AppDbContext db, TenantContext tenant,
-        IBlobStore blobs, StorageAllocator allocator, CancellationToken ct)
+        IBlobStore blobs, StorageAllocator allocator,
+        TatvaOS.Api.Modules.Admin.AuditWriter audit, CancellationToken ct)
     {
         if (!TryCaller(tenant, out var uid)) return Results.Unauthorized();
 
@@ -1125,6 +1133,13 @@ public static class SpaceEndpoints
         await blobs.DeleteAsync(file.BlobKey);
         db.SpaceFiles.Remove(file);
         await db.SaveChangesAsync(ct);
+
+        // Destruction is the audit trail's whole reason to exist — the row
+        // is gone, so this line is the only remaining record of the file.
+        await audit.WriteAsync("space.file.purged",
+            targetType: "space_file", targetId: id.ToString(),
+            before: new { file.Name, file.SizeBytes, file.OwnershipType, file.OwnerUserId },
+            ct: ct, productCode: "drive");
 
         await allocator.ReconcileUsageAsync(tenant.TenantId, ct);
         return Results.NoContent();
@@ -1303,7 +1318,8 @@ public static class SpaceEndpoints
 
     private static async Task<IResult> PurgeFolderAsync(
         Guid id, AppDbContext db, TenantContext tenant,
-        IBlobStore blobs, StorageAllocator allocator, CancellationToken ct)
+        IBlobStore blobs, StorageAllocator allocator,
+        TatvaOS.Api.Modules.Admin.AuditWriter audit, CancellationToken ct)
     {
         if (!TryCaller(tenant, out var uid)) return Results.Unauthorized();
 
@@ -1333,6 +1349,12 @@ public static class SpaceEndpoints
 
         db.SpaceFolders.Remove(folder);
         await db.SaveChangesAsync(ct);
+
+        await audit.WriteAsync("space.folder.purged",
+            targetType: "space_folder", targetId: id.ToString(),
+            before: new { folder.Name, folder.OwnershipType, folder.OwnerUserId,
+                          filesPurged = blobKeys.Count },
+            ct: ct, productCode: "drive");
 
         await allocator.ReconcileUsageAsync(tenant.TenantId, ct);
         return Results.NoContent();
@@ -1407,7 +1429,8 @@ public static class SpaceEndpoints
     }
 
     private static async Task<IResult> PutShareAsync(
-        Guid id, bool isFile, ShareRequest req, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid id, bool isFile, ShareRequest req, AppDbContext db, TenantContext tenant,
+        TatvaOS.Api.Modules.Admin.AuditWriter audit, CancellationToken ct)
     {
         if (!TryCaller(tenant, out var uid)) return Results.Unauthorized();
 
@@ -1456,6 +1479,11 @@ public static class SpaceEndpoints
         }
         await db.SaveChangesAsync(ct);
 
+        await audit.WriteAsync("space.share.granted",
+            targetType: isFile ? "space_file" : "space_folder", targetId: id.ToString(),
+            after: new { share.SharedWithUserId, share.OrgWide, share.Permission },
+            ct: ct, productCode: "drive");
+
         string? displayName = null;
         if (share.SharedWithUserId is Guid g2)
             displayName = await db.Users.AsNoTracking()
@@ -1467,7 +1495,8 @@ public static class SpaceEndpoints
     }
 
     private static async Task<IResult> DeleteShareAsync(
-        Guid id, Guid shareId, bool isFile, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid id, Guid shareId, bool isFile, AppDbContext db, TenantContext tenant,
+        TatvaOS.Api.Modules.Admin.AuditWriter audit, CancellationToken ct)
     {
         if (!TryCaller(tenant, out var uid)) return Results.Unauthorized();
 
@@ -1480,6 +1509,12 @@ public static class SpaceEndpoints
 
         db.SpaceShares.Remove(share);
         await db.SaveChangesAsync(ct);
+
+        await audit.WriteAsync("space.share.revoked",
+            targetType: isFile ? "space_file" : "space_folder", targetId: id.ToString(),
+            before: new { share.SharedWithUserId, share.OrgWide, share.Permission },
+            ct: ct, productCode: "drive");
+
         return Results.NoContent();
     }
 }
