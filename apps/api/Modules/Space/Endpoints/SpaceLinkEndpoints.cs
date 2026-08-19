@@ -150,13 +150,21 @@ public static partial class SpaceLinkEndpoints
 
         // The ONLY response that ever contains the token. The url is the
         // landing page (Core's doorstep), not the raw API route.
+        // Same shape the list route returns, PLUS token and url — the client
+        // types the create response as a full link, and a freshly created one
+        // goes straight into the list the share dialog is showing. Omitting
+        // these made downloadCount and friends undefined on that first render.
         return Results.Created($"/api/space/files/{id}/links/{link.Id}", new
         {
             id = link.Id,
             token,
             url = $"{baseUrl}/l/{token}",
+            createdByUserId = link.CreatedByUserId,
             expiresAt = link.ExpiresAt,
             maxDownloads = link.MaxDownloads,
+            downloadCount = link.DownloadCount,
+            revokedAt = link.RevokedAt,
+            createdAt = link.CreatedAt,
         });
     }
 
