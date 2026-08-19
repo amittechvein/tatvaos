@@ -133,9 +133,25 @@ Check yourself before pushing:
 git diff --name-only main...HEAD
 ```
 
-If a path outside your rows appears, it goes over as a patch instead. And if
-two lanes have touched the same file this week, read it after merging even
-when git said nothing.
+If a path outside your rows appears, it goes over as a patch instead.
+
+**And before any merge into main, run:**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File infra\scripts\lane-overlap.ps1
+```
+
+It lists every file that two *different* lanes are both editing across the
+unmerged branches. Same-lane overlap is ordinary work and is not reported.
+
+It tells you **where to look, never what is wrong** — it cannot read the file
+and cannot tell a duplicate from two unrelated edits. A name on that list
+means one thing: open it after merging and read it, looking for two things
+doing one job. Two wrappers for an endpoint, two helpers under different
+names, the same constant twice.
+
+It exits 0 even when it finds something, on purpose. Making it fail a merge
+would train people to skip it, and most overlaps are entirely fine.
 
 **6. Only ONE lane runs the local Docker stack at a time.** Compose derives its
 project name from the directory, so each folder would get its own containers,
