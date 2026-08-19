@@ -46,13 +46,29 @@ the host via `PUT .../recordings/{id}/keep {days: 30|90|180|365}` (null
 clears). The spec's own prediction is that the first support ticket is a
 board meeting that got swept.
 
-**One ruling made here, flagged for Amit.** The spec says "the transcript
-and notes follow the same rule." Implemented as: the recording's
-**transcript rows are deleted with it** — they are the words verbatim, and
-keeping them defeats why an organisation shortens retention — but the
-**notes stay**: summary, decisions, attendance are the meeting's record and
-were already emailed to the room. If "notes too" is what was meant,
-`SweepExpiredRecordingsAsync` is the one place to change.
+**What the sweep deletes — ruled by Amit, 19 August.** At the end of the
+retention period:
+
+    Recording   → DELETE
+    Transcript  → DELETE
+    AI notes    → KEEP
+
+The recording and the transcript are the meeting verbatim; keeping either
+would defeat the reason an organisation sets a retention period at all. The
+notes — summary, decisions, action items, attendance — are the meeting's
+*record*, were already emailed to the room, and survive. This is what
+`SweepExpiredRecordingsAsync` implements; the spec's original sentence
+("the transcript and notes follow the same rule") was ambiguous and this
+ruling settles it.
+
+One consequence worth stating plainly, because a customer will meet it: a
+90-day-old meeting keeps its minutes and loses the audio they were checked
+against. `had_recording` still reads true on those notes — it records what
+was true when they were written, which is correct — so the minutes will
+name a recording that no longer exists. That is the honest outcome of the
+ruling rather than a defect, but if it reads badly on screen, the
+recordings list is the place to say "deleted under the 90-day policy"
+rather than showing nothing.
 
 **Setting the retention is still SQL**, like `allow_connect_recording`
 before it — there is no org-settings API for Connect flags yet. When that
