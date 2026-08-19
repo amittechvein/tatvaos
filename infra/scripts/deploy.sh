@@ -164,6 +164,38 @@ if [ "$BRANCH" = "HEAD" ]; then
     printf '   %s[warn]%s detached HEAD — no branch to attribute this deploy to.\n' "$Y" "$X"
 fi
 
+# ---------------------------------------------------------------------------
+#  Dirty-checkout guard.
+#
+#  A modified file here means production is running something that exists on
+#  no branch and in no commit — nobody can reproduce it, review it, or roll
+#  back to it, and `git pull` will refuse the next time somebody tries.
+#
+#  On 19 August this happened twice in one day with the same single line. It
+#  was hand-patched onto the box to bring the API back, was not in git, and
+#  the next pull could not land. Discarding it to make the pull work took the
+#  whole API down for an hour because the committed replacement had not been
+#  pushed yet.
+#
+#  So: named, not silent. The escape hatch exists because the SECOND of those
+#  hand-edits was the correct call — during an outage, service first. What is
+#  not acceptable is not knowing.
+# ---------------------------------------------------------------------------
+DIRTY=$(git status --porcelain 2>/dev/null)
+if [ -n "$DIRTY" ]; then
+    bad "This checkout has uncommitted changes."
+    printf '%s\n' "$DIRTY" | sed 's/^/      /'
+    note "Production would run code that is in no commit and on no branch."
+    note "Recover it, or discard it, before deploying:"
+    note "  git diff                      # see what it is"
+    note "  git stash                     # keep it, out of the way"
+    note "  git checkout -- <path>        # discard it"
+    note "If this is a deliberate emergency patch, re-run with DEPLOY_ALLOW_DIRTY=1"
+    note "and open a commit for it the same day."
+    [ "${DEPLOY_ALLOW_DIRTY:-}" = "1" ] || exit 1
+    note "DEPLOY_ALLOW_DIRTY=1 — proceeding with a modified checkout"
+fi
+
 if [ "$ENV" = "production" ]; then
     printf '\n   %sProduction deploy. Outbound mail WILL reach real inboxes.%s\n' "$Y" "$X"
     if [ "${CI:-}" = "1" ]; then
