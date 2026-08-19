@@ -79,6 +79,43 @@ now refuses to run unless you have staged something yourself.
 `next.config.ts` and the shell components are Core's. The Connect developer got
 this right on day one — copy him.
 
+### 5a. Where the frontend boundary actually is
+
+**A boundary you cannot check with `git diff --name-only` is not a boundary.**
+
+`docs/plans/LARGE_ATTACHMENTS.md` said "the Mail client UI is Core's" and, in
+the same document, assigned the compose-time pre-check and the on-send body
+block to Mail. Both are compose-UI work — a pre-check that must fire "at
+attach time" can only live in the file picker's handler. Two developers read
+one document, reached opposite conclusions, and one day of work was built
+twice. Neither misread it. It said both.
+
+The rule that failed was the prose one, and it failed because it describes an
+intent with no test attached. Every rule on this platform that people actually
+follow is a file list. So this one is too — **proposed by the Mail developer,
+and adopted because he is right**:
+
+| Path | Owner |
+|---|---|
+| `components/shell/*`, `components/ui/*`, `lib/theme.tsx`, `styles/*`, `app/layout.tsx` | **Core** — the design system and the frame |
+| `components/mail/*`, `app/mail/*`, `lib/mail.ts` | **Mail** — product behaviour inside that frame |
+| `components/space/*`, `app/space/*`, `lib/space.ts` | **Core** — Space's client is Core-built |
+| `app/connect/*`, `lib/connect.ts` | **Connect** |
+
+**The condition that makes this safe:** inside your own files you use existing
+tokens and existing primitives, and introduce no new visual language. If a
+feature needs a component that is not already in `components/ui/*`, that is a
+request to Core, not something a product lane invents. A lane owning its
+screens is not a lane owning the design system.
+
+Check yourself before pushing:
+
+```
+git diff --name-only main...HEAD
+```
+
+If a path outside your rows appears, it goes over as a patch instead.
+
 **6. Only ONE lane runs the local Docker stack at a time.** Compose derives its
 project name from the directory, so each folder would get its own containers,
 volumes and database — but they would all want ports 5432, 3000 and 25 on the

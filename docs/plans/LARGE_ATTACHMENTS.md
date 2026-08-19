@@ -121,9 +121,25 @@ migration plus a rewrite of the resolve path.
 
 3. **Admin policy toggle** in the org console: allow or forbid public links.
 
-4. **Compose UI** (the Mail client is my lane): the over-size prompt, the
+4. ~~**Compose UI** (the Mail client is my lane): the over-size prompt, the
    "upload to Space instead" flow, the tray reuse, and the block that appears
-   in the body.
+   in the body.~~
+
+   **WRONG, AND CORRECTED 19 August 2026 — this is Mail's, and it is built**
+   (`feature/mail-large-attachments`).
+
+   This item and Mail's items 2 and 3 above describe the same work. A
+   compose-time pre-check that must fire "at attach time" can only exist in
+   the composer, so item 2 hands Mail the file this item claims for Core.
+   Both developers read the document, reached opposite conclusions, and the
+   work was built twice. Neither misread it: it said both, and I wrote it.
+
+   The boundary is now a file list rather than the sentence "the Mail client
+   UI is Core's", which had no test attached and could not be followed. See
+   `docs/WORKING_IN_LANES.md` §5a — `components/mail/*` is Mail's.
+
+   What stays Core's on this feature: the landing page (1), the share-dialog
+   audience (2), the admin toggle (3), and the security review (5).
 
 5. **Security review of the unauthenticated path before it ships.** Not a
    formality — I will read that endpoint line by line.
