@@ -33,6 +33,17 @@ public static class ConnectGuestEndpoints
     private static IResult Gone() =>
         Results.NotFound(new { error = "This meeting link does not work." });
 
+    /// <summary>
+    /// Review finding F2: the rate limiter caps the RATE of guest joins, not
+    /// the TOTAL — 60 a minute, indefinitely, was a waiting room nobody could
+    /// empty and an attendance table full of rows that never attended. A
+    /// blunt per-meeting ceiling bounds both. 200 is far above any real
+    /// meeting on this deployment and far below "unbounded"; refusals say the
+    /// one sentence, because a ceiling that answers differently is an oracle
+    /// for how full a meeting is.
+    /// </summary>
+    private const int PerMeetingGuestCeiling = 200;
+
     public static void MapConnectGuestEndpoints(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api/connect/g")
@@ -41,7 +52,15 @@ public static class ConnectGuestEndpoints
 
         g.MapGet("/{code}", DoorstepAsync).AllowAnonymous();
         g.MapPost("/{code}/join", GuestJoinAsync).AllowAnonymous();
-        g.MapGet("/wait/{waitToken}", WaitAsync).AllowAnonymous();
+        // Its OWN rate-limit policy, overriding the group's per-IP one (an
+        // endpoint-level RequireRateLimiting takes precedence over its
+        // group's). Review finding F1: this route polls every ~2 seconds per
+        // waiting person, so per-IP limiting 429'd three guests behind one
+        // office NAT out of their own admission. connect-wait partitions on
+        // the wait-token hash instead — see the policy in Program.cs.
+        g.MapGet("/wait/{waitToken}", WaitAsync)
+            .RequireRateLimiting("connect-wait")
+            .AllowAnonymous();
     }
 
     public sealed record GuestJoinRequest(string? DisplayName, string? Password);
@@ -154,6 +173,23 @@ public static class ConnectGuestEndpoints
             // Core in docs/CONNECT_API.md, open question 3.
             if (string.IsNullOrEmpty(req.Password) || !hasher.Verify(req.Password, hash))
                 return Results.Json(new { error = "That password is not right." }, statusCode: 403);
+        }
+
+        // The ceilings, BEFORE any row is written (F2). Two counts, both under
+        // ordinary RLS now that the tenant is entered: how many guest rows
+        // this meeting already has, and how many people are actually waiting.
+        // Either at the ceiling answers the one failure sentence.
+        var guestRows = await db.ConnectParticipants.AsNoTracking()
+            .CountAsync(p => p.MeetingId == row.MeetingId && p.IsGuest, ct);
+        if (guestRows >= PerMeetingGuestCeiling) return Gone();
+
+        if (row.WaitingRoom is "guests" or "everyone")
+        {
+            var cutoff = DateTimeOffset.UtcNow.AddMinutes(-30);
+            var waitingRows = await db.ConnectLobbyRequests.AsNoTracking()
+                .CountAsync(r => r.MeetingId == row.MeetingId
+                              && r.Status == "waiting" && r.CreatedAt > cutoff, ct);
+            if (waitingRows >= PerMeetingGuestCeiling) return Gone();
         }
 
         var participant = new ConnectParticipant
