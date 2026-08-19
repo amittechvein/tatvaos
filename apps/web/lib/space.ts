@@ -243,39 +243,20 @@ export const linkApi = {
 };
 
 // ---------------------------------------------------------------------------
-//  Org policy — the public-links kill switch.
+//  Org policy - the public-links kill switch.
 //
-//  OrgAdmin-gated on the server (GET/PUT /api/space/settings). Turning it off
-//  closes the TAP, not the handle: the anonymous resolve predicate checks the
-//  flag, so every existing link stops working immediately — and reversibly,
-//  because the link rows survive. The server audits the change; the UI's job
-//  is only to make the consequence unmistakable before the click.
+//  GET is any signed-in user (the composer checks it before spending someone's
+//  bytes on an upload that cannot be linked); PUT is OrgAdmin and audited.
+//  Turning it off closes the TAP, not the handle: the anonymous resolve
+//  predicate reads the flag, so existing links stop working immediately - and
+//  reversibly, because the rows survive.
+//
+//  Owned by Space, per WORKING_IN_LANES.md 5a: the API client belongs with the
+//  API. Core briefly had a second wrapper here for the admin toggle and the two
+//  branches MERGED CLEANLY, which is how a duplicate gets onto main without
+//  anyone being stopped. One client, and it lives with the endpoint.
 // ---------------------------------------------------------------------------
 
-export const spaceSettingsApi = {
-  get: (f: AuthedFetch) =>
-    f('/space/settings')
-      .then((r) => json<{ allowPublicLinks: boolean }>(r, 'Could not load the sharing policy.')),
-
-  set: (f: AuthedFetch, allowPublicLinks: boolean) =>
-    f('/space/settings', {
-      method: 'PUT',
-      body: JSON.stringify({ allowPublicLinks }),
-    }).then((r) => json<{ allowPublicLinks: boolean }>(r, 'Could not save the sharing policy.')),
-};
-
-/**
- * The organisation's Space policy.
- *
- * `get` is readable by ANY signed-in person, deliberately: the mail composer
- * has to know whether links are allowed before it uploads 40 MB it may not be
- * able to link, and the share dialog needs it to decide whether to offer the
- * option. `set` is OrgAdmin only.
- *
- * Lives here rather than in each caller so there is one client for one
- * contract — Mail calls this, the composer calls this, the admin console
- * calls this.
- */
 export const settingsApi = {
   get: (f: AuthedFetch) =>
     f('/space/settings')

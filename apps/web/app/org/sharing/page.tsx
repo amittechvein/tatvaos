@@ -6,7 +6,7 @@ import { AdminShell } from '@/components/admin/AdminShell';
 import { Badge, Button, Card } from '@/components/ui/Kit';
 import { Modal } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
-import { spaceSettingsApi } from '@/lib/space';
+import { settingsApi } from '@/lib/space';
 
 // ============================================================================
 //  Sharing policy
@@ -39,7 +39,7 @@ export default function SharingPolicyPage() {
 
   const load = useCallback(() => {
     setError(null);
-    spaceSettingsApi.get(authedFetch)
+    settingsApi.get(authedFetch)
       .then((s) => setAllow(s.allowPublicLinks))
       .catch((e: Error) => setError(e.message));
   }, [authedFetch]);
@@ -50,7 +50,7 @@ export default function SharingPolicyPage() {
     setSaving(true);
     setError(null);
     try {
-      const s = await spaceSettingsApi.set(authedFetch, next);
+      const s = await settingsApi.set(authedFetch, next);
       setAllow(s.allowPublicLinks);
       setConfirmOff(false);
     } catch (e) {
