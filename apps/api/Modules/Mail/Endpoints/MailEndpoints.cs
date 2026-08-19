@@ -378,7 +378,7 @@ public static class MailEndpoints
     // ------------------------------------------------------------------
     private static async Task<IResult> AttachToSpaceAsync(
         HttpRequest request, AppDbContext db, TenantContext tenant,
-        SpaceContentGateway space, CancellationToken ct)
+        SpaceContentGateway space, ILoggerFactory logFactory, CancellationToken ct)
     {
         if (!request.HasFormContentType)
             return Results.BadRequest(new { ok = false, reason = "bad_request", error = "Expected a multipart form." });
@@ -395,7 +395,7 @@ public static class MailEndpoints
             file.FileName,
             file.ContentType,
             file.Length,
-            folderId: await MailAttachmentsFolderAsync(space, ct),
+            folderId: await MailAttachmentsFolderAsync(space, logFactory, ct),
             scope: "personal",
             ct: ct);
 
@@ -444,17 +444,37 @@ public static class MailEndpoints
             : Results.BadRequest(body);
     }
 
+    /// <summary>The folder mailed files are parked in. One name, one place.</summary>
+    private const string AttachmentsFolderName = "Email attachments";
+
     /// <summary>
-    /// The person's "Email attachments" folder in Space.
+    /// The person's "Email attachments" folder in Space, or null to fall back
+    /// to their personal root.
     ///
-    /// Null for now, which means the file lands in their personal root. The
-    /// gateway has no folder-creation call yet - Core is adding
-    /// EnsureFolderAsync - and creating space.folders rows from Mail would put
-    /// Space's ownership rules in two places, which is the exact thing the
-    /// gateway exists to prevent. One line changes here when it lands.
+    /// Through the gateway, so folder ownership follows Space's rules rather
+    /// than a second copy of them living in Mail.
+    ///
+    /// A FOLDER IS TIDINESS, NOT CORRECTNESS. EnsureFolderAsync throws when it
+    /// cannot make one, and refusing somebody's attachment because a folder
+    /// could not be created would be a bad trade - the file goes to the root
+    /// instead. Logged rather than shown: it needs to be findable, but nothing
+    /// the person did caused it.
     /// </summary>
-    private static Task<Guid?> MailAttachmentsFolderAsync(
-        SpaceContentGateway space, CancellationToken ct) => Task.FromResult<Guid?>(null);
+    private static async Task<Guid?> MailAttachmentsFolderAsync(
+        SpaceContentGateway space, ILoggerFactory logFactory, CancellationToken ct)
+    {
+        try
+        {
+            return await space.EnsureFolderAsync(AttachmentsFolderName, "personal", ct);
+        }
+        catch (Exception ex)
+        {
+            logFactory.CreateLogger("MailAttachToSpace").LogWarning(
+                ex, "Could not ensure the {Folder} folder; saving to the personal root instead",
+                AttachmentsFolderName);
+            return null;
+        }
+    }
 
     // ------------------------------------------------------------------
     //  Directory - who you can address inside your own organisation.
