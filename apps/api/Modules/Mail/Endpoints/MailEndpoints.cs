@@ -1,5 +1,3 @@
-using MailKit.Net.Smtp;
-using MailKit.Security;
 using Microsoft.EntityFrameworkCore;
 using MimeKit;
 using TatvaOS.Api.Modules.Admin;
@@ -1794,14 +1792,6 @@ public static class MailEndpoints
         if (box is null)
             return Results.BadRequest(new { error = "You have no mailbox to send from." });
 
-        // Whether this is somebody else's queue changes the display name and
-        // the audit trail. It changes nothing else: the message is built,
-        // submitted and filed through exactly the same path either way.
-        var isShared = box.UserId != tenant.UserId;
-
-        var user = await db.Users.AsNoTracking()
-            .FirstOrDefaultAsync(u => u.Id == tenant.UserId, ct);
-
         // ---- Recipients -------------------------------------------------
         var to = ParseAddressLine(form["to"]);
         var cc = ParseAddressLine(form["cc"]);
@@ -1824,208 +1814,53 @@ public static class MailEndpoints
                 error = "This message is over the 25 MB limit. Remove an attachment and try again.",
             });
 
-        // ---- Compose with a body builder --------------------------------
-        //  HtmlBody + TextBody makes a multipart/alternative the receiver's
-        //  client picks from; attachments make it multipart/mixed around that.
-        //  MimeKit assembles the right structure from what we set here.
-        var builder = new BodyBuilder();
-        if (!string.IsNullOrWhiteSpace(bodyHtml)) builder.HtmlBody = bodyHtml;
-        if (!string.IsNullOrWhiteSpace(bodyText)) builder.TextBody = bodyText;
-        else if (string.IsNullOrWhiteSpace(bodyHtml)) builder.TextBody = "";
-
+        // ---- Hand it to the sender ---------------------------------------
+        //  Everything past this point - compose, submit, file the Sent copy,
+        //  thread it, index the attachments, charge the quota, audit - now
+        //  lives in MailSender, so Calendar can send an invitation down
+        //  exactly this path instead of growing a fifth SmtpClient of its own.
+        //
+        //  The files are read into memory HERE, after the gate above has
+        //  already refused anything oversize on IFormFile.Length alone.
+        var attachments = new List<MailAttachment>(files.Count);
         foreach (var file in files)
         {
             await using var stream = file.OpenReadStream();
             using var ms = new MemoryStream();
             await stream.CopyToAsync(ms, ct);
-            var contentType = ContentType.Parse(
-                string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType);
-            builder.Attachments.Add(file.FileName, ms.ToArray(), contentType);
+            attachments.Add(new MailAttachment(file.FileName, file.ContentType, ms.ToArray()));
         }
 
-        var mime = new MimeMessage();
-        // A reply from a shared queue goes out AS the queue, display name and
-        // all. Putting the individual's name here is how an answer comes back
-        // to one person's inbox and dies there the week they are on leave.
-        mime.From.Add(new MailboxAddress(
-            // The mailbox's own name when it has one ("Admissions Office"),
-            // falling back to the local part for mailboxes created before
-            // display names existed.
-            isShared ? box.DisplayName ?? box.LocalPart : user?.DisplayName ?? box.LocalPart,
-            box.Address));
-        foreach (var a in to) mime.To.Add(a);
-        foreach (var a in cc) mime.Cc.Add(a);
-        mime.Subject = subject;
-        mime.Body = builder.ToMessageBody();
+        var result = await MailSender.SubmitAsync(
+            box,
+            new MailSubmission(
+                To: to,
+                Cc: cc,
+                Subject: subject,
+                BodyText: bodyText,
+                BodyHtml: bodyHtml,
+                Attachments: attachments,
+                InReplyToMessageId: Guid.TryParse(form["inReplyToId"], out var replyId)
+                    ? replyId : (Guid?)null,
+                DraftId: Guid.TryParse(form["draftId"], out var draftId)
+                    ? draftId : (Guid?)null),
+            db, tenant, config, log, autoSave, audit, ct);
 
-        // Threading headers, so replies land in the same conversation in
-        // every client that receives them — including ours, later.
-        if (Guid.TryParse(form["inReplyToId"], out var replyId))
+        return result.Outcome switch
         {
-            var original = await db.Messages.AsNoTracking()
-                .FirstOrDefaultAsync(x => x.Id == replyId && x.MailboxId == box.Id, ct);
-            if (original?.MessageIdHeader is string origId && origId.Length > 0)
-            {
-                mime.InReplyTo = origId.Trim('<', '>');
-                mime.References.Add(origId.Trim('<', '>'));
-            }
-        }
+            SendOutcome.Sent =>
+                Results.Ok(new { id = result.MessageId, folderId = result.FolderId }),
 
-        // ---- Submit through our own Postfix -----------------------------
-        //  :587, same path as system mail. The verified-domain outbound gate
-        //  lives THERE, in sender-external-gate.cf — deliberately not
-        //  re-implemented here, because two copies of one rule drift and the
-        //  Postfix one is the one Linode was told about.
-        var host = config["Smtp:Host"] ?? "postfix";
-        var port = int.TryParse(config["Smtp:Port"], out var p) ? p : 587;
+            // The message HAS gone out; only the filing failed. Reporting a
+            // successful send as an error is how someone sends it twice.
+            SendOutcome.SentButNotFiled =>
+                Results.Ok(new { id = (Guid?)null, warning = "Sent, but no Sent folder exists to file a copy in." }),
 
-        try
-        {
-            using var client = new SmtpClient();
-            await client.ConnectAsync(host, port, SecureSocketOptions.None, ct);
-            await client.SendAsync(mime, ct);
-            await client.DisconnectAsync(true, ct);
-        }
-        catch (SmtpCommandException ex)
-        {
-            // Postfix said no — most usefully, the outbound gate's own words:
-            // "Sending outside your organisation requires a verified domain."
-            // Pass the reason through; a generic "send failed" would send the
-            // admin hunting through server logs for a policy working as built.
-            log.LogInformation(ex, "Send from {From} refused by SMTP", box.Address);
-            return Results.UnprocessableEntity(new { error = CleanSmtpError(ex.Message) });
-        }
-        catch (Exception ex)
-        {
-            log.LogError(ex, "Send from {From} failed", box.Address);
-            return Results.Problem("The mail server could not be reached. Nothing was sent.",
-                statusCode: StatusCodes.Status502BadGateway);
-        }
+            SendOutcome.Refused =>
+                Results.UnprocessableEntity(new { error = result.Error }),
 
-        // ---- File the Sent copy -----------------------------------------
-        //  After the submit succeeds, never before: a Sent copy of a message
-        //  that was refused would be a record of something that did not happen.
-        var sent = await db.Folders.FirstOrDefaultAsync(
-            f => f.MailboxId == box.Id && f.SpecialUse == "\\Sent", ct);
-        if (sent is null)
-        {
-            // The message went out; only the filing failed. Say exactly that.
-            log.LogError("Mailbox {Address} has no Sent folder — default-folders trigger missing",
-                box.Address);
-            return Results.Ok(new { id = (Guid?)null, warning = "Sent, but no Sent folder exists to file a copy in." });
-        }
-
-        var raw = mime.ToString();
-        var attParts = MailContent.AttachmentParts(mime);
-
-        // The Sent copy joins the conversation it answers.
-        //
-        // Without this, thread_id is set on every message people send US and
-        // on none of the ones we send back, so a conversation renders as the
-        // other side's half with our replies silently missing. That reads as
-        // complete and is therefore worse than no threading at all.
-        //
-        // Same resolver the ingest worker calls, deliberately: one definition
-        // of what a conversation is, in one place. The pending-batch argument
-        // is empty because there is no batch here - one message, one call -
-        // and mime already carries the In-Reply-To/References set above.
-        var threadId = await MailThreads.ResolveAsync(
-            db, box.Id, mime, new Dictionary<string, Guid>(), ct);
-
-        var message = new Message
-        {
-            TenantId = box.TenantId,
-            MailboxId = box.Id,
-            FolderId = sent.Id,
-            ThreadId = threadId,
-            MessageIdHeader = mime.MessageId,
-            FromAddr = box.Address,
-            FromName = isShared ? box.DisplayName ?? box.LocalPart : user?.DisplayName,
-            ToAddrs = to.Select(a => a.Address).ToArray(),
-            CcAddrs = cc.Count > 0 ? cc.Select(a => a.Address).ToArray() : null,
-            Subject = mime.Subject,
-            Snippet = MailContent.Snippet(mime),
-            // Same as ingest: give search a body to index. Without this, mail
-            // you sent would be findable by subject but not by what you wrote.
-            BodyText = mime.TextBody ?? mime.HtmlBody,
-            SentAt = DateTimeOffset.UtcNow,
-            ReceivedAt = DateTimeOffset.UtcNow,
-            // Who pressed send. Recorded for every send, not only shared ones:
-            // one rule is easier to trust than "sometimes populated".
-            SentByUserId = tenant.UserId,
-            SizeBytes = raw.Length,
-            IsRead = true,
-            HasAttachments = attParts.Count > 0,
-            RawBody = raw,
+            _ => Results.Problem(result.Error, statusCode: StatusCodes.Status502BadGateway),
         };
-        db.Messages.Add(message);
-
-        // The draft this was composed from has become a sent message. Leaving
-        // it in Drafts is how someone sends the same mail twice, having found
-        // what looks like an unsent copy of it later.
-        if (Guid.TryParse(form["draftId"], out var draftId))
-        {
-            var draftsFolder = await db.Folders.FirstOrDefaultAsync(
-                f => f.MailboxId == box.Id && f.SpecialUse == "\\Drafts", ct);
-            if (draftsFolder is not null)
-            {
-                var draft = await db.Messages.FirstOrDefaultAsync(
-                    m => m.Id == draftId && m.MailboxId == box.Id
-                         && m.FolderId == draftsFolder.Id, ct);
-                if (draft is not null) db.Messages.Remove(draft);
-            }
-        }
-
-        // Index the Sent copy's attachments so they show as chips and download
-        // through the same part-index path as received mail.
-        for (var i = 0; i < attParts.Count; i++)
-        {
-            var part = attParts[i];
-            db.Attachments.Add(new Attachment
-            {
-                TenantId = box.TenantId,
-                MessageId = message.Id,
-                Filename = part.FileName ?? $"attachment-{i + 1}",
-                ContentType = part.ContentType?.MimeType,
-                SizeBytes = files.ElementAtOrDefault(i)?.Length ?? 0,
-                PartIndex = i,
-                // "pending", not "clean". Nothing on this platform scans an
-                // attachment, so a row saying clean is a security claim we
-                // cannot support - and it is worse than an honest unknown,
-                // because a client would be right to trust it. Inbound mail
-                // has always recorded pending; this makes outbound agree, so
-                // the day a scanner exists it has one backlog, not two.
-                ScanStatus = "pending",
-            });
-        }
-
-        box.UsedBytes += message.SizeBytes;
-        await db.SaveChangesAsync(ct);
-
-        // Offer the recipients to the sender's address book. Off by default —
-        // see ContactSettings.AutoSaveSent — and after the commit, because a
-        // failure here must not lose a message that has already gone out.
-        // tenant.UserId, NOT box.UserId: recipients learned from a send belong
-        // to the HUMAN who pressed send. For a personal mailbox the two are the
-        // same id; for a shared mailbox box.UserId is NULL, and passing it made
-        // every delegated send silently skip contact auto-save.
-        await autoSave.RecordAsync(db, tenant, tenant.UserId, [message], "recipient", ct);
-
-        // Audited only when the mailbox is not your own. The question this
-        // trail exists to answer is "who answered as admissions@"; a row for
-        // every personal send would bury it. After the commit, like the
-        // contact write above - a failure to record must never lose a message
-        // that has already gone out.
-        if (isShared)
-            await audit.WriteAsync(
-                "mail.sent_as",
-                targetType: "mail.mailbox",
-                targetId: box.Id.ToString(),
-                after: new { messageId = message.Id, from = box.Address, recipients = to.Count },
-                ct: ct,
-                productCode: "mail");
-
-        return Results.Ok(new { id = message.Id, folderId = message.FolderId });
     }
 
     /// <summary>
@@ -2049,10 +1884,4 @@ public static class MailEndpoints
     /// SMTP errors arrive as "5.7.1 &lt;addr&gt;: Recipient address rejected: {reason}".
     /// The reason is the part a person can act on; the protocol prefix is noise.
     /// </summary>
-    private static string CleanSmtpError(string message)
-    {
-        var idx = message.LastIndexOf("rejected:", StringComparison.OrdinalIgnoreCase);
-        var cleaned = idx >= 0 ? message[(idx + "rejected:".Length)..].Trim() : message.Trim();
-        return cleaned.Length > 0 ? cleaned : "The mail server refused the message.";
-    }
 }
