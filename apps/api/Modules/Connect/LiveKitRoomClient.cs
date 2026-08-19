@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace TatvaOS.Api.Modules.Connect;
@@ -48,9 +49,44 @@ public sealed class LiveKitRoomClient(
             new { room = ConnectCodes.RoomName(meetingId) }, ct);
         if (response is null) return null;
 
-        var parsed = await response.Content.ReadFromJsonAsync<LkParticipantList>(ct);
-        return parsed?.Participants ?? [];
+        try
+        {
+            var parsed = await response.Content.ReadFromJsonAsync<LkParticipantList>(WireJson, ct);
+            return parsed?.Participants ?? [];
+        }
+        catch (JsonException ex)
+        {
+            // A body that will not deserialise is the media server being
+            // unintelligible, which is the same thing to a caller as the media
+            // server being unreachable: null, not an empty room. Telling a host
+            // "nobody has joined" because a field changed shape would send them
+            // looking in entirely the wrong place.
+            log.LogWarning(ex, "LiveKit ListParticipants returned a body that could not be read");
+            return null;
+        }
     }
+
+    /// <summary>
+    /// The one place this file deserialises LiveKit's JSON into typed classes,
+    /// and the settings that keep that safe.
+    ///
+    /// AllowReadingFromString is not optional here. LiveKit serialises protobuf
+    /// with protojson, which renders every int64 as a JSON STRING — joinedAt,
+    /// creationTime, any byte count. The classes below happen to hold only
+    /// strings and bools today, so nothing breaks; the day somebody adds
+    /// `public long JoinedAt`, the deserialiser would throw on a perfectly
+    /// normal LiveKit response and the recording gate would start answering
+    /// 502 to a room full of people. That exact class of surprise — a number
+    /// arriving as a string — already cost this module a day.
+    ///
+    /// Everything hand-parsed goes through ConnectWire, which knows the same
+    /// rule. This is the typed path saying it out loud.
+    /// </summary>
+    private static readonly JsonSerializerOptions WireJson = new()
+    {
+        NumberHandling = JsonNumberHandling.AllowReadingFromString,
+        PropertyNameCaseInsensitive = true,
+    };
 
     /// <summary>
     /// Mute one person's microphone or camera.

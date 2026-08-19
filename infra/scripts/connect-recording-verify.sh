@@ -111,16 +111,22 @@ n=$(q "SELECT count(*) FROM pg_proc p JOIN pg_namespace ns ON ns.oid=p.pronamesp
         WHERE ns.nspname='connect' AND p.proname='attendance'")
 [ "${n:-0}" -eq 1 ] && ok "connect.attendance() present" || bad "connect.attendance() is missing"
 
-# pending_notes must no longer require a transcript. Checked by reading the
-# definition rather than by running it, because running it on production would
-# mean asserting against real customers' meetings.
-if q "SELECT pg_get_functiondef(p.oid) FROM pg_proc p
-       JOIN pg_namespace ns ON ns.oid=p.pronamespace
-      WHERE ns.nspname='connect' AND p.proname='pending_notes'" | grep -q "status = 'ended'"; then
-    ok "pending_notes covers every ended meeting, not only transcribed ones"
-else
-    bad "pending_notes still requires a transcript — notes will never appear for meetings that were not recorded"
-fi
+# pending_notes must no longer require a transcript. Read from the definition
+# rather than by running it, because running it on production would mean
+# asserting against real customers' meetings.
+#
+# THE MATCH IS DONE IN SQL, NOT IN THE SHELL. The first version of this piped
+# pg_get_functiondef through q() and grepped it — and q() ends in
+# `tail -n1 | tr -d '[:space:]'`, which is correct for the scalars everything
+# else here asks for and destroys a multi-line function body: it kept the last
+# line and then deleted every space, so the pattern could never match. It
+# reported a red FAIL against a perfectly correct migration. Ask the database
+# for a COUNT, which is what q() is for.
+n=$(q "SELECT count(*) FROM pg_proc p JOIN pg_namespace ns ON ns.oid=p.pronamespace
+        WHERE ns.nspname='connect' AND p.proname='pending_notes'
+          AND pg_get_functiondef(p.oid) LIKE '%status = ''ended''%'")
+[ "${n:-0}" -eq 1 ] && ok "pending_notes covers every ended meeting, not only transcribed ones" \
+                    || bad "pending_notes still requires a transcript — notes will never appear for meetings that were not recorded"
 
 # How much has actually been produced. Not an assertion — a number to look at.
 meetings=$(q "SELECT count(*) FROM connect.meetings WHERE status='ended'")
@@ -177,10 +183,11 @@ fi
 
 echo
 echo "== the recordings volume =="
-# Egress WRITES as its own uid; the API READS and DELETES as 5000. The directory
-# must therefore be owned by egress, group-owned by the API, and setgid so new
-# files inherit the group. This is a ONE-TIME step, like spaceblobs, and it is
-# invisible until the first recording fails to appear.
+# Egress WRITES as its own uid; the API READS and DELETES as its own gid. The
+# directory must therefore be owned by egress, group-owned by the API, and
+# setgid so new files inherit the group. This is a ONE-TIME step, like
+# spaceblobs, and it is invisible until the first recording fails to appear.
+# Both ids, and the volume name, are ASKED FOR below rather than written down.
 # ─────────────────────────────────────────────────────────────────────────
 #  ASK EGRESS WHAT UID IT IS. DO NOT ASSUME ONE.
 #
@@ -201,7 +208,37 @@ EGUID=$("${COMPOSE[@]}" exec -T egress id -u 2>/dev/null | tr -d '[:space:]')
 [ -n "$EGUID" ] && ok "egress runs as uid $EGUID" \
                 || warn "could not ask the egress container for its uid — is it running?"
 
-FIXCMD="docker run --rm -v tatvaos_connectrec:/r alpine sh -c 'chown ${EGUID:-<egress-uid>}:5000 /r && chmod 2775 /r'"
+# ─────────────────────────────────────────────────────────────────────────
+#  AND ASK THE API WHAT GID IT IS, FOR EXACTLY THE SAME REASON.
+#
+#  This block hardcoded 5000 for a whole day AFTER the uid-1000 lesson above
+#  was written directly on top of it. Same shape: a number taken from a
+#  Dockerfile, asserted against a directory the same script tells you to
+#  chown to that number. It happened to be right, which is the only reason
+#  it did not cost a second night — and "happened to be right" is not a
+#  check.
+#
+#  If the API image ever changes its user, the hardcoded version would keep
+#  saying OK while deletes started failing. This version cannot.
+# ─────────────────────────────────────────────────────────────────────────
+APIGID=$("${COMPOSE[@]}" exec -T api id -g 2>/dev/null | tr -d '[:space:]')
+[ -n "$APIGID" ] && ok "the api runs as gid $APIGID" \
+                 || warn "could not ask the api container for its gid — is it running?"
+
+# The volume name is derived too. 'tatvaos_connectrec' was a guess about the
+# compose project name, which comes from the directory the stack was deployed
+# into and is not this script's to assume — a printed fix command that does
+# not work is worse than no fix command, because it is followed.
+EGCID=$("${COMPOSE[@]}" ps -q egress 2>/dev/null | head -n1)
+VOLNAME=""
+if [ -n "$EGCID" ]; then
+    VOLNAME=$(docker inspect -f \
+        '{{range .Mounts}}{{if eq .Destination "/var/lib/connect/recordings"}}{{.Name}}{{end}}{{end}}' \
+        "$EGCID" 2>/dev/null | tr -d '[:space:]')
+fi
+FIXCMD="docker run --rm -v ${VOLNAME:-<recordings-volume>}:/r alpine sh -c 'chown ${EGUID:-<egress-uid>}:${APIGID:-<api-gid>} /r && chmod 2775 /r'"
+[ -n "$VOLNAME" ] && ok "the recordings volume is $VOLNAME" \
+                  || warn "could not work out the recordings volume name from the egress container"
 
 perm=$("${COMPOSE[@]}" exec -T api sh -c 'stat -c "%u %g %a" /var/lib/connect/recordings' 2>/dev/null | tr -d '\r')
 if [ -z "$perm" ]; then
@@ -209,8 +246,13 @@ if [ -z "$perm" ]; then
 else
     set -- $perm
     owner=$1; group=$2; mode=$3
-    [ "$group" = "5000" ] && ok "recordings dir is group-owned by the api (gid 5000)" \
-        || bad "recordings dir gid is $group, expected 5000 — the API will not be able to delete recordings. Fix: $FIXCMD"
+    if [ -z "$APIGID" ]; then
+        warn "recordings dir gid is $group; could not confirm the api's own gid"
+    elif [ "$group" = "$APIGID" ] || [ "$APIGID" = "0" ]; then
+        ok "recordings dir is group-owned by the api (gid $group)"
+    else
+        bad "recordings dir gid is $group but THE API RUNS AS GID $APIGID — it will not be able to delete recordings. Fix: $FIXCMD"
+    fi
     case "$mode" in
         2775|2777|3775) ok "recordings dir is setgid and group-writable (mode $mode)" ;;
         *) bad "recordings dir mode is $mode, expected 2775 — without setgid, files egress writes will not be readable by the API. Fix: $FIXCMD" ;;

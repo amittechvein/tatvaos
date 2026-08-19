@@ -1,0 +1,57 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ═══════════════════════════════════════════════════════════════════════
+     THE WIRE TESTS.
+
+     This project exists because of one line. ConnectWebhookEndpoints read
+     LiveKit's `createdAt` with JsonElement.TryGetInt64. protojson sends
+     int64 as a JSON *string*, and TryGetInt64 does not return false for a
+     string — it THROWS. The exception was unhandled, Kestrel answered 500,
+     LiveKit retried five times and gave up, and connect.meeting_events was
+     empty from the day the module shipped. No attendance, no started_at, no
+     meeting ever reaching 'ended', and a notes worker patiently reading a
+     table that could not have a row in it. Twelve hours to find.
+
+     It would have taken this project under a second, because the fixtures
+     below are REAL LiveKit payloads, not payloads a developer imagined.
+
+     TWO DELIBERATE CHOICES:
+
+     1. ConnectWire.cs is LINKED, not copied. This compiles the exact file
+        that runs in production. A copy would drift and the tests would go
+        on passing against code nobody ships.
+
+     2. No test framework. A console app with an exit code needs no package
+        restore, so it runs on a box with no network, in CI, and on a
+        laptop, identically. `dotnet run` and read the last line.
+
+     It is not in any solution file on purpose: nothing about the API build
+     should depend on it, and it must never end up published.
+    ═══════════════════════════════════════════════════════════════════════
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TatvaOS.Tests.Wire</RootNamespace>
+    <AssemblyName>connect-wire-test</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+    <!-- Central package management, if the repo ever turns it on, must not
+         reach in here: this project has no packages to manage. -->
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <!-- Warnings are errors here for the same reason they are in the API:
+         the whole point of this project is that nothing gets waved through. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The production file itself. Not a copy. -->
+    <Compile Include="../../apps/api/Modules/Connect/ConnectWire.cs"
+             Link="ConnectWire.cs" />
+  </ItemGroup>
+
+</Project>

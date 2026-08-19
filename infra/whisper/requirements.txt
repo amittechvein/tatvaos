@@ -1,0 +1,22 @@
+# Pinned to a MINOR floor, not to an exact version.
+#
+# Exact pins would be better if this were rebuilt often; it is not — it is a
+# service that gets built once and then runs for months. What actually bites a
+# build like that is a major version quietly landing during a rebuild eighteen
+# months from now, which a floor with an upper bound prevents and an exact pin
+# also prevents at the cost of never getting a security fix.
+#
+# Every version below was checked against PyPI on 19 August 2026. The one
+# thing that could NOT be checked from where this was written is whether the
+# base image tag in the Dockerfile still exists — Docker Hub is not reachable
+# from there. If `docker compose build whisper` fails on the FROM line, that
+# is why, and any current python:3.12-slim digest will do.
+
+faster-whisper>=1.2,<2
+fastapi>=0.141,<1
+uvicorn[standard]>=0.52,<1
+
+# Not optional. FastAPI parses multipart through this, and without it the
+# upload arrives as a 422 with a message about a missing dependency — which
+# reads like a bug in the caller and is not.
+python-multipart>=0.0.32,<0.1

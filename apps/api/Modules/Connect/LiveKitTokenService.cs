@@ -219,15 +219,22 @@ public sealed class LiveKitTokenService(IConfiguration config, ILogger<LiveKitTo
 
         // Expiry, if present. LiveKit sets one; a token without it is refused
         // rather than trusted.
-        if (!payload.TryGetProperty("exp", out var expEl) || !expEl.TryGetInt64(out var exp)) return false;
-        if (DateTimeOffset.UtcNow.ToUnixTimeSeconds() > exp + 30) return false;
+        //
+        // Read through ConnectWire, not TryGetInt64. `exp` is a JWT NumericDate
+        // and LiveKit's Go library emits it as a number — but TryGetInt64
+        // THROWS on a string rather than returning false, and TryGetProperty
+        // throws if the decoded payload is not an object at all. An exception
+        // thrown HERE, one line after the signature check, would take down
+        // webhook verification itself. That is the same bug that emptied
+        // connect.meeting_events, sitting on the security path.
+        var exp = ConnectWire.Number(payload, "exp");
+        if (exp is not long expiresAt) return false;
+        if (DateTimeOffset.UtcNow.ToUnixTimeSeconds() > expiresAt + 30) return false;
 
         // The body hash. Without this a valid signature could be replayed over
         // a DIFFERENT body — the signature would still check out.
-        if (!payload.TryGetProperty("sha256", out var shaEl) || shaEl.ValueKind != JsonValueKind.String)
-            return false;
-
-        var declared = shaEl.GetString();
+        var declared = ConnectWire.Text(payload, "sha256");
+        if (declared is null) return false;
         var actual = Convert.ToBase64String(SHA256.HashData(body));
         return CryptographicOperations.FixedTimeEquals(
             Encoding.ASCII.GetBytes(declared ?? ""), Encoding.ASCII.GetBytes(actual));

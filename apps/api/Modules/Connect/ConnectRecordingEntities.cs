@@ -136,6 +136,88 @@ public sealed class ConnectMeetingNotes
     public string? Error { get; set; }
     public DateTimeOffset? GeneratedAt { get; set; }
 
+    // ---- The minutes email ------------------------------------------------
+    //
+    // EmailedAt is stamped BEFORE the send is attempted, and that order is the
+    // whole design. calendar.reminder_sends learned it the same way: a worker
+    // that records after sending re-sends everything it was in the middle of
+    // when the process restarted, and minutes that arrive three times are how
+    // somebody builds a filter rule for you. Recording first can lose one
+    // send; recording after can send one repeatedly, forever.
+
+    /// <summary>When the minutes email went out. NULL means it has not.</summary>
+    public DateTimeOffset? EmailedAt { get; set; }
+
+    /// <summary>Attempts so far. Three and it stops asking — a permanently
+    /// bad recipient list must not be retried every minute for the life of
+    /// the deployment.</summary>
+    public int EmailAttempts { get; set; }
+
+    public string? EmailError { get; set; }
+
+    /// <summary>How many people it actually reached. 'Sent' with a count of
+    /// zero is a different fact from 'sent to eleven people', and an operator
+    /// reading this row deserves to tell them apart.</summary>
+    public int EmailRecipients { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
+}
+
+/// <summary>
+/// One line of meeting chat, kept.
+///
+/// ─────────────────────────────────────────────────────────────────────────
+///  CHAT USED TO EXIST ONLY IN THE BROWSERS THAT WERE OPEN.
+///
+///  It rides LiveKit's data channel, which is the right transport — it is
+///  peer-to-peer through the SFU, it needs no server round trip, and it works
+///  when the API is restarting. What it is not is a record. Every link, every
+///  "I'll send that by Friday", every question from somebody who could not
+///  unmute went away when the tab closed. For a school, a good half of what
+///  they actually need from a class is in there.
+///
+///  So the transport is unchanged and a copy is POSTED here as well. The
+///  meeting does not wait for it and does not fail if it does not arrive:
+///  chat that is delivered but not stored is a worse meeting record, while
+///  chat that is stored but not delivered is a broken meeting.
+///
+///  THE NAME IS DENORMALISED ON PURPOSE. It is what the person was called AT
+///  THE TIME. A join to the user table would rewrite the minutes every time
+///  somebody changed their display name, and minutes that change after the
+///  fact are not minutes.
+/// ─────────────────────────────────────────────────────────────────────────
+/// </summary>
+public sealed class ConnectMeetingChat
+{
+    public Guid Id { get; set; }
+    public Guid MeetingId { get; set; }
+
+    /// <summary>
+    /// The id the SENDER'S browser made up for this line.
+    ///
+    /// A guest cannot post to this API, so their lines are stored by one of
+    /// the signed-in clients that received them — and 'one of' is a race the
+    /// moment two of them try. Unique per meeting, inserted with ON CONFLICT
+    /// DO NOTHING, so five clients storing the same line leave one row. It is
+    /// the difference between minutes and minutes-in-triplicate.
+    /// </summary>
+    public Guid ClientId { get; set; }
+
+    /// <summary>The LiveKit identity, which survives a rejoin. NOT a user id:
+    /// guests have none, and guests are half the room.</summary>
+    public string Identity { get; set; } = "";
+
+    public string DisplayName { get; set; } = "";
+    public bool IsGuest { get; set; }
+
+    public string Body { get; set; } = "";
+
+    /// <summary>When it was SAID, as the sender's browser saw it — not when
+    /// the POST landed. A line typed during a thirty-second reconnect belongs
+    /// where it was typed, or the transcript of the chat reads out of
+    /// order.</summary>
+    public DateTimeOffset SentAt { get; set; }
+
+    public DateTimeOffset CreatedAt { get; set; }
 }

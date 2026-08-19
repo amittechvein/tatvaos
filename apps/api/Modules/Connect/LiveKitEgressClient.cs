@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -45,17 +44,16 @@ public sealed class LiveKitEgressClient(
     ConnectRecordingOptions options,
     ILogger<LiveKitEgressClient> log)
 {
-    /// <summary>What LiveKit told us about one egress. Every field is optional
-    /// because this is external input and a missing field must not throw.</summary>
-    public sealed record EgressState(
-        string? EgressId,
-        string? Status,
-        string? Error,
-        string? FileName,
-        long SizeBytes,
-        long? DurationMs,
-        DateTimeOffset? StartedAt,
-        DateTimeOffset? EndedAt);
+    // ------------------------------------------------------------------
+    //  EgressState LIVES IN ConnectWire NOW, and so does the code that fills
+    //  it. It used to live here, with a second and subtly different copy of
+    //  the same knowledge in ConnectWebhookEndpoints one folder over. The
+    //  copy there was wrong — it read an int64 with TryGetInt64, which throws
+    //  on the string protojson actually sends — and connect.meeting_events
+    //  stayed empty for the module's entire life because of it.
+    //
+    //  One reader, one set of rules, one test project aimed at it.
+    // ------------------------------------------------------------------
 
     public bool IsConfigured => tokens.IsConfigured && options.Enabled;
 
@@ -63,7 +61,7 @@ public sealed class LiveKitEgressClient(
     /// Begin recording a room. Returns null when LiveKit refuses or cannot be
     /// reached — the caller answers 502 with a sentence rather than throwing.
     /// </summary>
-    public async Task<EgressState?> StartAsync(
+    public async Task<ConnectWire.EgressState?> StartAsync(
         Guid meetingId, string mode, string fileName, CancellationToken ct)
     {
         var isVideo = mode == "video";
@@ -98,16 +96,16 @@ public sealed class LiveKitEgressClient(
         }
 
         var root = await CallAsync("StartRoomCompositeEgress", request, ct);
-        return root is null ? null : ReadEgress(root.Value);
+        return root is null ? null : ConnectWire.ReadEgress(root.Value);
     }
 
     /// <summary>Stop one egress. LiveKit finalises the file and then sends
     /// egress_ended, which is what actually marks the row ready.</summary>
-    public async Task<EgressState?> StopAsync(string egressId, CancellationToken ct)
+    public async Task<ConnectWire.EgressState?> StopAsync(string egressId, CancellationToken ct)
     {
         var root = await CallAsync("StopEgress",
             new Dictionary<string, object?> { ["egress_id"] = egressId }, ct);
-        return root is null ? null : ReadEgress(root.Value);
+        return root is null ? null : ConnectWire.ReadEgress(root.Value);
     }
 
     /// <summary>
@@ -118,7 +116,7 @@ public sealed class LiveKitEgressClient(
     /// never be linked to its row. The worker calls this for anything stuck,
     /// so a missed callback costs a delay rather than a lost recording.
     /// </summary>
-    public async Task<EgressState?> DescribeAsync(string egressId, CancellationToken ct)
+    public async Task<ConnectWire.EgressState?> DescribeAsync(string egressId, CancellationToken ct)
     {
         var root = await CallAsync("ListEgress",
             new Dictionary<string, object?> { ["egress_id"] = egressId }, ct);
@@ -126,7 +124,7 @@ public sealed class LiveKitEgressClient(
 
         if (!root.Value.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array)
             return null;
-        foreach (var item in items.EnumerateArray()) return ReadEgress(item);
+        foreach (var item in items.EnumerateArray()) return ConnectWire.ReadEgress(item);
         return null;
     }
 
@@ -173,86 +171,15 @@ public sealed class LiveKitEgressClient(
     }
 
     // ==================================================================
-    //  Reading LiveKit's JSON.
+    //  There is no JSON reader in this file any more.
     //
     //  Twirp and the webhooks both serialise protobuf with protojson, which
-    //  emits lowerCamelCase field names AND renders every int64 as a JSON
-    //  STRING. Both of those are easy to get wrong in a way that compiles,
-    //  runs, and quietly produces zero — which is exactly the class of bug
-    //  that already cost this module a day. So nothing here is deserialised
-    //  into a typed class: every field is read by name, both spellings are
-    //  accepted, and every number goes through a reader that takes a string
-    //  or a number.
+    //  emits lowerCamelCase names and renders every int64 as a JSON STRING.
+    //  Those rules, and the four others that cost this module real time, are
+    //  written down once in ConnectWire — together with the test project that
+    //  feeds them real protojson payloads. Read that file before you parse
+    //  anything LiveKit sends.
     // ==================================================================
-    internal static EgressState ReadEgress(JsonElement e)
-    {
-        var (fileName, size, durationNs) = ReadFirstFile(e);
-
-        return new EgressState(
-            EgressId: Text(e, "egressId", "egress_id"),
-            Status: Text(e, "status"),
-            Error: NullIfBlank(Text(e, "error")),
-            FileName: fileName,
-            SizeBytes: size,
-            DurationMs: durationNs is long ns && ns > 0 ? ns / 1_000_000 : null,
-            StartedAt: Instant(e, "startedAt", "started_at"),
-            EndedAt: Instant(e, "endedAt", "ended_at"));
-    }
-
-    private static (string? Name, long Size, long? DurationNs) ReadFirstFile(JsonElement e)
-    {
-        if (!TryProperty(e, out var files, "fileResults", "file_results")
-            || files.ValueKind != JsonValueKind.Array)
-            return (null, 0, null);
-
-        foreach (var f in files.EnumerateArray())
-        {
-            // 'filename' is the full path egress wrote to. The database stores
-            // the leaf only — the directory is configuration, not data, and a
-            // stored absolute path would be wrong the day the mount moves.
-            var full = Text(f, "filename");
-            var leaf = string.IsNullOrEmpty(full) ? null : full[(full.LastIndexOf('/') + 1)..];
-            return (NullIfBlank(leaf), Number(f, "size") ?? 0, Number(f, "duration"));
-        }
-        return (null, 0, null);
-    }
-
-    private static bool TryProperty(JsonElement e, out JsonElement value, params string[] names)
-    {
-        foreach (var name in names)
-            if (e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out value))
-                return true;
-        value = default;
-        return false;
-    }
-
-    private static string? Text(JsonElement e, params string[] names) =>
-        TryProperty(e, out var v, names) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-
-    private static string? NullIfBlank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
-
-    /// <summary>protojson renders int64 as a STRING. Accepts either.</summary>
-    private static long? Number(JsonElement e, params string[] names)
-    {
-        if (!TryProperty(e, out var v, names)) return null;
-        return v.ValueKind switch
-        {
-            JsonValueKind.Number => v.TryGetInt64(out var n) ? n : null,
-            JsonValueKind.String => long.TryParse(v.GetString(), NumberStyles.Integer,
-                CultureInfo.InvariantCulture, out var s) ? s : null,
-            _ => null,
-        };
-    }
-
-    /// <summary>EgressInfo timestamps are UNIX NANOSECONDS, unlike the
-    /// webhook envelope's createdAt which is seconds. Getting that wrong puts
-    /// a recording in the year 55000 and no test would notice.</summary>
-    private static DateTimeOffset? Instant(JsonElement e, params string[] names)
-    {
-        var ns = Number(e, names);
-        if (ns is not long value || value <= 0) return null;
-        return DateTimeOffset.FromUnixTimeMilliseconds(value / 1_000_000);
-    }
 }
 
 /// <summary>

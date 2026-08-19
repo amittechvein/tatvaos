@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ═══════════════════════════════════════════════════════════════════════
+     THE MINUTES DOCUMENT, TESTED.
+
+     ConnectMinutes is the single renderer behind three surfaces: the page,
+     the downloaded file, and the email sent to attendees. One renderer was a
+     deliberate choice — three would drift, and this module has already paid
+     for two copies of one fact. The cost of that choice is that a mistake
+     here is a mistake in all three at once, so it gets a test.
+
+     What it actually checks:
+       · the facts are present, and the ABSENT ones produce no empty headings
+       · the document does not oversell itself — a mechanical digest says so,
+         a model summary names the model and warns it can be wrong
+       · attendees with no email address are COUNTED in the document rather
+         than silently dropped from the record
+       · every string from a person or a model is HTML-encoded, because a
+         meeting titled <script> is a Tuesday
+       · timestamps are in the organisation's clock, not UTC
+       · the markup stays email-safe: no <style>, no flex, tables only
+
+     BOTH linked files are the REAL ones. ConnectNotesModel.cs exists
+     precisely so this can be true: the record shapes live apart from the
+     composer that needs an HttpClient, so a test can compile against the
+     types that actually ship instead of a hand-copy that drifts.
+    ═══════════════════════════════════════════════════════════════════════
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TatvaOS.Tests.Minutes</RootNamespace>
+    <AssemblyName>connect-minutes-test</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../../apps/api/Modules/Connect/ConnectNotesModel.cs" Link="ConnectNotesModel.cs" />
+    <Compile Include="../../apps/api/Modules/Connect/ConnectMinutes.cs" Link="ConnectMinutes.cs" />
+  </ItemGroup>
+
+</Project>

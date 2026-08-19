@@ -1,0 +1,23 @@
+--- a/apps/api/Shared/Data/AppDbContext.cs
++++ b/apps/api/Shared/Data/AppDbContext.cs
+@@ -123,6 +123,12 @@
+         => Set<TatvaOS.Api.Modules.Connect.ConnectTranscript>();
+     public DbSet<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes> ConnectMeetingNotes
+         => Set<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>();
++    // Added by 20260904-connect-minutes. Chat still travels over LiveKit's
++    // data channel — that is the right transport and it is unchanged. A copy
++    // is stored so it can be part of the minutes, because chat that lives
++    // only in the browsers that were open is not a record of anything.
++    public DbSet<TatvaOS.Api.Modules.Connect.ConnectMeetingChat> ConnectMeetingChat
++        => Set<TatvaOS.Api.Modules.Connect.ConnectMeetingChat>();
+     public DbSet<SpaceShare> SpaceShares => Set<SpaceShare>();
+     public DbSet<SpaceFileActivity> SpaceFileActivities => Set<SpaceFileActivity>();
+     public DbSet<SpaceStar> SpaceStars => Set<SpaceStar>();
+@@ -207,6 +213,7 @@
+         b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecording>().ToTable("recordings", "connect");
+         b.Entity<TatvaOS.Api.Modules.Connect.ConnectTranscript>().ToTable("transcripts", "connect");
+         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>().ToTable("meeting_notes", "connect");
++        b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingChat>().ToTable("meeting_chat", "connect");
+ 
+         // jsonb, not text. Npgsql maps a string property to `text` by default,
+         // and `text` does not implicitly cast to `jsonb` on INSERT — the write

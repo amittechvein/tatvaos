@@ -5,6 +5,7 @@ import { useAuth } from '@/lib/auth';
 import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
 import {
   durationLabel, recordingApi, sizeLabel, timeLabel,
+  minutesApi,
   type NotesPayload, type RecordingList, type RecordingListItem, type RecordingStatus,
   type TranscriptStatus,
 } from '@/lib/connect';
@@ -122,7 +123,7 @@ export default function Recordings({ meetingId, isHost, canDelete }: {
             hint="The recorder is a separate service. Once it is deployed, hosts can record a meeting's audio and have what was said written up automatically."
           />
         </Card>
-        <NotesCard notes={notes} isHost={isHost}
+        <NotesCard notes={notes} meetingId={meetingId} isHost={isHost}
                    show={showTranscript} onToggle={() => setShowTranscript((s) => !s)}
                    onRegenerate={() => void act('notes', () =>
                      recordingApi.regenerate(authedFetch, meetingId))}
@@ -161,7 +162,7 @@ export default function Recordings({ meetingId, isHost, canDelete }: {
         )}
       </Card>
 
-      <NotesCard notes={notes} isHost={isHost}
+      <NotesCard notes={notes} meetingId={meetingId} isHost={isHost}
                  show={showTranscript} onToggle={() => setShowTranscript((s) => !s)}
                  onRegenerate={() => void act('notes', () =>
                    recordingApi.regenerate(authedFetch, meetingId))}
@@ -198,13 +199,15 @@ function Row({ item, meetingId, isHost, canDelete, busy, act }: {
       </Td>
       <Td className="text-end">
         <div className="d-flex gap-2 justify-content-end flex-wrap">
-          {/* A plain link, not a fetch: the browser has to navigate for the
-              download to happen, and the session cookie goes with it. */}
+          {/* A BUTTON, not a link — see recordingApi.download. A plain <a>
+              here answered 401 every time, because this app's access token is
+              an Authorization header and a navigation does not carry one. */}
           {r.hasFile && (
-            <a className="btn btn-outline-light btn-sm"
-               href={recordingApi.fileUrl(meetingId, r.id)}>
+            <Button className="btn-sm" disabled={busy}
+                    onClick={() => void act(r.id,
+                      () => recordingApi.download(authedFetch, meetingId, r.id))}>
               Download
-            </a>
+            </Button>
           )}
           {isHost && live && (
             <Button variant="danger" className="btn-sm" disabled={busy}
@@ -238,8 +241,9 @@ function transcriptLine(status: TranscriptStatus): string {
 }
 
 // ---------------------------------------------------------------------------
-function NotesCard({ notes, isHost, show, onToggle, onRegenerate, busy }: {
+function NotesCard({ notes, meetingId, isHost, show, onToggle, onRegenerate, busy }: {
   notes: NotesPayload | null;
+  meetingId: string;
   isHost: boolean;
   show: boolean;
   onToggle: () => void;
@@ -290,11 +294,16 @@ function NotesCard({ notes, isHost, show, onToggle, onRegenerate, busy }: {
           ? 'Assembled from the transcript on this server — no model was involved'
           : 'From attendance only — this meeting was not recorded'}
       className="mt-3"
-      actions={isHost ? (
-        <Button disabled={busy} onClick={onRegenerate}>
-          {busy ? 'Asking…' : 'Write again'}
-        </Button>
-      ) : undefined}
+      actions={(
+        <>
+          <MinutesActions meetingId={meetingId} isHost={isHost} />
+          {isHost && (
+            <Button disabled={busy} onClick={onRegenerate}>
+              {busy ? 'Asking…' : 'Write again'}
+            </Button>
+          )}
+        </>
+      )}
     >
       {n.summary && <p className="mb-3">{n.summary}</p>}
 
@@ -395,4 +404,74 @@ function clock(seconds: number): string {
   const s = total % 60;
   const pad = (n: number) => String(n).padStart(2, '0');
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+// ===========================================================================
+//  Minutes of meeting — the document, and sending it.
+// ===========================================================================
+//
+//  The notes card already SHOWS everything. This is about the thing people
+//  actually do with minutes: keep a copy, and send it to the people who were
+//  there. A school secretary's next move after a fee committee meeting is to
+//  put the minutes somewhere and mail them, and until this existed the answer
+//  was to select the page and paste it into an email.
+//
+//  Both buttons are deliberately plain about what happens. "Email to
+//  attendees" says who gets it, in the confirmation, with a count — because
+//  the one thing worse than not sending minutes is sending them to a list you
+//  did not know about.
+function MinutesActions({ meetingId, isHost }: { meetingId: string; isHost: boolean }) {
+  const { authedFetch } = useAuth();
+  const [busy, setBusy] = useState<'file' | 'mail' | null>(null);
+  const [said, setSaid] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  async function run(kind: 'file' | 'mail', fn: () => Promise<string>) {
+    setBusy(kind);
+    setSaid(null);
+    setFailed(false);
+    try {
+      setSaid(await fn());
+    } catch (e) {
+      setFailed(true);
+      setSaid(e instanceof Error ? e.message : 'That did not work.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <>
+      <Button
+        disabled={busy !== null}
+        onClick={() => void run('file', async () => {
+          await minutesApi.download(authedFetch, meetingId);
+          return 'Downloaded.';
+        })}
+      >
+        {busy === 'file' ? 'Preparing…' : 'Download minutes'}
+      </Button>
+
+      {isHost && (
+        <Button
+          disabled={busy !== null}
+          onClick={() => void run('mail', async () => {
+            const n = await minutesApi.email(authedFetch, meetingId);
+            // The count, always — including zero, which is a real answer for a
+            // meeting everybody attended as a guest and is the one case where
+            // silence would be actively misleading.
+            return n === 0
+              ? 'Nobody in this meeting has an address on this platform, so there was no one to send to.'
+              : `Sent to ${n} ${n === 1 ? 'person' : 'people'} who attended.`;
+          })}
+        >
+          {busy === 'mail' ? 'Sending…' : 'Email to attendees'}
+        </Button>
+      )}
+
+      {said && (
+        <span className={`fs-12 ms-2 ${failed ? 'text-danger' : 'text-muted'}`}>{said}</span>
+      )}
+    </>
+  );
 }

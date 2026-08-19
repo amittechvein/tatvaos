@@ -109,31 +109,18 @@ public static class ConnectWebhookEndpoints
         try { root = JsonDocument.Parse(body).RootElement; }
         catch (JsonException) { return Results.BadRequest(); }
 
-        var eventName = Text(root, "event");
+        var eventName = ConnectWire.Text(root, "event");
         if (string.IsNullOrEmpty(eventName)) return Results.Ok();
 
-        var kind = eventName switch
-        {
-            "room_started" => "room_started",
-            "room_finished" => "room_finished",
-            "participant_joined" => "participant_joined",
-            "participant_left" => "participant_left",
-            "recording_started" => "recording_started",
-            "recording_finished" => "recording_finished",
-            // Egress — how a recording learns it exists, finished, or failed.
-            // egress_updated is stored and otherwise ignored; it still has to
-            // be STORABLE, because "ignore it" would otherwise mean 500 and be
-            // retried forever (the kind CHECK is widened in 20260902).
-            "egress_started" => "egress_started",
-            "egress_updated" => "egress_updated",
-            "egress_ended" => "egress_ended",
-            _ => null,
-        };
+        // Every wire-format decision lives in ConnectWire. See its header for
+        // why: the same knowledge used to live in two files and only one of
+        // them was right.
+        var kind = ConnectWire.EventKind(eventName);
         // Unknown events are acknowledged and dropped: answering anything else
         // makes LiveKit retry forever over something we deliberately ignore.
         if (kind is null) return Results.Ok();
 
-        if (!TryMeetingId(root, out var meetingId)) return Results.Ok();
+        if (!ConnectWire.TryMeetingId(root, out var meetingId)) return Results.Ok();
 
         // No tenant is set yet, so this CANNOT be an ordinary query — forced
         // RLS would return zero rows for a meeting that exists, and this
@@ -160,7 +147,7 @@ public static class ConnectWebhookEndpoints
         // scope. Connect was the only one that did not.
         await db.SyncTenantAsync(ct);
 
-        var webhookId = Text(root, "id");
+        var webhookId = ConnectWire.Text(root, "id");
         if (!string.IsNullOrEmpty(webhookId))
         {
             var seen = await db.ConnectMeetingEvents.AsNoTracking()
@@ -168,15 +155,17 @@ public static class ConnectWebhookEndpoints
             if (seen) return Results.Ok();   // a retry, not a second join
         }
 
-        var identity = ParticipantText(root, "identity");
-        var displayName = ParticipantText(root, "name");
+        var identity = ConnectWire.ParticipantText(root, "identity");
+        var displayName = ConnectWire.ParticipantText(root, "name");
 
         // createdAt arrives as a STRING, not a number. See UnixSeconds below —
         // this one line, written the obvious way, threw on every webhook this
         // handler actually processed, for the entire life of the module.
-        var occurredAt = UnixSeconds(root, "createdAt") is long unix
-            ? DateTimeOffset.FromUnixTimeSeconds(unix)
-            : DateTimeOffset.UtcNow;
+        // Rule 1 and rule 2 in ConnectWire: createdAt is a STRING, and
+        // TryGetInt64 throws on one rather than returning false. That single
+        // line, written the obvious way, broke every webhook this handler
+        // processed for the life of the module.
+        var occurredAt = ConnectWire.Seconds(root, "createdAt") ?? DateTimeOffset.UtcNow;
 
         db.ConnectMeetingEvents.Add(new ConnectMeetingEvent
         {
@@ -236,9 +225,9 @@ public static class ConnectWebhookEndpoints
         //  recording.
         // ------------------------------------------------------------------
         var reconcileStorage = false;
-        if (kind is "egress_started" or "egress_updated" or "egress_ended" && TryEgress(root, out var egressInfo))
+        if (kind is "egress_started" or "egress_updated" or "egress_ended" && ConnectWire.TryEgress(root, out var egressInfo))
         {
-            var state = LiveKitEgressClient.ReadEgress(egressInfo);
+            var state = ConnectWire.ReadEgress(egressInfo);
             if (state.EgressId is { Length: > 0 } egressId)
             {
                 var recording = await db.ConnectRecordings
@@ -247,7 +236,7 @@ public static class ConnectWebhookEndpoints
 
                 if (recording is not null && recording.Status != "deleted")
                 {
-                    var next = MapEgressStatus(state.Status, state.FileName);
+                    var next = ConnectWire.MapEgressStatus(state.Status, state.FileName);
                     if (next is not null) recording.Status = next;
 
                     if (state.FileName is { Length: > 0 } file) recording.FileName = file;
@@ -298,133 +287,4 @@ public static class ConnectWebhookEndpoints
         return Results.Ok();
     }
 
-    // ------------------------------------------------------------------
-    //  LiveKit's payload, read defensively: this is external input.
-    // ------------------------------------------------------------------
-    private static string? Text(JsonElement root, string name) =>
-        root.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.String
-            ? el.GetString()
-            : null;
-
-    private static string? ParticipantText(JsonElement root, string name) =>
-        root.TryGetProperty("participant", out var p) && p.ValueKind == JsonValueKind.Object
-            ? Text(p, name)
-            : null;
-
-    /// <summary>
-    /// A unix timestamp from LiveKit, which sends it as a JSON STRING.
-    ///
-    /// ─────────────────────────────────────────────────────────────────────
-    ///  THE BUG THIS FUNCTION EXISTS TO HAVE FIXED, WRITTEN DOWN SO IT IS
-    ///  NEVER REINTRODUCED.
-    ///
-    ///  protojson — which is what LiveKit serialises every webhook with —
-    ///  renders int64 as a STRING, because JSON numbers cannot carry 64 bits
-    ///  precisely. So `createdAt` is "1787074610", not 1787074610.
-    ///
-    ///  This was originally written as
-    ///
-    ///      root.TryGetProperty("createdAt", out var c) && c.TryGetInt64(out var u)
-    ///
-    ///  and JsonElement.TryGetInt64 DOES NOT RETURN FALSE for a String — it
-    ///  THROWS InvalidOperationException. A TryGet that throws is a trap, and
-    ///  this one was fatal: the exception was unhandled, Kestrel answered 500,
-    ///  LiveKit retried five times and gave up.
-    ///
-    ///  Every event this handler PROCESSES reaches that line. Every event it
-    ///  ignores (track_published and friends) returns before it. So the log
-    ///  read: track events 200 OK in 3ms, participant_joined / participant_left
-    ///  / room_finished / egress_* all "giving up after 5 attempt(s)" — for
-    ///  the entire life of this module. connect.meeting_events stayed empty,
-    ///  meetings.started_at stayed null, no meeting ever reached 'ended', and
-    ///  therefore attendance, meeting history and the notes worker were all
-    ///  built on a table that could never have a row in it.
-    ///
-    ///  The rule was already written down, in LiveKitEgressClient, which reads
-    ///  every number through a tolerant helper for exactly this reason. It was
-    ///  applied there and not here, in the file next to it.
-    /// ─────────────────────────────────────────────────────────────────────
-    /// </summary>
-    private static long? UnixSeconds(JsonElement root, string name)
-    {
-        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty(name, out var v))
-            return null;
-        return v.ValueKind switch
-        {
-            JsonValueKind.String => long.TryParse(v.GetString(), NumberStyles.Integer,
-                CultureInfo.InvariantCulture, out var s) ? s : null,
-            // Accepted too. A future LiveKit, or a hand-written test payload,
-            // may well send a real number, and refusing it would be a second
-            // version of the same mistake in the opposite direction.
-            JsonValueKind.Number => v.TryGetInt64(out var n) ? n : null,
-            _ => null,
-        };
-    }
-
-    /// <summary>
-    /// The room name is m-{meetingId} and that is the only place the meeting
-    /// id appears. A room LiveKit knows about but we do not — anything not
-    /// matching the shape — is ignored rather than guessed at.
-    ///
-    /// An EGRESS event carries no `room` object at all: the room name lives on
-    /// `egressInfo.roomName` instead. Both are checked, because a handler that
-    /// looked only at `room` would drop every recording callback on the floor
-    /// and answer 200, which is precisely the failure this file's header is
-    /// about.
-    /// </summary>
-    private static bool TryMeetingId(JsonElement root, out Guid meetingId)
-    {
-        meetingId = Guid.Empty;
-
-        string? name = null;
-        if (root.TryGetProperty("room", out var room) && room.ValueKind == JsonValueKind.Object)
-            name = Text(room, "name");
-
-        if (string.IsNullOrEmpty(name) && TryEgress(root, out var egress))
-            // protojson emits lowerCamelCase; the snake_case spelling is
-            // accepted too rather than betting on which one arrives.
-            name = Text(egress, "roomName") ?? Text(egress, "room_name");
-
-        if (string.IsNullOrEmpty(name) || !name.StartsWith("m-", StringComparison.Ordinal))
-            return false;
-
-        return Guid.TryParse(name[2..], out meetingId);
-    }
-
-    /// <summary>
-    /// LiveKit's egress status to ours.
-    ///
-    /// EGRESS_COMPLETE without a file is 'failed', not 'ready'. A complete
-    /// egress that wrote nothing happens — the room emptied before a single
-    /// frame, or the output path was not writable — and calling that ready
-    /// would put a download button on screen that answers 404. The database
-    /// also refuses it: recordings_ready_has_file.
-    ///
-    /// An unrecognised status returns null and the row is LEFT ALONE. LiveKit
-    /// may add states; guessing at one and moving a live recording to a wrong
-    /// status is worse than ignoring it, because the worker's repair pass
-    /// reads the real state from LiveKit anyway.
-    /// </summary>
-    private static string? MapEgressStatus(string? status, string? fileName) => status switch
-    {
-        "EGRESS_STARTING" => "starting",
-        "EGRESS_ACTIVE" => "recording",
-        "EGRESS_ENDING" => "processing",
-        "EGRESS_COMPLETE" or "EGRESS_LIMIT_REACHED"
-            => string.IsNullOrEmpty(fileName) ? "failed" : "ready",
-        "EGRESS_FAILED" => "failed",
-        "EGRESS_ABORTED" => "aborted",
-        _ => null,
-    };
-
-    private static bool TryEgress(JsonElement root, out JsonElement egress)
-    {
-        if (root.ValueKind == JsonValueKind.Object
-            && (root.TryGetProperty("egressInfo", out egress)
-                || root.TryGetProperty("egress_info", out egress))
-            && egress.ValueKind == JsonValueKind.Object)
-            return true;
-        egress = default;
-        return false;
-    }
 }

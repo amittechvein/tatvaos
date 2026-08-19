@@ -20,9 +20,9 @@ type AuthedFetch = (path: string, init?: RequestInit) => Promise<Response>;
 
 /**
  * The API origin. Declared here rather than beside the guest calls that first
- * needed it, because recordingApi.fileUrl below also builds a URL from it and
- * a const referenced above its own declaration is a temporal-dead-zone trap
- * waiting for the day somebody calls it during module evaluation.
+ * needed it, because recordingApi.ticketUrl below also builds a URL from it
+ * and a const referenced above its own declaration is a temporal-dead-zone
+ * trap waiting for the day somebody calls it during module evaluation.
  */
 const API = process.env.NEXT_PUBLIC_API_URL ?? '/api';
 
@@ -375,13 +375,37 @@ export const recordingApi = {
       .then((r) => { if (!r.ok) throw new Error('Could not delete that recording.'); }),
 
   /**
-   * The download URL. Built rather than fetched because the browser has to
-   * navigate to it — and it deliberately carries the recording ID, never the
-   * stored file name, so nothing on this side can be talked into building a
-   * path.
+   * Downloading takes TWO steps, and the reason is worth knowing before
+   * anybody "simplifies" it back.
+   *
+   * This app holds the access token in memory and sends it as an
+   * Authorization header — see the top of lib/auth.tsx. A plain <a href> is a
+   * NAVIGATION: the browser sends cookies and nothing else, so a link to an
+   * authorised route arrives with no header and answers 401. The first
+   * version of this was exactly that link, and the download could never have
+   * worked.
+   *
+   * So: ask for a signed ticket with a real authorised request, then let the
+   * browser navigate to a URL carrying it. Same shape as every object store's
+   * pre-signed URL.
    */
-  fileUrl: (meetingId: string, recordingId: string) =>
-    `${API}/connect/meetings/${meetingId}/recordings/${recordingId}/file`,
+  ticket: (f: AuthedFetch, meetingId: string, recordingId: string) =>
+    f(`/connect/meetings/${meetingId}/recordings/${recordingId}/ticket`)
+      .then((r) => json<{ ticket: string }>(r, 'Could not prepare that download.')),
+
+  /** Where the ticket is spent. Anonymous by necessity; the signature is the
+   *  control, and the server re-checks every permission behind it. */
+  ticketUrl: (ticket: string) =>
+    `${API}/connect/recordings/file?t=${encodeURIComponent(ticket)}`,
+
+  /** Ask, then go. One call for the button to make. */
+  download: async (f: AuthedFetch, meetingId: string, recordingId: string) => {
+    const { ticket } = await recordingApi.ticket(f, meetingId, recordingId);
+    // assign, not open: the response carries Content-Disposition: attachment,
+    // so the browser downloads it and stays where it is. window.open would
+    // flash a blank tab that some blockers eat.
+    window.location.assign(recordingApi.ticketUrl(ticket));
+  },
 
   notes: (f: AuthedFetch, meetingId: string) =>
     f(`/connect/meetings/${meetingId}/notes`)
@@ -391,6 +415,105 @@ export const recordingApi = {
     f(`/connect/meetings/${meetingId}/notes/regenerate`, { method: 'POST' })
       .then((r) => { if (!r.ok) throw new Error('Could not ask for the notes again.'); }),
 };
+
+// ---------------------------------------------------------------------------
+//  Minutes of meeting, and the chat that goes into them.
+// ---------------------------------------------------------------------------
+
+export interface StoredChatLine {
+  displayName: string;
+  isGuest: boolean;
+  body: string;
+  sentAt: string;
+}
+
+export const minutesApi = {
+  /**
+   * Keep one chat line.
+   *
+   * Best effort, ALWAYS. The line has already been delivered over LiveKit's
+   * data channel by the time this runs — this is the copy that makes it part
+   * of the record. If it fails, the meeting is unaffected and the minutes are
+   * one line short; if this were allowed to throw into the send path, a
+   * flapping API would break chat itself. Never awaited by the UI.
+   */
+  storeChat: (
+    f: AuthedFetch, meetingId: string,
+    line: { clientId: string; identity: string; body: string; sentAt: string },
+  ) => f(`/connect/meetings/${meetingId}/chat`, {
+    method: 'POST', body: JSON.stringify(line),
+  }).then(() => undefined).catch(() => undefined),
+
+  chat: (f: AuthedFetch, meetingId: string) =>
+    f(`/connect/meetings/${meetingId}/chat`)
+      .then((r) => json<{ lines: StoredChatLine[] }>(r, 'Could not load the chat.')),
+
+  /**
+   * Download the minutes.
+   *
+   * Fetched WITH the Authorization header and saved as a blob — deliberately
+   * not the signed-ticket dance a recording download needs. That exists
+   * because a recording is hundreds of megabytes and wants range requests
+   * from a real navigation; this is a few kilobytes of HTML, and fetching it
+   * keeps the whole thing inside one authorised request with no signed URL to
+   * leak into a browser history.
+   */
+  download: async (f: AuthedFetch, meetingId: string, format: 'html' | 'txt' = 'html') => {
+    const r = await f(`/connect/meetings/${meetingId}/minutes?format=${format}`);
+    if (!r.ok) {
+      const detail = await r.json().catch(() => null) as { error?: string } | null;
+      throw new Error(detail?.error ?? 'Could not download the minutes.');
+    }
+    const blob = await r.blob();
+    // The server names the file; the client only has to honour it.
+    const name = fileNameFrom(r.headers.get('content-disposition'))
+      ?? `Minutes.${format}`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    // Revoked on the next tick, not immediately: Safari has not started
+    // reading the blob when click() returns, and revoking first gives a
+    // download of zero bytes with no error anywhere.
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  },
+
+  email: (f: AuthedFetch, meetingId: string) =>
+    f(`/connect/meetings/${meetingId}/minutes/email`, { method: 'POST' })
+      .then(async (r) => {
+        const body = await r.json().catch(() => null) as
+          { sent?: boolean; recipients?: number; error?: string } | null;
+        if (!r.ok || body?.sent !== true) {
+          throw new Error(body?.error ?? 'Could not send the minutes.');
+        }
+        return body.recipients ?? 0;
+      }),
+};
+
+/**
+ * The filename out of a Content-Disposition header.
+ *
+ * Prefers filename*= (RFC 5987, percent-encoded UTF-8) over plain filename=,
+ * because the plain one cannot carry the em dash or a title in Hindi and the
+ * server sends both forms for exactly that reason.
+ */
+function fileNameFrom(header: string | null): string | null {
+  if (!header) return null;
+
+  // noUncheckedIndexedAccess is on, so a capture group is string | undefined
+  // even when the regex guarantees it. The compiler is right to insist: a
+  // regex that matched with an empty group is exactly how this returns the
+  // string "undefined" as a filename.
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(header)?.[1];
+  if (star !== undefined) {
+    try { return decodeURIComponent(star); } catch { /* fall through to plain */ }
+  }
+
+  return /filename="?([^";]+)"?/i.exec(header)?.[1] ?? null;
+}
 
 // ---------------------------------------------------------------------------
 //  The guest path — no session, no token, no Authorization header.

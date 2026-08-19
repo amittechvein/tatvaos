@@ -5,6 +5,15 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
+// The shape of what this class produces lives in ConnectNotesModel, which
+// depends on nothing at all. It moved out of here so the minutes renderer and
+// its tests can use the REAL types without dragging an HttpClient along — a
+// hand-copied record is a second definition that drifts. These aliases keep
+// every call site in this file reading exactly as it did.
+using SpeakerTime = TatvaOS.Api.Modules.Connect.ConnectNotesModel.SpeakerTime;
+using Attendee = TatvaOS.Api.Modules.Connect.ConnectNotesModel.Attendee;
+using Notes = TatvaOS.Api.Modules.Connect.ConnectNotesModel.Notes;
+
 namespace TatvaOS.Api.Modules.Connect;
 
 /// <summary>
@@ -47,22 +56,6 @@ public sealed class ConnectNotesComposer(
     ConnectRecordingOptions options,
     ILogger<ConnectNotesComposer> log)
 {
-    public sealed record SpeakerTime(string Name, long Seconds, int Turns);
-
-    /// <summary>One person's attendance, as connect.attendance() returns it.</summary>
-    public sealed record Attendee(string Name, bool Guest, long Seconds, int Joins);
-
-    public sealed record Notes(
-        string Kind,                 // digest | model
-        string? Provider,
-        string? Model,
-        string Summary,
-        IReadOnlyList<string> KeyPoints,
-        IReadOnlyList<string> Decisions,
-        IReadOnlyList<string> ActionItems,
-        IReadOnlyList<SpeakerTime> Speakers,
-        IReadOnlyList<Attendee> Attendance);
-
     /// <summary>Roughly four characters to a token. Deliberately conservative:
     /// running out of context produces a 400 the user cannot act on.</summary>
     private const int MaxTranscriptChars = 48_000;
@@ -338,19 +331,30 @@ public sealed class ConnectNotesComposer(
         return (head + "\n\n[... middle of the meeting omitted ...]\n\n" + tail, true);
     }
 
+    /// <summary>
+    /// The content out of an OpenAI-shaped chat completion.
+    ///
+    /// This walks three levels into JSON from a service nobody here controls —
+    /// it may be OpenAI, it may be a llama.cpp server somebody pointed at this
+    /// box, it may be a proxy in between. JsonElement.TryGetProperty THROWS
+    /// when the thing it is called on is not an object, so every level is
+    /// proved to be one before the next is touched. The catch below only
+    /// handles JsonException; an InvalidOperationException from a `choices`
+    /// array full of strings would escape it and kill the notes job for every
+    /// meeting behind it in the queue.
+    /// </summary>
     private static string? ChatContent(string payload)
     {
         try
         {
             var root = JsonDocument.Parse(payload).RootElement;
-            if (!root.TryGetProperty("choices", out var choices)
-                || choices.ValueKind != JsonValueKind.Array) return null;
+            if (!ConnectWire.TryArray(root, out var choices, "choices")) return null;
+
             foreach (var choice in choices.EnumerateArray())
             {
-                if (choice.TryGetProperty("message", out var message)
-                    && message.TryGetProperty("content", out var content)
-                    && content.ValueKind == JsonValueKind.String)
-                    return content.GetString();
+                if (ConnectWire.TryObject(choice, out var message, "message")
+                    && ConnectWire.Text(message, "content") is { } content)
+                    return content;
             }
         }
         catch (JsonException) { }

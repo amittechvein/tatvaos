@@ -9,12 +9,12 @@ import {
 } from 'livekit-client';
 import { useAuth } from '@/lib/auth';
 import {
-  connectApi, recordingApi,
+  connectApi, minutesApi, recordingApi,
   type LobbyEntry, type Meeting, type Recording, type Seat,
 } from '@/lib/connect';
 import {
   documentPipSupported, onAutoPip, openPipWindow, pipSupported, videoPipSupported,
-  type PipHandles,
+  type PipHandles, type PipTile,
 } from '@/lib/pip';
 import { CSS, Centre, Spinner, initialOf } from './RoomChrome';
 
@@ -112,6 +112,14 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
   const panelRef = useRef<PanelKind>(null);
   panelRef.current = panel;
 
+  // Same reason as panelRef: the DataReceived handler below is registered once
+  // and closes over the FIRST render. It needs the meeting to know where to
+  // store a chat line, and the meeting arrives as a prop that can change.
+  const meetingRef = useRef<Meeting | null>(meeting);
+  meetingRef.current = meeting;
+  const fetchRef = useRef(authedFetch);
+  fetchRef.current = authedFetch;
+
   // ---------------------------------------------------------------------
   useEffect(() => {
     const r = new Room({ adaptiveStream: true, dynacast: true });
@@ -175,6 +183,36 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
           if (!('text' in parsed)) return;
           const text = String((parsed as { text?: unknown }).text ?? '');
           if (text.length === 0) return;
+
+          // ── KEEPING A GUEST'S LINE FOR THE MINUTES. ───────────────────
+          //
+          // A guest has no session, so they cannot store their own line —
+          // somebody signed in has to do it for them. Everybody doing it
+          // would be N posts per line, which for a class of forty is absurd,
+          // so exactly ONE client relays: the signed-in participant whose
+          // identity sorts first. That is a pure function of who is in the
+          // room, so every client agrees without anyone electing anything.
+          //
+          // The agreement does not have to be perfect. Someone joining or
+          // leaving mid-message can briefly make two clients think they are
+          // first, and the id below means the server keeps one row anyway.
+          // Consensus would be the wrong amount of machinery for a problem
+          // a unique index already solves.
+          const from = participant?.identity;
+          const cid = (parsed as { cid?: unknown }).cid;
+          const at = (parsed as { at?: unknown }).at;
+          const mine = meetingRef.current;
+          if (typeof cid === 'string' && cid.length > 0
+              && from?.startsWith('guest:') === true
+              && mine && relayerOf(r) === r.localParticipant.identity) {
+            void minutesApi.storeChat(fetchRef.current, mine.id, {
+              clientId: cid,
+              identity: from,
+              body: text,
+              sentAt: typeof at === 'string' ? at : new Date().toISOString(),
+            });
+          }
+
           setChat((c) => [...c, {
             id: c.length,
             who: participant?.name ?? participant?.identity ?? 'Someone',
@@ -464,46 +502,107 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
   const screenSharers = participants.filter(
     (p) => p.getTrackPublication(Track.Source.ScreenShare)?.videoTrack,
   );
-  const screenSharer = screenSharers[0];
+  // Speaker view's single tile. Picture-in-Picture used to borrow this too;
+  // it now shows everyone, so this is only the stage's own layout.
   const speaker = participants.find((p) => p.isSpeaking && p !== room?.localParticipant)
     ?? participants[0];
 
   // ---------------------------------------------------------------------
   //  Picture-in-Picture — what the floating window should be showing.
   //
-  //  Whatever the meeting is ABOUT: a shared screen if there is one, the
-  //  person talking otherwise. Plain values, so the effect can depend on the
-  //  track's SID — a stable string — rather than on the SDK objects, which
-  //  are rebuilt every render and would make it re-run forever.
+  //  EVERYONE, tiled to the window. This used to be one face: whoever was
+  //  talking, or the shared screen. That answers "is someone speaking" and
+  //  nothing else — you could not tell who was still in the room, who had
+  //  their hand up, or that four people had joined while you were away. The
+  //  window is now the room, at whatever size the person has dragged it to.
+  //
+  //  What is built here is PLAIN DATA — strings, booleans, and two functions
+  //  for attaching a track. lib/pip.ts knows nothing about LiveKit and should
+  //  not: a track can be attached to several elements at once, so the page
+  //  keeps its own copy on the stage and nothing is moved or stolen.
   //
   //  ABOVE the "you have left the meeting" early return, deliberately. This
-  //  block first sat below it, and the room-of-hooks lint caught what would
+  //  block first sat below it, and the rules-of-hooks lint caught what would
   //  have been a crash the first time somebody was removed from a call: a
   //  hook that runs on some renders and not others.
   // ---------------------------------------------------------------------
-  const pipKind: 'cam' | 'screen' = screenSharer ? 'screen' : 'cam';
-  const pipOwner = screenSharer ?? speaker;
-  const pipPub = pipOwner?.getTrackPublication(
-    pipKind === 'screen' ? Track.Source.ScreenShare : Track.Source.Camera);
-  const pipTrack = (pipPub?.isMuted === true ? undefined : pipPub?.videoTrack) ?? null;
-  const pipSid = pipPub?.trackSid ?? '';
-  const pipWho = pipOwner ? (pipOwner.name && pipOwner.name.length > 0
-    ? pipOwner.name : pipOwner.identity) : '';
-  const pipLabel = pipKind === 'screen' ? `${pipWho} — screen` : pipWho;
+  const pipTiles: PipTile[] = [];
 
-  // Keep the floating window showing the right thing. Attaching a track to a
-  // SECOND element is supported by the SDK, so the page keeps its own copy and
-  // nothing is moved or stolen from the stage.
+  // Screens first, and each sharer gets their own tile — the same rule the
+  // stage follows, for the same reason (feature 71).
+  for (const p of screenSharers) {
+    const pub = p.getTrackPublication(Track.Source.ScreenShare);
+    const track = pub?.videoTrack;
+    if (!track) continue;
+    pipTiles.push({
+      id: `screen-${p.identity}`,
+      name: p.name && p.name.length > 0 ? p.name : p.identity,
+      initial: initialOf(p.name && p.name.length > 0 ? p.name : p.identity),
+      screen: true,
+      trackId: pub?.trackSid ?? '',
+      attach: (el) => track.attach(el),
+      detach: (el) => track.detach(el),
+    });
+  }
+
+  // Then the people. Ordered by things that change RARELY — hand raised, then
+  // camera on — and never by who is speaking. Sorting on speech would shuffle
+  // the grid every couple of seconds, and a face that moves while you are
+  // looking at it is harder to follow than one in the wrong place. Speaking is
+  // shown with a ring instead. You go last, because you know what you look
+  // like; unless you are the only one here, in which case last is also first.
+  const pipPeople = [...participants].sort((a, b) => {
+    const local = Number(a === room?.localParticipant) - Number(b === room?.localParticipant);
+    if (local !== 0) return local;
+    const hand = Number(hands[b.identity] === true) - Number(hands[a.identity] === true);
+    if (hand !== 0) return hand;
+    const cam = (x: typeof a) => Number(
+      x.getTrackPublication(Track.Source.Camera)?.isMuted === false);
+    return cam(b) - cam(a);
+  });
+
+  for (const p of pipPeople) {
+    const who = p.name && p.name.length > 0 ? p.name : p.identity;
+    const camPub = p.getTrackPublication(Track.Source.Camera);
+    const camTrack = camPub?.isMuted === true ? undefined : camPub?.videoTrack;
+    const micPub = p.getTrackPublication(Track.Source.Microphone);
+    pipTiles.push({
+      id: p.identity,
+      name: who,
+      initial: initialOf(who),
+      speaking: p.isSpeaking,
+      // No publication at all is not "unmuted" — somebody who never turned a
+      // microphone on cannot be heard, and showing them as live is a lie the
+      // person in the floating window has no way to check.
+      micMuted: !micPub || micPub.isMuted === true,
+      hand: hands[p.identity] === true,
+      local: p === room?.localParticipant,
+      trackId: camTrack ? camPub?.trackSid ?? '' : '',
+      attach: camTrack ? (el) => camTrack.attach(el) : undefined,
+      detach: camTrack ? (el) => camTrack.detach(el) : undefined,
+    });
+  }
+
+  // Everything the window can actually show, as one string.
+  //
+  // The effect depends on THIS rather than on the array. pipTiles is rebuilt
+  // on every render — new array, new closures — so an effect depending on it
+  // would run on every render, detaching and re-attaching every video, and a
+  // re-attached video restarts: black frame, flicker, a stall on a weak
+  // connection. The signature changes only when something visible changes.
+  const pipKey = pipTiles.map((t) => [
+    t.id, t.trackId, t.name,
+    t.screen ? 's' : '', t.speaking ? 'v' : '', t.micMuted ? 'm' : '', t.hand ? 'h' : '',
+  ].join('|')).join(';');
+
+  // The freshest tiles, readable from an effect that does not depend on them.
+  const pipTilesRef = useRef<PipTile[]>(pipTiles);
+  pipTilesRef.current = pipTiles;
+
   useEffect(() => {
-    const handles = pipRef.current;
-    if (!handles || !pipOpen) return;
-    handles.setKind(pipKind);
-    handles.setLabel(pipLabel);
-    handles.setHasVideo(pipTrack !== null);
-    if (!pipTrack) return;
-    pipTrack.attach(handles.video);
-    return () => { pipTrack.detach(handles.video); };
-  }, [pipOpen, pipSid, pipKind, pipLabel, pipTrack]);
+    if (!pipOpen) return;
+    pipRef.current?.setTiles(pipTilesRef.current);
+  }, [pipOpen, pipKey]);
 
   // ---------------------------------------------------------------------
   async function toggleCam() {
@@ -552,9 +651,34 @@ export default function Stage({ seat, meeting }: { seat: Seat; meeting: Meeting 
     const r = roomRef.current;
     const text = draft.trim();
     if (!r || text.length === 0) return;
-    void r.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ text })), { reliable: true });
+
+    // ── THE LINE CARRIES AN ID AND A TIME, AND BOTH ARE LOAD-BEARING. ────
+    //
+    // cid is what stops the same line being stored twice. A guest cannot
+    // post to the API — no session — so their lines are kept by one of the
+    // signed-in clients that received them, and 'one of' is a race. The
+    // server inserts ON CONFLICT DO NOTHING against this id, so five clients
+    // racing leave one row instead of five.
+    //
+    // `at` is when it was TYPED, not when the POST lands. A line sent during
+    // a thirty-second reconnect belongs where it was said, or the chat in the
+    // minutes reads out of order for no visible reason.
+    const cid = newId();
+    const at = new Date().toISOString();
+
+    void r.localParticipant.publishData(
+      new TextEncoder().encode(JSON.stringify({ text, cid, at })), { reliable: true });
     setChat((c) => [...c, { id: c.length, who: 'You', text, mine: true }]);
     setDraft('');
+
+    // Kept for the minutes. Fire and forget, ALWAYS: the line is already
+    // delivered by the time this runs, and a flapping API must cost a line in
+    // the record rather than break chat itself.
+    if (meeting) {
+      void minutesApi.storeChat(authedFetch, meeting.id, {
+        clientId: cid, identity: r.localParticipant.identity, body: text, sentAt: at,
+      });
+    }
   }
   async function hostAction(fn: () => Promise<void>) {
     try { await fn(); } catch (e) { setError(e instanceof Error ? e.message : 'That did not work.'); }
@@ -1183,4 +1307,49 @@ function noteBlocked(e: unknown, set: (m: string | null) => void) {
     return;
   }
   set(null);
+}
+
+// ===========================================================================
+//  Two small things the chat needs
+// ===========================================================================
+
+/**
+ * An id for one chat line.
+ *
+ * crypto.randomUUID needs a secure context, which this app always is — but
+ * "always" has been wrong before, and a chat that throws on send because an
+ * id could not be made would be a spectacular way to lose a meeting. The
+ * fallback is not cryptography; it only has to be unique among the handful of
+ * lines one room types.
+ */
+function newId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch { /* no secure context */ }
+  const hex = (n: number) => Math.floor(Math.random() * 16 ** n).toString(16).padStart(n, '0');
+  return `${hex(8)}-${hex(4)}-4${hex(3)}-a${hex(3)}-${hex(12)}`;
+}
+
+/**
+ * Which signed-in client is responsible for storing guests' chat lines.
+ *
+ * The one whose identity sorts first. No election, no messages, no state —
+ * every client computes the same answer from the same room, and when it is
+ * briefly wrong the server's unique index makes that harmless.
+ *
+ * Returns null when the room has only guests in it, in which case nobody can
+ * store anything and the chat simply is not part of the minutes. That is the
+ * honest outcome: there is no signed-in person present to take
+ * responsibility for the record.
+ */
+function relayerOf(r: Room): string | null {
+  const signedIn = [
+    r.localParticipant.identity,
+    ...Array.from(r.remoteParticipants.values(), (p) => p.identity),
+  ].filter((id) => !id.startsWith('guest:'));
+
+  signedIn.sort();
+  return signedIn[0] ?? null;
 }

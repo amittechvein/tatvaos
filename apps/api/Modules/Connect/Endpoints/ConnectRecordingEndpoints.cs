@@ -54,9 +54,30 @@ public static class ConnectRecordingEndpoints
         g.MapPost("/meetings/{id:guid}/recordings/{recordingId:guid}/stop", StopAsync);
         g.MapDelete("/meetings/{id:guid}/recordings/{recordingId:guid}", DeleteAsync);
         g.MapGet("/meetings/{id:guid}/recordings/{recordingId:guid}/file", DownloadAsync);
+        // A browser cannot put an Authorization header on a navigation, and
+        // this platform's access token is a header. So the signed-in caller
+        // asks for a ticket, and the anonymous route below trades it for the
+        // bytes. See ConnectDownloadTicket for why that is the shape.
+        g.MapGet("/meetings/{id:guid}/recordings/{recordingId:guid}/ticket", TicketAsync);
 
         g.MapGet("/meetings/{id:guid}/notes", NotesAsync);
         g.MapPost("/meetings/{id:guid}/notes/regenerate", RegenerateAsync);
+
+        // ── ANONYMOUS, AND SAFE FOR THE SAME REASON THE WEBHOOK IS. ───────
+        // Outside the authorised group because a <a href> download carries no
+        // header. The control is the SIGNATURE on the ticket, not the fact
+        // that the route needs a session — and having verified it, this
+        // handler still re-checks every permission through ordinary
+        // RLS-scoped queries rather than trusting what the ticket says.
+        app.MapGet("/api/connect/recordings/file", DownloadTicketedAsync)
+           .AllowAnonymous()
+           .WithTags("Connect");
+
+        // Minutes of meeting, and the chat that goes into them. Registered
+        // from HERE rather than from Program.cs: Program.cs is Core's file, a
+        // change to it is a cross-lane patch, and this needs nothing from
+        // Core that is not already registered.
+        app.MapConnectMinutesEndpoints();
     }
 
     public sealed record StartRecordingRequest(string? Mode, bool? Transcribe);
@@ -358,6 +379,77 @@ public static class ConnectRecordingEndpoints
     }
 
     // ==================================================================
+    //  Downloading, part two: the ticket
+    // ==================================================================
+    private static async Task<IResult> TicketAsync(
+        Guid id, Guid recordingId, AppDbContext db, TenantContext tenant,
+        ConnectDownloadTicket tickets, CancellationToken ct)
+    {
+        if (tenant.UserId is not Guid uid) return Results.Unauthorized();
+        if (!await SeenMeetingAsync(db, id, uid, ct)) return NotFound();
+
+        var exists = await db.ConnectRecordings.AsNoTracking()
+            .AnyAsync(r => r.Id == recordingId && r.MeetingId == id && r.Status == "ready", ct);
+        if (!exists) return NotFound();
+
+        return Results.Ok(new
+        {
+            ticket = tickets.Issue(new ConnectDownloadTicket.Claim(
+                tenant.TenantId, id, recordingId, uid)),
+        });
+    }
+
+    /// <summary>
+    /// Trade a signed ticket for the bytes.
+    ///
+    /// The ticket names a tenant, and that is the ONLY thing taken on trust —
+    /// because it is signed, and because without it forced RLS would return
+    /// nothing here, exactly as it does on the guest path and in the webhook.
+    /// Everything else is re-read and re-checked underneath the policy.
+    /// </summary>
+    private static async Task<IResult> DownloadTicketedAsync(
+        string? t, AppDbContext db, TenantContext tenant, ConnectDownloadTicket tickets,
+        ConnectRecordingOptions options, CancellationToken ct)
+    {
+        if (tickets.Verify(t) is not { } claim) return NotFound();
+
+        tenant.EnterAnonymousScope(claim.TenantId, "system");
+        // AND PUSH IT INTO THE DATABASE SESSION — the two-step rule this
+        // module has already got wrong once. EnterAnonymousScope changes a C#
+        // object; app.tenant_id is what RLS reads.
+        await db.SyncTenantAsync(ct);
+
+        // Re-checked, not trusted. The ticket said who asked; this says
+        // whether they may still have it.
+        var stillIn = await db.ConnectParticipants.AsNoTracking()
+            .AnyAsync(p => p.MeetingId == claim.MeetingId && p.UserId == claim.UserId, ct);
+        var isOrganiser = await db.ConnectMeetings.AsNoTracking()
+            .AnyAsync(m => m.Id == claim.MeetingId && m.CreatedByUserId == claim.UserId, ct);
+        if (!stillIn && !isOrganiser) return NotFound();
+
+        var recording = await db.ConnectRecordings.AsNoTracking()
+            .Where(r => r.Id == claim.RecordingId
+                     && r.MeetingId == claim.MeetingId
+                     && r.Status == "ready")
+            .FirstOrDefaultAsync(ct);
+        if (recording is null) return NotFound();
+
+        var path = ResolvePath(options, recording.FileName);
+        if (path is null || !File.Exists(path)) return NotFound();
+
+        var title = await db.ConnectMeetings.AsNoTracking()
+            .Where(m => m.Id == claim.MeetingId).Select(m => m.Title).FirstOrDefaultAsync(ct);
+
+        var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
+            bufferSize: 64 * 1024, useAsync: true);
+
+        return Results.File(stream,
+            contentType: recording.ContentType ?? "application/octet-stream",
+            fileDownloadName: DownloadName(title, recording),
+            enableRangeProcessing: true);
+    }
+
+    // ==================================================================
     //  Notes
     // ==================================================================
     private static async Task<IResult> NotesAsync(
@@ -459,11 +551,11 @@ public static class ConnectRecordingEndpoints
     // ==================================================================
     //  Helpers
     // ==================================================================
-    private static IResult NotFound() => Results.NotFound(new { error = "That meeting does not exist." });
-    private static IResult Forbidden() => Results.Json(
+    internal static IResult NotFound() => Results.NotFound(new { error = "That meeting does not exist." });
+    internal static IResult Forbidden() => Results.Json(
         new { error = "Only the host can do that." }, statusCode: 403);
 
-    private static async Task<string?> RoleOfAsync(
+    internal static async Task<string?> RoleOfAsync(
         AppDbContext db, Guid meetingId, Guid userId, CancellationToken ct)
     {
         var person = await db.ConnectParticipants.AsNoTracking()
@@ -480,7 +572,10 @@ public static class ConnectRecordingEndpoints
     /// everyone who works there. The rule is: you were in the room, or you
     /// created it. Both are rows, not claims.
     /// </summary>
-    private static async Task<bool> SeenMeetingAsync(
+    /// <summary>Internal, not private, because ConnectMinutesEndpoints asks
+    /// the same question and a second copy of "may this person see this
+    /// meeting" is the last thing this module needs.</summary>
+    internal static async Task<bool> SeenMeetingAsync(
         AppDbContext db, Guid meetingId, Guid userId, CancellationToken ct)
     {
         var meeting = await db.ConnectMeetings.AsNoTracking()

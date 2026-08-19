@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TatvaOS.Api.Modules.Connect;
 using TatvaOS.Api.Shared.Data;
+using TatvaOS.Api.Shared.Notify;
 using TatvaOS.Api.Shared.Tenancy;
 
 namespace TatvaOS.Api.Workers;
@@ -88,6 +89,14 @@ public sealed class ConnectNotesWorker(
                     await TranscribeAsync(stopping);
                 }
                 await WriteNotesAsync(stopping);
+
+                // Sending the minutes is its own pass, AFTER writing them.
+                // Same tick, separate scope: a meeting whose notes were just
+                // written is emailed on the NEXT tick, a minute later, which
+                // is the difference between a document and a draft nobody
+                // asked for. It also means a mail server being down cannot
+                // stop notes being written for everybody else.
+                await MailMinutesAsync(stopping);
             }
             catch (OperationCanceledException) when (stopping.IsCancellationRequested)
             {
@@ -147,17 +156,12 @@ public sealed class ConnectNotesWorker(
             tenant.EnterAnonymousScope(tenantId, "system");
             await db.SyncTenantAsync(ct);
 
-            var next = state.Status switch
-            {
-                "EGRESS_STARTING" => "starting",
-                "EGRESS_ACTIVE" => "recording",
-                "EGRESS_ENDING" => "processing",
-                "EGRESS_COMPLETE" or "EGRESS_LIMIT_REACHED"
-                    => string.IsNullOrEmpty(state.FileName) ? "failed" : "ready",
-                "EGRESS_FAILED" => "failed",
-                "EGRESS_ABORTED" => "aborted",
-                _ => null,
-            };
+            // A FOURTH copy of this mapping used to live here, inline. The
+            // other three were in ConnectWebhookEndpoints, LiveKitEgressClient
+            // and a helper — and one of them was wrong, which is how this
+            // module lost a day. There is one now, in ConnectWire, and it is
+            // the one the wire tests point at.
+            var next = ConnectWire.MapEgressStatus(state.Status, state.FileName);
             if (next is null || next == recording.Status) continue;
 
             recording.Status = next;
@@ -424,6 +428,101 @@ public sealed class ConnectNotesWorker(
             """).ToListAsync(ct);
         return ids.Count == 0 ? null : ids[0];
     }
+    // ==================================================================
+    //  4. The minutes email.
+    //
+    //  OFF BY DEFAULT, PER ORGANISATION. connect.pending_minutes_email only
+    //  returns rows for a tenant whose connect_email_minutes is true, and it
+    //  defaults to FALSE. This is outbound mail about what was said in a room,
+    //  to people including guests; no deployment starts sending it because a
+    //  migration ran.
+    //
+    //  THE ATTEMPT IS SAVED BEFORE THE SEND. A crash between the two burns one
+    //  attempt that never happened — the cost is one lost email out of three
+    //  tries. Saving afterwards would re-send the same minutes to everybody in
+    //  the meeting every minute until the crash stopped, which is the failure
+    //  people build a filter rule for. The database caps it at three attempts
+    //  so even the bad case is bounded.
+    // ==================================================================
+    private async Task MailMinutesAsync(CancellationToken ct)
+    {
+        using var scope = scopes.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var tenant = scope.ServiceProvider.GetRequiredService<TenantContext>();
+        var mailer = scope.ServiceProvider.GetRequiredService<SystemMailer>();
+        var config = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+
+        var jobs = await db.Database.SqlQuery<Guid>($"""
+            SELECT notes_id AS "Value" FROM connect.pending_minutes_email({BatchSize})
+            """).ToListAsync(ct);
+
+        foreach (var notesId in jobs)
+        {
+            var tenantIds = await db.Database.SqlQuery<Guid>($"""
+                SELECT tenant_id AS "Value" FROM connect.notes_tenant({notesId})
+                """).ToListAsync(ct);
+            if (tenantIds.Count == 0) continue;
+
+            tenant.EnterAnonymousScope(tenantIds[0], "system");
+            await db.SyncTenantAsync(ct);          // and push it into the DB session
+
+            // Read under the policy, like everything else. The definer
+            // function handed over an id and nothing more.
+            var notes = await db.ConnectMeetingNotes
+                .Where(n => n.Id == notesId).FirstOrDefaultAsync(ct);
+            if (notes is null) continue;
+
+            // Claim it before doing any work, and SAVE that claim. Two API
+            // containers will exist one day and 'find the queue, then send'
+            // with no claim is how both of them mail the same minutes.
+            notes.EmailAttempts++;
+            await db.SaveChangesAsync(ct);
+
+            try
+            {
+                var result = await ConnectMinutesMailer.SendAsync(
+                    mailer, config, log, db, notes.MeetingId, notes, ct);
+
+                // Re-assert the scope: SendAsync makes network calls and the
+                // scope must not be assumed to have survived them.
+                tenant.EnterAnonymousScope(tenantIds[0], "system");
+                await db.SyncTenantAsync(ct);
+
+                await db.SaveChangesAsync(ct);
+
+                if (!result.Sent)
+                    log.LogWarning("Minutes for meeting {Meeting} were not sent: {Error}",
+                        notes.MeetingId, result.Error);
+            }
+            catch (Exception ex)
+            {
+                // The claim stands. Three of these and the database stops
+                // offering this row, which is the point of counting.
+                log.LogError(ex, "Sending minutes for meeting {Meeting} threw", notes.MeetingId);
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    //  Reading the jsonb columns back.
+    //
+    //  These two read JSON this platform wrote itself, which is exactly why
+    //  they used to read it carelessly: TryGetDouble and TryGetInt64 straight
+    //  off a property, no ValueKind check, on the reasoning that we know what
+    //  we put there.
+    //
+    //  We do not, for three reasons. transcripts.segments is written from
+    //  whatever a transcription service returned, and this box is about to run
+    //  its own Whisper — a different wrapper quotes its numbers. A jsonb column
+    //  can be corrected by hand at 2 a.m. And those TryGet methods THROW on the
+    //  wrong kind rather than returning false, while the catch below only
+    //  handles JsonException — so one odd row would take down the notes worker
+    //  for every meeting queued behind it, silently, exactly as one line in
+    //  the webhook handler took down every event on the platform.
+    //
+    //  ConnectWire returns null instead. A segment with a missing offset is a
+    //  slightly worse transcript; an exception here is no minutes at all.
+    // ══════════════════════════════════════════════════════════════════════
     private static List<ConnectTranscriber.Segment> ReadSegments(string? raw)
     {
         var list = new List<ConnectTranscriber.Segment>();
@@ -434,38 +533,35 @@ public sealed class ConnectNotesWorker(
             if (root.ValueKind != JsonValueKind.Array) return list;
             foreach (var item in root.EnumerateArray())
             {
-                var text = item.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String
-                    ? t.GetString() : null;
+                var text = ConnectWire.Text(item, "text");
                 if (string.IsNullOrWhiteSpace(text)) continue;
                 list.Add(new ConnectTranscriber.Segment(
-                    item.TryGetProperty("start", out var s) && s.TryGetDouble(out var sv) ? sv : 0,
-                    item.TryGetProperty("end", out var e) && e.TryGetDouble(out var ev) ? ev : 0,
+                    ConnectWire.Real(item, "start") ?? 0,
+                    ConnectWire.Real(item, "end") ?? 0,
                     text,
-                    item.TryGetProperty("speaker", out var sp) && sp.ValueKind == JsonValueKind.String
-                        ? sp.GetString() : null));
+                    ConnectWire.Text(item, "speaker")));
             }
         }
         catch (JsonException) { }
         return list;
     }
 
-    private static List<ConnectNotesComposer.Attendee> ReadAttendance(string raw)
+    private static List<ConnectNotesModel.Attendee> ReadAttendance(string raw)
     {
-        var list = new List<ConnectNotesComposer.Attendee>();
+        var list = new List<ConnectNotesModel.Attendee>();
         try
         {
             var root = JsonDocument.Parse(raw).RootElement;
             if (root.ValueKind != JsonValueKind.Array) return list;
             foreach (var item in root.EnumerateArray())
             {
-                var name = item.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String
-                    ? n.GetString() : null;
+                var name = ConnectWire.Text(item, "name");
                 if (string.IsNullOrWhiteSpace(name)) continue;
-                list.Add(new ConnectNotesComposer.Attendee(
+                list.Add(new ConnectNotesModel.Attendee(
                     name,
-                    item.TryGetProperty("guest", out var g) && g.ValueKind == JsonValueKind.True,
-                    item.TryGetProperty("seconds", out var s) && s.TryGetInt64(out var sv) ? sv : 0,
-                    item.TryGetProperty("joins", out var j) && j.TryGetInt32(out var jv) ? jv : 0));
+                    ConnectWire.Flag(item, "guest"),
+                    ConnectWire.Number(item, "seconds") ?? 0,
+                    (int)Math.Clamp(ConnectWire.Number(item, "joins") ?? 0, 0, int.MaxValue)));
             }
         }
         catch (JsonException) { }
