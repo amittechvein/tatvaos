@@ -197,6 +197,11 @@ builder.Services.AddHostedService<ThreadBackfillWorker>();
 builder.Services.AddScoped<ClamAvScanner>();
 builder.Services.AddHostedService<AttachmentScanWorker>();
 
+// Sends out-of-office replies. Every rule inside it exists because of a
+// specific loop - two responders answering each other, a mailing list, a
+// bounce. Read the block at the top before relaxing any of them.
+builder.Services.AddHostedService<VacationReplyWorker>();
+
 // Calendar reminders. Polls every minute and records every send, rather than
 // scheduling in-memory timers that a deploy would silently swallow.
 builder.Services.AddHostedService<CalendarReminderWorker>();

@@ -72,6 +72,106 @@ public static class MailEndpoints
         g.MapGet("/mailboxes/{id:guid}/permissions", ListPermissionsAsync);
         g.MapPost("/mailboxes/{id:guid}/permissions", GrantPermissionAsync);
         g.MapDelete("/mailboxes/{id:guid}/permissions/{userId:guid}/{permission}", RevokePermissionAsync);
+
+        g.MapGet("/away", GetAwayAsync);
+        g.MapPut("/away", SaveAwayAsync);
+    }
+
+    // ------------------------------------------------------------------
+    //  Out of office.
+    //
+    //  A mailbox setting, so it needs full access - running a shared queue
+    //  includes deciding what it says while nobody is reading it. Read and
+    //  send_as do not reach this, the same as filters and the signature.
+    //
+    //  The window is stored as DATES. Which midnight they mean is decided when
+    //  a message arrives, against the owner's timezone, because storing an
+    //  instant would freeze that answer at the moment somebody pressed save.
+    // ------------------------------------------------------------------
+    public sealed record AwayRequest(
+        bool Enabled,
+        DateOnly FirstDay,
+        DateOnly? LastDay,
+        string? Subject,
+        string? BodyText,
+        string? BodyHtml,
+        bool ContactsOnly,
+        bool OrgOnly);
+
+    private static object ShapeAway(VacationResponder? v) => new
+    {
+        enabled = v?.Enabled ?? false,
+        firstDay = (v?.FirstDay ?? DateOnly.FromDateTime(DateTime.UtcNow)).ToString("yyyy-MM-dd"),
+        lastDay = v?.LastDay?.ToString("yyyy-MM-dd"),
+        subject = v?.Subject ?? "",
+        bodyText = v?.BodyText ?? "",
+        bodyHtml = v?.BodyHtml ?? "",
+        contactsOnly = v?.ContactsOnly ?? false,
+        orgOnly = v?.OrgOnly ?? false,
+    };
+
+    private static async Task<IResult> GetAwayAsync(
+        Guid? mailboxId, AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Full, ct);
+        if (box is null) return Results.Ok(ShapeAway(null));
+
+        var v = await db.VacationResponders.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.MailboxId == box.Id, ct);
+        return Results.Ok(ShapeAway(v));
+    }
+
+    private static async Task<IResult> SaveAwayAsync(
+        AwayRequest req, Guid? mailboxId, AppDbContext db, TenantContext tenant,
+        AuditWriter audit, CancellationToken ct)
+    {
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Full, ct);
+        if (box is null) return Results.BadRequest(new { error = "You have no mailbox." });
+
+        if (req.LastDay is DateOnly last && last < req.FirstDay)
+            return Results.BadRequest(new { error = "The last day cannot be before the first day." });
+
+        // Same ceiling as a signature, for the same reason: this is user input
+        // that ends up in an HTML body, and a size cap is the difference
+        // between an away message and a payload.
+        const int MaxChars = 20_000;
+        var subject = (req.Subject ?? "").Trim();
+        var text = req.BodyText ?? "";
+        var html = req.BodyHtml ?? "";
+        if (subject.Length > 500 || text.Length > MaxChars || html.Length > MaxChars)
+            return Results.BadRequest(new { error = "That away message is too long." });
+
+        // Turning it ON with nothing to say would send blank mail to everybody
+        // who writes. Refusing is kinder than sending it.
+        if (req.Enabled && text.Trim().Length == 0 && html.Trim().Length == 0)
+            return Results.BadRequest(new { error = "An away message needs something to say." });
+
+        var v = await db.VacationResponders.FirstOrDefaultAsync(x => x.MailboxId == box.Id, ct);
+        if (v is null)
+        {
+            v = new VacationResponder { TenantId = box.TenantId, MailboxId = box.Id, FirstDay = req.FirstDay };
+            db.VacationResponders.Add(v);
+        }
+
+        v.Enabled = req.Enabled;
+        v.FirstDay = req.FirstDay;
+        v.LastDay = req.LastDay;
+        v.Subject = subject;
+        v.BodyText = text;
+        v.BodyHtml = html;
+        v.ContactsOnly = req.ContactsOnly;
+        v.OrgOnly = req.OrgOnly;
+        // The worker never answers mail older than this, so saving is also what
+        // stops switching a responder on from replying to a full Inbox.
+        v.UpdatedAt = DateTimeOffset.UtcNow;
+
+        await db.SaveChangesAsync(ct);
+
+        await AuditMailboxSettingAsync(
+            audit, tenant, box, "mail.away.saved",
+            new { enabled = v.Enabled, firstDay = v.FirstDay, lastDay = v.LastDay }, ct);
+
+        return Results.Ok(ShapeAway(v));
     }
 
     // ------------------------------------------------------------------
