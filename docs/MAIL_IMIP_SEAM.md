@@ -350,3 +350,52 @@ exactly the kind of guard that has earned its place twice on this platform
 this week.
 
 **Status: the seam is fully specified. Nothing about it is open.**
+
+---
+
+# v1.4 — threading: Calendar chains to the ROOT, not to the previous message
+
+Mail's sender extraction landed (`MailSender.SubmitAsync`), and reading it
+settles how §3's threading requirement is actually met. **Nothing is needed
+from Mail. This is a rule on Calendar.**
+
+How it works: `MailSubmission.InReplyToMessageId` is a `Guid` naming one of
+*our* `mail.messages` rows, not an RFC header. `SubmitAsync` looks that row
+up, reads its stored `MessageIdHeader`, and writes both `In-Reply-To` and
+`References` from it. `SendResult.MessageId` returns the new row's id. So
+Calendar deals in handles and never in message-id syntax, which is the right
+side of that line for both of us.
+
+**The rule: Calendar stores the message id of the FIRST invitation on the
+event, and passes that same id as `InReplyToMessageId` for every update and
+every cancellation thereafter.** Not the id of the message it sent last.
+
+Why it matters. `SubmitAsync` sets `References` to the immediate parent's
+Message-Id alone — it does not append the parent's own `References` chain,
+because we do not store that header. So chaining each message to the previous
+one produces:
+
+```
+invitation    Message-Id: <A>
+update        In-Reply-To: <A>   References: <A>
+cancellation  In-Reply-To: <B>   References: <B>        <-- A is gone
+```
+
+Most clients still stitch that together link by link. A client that rebuilds
+the conversation strictly from `References` can split it — and §3 says
+plainly that an update which starts a new thread reads to the recipient as a
+second meeting. That is the failure we called load-bearing, so it should not
+depend on client generosity.
+
+Chaining everything to the root instead gives every message
+`References: <A>`, one conversation in every client, with no schema change
+and no work in Mail:
+
+```
+invitation    Message-Id: <A>
+update        In-Reply-To: <A>   References: <A>
+cancellation  In-Reply-To: <A>   References: <A>
+```
+
+Calendar therefore needs one nullable column on the event to hold that first
+message id. It is a Calendar-side change and it is mine.
