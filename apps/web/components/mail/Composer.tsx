@@ -6,6 +6,9 @@ import type { Message } from '@tatvaos/types';
 import { Icon } from '../ui/Icon';
 import { ContactPicker } from '@/components/family/ContactPicker';
 import { useAuth } from '@/lib/auth';
+import { mailApi } from '@/lib/mail';
+import { linkApi } from '@/lib/space';
+import { fetchMyStorage } from '@/lib/myStorage';
 
 /** Comma- or semicolon-separated addresses → a clean list. */
 function splitAddresses(raw: string): string[] {
@@ -13,6 +16,101 @@ function splitAddresses(raw: string): string[] {
 }
 
 const MAX_TOTAL = 26_214_400; // 25 MB, matches the server gate
+
+/**
+ * How long a mailed link lives.
+ *
+ * Stated EXPLICITLY rather than letting Space apply its own default, because
+ * the message body tells the recipient a date. If Space changed its default
+ * tomorrow, every promise already sitting in somebody's inbox would quietly
+ * become wrong, and nobody would find out until a link died early.
+ *
+ * Thirty days is chosen for mail specifically: people open attachments late,
+ * and a link that expires before the recipient gets to it is the same failure
+ * as never sending one.
+ */
+const LINK_EXPIRY_DAYS = 30;
+
+/** A file parked in Space, and the link that will go in the message. */
+interface SpaceLink {
+  fileId: string;
+  /** What SPACE stored, not the local filename. They differ often enough. */
+  name: string;
+  sizeBytes: number;
+  url: string;
+  expiresAt: string;
+}
+
+/** An oversize file waiting on "send it as a link instead?". */
+interface ParkOffer {
+  file: File;
+  /** Their free storage, or null when it could not be read. */
+  free: number | null;
+}
+
+/** Escaped for the HTML half. The names come from a server; escape anyway. */
+function esc(v: string): string {
+  return v
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * The date the FIRST of these links dies.
+ *
+ * The earliest, not the latest: one sentence covering several links has to be
+ * true of all of them, and "expires on the 30th" beside a link that died on
+ * the 12th is worse than no sentence at all.
+ */
+function expiryLine(links: SpaceLink[]): string {
+  const first = links
+    .map((l) => new Date(l.expiresAt).getTime())
+    .filter((t) => Number.isFinite(t))
+    .sort((a, b) => a - b)[0];
+  if (first === undefined) return '';
+  const when = new Date(first).toLocaleDateString('en-GB', {
+    day: 'numeric', month: 'long', year: 'numeric',
+  });
+  return links.length === 1
+    ? `This link stops working on ${when}.`
+    : `These links stop working on ${when}.`;
+}
+
+/**
+ * The links, as the plain-text half of the message.
+ *
+ * BOTH HALVES GET THEM, and that is not tidiness. Outgoing mail is
+ * multipart/alternative; a link present in only one part means whichever
+ * recipients read the other part see a message that mentions an attachment
+ * and does not have one - which is exactly the bug the signature had.
+ */
+function linkBlockText(links: SpaceLink[]): string {
+  if (links.length === 0) return '';
+  const head = links.length === 1
+    ? 'Attached file, shared as a link:'
+    : 'Attached files, shared as links:';
+  const rows = links
+    .map((l) => `${l.name} (${formatBytes(l.sizeBytes)})\n${l.url}`)
+    .join('\n\n');
+  return `\n\n${head}\n\n${rows}\n\n${expiryLine(links)}`;
+}
+
+/** The same block, as the HTML half. */
+function linkBlockHtml(links: SpaceLink[]): string {
+  if (links.length === 0) return '';
+  const head = links.length === 1
+    ? 'Attached file, shared as a link:'
+    : 'Attached files, shared as links:';
+  const rows = links
+    .map((l) =>
+      `<li><a href="${esc(l.url)}">${esc(l.name)}</a> ` +
+      `<span style="color:#6b7280">(${esc(formatBytes(l.sizeBytes))})</span></li>`)
+    .join('');
+  return `<br><p>${esc(head)}</p><ul>${rows}</ul><p>${esc(expiryLine(links))}</p>`;
+}
+
 const EMOJI = ['😀', '😊', '👍', '🙏', '🎉', '✅', '❤️', '🔥', '😅', '🤝', '📎', '📅', '💡', '⚠️', '🚀', '👀'];
 
 /**
@@ -148,7 +246,7 @@ export function Composer({
   //  The person shape is declared inline rather than imported from lib/mail,
   //  for the same reason as the signature type above: the composer keeps no
   //  dependency on the mail client module.
-  const { authedFetch } = useAuth();
+  const { authedFetch, authedUpload } = useAuth();
   const [mention, setMention] = useState<{ query: string; x: number; y: number } | null>(null);
   const [mentionHits, setMentionHits] = useState<{ email: string; name: string }[]>([]);
   const [mentionIdx, setMentionIdx] = useState(0);
@@ -251,6 +349,16 @@ export function Composer({
     return base.match(/^re:/i) ? base : `Re: ${base}`;
   });
   const [files, setFiles] = useState<File[]>([]);
+  /** Parked in Space, going out as links when this message is sent. */
+  const [links, setLinks] = useState<SpaceLink[]>([]);
+  /** Oversize files picked but not yet decided on, oldest first. */
+  const [queue, setQueue] = useState<File[]>([]);
+  /** The one being asked about. Null when nothing is. */
+  const [offer, setOffer] = useState<ParkOffer | null>(null);
+  const [parking, setParking] = useState(false);
+  /** 0..1 while a file is going up, null when nothing is. */
+  const [progress, setProgress] = useState<number | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const [pane, setPane] = useState<PaneState>('docked');
   const [plain, setPlain] = useState(false);
   const [spell, setSpell] = useState(true);
@@ -319,24 +427,165 @@ export function Composer({
     if (url) cmd('createLink', url);
   }
 
+  /**
+   * Picking files.
+   *
+   * THE 25 MB CEILING IS NO LONGER A DEAD END. It used to refuse the whole
+   * selection and say so, which left somebody holding a 40 MB video with
+   * nothing to do about it but find another way to send it. Now anything that
+   * fits is attached, and anything that does not is offered as a Space link -
+   * the file goes to their own storage and the message carries a link to it.
+   *
+   * Files are taken in order and each is measured against what is left, so
+   * picking a 30 MB file and a 1 MB file attaches the small one rather than
+   * refusing both because the first was too big.
+   */
   function onPickFiles(list: FileList | null) {
     if (!list) return;
-    const next = [...files, ...Array.from(list)];
-    const total = next.reduce((n, f) => n + f.size, 0);
-    if (total > MAX_TOTAL) {
-      setError('Attachments would push the message over the 25 MB limit.');
-      return;
+
+    const fits: File[] = [];
+    const oversize: File[] = [];
+    let total = files.reduce((n, f) => n + f.size, 0);
+
+    for (const f of Array.from(list)) {
+      if (total + f.size <= MAX_TOTAL) {
+        fits.push(f);
+        total += f.size;
+      } else {
+        oversize.push(f);
+      }
     }
+
     setError(null);
-    setFiles(next);
+    if (fits.length > 0) setFiles((prev) => [...prev, ...fits]);
+    if (oversize.length > 0) setQueue((prev) => [...prev, ...oversize]);
+  }
+
+  /**
+   * THE PRE-CHECK, and the reason it happens here rather than at send.
+   *
+   * Since Core's storage change one allowance covers a person's mail AND
+   * their files, so somebody nowhere near full on email can still have no
+   * room for a 2 GB video. Finding that out after writing the message - or
+   * worse, after waiting through the upload - is the bad version. This reads
+   * the allowance the moment the file is picked, before a byte moves.
+   *
+   * A storage read that FAILS is not a refusal. The offer is made anyway with
+   * `free` null, and the server gets to be the judge: it refuses correctly,
+   * and guessing "no" here would block somebody who has plenty of room
+   * because one unrelated call had a bad moment.
+   */
+  useEffect(() => {
+    if (offer !== null || parking || queue.length === 0) return;
+    let alive = true;
+    const file = queue[0];
+    void fetchMyStorage(authedFetch)
+      .then((s) => { if (alive) setOffer({ file, free: s.availableBytes }); })
+      .catch(() => { if (alive) setOffer({ file, free: null }); });
+    return () => { alive = false; };
+  }, [queue, offer, parking, authedFetch]);
+
+  /** Done with the file at the head of the queue, whatever we decided. */
+  function dismissOffer() {
+    setQueue((q) => q.slice(1));
+    setOffer(null);
+  }
+
+  /**
+   * Park the offered file in Space and put a link on the message.
+   *
+   * TWO CALLS, AND THE GAP BETWEEN THEM MATTERS. Once the upload returns, the
+   * file EXISTS in their Space whether or not the link succeeds. A failure
+   * after that point must say where the file went, or somebody has a 40 MB
+   * upload sitting somewhere they were never told about and will not think to
+   * look. It is not lost - it is in "Email attachments" - but only if we say
+   * so.
+   */
+  async function parkOffered() {
+    if (!offer) return;
+    const { file } = offer;
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setParking(true);
+    setProgress(0);
+    setError(null);
+    try {
+      const parked = await mailApi.attachToSpace(
+        authedUpload, file, (fraction) => setProgress(fraction), controller.signal);
+
+      if (!parked.ok) {
+        let sentence = parked.error;
+        if (parked.reason === 'full') {
+          // The upload transport keeps Core's reason and Core's sentence but
+          // not the figures. Fetching them is worth one extra call on a path
+          // nobody hits twice: "you have 1.2 GB free" is the half that tells
+          // somebody what to do next.
+          const room = await fetchMyStorage(authedFetch).catch(() => null);
+          if (room)
+            sentence = `${parked.error} (${formatBytes(room.availableBytes)} free of ` +
+                       `${formatBytes(room.quotaBytes)}.)`;
+        }
+        setError(sentence);
+        dismissOffer();
+        return;
+      }
+
+      // FROM HERE THE FILE EXISTS IN THEIR SPACE whether or not the link
+      // succeeds. Any failure after this point has to say where it went, or
+      // somebody has a half-gigabyte upload sitting somewhere they were never
+      // told about and would not think to look. It is not lost - it is in
+      // "Email attachments" - but only if we say so.
+      try {
+        const link = await linkApi.create(authedFetch, parked.fileId, LINK_EXPIRY_DAYS);
+        setLinks((prev) => [...prev, {
+          fileId: parked.fileId,
+          name: parked.name,
+          sizeBytes: parked.sizeBytes,
+          url: link.url,
+          expiresAt: link.expiresAt,
+        }]);
+      } catch (e) {
+        // The likeliest reason by far is an administrator having turned public
+        // links off for the organisation, and Space says so in the message.
+        // Swallowing it would leave somebody retrying a thing that is not
+        // going to start working.
+        const why = e instanceof Error && e.message ? ` ${e.message}` : '';
+        setError(
+          `${parked.name} was saved to your Space, in the “Email attachments” folder, ` +
+          `but a link could not be created, so it is not on this message.${why} ` +
+          'You can share it from Space.');
+      }
+      dismissOffer();
+    } catch (e) {
+      // Stopping your own upload is not a failure and must not be reported as
+      // one. Everything else leaves the offer UP, so "Send as a link" is one
+      // click away rather than a re-pick from the file dialog.
+      if ((e as Error).name === 'AbortError') dismissOffer();
+      else setError('The file could not be sent to Space. Check your connection and try again.');
+    } finally {
+      abortRef.current = null;
+      setParking(false);
+      setProgress(null);
+    }
   }
 
   async function handleSend() {
     setSending(true);
     setError(null);
     try {
-      const bodyText = plain ? plainBody : (editorRef.current?.innerText ?? '');
-      const bodyHtml = plain ? undefined : (editorRef.current?.innerHTML || undefined);
+      // The link block is appended AT SEND, not inserted as you attach, so it
+      // cannot be half-deleted by an editing cursor and cannot drift out of
+      // step with the chips above. What the chips show is what goes out.
+      const linkText = linkBlockText(links);
+      const linkHtml = linkBlockHtml(links);
+
+      const bodyText = (plain ? plainBody : (editorRef.current?.innerText ?? '')) + linkText;
+      const rawHtml = plain ? undefined : (editorRef.current?.innerHTML || undefined);
+      // In plain mode there is no HTML half at all and the text block carries
+      // the links alone. Otherwise an empty body plus links still needs one.
+      const bodyHtml = plain
+        ? undefined
+        : (linkHtml ? `${rawHtml ?? ''}${linkHtml}` : rawHtml);
       await onSend({
         to: splitAddresses(to),
         cc: showCc ? splitAddresses(cc) : undefined,
@@ -696,6 +945,140 @@ export function Composer({
           </div>
         )}
 
+        {/* Space links. A separate row from the attachment chips on purpose:
+            these are NOT on the message as files, they are links to the
+            sender's own storage, and one row of identical chips would say
+            they were the same thing. */}
+        {links.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 px-4 pb-1 pt-2">
+            {links.map((l) => (
+              <span
+                key={l.fileId}
+                className="flex items-center gap-2 rounded-lg border border-brand-400 px-2.5 py-1.5 text-xs"
+              >
+                <Icon name="link" className="h-3.5 w-3.5 text-brand-600" />
+                <span className="max-w-[12rem] truncate">{l.name}</span>
+                <span className="text-ink-muted">{formatBytes(l.sizeBytes)}</span>
+                <button
+                  type="button"
+                  onClick={() => setLinks((prev) => prev.filter((x) => x.fileId !== l.fileId))}
+                  /* Takes it off THIS MESSAGE only. The file stays in their
+                     Space, because deleting somebody's upload to undo a
+                     compose-window decision is not a trade we get to make. */
+                  aria-label={`Remove the link to ${l.name} from this message`}
+                  title="Remove from this message. The file stays in your Space."
+                  className="text-ink-faint hover:text-danger"
+                >
+                  <Icon name="close" className="h-3.5 w-3.5" />
+                </button>
+              </span>
+            ))}
+            <span className="text-[11px] text-ink-faint">
+              sent as {links.length === 1 ? 'a link' : 'links'}, added when you send
+            </span>
+          </div>
+        )}
+
+        {/* The oversize offer. */}
+        {offer !== null && (
+          <div className="mx-4 my-2 rounded-lg border border-line bg-canvas p-3">
+            {offer.free !== null && offer.file.size > offer.free ? (
+              <>
+                {/* The pre-check refusing BEFORE the upload. The whole point
+                    of reading the allowance at attach time is that this
+                    sentence arrives now and not after a long wait. */}
+                <p className="mb-2 text-sm text-ink">
+                  <span className="font-medium">{offer.file.name}</span> is{' '}
+                  {formatBytes(offer.file.size)}, and you have {formatBytes(offer.free)} of
+                  storage free — so it cannot be sent as a link either.
+                </p>
+                <p className="mb-3 text-xs text-ink-muted">
+                  Your storage covers your mail and your files together. Empty your trash in
+                  Space, or ask an administrator for more room.
+                </p>
+                <button
+                  type="button"
+                  onClick={dismissOffer}
+                  className="rounded-md border border-line px-3 py-1.5 text-sm text-ink transition hover:border-brand-400"
+                >
+                  Leave it out
+                </button>
+              </>
+            ) : (
+              <>
+                {/* Two different problems wear the same offer, and saying the
+                    wrong one is how you get "40 MB is over the limit" printed
+                    beside a 1 KB file that simply had no room left. */}
+                <p className="mb-2 text-sm text-ink">
+                  {offer.file.size > MAX_TOTAL ? (
+                    <>
+                      <span className="font-medium">{offer.file.name}</span> is{' '}
+                      {formatBytes(offer.file.size)} — over the {formatBytes(MAX_TOTAL)} limit
+                      for files sent with a message.
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-medium">{offer.file.name}</span> will not fit —
+                      this message is already carrying {formatBytes(totalSize)} of its{' '}
+                      {formatBytes(MAX_TOTAL)}.
+                    </>
+                  )}
+                </p>
+                <p className="mb-3 text-xs text-ink-muted">
+                  It can go to your Space instead, in the “Email attachments” folder, and the
+                  message will carry a link anyone you send it to can open. The link stops
+                  working after {LINK_EXPIRY_DAYS} days.
+                </p>
+                {parking ? (
+                  /* A file this size takes minutes. A button that looks
+                     pressed and nothing else is indistinguishable from broken,
+                     and the second click is the one that makes it worse. */
+                  <div className="flex items-center gap-3">
+                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-line">
+                      <div
+                        className="h-full rounded-full bg-brand-500 transition-all"
+                        style={{ width: `${Math.round((progress ?? 0) * 100)}%` }}
+                      />
+                    </div>
+                    <span className="shrink-0 text-xs tabular-nums text-ink-muted">
+                      {Math.round((progress ?? 0) * 100)}%
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => abortRef.current?.abort()}
+                      className="shrink-0 rounded-md border border-line px-3 py-1.5 text-sm text-ink transition hover:border-danger hover:text-danger"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void parkOffered()}
+                      className="rounded-md bg-brand-500 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-brand-600"
+                    >
+                      Send as a link
+                    </button>
+                    <button
+                      type="button"
+                      onClick={dismissOffer}
+                      className="rounded-md border border-line px-3 py-1.5 text-sm text-ink transition hover:border-brand-400"
+                    >
+                      Leave it out
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+            {queue.length > 1 && (
+              <p className="mt-2 text-[11px] text-ink-faint">
+                {queue.length - 1} more {queue.length - 1 === 1 ? 'file' : 'files'} after this one.
+              </p>
+            )}
+          </div>
+        )}
+
             {/* Said where the attachments are, not in a help page. Someone who
                 minimises believing the file was kept has lost work, and they
                 will not find out until they reopen the draft. */}
@@ -703,6 +1086,7 @@ export function Composer({
               <p className="px-4 pb-1 text-[11px] text-warn">
                 Attachments are not saved with a draft — they stay in this window
                 and are only included if you send now.
+                {links.length > 0 && ' Files sent as links are already in your Space and do survive.'}
               </p>
             )}
 
@@ -715,7 +1099,9 @@ export function Composer({
           <button
             type="button"
             onClick={handleSend}
-            disabled={sending || !to.trim()}
+            /* Sending while a file is still uploading would post the message
+               without the link that was about to be added to it. */
+            disabled={sending || parking || !to.trim()}
             className="mr-1 flex items-center gap-2 rounded-full bg-brand-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {sending ? 'Sending…' : 'Send'}
