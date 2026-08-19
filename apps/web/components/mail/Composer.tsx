@@ -476,9 +476,13 @@ export function Composer({
    * because one unrelated call had a bad moment.
    */
   useEffect(() => {
-    if (offer !== null || parking || queue.length === 0) return;
-    let alive = true;
+    if (offer !== null || parking) return;
+    // Indexed, not a length check: noUncheckedIndexedAccess types queue[0] as
+    // File | undefined, and narrowing it here is what proves the queue is
+    // non-empty rather than asserting it.
     const file = queue[0];
+    if (!file) return;
+    let alive = true;
     void fetchMyStorage(authedFetch)
       .then((s) => { if (alive) setOffer({ file, free: s.availableBytes }); })
       .catch(() => { if (alive) setOffer({ file, free: null }); });
