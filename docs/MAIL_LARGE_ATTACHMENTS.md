@@ -55,6 +55,27 @@ start working.
 
 ---
 
+## The one state where the message and Space disagree
+
+**If the send itself fails after the links were created, the files and the
+links both survive.** That is deliberate and it is the right outcome — the
+person keeps a 40 MB upload they already waited for, and sending again reuses
+the same links rather than re-uploading. The composer holds them, so a retry
+costs nothing.
+
+It is worth naming because it is the only case where Space's state and the
+message's state disagree. If they discard the composer instead of retrying,
+the files stay in `Email attachments` with live links pointing at them for
+thirty days. Nothing is lost and nothing leaks — they own the files and the
+links are theirs — but it is the one path where somebody has links they never
+sent.
+
+The alternative, revoking on discard, is worse: the file stays either way, so
+it would destroy the link while leaving the upload, which is the half of the
+work that cost them time.
+
+---
+
 ## Decisions
 
 **The upload goes through `authedUpload`, not `authedFetch`.** This is the one
@@ -108,3 +129,16 @@ their problem to fix.
   restored into a reopened draft. It needs a place to persist per draft.
 - **Revoking from Mail.** Links are managed in Space. A sent message has no
   "unshare" button.
+- **Pre-checking the organisation's link policy.** An organisation can forbid
+  public links, and today a sender in such an organisation uploads the whole
+  file and only then learns it cannot be linked. The file is safe and the
+  refusal names the folder, but the upload should never have started.
+
+  It cannot be pre-checked yet: `GET /api/space/settings` is behind
+  `RequireAuthorization("OrgAdmin")`, so an ordinary sender cannot read their
+  own organisation's policy. Core has asked Space to split it — GET for any
+  signed-in user, PUT staying OrgAdmin. When that lands this is a few lines
+  beside the storage pre-check: don't offer the link at all, offer "save to
+  Space" instead. The same change should tell the person, when a send fails
+  with links already created, that their uploads are kept and retrying will
+  not re-upload them.
