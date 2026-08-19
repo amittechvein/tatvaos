@@ -29,11 +29,25 @@
 #  Suggested by the Space developer, whose branch was one of the two.
 #  ---------------------------------------------------------------------------
 
-$ErrorActionPreference = 'Stop'
+# NOT 'Stop'. Under Stop, PowerShell 5.1 turns ANY stderr output from a native
+# command into a terminating NativeCommandError - even a harmless one, and even
+# with 2>$null, which does not suppress it. On this script's first real run git
+# printed "warning: multiple merge bases" for an archived branch and the whole
+# thing died on a line that had done nothing wrong.
+#
+# git tells us success through its EXIT CODE. Its stderr is commentary.
+$ErrorActionPreference = 'Continue'
 
 function Step($m) { Write-Host ""; Write-Host ">> $m" -ForegroundColor Cyan }
 function Ok($m)   { Write-Host "   [ ok ] $m" -ForegroundColor Green }
 function Warn($m) { Write-Host "   [warn] $m" -ForegroundColor Yellow }
+
+# Run git and hand back only stdout. Stderr is dropped on purpose - see above.
+function GitOut {
+    $out = & git @args 2>$null
+    if ($null -eq $out) { return @() }
+    return @($out)
+}
 
 # Which lane owns a branch, by its name. feature/mail-away is Mail's,
 # lane/space is Space's. Anything that does not match is reported as its own
@@ -46,14 +60,17 @@ function LaneOf($branch) {
 }
 
 Step "Fetching"
-git fetch --all --prune --quiet
+GitOut fetch --all --prune --quiet | Out-Null
 Ok "fetched"
 
 # Every remote branch that is not main, and is not already merged. An already
 # merged branch cannot collide with anything - it IS main.
-$branches = @(git branch -r --no-merged origin/main |
+# archive/* is, by definition, not active work. Scanning it produces noise and
+# - because those branches have diverged far enough to have several merge bases
+# - the warnings git emits about them are what killed the first run.
+$branches = @(GitOut branch -r --no-merged origin/main |
     ForEach-Object { $_.Trim() } |
-    Where-Object { $_ -and $_ -notmatch 'HEAD' -and $_ -ne 'origin/main' })
+    Where-Object { $_ -and $_ -notmatch 'HEAD' -and $_ -ne 'origin/main' -and $_ -notmatch '^origin/archive/' })
 
 if ($branches.Count -eq 0) {
     Ok "no unmerged branches - nothing can collide"
@@ -69,7 +86,7 @@ foreach ($b in $branches) {
 $touched = @{}
 foreach ($b in $branches) {
     $lane = LaneOf $b
-    $files = @(git diff --name-only "origin/main...$b" 2>$null)
+    $files = GitOut diff --name-only "origin/main...$b"
     foreach ($f in $files) {
         if (-not $f) { continue }
         if (-not $touched.ContainsKey($f)) { $touched[$f] = @{} }
