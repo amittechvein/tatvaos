@@ -314,9 +314,16 @@ public static partial class SpaceLinkEndpoints
 
         var stream = blobs.OpenRead(row.BlobKey);
         if (stream is null)
-            // Blob missing after a successful consume: the count is already
-            // spent (stated in the contract, not hidden). Same one answer.
+        {
+            // Blob missing after a successful consume — our fault, so the
+            // recipient does not pay for it: refund the count (review
+            // finding F1; floored at zero inside the function). Same one
+            // 404 answer as everything else on this path.
+            await db.Database.ExecuteSqlInterpolatedAsync($"""
+                SELECT space.refund_public_link({HashToken(token)})
+                """, ct);
             return LinkNotFound();
+        }
 
         // Always a download, never a rendered page — this origin holds
         // sessions, and inline HTML from a stranger is XSS against them all.
