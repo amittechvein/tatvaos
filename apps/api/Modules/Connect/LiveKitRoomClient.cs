@@ -202,13 +202,29 @@ public sealed class LiveKitRoomClient(
             return null;
         }
 
-        var admin = tokens.MintJoinToken(new LiveKitGrantOptions(
-            RoomName: ConnectCodes.RoomName(meetingId),
-            Identity: "tatvaos-api",
-            DisplayName: "TatvaOS",
-            CanPublish: false,
-            CanSubscribe: false,
-            RoomAdmin: true));
+        // Two different grants, because LiveKit checks two different ones.
+        //
+        // roomAdmin authorises operations on the PEOPLE in a room — mute,
+        // remove, update, list. Room LIFECYCLE — CreateRoom, DeleteRoom,
+        // ListRooms — is checked against roomCreate instead, and a token
+        // carrying only roomAdmin is answered:
+        //
+        //     status 401, "permissions denied", code "unauthenticated"
+        //
+        // which is precisely what "End the meeting for everyone" did, in
+        // production, while every other host control worked. The failure was
+        // invisible from our side: EndAsync saw a null response and answered
+        // 502 with a sentence, and the reason was only ever in LiveKit's log.
+        var lifecycle = method is "DeleteRoom" or "CreateRoom" or "ListRooms";
+        var admin = lifecycle
+            ? tokens.MintRoomLifecycleToken()
+            : tokens.MintJoinToken(new LiveKitGrantOptions(
+                RoomName: ConnectCodes.RoomName(meetingId),
+                Identity: "tatvaos-api",
+                DisplayName: "TatvaOS",
+                CanPublish: false,
+                CanSubscribe: false,
+                RoomAdmin: true));
 
         using var request = new HttpRequestMessage(HttpMethod.Post,
             $"{tokens.InternalUrl.TrimEnd('/')}/twirp/livekit.RoomService/{method}")
