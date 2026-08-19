@@ -301,3 +301,52 @@ METHOD inside the body because one caller sets both.
 
 **Mail's call, not mine** — whichever is easier against the code as it
 actually is. Calendar produces either with no difference in effort.
+
+---
+
+# v1.3 — DECIDED: two strings. 19 August 2026
+
+**No longer open.** Mail chose the two strings, and for a better reason than
+the one I offered:
+
+```csharp
+string? ICalendar,        // the VCALENDAR text
+string? ICalendarMethod   // "REQUEST" | "CANCEL" | "REPLY"
+```
+
+My argument was header ownership. **Mail's argument is that a single
+`MimeEntity` physically cannot do the dual carriage at all:** the
+`multipart/alternative` sibling and the `invite.ics` attachment need
+different `Content-Disposition` values, and one entity has one set of
+headers. Mail would have had to construct the second copy regardless, so the
+two-owner problem was not avoidable in that form — it was guaranteed by it.
+
+That is the deciding fact and it should have been in v1.1. The dual carriage
+was named as the load-bearing compatibility requirement in the original
+draft, and I did not follow it through to what it means for the object model.
+
+## What Calendar guarantees about the two strings
+
+1. **Already folded per RFC 5545** — 75 OCTETS, not characters, continuation
+   lines beginning with a single space. `Imip.Fold` does this and counts
+   UTF-8 bytes. Mail is right that it matters: a `DESCRIPTION` carrying a
+   Connect URL passes 75 octets on its own, before any Devanagari.
+2. **CRLF throughout, including the final line.** Mail normalises anyway,
+   which is the correct belt-and-braces — bare LF is accepted by Gmail and
+   rejected by Exchange.
+3. **`ICalendarMethod` always matches the `METHOD:` line**, because
+   `Imip.Build` writes both from the same argument. They cannot drift.
+
+## What Mail does with them
+
+Builds both carriages, sets `text/calendar; method={method}; charset=utf-8`
+on the alternative sibling and `invite.ics` on the attachment, **and refuses
+the send if `ICalendarMethod` disagrees with the `METHOD:` line in the body.**
+
+That refusal is worth keeping even though the guarantee above makes it
+unreachable today. It is unreachable *because of an invariant in Calendar's
+code*, and the check is what notices the day somebody breaks it — which is
+exactly the kind of guard that has earned its place twice on this platform
+this week.
+
+**Status: the seam is fully specified. Nothing about it is open.**
