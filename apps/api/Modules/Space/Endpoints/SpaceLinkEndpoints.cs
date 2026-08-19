@@ -300,11 +300,16 @@ public static partial class SpaceLinkEndpoints
         public string Name { get; set; } = "";
         public string MimeType { get; set; } = "";
         public long SizeBytes { get; set; }
+        // Returned so a missing blob can be logged as the storage loss it is
+        // — see 20260819-space-link-loss-logging.sql.
+        public Guid LinkId { get; set; }
+        public Guid FileId { get; set; }
     }
 
     /// <summary>GET /api/space/l/{token} — the bytes.</summary>
     private static async Task<IResult> DownloadAsync(
-        string token, HttpContext http, AppDbContext db, IBlobStore blobs, CancellationToken ct)
+        string token, HttpContext http, AppDbContext db, IBlobStore blobs,
+        ILoggerFactory loggerFactory, CancellationToken ct)
     {
         // Shape check first: garbage fails before it costs a hash or a query.
         if (!TokenShape().IsMatch(token)) return LinkNotFound();
@@ -315,7 +320,9 @@ public static partial class SpaceLinkEndpoints
             SELECT blob_key   AS "BlobKey",
                    name       AS "Name",
                    mime_type  AS "MimeType",
-                   size_bytes AS "SizeBytes"
+                   size_bytes AS "SizeBytes",
+                   link_id    AS "LinkId",
+                   file_id    AS "FileId"
               FROM space.consume_public_link({HashToken(token)})
             """).FirstOrDefaultAsync(ct);
         if (row is null) return LinkNotFound();
@@ -330,6 +337,25 @@ public static partial class SpaceLinkEndpoints
             await db.Database.ExecuteSqlInterpolatedAsync($"""
                 SELECT space.refund_public_link({HashToken(token)})
                 """, ct);
+
+            // WARNING, never information: a missing blob is never normal.
+            // Either the volume lost data or something deleted the bytes and
+            // left the row — both are incidents, and info level would bury
+            // them under the ordinary. The blob key is the field that earns
+            // its place: it tells whoever reads this whether one file went
+            // or a whole prefix did, which is the difference between a bug
+            // and a storage failure. And the line says REFUNDED, not
+            // refused, because the person reading it in six months is
+            // deciding whether a customer lost data — "link not found"
+            // would not answer that question.
+            loggerFactory
+                .CreateLogger("TatvaOS.Space.PublicLinks")
+                .LogWarning(
+                    "Public link consumed and REFUNDED because the file's bytes are "
+                    + "missing from storage — the file is gone, not the link. "
+                    + "fileId={FileId} linkId={LinkId} blobKey={BlobKey}",
+                    row.FileId, row.LinkId, row.BlobKey);
+
             return LinkNotFound();
         }
 
