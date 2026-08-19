@@ -42,12 +42,27 @@ public static partial class SpaceLinkEndpoints
         g.MapGet("/files/{id:guid}/links", ListLinksAsync);
         g.MapDelete("/files/{id:guid}/links/{linkId:guid}", RevokeLinkAsync);
 
-        // Org policy — the admin console's toggle reads and writes this.
-        var s = app.MapGroup("/api/space/settings")
+        // Org policy, split by verb because reading and setting it are
+        // different acts.
+        //
+        // READ — any signed-in person. A sender needs to know whether their
+        // organisation allows link sharing BEFORE the composer spends 40 MB
+        // uploading a file it then cannot link, and the share dialog wants
+        // the same answer to decide whether to offer the option at all.
+        // Whether your own organisation permits link sharing is not
+        // sensitive, and both the query filter and RLS scope the row to the
+        // caller's tenant, so this can only ever return their own policy.
+        var settingsRead = app.MapGroup("/api/space")
+            .RequireAuthorization("User")
+            .WithTags("Space");
+        settingsRead.MapGet("/settings", GetSettingsAsync);
+
+        // WRITE — OrgAdmin. Setting the policy is an administrative act and
+        // is audited as one.
+        var settingsWrite = app.MapGroup("/api/space")
             .RequireAuthorization("OrgAdmin")
             .WithTags("Space");
-        s.MapGet("/", GetSettingsAsync);
-        s.MapPut("/", PutSettingsAsync);
+        settingsWrite.MapPut("/settings", PutSettingsAsync);
 
         // The anonymous pair. Rate limited per IP; policy in Program.cs.
         var l = app.MapGroup("/api/space/l")
