@@ -452,7 +452,13 @@ services:
   #  with the SFU for the whole machine.
   # --------------------------------------------------------------------------
   egress:
-    image: livekit/egress:latest
+    # Pinned by digest, the same as livekit-server above. This pin was applied
+    # BY HAND on the production box and lived only there — every fresh
+    # checkout would have silently reverted to :latest, and an egress image
+    # drifting under a working recording setup is how uid assumptions and
+    # layout behaviour change overnight (see CONNECT_HANDOVER.md §5.3). The
+    # deploy guard flagged the box drift and this commit is the recovery.
+    image: livekit/egress:latest@sha256:bf2b648b947349c3e9ff7aa8c718f00378d5c06af7624652a3653318e00333ce
     restart: unless-stopped
     depends_on:
       redis:   { condition: service_healthy }
