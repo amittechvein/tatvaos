@@ -42,8 +42,12 @@
 #
 #      1. In Space, upload a small throwaway file named
 #         delete-me-test-YYYYMMDD.txt
-#      2. Create a public link on it, max downloads 2. Keep the URL.
+#      2. Create a public link on it. LEAVE THE DOWNLOAD CAP EMPTY - a link
+#         already at its cap refuses before it reaches the blob, and the
+#         script will (correctly) refuse to run against it.
 #      3. bash infra/scripts/verify-loss-refund.sh delete-me-test-YYYYMMDD.txt
+#      4. When it pauses, open the link AND CLICK DOWNLOAD. The landing page
+#         alone does not consume the link.
 #
 #  Safe to re-run: use a new date in the filename each time.
 # =============================================================================
@@ -141,6 +145,25 @@ info "blobKey  $BLOB_KEY"
 info "size     $SIZE bytes"
 info "count    $COUNT_BEFORE (this must NOT change)"
 
+# The link must still be CONSUMABLE, or the whole test is a no-op that looks
+# like a pass. An exhausted or revoked link returns the same 404, leaves the
+# same unchanged count, and logs nothing - identical output, nothing tested.
+# Added 21 August 2026: the first real run reported "the refund posted"
+# without ever having checked this. It happened to be true. That was luck,
+# and a false pass is worse than a failure because it closes the question.
+CONSUMABLE=$("${PSQL[@]}" -c "
+    select (revoked_at is null
+            and expires_at > now()
+            and (max_downloads is null or download_count < max_downloads))
+      from space.public_links where id = '${LINK_ID}';")
+if [[ "$CONSUMABLE" != "t" ]]; then
+    bad "the link is not consumable - revoked, expired, or at its cap"
+    info "the download would refuse BEFORE reaching the blob, so nothing would"
+    info "be tested and the result would still look like a pass. Refusing."
+    exit 1
+fi
+ok "the link is still consumable - the blob-missing branch can be reached"
+
 if [[ "$SIZE" -gt 1048576 ]]; then
     bad "that file is over 1 MiB — the throwaway file should be tiny"
     info "refusing: a large file means the key is not what you think it is"
@@ -172,7 +195,16 @@ docker run --rm -v "${VOL}:/b" alpine rm -f "/b/${BLOB_KEY}" \
 
 # ---- 5. Now make the fault happen ------------------------------------------
 head2 "trigger it"
-echo "  Open the public link in a PRIVATE window now."
+# A window in TIME, not a line count. The first real run reported "no REFUNDED
+# warning" against --tail 300 while the line was sitting in the log: EF wrote
+# every SQL statement at Information, so 300 lines was a few seconds of
+# traffic. Asking "did this happen since I pressed a key" is the honest
+# question. (The noise itself is fixed separately in appsettings.json.)
+SINCE=$(date -u +%Y-%m-%dT%H:%M:%S)
+
+echo "  Open the public link in a PRIVATE window and CLICK DOWNLOAD."
+echo "  Opening the landing page alone does NOT consume the link - the"
+echo "  download is what reads the blob, and the blob is what is missing."
 echo "  Expected: the ordinary 'this link does not exist or has expired'."
 echo
 read -r -p "  Press Enter once you have opened it: " _
@@ -193,10 +225,12 @@ fi
 
 # (b) the warning was logged, naming all three fields
 if [[ -n "${API:-}" ]]; then
-    LOG=$(docker logs "$API" --tail 300 2>&1 | grep -i "REFUNDED" | tail -1)
+    LOG=$(docker logs "$API" --since "$SINCE" 2>&1 | grep -i "REFUNDED" | tail -1)
     if [[ -z "$LOG" ]]; then
-        bad "no REFUNDED warning in the last 300 log lines"
-        info "the logging never fired — check the endpoint was actually reached"
+        bad "no REFUNDED warning since this test began"
+        info "EITHER the logging did not fire, OR the download was never"
+        info "reached - opening the link without clicking Download does the"
+        info "second. Both produce this line; do not assume the first."
         FAILED=1
     else
         ok "warning logged"
