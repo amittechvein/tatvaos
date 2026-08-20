@@ -1,6 +1,10 @@
 using System.Globalization;
 using System.Text;
+using MimeKit;
 using TatvaOS.Api.Modules.Calendar;
+#if HAS_MAIL_CARRIAGE
+using TatvaOS.Api.Modules.Mail;
+#endif
 using TatvaOS.Api.Shared.Data;
 
 namespace TatvaOS.Tests.CalendarImip;
@@ -62,6 +66,7 @@ internal static class Program
         Cancellation(t);
         ParseRealClients(t);
         ParseRefusals(t);
+        RealCarriage(t);
         NothingThrows(t);
     }
 
@@ -281,6 +286,182 @@ internal static class Program
         t.Ok("DELEGATED parses", delegated is not null);
         t.Ok("  but is NOT recorded as acceptance", delegated?.PartStat == "needs-action");
         t.Note("saying someone is coming when they handed it on is the worst possible answer");
+    }
+
+    // ==================================================================
+    //  THE REAL CARRIAGE — Mail's assembly, not one built here
+    // ==================================================================
+    //
+    //  Everything above tests the payload. This tests the MESSAGE, and it
+    //  calls MAIL'S InvitationBody.TryBuild to build it — the same method
+    //  SubmitAsync calls in production. Assembling one here instead would
+    //  prove this test correct and the shipping code untested, which is the
+    //  two-implementations problem that put a duplicate endpoint client on
+    //  main earlier the same day.
+    // ==================================================================
+    private static void RealCarriage(Harness t)
+    {
+#if !HAS_MAIL_CARRIAGE
+        // Skipped LOUDLY. Mail's InvitationBody.cs is not in this checkout —
+        // it is on Mail's branch and has not merged yet. Printing this beats
+        // a suite that silently drops a section and still says "all ok".
+        t.Section("the carriage Mail actually ships — SKIPPED");
+        t.Note("apps/api/Modules/Mail/InvitationBody.cs is not in this checkout");
+        t.Note("it lives on Mail's branch; after the merge this section runs by itself");
+#else
+        t.Section("the carriage Mail actually ships");
+
+        var ical = Imip.Build(Event(), [Attendee("riya@gmail.com", "Riya")],
+            "amit@tatvaos.com", "Amit Dadhich", Imip.MethodRequest);
+
+        var (body, refusal) = InvitationBody.TryBuild(
+            "Project review, Tuesday.", "<p>Project review, Tuesday.</p>", ical, Imip.MethodRequest);
+
+        t.Ok("a good submission assembles", body is not null);
+        t.Ok("  and is not refused", refusal is null);
+
+        if (body is null)
+        {
+            t.Ok($"  [refused: {refusal}]", false);
+            return;
+        }
+
+        var message = new MimeMessage { Body = body };
+        var problems = ImipStructure.Check(message, Imip.MethodRequest);
+
+        t.Ok("ImipStructure finds no fault in it", problems.Count == 0);
+        foreach (var problem in problems) t.Ok($"  PROBLEM: {problem}", false);
+
+        // The thing Mail asked to have measured rather than assumed: MimeKit
+        // chooses the alternative part's encoding, and "it picks something
+        // that survives" was the last unverified assertion in that half.
+        var alternative = message.BodyParts.OfType<TextPart>()
+            .FirstOrDefault(p => p.ContentType.IsMimeType("text", "calendar"));
+        if (alternative is not null)
+            t.Note($"MimeKit chose {alternative.ContentTransferEncoding} for the alternative part");
+
+        // ── AND AGAIN, THROUGH THE WIRE ────────────────────────────────
+        //
+        //  Everything above inspects the object graph Mail built. Gmail never
+        //  sees that graph; it sees BYTES. MimeKit chooses transfer encodings
+        //  at WRITE time, so the encoding question cannot be answered by
+        //  looking at the object at all — and a payload that survives in
+        //  memory but is mangled on serialisation would pass every assertion
+        //  above and still fail at the customer.
+        //
+        //  So: write it out, parse it back, check the parsed result. This is
+        //  the closest this suite gets to a real send.
+        // ────────────────────────────────────────────────────────────────
+        t.Section("and again after a round trip through the wire format");
+
+        using var wire = new MemoryStream();
+        message.WriteTo(wire);
+        wire.Position = 0;
+        var delivered = MimeMessage.Load(wire);
+
+        var afterWire = ImipStructure.Check(delivered, Imip.MethodRequest);
+        t.Ok("the serialised-and-reparsed message is still correct", afterWire.Count == 0);
+        foreach (var problem in afterWire) t.Ok($"  PROBLEM: {problem}", false);
+
+        var wireText = Encoding.UTF8.GetString(wire.ToArray());
+        t.Ok("the message on the wire has no bare LF",
+            !wireText.Replace("\r\n", "").Contains('\n'));
+
+        var deliveredCalendar = delivered.BodyParts.OfType<TextPart>()
+            .FirstOrDefault(p => p.ContentType.IsMimeType("text", "calendar"));
+        if (deliveredCalendar is not null)
+        {
+            t.Note($"ON THE WIRE the alternative part is {deliveredCalendar.ContentTransferEncoding}");
+
+            // MimePart.Content is nullable. This is the SAME dereference I had
+            // just fixed in ImipStructure.cs and then wrote again here within
+            // the hour — which is the argument for compiling, not for being
+            // more careful. Being more careful is what I was already doing.
+            t.Ok("the alternative part has a body at all", deliveredCalendar.Content is not null);
+            if (deliveredCalendar.Content is { } content)
+            {
+                using var payload = new MemoryStream();
+                content.DecodeTo(payload);
+                t.Ok("and the payload comes back BYTE FOR BYTE what Calendar produced",
+                    Encoding.UTF8.GetString(payload.ToArray()) == InvitationBody.Crlf(ical));
+            }
+        }
+
+        var attachment = delivered.BodyParts.OfType<MimePart>()
+            .FirstOrDefault(p => (p.FileName ?? "").EndsWith(".ics", StringComparison.Ordinal));
+        if (attachment is not null)
+            t.Note($"the attachment is {attachment.ContentTransferEncoding}, {attachment.ContentType.MimeType}");
+
+        // A header that disagrees with the body renders as an invitation and
+        // cancels the meeting — the worst of both. It cannot happen today
+        // because Calendar writes both from one argument, which is exactly
+        // why the guard is worth having: it notices when that stops being true.
+        t.Section("a header that disagrees with the body is refused");
+        var (mismatched, why) = InvitationBody.TryBuild(
+            "x", "<p>x</p>", ical, Imip.MethodCancel);
+        t.Ok("no body is returned", mismatched is null);
+        t.Ok("a reason is", why is not null);
+        t.Note("asserting a reason EXISTS, never its wording - Mail should be able to improve the sentence");
+
+        // ── THE PUNE TEST, APPLIED ─────────────────────────────────────
+        //
+        //  Everything above used an English title, so it measured the
+        //  encoding without proving anything survives it. That gap is the
+        //  one that matters here: a Devanagari title is 8-bit UTF-8, three
+        //  bytes a character, and it is the live case for our customers
+        //  while ASCII is the case we happen to type.
+        //
+        //  Mail set QuotedPrintable explicitly on the calendar part after
+        //  this argument. This is the assertion that the choice was right,
+        //  rather than the note that a choice was made.
+        // ────────────────────────────────────────────────────────────────
+        t.Section("a Hindi meeting title survives the whole carriage");
+
+        const string hindi = "परियोजना समीक्षा — तिमाही बैठक, पुणे";
+        var hindiIcal = Imip.Build(Event(title: hindi),
+            [Attendee("riya@gmail.com", "रिया")],
+            "amit@tatvaos.com", "अमित", Imip.MethodRequest);
+
+        var (hindiBody, hindiRefusal) = InvitationBody.TryBuild(
+            "परियोजना समीक्षा", "<p>परियोजना समीक्षा</p>", hindiIcal, Imip.MethodRequest);
+
+        t.Ok("it assembles", hindiBody is not null && hindiRefusal is null);
+        if (hindiBody is not null)
+        {
+            var hindiMessage = new MimeMessage { Body = hindiBody };
+            using var hindiWire = new MemoryStream();
+            hindiMessage.WriteTo(hindiWire);
+            hindiWire.Position = 0;
+            var hindiDelivered = MimeMessage.Load(hindiWire);
+
+            var hindiProblems = ImipStructure.Check(hindiDelivered, Imip.MethodRequest);
+            t.Ok("and is structurally correct after the wire round trip", hindiProblems.Count == 0);
+            foreach (var problem in hindiProblems) t.Ok($"  PROBLEM: {problem}", false);
+
+            var part = hindiDelivered.BodyParts.OfType<TextPart>()
+                .FirstOrDefault(p => p.ContentType.IsMimeType("text", "calendar"));
+            t.Ok("the calendar part came back", part is not null);
+
+            if (part?.Content is { } hindiContent)
+            {
+                t.Note($"encoded as {part.ContentTransferEncoding}");
+
+                using var decoded = new MemoryStream();
+                hindiContent.DecodeTo(decoded);
+                var text = Encoding.UTF8.GetString(decoded.ToArray());
+
+                t.Ok("BYTE FOR BYTE what Calendar produced",
+                    text == InvitationBody.Crlf(hindiIcal));
+                t.Ok("the Devanagari title is still readable in the payload",
+                    text.Contains("परियोजना", StringComparison.Ordinal));
+                t.Ok("no line exceeds 75 OCTETS after assembly",
+                    text.Split("\r\n").All(l => Encoding.UTF8.GetByteCount(l) <= 75));
+                t.Ok("and no character was split across a fold",
+                    string.Join("", Imip.Unfold(text)).Contains(hindi.Replace("\r\n", ""),
+                        StringComparison.Ordinal));
+            }
+        }
+#endif
     }
 
     // ==================================================================

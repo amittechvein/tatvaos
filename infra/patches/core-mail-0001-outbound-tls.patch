@@ -1,0 +1,63 @@
+From: Core
+Subject: [SECURITY] Outbound mail leaves this platform in plaintext
+
+Gmail is telling our recipients "tatvaos.com did not encrypt this message",
+and it is right. Every email TatvaOS sends to the outside world crosses the
+internet unencrypted, readable by anything on the path.
+
+WHY IT REACHED PRODUCTION. main.cf sets both TLS levels to `none` with the
+comment "Mailpit speaks plain SMTP; no TLS locally" - correct for the local
+stack, which relays everything to Mailpit. The entrypoint templates
+myhostname, mydomain and relayhost from the environment for production, but
+it never touches the TLS lines. So the local-only setting shipped verbatim to
+a server doing direct MX delivery to Gmail.
+
+THE FIX IS ONE WORD, AND IT IS SAFE IN BOTH ENVIRONMENTS. `may` is
+opportunistic TLS: Postfix offers STARTTLS, uses it when the far end supports
+it - which Gmail, Outlook and every major provider do - and falls back to
+plaintext when it does not. Nothing stops being delivered. Mailpit, which
+speaks plain SMTP, still works untouched.
+
+NOT `encrypt`: that refuses to deliver to a server without TLS, which turns a
+confidentiality improvement into silent bounces to small hosts. Opportunistic
+is what the rest of the internet runs.
+
+INBOUND (smtpd_tls_security_level) is deliberately NOT changed here. Offering
+STARTTLS to senders needs a certificate for the MX name, which is a separate
+job with its own failure modes - and leaving it at `none` today is no worse
+than yesterday, whereas outbound is a live confidentiality problem with a
+one-word fix.
+
+--- a/local/postfix/main.cf
++++ b/local/postfix/main.cf
+@@ -150,8 +150,26 @@
+ relayhost = [mailpit]:1025
+
+-# Mailpit speaks plain SMTP; no TLS locally
+-smtp_tls_security_level  = none
++# ----------------------------------------------------------------------------
++# TLS
++# ----------------------------------------------------------------------------
++#  OUTBOUND: opportunistic. Postfix offers STARTTLS and uses it whenever the
++#  receiving server supports it, falling back to plaintext when it does not.
++#  No certificate is needed for this - we are the client.
++#
++#  This was `none` until 19 August 2026, which meant every message this
++#  platform sent crossed the internet in the clear. Gmail says so to the
++#  recipient, in red, under "security". The setting was written for the local
++#  stack (Mailpit speaks plain SMTP) and the entrypoint never overrode it for
++#  production, so a development convenience became a production exposure.
++#
++#  `may` and not `encrypt`: encrypt REFUSES delivery to a server with no TLS,
++#  which trades a confidentiality problem for undelivered mail to smaller
++#  hosts. Opportunistic is what the rest of the internet runs.
++#
++#  Safe locally too - Mailpit does not offer STARTTLS, so Postfix falls back
++#  and behaves exactly as before.
++smtp_tls_security_level  = may
++smtp_tls_loglevel        = 1
++
++#  INBOUND: unchanged. Offering STARTTLS to senders needs a certificate for
++#  the MX name; that is its own piece of work. Leaving this at `none` is no
++#  worse than yesterday, while outbound was actively leaking.
+ smtpd_tls_security_level = none
