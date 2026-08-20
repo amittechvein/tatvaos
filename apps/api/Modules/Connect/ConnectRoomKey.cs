@@ -41,10 +41,20 @@ namespace TatvaOS.Api.Modules.Connect;
 ///     never produce these bytes. Changing the prefix changes every key —
 ///     which is what makes "v1" a version and not decoration.
 ///
-///  3. DERIVED, NOT STORED. Nothing at rest, and a late joiner gets the same
-///     key an hour into the meeting because the derivation is a function of
-///     the meeting id. There is no key column to leak, back up, or forget to
-///     delete with the meeting.
+///  3. DERIVED, NOT STORED. No PER-MEETING key is ever at rest: a late
+///     joiner gets the same key an hour in because the derivation is a
+///     function of the meeting id, and there is no key column to leak, back
+///     up, or forget to delete with the meeting.
+///
+///     The SECRET itself is another matter, and this header must not claim
+///     more than the code can back: it lives in the box's env file, and
+///     backup.sh copies that file VERBATIM into every nightly backup —
+///     deliberately, because a backup you cannot restore from is theatre.
+///     So the security of Private meetings rides on backup security, like
+///     every other secret on this platform. What limits the damage is the
+///     rest of this design: nothing derived is stored, a Private meeting
+///     cannot be recorded, and the secret alone decrypts nothing without
+///     media that was never captured.
 ///
 ///  ─────────────────────────────────────────────────────────────────────────
 ///  ROTATION HAS A CONSEQUENCE, AND IT IS NOT A SURPRISE.
@@ -58,6 +68,11 @@ namespace TatvaOS.Api.Modules.Connect;
 ///  So: rotate between meetings, not during one. The same sentence is written
 ///  beside the setting in .env.example, because that is where somebody will be
 ///  standing when they decide to rotate it.
+///
+///  And rotation does not un-back-anything-up: every value this secret has
+///  ever held lives on in the nightly backups taken while it was set.
+///  Rotating limits what a FUTURE leak of the live file exposes, not what a
+///  leak of old backups does.
 /// ─────────────────────────────────────────────────────────────────────────
 /// </summary>
 public sealed class ConnectRoomKey
