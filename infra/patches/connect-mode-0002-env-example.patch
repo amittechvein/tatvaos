@@ -1,0 +1,32 @@
+ALREADY APPLIED ON THIS BRANCH (feature/connect-meeting-mode) — do not apply.
+
+.env.example is a shared root file; this patch is the record of the lane
+crossing, and the change itself is in the branch (with a Windows-safe key
+command added beyond what this hunk shows — the branch copy is the truth).
+`git apply` would fail on already-applied context. Kept as documentation.
+git apply tolerates this leading text; it reads from the first ---/+++ pair.
+
+--- a/.env.example
++++ b/.env.example
+@@ -40,3 +40,21 @@
+ SENTRY_DSN=
+ RAZORPAY_KEY_ID=
+ RAZORPAY_KEY_SECRET=
++
++# --- Connect: private (encrypted) meetings --------------------------------
++# The secret the per-meeting media key is derived from. Unset means Private
++# meetings are switched OFF on this server; Recorded meetings are unaffected.
++# Must be long and random — anything under 32 characters is IGNORED, because
++# a weak key here looks like encryption without being it.
++#
++#   openssl rand -base64 48
++#
++# ROTATING THIS HAS A CONSEQUENCE, AND IT IS NOT A SURPRISE:
++# every meeting's key is derived from it, so anyone who JOINS OR REJOINS a
++# private meeting after a rotation derives the new key and will see and hear
++# nothing from the people already in the room. It clears when that meeting
++# ends. Rotate BETWEEN meetings, never during one.
++#
++# Distinct from JWT_SIGNING_KEY on purpose: one secret per purpose, so
++# rotating or leaking one does not touch the other.
++CONNECT_ROOM_KEY_SECRET=

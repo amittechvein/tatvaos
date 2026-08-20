@@ -24,6 +24,8 @@
 #  ─────────────────────────────────────────────────────────────────────────
 #
 #  It WRITES: one meeting, in your own tenant, ended by the time it finishes.
+#  NOT FOR PRODUCTION — and unlike the first version of this file, that is
+#  enforced by the refusal block below rather than stated here and hoped for.
 # ============================================================================
 set -uo pipefail
 cd "$(dirname "$0")/../.."
@@ -32,8 +34,51 @@ ENV_FILE=infra/docker/.env
 COMPOSE=(docker compose -f infra/docker/docker-compose.base.yml -f infra/docker/docker-compose.production.yml --env-file "$ENV_FILE")
 CLI_IMAGE=livekit/livekit-cli:v2.18.2
 
+# ── REFUSE, RATHER THAN DEFAULT, WHEN THE TARGET IS UNKNOWN. ────────────
+#
+# This block is copied from connect-mode-test.sh, where its absence nearly
+# ran that test against production: a lane checkout has no infra/docker/.env
+# (env files are not in git), the SITE grep came back empty, and the old
+# `${SITE:-core.tatvaos.com}` fallback — the exact line this replaces —
+# pointed the API half of the script at the production domain while q()
+# queried a local stack that did not exist. This script CREATES A MEETING
+# AND ENDS IT; pointed at production it would have done that to a real
+# tenant. A missing target is a refusal, never a default.
+if [ ! -f "$ENV_FILE" ]; then
+    echo "  REFUSED  $ENV_FILE does not exist in this checkout."
+    echo
+    echo "           This test needs the LOCAL stack's env file, both to find the"
+    echo "           local API and to reach the local database. Without it the old"
+    echo "           behaviour was to fall back to the production domain — which is"
+    echo "           the one place this script must never point."
+    echo
+    echo "           If you meant to run it here, bring up the local stack first"
+    echo "           (infra/docker, with its own .env). If you are in a lane"
+    echo "           checkout, that is why the file is missing."
+    exit 2
+fi
+
 SITE=$(grep -E '^SITE_DOMAIN=' "$ENV_FILE" | tail -1 | cut -d= -f2- | tr -d "\"' ")
-API="https://${SITE:-core.tatvaos.com}/api"
+case "$SITE" in
+    ''|*.tatvaos.com)
+        echo "  REFUSED  SITE_DOMAIN='${SITE:-unset}' is production, or unknown."
+        echo "           This test WRITES rows — it creates a meeting, joins it and"
+        echo "           ends it — and production is where real customers live."
+        echo "           Point it at a local stack (a *.local domain) or do not run it."
+        exit 2 ;;
+esac
+API="https://${SITE}/api"
+
+# And prove the LOCAL database is reachable BEFORE anybody types a password:
+# q() swallows stderr, so without this check "no database here" and "no rows
+# arrived" would be indistinguishable — the exact ambiguity that made the
+# mode test's first failure unreadable.
+if ! "${COMPOSE[@]}" exec -T postgres psql -U postgres -d tatvaos_mail -tAc "SELECT 1" >/dev/null 2>&1; then
+    echo "  REFUSED  the local postgres container is not reachable from here."
+    echo "           Bring up the local stack (docker compose ... up -d) and re-run."
+    exit 2
+fi
+
 KEY=$(grep -E '^LIVEKIT_API_KEY='    "$ENV_FILE" | tail -1 | cut -d= -f2- | tr -d "\"' ")
 SECRET=$(grep -E '^LIVEKIT_API_SECRET=' "$ENV_FILE" | tail -1 | cut -d= -f2- | tr -d "\"' ")
 

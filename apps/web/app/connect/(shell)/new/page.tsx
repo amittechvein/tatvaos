@@ -4,7 +4,10 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { Button, Card } from '@/components/ui/Kit';
-import { connectApi, type SharePolicy, type WaitingRoom } from '@/lib/connect';
+import {
+  connectApi, PRIVATE_BLURB, RECORDED_BLURB,
+  type MeetingMode, type SharePolicy, type WaitingRoom,
+} from '@/lib/connect';
 
 // ============================================================================
 //  Schedule a meeting
@@ -51,6 +54,7 @@ export default function NewMeetingPage() {
   const [allowGuests, setAllowGuests] = useState(true);
   const [password, setPassword] = useState('');
   const [autoRecord, setAutoRecord] = useState(false);
+  const [mode, setMode] = useState<MeetingMode>('recorded');
   const [sharePolicy, setSharePolicy] = useState<SharePolicy>('everyone');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -84,8 +88,13 @@ export default function NewMeetingPage() {
         waitingRoom,
         allowGuests,
         password: password.length > 0 ? password : null,
-        autoRecord,
+        // A private meeting cannot auto-record; the server refuses the
+        // combination and the database makes the row unrepresentable. Sending
+        // false rather than relying on the toggle's state means a stale
+        // checkbox cannot produce a 400 the person did not ask for.
+        autoRecord: mode === 'private' ? false : autoRecord,
         sharePolicy,
+        mode,
       });
       router.push(`/connect/meetings/${m.id}`);
     } catch (err) {
@@ -132,6 +141,23 @@ export default function NewMeetingPage() {
                 </div>
               </div>
 
+              {/* The first choice, because it decides what the rest of
+                  this form can even offer. Chosen once — there is no way to
+                  change it afterwards, and the form says so rather than
+                  letting somebody discover it later. */}
+              <div className="mb-3">
+                <label className="form-label" htmlFor="mode">Meeting type</label>
+                <select id="mode" className="form-select" value={mode}
+                        onChange={(e) => setMode(e.target.value as MeetingMode)}>
+                  <option value="recorded">Recorded — can be recorded and summarised</option>
+                  <option value="private">Private — encrypted, cannot be recorded</option>
+                </select>
+                <div className="form-text">
+                  {mode === 'private' ? PRIVATE_BLURB : RECORDED_BLURB}
+                  {' '}This cannot be changed once the meeting is created.
+                </div>
+              </div>
+
               <div className="mb-3">
                 <label className="form-label" htmlFor="waiting">Waiting room</label>
                 <select id="waiting" className="form-select" value={waitingRoom}
@@ -170,6 +196,7 @@ export default function NewMeetingPage() {
                 </div>
               </div>
 
+              {mode === 'recorded' && (
               <div className="form-check mb-3">
                 <input className="form-check-input" type="checkbox" id="autorec"
                        checked={autoRecord} onChange={(e) => setAutoRecord(e.target.checked)} />
@@ -182,6 +209,7 @@ export default function NewMeetingPage() {
                   the meeting simply runs unrecorded.
                 </div>
               </div>
+              )}
 
               <div className="mb-3">
                 <label className="form-label" htmlFor="password">Password <span className="text-muted fw-normal">(optional)</span></label>

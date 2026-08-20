@@ -2,7 +2,16 @@
 # ============================================================================
 #  Prove the webhook loop without a browser.
 #
-#      bash infra/scripts/connect-webhook-test.sh
+#      bash infra/scripts/connect-webhook-test.sh                # local stack
+#      bash infra/scripts/connect-webhook-test.sh --production   # see below
+#
+#  By default this script REFUSES to run against production, exactly like
+#  connect-mode-test.sh and connect-host-controls-test.sh. Unlike them it has
+#  a legitimate production use — proving the webhook loop on the live box
+#  right after a deploy — so production is reachable, but only behind BOTH
+#  the --production flag AND typing the full domain when prompted. Intent
+#  stated twice: once in the command, once by hand. One of the two by
+#  accident is not intent.
 #
 #  Joins a real meeting's room as a headless participant, waits, leaves, and
 #  reports what landed in connect.meeting_events.
@@ -33,10 +42,82 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 
+# ── arguments: an optional meeting id, and the --production flag. ─────────
+PRODUCTION=0
+MEETING_ARG=""
+for a in "$@"; do
+    case "$a" in
+        --production) PRODUCTION=1 ;;
+        --*) echo "  Unknown flag '$a'. This script takes an optional meeting id"
+             echo "  and, for the live box only, --production."; exit 2 ;;
+        *) MEETING_ARG="$a" ;;
+    esac
+done
+
 ENV_FILE=infra/docker/.env
 COMPOSE=(docker compose -f infra/docker/docker-compose.base.yml -f infra/docker/docker-compose.production.yml --env-file "$ENV_FILE")
 CLI_IMAGE=livekit/livekit-cli:v2.18.2
 HOLD="${HOLD:-20}"
+
+# ── REFUSE, RATHER THAN DEFAULT, WHEN THE TARGET IS UNKNOWN. ────────────
+#
+# Same block as connect-mode-test.sh, for the same reason: a lane checkout
+# has no infra/docker/.env, and every fallback taken from a missing file is
+# a guess about which system you are pointing a test at. This script puts a
+# REAL PARTICIPANT named 'webhook-test' into a REAL ROOM — in a customer's
+# meeting, every person present would watch it join. A missing target is a
+# refusal, never a default.
+if [ ! -f "$ENV_FILE" ]; then
+    echo "  REFUSED  $ENV_FILE does not exist in this checkout."
+    echo
+    echo "           This test drives the stack that env file describes — its"
+    echo "           LiveKit, its database. Without the file there is nothing to"
+    echo "           point at except a guess, and a guess once pointed a sibling"
+    echo "           of this script at production. If you are in a lane checkout,"
+    echo "           that is why the file is missing; run this on a box with a"
+    echo "           local stack, or on the production box with --production."
+    exit 2
+fi
+
+SITE=$(grep -E '^SITE_DOMAIN=' "$ENV_FILE" | tail -1 | cut -d= -f2- | tr -d "\"' ")
+case "$SITE" in
+    ''|*.tatvaos.com)
+        # This is production (or an env file too broken to say). Reachable,
+        # but only with intent stated twice.
+        if [ "$PRODUCTION" -ne 1 ]; then
+            echo "  REFUSED  SITE_DOMAIN='${SITE:-unset}' is production, or unknown."
+            echo "           This test joins a real meeting's room as a visible"
+            echo "           participant. If you genuinely mean to prove the webhook"
+            echo "           loop on the live box, re-run with --production and be"
+            echo "           ready to type the domain when asked."
+            exit 2
+        fi
+        if [ -z "$SITE" ]; then
+            echo "  REFUSED  --production was given but SITE_DOMAIN is unset in $ENV_FILE."
+            echo "           A flag cannot vouch for a target the env file cannot name."
+            exit 2
+        fi
+        echo "  This stack is PRODUCTION ($SITE). The test will join the most recent"
+        echo "  meeting's room as a participant named 'webhook-test' — if that is a"
+        echo "  customer's meeting, everyone in it will see that participant appear."
+        echo "  Pass a meeting id of your own as an argument to control which room."
+        printf '  Type the full domain to continue: '
+        read -r TYPED
+        if [ "$TYPED" != "$SITE" ]; then
+            echo "  REFUSED  '$TYPED' does not match '$SITE'. Nothing was run."
+            exit 2
+        fi
+        ;;
+esac
+
+# And prove the database is reachable BEFORE doing anything else: q() swallows
+# stderr, so without this check "no database here" and "no events arrived"
+# print the same failure — an ambiguity a sibling of this script already hit.
+if ! "${COMPOSE[@]}" exec -T postgres psql -U postgres -d tatvaos_mail -tAc "SELECT 1" >/dev/null 2>&1; then
+    echo "  REFUSED  the postgres container is not reachable from here."
+    echo "           Bring up the stack (docker compose ... up -d) and re-run."
+    exit 2
+fi
 
 q() { "${COMPOSE[@]}" exec -T postgres psql -U postgres -d tatvaos_mail -tAc "$1" 2>/dev/null | tail -n1; }
 
@@ -48,7 +129,7 @@ SECRET=$(grep -E '^LIVEKIT_API_SECRET=' "$ENV_FILE" | tail -1 | cut -d= -f2- | t
 # A room whose name does not resolve to a meeting is not a test: the handler
 # reads the id out of m-<uuid>, finds no row, and returns 200 having written
 # nothing — which is indistinguishable from a webhook that never arrived.
-MEETING="${1:-$(q "SELECT id FROM connect.meetings WHERE status <> 'cancelled' ORDER BY created_at DESC LIMIT 1")}"
+MEETING="${MEETING_ARG:-$(q "SELECT id FROM connect.meetings WHERE status <> 'cancelled' ORDER BY created_at DESC LIMIT 1")}"
 if [ -z "$MEETING" ]; then
     echo "No meeting to join. Create one first:"
     echo "    bash infra/scripts/connect-phase1-handcheck.sh"

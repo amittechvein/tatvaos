@@ -103,13 +103,27 @@ public static class ConnectGuestEndpoints
     //  The doorstep. Costs nothing, counts nothing, changes nothing.
     // ==================================================================
     private static async Task<IResult> DoorstepAsync(
-        string code, AppDbContext db, CancellationToken ct)
+        string code, AppDbContext db, TenantContext tenant, CancellationToken ct)
     {
         var row = await ResolveAsync(db, code, ct);
         if (row is null) return Gone();
 
+        // The MODE, so the browser can refuse an encrypted meeting it cannot
+        // decode BEFORE anybody mints a token — a sentence at the door beats a
+        // black screen inside. Read the ordinary way, under the policy, after
+        // the two-step scope change; resolve_meeting_code deliberately does not
+        // return it, because widening a definer function's shape is a
+        // migration that fights the one that owns it (the 20260816 trap).
+        tenant.EnterAnonymousScope(row.TenantId, "guest");
+        await db.SyncTenantAsync(ct);
+        var mode = await db.ConnectMeetings.AsNoTracking()
+            .Where(m => m.Id == row.MeetingId)
+            .Select(m => m.Mode)
+            .FirstOrDefaultAsync(ct) ?? ConnectModes.Recorded;
+
         return Results.Ok(new
         {
+            mode,
             row.Title,
             row.ScheduledStart,
             state = row.Status switch
@@ -128,7 +142,8 @@ public static class ConnectGuestEndpoints
     // ==================================================================
     private static async Task<IResult> GuestJoinAsync(
         string code, GuestJoinRequest req, AppDbContext db, TenantContext tenant,
-        IPasswordHasher hasher, LiveKitTokenService tokens, CancellationToken ct)
+        IPasswordHasher hasher, LiveKitTokenService tokens, ConnectRoomKey roomKeys,
+        CancellationToken ct)
     {
         if (!tokens.IsConfigured)
             return Results.Problem("Connect is not configured on this server.", statusCode: 503);
@@ -159,7 +174,7 @@ public static class ConnectGuestEndpoints
         // the token below is minted under.
         var meeting = await db.ConnectMeetings.AsNoTracking()
             .Where(m => m.Id == row.MeetingId)
-            .Select(m => new { m.PasswordHash, m.SharePolicy })
+            .Select(m => new { m.PasswordHash, m.SharePolicy, m.Mode })
             .FirstOrDefaultAsync(ct);
         if (meeting is null) return Gone();
 
@@ -226,6 +241,12 @@ public static class ConnectGuestEndpoints
                 // A guest is a 'participant' for the share policy — the same
                 // rule a signed-in participant gets, read from the same column.
                 CanPublishSources: ConnectShare.SourcesFor(meeting.SharePolicy, "participant"))),
+            meeting.Mode,
+            // A guest who passed the door is IN the room, so they get the key
+            // like anybody else — a key withheld from the people the meeting
+            // is for would be theatre, not security. Null on a recorded
+            // meeting, and never logged. See ConnectRoomKey.
+            roomKey = meeting.Mode == ConnectModes.Private ? roomKeys.For(row.MeetingId) : null,
             wsUrl = tokens.PublicUrl,
             identity = participant.Identity,
         });
@@ -236,7 +257,7 @@ public static class ConnectGuestEndpoints
     // ==================================================================
     private static async Task<IResult> WaitAsync(
         string waitToken, AppDbContext db, TenantContext tenant,
-        LiveKitTokenService tokens, CancellationToken ct)
+        LiveKitTokenService tokens, ConnectRoomKey roomKeys, CancellationToken ct)
     {
         if (!ConnectCodes.IsWellFormed(waitToken)) return Gone();
         var hash = ConnectCodes.HashToken(waitToken);
@@ -308,10 +329,12 @@ public static class ConnectGuestEndpoints
 
                 // The policy AT ADMISSION, not at the original knock — a host
                 // who tightened sharing while this guest waited means it.
-                var sharePolicy = await db.ConnectMeetings.AsNoTracking()
+                var live = await db.ConnectMeetings.AsNoTracking()
                     .Where(m => m.Id == claimed.MeetingId)
-                    .Select(m => m.SharePolicy)
-                    .FirstOrDefaultAsync(ct) ?? ConnectShare.PolicyEveryone;
+                    .Select(m => new { m.SharePolicy, m.Mode })
+                    .FirstOrDefaultAsync(ct);
+                var sharePolicy = live?.SharePolicy ?? ConnectShare.PolicyEveryone;
+                var mode = live?.Mode ?? ConnectModes.Recorded;
 
                 return Results.Ok(new
                 {
@@ -321,6 +344,9 @@ public static class ConnectGuestEndpoints
                         CanPublishSources: ConnectShare.SourcesFor(sharePolicy, "participant"))),
                     wsUrl = tokens.PublicUrl,
                     identity = person.Identity,
+                    mode,
+                    roomKey = mode == ConnectModes.Private
+                        ? roomKeys.For(claimed.MeetingId) : null,
                 });
 
             // 'claimed' lands here too: the token was already collected, and
