@@ -21,21 +21,62 @@
 #   security argument for the waiting room, so it is asserted here explicitly.
 #  ─────────────────────────────────────────────────────────────────────────
 #
-#  Also asserted: a denied guest is told "denied" and gets no token, and every
-#  failure answers with the SAME sentence — the no-oracle rule.
+#  Also asserted: a denied guest is told "denied" and gets no token; every
+#  failure answers with the SAME sentence — the no-oracle rule; and the LIVE
+#  TOGGLE — a host loosening the waiting room mid-meeting frees the people
+#  already parked (with a control case proving 'guests' frees only colleagues).
 #
-#  It WRITES: one meeting and two guest participant rows, in your own tenant.
-#  The meeting is ended at the finish.
+#  It WRITES: one meeting and four guest participant rows, in your own tenant.
+#  The meeting is ended at the finish. NOT FOR PRODUCTION — enforced by the
+#  refusal block below, same as its sibling scripts.
 # ============================================================================
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 
 ENV_FILE=infra/docker/.env
 COMPOSE=(docker compose -f infra/docker/docker-compose.base.yml -f infra/docker/docker-compose.production.yml --env-file "$ENV_FILE")
+
+# ── REFUSE, RATHER THAN DEFAULT, WHEN THE TARGET IS UNKNOWN. ────────────
+# Same block as connect-mode-test.sh and connect-host-controls-test.sh, for
+# the same reason: this file used to fall back to the production domains when
+# the env file was missing, and it WRITES — a meeting and guest rows. A
+# missing target is a refusal, never a default.
+if [ ! -f "$ENV_FILE" ]; then
+    echo "  REFUSED  $ENV_FILE does not exist in this checkout."
+    echo "           This test needs the LOCAL stack's env file. Without it the"
+    echo "           old behaviour was to fall back to the production domains —"
+    echo "           the one place this script must never point. If you are in"
+    echo "           a lane checkout, that is why the file is missing."
+    exit 2
+fi
+
 SITE=$(grep -E '^SITE_DOMAIN='    "$ENV_FILE" | tail -1 | cut -d= -f2- | tr -d "\"' ")
 DOM=$(grep -E '^CONNECT_DOMAIN=' "$ENV_FILE" | tail -1 | cut -d= -f2- | tr -d "\"' ")
-API="https://${SITE:-core.tatvaos.com}/api"
-GUEST="https://${DOM:-connect.tatvaos.com}/api/connect/g"
+case "$SITE" in
+    ''|*.tatvaos.com)
+        echo "  REFUSED  SITE_DOMAIN='${SITE:-unset}' is production, or unknown."
+        echo "           This test WRITES rows and production is where real"
+        echo "           customers live. Point it at a local stack or do not run it."
+        exit 2 ;;
+esac
+case "$DOM" in
+    ''|*.tatvaos.com)
+        echo "  REFUSED  CONNECT_DOMAIN='${DOM:-unset}' is production, or unknown."
+        echo "           Both halves of this test must point at the SAME local"
+        echo "           stack — a mixed target is how the first near-miss happened."
+        exit 2 ;;
+esac
+API="https://${SITE}/api"
+GUEST="https://${DOM}/api/connect/g"
+
+# And prove the local database is reachable BEFORE anybody types a password:
+# q() swallows stderr, so "no database here" and "row missing" would otherwise
+# print the same failure.
+if ! "${COMPOSE[@]}" exec -T postgres psql -U postgres -d tatvaos_mail -tAc "SELECT 1" >/dev/null 2>&1; then
+    echo "  REFUSED  the local postgres container is not reachable from here."
+    echo "           Bring up the local stack (docker compose ... up -d) and re-run."
+    exit 2
+fi
 
 PASSED=0; FAILED=0
 ok()  { echo "  OK    $1"; PASSED=$((PASSED+1)); }
@@ -219,6 +260,55 @@ if [ -n "$WAIT2" ]; then
     fi
 else
     bad "the second guest could not knock"
+fi
+
+# ---------------------------------------------------------------------------
+echo
+echo "== the live toggle reaches the people already waiting =="
+# A third guest knocks while waiting_room='everyone'. The host then LOOSENS
+# the setting from inside the meeting, and the parked guest must be freed by
+# the change itself — no Admit click. The control case comes first, and is
+# half the test: 'everyone' -> 'guests' frees only COLLEAGUES, so a parked
+# GUEST must still be waiting after it. A toggle that admitted everybody on
+# any change would pass the 'off' check just as happily; this is what proves
+# the release logic reads the new setting rather than merely firing on change.
+r=$(anon POST "$GUEST/$CODE/join" '{"displayName":"Asha Guest"}')
+WAIT3=$(body "$r" | jstr waitToken)
+if [ -n "$WAIT3" ]; then
+    authed PATCH "$API/connect/meetings/$MEETING" '{"waitingRoom":"guests"}' >/dev/null
+    sleep 1
+    st=$(body "$(anon GET "$GUEST/wait/$WAIT3")" | jstr status)
+    if [ "$st" = "waiting" ]; then
+        ok "'everyone' -> 'guests' leaves a parked GUEST parked (control case)"
+    else
+        bad "'everyone' -> 'guests' set the guest's status to '$st' — the release
+        logic is firing on ANY change instead of reading the new setting"
+    fi
+
+    authed PATCH "$API/connect/meetings/$MEETING" '{"waitingRoom":"off"}' >/dev/null
+    sleep 1
+    r=$(anon GET "$GUEST/wait/$WAIT3")
+    st=$(body "$r" | jstr status); tok=$(body "$r" | jstr token)
+    if [ "$st" = "admitted" ] && [ -n "$tok" ]; then
+        ok "turning the waiting room OFF admitted the parked guest, with a token"
+    else
+        bad "after waiting room off, the parked guest saw '$st'${tok:+ }— they
+        would have waited forever on a door that no longer exists"
+        printf '        %s\n' "$(body "$r")"
+    fi
+else
+    bad "the third guest could not knock, so the toggle has nobody to free"
+fi
+
+# And a NEW knock now walks straight in — the setting governs the next
+# arrival as it always did; the block above is about the people it stranded.
+r=$(anon POST "$GUEST/$CODE/join" '{"displayName":"Walkin Guest"}')
+st=$(body "$r" | jstr status); tok=$(body "$r" | jstr token)
+if [ "$st" = "joined" ] && [ -n "$tok" ]; then
+    ok "with the waiting room off, a new guest joins directly"
+else
+    bad "waiting room is off but a new guest got '$st' ($(status "$r"))"
+    printf '        %s\n' "$(body "$r")"
 fi
 
 # ---------------------------------------------------------------------------
