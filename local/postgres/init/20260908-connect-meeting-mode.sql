@@ -159,8 +159,39 @@ BEGIN
 END;
 $$;
 
-DROP TRIGGER IF EXISTS trg_meetings_mode_immutable ON connect.meetings;
-CREATE TRIGGER trg_meetings_mode_immutable
+--  ─────────────────────────────────────────────────────────────────────────
+--  CREATE OR REPLACE TRIGGER, AND NOT "DROP IF EXISTS THEN CREATE".
+--  DO NOT "FIX" THIS BACK TO THE DROP PATTERN.
+--
+--  This file re-runs on EVERY deploy, and deploy.sh runs it with
+--  ON_ERROR_STOP but WITHOUT --single-transaction — so every statement
+--  autocommits on its own. A DROP followed by a CREATE therefore leaves a
+--  real window, on the live database, in which this trigger does not exist
+--  and the mode is silently mutable. Milliseconds, and the odds of an UPDATE
+--  landing inside one are small — but it would reopen on every deploy, for
+--  ever, and the whole reason this trigger exists is to keep a promise that
+--  must not be suspended on a schedule.
+--
+--  It is the same shape as the unwrapped function swap that
+--  20260819-space-link-loss-logging.sql wraps in BEGIN/COMMIT for exactly
+--  this reason, and the same family as the 20260816 trap cited at the top of
+--  this file. I wrote the header quoting that lesson and then made the
+--  mistake one layer down; Core caught it in review.
+--
+--  CREATE OR REPLACE TRIGGER is atomic — no window at all — and needs
+--  PostgreSQL 14+; production is 17. It also sidesteps the 20260816
+--  return-type trap by construction, because a trigger has no return type to
+--  fight over. BEGIN/COMMIT around DROP+CREATE would also work; this is
+--  simpler and has nothing to forget.
+--
+--  A KNOWN KNOB, not a discovery: the trigger fires per row on every
+--  meetings UPDATE, whether the mode changed or not. At our volumes that is
+--  nothing, and the behavioural checks confirm ordinary updates pass. If
+--  meetings updates ever become hot, adding
+--      WHEN (OLD.mode IS DISTINCT FROM NEW.mode)
+--  moves the test ahead of the function call. Deliberately not done now.
+--  ─────────────────────────────────────────────────────────────────────────
+CREATE OR REPLACE TRIGGER trg_meetings_mode_immutable
     BEFORE UPDATE ON connect.meetings
     FOR EACH ROW
     EXECUTE FUNCTION connect.meetings_mode_is_immutable();
