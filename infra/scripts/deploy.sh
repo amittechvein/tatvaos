@@ -306,6 +306,73 @@ done
 }
 
 # ---------------------------------------------------------------------------
+# THE GATE: prove the NEW api starts before retiring the OLD one.
+#
+# Until 20 August 2026 this script swapped the containers and THEN checked
+# health. That ordering turned a two-character config mistake — a "//" key in
+# Logging:LogLevel, valid JSON that LoggerFactory cannot parse — into a
+# platform-wide outage: the old, working API was already gone by the time
+# anything asked whether the new one could start. The health check did its
+# job perfectly and reported a fire it had helped light.
+#
+# So: run the new image FIRST, as a throwaway container on the real network
+# against the real database, and require /health to answer. Only then is the
+# running API allowed to be replaced. If the probe fails, the deploy stops
+# and the old containers keep serving — a refused deploy instead of an
+# outage, which is the entire difference between this morning and a log line.
+#
+# Mechanics, because each choice is load-bearing:
+#   · `compose run` (not `up`)  — real env, real network, and NO ports
+#     published, so it cannot collide with the API that is still serving.
+#   · `--no-deps`               — postgres is already up (schema just
+#     applied); nothing else is a startup dependency (checked: depends_on
+#     lists postgres alone, and Program.cs never touches redis).
+#   · bash + /dev/tcp           — the aspnet runtime image ships neither
+#     curl nor wget (the compose file documents this); it does ship bash,
+#     and bash can speak enough HTTP to read one status line.
+#   · 60 seconds                — cold start against a cold connection pool
+#     is seconds; a minute means it is not coming up.
+# ---------------------------------------------------------------------------
+step "Proving the new API starts (before touching the running one)"
+
+PROBE="tatvaos-api-probe"
+docker rm -f "$PROBE" >/dev/null 2>&1 || true   # debris from an aborted run
+
+if ! $COMPOSE run -d --no-deps --name "$PROBE" api >/dev/null 2>&1; then
+    bad "could not start the probe container at all"
+    note "the running API has NOT been touched"
+    exit 1
+fi
+
+probe_ok=0
+for i in $(seq 1 30); do
+    # Container died = startup crash. Say so with its own last words.
+    if [ "$(docker inspect -f '{{.State.Running}}' "$PROBE" 2>/dev/null)" != "true" ]; then
+        bad "the NEW api crashed on startup — this deploy would have been an outage"
+        docker logs "$PROBE" 2>&1 | tail -15 | sed 's/^/      /'
+        break
+    fi
+    status=$(docker exec "$PROBE" bash -c         'exec 3<>/dev/tcp/localhost/8080 &&
+         printf "GET /health HTTP/1.0\r\n\r\n" >&3 &&
+         head -1 <&3' 2>/dev/null | tr -d '\r')
+    case "$status" in
+        *" 200 "*|*" 200") probe_ok=1; break ;;
+    esac
+    sleep 2
+done
+
+docker rm -f "$PROBE" >/dev/null 2>&1 || true
+
+if [ "$probe_ok" -eq 1 ]; then
+    ok "the new API starts and /health answers 200 — safe to swap"
+else
+    bad "the new API never answered /health — REFUSING to replace the one that works"
+    note "the old containers are untouched and still serving"
+    note "debug with:  $COMPOSE run --rm --no-deps api"
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
 step "Starting services"
 $COMPOSE up -d --remove-orphans 2>&1 | tail -12 | sed 's/^/   /'
 
