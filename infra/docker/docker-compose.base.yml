@@ -268,6 +268,29 @@ services:
       # retry, which is recoverable, but still not something to switch on
       # blind.
       Mail__QuotaEnforcement: ${MAIL_QUOTA_ENFORCEMENT:-}
+      # ---- Connect: Private (encrypted) meetings ----------------------
+      #
+      #  THE SECRET LIVES IN infra/docker/.env AND MUST BE PASSED IN HERE.
+      #  Putting it in .env alone is NOT enough and looks exactly like
+      #  success: compose reads .env for its OWN substitution, so the file
+      #  parses, the deploy is green, and the container never sees the
+      #  variable. ConnectRoomKey then reports itself unconfigured and every
+      #  Private meeting is refused with "not switched on for this server" —
+      #  a feature silently disabled forever, explained away by its own
+      #  polite message.
+      #
+      #  Found 20 August 2026 by creating one Private meeting on production
+      #  after the deploy said everything was fine. Fifteen files of correct
+      #  code and one missing line here; nothing in either build could see it.
+      #
+      #  Generate on the box, never on a laptop, never into a chat:
+      #    printf 'CONNECT_ROOM_KEY_SECRET=%s\n' "$(openssl rand -base64 48)" \
+      #      >> infra/docker/.env
+      #
+      #  Unset is a valid state: Private meetings are refused in words,
+      #  Recorded meetings are unaffected. See ConnectRoomKey.cs for what this
+      #  protects, what it does not, and the rotation consequence.
+      Connect__RoomKeySecret: ${CONNECT_ROOM_KEY_SECRET:-}
       # ---- Connect recording and automatic notes ----------------------
       # OFF by default. Recording needs the egress service above; with this
       # false every recording endpoint answers "not switched on for this
