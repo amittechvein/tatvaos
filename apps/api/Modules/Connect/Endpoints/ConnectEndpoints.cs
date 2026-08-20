@@ -390,11 +390,13 @@ public static class ConnectEndpoints
 
         if (!string.IsNullOrWhiteSpace(req.Timezone)) meeting.Timezone = req.Timezone.Trim();
 
+        var waitingChanged = false;
         if (req.WaitingRoom is { } w)
         {
             var waiting = w.Trim().ToLowerInvariant();
             if (waiting is not ("everyone" or "guests" or "off"))
                 return Results.BadRequest(new { error = "Unknown waiting-room setting." });
+            waitingChanged = waiting != meeting.WaitingRoom;
             meeting.WaitingRoom = waiting;
         }
         if (req.AllowGuests is bool ag) meeting.AllowGuests = ag;
@@ -469,6 +471,77 @@ public static class ConnectEndpoints
             }
             await audit.WriteAsync("connect.meeting.share_policy", "connect.meeting",
                 meeting.Id.ToString(), after: new { meeting.SharePolicy },
+                ct: ct, productCode: "connect");
+        }
+
+        // ── OPENING THE DOOR REACHES THE PEOPLE ALREADY AT IT. ─────────────
+        //
+        // The setting was PATCHable before this block existed, but a change
+        // only governed the NEXT knock: everyone already parked kept polling
+        // "waiting" forever, because the wait loop frees a person only when
+        // their lobby row says 'admitted'. A host who turns the waiting room
+        // off mid-meeting means "stop making people wait" — including the
+        // people currently waiting — so the rows the new setting would no
+        // longer park are admitted here, through the SAME status machine the
+        // Admit button drives. No new path for the guest: their next poll
+        // claims the one-shot admission exactly as if the host had clicked.
+        //
+        // Three deliberate edges:
+        //   · 'everyone' → 'guests' frees only COLLEAGUES (rows with a
+        //     user_id); guests are exactly whom 'guests' still parks.
+        //   · A REMOVED colleague stays parked. Removed means removed —
+        //     DecideAsync refuses to admit them by hand, and a bulk admit
+        //     must not be the back door. They are left 'waiting', not
+        //     denied: the toggle is not a decision about a person.
+        //   · The same 30-minute cutoff as ListLobbyAsync, so this admits
+        //     precisely the people the host could see waiting — never a
+        //     stale token from someone who knocked and left an hour ago.
+        if (waitingChanged)
+        {
+            var released = 0;
+            if (meeting.WaitingRoom is "off" or "guests")
+            {
+                var cutoff = DateTimeOffset.UtcNow.AddMinutes(-30);
+                var parked = await db.ConnectLobbyRequests
+                    .Where(r => r.MeetingId == id && r.Status == "waiting" && r.CreatedAt > cutoff)
+                    .ToListAsync(ct);
+                var freeable = meeting.WaitingRoom == "off"
+                    ? parked
+                    : parked.Where(r => r.UserId is not null).ToList();
+                if (freeable.Count > 0)
+                {
+                    // KNOWN PROPERTY (review finding, accepted, no change):
+                    // blocks are keyed by user_id, so a GUEST cannot be
+                    // blocked — "remove" never sticks for a guest, whose only
+                    // control is the waiting room itself. Turning the room
+                    // 'off' therefore frees a previously-removed guest along
+                    // with everyone else. That is inherent to what 'off'
+                    // means — anyone with the link walks in — and it predates
+                    // this block; the toggle just makes it visible for the
+                    // first time. If "remove sticks for guests" is ever
+                    // wanted, it needs a block keyed on something a guest
+                    // actually has, which is a design question, not a fix
+                    // here.
+                    var blockedIds = await db.ConnectMeetingBlocks.AsNoTracking()
+                        .Where(b => b.MeetingId == id)
+                        .Select(b => b.UserId)
+                        .ToListAsync(ct);
+                    foreach (var request in freeable)
+                    {
+                        if (request.UserId is Guid parkedUid && blockedIds.Contains(parkedUid)) continue;
+                        request.Status = "admitted";
+                        request.DecidedByUserId = uid;
+                        request.DecidedAt = DateTimeOffset.UtcNow;
+                        released++;
+                    }
+                    await db.SaveChangesAsync(ct);
+                }
+            }
+            // The count is in the audit row because "who let these people in"
+            // has an answer — the host who changed the setting — and it should
+            // be findable without diffing lobby rows against a clock.
+            await audit.WriteAsync("connect.meeting.waiting_room", "connect.meeting",
+                meeting.Id.ToString(), after: new { meeting.WaitingRoom, released },
                 ct: ct, productCode: "connect");
         }
 

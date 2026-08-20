@@ -12,6 +12,7 @@ import { useAuth } from '@/lib/auth';
 import {
   connectApi, minutesApi, recordingApi,
   type LobbyEntry, type Meeting, type Recording, type Seat, type SharePolicy,
+  type WaitingRoom,
 } from '@/lib/connect';
 import type { JoinPrefs } from './PreJoin';
 import {
@@ -21,6 +22,23 @@ import {
 import { CSS, Centre, Spinner, initialOf } from './RoomChrome';
 
 const LOBBY_POLL_MS = 3000;
+
+// ---------------------------------------------------------------------------
+//  The join/leave chime — burst suppression.
+//
+//  A tone per arrival is information in a meeting of six and a carillon in a
+//  class of forty arriving at once. When more than CHIME_BURST_MAX tones have
+//  played inside CHIME_BURST_WINDOW_MS, further ones are SUPPRESSED until the
+//  window drains — the first few arrivals are announced, the stampede is not.
+//
+//  BOTH NUMBERS ARE PROVISIONAL, AND SAYING SO IS A REVIEW CONDITION: "measure
+//  the threshold in a real meeting and tell me the number rather than defend a
+//  guess." The console.info in chime() below is the measuring instrument — it
+//  prints how many tones a real meeting's start actually produced, so the
+//  numbers here can be replaced by observed ones, not defended.
+// ---------------------------------------------------------------------------
+const CHIME_BURST_WINDOW_MS = 10_000;
+const CHIME_BURST_MAX = 4;
 
 // ===========================================================================
 //  The live meeting
@@ -88,6 +106,82 @@ export default function Stage({ seat, meeting, prefs }: {
   const [roles, setRoles] = useState<Record<string, string>>({});
   const [sharePolicy, setSharePolicy] = useState<SharePolicy>(
     meeting?.sharePolicy ?? 'everyone');
+  // The waiting-room setting, LIVE — state rather than the prop, because the
+  // host can now change it from inside the room and the lobby poll below has
+  // to follow the change, not the value at join.
+  const [waitingRoom, setWaitingRoom] = useState<WaitingRoom>(
+    meeting?.waitingRoom ?? 'guests');
+
+  // ---- The join/leave chime --------------------------------------------
+  //
+  // Entirely client-side: an oscillator, not an asset — nothing to download,
+  // nothing to cache, nothing that 404s. Everyone hears it, guests included,
+  // because "did somebody just join?" is a question everybody in a meeting
+  // has. The toggle lives in Settings; a ref mirrors it because the room's
+  // event handlers are registered once and would otherwise close over the
+  // first render's value for the life of the meeting (same rule as pipRef).
+  const [chimeOn, setChimeOn] = useState(true);
+  const chimeOnRef = useRef(true);
+  useEffect(() => { chimeOnRef.current = chimeOn; }, [chimeOn]);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const chimeTimesRef = useRef<number[]>([]);
+  const chimeSuppressedRef = useRef(0);
+
+  const chime = useCallback((kind: 'join' | 'leave') => {
+    if (!chimeOnRef.current) return;
+
+    // Burst suppression — see the constants at the top of the file.
+    const now = Date.now();
+    const recent = chimeTimesRef.current.filter((t) => now - t < CHIME_BURST_WINDOW_MS);
+    if (recent.length >= CHIME_BURST_MAX) {
+      chimeSuppressedRef.current += 1;
+      chimeTimesRef.current = recent;
+      // The measuring instrument for the review condition: after a real
+      // meeting, this line says what the burst actually was.
+      console.info(`[chime] suppressed a ${kind} tone — ${recent.length} played and `
+        + `${chimeSuppressedRef.current} suppressed within ${CHIME_BURST_WINDOW_MS / 1000}s`);
+      return;
+    }
+    if (chimeSuppressedRef.current > 0) {
+      console.info(`[chime] burst over — ${chimeSuppressedRef.current} tones were suppressed`);
+      chimeSuppressedRef.current = 0;
+    }
+    recent.push(now);
+    chimeTimesRef.current = recent;
+
+    // A missing tone is nothing; a thrown one would take the handler with it.
+    try {
+      const ctx = audioCtxRef.current ?? new AudioContext();
+      audioCtxRef.current = ctx;
+      // The context can be born suspended under autoplay policy; resume is a
+      // no-op when it is already running and best-effort when it is not.
+      if (ctx.state === 'suspended') void ctx.resume();
+
+      // Two soft sine notes: rising for an arrival, falling for a departure —
+      // tellable apart without looking, which is the entire point of a chime.
+      const notes = kind === 'join' ? [659.25, 880] : [880, 659.25];
+      const at = ctx.currentTime;
+      notes.forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        const t0 = at + i * 0.11;
+        // Quiet on purpose (peak 0.06): a notification, not a doorbell — it
+        // sits under speech rather than over it.
+        gain.gain.setValueAtTime(0.0001, t0);
+        gain.gain.exponentialRampToValueAtTime(0.06, t0 + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.2);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(t0);
+        osc.stop(t0 + 0.22);
+      });
+    } catch { /* no AudioContext, no chime — the meeting is unaffected */ }
+  }, []);
+
+  // The AudioContext outlives the room (it is lazily made and survives a
+  // reconnect), so it is closed on unmount, not in the connect effect.
+  useEffect(() => () => { void audioCtxRef.current?.close(); }, []);
 
   // ---- Full screen -----------------------------------------------------
   //
@@ -250,10 +344,13 @@ export default function Stage({ seat, meeting, prefs }: {
       // The server tells everyone in the room, including guests. This is the
       // ONLY input to the notice on screen — see the state comment above.
       .on(RoomEvent.RecordingStatusChanged, (on: boolean) => { setBeingRecorded(on); rerender(); })
-      .on(RoomEvent.ParticipantConnected, rerender)
+      // The chime rides the same events the tiles do. Existing participants
+      // do not fire ParticipantConnected at OUR join, so entering a full room
+      // is silent — the chime announces changes, not the status quo.
+      .on(RoomEvent.ParticipantConnected, () => { chime('join'); rerender(); })
       // Remove the tile by identity, or a black rectangle sits there looking
       // like a broken camera while everyone waits for somebody who has left.
-      .on(RoomEvent.ParticipantDisconnected, rerender)
+      .on(RoomEvent.ParticipantDisconnected, () => { chime('leave'); rerender(); })
       .on(RoomEvent.TrackSubscribed, rerender)
       .on(RoomEvent.TrackUnsubscribed, rerender)
       .on(RoomEvent.TrackMuted, rerender)
@@ -401,8 +498,9 @@ export default function Stage({ seat, meeting, prefs }: {
     // seat.roomKey belongs here with the other seat fields. It cannot change
     // without the token changing — both arrive in one response — so this adds
     // no re-runs; it is listed because a dependency the effect reads and the
-    // array omits is a lie that stays true only by luck.
-  }, [seat.wsUrl, seat.token, seat.roomKey, rerender]);
+    // array omits is a lie that stays true only by luck. chime is a stable
+    // useCallback with no dependencies, listed for the same reason.
+  }, [seat.wsUrl, seat.token, seat.roomKey, rerender, chime]);
 
   // Device labels are blank until permission exists, so a menu built too early
   // is a list of empty strings.
@@ -427,7 +525,7 @@ export default function Stage({ seat, meeting, prefs }: {
   //  gave up. Polled here only while it can matter: a host, in a live meeting,
   //  with a waiting room actually switched on.
   // ---------------------------------------------------------------------
-  const lobbyLive = isHost && meeting !== null && meeting.waitingRoom !== 'off'
+  const lobbyLive = isHost && meeting !== null && waitingRoom !== 'off'
     && (connState === 'live' || connState === 'reconnecting');
 
   useEffect(() => {
@@ -483,6 +581,24 @@ export default function Stage({ seat, meeting, prefs }: {
     } catch (e) {
       setSharePolicy(previous);
       setError(e instanceof Error ? e.message : 'Could not change who may share.');
+    }
+  }
+
+  async function changeWaitingRoom(next: WaitingRoom) {
+    if (!meeting) return;
+    const previous = waitingRoom;
+    setWaitingRoom(next);   // optimistic — same rule as the share select
+    try {
+      await connectApi.update(authedFetch, meeting.id, { waitingRoom: next });
+      // Turning it OFF admits everybody parked, server-side, in the same
+      // PATCH — so the knock cards are stale the moment it succeeds. Cleared
+      // here rather than left for the poll, or the host spends three seconds
+      // looking at "Let in" buttons for people who are already in. A change
+      // to 'guests' only frees colleagues, so there the poll corrects.
+      if (next === 'off') setKnocking([]);
+    } catch (e) {
+      setWaitingRoom(previous);
+      setError(e instanceof Error ? e.message : 'Could not change the waiting room.');
     }
   }
 
@@ -1323,6 +1439,18 @@ export default function Stage({ seat, meeting, prefs }: {
                 <div className="cx-sub" style={{ marginTop: 4 }}>
                   Applies to everyone already here, immediately.
                 </div>
+
+                <label className="cx-label" htmlFor="cx-waiting-room"
+                       style={{ marginTop: 14, display: 'block' }}>Waiting room</label>
+                <select id="cx-waiting-room" className="cx-field" value={waitingRoom}
+                        onChange={(e) => void changeWaitingRoom(e.target.value as WaitingRoom)}>
+                  <option value="off">Off — anyone with the link joins straight in</option>
+                  <option value="guests">Guests wait to be let in</option>
+                  <option value="everyone">Everyone waits to be let in</option>
+                </select>
+                <div className="cx-sub" style={{ marginTop: 4 }}>
+                  Opening the door also lets in the people already waiting.
+                </div>
               </div>
             )}
             {isHost && knocking.length > 0 && (
@@ -1484,6 +1612,17 @@ export default function Stage({ seat, meeting, prefs }: {
                 Device names appear once the browser has granted the camera or microphone.
               </div>
             )}
+
+            {/* The chime's own mute — a review condition, not a nicety: a
+                sound nobody can switch off is a sound people mute the whole
+                tab to escape. Per tab, deliberately: back-to-back meetings
+                have different manners, and a checkbox is cheap to re-tick. */}
+            <label className="cx-label" style={{ marginTop: 16, display: 'flex',
+                   alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <input type="checkbox" checked={chimeOn}
+                     onChange={(e) => setChimeOn(e.target.checked)} />
+              Play a soft tone when someone joins or leaves
+            </label>
           </Panel>
         )}
       </div>
