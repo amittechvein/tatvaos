@@ -108,16 +108,14 @@ public static class ImipStructure
     /// </summary>
     private static IEnumerable<string> CheckPayload(MimePart part, string expectedMethod, string where)
     {
-        string text;
-        try
+        // Decoded in a SEPARATE method, and not for tidiness: an iterator
+        // cannot `yield return` from inside a catch (CS1631), so the try must
+        // live somewhere that returns normally. Caught 20 August 2026 by the
+        // compiler, which is the only reader this file had not yet had.
+        var (text, unreadable) = Decode(part, where);
+        if (text is null)
         {
-            using var memory = new MemoryStream();
-            part.Content.DecodeTo(memory);
-            text = System.Text.Encoding.UTF8.GetString(memory.ToArray());
-        }
-        catch (Exception ex)
-        {
-            yield return $"{where}: the payload could not be decoded ({ex.GetType().Name})";
+            yield return unreadable ?? $"{where}: the payload could not be read";
             yield break;
         }
 
@@ -172,6 +170,32 @@ public static class ImipStructure
     /// than against a message this file had assembled itself — which is the
     /// entire argument for linking the production file instead of copying it.
     /// </summary>
+    /// <summary>
+    /// Null text means the caller should report the problem and stop.
+    ///
+    /// MimePart.Content is NULLABLE — a part can carry headers and no body,
+    /// and a message assembled by something other than our own code is exactly
+    /// where that turns up. Dereferencing it was CS8602 and would have been a
+    /// NullReferenceException inside a checker whose whole job is to report
+    /// problems calmly rather than throw.
+    /// </summary>
+    private static (string? Text, string? Problem) Decode(MimePart part, string where)
+    {
+        if (part.Content is null)
+            return (null, $"{where}: the part has headers but no body at all");
+
+        try
+        {
+            using var memory = new MemoryStream();
+            part.Content.DecodeTo(memory);
+            return (System.Text.Encoding.UTF8.GetString(memory.ToArray()), null);
+        }
+        catch (Exception ex)
+        {
+            return (null, $"{where}: the payload could not be decoded ({ex.GetType().Name})");
+        }
+    }
+
     private static Multipart? FindAlternative(MimeEntity? entity)
     {
         if (entity is Multipart multipart)
