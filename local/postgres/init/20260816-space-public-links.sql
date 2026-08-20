@@ -131,29 +131,79 @@ AS $$
        AND COALESCE(s.allow_public_links, true)                        -- tap is open (absent row = default on)
 $$;
 
-CREATE OR REPLACE FUNCTION space.consume_public_link(p_token_hash text)
-RETURNS TABLE (blob_key text, name text, mime_type text, size_bytes bigint)
-LANGUAGE sql
-SECURITY DEFINER
-SET search_path = space, core, pg_temp
-AS $$
-    UPDATE space.public_links l
-       SET download_count = l.download_count + 1
-      FROM space.files   f
-      JOIN core.tenants  t ON t.id = f.tenant_id
-      LEFT JOIN space.tenant_settings s ON s.tenant_id = f.tenant_id
-     WHERE f.id = l.file_id
-       AND l.token_hash = p_token_hash
-       -- THE PREDICATE — textually identical in peek_public_link above.
-       -- Diff them in review; any difference between the two is a bug.
-       AND l.revoked_at IS NULL                                        -- not revoked
-       AND l.expires_at > now()                                        -- not expired
-       AND (l.max_downloads IS NULL OR l.download_count < l.max_downloads)  -- under the cap
-       AND f.deleted_at IS NULL                                        -- file is live
-       AND t.status IN ('active','trial')                              -- tenant is live
-       AND COALESCE(s.allow_public_links, true)                        -- tap is open (absent row = default on)
-    RETURNING f.blob_key, f.name, f.mime_type, f.size_bytes
-$$;
+-- ============================================================================
+--  consume_public_link — CREATED ONLY IF ABSENT. Read the reason.
+--
+--  This file re-runs on EVERY deploy, and so does every file after it.
+--  20260819-space-link-loss-logging.sql DROPs this function and recreates it
+--  returning two extra columns (link_id, file_id) so a missing blob can be
+--  logged as the storage loss it is.
+--
+--  With CREATE OR REPLACE here, the second deploy after that migration landed
+--  died on this line:
+--
+--      ERROR: cannot change return type of existing function
+--      DETAIL: Row type defined by OUT parameters is different.
+--
+--  Postgres will not let REPLACE change a return type, and by then the
+--  function had the six-column shape. Broken from 19 August 2026, invisible
+--  until the next deploy on 20 August, which it blocked entirely.
+--
+--  WHY CONDITIONAL AND NOT "DROP THEN CREATE". A drop here would leave the
+--  four-column version live from this file's commit until the later file's,
+--  and the API serving traffic during a deploy expects six. Milliseconds, on
+--  the anonymous path, returning an error to a stranger holding a link — the
+--  exact window 20260819 wrapped its own swap in a transaction to avoid.
+--  Recreating it here would reopen it.
+--
+--  So: a fresh database gets the function from this file, and a database that
+--  already has one is left alone for the later migration to shape. The rule
+--  this encodes is general — AN EARLIER MIGRATION MUST NOT FIGHT A LATER
+--  ONE'S EVOLUTION OF THE SAME OBJECT.
+--
+--  Consequence, stated so it is not discovered: editing the body below no
+--  longer reaches existing databases. It cannot, and it should not — the
+--  later file owns this function's shape now. Change it there.
+-- ============================================================================
+DO $guard$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+          FROM pg_proc p
+          JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = 'space'
+           AND p.proname = 'consume_public_link'
+    ) THEN
+        RAISE NOTICE '  space.consume_public_link exists — left alone; a later migration owns its shape.';
+    ELSE
+        EXECUTE $fn$
+            CREATE FUNCTION space.consume_public_link(p_token_hash text)
+            RETURNS TABLE (blob_key text, name text, mime_type text, size_bytes bigint)
+            LANGUAGE sql
+            SECURITY DEFINER
+            SET search_path = space, core, pg_temp
+            AS $body$
+                UPDATE space.public_links l
+                   SET download_count = l.download_count + 1
+                  FROM space.files   f
+                  JOIN core.tenants  t ON t.id = f.tenant_id
+                  LEFT JOIN space.tenant_settings s ON s.tenant_id = f.tenant_id
+                 WHERE f.id = l.file_id
+                   AND l.token_hash = p_token_hash
+                   -- THE PREDICATE — textually identical in peek_public_link above.
+                   -- Diff them in review; any difference between the two is a bug.
+                   AND l.revoked_at IS NULL
+                   AND l.expires_at > now()
+                   AND (l.max_downloads IS NULL OR l.download_count < l.max_downloads)
+                   AND f.deleted_at IS NULL
+                   AND t.status IN ('active','trial')
+                   AND COALESCE(s.allow_public_links, true)
+                RETURNING f.blob_key, f.name, f.mime_type, f.size_bytes
+            $body$;
+        $fn$;
+    END IF;
+END
+$guard$;
 
 REVOKE ALL ON FUNCTION space.peek_public_link(text)    FROM PUBLIC;
 REVOKE ALL ON FUNCTION space.consume_public_link(text) FROM PUBLIC;
