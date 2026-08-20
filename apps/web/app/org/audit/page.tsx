@@ -1,6 +1,7 @@
 'use client';
 
 import { Fragment, useCallback, useEffect, useState } from 'react';
+import { formatTimestamp } from '@/lib/dates';
 
 import { AdminShell } from '@/components/admin/AdminShell';
 import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
@@ -42,15 +43,11 @@ function dayEnd(value: string): string | undefined {
   return d.toISOString();
 }
 
-function when(iso: string): string {
-  // Rendered in the reader's own zone, with the date spelled out. An audit
-  // trail is read to answer "when exactly", and an ambiguous 03/04 costs
-  // somebody a phone call.
-  return new Date(iso).toLocaleString(undefined, {
-    day: 'numeric', month: 'short', year: 'numeric',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-  });
-}
+// Rendered in the reader's own ZONE — that part was always right and stays —
+// but no longer in the reader's browser LOCALE, which silently decided field
+// order. An audit trail is read to answer "when exactly", and an ambiguous
+// 03/04 costs somebody a phone call.
+const when = formatTimestamp;
 
 export default function OrgAuditPage() {
   const { authedFetch } = useAuth();

@@ -2,6 +2,7 @@
 
 import { use, useEffect, useState } from 'react';
 import { fetchLinkInfo, formatSize } from '@/lib/space';
+import { formatDate } from '@/lib/dates';
 
 // ============================================================================
 //  The public link landing page — space.tatvaos.com/l/{token}
@@ -77,8 +78,7 @@ export default function PublicLinkPage({ params }: { params: Promise<{ token: st
             </a>
 
             <p className="mt-4 text-[11px] text-ink-faint">
-              Link expires {new Date(info.expiresAt).toLocaleDateString(undefined,
-                { day: 'numeric', month: 'long', year: 'numeric' })}.
+              Link expires {formatDate(info.expiresAt)}.
               Only download files from people you trust.
             </p>
           </>
