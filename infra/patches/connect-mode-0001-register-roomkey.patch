@@ -1,3 +1,12 @@
+ALREADY APPLIED ON THIS BRANCH (feature/connect-meeting-mode) — do not apply.
+
+Program.cs is Core's file; WORKING_IN_LANES forbids Connect editing it in a
+lane without leaving a record, and this patch IS that record. The identical
+change is in the branch's own Program.cs, so `git apply` would fail on
+already-applied context. Kept as documentation of the lane crossing and of
+WHY the registration line is load-bearing (see the comment in the hunk).
+git apply tolerates this leading text; it reads from the first ---/+++ pair.
+
 --- a/apps/api/Program.cs
 +++ b/apps/api/Program.cs
 @@ -148,6 +148,25 @@

@@ -1,3 +1,11 @@
+ALREADY APPLIED ON THIS BRANCH (feature/connect-meeting-mode) — do not apply.
+
+.env.example is a shared root file; this patch is the record of the lane
+crossing, and the change itself is in the branch (with a Windows-safe key
+command added beyond what this hunk shows — the branch copy is the truth).
+`git apply` would fail on already-applied context. Kept as documentation.
+git apply tolerates this leading text; it reads from the first ---/+++ pair.
+
 --- a/.env.example
 +++ b/.env.example
 @@ -40,3 +40,21 @@
