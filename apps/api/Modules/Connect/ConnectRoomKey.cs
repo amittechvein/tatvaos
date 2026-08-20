@@ -110,6 +110,35 @@ public sealed class ConnectRoomKey
             return;
         }
 
+        // ── LENGTH IS NOT ENTROPY, AND THIS CHECK EXISTS BECAUSE OF A REAL
+        //    NEAR-MISS, NOT A HYPOTHETICAL. ─────────────────────────────────
+        //
+        // The day this feature was built, a key-generation one-liner failed
+        // halfway on Windows PowerShell 5 — RandomNumberGenerator::Fill does
+        // not exist there — and still printed base64 of the untouched all-zero
+        // buffer: sixty-four 'A's. Long enough to sail past the length check
+        // above, constant on every machine on Earth, and one paste away from
+        // Bitwarden. A person who is not an engineer cannot be expected to
+        // know that AAAA… means "the randomness never happened"; this server
+        // can, and now does.
+        //
+        // Real entropy cannot be measured from one sample, so this does not
+        // try. It refuses the DEGENERATE cases only: any 32+ character string
+        // built from fewer than ten distinct characters is a failed generator
+        // or a human pattern, never 48 bytes from a CSPRNG (whose base64 has
+        // ~40 distinct characters essentially always).
+        if (raw.Trim().Distinct().Count() < 10)
+        {
+            log.LogError(
+                "Connect: CONNECT_ROOM_KEY_SECRET is long enough but is made of only a few "
+                + "repeated characters — this is what a FAILED key generator prints (for "
+                + "example, base64 of an all-zero buffer is all 'A's). It is being IGNORED "
+                + "and Private meetings are disabled until it is replaced with a value from "
+                + "a working generator. See .env.example for a command that works.");
+            _secret = null;
+            return;
+        }
+
         _secret = Encoding.UTF8.GetBytes(raw.Trim());
     }
 
