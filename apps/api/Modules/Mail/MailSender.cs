@@ -1,6 +1,8 @@
 using MailKit.Net.Smtp;
 using MailKit.Security;
 using Microsoft.EntityFrameworkCore;
+using System.Text;
+using System.Text.RegularExpressions;
 using MimeKit;
 using TatvaOS.Api.Modules.Admin;
 using TatvaOS.Api.Modules.Family;
@@ -59,7 +61,13 @@ public sealed record MailSubmission(
     // A message of ours this answers; threads the Sent copy.
     Guid? InReplyToMessageId = null,
     // Removed from Drafts once the send succeeds.
-    Guid? DraftId = null);
+    Guid? DraftId = null,
+    // The VCALENDAR text, folded per RFC 5545 by whoever built it. Null for
+    // every caller that is not Calendar, which is all of them today.
+    string? ICalendar = null,
+    // REQUEST | CANCEL | REPLY. Must agree with the METHOD: line inside
+    // ICalendar; SubmitAsync refuses the send if it does not.
+    string? ICalendarMethod = null);
 
 public enum SendOutcome
 {
@@ -140,7 +148,39 @@ public static class MailSender
         foreach (var a in s.To) mime.To.Add(a);
         foreach (var a in s.Cc) mime.Cc.Add(a);
         mime.Subject = s.Subject;
-        mime.Body = builder.ToMessageBody();
+        // An invitation is assembled by hand; everything else goes through
+        // BodyBuilder exactly as it always has.
+        if (s.ICalendar is { Length: > 0 } ical)
+        {
+            var method = (s.ICalendarMethod ?? string.Empty).Trim().ToUpperInvariant();
+
+            // THE HEADER AND THE BODY MUST AGREE. Gmail decides whether to
+            // draw Accept/Decline from method= on the content type; the body's
+            // METHOD: line is what the recipient's calendar acts on. A message
+            // whose header says REQUEST and whose body says CANCEL renders as
+            // an invitation and cancels the meeting, which is the worst of
+            // both. Today this cannot happen - Calendar writes both from one
+            // argument - and that is exactly why the check is worth keeping:
+            // it notices the day that invariant is broken.
+            var declared = Regex.Match(ical, @"^METHOD:[ \t]*([A-Za-z]+)",
+                RegexOptions.Multiline);
+            if (!declared.Success ||
+                !string.Equals(declared.Groups[1].Value, method, StringComparison.OrdinalIgnoreCase))
+            {
+                log.LogError(
+                    "Refusing an invitation from {From}: content-type method={Method} but the payload says {Body}",
+                    box.Address, method.Length > 0 ? method : "(none)",
+                    declared.Success ? declared.Groups[1].Value : "(none)");
+                return new SendResult(SendOutcome.Refused, null, null,
+                    "This invitation is inconsistent and was not sent.");
+            }
+
+            mime.Body = CalendarBody(s, Crlf(ical), method);
+        }
+        else
+        {
+            mime.Body = builder.ToMessageBody();
+        }
 
         // Threading headers, so replies land in the same conversation in
         // every client that receives them — including ours, later.
@@ -310,6 +350,86 @@ public static class MailSender
                 productCode: "mail");
 
         return new SendResult(SendOutcome.Sent, message.Id, message.FolderId, null);
+    }
+
+    // ------------------------------------------------------------------
+    //  The dual carriage.
+    //
+    //  The SAME iCalendar content appears twice in one message: as a sibling
+    //  inside multipart/alternative, and again as an invite.ics attachment.
+    //  Gmail reads the alternative part; some Outlook versions only ever see
+    //  the attachment. Sending one without the other means it works for half
+    //  the recipients, and which half is not something we get to choose.
+    //
+    //  BUILT BY HAND rather than through BodyBuilder, which emits a
+    //  multipart/alternative from TextBody and HtmlBody and offers no way to
+    //  add a third sibling. The alternative was to let BodyBuilder build the
+    //  tree and then operate on it - find the alternative, or wrap a lone
+    //  text part, or reach inside a mixed part that may or may not have one -
+    //  which is more code, in more shapes, and none of it verifiable without
+    //  sending real mail to real Gmail. Repeating a six-line attachment loop
+    //  is the cheaper mistake.
+    // ------------------------------------------------------------------
+    private static MimeEntity CalendarBody(MailSubmission s, string ical, string method)
+    {
+        // ORDER MATTERS. A receiver picks the LAST alternative it understands,
+        // so the calendar part goes after the text and the HTML - which is
+        // also the order Google itself emits.
+        var alternative = new Multipart("alternative");
+        if (!string.IsNullOrWhiteSpace(s.BodyText))
+            alternative.Add(new TextPart("plain") { Text = s.BodyText });
+        if (!string.IsNullOrWhiteSpace(s.BodyHtml))
+            alternative.Add(new TextPart("html") { Text = s.BodyHtml });
+
+        var invitation = new TextPart("calendar");
+        invitation.ContentType.Parameters["method"] = method;
+        invitation.SetText(Encoding.UTF8, ical);
+        alternative.Add(invitation);
+
+        var mixed = new Multipart("mixed") { alternative };
+
+        // The attachment carriage. Base64, so the CRLF line endings iCalendar
+        // requires survive the transport byte for byte - quoted-printable
+        // would also work and is harder to be sure about.
+        var file = new MimePart("application", "ics")
+        {
+            ContentDisposition = new ContentDisposition(ContentDisposition.Attachment)
+            {
+                FileName = "invite.ics",
+            },
+            ContentTransferEncoding = ContentEncoding.Base64,
+            Content = new MimeContent(new MemoryStream(Encoding.UTF8.GetBytes(ical))),
+        };
+        file.ContentType.Name = "invite.ics";
+        mixed.Add(file);
+
+        foreach (var a in s.Attachments)
+        {
+            var contentType = ContentType.Parse(
+                string.IsNullOrWhiteSpace(a.ContentType) ? "application/octet-stream" : a.ContentType);
+            var part = new MimePart(contentType)
+            {
+                ContentDisposition = new ContentDisposition(ContentDisposition.Attachment)
+                {
+                    FileName = a.FileName,
+                },
+                ContentTransferEncoding = ContentEncoding.Base64,
+                Content = new MimeContent(new MemoryStream(a.Content)),
+            };
+            mixed.Add(part);
+        }
+
+        return mixed;
+    }
+
+    /// <summary>
+    /// CRLF throughout, including the last line. iCalendar requires it and
+    /// Outlook is the one that notices when it is missing.
+    /// </summary>
+    private static string Crlf(string text)
+    {
+        var normalised = text.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", "\r\n");
+        return normalised.EndsWith("\r\n", StringComparison.Ordinal) ? normalised : normalised + "\r\n";
     }
 
     /// <summary>
