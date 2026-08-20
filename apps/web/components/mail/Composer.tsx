@@ -870,6 +870,27 @@ export function Composer({
           </label>
         </div>
 
+        {/* ------------------------------------------------------------------
+            The body AND everything attached to it, in ONE scrolling region.
+
+            The composer is a fixed-height panel (78vh, or 560px from the sm
+            breakpoint up) with overflow-hidden. Anything stacked below the
+            editor that made the column taller than that was simply CLIPPED —
+            which is how the over-size offer card ended up rendering past the
+            bottom edge with its button behind the taskbar, on a laptop, where
+            the feature is most likely to be needed.
+
+            Everything that grows now lives in here and scrolls. The toolbar
+            and the error line stay outside it, pinned, because a Send button
+            you have to scroll to find is the same bug wearing a different hat.
+            ------------------------------------------------------------------ */}
+        <div
+          className="scroll-thin flex min-h-0 flex-1 flex-col overflow-y-auto"
+          // The mention popup is positioned at the caret, so a scroll moves
+          // the caret out from under it. This moved up from the editor with
+          // the scrollbar itself.
+          onScroll={() => setMention(null)}
+        >
         {/* Body */}
         {plain ? (
           <textarea
@@ -877,7 +898,7 @@ export function Composer({
             onChange={(e) => setPlainBody(e.target.value)}
             spellCheck={spell}
             placeholder="Write your message"
-            className="scroll-thin min-h-[220px] flex-1 resize-none border-0 bg-transparent px-4 py-3 font-mono text-sm text-ink outline-none placeholder:text-ink-faint"
+            className="min-h-[220px] flex-1 resize-none border-0 bg-transparent px-4 py-3 font-mono text-sm text-ink outline-none placeholder:text-ink-faint"
           />
         ) : (
           <div
@@ -892,7 +913,10 @@ export function Composer({
             // the caret out from under it, so close rather than drift.
             onScroll={() => setMention(null)}
             onBlur={() => setMention(null)}
-            className="composer-body scroll-thin min-h-[220px] flex-1 overflow-y-auto px-4 py-3 text-sm leading-relaxed text-ink outline-none"
+            // No overflow of its own: the region above scrolls, and an
+            // editor scrolling inside a scrolling pane is the nested
+            // scrollbar we are also fixing in the reading pane.
+            className="composer-body min-h-[220px] flex-1 px-4 py-3 text-sm leading-relaxed text-ink outline-none"
           />
         )}
 
@@ -1093,6 +1117,8 @@ export function Composer({
                 {links.length > 0 && ' Files sent as links are already in your Space and do survive.'}
               </p>
             )}
+        </div>
+        {/* ---- end of the scrolling region; what follows is pinned ---- */}
 
         {error && (
           <div className="border-t border-line bg-danger/5 px-4 py-2 text-sm text-danger">{error}</div>
