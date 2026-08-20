@@ -36,8 +36,53 @@ cd "$(dirname "$0")/../.."
 ENV_FILE=infra/docker/.env
 COMPOSE=(docker compose -f infra/docker/docker-compose.base.yml -f infra/docker/docker-compose.production.yml --env-file "$ENV_FILE")
 
+# ── REFUSE, RATHER THAN DEFAULT, WHEN THE TARGET IS UNKNOWN. ────────────
+#
+# The first run of this script did exactly what this block now prevents. It
+# was run from a lane checkout, which has no infra/docker/.env (env files are
+# not in git) — so the grep below came back empty, the API fell back to the
+# production domain, AND IT SIGNED IN TO PRODUCTION. It survived because the
+# migration check happened to be the first assertion and production did not
+# have the migration yet; had that check passed, the next step CREATES
+# MEETINGS. The "NOT FOR PRODUCTION" banner at the top of this file was
+# decoration — a comment cannot refuse anything. This block can.
+#
+# A missing target is therefore a refusal, never a default. Same rule as the
+# guest path's fail-closed RLS: when you do not know who you are talking to,
+# the answer is nothing, not a guess.
+if [ ! -f "$ENV_FILE" ]; then
+    echo "  REFUSED  $ENV_FILE does not exist in this checkout."
+    echo
+    echo "           This test needs the LOCAL stack's env file, both to find the"
+    echo "           local API and to reach the local database. Without it the old"
+    echo "           behaviour was to fall back to the production domain — which is"
+    echo "           the one place this script must never point."
+    echo
+    echo "           If you meant to run it here, bring up the local stack first"
+    echo "           (infra/docker, with its own .env). If you are in a lane"
+    echo "           checkout, that is why the file is missing."
+    exit 2
+fi
+
 SITE=$(grep -E '^SITE_DOMAIN=' "$ENV_FILE" | tail -1 | cut -d= -f2- | tr -d "\"' ")
-API="https://${SITE:-core.tatvaos.com}/api"
+case "$SITE" in
+    ''|*.tatvaos.com)
+        echo "  REFUSED  SITE_DOMAIN='${SITE:-unset}' is production, or unknown."
+        echo "           This test WRITES rows — meetings in your own tenant — and"
+        echo "           production is where real customers live. Point it at a"
+        echo "           local stack (a *.local domain) or do not run it."
+        exit 2 ;;
+esac
+API="https://${SITE}/api"
+
+# And prove the LOCAL database is reachable BEFORE anybody types a password:
+# q() swallows stderr, so without this check "no database here" and "column
+# missing" would print the same FAIL — an ambiguity the first run also hit.
+if ! "${COMPOSE[@]}" exec -T postgres psql -U postgres -d tatvaos_mail -tAc "SELECT 1" >/dev/null 2>&1; then
+    echo "  REFUSED  the local postgres container is not reachable from here."
+    echo "           Bring up the local stack (docker compose ... up -d) and re-run."
+    exit 2
+fi
 
 PASSED=0; FAILED=0; WARNED=0
 ok()   { echo "  OK    $1"; PASSED=$((PASSED+1)); }
