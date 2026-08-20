@@ -456,8 +456,18 @@ internal static class Program
                     text.Contains("परियोजना", StringComparison.Ordinal));
                 t.Ok("no line exceeds 75 OCTETS after assembly",
                     text.Split("\r\n").All(l => Encoding.UTF8.GetByteCount(l) <= 75));
+                // Compared against the ESCAPED title, not the raw one. The
+                // title contains a comma, and RFC 5545 escapes commas inside
+                // a TEXT value - so the payload correctly contains
+                // "बैठक\, पुणे" and never the raw string. The first version of
+                // this line asserted the raw form and failed against correct
+                // output: my assertion, not Mail's code, and the third time
+                // this week a test of mine was wrong rather than the thing it
+                // tested. Worth the comment: an assertion that is wrong in the
+                // strict direction wastes an afternoon, and one that is wrong
+                // in the lax direction is never noticed at all.
                 t.Ok("and no character was split across a fold",
-                    string.Join("", Imip.Unfold(text)).Contains(hindi.Replace("\r\n", ""),
+                    string.Join("", Imip.Unfold(text)).Contains(Imip.Escape(hindi),
                         StringComparison.Ordinal));
             }
         }
