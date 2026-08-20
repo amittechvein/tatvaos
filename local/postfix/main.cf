@@ -149,8 +149,36 @@ mynetworks = 127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
 # ----------------------------------------------------------------------------
 relayhost = [mailpit]:1025
 
-# Mailpit speaks plain SMTP; no TLS locally
-smtp_tls_security_level  = none
+# ----------------------------------------------------------------------------
+# TLS
+# ----------------------------------------------------------------------------
+#  OUTBOUND IS OPPORTUNISTIC, NOT OFF. It was `none` because this file was
+#  written for the local stack, where Mailpit speaks plain SMTP - correct
+#  there, and wrong the moment the same file shipped to a box doing direct MX
+#  delivery. The entrypoint templates myhostname, mydomain and relayhost from
+#  the environment and never touched these lines, so a local-only setting went
+#  to production verbatim and Gmail told our recipients about it, in red:
+#  "tatvaos.com did not encrypt this message."
+#
+#  `may` offers STARTTLS and uses it whenever the far end supports it - Gmail,
+#  Outlook, everyone that matters - and falls back to plaintext when it does
+#  not. Nothing stops being delivered. Mailpit does not offer STARTTLS, so
+#  locally this behaves exactly as `none` did.
+#
+#  DELIBERATELY NOT `encrypt`. That REFUSES delivery to any server without
+#  TLS, trading a confidentiality problem for silent non-delivery to smaller
+#  hosts - a school's own mail server, a supplier on shared hosting. A message
+#  that arrives readable beats a message that never arrives.
+smtp_tls_security_level  = may
+
+#  So a delivery that fell back to plaintext is findable in the logs rather
+#  than invisible. Level 1 is the summary line per connection, not a firehose.
+smtp_tls_loglevel        = 1
+
+#  INBOUND IS LEFT ALONE ON PURPOSE. Offering STARTTLS to senders needs a
+#  certificate matching the MX name and has its own failure modes; it is no
+#  worse today than yesterday, whereas outbound was actively leaking. Its own
+#  change, next.
 smtpd_tls_security_level = none
 
 # ----------------------------------------------------------------------------
