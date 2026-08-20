@@ -69,7 +69,12 @@ public static class ConnectMinutes
         /// <summary>Attendees with no address here — almost always guests.</summary>
         int UnreachableAttendees,
         string BaseUrl,
-        Guid MeetingId);
+        Guid MeetingId,
+        // Appended with a default rather than placed beside HadTranscript,
+        // deliberately: every existing positional construction (including the
+        // test suite's) stays valid, and the compiler still forces the one
+        // caller that matters to say it by name.
+        bool HadRecording = false);
 
     public static string Subject(Input m) =>
         $"Minutes: {Trim(m.MeetingTitle, 120)}"
@@ -346,9 +351,17 @@ public static class ConnectMinutes
             ? $"summarised automatically{(string.IsNullOrWhiteSpace(n.Model) ? "" : $" by {n.Model}")}"
             : "assembled automatically";
 
+        // Three true sentences, not two. "No transcript" has two causes —
+        // never recorded, and recorded-but-not-transcribed — and on the
+        // module's first proven run the two-way version claimed "not
+        // recorded" beside a Ready recording. A document that is a record
+        // cannot contain a sentence the recordings list contradicts.
         var from = m.HadTranscript
             ? "from the meeting's recording and transcript"
-            : "from who joined and when — this meeting was not recorded, so there is no transcript";
+            : m.HadRecording
+                ? "from who joined and when — the meeting was recorded, but no "
+                  + "transcript was made of the recording"
+                : "from who joined and when — this meeting was not recorded, so there is no transcript";
 
         return $"These minutes were {how} {from}. "
              + (n.Kind == "model"
