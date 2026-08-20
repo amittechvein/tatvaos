@@ -350,3 +350,71 @@ exactly the kind of guard that has earned its place twice on this platform
 this week.
 
 **Status: the seam is fully specified. Nothing about it is open.**
+
+
+---
+
+# v1.4 — threading, and a platform-wide finding
+
+Mail's sender extraction landed (`MailSender.SubmitAsync`). Reading it settles
+how §3's threading requirement is met, and turned up something bigger.
+
+**How it works.** `MailSubmission.InReplyToMessageId` is a `Guid` naming one
+of *our* `mail.messages` rows, not an RFC header. `SubmitAsync` looks that row
+up, reads its stored `MessageIdHeader`, and writes both `In-Reply-To` and
+`References` from it. `SendResult.MessageId` hands the new row's id back. So
+Calendar deals in handles and never in message-id syntax — the right side of
+that line for both lanes.
+
+## The rule for Calendar: chain to the ROOT, not to the previous message
+
+**Calendar stores the message id of the FIRST invitation on the event, and
+passes that same id as `InReplyToMessageId` for every update and cancellation
+after it.** Not the id of whatever it sent last.
+
+Chaining to the previous message produces this:
+
+```
+invitation    Message-Id: <A>
+update        In-Reply-To: <A>   References: <A>
+cancellation  In-Reply-To: <B>   References: <B>     <-- <A> is gone
+```
+
+Chaining to the root gives every message `References: <A>`, one conversation
+in every client, no schema change and no work in Mail:
+
+```
+invitation    Message-Id: <A>
+update        In-Reply-To: <A>   References: <A>
+cancellation  In-Reply-To: <A>   References: <A>
+```
+
+Calendar needs one nullable column on the event to hold that first id. Mine.
+
+## THIS IS A PLATFORM ISSUE, NOT AN INVITATIONS ONE
+
+Mail checked the schema after reading the above, and the finding is wider than
+I framed it. Recorded here so nobody later reads it as a meetings quirk:
+
+**`mail.messages` stores `MessageIdHeader` and nothing else.** `MailThreads`
+reads the inbound `References` header at ingest to decide which conversation a
+message belongs to, but never stores it. So on reply there is nothing to
+append to, and `SubmitAsync` can only write the immediate parent's Message-Id.
+**Every reply this platform sends carries a one-entry `References` chain.**
+Invitations are just where it got noticed.
+
+It degrades gracefully in the ordinary case — each message points at its
+parent, so a client holding the whole conversation walks the links back. It
+fails when a message in the middle is missing: there is no second path home
+and the conversation splits. A cancellation arriving after someone missed the
+update is the sharpest version, which is why it surfaced here.
+
+**Ownership:** the general fix is Mail's — store the inbound `References`
+header, one nullable column plus a few lines in ingest and in `SubmitAsync`.
+Deliberately deferred, and correctly: nothing is blocked, and a schema change
+does not belong on the same deploy as the send-path refactor that just went
+out. Mail picks it up after the `ICalendar`/`ICalendarMethod` pair.
+
+Calendar's root-chaining rule stands regardless and needs nothing from Mail —
+it sidesteps the problem for event mail rather than waiting on the platform
+fix.

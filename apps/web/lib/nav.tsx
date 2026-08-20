@@ -108,8 +108,12 @@ export const RAIL_PRODUCTS: RailProduct[] = [
   // the cyan end: that is #00b8d9, which is Family's exactly — and tile colour
   // is how people find an app in a grid without reading it, so two products
   // sharing one is the same as neither having one.
-  { code: 'connect', label: 'Connect', href: '/connect', icon: <Icon d={PATHS.connect} />,
-    live: false, colour: '#003cf0', match: ['/connect'] },
+  // LIVE since 19 August 2026. It sat at live:false for a day after shipping,
+  // so the launcher told people "coming soon" about a product they could
+  // already hold a meeting in. Flip this in the commit that ships a product,
+  // not the one after.
+  { code: 'connect', label: 'Connect', href: '/connect/new', icon: <Icon d={PATHS.connect} />,
+    live: true, colour: '#003cf0', match: ['/connect'] },
   // Techvein only. The panel it opens is a different world from a customer's,
   // which is why it sits apart at the end rather than among the products.
   { code: 'platform', label: 'Platform admin', href: '/admin',
