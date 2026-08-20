@@ -59,7 +59,13 @@ public sealed record MailSubmission(
     // A message of ours this answers; threads the Sent copy.
     Guid? InReplyToMessageId = null,
     // Removed from Drafts once the send succeeds.
-    Guid? DraftId = null);
+    Guid? DraftId = null,
+    // The VCALENDAR text, folded per RFC 5545 by whoever built it. Null for
+    // every caller that is not Calendar, which is all of them today.
+    string? ICalendar = null,
+    // REQUEST | CANCEL | REPLY. Must agree with the METHOD: line inside
+    // ICalendar; SubmitAsync refuses the send if it does not.
+    string? ICalendarMethod = null);
 
 public enum SendOutcome
 {
@@ -140,7 +146,36 @@ public static class MailSender
         foreach (var a in s.To) mime.To.Add(a);
         foreach (var a in s.Cc) mime.Cc.Add(a);
         mime.Subject = s.Subject;
-        mime.Body = builder.ToMessageBody();
+        // An invitation is assembled by hand; everything else goes through
+        // BodyBuilder exactly as it always has.
+        if (s.ICalendar is { Length: > 0 } ical)
+        {
+            // ONE CALL for both outcomes. Assembling and checking the method
+            // are not two steps a caller can get out of order, because a
+            // caller who has to remember the check is one who will forget -
+            // and an invitation whose header and body disagree is silent at
+            // every layer until it reaches somebody's calendar.
+            var (body, refusal) = InvitationBody.TryBuild(
+                s.BodyText, s.BodyHtml, ical, s.ICalendarMethod ?? string.Empty);
+
+            if (body is null)
+            {
+                log.LogError("Refusing an invitation from {From}: {Refusal}", box.Address, refusal);
+                return new SendResult(SendOutcome.Refused, null, null,
+                    "This invitation is inconsistent and was not sent.");
+            }
+
+            // The ordinary attachments, which are not the invitation's
+            // business and so are not TryBuild's either.
+            foreach (var file in s.Attachments)
+                body.Add(InvitationBody.FileAttachment(file.FileName, file.ContentType, file.Content));
+
+            mime.Body = body;
+        }
+        else
+        {
+            mime.Body = builder.ToMessageBody();
+        }
 
         // Threading headers, so replies land in the same conversation in
         // every client that receives them — including ours, later.
@@ -166,6 +201,13 @@ public static class MailSender
         try
         {
             using var client = new SmtpClient();
+            // NOT THE PLAINTEXT PROBLEM main.cf FIXES, and worth saying so
+            // where somebody grepping for TLS during an incident will find it.
+            // This is the API talking to our own Postfix inside the compose
+            // network, on a hop that never leaves the host. What Gmail saw
+            // unencrypted was Postfix's onward delivery, governed by
+            // smtp_tls_security_level. Different hop, different setting;
+            // "fixing" this one would break submission and leave the leak open.
             await client.ConnectAsync(host, port, SecureSocketOptions.None, ct);
             await client.SendAsync(mime, ct);
             await client.DisconnectAsync(true, ct);
