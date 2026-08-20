@@ -402,6 +402,65 @@ internal static class Program
         t.Ok("no body is returned", mismatched is null);
         t.Ok("a reason is", why is not null);
         t.Note("asserting a reason EXISTS, never its wording - Mail should be able to improve the sentence");
+
+        // ── THE PUNE TEST, APPLIED ─────────────────────────────────────
+        //
+        //  Everything above used an English title, so it measured the
+        //  encoding without proving anything survives it. That gap is the
+        //  one that matters here: a Devanagari title is 8-bit UTF-8, three
+        //  bytes a character, and it is the live case for our customers
+        //  while ASCII is the case we happen to type.
+        //
+        //  Mail set QuotedPrintable explicitly on the calendar part after
+        //  this argument. This is the assertion that the choice was right,
+        //  rather than the note that a choice was made.
+        // ────────────────────────────────────────────────────────────────
+        t.Section("a Hindi meeting title survives the whole carriage");
+
+        const string hindi = "परियोजना समीक्षा — तिमाही बैठक, पुणे";
+        var hindiIcal = Imip.Build(Event(title: hindi),
+            [Attendee("riya@gmail.com", "रिया")],
+            "amit@tatvaos.com", "अमित", Imip.MethodRequest);
+
+        var (hindiBody, hindiRefusal) = InvitationBody.TryBuild(
+            "परियोजना समीक्षा", "<p>परियोजना समीक्षा</p>", hindiIcal, Imip.MethodRequest);
+
+        t.Ok("it assembles", hindiBody is not null && hindiRefusal is null);
+        if (hindiBody is not null)
+        {
+            var hindiMessage = new MimeMessage { Body = hindiBody };
+            using var hindiWire = new MemoryStream();
+            hindiMessage.WriteTo(hindiWire);
+            hindiWire.Position = 0;
+            var hindiDelivered = MimeMessage.Load(hindiWire);
+
+            var hindiProblems = ImipStructure.Check(hindiDelivered, Imip.MethodRequest);
+            t.Ok("and is structurally correct after the wire round trip", hindiProblems.Count == 0);
+            foreach (var problem in hindiProblems) t.Ok($"  PROBLEM: {problem}", false);
+
+            var part = hindiDelivered.BodyParts.OfType<TextPart>()
+                .FirstOrDefault(p => p.ContentType.IsMimeType("text", "calendar"));
+            t.Ok("the calendar part came back", part is not null);
+
+            if (part?.Content is { } hindiContent)
+            {
+                t.Note($"encoded as {part.ContentTransferEncoding}");
+
+                using var decoded = new MemoryStream();
+                hindiContent.DecodeTo(decoded);
+                var text = Encoding.UTF8.GetString(decoded.ToArray());
+
+                t.Ok("BYTE FOR BYTE what Calendar produced",
+                    text == InvitationBody.Crlf(hindiIcal));
+                t.Ok("the Devanagari title is still readable in the payload",
+                    text.Contains("परियोजना", StringComparison.Ordinal));
+                t.Ok("no line exceeds 75 OCTETS after assembly",
+                    text.Split("\r\n").All(l => Encoding.UTF8.GetByteCount(l) <= 75));
+                t.Ok("and no character was split across a fold",
+                    string.Join("", Imip.Unfold(text)).Contains(hindi.Replace("\r\n", ""),
+                        StringComparison.Ordinal));
+            }
+        }
 #endif
     }
 
