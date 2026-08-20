@@ -156,6 +156,34 @@ export interface ThreadPage {
   threads: ThreadSummary[];
 }
 
+/**
+ * What the translator can do, if anything. `enabled:false` means no
+ * translator is configured - hide the control rather than offer one that
+ * fails. `enabled:true` with an empty language list means it is configured
+ * and not answering, which is worth showing differently.
+ */
+export interface TranslateStatus {
+  enabled: boolean;
+  maxCharacters?: number;
+  languages: { code: string; name: string }[];
+}
+
+/**
+ * A translated view of a message. Plain text, always - the body is
+ * attacker-controlled and is never round-tripped as HTML through a
+ * translator. Render it as text.
+ */
+export interface TranslatedMessage {
+  target?: string;
+  detectedLanguage?: string | null;
+  subject?: string;
+  body?: string;
+  /** True when the body was longer than the translator's limit and was cut. */
+  truncated?: boolean;
+  /** Set instead of the rest when the translator could not be reached. */
+  error?: string;
+}
+
 /** An address this mailbox has blocked. Blocked mail is filed to Junk, not refused. */
 /**
  * A mailbox's out-of-office reply.
@@ -384,6 +412,28 @@ export const mailApi = {
   thread: (f: AuthedFetch, threadId: string, mailboxId?: string) =>
     f(withMb(`/mail/threads/${threadId}/messages`, mailboxId))
       .then((r) => json<SearchPage>(r, 'Could not load this conversation.')),
+
+  /**
+   * Whether translation is available, and into what.
+   *
+   * Worth calling once when the reading pane mounts rather than per message:
+   * the answer changes when an administrator changes configuration, not when
+   * somebody opens mail.
+   */
+  translateStatus: (f: AuthedFetch) =>
+    f('/mail/translate/status')
+      .then((r) => json<TranslateStatus>(r, 'Could not check whether translation is available.')),
+
+  /**
+   * Translate one message. Nothing is stored - ask again and it is computed
+   * again, so a better translator later changes what people see with no
+   * migration and no stale copies.
+   */
+  translateMessage: (f: AuthedFetch, id: string, target: string) =>
+    f(`/mail/messages/${id}/translate`, {
+      method: 'POST',
+      body: JSON.stringify({ target }),
+    }).then((r) => json<TranslatedMessage>(r, 'Could not translate this message.')),
 
   message: (f: AuthedFetch, id: string, mailboxId?: string) =>
     f(withMb(`/mail/messages/${id}`, mailboxId))

@@ -256,6 +256,12 @@ services:
       # Where the API reaches LiveKit's server API, inside the compose network.
       # Not public, and deliberately not the same value as PublicUrl.
       LiveKit__InternalUrl: http://livekit:7880
+      # Base URL of a LibreTranslate we run ourselves. Empty - the default -
+      # means the Translate control is reported as unavailable rather than
+      # offered and broken. Message bodies go to whatever this points at, so
+      # it should never point off this machine.
+      Translate__Endpoint: ${TRANSLATE_ENDPOINT:-}
+      Translate__ApiKey: ${TRANSLATE_API_KEY:-}
       # Over-quota mailboxes: anything but "enforce" only LOGS would-defer
       # lines. Flip to enforce only after reading those logs shows no
       # innocent mailbox would be hit — a 4xx defer makes senders queue and
