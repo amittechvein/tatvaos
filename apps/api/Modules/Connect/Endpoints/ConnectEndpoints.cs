@@ -510,6 +510,18 @@ public static class ConnectEndpoints
                     : parked.Where(r => r.UserId is not null).ToList();
                 if (freeable.Count > 0)
                 {
+                    // KNOWN PROPERTY (review finding, accepted, no change):
+                    // blocks are keyed by user_id, so a GUEST cannot be
+                    // blocked — "remove" never sticks for a guest, whose only
+                    // control is the waiting room itself. Turning the room
+                    // 'off' therefore frees a previously-removed guest along
+                    // with everyone else. That is inherent to what 'off'
+                    // means — anyone with the link walks in — and it predates
+                    // this block; the toggle just makes it visible for the
+                    // first time. If "remove sticks for guests" is ever
+                    // wanted, it needs a block keyed on something a guest
+                    // actually has, which is a design question, not a fix
+                    // here.
                     var blockedIds = await db.ConnectMeetingBlocks.AsNoTracking()
                         .Where(b => b.MeetingId == id)
                         .Select(b => b.UserId)
