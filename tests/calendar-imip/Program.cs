@@ -372,10 +372,19 @@ internal static class Program
         if (deliveredCalendar is not null)
         {
             t.Note($"ON THE WIRE the alternative part is {deliveredCalendar.ContentTransferEncoding}");
-            using var payload = new MemoryStream();
-            deliveredCalendar.Content.DecodeTo(payload);
-            t.Ok("and the payload comes back BYTE FOR BYTE what Calendar produced",
-                Encoding.UTF8.GetString(payload.ToArray()) == InvitationBody.Crlf(ical));
+
+            // MimePart.Content is nullable. This is the SAME dereference I had
+            // just fixed in ImipStructure.cs and then wrote again here within
+            // the hour — which is the argument for compiling, not for being
+            // more careful. Being more careful is what I was already doing.
+            t.Ok("the alternative part has a body at all", deliveredCalendar.Content is not null);
+            if (deliveredCalendar.Content is { } content)
+            {
+                using var payload = new MemoryStream();
+                content.DecodeTo(payload);
+                t.Ok("and the payload comes back BYTE FOR BYTE what Calendar produced",
+                    Encoding.UTF8.GetString(payload.ToArray()) == InvitationBody.Crlf(ical));
+            }
         }
 
         var attachment = delivered.BodyParts.OfType<MimePart>()
