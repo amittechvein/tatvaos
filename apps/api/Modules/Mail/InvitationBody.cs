@@ -102,6 +102,32 @@ public static class InvitationBody
         var invitation = new TextPart("calendar");
         invitation.ContentType.Parameters["method"] = method.Trim().ToUpperInvariant();
         invitation.SetText(Encoding.UTF8, ical);
+
+        // CHOSEN, not left to the library, and this line is the whole reason
+        // this comment is long. Without it MimeKit writes NO
+        // Content-Transfer-Encoding header at all, and an absent header means
+        // 7bit under RFC 2045 - so a part carrying 8-bit octets is
+        // non-conformant. It survives today only because MailKit's Prepare()
+        // downgrades on the fly using whatever the receiving server
+        // advertised, and Postfix and Gmail both advertise 8BITMIME. That is
+        // a capability negotiation we neither observe nor log, silently
+        // deciding the encoding of the one part that makes Gmail draw
+        // Accept/Decline.
+        //
+        // A DEVANAGARI MEETING TITLE IS 8-BIT UTF-8. This is our market's
+        // ordinary case, not an edge one - and an English title would have
+        // passed every test anybody would naturally think to run.
+        //
+        // Quoted-printable rather than base64, and the asymmetry with the
+        // attachment below is now DELIBERATE rather than accidental. The two
+        // parts have different readers. When an invitation renders as a
+        // paperclip instead of buttons, the first thing anyone does is "Show
+        // original" - quoted-printable leaves BEGIN:VCALENDAR legible there,
+        // base64 is an opaque blob at exactly the moment you need to read it.
+        // The attachment is a file a client parses and nobody reads, so
+        // unconditional base64 costs nothing there and buys certainty.
+        invitation.ContentTransferEncoding = ContentEncoding.QuotedPrintable;
+
         alternative.Add(invitation);
 
         var mixed = new Multipart("mixed") { alternative };
