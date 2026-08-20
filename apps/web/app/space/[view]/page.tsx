@@ -1,6 +1,7 @@
 'use client';
 
 import { use, useCallback, useEffect, useRef, useState } from 'react';
+import { formatDateShort } from '@/lib/dates';
 import { useAuth } from '@/lib/auth';
 import {
   spaceApi, formatSize, linkApi, type PublicLink,
@@ -27,9 +28,10 @@ const fileIcon = (mime: string): React.ComponentProps<typeof Icon>['name'] => {
   return 'draft';
 };
 
-function when(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
-}
+// Pinned to en-IN in lib/dates.ts. This used to pass `undefined`, which meant
+// the field ORDER came from the viewer's browser — the same screen read
+// "19 Sep 2026" here and "Sep 19, 2026" on a US-configured machine.
+const when = formatDateShort;
 
 export default function SpacePage({ params }: { params: Promise<{ view: string }> }) {
   const { view: viewParam } = use(params);
@@ -689,8 +691,7 @@ function PublicLinkSection({ fileId }: { fileId: string }) {
           {live.map((l) => (
             <div key={l.id} className="flex items-center gap-2 py-1 text-xs text-ink-muted">
               <span className="min-w-0 flex-1 truncate">
-                Expires {new Date(l.expiresAt).toLocaleDateString(undefined,
-                  { day: 'numeric', month: 'short', year: 'numeric' })}
+                Expires {formatDateShort(l.expiresAt)}
                 {l.downloadCount > 0 && ` · downloaded ${l.downloadCount}×`}
               </span>
               <button type="button" disabled={busy}

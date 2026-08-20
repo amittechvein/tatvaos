@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { formatDateTime } from '@/lib/dates';
 
 import { AdminShell } from '@/components/admin/AdminShell';
 import { Badge, Button, Card, Empty, Meter, Table, Td, statusTone } from '@/components/ui/Kit';
@@ -779,8 +780,7 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
           <div className="fs-12 text-muted">Last sign-in</div>
           <span className="fs-13">
             {person.lastLoginAt
-              ? new Date(person.lastLoginAt).toLocaleString(undefined,
-                  { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+              ? formatDateTime(person.lastLoginAt)
               : 'Never'}
           </span>
         </div>
