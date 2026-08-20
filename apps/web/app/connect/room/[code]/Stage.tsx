@@ -122,6 +122,34 @@ export default function Stage({ seat, meeting, prefs }: {
   // Driving the notice from our row instead would mean a guest — who never
   // calls that endpoint — sat in a recorded meeting with nothing on screen.
   const [beingRecorded, setBeingRecorded] = useState(false);
+
+  // ---- The SPOKEN notice (docs/CONNECT_DECISIONS.md §2) ----------------
+  //
+  // "This meeting is being recorded." — heard as well as read, exactly once
+  // per activation, LOCALLY: it plays on this client only, so it is not in
+  // the recording, does not interrupt whoever is talking, and does not fire
+  // eleven times for the eleven people already there. The trigger is
+  // "recording became active FOR ME" — joining an already-recorded meeting
+  // and the host pressing Record twenty minutes in both count, which is why
+  // this watches the flag's transition rather than the join.
+  //
+  // A static clip, not the Web Speech API: browser voices vary by OS and are
+  // absent on some Android builds, and the one sentence that has to be heard
+  // must not depend on that. Autoplay is allowed here because clicking Join
+  // was a user activation and the page holds a microphone permission — but a
+  // refusal (or a missing clip) is swallowed: the WRITTEN notice below is
+  // non-dismissible and role="status", and the audio is the second channel,
+  // never the only one.
+  const spokenRef = useRef(false);
+  useEffect(() => {
+    if (!beingRecorded) { spokenRef.current = false; return; }
+    if (spokenRef.current) return;
+    spokenRef.current = true;
+    try {
+      const clip = new Audio('/connect-recording-notice.mp3');
+      void clip.play().catch(() => { /* blocked or clip absent; the banner stands */ });
+    } catch { /* no Audio in this environment; the banner stands */ }
+  }, [beingRecorded]);
   const [recording, setRecording] = useState<Recording | null>(null);
   const [recBusy, setRecBusy] = useState(false);
   const [recOff, setRecOff] = useState(false);   // no egress on this server

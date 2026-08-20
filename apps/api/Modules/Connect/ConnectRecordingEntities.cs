@@ -47,6 +47,11 @@ public sealed class ConnectRecording
     /// <summary>Whether this recording should be transcribed once ready.</summary>
     public bool Transcribe { get; set; } = true;
 
+    /// <summary>"Keep this one": the retention sweep will not touch this
+    /// recording before this instant, whatever the org policy says. NULL for
+    /// the ordinary case. See 20260907-connect-retention.sql.</summary>
+    public DateTimeOffset? KeepUntilAt { get; set; }
+
     public string? Error { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }
@@ -132,6 +137,15 @@ public sealed class ConnectMeetingNotes
     /// the transcript failed" — a fault. Those need different sentences.
     /// </summary>
     public bool HadTranscript { get; set; }
+
+    /// <summary>
+    /// Whether a READY recording existed when these notes were written. On
+    /// the module's first proven run, had_transcript alone made the minutes
+    /// say "this meeting was not recorded" beside a Ready recording — a false
+    /// sentence, because "no transcript" has two causes and the notes could
+    /// only name one. See 20260906-connect-notes-wait-recording.sql.
+    /// </summary>
+    public bool HadRecording { get; set; }
 
     public string? Error { get; set; }
     public DateTimeOffset? GeneratedAt { get; set; }
