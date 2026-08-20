@@ -2,7 +2,9 @@ using System.Globalization;
 using System.Text;
 using MimeKit;
 using TatvaOS.Api.Modules.Calendar;
+#if HAS_MAIL_CARRIAGE
 using TatvaOS.Api.Modules.Mail;
+#endif
 using TatvaOS.Api.Shared.Data;
 
 namespace TatvaOS.Tests.CalendarImip;
@@ -299,6 +301,14 @@ internal static class Program
     // ==================================================================
     private static void RealCarriage(Harness t)
     {
+#if !HAS_MAIL_CARRIAGE
+        // Skipped LOUDLY. Mail's InvitationBody.cs is not in this checkout —
+        // it is on Mail's branch and has not merged yet. Printing this beats
+        // a suite that silently drops a section and still says "all ok".
+        t.Section("the carriage Mail actually ships — SKIPPED");
+        t.Note("apps/api/Modules/Mail/InvitationBody.cs is not in this checkout");
+        t.Note("it lives on Mail's branch; after the merge this section runs by itself");
+#else
         t.Section("the carriage Mail actually ships");
 
         var ical = Imip.Build(Event(), [Attendee("riya@gmail.com", "Riya")],
@@ -383,6 +393,7 @@ internal static class Program
         t.Ok("no body is returned", mismatched is null);
         t.Ok("a reason is", why is not null);
         t.Note("asserting a reason EXISTS, never its wording - Mail should be able to improve the sentence");
+#endif
     }
 
     // ==================================================================

@@ -71,13 +71,37 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The production files themselves. Not copies. InvitationBody is MAIL'S
-         file, linked so the structural test exercises the carriage that
-         actually ships rather than one assembled here. -->
+    <!-- The production files themselves. Not copies. -->
     <Compile Include="../../apps/api/Modules/Calendar/Imip.cs" Link="Imip.cs" />
     <Compile Include="../../apps/api/Modules/Calendar/ImipStructure.cs" Link="ImipStructure.cs" />
-    <Compile Include="../../apps/api/Modules/Mail/InvitationBody.cs" Link="InvitationBody.cs" />
     <Compile Include="../../apps/api/Shared/Data/CalendarEntities.cs" Link="CalendarEntities.cs" />
+  </ItemGroup>
+
+  <!-- ==========================================================================
+       MAIL'S HALF OF THE SEAM, IF IT IS PRESENT
+
+       InvitationBody.cs is Mail's file, and the carriage test links it so that
+       what gets checked is the assembly that actually SHIPS rather than one
+       this test wrote for itself. Testing your own reimplementation proves the
+       test correct and the shipping code untested.
+
+       But we work in LANES: separate worktrees on separate branches. Until
+       Mail's branch merges, that file does not exist in Core's checkout, and
+       an unconditional <Compile Include> made `dotnet run` fail here with
+       CS2001 — a build broken by which branch you happen to be standing in,
+       which is exactly the coupling lanes exist to prevent.
+
+       So it is conditional. Present: the carriage case runs. Absent: it is
+       SKIPPED LOUDLY — the suite prints that it skipped and why, because a
+       test that quietly vanishes is worse than one that fails. After the merge
+       the condition is simply always true and this comment becomes history.
+       ========================================================================== -->
+  <PropertyGroup Condition="Exists('$(MSBuildThisFileDirectory)../../apps/api/Modules/Mail/InvitationBody.cs')">
+    <DefineConstants>$(DefineConstants);HAS_MAIL_CARRIAGE</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)../../apps/api/Modules/Mail/InvitationBody.cs')">
+    <Compile Include="../../apps/api/Modules/Mail/InvitationBody.cs" Link="InvitationBody.cs" />
   </ItemGroup>
 
 </Project>
