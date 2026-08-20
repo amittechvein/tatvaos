@@ -70,8 +70,15 @@ public static class ConnectEndpoints
         string? Title, string? Kind,
         DateTimeOffset? ScheduledStart, DateTimeOffset? ScheduledEnd,
         string? Timezone, string? Password, string? WaitingRoom, bool? AllowGuests,
-        bool? AutoRecord, string? SharePolicy);
+        bool? AutoRecord, string? SharePolicy, string? Mode);
 
+    // ── NO Mode FIELD HERE, AND IT MUST STAY THAT WAY. ───────────────────
+    // The mode is chosen once and cannot change: a host who could flip
+    // 'private' to 'recorded' mid-meeting would make recordable a
+    // conversation people joined believing it could not be. Its absence from
+    // this record is the first lock; a trigger on connect.meetings is the one
+    // that still holds if somebody adds the field back without knowing why it
+    // was missing (20260908-connect-meeting-mode.sql).
     public sealed record UpdateMeetingRequest(
         string? Title, DateTimeOffset? ScheduledStart, DateTimeOffset? ScheduledEnd,
         string? Timezone, string? Password, string? WaitingRoom,
@@ -103,6 +110,7 @@ public static class ConnectEndpoints
         m.Locked,
         m.AutoRecord,
         m.SharePolicy,
+        m.Mode,
         m.CreatedByUserId,
         myRole,
         m.CreatedAt,
@@ -255,7 +263,7 @@ public static class ConnectEndpoints
     // ==================================================================
     private static async Task<IResult> CreateMeetingAsync(
         CreateMeetingRequest req, AppDbContext db, TenantContext tenant,
-        IPasswordHasher hasher, AuditWriter audit, CancellationToken ct)
+        IPasswordHasher hasher, ConnectRoomKey roomKeys, AuditWriter audit, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
 
@@ -281,6 +289,29 @@ public static class ConnectEndpoints
         if (!ConnectShare.IsValidPolicy(share))
             return Results.BadRequest(new { error = "Sharing is open to the host, the host and co-hosts, or everyone." });
 
+        // ── THE MODE. The only place it is ever set. ─────────────────────
+        var mode = (req.Mode ?? ConnectModes.Recorded).Trim().ToLowerInvariant();
+        if (!ConnectModes.IsValid(mode))
+            return Results.BadRequest(new { error = "A meeting is either recorded or private." });
+
+        // A server with no room-key secret cannot encrypt anything, so it says
+        // so rather than creating a meeting labelled private that is not.
+        // Recorded meetings are unaffected — this is a per-feature refusal,
+        // the same shape as recording being off.
+        if (mode == ConnectModes.Private && !roomKeys.IsConfigured)
+            return Results.Json(new
+            {
+                error = "Private meetings are not switched on for this server. "
+                      + "An administrator can enable them.",
+            }, statusCode: 503);
+
+        // The database refuses this combination too (meetings_private_no_autorecord).
+        // Refusing it HERE is what makes a person meet a sentence instead of a
+        // 23514: the constraint is the backstop, not the user interface.
+        var autoRecord = req.AutoRecord ?? false;
+        if (mode == ConnectModes.Private && autoRecord)
+            return Results.BadRequest(new { error = ConnectModes.MediaRefusal });
+
         var meeting = new ConnectMeeting
         {
             TenantId = tenant.TenantId,
@@ -299,8 +330,9 @@ public static class ConnectEndpoints
             // org's recording flag and the storage gate when the room actually
             // starts. Accepted here even if recording is off right now, because
             // "on for the org by Monday's meeting" is a normal sequence.
-            AutoRecord = req.AutoRecord ?? false,
+            AutoRecord = autoRecord,
             SharePolicy = share,
+            Mode = mode,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow,
         };
@@ -321,8 +353,11 @@ public static class ConnectEndpoints
         });
 
         await db.SaveChangesAsync(ct);
+        // The mode is in the audit row because "was this meeting recordable"
+        // is a question somebody will ask months later, and the row is the
+        // only place that can still answer it.
         await audit.WriteAsync("connect.meeting.created", "connect.meeting", meeting.Id.ToString(),
-            after: new { meeting.Title, meeting.Kind, meeting.ScheduledStart },
+            after: new { meeting.Title, meeting.Kind, meeting.ScheduledStart, meeting.Mode },
             ct: ct, productCode: "connect");
 
         return Results.Created($"/api/connect/meetings/{meeting.Id}", Shape(meeting, "host"));
@@ -378,7 +413,15 @@ public static class ConnectEndpoints
         var lockChanged = req.Locked is bool l && l != meeting.Locked;
         if (req.Locked is bool lk) meeting.Locked = lk;
 
-        if (req.AutoRecord is bool ar) meeting.AutoRecord = ar;
+        // Auto-record on a private meeting is refused in words. Without this
+        // the database's CHECK would answer instead, and a person would meet
+        // a 500 carrying SQLSTATE 23514 rather than a sentence.
+        if (req.AutoRecord is bool ar)
+        {
+            if (ar && !meeting.MediaIsReadable)
+                return Results.BadRequest(new { error = ConnectModes.MediaRefusal });
+            meeting.AutoRecord = ar;
+        }
 
         var shareChanged = false;
         if (req.SharePolicy is { } sp)
@@ -459,7 +502,8 @@ public static class ConnectEndpoints
     // ==================================================================
     private static async Task<IResult> JoinAsync(
         Guid id, JoinRequest? req, AppDbContext db, TenantContext tenant,
-        IPasswordHasher hasher, LiveKitTokenService tokens, CancellationToken ct)
+        IPasswordHasher hasher, LiveKitTokenService tokens, ConnectRoomKey roomKeys,
+        CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
         if (!tokens.IsConfigured)
@@ -541,6 +585,13 @@ public static class ConnectEndpoints
             wsUrl = tokens.PublicUrl,
             identity,
             role = role ?? "participant",
+            meeting.Mode,
+            // ── THE MEDIA KEY, and only for a private meeting. ───────────
+            // Null on a recorded meeting: absent rather than unused, so a
+            // client cannot silently encrypt a room the server expects to be
+            // able to record. It rides this one response and dies with the
+            // tab — it is never logged, never audited, never in a webhook.
+            roomKey = meeting.MediaIsReadable ? null : roomKeys.For(id),
         });
     }
 

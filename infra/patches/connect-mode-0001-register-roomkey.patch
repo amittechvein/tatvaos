@@ -1,0 +1,28 @@
+--- a/apps/api/Program.cs
++++ b/apps/api/Program.cs
+@@ -148,6 +148,25 @@
+ // ─────────────────────────────────────────────────────────────────────────
+ builder.Services.AddSingleton<TatvaOS.Api.Modules.Connect.ConnectDownloadTicket>();
+ 
++// The Private-meeting media key. Singleton for the same reason as the ticket
++// above: it reads one secret at start and holds no request state.
++//
++// ─────────────────────────────────────────────────────────────────────────
++//  THIS LINE IS LOAD-BEARING FOR THE SAME REASON THE ONE ABOVE IS.
++//
++//  ConnectRoomKey is a handler parameter on /api/connect/g/wait/{waitToken},
++//  which is a GET. An unregistered type is not an error to the minimal-API
++//  binder — it cannot resolve it as a service, so it INFERS it as the request
++//  BODY, and a GET may not have an inferred body. That throws while the
++//  endpoint graph is being built, before a single request, taking mail,
++//  calendar, space and login down with it. Exactly what the absence of the
++//  ConnectDownloadTicket registration did.
++//
++//  `dotnet build` is happy without this line, and so is every unit test,
++//  because the binder only runs when the app starts.
++// ─────────────────────────────────────────────────────────────────────────
++builder.Services.AddSingleton<TatvaOS.Api.Modules.Connect.ConnectRoomKey>();
++
+ // Scoped: it writes through the request's AppDbContext and reads its
+ // TenantContext. A singleton holding either would serve one tenant's scope to
+ // whichever request arrived next.

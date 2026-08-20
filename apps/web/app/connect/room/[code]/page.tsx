@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic';
 import { use, useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import {
-  connectApi, guestApi, DoorClosedError, WrongPasswordError, GUEST_FAILURE,
+  connectApi, guestApi, e2eeSupported, DoorClosedError, WrongPasswordError, GUEST_FAILURE,
   type Doorstep, type JoinResult, type Meeting, type Seat,
 } from '@/lib/connect';
 import { Centre, Spinner } from './RoomChrome';
@@ -68,6 +68,10 @@ type Phase =
   | { kind: 'prejoin'; seat: Seat; meeting: Meeting | null }
   | { kind: 'live'; seat: Seat; meeting: Meeting | null; prefs: JoinPrefs }
   | { kind: 'denied' }
+  // This browser cannot decode an encrypted meeting. Its own phase, not a
+  // 'gone', because nothing is wrong with the link — the answer is "open it
+  // somewhere else", and that is a different sentence.
+  | { kind: 'cannotEncrypt' }
   | { kind: 'gone'; message: string };
 
 const WAIT_POLL_MS = 2500;
@@ -89,6 +93,13 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
           // Routing a colleague through the guest door would make them a guest
           // in their own organisation's meeting.
           const meeting = await connectApi.byCode(authedFetch, code);
+          // BEFORE the token. A private meeting on a browser without the
+          // media-transform APIs would join, publish nothing anyone can
+          // decode, and look broken.
+          if (meeting.mode === 'private' && !e2eeSupported()) {
+            if (alive) setPhase({ kind: 'cannotEncrypt' });
+            return;
+          }
           if (meeting.hasPassword) {
             if (alive) {
               setPhase({
@@ -100,6 +111,12 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
                     : meeting.status === 'ended' ? 'ended' : 'not_started',
                   passwordRequired: true,
                   locked: meeting.locked,
+                  // A signed-in caller reaches the door through byCode, not
+                  // through the guest doorstep, so this object is assembled
+                  // from the meeting row. The mode has to come with it, or
+                  // the two paths would describe the same meeting
+                  // differently — and the compiler caught exactly that.
+                  mode: meeting.mode,
                 },
                 meeting,
               });
@@ -115,7 +132,12 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
         }
 
         const door = await guestApi.doorstep(code);
-        if (alive) setPhase({ kind: 'door', door, meeting: null });
+        if (!alive) return;
+        if (door.mode === 'private' && !e2eeSupported()) {
+          setPhase({ kind: 'cannotEncrypt' });
+          return;
+        }
+        setPhase({ kind: 'door', door, meeting: null });
       } catch (e) {
         if (!alive) return;
         if (e instanceof DoorClosedError) { setPhase({ kind: 'gone', message: GUEST_FAILURE }); return; }
@@ -164,6 +186,25 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
           or the code may have a typo.
         </p>
         <Link href="/connect" className="cx-mini">Back to Connect</Link>
+      </Centre>
+    );
+  }
+
+  if (phase.kind === 'cannotEncrypt') {
+    return (
+      <Centre>
+        <h1 style={{ fontSize: 20, fontWeight: 600, marginBottom: 8 }}>
+          This browser cannot open a private meeting
+        </h1>
+        <p style={{ color: '#9b9bab', maxWidth: 460, marginBottom: 8 }}>
+          This meeting is encrypted so that even the meeting server cannot see or
+          hear it. Your browser does not support the encryption it uses, so it
+          would not be able to decode anyone.
+        </p>
+        <p style={{ color: '#9b9bab', maxWidth: 460 }}>
+          A recent Chrome, Edge or Safari will open it. Nothing is wrong with
+          your link.
+        </p>
       </Centre>
     );
   }

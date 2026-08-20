@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
+  ExternalE2EEKeyProvider,
   Room, RoomEvent, Track, DisconnectReason, ConnectionQuality,
   type Participant as LKParticipant,
   type RemoteParticipant,
@@ -156,6 +157,10 @@ export default function Stage({ seat, meeting, prefs }: {
 
   const isHost = meeting?.myRole === 'host' || meeting?.myRole === 'cohost';
 
+  // A guest has no meeting row, so the seat carries the mode for them. Both
+  // come from the same database column, so they cannot disagree.
+  const isPrivate = (meeting?.mode ?? seat.mode) === 'private';
+
   // The SDK handlers are registered once, so they close over the FIRST render's
   // state. `panel` read directly inside one would be permanently null. A ref
   // updated every render is the standard way out.
@@ -173,6 +178,43 @@ export default function Stage({ seat, meeting, prefs }: {
   // ---------------------------------------------------------------------
   useEffect(() => {
     const chosen = prefsRef.current;
+
+    // ── ENCRYPTION, FOR A PRIVATE MEETING ONLY. ────────────────────────
+    //
+    // The key came down with the seat and exists nowhere else: not in
+    // storage, not in the URL, not in a log. It dies with this tab.
+    //
+    // Everything about the setup is deliberately DONE BEFORE connect(), and
+    // a failure below aborts the join rather than continuing. See the catch
+    // in the async block further down for why that is not negotiable.
+    //
+    // The worker is constructed with `new Worker(new URL(...))` because that
+    // is the form the bundler understands statically; a path assembled at
+    // runtime would not be emitted into the bundle at all. The specifier is
+    // a BARE package name, which is LiveKit's documented form.
+    //
+    // NO `{ type: 'module' }`, and that is a finding rather than an omission.
+    // It was written that way first; webpack compiled the worker to a CLASSIC
+    // one anyway and emitted `type: undefined` into the bundle, because the
+    // chunk it produces uses importScripts, which module workers do not have.
+    // Verified in the build output: the emitted call is
+    //     new Worker(n.tu(new URL(n.p + n.u(3347), n.b)), { type: void 0 })
+    // and chunk 3347 is a worker bootstrap that importScripts the rest. So
+    // declaring 'module' here would have been a claim the output contradicts —
+    // and classic is the better answer anyway on the older Android browsers
+    // our guests actually carry.
+    //
+    // STILL UNVERIFIED WITHOUT A BROWSER: that the chunk URL resolves at
+    // runtime behind our public path, and that the media genuinely decodes.
+    // A green build proves the worker was bundled, not that it runs.
+    const wantsE2ee = typeof seat.roomKey === 'string' && seat.roomKey.length > 0;
+    let keyProvider: ExternalE2EEKeyProvider | null = null;
+    let e2eeWorker: Worker | null = null;
+    if (wantsE2ee) {
+      keyProvider = new ExternalE2EEKeyProvider();
+      e2eeWorker = new Worker(new URL('livekit-client/e2ee-worker', import.meta.url));
+    }
+
     const r = new Room({
       adaptiveStream: true,
       dynacast: true,
@@ -181,6 +223,9 @@ export default function Stage({ seat, meeting, prefs }: {
       // already from the right camera.
       audioCaptureDefaults: chosen?.micId ? { deviceId: chosen.micId } : undefined,
       videoCaptureDefaults: chosen?.camId ? { deviceId: chosen.camId } : undefined,
+      e2ee: keyProvider && e2eeWorker
+        ? { keyProvider, worker: e2eeWorker }
+        : undefined,
     });
     roomRef.current = r;
     setRoom(r);
@@ -300,6 +345,26 @@ export default function Stage({ seat, meeting, prefs }: {
 
     void (async () => {
       try {
+        // ── THE KEY, THEN ENCRYPTION ON, THEN CONNECT. IN THAT ORDER. ──
+        //
+        // AND IF ANY OF IT FAILS, WE DO NOT JOIN.
+        //
+        // The tempting shape is a try/catch that logs and carries on, the way
+        // the camera and microphone are handled twenty lines below — those are
+        // survivable, because attending without a camera is still attending.
+        // This one is not. A participant who joined a meeting labelled
+        // Private with encryption silently off would be publishing plaintext
+        // into a room everyone believes is encrypted, and NOBODY WOULD SEE IT
+        // HAPPEN: the tiles would look normal to them and to everyone else.
+        //
+        // So the failure is loud and total. A meeting you cannot join is a
+        // bad afternoon; a meeting that lied about being private is the whole
+        // promise gone.
+        if (keyProvider && wantsE2ee) {
+          await keyProvider.setKey(seat.roomKey as string);
+          await r.setE2EEEnabled(true);
+        }
+
         await r.connect(seat.wsUrl, seat.token);
         // Mic and camera are attempted separately and each failure survivable:
         // joining audio-only because the camera is busy is a normal way to
@@ -316,13 +381,28 @@ export default function Stage({ seat, meeting, prefs }: {
         }
         rerender();
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Could not connect to the meeting.');
+        // Named separately when it was the encryption that failed, because
+        // "could not connect" would send somebody to check their wifi.
+        setError(wantsE2ee
+          ? 'This private meeting could not be encrypted on this device, so it was '
+            + 'not joined. Nothing was published. Try a recent Chrome, Edge or Safari.'
+          : e instanceof Error ? e.message : 'Could not connect to the meeting.');
         setConnState('over');
       }
     })();
 
-    return () => { void r.disconnect(); roomRef.current = null; };
-  }, [seat.wsUrl, seat.token, rerender]);
+    return () => {
+      void r.disconnect();
+      roomRef.current = null;
+      // The worker outlives the Room unless it is told otherwise, and a
+      // leaked one per rejoin is a thread nobody is counting.
+      e2eeWorker?.terminate();
+    };
+    // seat.roomKey belongs here with the other seat fields. It cannot change
+    // without the token changing — both arrive in one response — so this adds
+    // no re-runs; it is listed because a dependency the effect reads and the
+    // array omits is a lie that stays true only by luck.
+  }, [seat.wsUrl, seat.token, seat.roomKey, rerender]);
 
   // Device labels are blank until permission exists, so a menu built too early
   // is a list of empty strings.
@@ -939,6 +1019,15 @@ export default function Stage({ seat, meeting, prefs }: {
               {connState === 'live' && <span className="cx-dot" aria-hidden="true" />}
               <span>{participants.length} {participants.length === 1 ? 'person' : 'people'}</span>
               {meeting?.locked && <span>· Locked</span>}
+              {/* Says what is true and no more: the meeting SERVER cannot
+                  hear it. Not "end-to-end encrypted" unqualified — our API
+                  derived the key, and the wording rule in lib/connect.ts
+                  explains why that distinction is not pedantry. */}
+              {isPrivate && (
+                <span title="Encrypted so the meeting server cannot see or hear it. It cannot be recorded.">
+                  · 🔒 Private
+                </span>
+              )}
             </div>
           </div>
           <div className="cx-ghost">
@@ -1103,7 +1192,7 @@ export default function Stage({ seat, meeting, prefs }: {
           {/* Hidden entirely when this server has no egress, rather than shown
               and refusing. A control that is always there and never works is
               read as a broken product, not as an unconfigured one. */}
-          {isHost && meeting && !recOff && (
+          {isHost && meeting && !recOff && !isPrivate && (
             <button type="button" className={`cx-btn ${recording ? 'is-rec' : ''}`}
                     onClick={() => void toggleRecording()} disabled={recBusy}
                     aria-pressed={recording !== null}

@@ -33,6 +33,30 @@ export type MeetingRole = 'host' | 'cohost' | 'participant';
  *  reads it only to decide what to show. */
 export type SharePolicy = 'host' | 'cohost' | 'everyone';
 
+/**
+ * What kind of meeting this is, chosen at creation and never changeable.
+ *
+ * 'private' means the media is encrypted with a key the meeting server does
+ * not hold, so recording, transcription and AI notes are impossible rather
+ * than merely switched off.
+ *
+ * ── WORDING RULE, NOT A STYLE PREFERENCE ────────────────────────────────
+ * Never render 'private' as plain "end-to-end encrypted". Our API derives
+ * the key and hands it out, so the true claim is that the MEETING SERVER
+ * cannot see or hear the meeting — not that TatvaOS could never. Say the
+ * first; a customer who reads the second and later learns otherwise has
+ * been misled. PRIVATE_BLURB below is the sentence to use.
+ */
+export type MeetingMode = 'recorded' | 'private';
+
+export const PRIVATE_BLURB =
+  'Encrypted so the meeting server cannot see or hear it. It cannot be '
+  + 'recorded, transcribed or summarised.';
+
+export const RECORDED_BLURB =
+  'Can be recorded, transcribed and summarised. Everyone is told, on screen '
+  + 'and aloud, whenever recording starts.';
+
 export interface Meeting {
   id: string;
   code: string;
@@ -53,6 +77,7 @@ export interface Meeting {
    *  recording flag and the storage gate at the moment the room starts. */
   autoRecord: boolean;
   sharePolicy: SharePolicy;
+  mode: MeetingMode;
   createdByUserId: string | null;
   myRole: MeetingRole | null;
   createdAt: string;
@@ -90,6 +115,10 @@ export interface Seat {
   token: string;
   wsUrl: string;
   identity: string;
+  mode?: MeetingMode;
+  /** Present ONLY for a private meeting. It rides this one response and dies
+   *  with the tab: never store it, never log it, never put it in a URL. */
+  roomKey?: string | null;
 }
 
 /** Parked in the waiting room; poll `waitToken` until admitted or denied. */
@@ -103,6 +132,9 @@ export type JoinResult = Seat | Waiting;
 /** What a code-holder learns at the door, before they are anybody. */
 export interface Doorstep {
   title: string;
+  /** So the browser can refuse an encrypted meeting it cannot decode before
+   *  a token is ever minted. */
+  mode: MeetingMode;
   scheduledStart: string | null;
   state: 'active' | 'ended' | 'not_started';
   passwordRequired: boolean;
@@ -120,6 +152,9 @@ export interface CreateMeeting {
   allowGuests?: boolean;
   autoRecord?: boolean;
   sharePolicy?: SharePolicy;
+  /** Chosen once. There is deliberately no way to change it afterwards —
+   *  UpdateMeeting below does not carry it, and the database refuses. */
+  mode?: MeetingMode;
 }
 
 export type UpdateMeeting = Partial<CreateMeeting & { locked: boolean }>;
@@ -150,6 +185,38 @@ async function json<T>(res: Response, fallback: string): Promise<T> {
     throw new Error(msg);
   }
   return res.json() as Promise<T>;
+}
+
+/**
+ * Can this browser do encrypted meetings at all?
+ *
+ * ── ASKED AT THE DOOR, BEFORE A TOKEN IS MINTED. ────────────────────────
+ * LiveKit's E2EE needs a secure context, a Worker, and the browser's own
+ * media-transform API. Where any of those is missing the meeting simply will
+ * not decode — and the failure mode without this check is a black screen and
+ * silence, which reads as "TatvaOS is broken", not "your browser is too old".
+ *
+ * A sentence before a token beats a black screen after one. That is the rule
+ * from CONNECT_PHASE_NEXT; this function is where it is enforced.
+ *
+ * Feature-DETECTED, never sniffed from a user-agent string or a support
+ * table: the fleet our guests actually carry is older Android and Firefox,
+ * and a table in a document is a claim, while this is the browser answering
+ * for itself. Both spellings are checked because browsers disagree about
+ * which one they ship — betting on one would fail on half the fleet.
+ */
+export function e2eeSupported(): boolean {
+  if (typeof window === 'undefined') return false;
+  // A secure context is required for the transform APIs and for workers to
+  // do anything useful with media. localhost counts as secure.
+  if (!window.isSecureContext) return false;
+  if (typeof Worker === 'undefined') return false;
+  const w = window as unknown as Record<string, unknown>;
+  const insertable = 'RTCRtpSender' in w
+    && typeof (w.RTCRtpSender as { prototype?: Record<string, unknown> })?.prototype
+         ?.createEncodedStreams === 'function';
+  const scriptTransform = 'RTCRtpScriptTransform' in w;
+  return insertable || scriptTransform;
 }
 
 /**

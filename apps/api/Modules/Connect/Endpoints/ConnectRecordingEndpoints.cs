@@ -171,6 +171,22 @@ public static class ConnectRecordingEndpoints
         if (meeting is null) return NotFound();
         if (await RoleOfAsync(db, id, uid, ct) is not ("host" or "cohost")) return Forbidden();
 
+        // ── GATE 0 — THE MEETING'S OWN MODE, AND IT IS NOT A POLICY. ─────
+        //
+        // Before the organisation, the person or the disk, because those
+        // three are all decisions somebody could change. This one is not:
+        // a private meeting's media is encrypted with a key the SFU does not
+        // hold, so an egress attached to it would write an unplayable file.
+        // Refusing here means the failure is a sentence now rather than a
+        // corrupt recording forty minutes later.
+        //
+        // Checked in the ENDPOINT rather than trusted from the UI, because
+        // the UI hiding a button is decoration — assume someone calls this
+        // route directly, because eventually someone will. That assumption is
+        // what the test in infra/scripts/connect-mode-test.sh exercises.
+        if (!meeting.MediaIsReadable)
+            return Results.Json(new { error = ConnectModes.MediaRefusal }, statusCode: 409);
+
         // Gate 1 — the organisation, re-read every time.
         var allowed = await db.Database
             .SqlQuery<bool>($"""SELECT connect.recording_allowed({tid}) AS "Value" """)

@@ -320,8 +320,26 @@ public static class ConnectWebhookEndpoints
         // failure-isolated below: a recording that cannot start must cost a
         // recording, never the event — the event log sitting empty for the
         // module's whole life is how this file learned that priority.
-        if (saved && kind == "room_started" && meeting is { AutoRecord: true })
+        // MediaIsReadable first, and it is not merely "the flag is unchecked":
+        // a private meeting cannot carry auto_record at all (the API refuses
+        // it, and meetings_private_no_autorecord makes the row
+        // unrepresentable), so this can only be reached by a row that
+        // predates the constraint or was written around it. Either way the
+        // answer is the same — there is nothing decodable to record — and
+        // saying so here means the auto-record path is inert for private
+        // meetings by its own test, not by the absence of a flag.
+        if (saved && kind == "room_started"
+            && meeting is { AutoRecord: true, MediaIsReadable: true })
+        {
             await TryAutoRecordAsync(db, egress, recOptions, meeting, tenantIds[0], log, ct);
+        }
+        else if (saved && kind == "room_started" && meeting is { AutoRecord: true })
+        {
+            log.LogWarning(
+                "Auto-record for {MeetingId} ignored: the meeting is private, so its media "
+                + "cannot be decoded. A private meeting should not have carried this flag — "
+                + "check how the row was written.", meeting.Id);
+        }
 
         return Results.Ok();
     }

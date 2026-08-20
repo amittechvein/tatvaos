@@ -55,6 +55,24 @@ public sealed class ConnectMeeting
     /// the DATABASE — never from a client claim. See ConnectShare.</summary>
     public string SharePolicy { get; set; } = "everyone";
 
+    /// <summary>
+    /// recorded | private. Chosen at creation and IMMUTABLE — a database
+    /// trigger refuses any change, because the mode is a promise made to
+    /// everyone who already joined under it. See
+    /// 20260908-connect-meeting-mode.sql.
+    ///
+    /// A plain string, mapping to a plain text column by EF convention, so
+    /// nothing is needed in AppDbContext. That is deliberate:
+    /// meeting_events.payload is jsonb, was never mapped, and every insert
+    /// failed silently from the day the module shipped.
+    /// </summary>
+    public string Mode { get; set; } = ConnectModes.Recorded;
+
+    /// <summary>True when the server may decode this meeting's media at all —
+    /// the one question recording, transcription and notes all reduce to.</summary>
+    [NotMapped]
+    public bool MediaIsReadable => Mode != ConnectModes.Private;
+
     /// <summary>Reserved for Phase 2's Calendar toggle; unused in Phase 1.</summary>
     public Guid? CalendarEventId { get; set; }
 
@@ -109,6 +127,38 @@ public sealed class ConnectLobbyRequest
     public Guid? DecidedByUserId { get; set; }
     public DateTimeOffset? DecidedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+}
+
+/// <summary>
+/// The two meeting modes, and the one sentence each is allowed to claim.
+///
+/// Named constants rather than bare strings because these values appear in
+/// the migration's CHECK, in the API, and in the browser, and a typo in any
+/// one of them is a meeting that behaves as the wrong kind.
+/// </summary>
+public static class ConnectModes
+{
+    /// <summary>Recording, transcription and AI notes are available, with the
+    /// written and spoken notice. No E2EE.</summary>
+    public const string Recorded = "recorded";
+
+    /// <summary>End-to-end encrypted: the media server cannot decode the
+    /// media, so there is nothing to record, transcribe or summarise. Not a
+    /// policy — a property of the packets.</summary>
+    public const string Private = "private";
+
+    public static bool IsValid(string? mode) => mode is Recorded or Private;
+
+    /// <summary>
+    /// The refusal every media-touching endpoint gives for a Private meeting.
+    /// One sentence, in one place, so the reason cannot drift between the
+    /// three endpoints that say it — and so it never implies a setting the
+    /// host could change, because there isn't one.
+    /// </summary>
+    public const string MediaRefusal =
+        "This is a private meeting. Its audio and video are encrypted so that even "
+        + "the meeting server cannot read them, which means it cannot be recorded, "
+        + "transcribed or summarised. Create a recorded meeting if you need those.";
 }
 
 /// <summary>
