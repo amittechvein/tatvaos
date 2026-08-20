@@ -159,6 +159,61 @@ volumes and database — but they would all want ports 5432, 3000 and 25 on the
 same machine, and the second one fails. Agree who has the stack, or run
 `docker compose down` when you are finished with it.
 
+## Two checks on whether something is actually true
+
+These are not lane mechanics. They are here because this is the document every
+developer on the platform reads, and both were learned the expensive way in
+the same week.
+
+### Agreement between two things you wrote is not evidence
+
+**When two pieces of code must agree — an assembler and its checker, a writer
+and its reader, a migration and its entity — at least one of them must be the
+one that ships. And if both are yours, their agreement is not evidence of
+anything except that you are consistent.**
+
+Note what this does *not* say. It does not say "never write it twice". Two
+people independently implementing the same rule and comparing results is a
+real verification technique and a good one. The hazard is single authorship:
+one person writing both sides, then reading their agreement as proof.
+
+The illustration, 20 August 2026. Core's `ImipStructure` checked for a
+`multipart/alternative` by matching MimeKit's `MultipartAlternative` class.
+That class only exists when a message has been **parsed**. Anything that
+**builds** one writes `new Multipart("alternative")` and gets a plain
+`Multipart` with that subtype — byte-identical on the wire, different object
+in memory. So the checker rejected every correctly assembled message.
+
+MimeKit offers both spellings, and the named class is the one that reads
+better in a test. Had Core written the assembler as well, he would have
+reached for it in both places, been perfectly consistent, and shipped a
+checker that failed real mail. Instead the test linked Mail's actual file.
+The disagreement surfaced within an hour of the first run.
+
+*(This rule is Mail's wording. Core's first draft said "never copy the
+implementation", which is more absolute than the truth and missed its own
+point — the fault was shared authorship, not duplication.)*
+
+### The Pune test
+
+**When a rule sounds abstract, check whether it stays true for a customer in
+Pune with a Devanagari meeting title on a 2G connection.**
+
+Not a slogan. That is most of our users, and it is the case our instincts
+skip, because we write and test in English on fast connections.
+
+What it catches, from this week alone: folding an iCalendar line at 75
+*characters* rather than 75 *octets* — correct for English, broken for Hindi,
+where sixty characters is a hundred and eighty bytes. A MIME part carrying
+8-bit UTF-8 with no `Content-Transfer-Encoding` header — conformant-looking
+for ASCII, exposed for Devanagari. Both passed every test anyone would
+naturally have thought to run.
+
+It also settles arguments faster than the correct technical version does.
+"A part with 8-bit octets and no CTE header is non-conformant" is true and
+moved nobody. "An English invitation passes and a Hindi one is the live case"
+made the same two-line change obvious in a sentence.
+
 ## Pushing
 
 `push.cmd`, run **from your own lane folder**. It:

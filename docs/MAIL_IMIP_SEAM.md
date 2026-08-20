@@ -356,8 +356,9 @@ this week.
 # v1.4 — threading: Calendar chains to the ROOT, not to the previous message
 
 Mail's sender extraction landed (`MailSender.SubmitAsync`), and reading it
-settles how §3's threading requirement is actually met. **Nothing is needed
-from Mail. This is a rule on Calendar.**
+settles how §3's threading requirement is actually met. **The rule below needs
+nothing from Mail.** The limitation underneath it does — see the next
+heading, and do not read the two as one thing.
 
 How it works: `MailSubmission.InReplyToMessageId` is a `Guid` naming one of
 *our* `mail.messages` rows, not an RFC header. `SubmitAsync` looks that row
@@ -399,3 +400,38 @@ cancellation  In-Reply-To: <A>   References: <A>
 
 Calendar therefore needs one nullable column on the event to hold that first
 message id. It is a Calendar-side change and it is mine.
+
+## A ONE-ENTRY `References` IS PLATFORM-WIDE, NOT AN INVITATIONS PROBLEM
+
+**Restored 21 August 2026, having been lost in a merge.** Core resolved a
+clash between two drafts of v1.4 on a branch that was then deleted, and said
+the resolution was safe. It was not. Mail's draft reached `main` alone, and
+this section — the half that says the problem is bigger than calendars —
+existed nowhere. Mail found it by reading the merged file rather than
+trusting the account of it. Recorded because a limitation that reads as
+"already handled" is one nobody opens again, and that is how things sit
+broken here for weeks.
+
+**`SubmitAsync` writes a one-entry `References` for ALL mail, not only
+invitations.** `mail.messages` stores `MessageIdHeader` and nothing else.
+`MailThreads` reads the inbound `References` header at ingest to decide which
+conversation a message belongs to, and then discards it. So on reply there is
+nothing to append to and only the immediate parent's Message-Id can be
+written. Invitations are merely where it got noticed.
+
+It degrades gracefully in the ordinary case: each message points at its
+parent, so a client holding the whole conversation walks the links back. It
+fails when a message in the middle is missing — there is no second path home
+and the conversation splits. A cancellation arriving after someone missed the
+update is the sharpest version, which is why it surfaced here.
+
+**Chaining to the root closes it for Calendar only.** That rule sidesteps the
+gap for event mail; it does not narrow it for anything else the platform
+sends.
+
+**Closing it generally is Mail's:** store the inbound `References` header on
+`mail.messages` — one nullable column, plus a few lines in ingest and in
+`SubmitAsync`. **Not scheduled.** Deliberately so: nothing is blocked, and a
+schema change did not belong on the same deploy as the send-path refactor.
+But unscheduled is not the same as closed, which is the entire reason this
+has a heading of its own.
