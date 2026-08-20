@@ -29,6 +29,36 @@ import DOMPurify from 'dompurify';
  * a sandboxed cross-origin frame has nothing worth stealing even when they are.
  */
 
+/**
+ * How tall this message probably is, estimated from the markup.
+ *
+ * WHY AN ESTIMATE AND NOT A MEASUREMENT. Sizing an iframe to its content
+ * normally means reading `contentDocument` — which a sandbox without
+ * `allow-same-origin` denies, permanently and by design. That denial is layer
+ * 2 working, not a bug to route around, so the frame gets a considered guess
+ * instead of a number.
+ *
+ * IT ERRS TALL ON PURPOSE. Too tall is trailing whitespace. Too short is a
+ * porthole with its own scrollbar inside a pane that already scrolls, which
+ * is the state this replaces — every HTML message was 240px regardless of
+ * content.
+ */
+function estimateHeight(html: string): number {
+  const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+  // Roughly 55 characters to a line in this pane, 22px to a line.
+  const wrapped = Math.ceil(text.length / 55);
+
+  // Anything that ends a block starts a new line even when the text is short.
+  const blocks = (html.match(/<(br|\/p|\/div|\/tr|\/li|\/h[1-6]|\/table)\b/gi) ?? []).length;
+
+  // Images are the big unknown; assume a banner rather than an icon, because
+  // guessing small is the failure that hurts.
+  const images = (html.match(/<img\b/gi) ?? []).length;
+
+  return Math.min(4000, Math.max(180, (wrapped + blocks) * 22 + images * 180 + 48));
+}
+
 interface SafeHtmlProps {
   html: string;
   /** Show remote images immediately. Defaults to false, deliberately. */
@@ -105,9 +135,13 @@ export function SafeHtml({ html, allowRemoteInitially = false }: SafeHtmlProps) 
 <style>
   html,body{margin:0;padding:0}
   body{font:14px/1.6 ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;padding:4px 2px;word-break:break-word}
-  img{max-width:100%;height:auto}
+  img{max-width:100%!important;height:auto}
   a{color:#2145d6}
-  table{max-width:100%;border-collapse:collapse}
+  /* !important because bulk-mail tables carry inline width:600px, which beats
+     an ordinary rule and pushes a horizontal scrollbar into a 420px pane.
+     Author styles marked important outrank inline styles that are not. */
+  table{max-width:100%!important;border-collapse:collapse}
+  td,th{max-width:100%}
   blockquote{margin:8px 0;padding-left:12px;border-left:3px solid #e5e7eb;color:#6b7280}
   pre{white-space:pre-wrap}
   img[data-blocked-src]{
@@ -117,8 +151,18 @@ export function SafeHtml({ html, allowRemoteInitially = false }: SafeHtmlProps) 
 </style>
 </head><body>${body}</body></html>`;
 
-  // Size the frame to its content. postMessage is unavailable without
-  // allow-scripts, so measure from the parent instead.
+  // The estimate is the REAL mechanism, not a fallback. Recomputed when the
+  // body changes — which includes "Show images", since restoring remote
+  // content changes what there is to lay out.
+  useEffect(() => { setHeight(estimateHeight(body)); }, [body]);
+
+  // A genuine measurement, attempted anyway and expected to fail.
+  //
+  // With no allow-same-origin the frame has an opaque origin, so
+  // contentDocument throws every time — this is not an edge case, it is the
+  // only case. Kept because it costs nothing, refines the estimate on any
+  // browser that permits it, and starts working the day the sandbox is
+  // revisited. NEVER weaken the sandbox to make it succeed.
   useEffect(() => {
     const frame = frameRef.current;
     if (!frame) return;
