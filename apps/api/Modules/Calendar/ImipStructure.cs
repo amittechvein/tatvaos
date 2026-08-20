@@ -40,7 +40,7 @@ public static class ImipStructure
         var problems = new List<string>();
         if (message is null) return ["the message is null"];
 
-        var alternative = Find<MultipartAlternative>(message.Body);
+        var alternative = FindAlternative(message.Body);
         if (alternative is null)
         {
             problems.Add("no multipart/alternative — the invitation must be an ALTERNATIVE to the "
@@ -157,12 +157,29 @@ public static class ImipStructure
             }
     }
 
-    private static T? Find<T>(MimeEntity? entity) where T : MimeEntity
+    /// <summary>
+    /// Matched on the CONTENT TYPE, deliberately, and not on the CLR type.
+    ///
+    /// MimeKit only instantiates its MultipartAlternative class when it PARSES
+    /// a message. Code that builds one — which is what Mail does, and what any
+    /// caller of this method will hand us — writes `new Multipart("alternative")`
+    /// and gets a plain Multipart whose subtype happens to be "alternative".
+    /// The two produce byte-identical output; only the object graph differs.
+    ///
+    /// Checking `is MultipartAlternative` therefore rejected every correctly
+    /// assembled message that had not been round-tripped through the parser.
+    /// Found 20 August 2026, by running this against Mail's real builder rather
+    /// than against a message this file had assembled itself — which is the
+    /// entire argument for linking the production file instead of copying it.
+    /// </summary>
+    private static Multipart? FindAlternative(MimeEntity? entity)
     {
-        if (entity is T match) return match;
         if (entity is Multipart multipart)
+        {
+            if (multipart.ContentType.IsMimeType("multipart", "alternative")) return multipart;
             foreach (var child in multipart)
-                if (Find<T>(child) is T found) return found;
+                if (FindAlternative(child) is { } found) return found;
+        }
         return null;
     }
 }

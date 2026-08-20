@@ -31,9 +31,23 @@
         compile the exact files that run in production; a copy drifts and
         goes on passing against code nobody ships.
 
-     2. No test framework. A console app with an exit code needs no restore,
-        so it runs on a box with no network, in CI and on a laptop
-        identically. `dotnet run` and read the last line.
+     2. No test framework. A console app with an exit code, so there is no
+        test-runner to configure and `dotnet run` tells you everything.
+
+     THE NO-RESTORE PROPERTY WAS SPENT ON PURPOSE, 19 August 2026. This
+     project used to reference no packages at all and the header said so.
+     Testing the REAL carriage means linking Mail's InvitationBody and Core's
+     ImipStructure, and both need MimeKit - so it now needs one package.
+
+     Said here rather than quietly deleted, because a header that still
+     boasted "runs on a machine with no network" would be a lie somebody
+     eventually relies on. What was actually given up is narrower than the
+     old claim: MimeKit is already an API dependency, so any machine that has
+     built this repo has it cached. The loss is "runs on a machine that has
+     never built the API".
+
+     Bought with it: the alternative is testing a message the TEST assembled,
+     which proves the test correct and the shipping code untested.
     ═══════════════════════════════════════════════════════════════════════
   -->
 
@@ -51,8 +65,18 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- The production files themselves. Not copies. -->
+    <!-- Pinned to the API's version. A test that passes against a different
+         MimeKit than production ships is a test about a library nobody runs. -->
+    <PackageReference Include="MimeKit" Version="4.17.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The production files themselves. Not copies. InvitationBody is MAIL'S
+         file, linked so the structural test exercises the carriage that
+         actually ships rather than one assembled here. -->
     <Compile Include="../../apps/api/Modules/Calendar/Imip.cs" Link="Imip.cs" />
+    <Compile Include="../../apps/api/Modules/Calendar/ImipStructure.cs" Link="ImipStructure.cs" />
+    <Compile Include="../../apps/api/Modules/Mail/InvitationBody.cs" Link="InvitationBody.cs" />
     <Compile Include="../../apps/api/Shared/Data/CalendarEntities.cs" Link="CalendarEntities.cs" />
   </ItemGroup>
 

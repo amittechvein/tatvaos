@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text;
+using MimeKit;
 using TatvaOS.Api.Modules.Calendar;
+using TatvaOS.Api.Modules.Mail;
 using TatvaOS.Api.Shared.Data;
 
 namespace TatvaOS.Tests.CalendarImip;
@@ -62,6 +64,7 @@ internal static class Program
         Cancellation(t);
         ParseRealClients(t);
         ParseRefusals(t);
+        RealCarriage(t);
         NothingThrows(t);
     }
 
@@ -281,6 +284,105 @@ internal static class Program
         t.Ok("DELEGATED parses", delegated is not null);
         t.Ok("  but is NOT recorded as acceptance", delegated?.PartStat == "needs-action");
         t.Note("saying someone is coming when they handed it on is the worst possible answer");
+    }
+
+    // ==================================================================
+    //  THE REAL CARRIAGE — Mail's assembly, not one built here
+    // ==================================================================
+    //
+    //  Everything above tests the payload. This tests the MESSAGE, and it
+    //  calls MAIL'S InvitationBody.TryBuild to build it — the same method
+    //  SubmitAsync calls in production. Assembling one here instead would
+    //  prove this test correct and the shipping code untested, which is the
+    //  two-implementations problem that put a duplicate endpoint client on
+    //  main earlier the same day.
+    // ==================================================================
+    private static void RealCarriage(Harness t)
+    {
+        t.Section("the carriage Mail actually ships");
+
+        var ical = Imip.Build(Event(), [Attendee("riya@gmail.com", "Riya")],
+            "amit@tatvaos.com", "Amit Dadhich", Imip.MethodRequest);
+
+        var (body, refusal) = InvitationBody.TryBuild(
+            "Project review, Tuesday.", "<p>Project review, Tuesday.</p>", ical, Imip.MethodRequest);
+
+        t.Ok("a good submission assembles", body is not null);
+        t.Ok("  and is not refused", refusal is null);
+
+        if (body is null)
+        {
+            t.Ok($"  [refused: {refusal}]", false);
+            return;
+        }
+
+        var message = new MimeMessage { Body = body };
+        var problems = ImipStructure.Check(message, Imip.MethodRequest);
+
+        t.Ok("ImipStructure finds no fault in it", problems.Count == 0);
+        foreach (var problem in problems) t.Ok($"  PROBLEM: {problem}", false);
+
+        // The thing Mail asked to have measured rather than assumed: MimeKit
+        // chooses the alternative part's encoding, and "it picks something
+        // that survives" was the last unverified assertion in that half.
+        var alternative = message.BodyParts.OfType<TextPart>()
+            .FirstOrDefault(p => p.ContentType.IsMimeType("text", "calendar"));
+        if (alternative is not null)
+            t.Note($"MimeKit chose {alternative.ContentTransferEncoding} for the alternative part");
+
+        // ── AND AGAIN, THROUGH THE WIRE ────────────────────────────────
+        //
+        //  Everything above inspects the object graph Mail built. Gmail never
+        //  sees that graph; it sees BYTES. MimeKit chooses transfer encodings
+        //  at WRITE time, so the encoding question cannot be answered by
+        //  looking at the object at all — and a payload that survives in
+        //  memory but is mangled on serialisation would pass every assertion
+        //  above and still fail at the customer.
+        //
+        //  So: write it out, parse it back, check the parsed result. This is
+        //  the closest this suite gets to a real send.
+        // ────────────────────────────────────────────────────────────────
+        t.Section("and again after a round trip through the wire format");
+
+        using var wire = new MemoryStream();
+        message.WriteTo(wire);
+        wire.Position = 0;
+        var delivered = MimeMessage.Load(wire);
+
+        var afterWire = ImipStructure.Check(delivered, Imip.MethodRequest);
+        t.Ok("the serialised-and-reparsed message is still correct", afterWire.Count == 0);
+        foreach (var problem in afterWire) t.Ok($"  PROBLEM: {problem}", false);
+
+        var wireText = Encoding.UTF8.GetString(wire.ToArray());
+        t.Ok("the message on the wire has no bare LF",
+            !wireText.Replace("\r\n", "").Contains('\n'));
+
+        var deliveredCalendar = delivered.BodyParts.OfType<TextPart>()
+            .FirstOrDefault(p => p.ContentType.IsMimeType("text", "calendar"));
+        if (deliveredCalendar is not null)
+        {
+            t.Note($"ON THE WIRE the alternative part is {deliveredCalendar.ContentTransferEncoding}");
+            using var payload = new MemoryStream();
+            deliveredCalendar.Content.DecodeTo(payload);
+            t.Ok("and the payload comes back BYTE FOR BYTE what Calendar produced",
+                Encoding.UTF8.GetString(payload.ToArray()) == InvitationBody.Crlf(ical));
+        }
+
+        var attachment = delivered.BodyParts.OfType<MimePart>()
+            .FirstOrDefault(p => (p.FileName ?? "").EndsWith(".ics", StringComparison.Ordinal));
+        if (attachment is not null)
+            t.Note($"the attachment is {attachment.ContentTransferEncoding}, {attachment.ContentType.MimeType}");
+
+        // A header that disagrees with the body renders as an invitation and
+        // cancels the meeting — the worst of both. It cannot happen today
+        // because Calendar writes both from one argument, which is exactly
+        // why the guard is worth having: it notices when that stops being true.
+        t.Section("a header that disagrees with the body is refused");
+        var (mismatched, why) = InvitationBody.TryBuild(
+            "x", "<p>x</p>", ical, Imip.MethodCancel);
+        t.Ok("no body is returned", mismatched is null);
+        t.Ok("a reason is", why is not null);
+        t.Note("asserting a reason EXISTS, never its wording - Mail should be able to improve the sentence");
     }
 
     // ==================================================================
