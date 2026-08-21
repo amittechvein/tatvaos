@@ -288,11 +288,23 @@ function NotesCard({ notes, meetingId, isHost, show, onToggle, onRegenerate, bus
       // Decision 5 of the migration, surfaced. A summary that MIGHT have been
       // written by a model and might have been assembled by a regex, with no
       // way to tell, is worse than either one honestly labelled.
+      // ── THREE TRUE SENTENCES, AND THIS USED TO TELL ONE LIE. ────────────
+      //
+      // "no transcript" cannot say WHY there is none, which is why the notes
+      // carry hadRecording alongside hadTranscript. This subtitle ignored it
+      // and said "this meeting was not recorded" on a meeting whose recording
+      // is listed in the card directly above — the page contradicting itself
+      // on one screen, while the emailed copy said the correct thing.
+      //
+      // A person reading "not recorded" next to their own recording either
+      // stops trusting the notes or goes looking for a bug in the recorder.
       subtitle={n.kind === 'model'
         ? `Written by ${n.model ?? 'a language model'}${n.generatedAt ? ` · ${timeLabel(n.generatedAt)}` : ''}`
         : n.hadTranscript
           ? 'Assembled from the transcript on this server — no model was involved'
-          : 'From attendance only — this meeting was not recorded'}
+          : n.hadRecording
+            ? 'From attendance only — the meeting was recorded, but no transcript was made of it'
+            : 'From attendance only — this meeting was not recorded'}
       className="mt-3"
       actions={(
         <>
@@ -426,6 +438,22 @@ function MinutesActions({ meetingId, isHost }: { meetingId: string; isHost: bool
   const [said, setSaid] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
 
+  // ── A SUCCESS MESSAGE THAT NEVER LEAVES BECOMES FURNITURE. ──────────────
+  //
+  // "Downloaded." sat in the header for the rest of the session, wedged
+  // between two buttons, long after the file had been saved — it stopped
+  // meaning "just now" and started looking like a broken label. Confirmation
+  // is worth a few seconds and no more.
+  //
+  // A FAILURE is not cleared: it is the only place the reason appears, and a
+  // person who looked away for four seconds would be left with a button that
+  // silently did nothing.
+  useEffect(() => {
+    if (said === null || failed) return;
+    const t = setTimeout(() => setSaid(null), 4000);
+    return () => clearTimeout(t);
+  }, [said, failed]);
+
   async function run(kind: 'file' | 'mail', fn: () => Promise<string>) {
     setBusy(kind);
     setSaid(null);
@@ -469,8 +497,13 @@ function MinutesActions({ meetingId, isHost }: { meetingId: string; isHost: bool
         </Button>
       )}
 
+      {/* w-100 puts this on its OWN line inside the header's wrapping flex
+          row. Without it the message is just another flex item and lands
+          BETWEEN the buttons — which is what pushed "Write again" out of line
+          and made a confirmation look like a broken control. A sentence is
+          not a button and should not queue with them. */}
       {said && (
-        <span className={`fs-12 ms-2 ${failed ? 'text-danger' : 'text-muted'}`}>{said}</span>
+        <span className={`w-100 fs-12 ${failed ? 'text-danger' : 'text-muted'}`}>{said}</span>
       )}
     </>
   );

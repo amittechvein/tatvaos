@@ -79,6 +79,29 @@ const WAIT_POLL_MS = 2500;
 export default function RoomPage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = use(params);
   const { user, loading: authLoading, authedFetch } = useAuth();
+
+  // ── WHY THIS IS AN ID AND NOT THE USER OBJECT. ──────────────────────────
+  //
+  // This is the dependency of the effect below, and it decides how long a
+  // meeting can last.
+  //
+  // An access token lives fifteen minutes. When it expires the auth provider
+  // silently refreshes and calls setUser() with a freshly PARSED object —
+  // same person, same values, new identity. Any effect depending on `user`
+  // therefore re-ran on a timer: this one re-resolved the code, minted a
+  // second seat, and put the phase back to 'prejoin'. From the person's side
+  // they were dropped out of a live meeting onto the join screen at around
+  // the fifteen-minute mark, with no message, and had to rejoin — and it
+  // would happen again fifteen minutes later, forever.
+  //
+  // It only ever hit SIGNED-IN people; a guest has no session to refresh,
+  // which is why the attendance for the meeting that found this shows the
+  // host with "rejoined 1×" and the guest sitting through it unbroken.
+  //
+  // The identity of the signed-in person is what this effect actually cares
+  // about, and an id is a string: it is equal to itself across a refresh, so
+  // the effect stays put. Do not "simplify" this back to `user`.
+  const userId = user?.id ?? null;
   const [phase, setPhase] = useState<Phase>({ kind: 'resolving' });
 
   useEffect(() => {
@@ -87,7 +110,7 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
 
     const run = async () => {
       try {
-        if (user) {
+        if (userId) {
           // Signed in: resolve the code to a meeting, then take the seat the
           // authenticated route mints — carrying their real identity and role.
           // Routing a colleague through the guest door would make them a guest
@@ -147,7 +170,10 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
 
     void run();
     return () => { alive = false; };
-  }, [authLoading, user, authedFetch, code]);
+    // userId, NOT user — see the note where it is derived. authedFetch is
+    // stable (its own dependency chain bottoms out at a ref and an empty
+    // callback), so nothing else in this array moves during a meeting.
+  }, [authLoading, userId, authedFetch, code]);
 
   useEffect(() => {
     if (phase.kind !== 'waiting') return;
