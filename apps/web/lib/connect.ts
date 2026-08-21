@@ -188,12 +188,29 @@ export class DoorClosedError extends Error {
   constructor(message = GUEST_FAILURE) { super(message); }
 }
 
+/**
+ * The server's sentence, or ours.
+ *
+ * ── IT READS `detail` TOO, AND THAT IS NOT COSMETIC. ────────────────────
+ * The API says no in two shapes. Most refusals are Results.Json with an
+ * `error` field. But every Results.Problem — "Connect is not configured on
+ * this server", the recording refusals, several 503s — produces RFC 7807
+ * ProblemDetails, where the sentence is in `detail`. This function used to
+ * read `error` only, so every one of those carefully written explanations was
+ * discarded on arrival and the person saw a generic fallback instead.
+ *
+ * Nobody noticed because the fallback is always plausible. That is the whole
+ * problem with it: "Could not start recording" is true of a server with no
+ * spare CPU, a server with no egress at all, and a server that is on fire.
+ */
 async function json<T>(res: Response, fallback: string): Promise<T> {
   if (!res.ok) {
     const body: unknown = await res.json().catch(() => ({}));
-    const msg = typeof body === 'object' && body !== null && 'error' in body
-      ? String((body as { error?: unknown }).error ?? fallback)
-      : fallback;
+    const bag = typeof body === 'object' && body !== null
+      ? body as { error?: unknown; detail?: unknown }
+      : null;
+    const said = bag?.error ?? bag?.detail;
+    const msg = typeof said === 'string' && said.trim().length > 0 ? said : fallback;
     throw new Error(msg);
   }
   return res.json() as Promise<T>;
@@ -229,6 +246,35 @@ export function e2eeSupported(): boolean {
          ?.createEncodedStreams === 'function';
   const scriptTransform = 'RTCRtpScriptTransform' in w;
   return insertable || scriptTransform;
+}
+
+/**
+ * Can this browser capture a screen at all?
+ *
+ * ── THE ANSWER ON EVERY PHONE IS NO, AND IT IS NOT OUR DOING. ───────────
+ *
+ * getDisplayMedia is unimplemented in every mobile browser: Chrome for
+ * Android, Safari on iOS, Firefox for Android and Samsung Internet all lack
+ * it. It is not a permission the person can grant, a setting they can find,
+ * or something a newer version fixes — the API is simply absent, because
+ * capturing the screen is an operating-system privilege that iOS and Android
+ * hand to installed apps and not to web pages. It is why Zoom and Meet can
+ * share a phone screen from their APPS and not from their websites.
+ *
+ * Feature-detected rather than sniffed, for the same reason as above: the
+ * browser answering for itself beats any table we could keep up to date.
+ *
+ * Note this is checked and EXPLAINED rather than used to hide the button —
+ * the opposite of the recording control, which is hidden outright when the
+ * server has no egress. The difference is who can act on it: an
+ * unconfigured server is nothing a participant can do anything about, while
+ * "your phone cannot do this, a computer can" is a fact they can act on in
+ * the next minute. Hiding it would leave them hunting for a button everyone
+ * tells them exists.
+ */
+export function screenCaptureSupported(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return typeof navigator.mediaDevices?.getDisplayMedia === 'function';
 }
 
 /**

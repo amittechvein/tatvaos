@@ -10,7 +10,7 @@ import {
 } from 'livekit-client';
 import { useAuth } from '@/lib/auth';
 import {
-  connectApi, minutesApi, recordingApi,
+  connectApi, minutesApi, recordingApi, screenCaptureSupported,
   type LobbyEntry, type Meeting, type Recording, type RecordingMode, type Seat,
   type SharePolicy, type WaitingRoom,
 } from '@/lib/connect';
@@ -86,6 +86,11 @@ export default function Stage({ seat, meeting, prefs }: {
   // Feature 64. Pointless with four people and the only usable way through a
   // class of forty, which is the room this product is actually for.
   const [find, setFind] = useState('');
+  // Which tile this person wants kept large — a screen key (`screen-<id>`) or
+  // a participant identity. Local to this browser and pushed to nobody: one
+  // person pinning the whiteboard must not decide what everyone else looks
+  // at. Cleared by clicking Unpin, never by somebody else's actions.
+  const [pinned, setPinned] = useState<string | null>(null);
   const [knocking, setKnocking] = useState<LobbyEntry[]>([]);
   const [deciding, setDeciding] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -1000,6 +1005,19 @@ export default function Stage({ seat, meeting, prefs }: {
   }
   async function toggleShare() {
     const r = roomRef.current; if (!r) return;
+
+    // The phone case, answered before the SDK is asked. Without this the
+    // browser throws something unhelpful (or nothing at all) and the button
+    // reads as broken — the single most common "screen share is not working"
+    // report, and every time it is a phone.
+    if (!sharing && !screenCaptureSupported()) {
+      setError('This browser cannot share a screen. Phone and tablet browsers do not '
+        + 'have the feature at all — it is not a permission you can turn on. Join from '
+        + 'a computer to share, or ask someone on a computer to share instead. You can '
+        + 'still SEE what other people share here.');
+      return;
+    }
+
     try {
       // Feature 69. audio: true asks the browser to offer "also share tab
       // audio" in its picker. Without it, sharing a video is SILENT, which
@@ -1174,19 +1192,52 @@ export default function Stage({ seat, meeting, prefs }: {
     .sort((a, b) => Number(hands[b.identity] === true) - Number(hands[a.identity] === true));
 
   const presenting = screenSharers.length > 0;
-  const shown = presenting ? [] : (view === 'speaker' && speaker ? [speaker] : participants);
-  const others = presenting
-    ? participants
-    : (view === 'speaker' ? participants.filter((p) => p !== speaker) : []);
 
-  // Built once and placed in one of two containers — in the stage while
-  // somebody presents, below it otherwise. Two copies of this JSX would be
-  // two things to keep in step, and the one that is edited less often is the
-  // one that quietly stops matching.
-  const stripTiles = others.map((p) => (
-    <Tile key={p.identity} p={p} big={false} local={p === room?.localParticipant}
-          showScreen={false} hand={hands[p.identity] === true}
-          canHost={false} onMute={() => {}} onRemove={() => {}} />
+  // ── ONE LIST, ONE DECISION ABOUT WHAT IS LARGE. ─────────────────────────
+  //
+  // A screen and a face are both just tiles; what differs is which track they
+  // show. Keeping them in one list is what lets a pinned FACE outrank a
+  // screen share without a second code path — the share simply stops being
+  // in `main` and turns up in the column like anything else.
+  //
+  // The order of the rules IS the product decision, most specific first:
+  //   1. a pin, because somebody asked for it by hand
+  //   2. a screen share, because that is what people came to look at
+  //   3. speaker view's current speaker
+  //   4. otherwise everybody, at equal size
+  const tiles: { key: string; p: LKParticipant; screen: boolean }[] = [
+    ...screenSharers.map((p) => ({ key: `screen-${p.identity}`, p, screen: true })),
+    ...participants.map((p) => ({ key: p.identity, p, screen: false })),
+  ];
+
+  // A pin on somebody who has since left is ignored rather than cleared, so
+  // that a brief reconnect does not silently un-pin them.
+  const pinnedKey = pinned && tiles.some((t) => t.key === pinned) ? pinned : null;
+  const mainKeys = pinnedKey !== null
+    ? [pinnedKey]
+    : presenting
+      ? screenSharers.map((p) => `screen-${p.identity}`)
+      : view === 'speaker' && speaker
+        ? [speaker.identity]
+        : participants.map((p) => p.identity);
+
+  const main = tiles.filter((t) => mainKeys.includes(t.key));
+  const rest = tiles.filter((t) => !mainKeys.includes(t.key));
+
+  // Exactly one large tile with company beside it — a share, a pinned person,
+  // or speaker view. That is when the side column earns its place; a gallery
+  // of equals has no column and needs none.
+  const focused = main.length === 1 && rest.length > 0;
+
+  // Built once and placed in one of two containers — beside the large tile
+  // when focused, below it otherwise. Two copies of this JSX would be two
+  // things to keep in step, and the one edited less often is the one that
+  // quietly stops matching.
+  const stripTiles = rest.map((t) => (
+    <Tile key={t.key} p={t.p} big={false} local={t.p === room?.localParticipant}
+          showScreen={t.screen} hand={!t.screen && hands[t.p.identity] === true}
+          canHost={false} pinned={false} onPin={() => setPinned(t.key)}
+          onMute={() => {}} onRemove={() => {}} />
   ));
 
   // Who could take the meeting over: signed-in people other than you. A guest
@@ -1270,39 +1321,33 @@ export default function Stage({ seat, meeting, prefs }: {
             gesture every video player has had for twenty years, so it needs
             no discovery — the button below is for the people who never learnt
             it. */}
-        <div className={`cx-stage${presenting ? ' cx-stage--present' : ''}`}
+        <div className={`cx-stage${focused ? ' cx-stage--focus' : ''}`}
              onDoubleClick={canFull ? toggleFull : undefined}>
-          {/* The share, as a tile in its own right. Keyed separately from the
-              sharer's camera tile below so React never reuses one <video> for
-              both tracks. */}
-          {screenSharers.map((p) => (
-            <Tile key={`screen-${p.identity}`} p={p} big={screenSharers.length === 1}
-                  local={p === room?.localParticipant}
-                  showScreen canHost={false} onMute={() => {}} onRemove={() => {}}
-                  hand={false} />
-          ))}
-
-          {shown.map((p) => (
-            <Tile key={p.identity} p={p} big={view === 'speaker'}
-                  local={p === room?.localParticipant}
-                  showScreen={false} hand={hands[p.identity] === true}
-                  canHost={isHost && meeting !== null && p !== room?.localParticipant}
+          {/* Screen tiles are keyed apart from their owner's camera tile so
+              React never reuses one <video> element for two different
+              tracks. */}
+          {main.map((t) => (
+            <Tile key={t.key} p={t.p} big={main.length === 1}
+                  local={t.p === room?.localParticipant}
+                  showScreen={t.screen}
+                  hand={!t.screen && hands[t.p.identity] === true}
+                  pinned={pinnedKey === t.key}
+                  onPin={() => setPinned(pinnedKey === t.key ? null : t.key)}
+                  canHost={!t.screen && isHost && meeting !== null
+                    && t.p !== room?.localParticipant}
                   onMute={() => void hostAction(() =>
-                    connectApi.mute(authedFetch, meeting?.id ?? '', p.identity))}
+                    connectApi.mute(authedFetch, meeting?.id ?? '', t.p.identity))}
                   onRemove={() => void hostAction(() =>
-                    connectApi.remove(authedFetch, meeting?.id ?? '', p.identity))} />
+                    connectApi.remove(authedFetch, meeting?.id ?? '', t.p.identity))} />
           ))}
 
-          {/* While presenting, the strip lives INSIDE the stage and floats —
-              see the note beside .cx-strip--float. Same tiles either way:
-              rendered once into `stripTiles` so the two placements cannot
-              drift apart. */}
-          {presenting && others.length > 0 && (
-            <div className="cx-strip cx-strip--float">{stripTiles}</div>
+          {/* Beside the large tile, in the flow — see .cx-strip--side. */}
+          {focused && (
+            <div className="cx-strip cx-strip--side">{stripTiles}</div>
           )}
         </div>
 
-        {!presenting && others.length > 0 && (
+        {!focused && rest.length > 0 && (
           <div className="cx-strip">{stripTiles}</div>
         )}
 
@@ -1324,9 +1369,11 @@ export default function Stage({ seat, meeting, prefs }: {
           <button type="button" className={`cx-btn ${sharing ? 'is-on' : ''}`}
                   onClick={() => void toggleShare()} aria-pressed={sharing}
                   disabled={!mayShare && !sharing}
-                  title={mayShare || sharing
-                    ? 'Share your screen'
-                    : 'The host has limited who can share in this meeting'}>
+                  title={!screenCaptureSupported()
+                    ? 'This browser cannot share a screen — join from a computer'
+                    : mayShare || sharing
+                      ? 'Share your screen'
+                      : 'The host has limited who can share in this meeting'}>
             <i className="ri-computer-line" />
             {sharing ? 'Stop' : 'Share'}
           </button>
@@ -1800,13 +1847,17 @@ function Panel({ title, onClose, children, foot }: {
 }
 
 // ===========================================================================
-function Tile({ p, big, local, showScreen, hand, canHost, onMute, onRemove }: {
+function Tile({ p, big, local, showScreen, hand, canHost, pinned, onPin, onMute, onRemove }: {
   p: LKParticipant;
   big: boolean;
   local: boolean;
   showScreen: boolean;
   hand: boolean;
   canHost: boolean;
+  /** Is THIS tile the pinned one? Local to this browser. */
+  pinned?: boolean;
+  /** Absent on tiles that cannot be pinned; present means the button shows. */
+  onPin?: () => void;
   onMute: () => void;
   onRemove: () => void;
 }) {
@@ -1882,10 +1933,28 @@ function Tile({ p, big, local, showScreen, hand, canHost, onMute, onRemove }: {
         </span>
       </div>
 
-      {canHost && (
+      {/* PIN IS EVERYONE'S, AND IT IS ONLY YOURS.
+          Mute and Remove act on other people and belong to a host. Pinning
+          changes nothing but what THIS browser shows, so a guest gets it too
+          — and pinning must never be pushed to anybody else, which is the
+          whole reason it lives in local state and touches no API. */}
+      {(canHost || onPin) && (
         <div className="cx-tileacts">
-          <button type="button" className="cx-pill" onClick={onMute}>Mute</button>
-          <button type="button" className="cx-pill cx-pill--bad" onClick={onRemove}>Remove</button>
+          {onPin && (
+            <button type="button" className={`cx-pill${pinned ? ' cx-pill--on' : ''}`}
+                    onClick={onPin}
+                    title={pinned
+                      ? 'Stop keeping this one large'
+                      : 'Keep this one large, whoever is talking'}>
+              {pinned ? 'Unpin' : 'Pin'}
+            </button>
+          )}
+          {canHost && (
+            <>
+              <button type="button" className="cx-pill" onClick={onMute}>Mute</button>
+              <button type="button" className="cx-pill cx-pill--bad" onClick={onRemove}>Remove</button>
+            </>
+          )}
         </div>
       )}
     </div>

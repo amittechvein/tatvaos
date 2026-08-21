@@ -274,15 +274,23 @@ public static class ConnectRecordingEndpoints
             // ("most often") because a Chrome crash or a full disk lands
             // here too, and stating one cause as certain would be the same
             // mistake in the opposite direction.
-            return Results.Problem(
-                mode == "video"
+            //
+            // Results.Json with an `error` field, NOT Results.Problem: the web
+            // client reads `error` and nothing else (lib/connect.ts, json()),
+            // so a ProblemDetails body — which carries `detail` and `title` —
+            // is thrown away and the person sees the generic fallback. This
+            // sentence existing in the response but never on screen is the
+            // exact failure it was written to prevent.
+            return Results.Json(new
+            {
+                error = mode == "video"
                     ? "The media server would not start a VIDEO recording. Video composites the "
                       + "meeting in a browser on the server and needs roughly four spare processor "
                       + "cores; when they are not free the request is declined rather than the live "
                       + "meeting degraded. Audio recording is unaffected — start that instead, or "
                       + "give the server more cores."
                     : "The media server did not start the recording.",
-                statusCode: 502);
+            }, statusCode: 502);
 
         var recording = new ConnectRecording
         {
