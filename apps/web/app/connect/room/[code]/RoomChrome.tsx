@@ -129,6 +129,36 @@ export const CSS = `
 /* A touch screen has no hover, so hover-to-reveal means never-reveal. Pin
    would have been a desktop-only feature by accident. */
 @media (hover:none){.cx-tileacts{opacity:1}}
+
+/* ── ICONS ON THE TILE, NOT WORDS. ──────────────────────────────────────
+   Three word-pills across the corner of a 160px thumbnail covered the face
+   they were about. Icons are a quarter of the width and survive a column
+   tile; every one keeps a title and an aria-label, so the meaning is one
+   hover or one screen-reader away rather than gone. */
+.cx-ico{width:30px;height:30px;display:grid;place-items:center;padding:0;
+  border-radius:9px;font-size:15px;line-height:1;cursor:pointer;
+  background:rgba(10,10,14,.62);border:1px solid var(--cx-line);
+  color:var(--cx-text);backdrop-filter:blur(6px);transition:background .15s}
+.cx-ico:hover{background:rgba(10,10,14,.85)}
+.cx-ico--on{background:var(--cx-accent);border-color:var(--cx-accent);color:#04222a}
+.cx-ico--on:hover{background:var(--cx-accent)}
+.cx-ico--bad:hover{background:#ef4757;border-color:#ef4757;color:#fff}
+
+/* ── THE VIEW PANEL ─────────────────────────────────────────────────── */
+.cx-choices{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px}
+.cx-choice2{display:flex;flex-direction:column;align-items:flex-start;gap:4px;
+  padding:10px;border-radius:12px;cursor:pointer;text-align:left;
+  background:rgba(255,255,255,.05);border:1px solid var(--cx-line);
+  color:var(--cx-text);font-size:13px}
+.cx-choice2:hover{background:rgba(255,255,255,.1)}
+.cx-choice2.is-on{border-color:var(--cx-accent);background:rgba(0,184,217,.16)}
+.cx-choice2 i{font-size:18px;color:var(--cx-accent)}
+.cx-choice2 small{color:var(--cx-dim);font-size:11px;line-height:1.35}
+.cx-range{width:100%;accent-color:var(--cx-accent)}
+.cx-switch{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:9px 2px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--cx-line)}
+.cx-switch:last-child{border-bottom:0}
+.cx-switch input{accent-color:var(--cx-accent);width:17px;height:17px;cursor:pointer}
 .cx-pill{border:none;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer;
   background:rgba(255,255,255,.15);color:#fff;backdrop-filter:blur(6px)}
 .cx-pill:hover{background:rgba(255,255,255,.28)}
@@ -142,8 +172,75 @@ export const CSS = `
 .cx-strip{flex:0 0 auto;display:flex;gap:8px;padding:0 16px 8px;overflow-x:auto}
 .cx-strip .cx-tile{flex:0 0 168px;max-width:168px;border-radius:12px}
 
+/* ═══════════════════════════════════════════════════════════════════════
+   THE CONTROL BAR — POSITION IS THE PERSON'S CHOICE, NOT OURS.
+
+   Every video product on earth centres a dark bar along the bottom, so any
+   product that does the same reads as a copy of whichever one you used
+   last. Rather than pick a different single answer and impose it, the bar
+   moves: bottom, a rail down the left, or up beside the meeting name. The
+   choice is remembered per browser.
+
+   The rail and the top bar are LAID OUT, not floated over the video —
+   floating something over a picture whose shape you cannot predict is the
+   mistake this file already made once with the face strip.
+   ═══════════════════════════════════════════════════════════════════════ */
 .cx-bar{flex:0 0 auto;display:flex;align-items:center;justify-content:center;
   gap:8px;flex-wrap:wrap;padding:14px 16px 18px}
+
+/* The rail. A column, vertically centred, with the stage indented to match
+   so no tile ever sits underneath it. */
+.cx-bar--left{flex-direction:column;flex-wrap:nowrap;justify-content:flex-start;
+  padding:8px;gap:6px;overflow-y:auto;max-height:100%;
+  background:rgba(21,21,28,.72);border-right:1px solid var(--cx-line)}
+/* The pane holds header, stage, strip and (when it is there) the bottom bar.
+   It is a flex column in every mode; the only thing the rail changes is that
+   the root becomes a ROW, with the rail as the first column. */
+.cx-mainpane{flex:1 1 auto;display:flex;flex-direction:column;min-width:0;min-height:0}
+.cx-root--bar-left{flex-direction:row}
+
+/* Up in the header row, beside the meeting title. Compact — no labels, or
+   the title would be pushed off a laptop screen. */
+.cx-bar--top{padding:0;gap:6px;flex:1 1 auto;justify-content:flex-end;
+  flex-wrap:wrap}
+.cx-bar--top .cx-btn{min-width:0;padding:8px 10px;font-size:0;gap:0}
+.cx-bar--top .cx-btn i{font-size:18px}
+
+/* ── EVERY CONTROL ITS OWN COLOUR, WITHOUT LOSING WHAT IS ON. ────────────
+   Amit asked for coloured buttons so the product does not read as a copy.
+   The risk with that is real: when every button is bright, colour stops
+   telling you anything and you can no longer see at a glance that your
+   microphone is live.
+
+   So colour means IDENTITY and weight means STATE. Each button keeps its
+   own hue at low strength when idle; ON fills that hue solidly; the two
+   controls that can be dangerously off — microphone and camera — turn red
+   and change icon, which is a difference you can see without reading. */
+.cx-btn{--tone:#8b8b9a}
+.cx-btn{background:color-mix(in srgb,var(--tone) 20%,transparent);
+  border-color:color-mix(in srgb,var(--tone) 38%,transparent)}
+.cx-btn i{color:color-mix(in srgb,var(--tone) 88%,white)}
+.cx-btn:hover{background:color-mix(in srgb,var(--tone) 34%,transparent)}
+.cx-btn.is-on{background:var(--tone);border-color:var(--tone);color:#07131a}
+.cx-btn.is-on i{color:#07131a}
+.cx-btn.is-off{background:rgba(239,71,87,.9);border-color:#ef4757;color:#fff}
+.cx-btn.is-off i{color:#fff}
+
+.cx-btn--mic{--tone:#2ecc71}
+.cx-btn--cam{--tone:#00b8d9}
+.cx-btn--share{--tone:#7c5cff}
+.cx-btn--view{--tone:#f5a623}
+.cx-btn--full{--tone:#3ec9c9}
+.cx-btn--mini{--tone:#4a90d9}
+.cx-btn--hand{--tone:#ffb020}
+.cx-btn--people{--tone:#22b8a6}
+.cx-btn--chat{--tone:#e26bb0}
+.cx-btn--set{--tone:#9aa1b1}
+.cx-btn--rec{--tone:#ef6b6b}
+.cx-btn--end{--tone:#c46a2f}
+.cx-btn--leave{--tone:#ef4757;background:#ef4757;border-color:#ef4757;color:#fff}
+.cx-btn--leave i{color:#fff}
+.cx-btn--leave:hover{background:#ff5a69}
 .cx-btn{display:inline-flex;flex-direction:column;align-items:center;gap:4px;
   min-width:64px;padding:9px 12px;border-radius:14px;cursor:pointer;font-size:11px;
   background:rgba(255,255,255,.07);border:1px solid var(--cx-line);color:var(--cx-text);

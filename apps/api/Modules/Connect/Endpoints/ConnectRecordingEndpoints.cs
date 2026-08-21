@@ -283,12 +283,22 @@ public static class ConnectRecordingEndpoints
             // exact failure it was written to prevent.
             return Results.Json(new
             {
+                // SHORT, BECAUSE OF WHERE IT LANDS. This renders as a banner
+                // across the top of a LIVE meeting, above everybody's faces.
+                // The first version ran to five lines of explanation and cost
+                // two rows of the room to say it — a paragraph is the wrong
+                // shape for a place people are trying to look past. One
+                // sentence for what happened, one for what to do instead.
+                // "Give the server more cores" was advice for whoever runs
+                // the box, not for the person in the meeting, and it is in
+                // the comment above and in the docs where they will be.
+                //
+                // It still does not name a core COUNT. This code cannot
+                // measure the machine, and a number baked in here would keep
+                // being printed after somebody upgrades it.
                 error = mode == "video"
-                    ? "The media server would not start a VIDEO recording. Video composites the "
-                      + "meeting in a browser on the server and needs roughly four spare processor "
-                      + "cores; when they are not free the request is declined rather than the live "
-                      + "meeting degraded. Audio recording is unaffected — start that instead, or "
-                      + "give the server more cores."
+                    ? "Video recording needs about four spare processor cores and this server "
+                      + "has not got them free. Audio recording works — start that instead."
                     : "The media server did not start the recording.",
             }, statusCode: 502);
 

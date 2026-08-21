@@ -44,7 +44,56 @@ const CHIME_BURST_MAX = 4;
 //  The live meeting
 // ===========================================================================
 interface ChatLine { id: number; who: string; text: string; mine: boolean }
-type PanelKind = 'people' | 'chat' | 'devices' | null;
+type PanelKind = 'people' | 'chat' | 'devices' | 'view' | null;
+
+// ---------------------------------------------------------------------------
+//  HOW THIS ROOM IS ARRANGED — the person's choice, remembered.
+//
+//  Where the controls sit, how the tiles are laid out, how many of them, and
+//  three personal preferences. All of it is LOCAL: it changes what this
+//  browser draws and is never sent anywhere, so one person choosing Spotlight
+//  cannot decide what anybody else looks at.
+//
+//  Kept in localStorage rather than on the account on purpose. These are
+//  answers to "what does this screen suit", and the same person is on a
+//  laptop in the morning and a phone in the evening — a preference that
+//  followed them between the two would be wrong half the time.
+// ---------------------------------------------------------------------------
+type BarPos = 'bottom' | 'left' | 'top';
+type Layout = 'auto' | 'grid' | 'spotlight' | 'sidebar';
+
+interface RoomPrefs {
+  bar: BarPos;
+  layout: Layout;
+  /** Most faces drawn at once. A class of forty in forty tiles helps nobody. */
+  maxTiles: number;
+  hideNoCam: boolean;
+  mirror: boolean;
+  hideSelf: boolean;
+}
+
+const PREFS_KEY = 'tatvaos.connect.room-prefs';
+const DEFAULT_PREFS: RoomPrefs = {
+  bar: 'bottom', layout: 'auto', maxTiles: 12,
+  hideNoCam: false, mirror: true, hideSelf: false,
+};
+
+function loadPrefs(): RoomPrefs {
+  if (typeof window === 'undefined') return DEFAULT_PREFS;
+  try {
+    const raw = window.localStorage.getItem(PREFS_KEY);
+    if (!raw) return DEFAULT_PREFS;
+    const saved = JSON.parse(raw) as Partial<RoomPrefs>;
+    // Spread over the defaults rather than trusting the stored shape: this
+    // value outlives the code that wrote it, so a version saved before a new
+    // field existed must not arrive as undefined and break a layout.
+    return { ...DEFAULT_PREFS, ...saved };
+  } catch {
+    // Private windows and blocked storage both throw. A preference is not
+    // worth a broken meeting.
+    return DEFAULT_PREFS;
+  }
+}
 
 export default function Stage({ seat, meeting, prefs }: {
   seat: Seat; meeting: Meeting | null; prefs?: JoinPrefs;
@@ -66,7 +115,23 @@ export default function Stage({ seat, meeting, prefs }: {
   const [camOn, setCamOn] = useState(false);
   const [micOn, setMicOn] = useState(false);
   const [sharing, setSharing] = useState(false);
-  const [view, setView] = useState<'gallery' | 'speaker'>('gallery');
+  // Read once on mount, not at module load: localStorage does not exist while
+  // Next renders this on the server, and reading it in the initialiser keeps
+  // the first paint correct instead of flashing the default layout.
+  // roomPrefs, NOT prefs: this component already takes a `prefs` PROP — the
+  // camera and microphone choices made on the pre-join screen. Naming this
+  // state `prefs` shadowed it and the build stopped dead with "Identifier
+  // 'prefs' has already been declared". Two different meanings of a very
+  // ordinary word, one scope apart.
+  const [roomPrefs, setRoomPrefs] = useState<RoomPrefs>(DEFAULT_PREFS);
+  useEffect(() => { setRoomPrefs(loadPrefs()); }, []);
+  const setRoomPref = useCallback(<K extends keyof RoomPrefs>(k: K, v: RoomPrefs[K]) => {
+    setRoomPrefs((old) => {
+      const next = { ...old, [k]: v };
+      try { window.localStorage.setItem(PREFS_KEY, JSON.stringify(next)); } catch { /* fine */ }
+      return next;
+    });
+  }, []);
   const [blocked, setBlocked] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [panel, setPanel] = useState<PanelKind>(null);
@@ -1205,24 +1270,62 @@ export default function Stage({ seat, meeting, prefs }: {
   //   2. a screen share, because that is what people came to look at
   //   3. speaker view's current speaker
   //   4. otherwise everybody, at equal size
+  const me = room?.localParticipant;
+  const hasCamera = (p: LKParticipant) => {
+    const pub = p.getTrackPublication(Track.Source.Camera);
+    return pub !== undefined && pub.videoTrack !== undefined && pub.isMuted !== true;
+  };
+
   const tiles: { key: string; p: LKParticipant; screen: boolean }[] = [
+    // A SHARED SCREEN IS NEVER FILTERED OUT. "Hide people with no camera" is
+    // about empty black squares with initials in them; a screen is the thing
+    // the meeting is looking at, and hiding it because of a preference about
+    // faces would be absurd.
     ...screenSharers.map((p) => ({ key: `screen-${p.identity}`, p, screen: true })),
-    ...participants.map((p) => ({ key: p.identity, p, screen: false })),
+    ...participants
+      .filter((p) => !(roomPrefs.hideSelf && p === me))
+      // Your own tile survives hideNoCam even with the camera off: a black
+      // square is how you notice your camera is off. Everyone else's does not.
+      .filter((p) => !roomPrefs.hideNoCam || p === me || hasCamera(p))
+      .map((p) => ({ key: p.identity, p, screen: false })),
   ];
 
   // A pin on somebody who has since left is ignored rather than cleared, so
   // that a brief reconnect does not silently un-pin them.
   const pinnedKey = pinned && tiles.some((t) => t.key === pinned) ? pinned : null;
-  const mainKeys = pinnedKey !== null
-    ? [pinnedKey]
-    : presenting
-      ? screenSharers.map((p) => `screen-${p.identity}`)
-      : view === 'speaker' && speaker
-        ? [speaker.identity]
-        : participants.map((p) => p.identity);
+
+  // 'auto' is not a layout of its own — it is a rule for choosing one, and
+  // resolving it here means everything below deals with three real layouts
+  // instead of three plus a special case.
+  const layout: Exclude<Layout, 'auto'> = roomPrefs.layout !== 'auto'
+    ? roomPrefs.layout
+    : (presenting || pinnedKey !== null) ? 'sidebar' : 'grid';
+
+  // The one tile that gets the stage, when a layout has one. Pin first
+  // because somebody asked by hand; then the share, because that is what
+  // people came to look at; then whoever is speaking.
+  const focusKey = pinnedKey
+    ?? (screenSharers[0] ? `screen-${screenSharers[0].identity}` : null)
+    ?? (speaker ? speaker.identity : null)
+    ?? tiles[0]?.key
+    ?? null;
+
+  const mainKeys = layout === 'grid'
+    ? tiles.map((t) => t.key)
+    : focusKey !== null ? [focusKey] : [];
 
   const main = tiles.filter((t) => mainKeys.includes(t.key));
-  const rest = tiles.filter((t) => !mainKeys.includes(t.key));
+  // Spotlight shows ONE tile and nothing else — that is the whole point of
+  // asking for it, so the others are not demoted to a column, they are gone.
+  const restAll = layout === 'spotlight'
+    ? []
+    : tiles.filter((t) => !mainKeys.includes(t.key));
+
+  // The cap applies to the COMPANY, never to the focused tile, and it counts
+  // what was hidden so the number can be shown rather than the people simply
+  // disappearing.
+  const rest = restAll.slice(0, Math.max(0, roomPrefs.maxTiles));
+  const overflow = restAll.length - rest.length;
 
   // Exactly one large tile with company beside it — a share, a pinned person,
   // or speaker view. That is when the side column earns its place; a gallery
@@ -1236,7 +1339,8 @@ export default function Stage({ seat, meeting, prefs }: {
   const stripTiles = rest.map((t) => (
     <Tile key={t.key} p={t.p} big={false} local={t.p === room?.localParticipant}
           showScreen={t.screen} hand={!t.screen && hands[t.p.identity] === true}
-          canHost={false} pinned={false} onPin={() => setPinned(t.key)}
+          canHost={false} pinned={false} mirror={roomPrefs.mirror}
+          onPin={() => setPinned(t.key)}
           onMute={() => {}} onRemove={() => {}} />
   ));
 
@@ -1257,10 +1361,140 @@ export default function Stage({ seat, meeting, prefs }: {
     || (sharePolicy === 'host' && meeting.myRole === 'host');
 
 
+  // ── THE CONTROL BUTTONS, BUILT ONCE. ─────────────────────────────────
+  //
+  // They are rendered in one of three places depending on the preference —
+  // a row at the bottom, a rail on the left, or up in the header. Written
+  // once here so the three placements cannot drift apart; a button added to
+  // only two of them would be a bug nobody notices until somebody has moved
+  // their bar.
+  const barButtons = (
+    <>
+            <button type="button" className={`cx-btn cx-btn--mic ${micOn ? '' : 'is-off'}`}
+                    onClick={() => void toggleMic()} aria-pressed={micOn}
+                    title={micOn ? 'Mute' : 'Unmute'}>
+              <i className={micOn ? 'ri-mic-line' : 'ri-mic-off-line'} />
+              {micOn ? 'Mute' : 'Unmute'}
+            </button>
+
+            <button type="button" className={`cx-btn cx-btn--cam ${camOn ? '' : 'is-off'}`}
+                    onClick={() => void toggleCam()} aria-pressed={camOn}
+                    title={camOn ? 'Stop video' : 'Start video'}>
+              <i className={camOn ? 'ri-vidicon-line' : 'ri-vidicon-off-line'} />
+              {camOn ? 'Video' : 'Video'}
+            </button>
+
+            <button type="button" className={`cx-btn cx-btn--share ${sharing ? 'is-on' : ''}`}
+                    onClick={() => void toggleShare()} aria-pressed={sharing}
+                    disabled={!mayShare && !sharing}
+                    title={!screenCaptureSupported()
+                      ? 'This browser cannot share a screen — join from a computer'
+                      : mayShare || sharing
+                        ? 'Share your screen'
+                        : 'The host has limited who can share in this meeting'}>
+              <i className="ri-computer-line" />
+              {sharing ? 'Stop' : 'Share'}
+            </button>
+
+            <button type="button" className={`cx-btn cx-btn--view ${panel === 'view' ? 'is-on' : ''}`}
+                    onClick={() => openPanel('view')}
+                    title="Choose how the meeting is arranged">
+              <i className="ri-layout-grid-line" />
+              View
+            </button>
+
+            {canFull && (
+              <button type="button" className={`cx-btn cx-btn--full ${full ? 'is-on' : ''}`}
+                      onClick={toggleFull} aria-pressed={full}
+                      title={full ? 'Leave full screen (Esc)' : 'Full screen'}>
+                <i className={full ? 'ri-fullscreen-exit-line' : 'ri-fullscreen-line'} />
+                {full ? 'Exit' : 'Full'}
+              </button>
+            )}
+
+            {canPip && (
+              <button type="button" className={`cx-btn cx-btn--mini ${pipOpen ? 'is-on' : ''}`}
+                      onClick={() => (pipOpen ? closePip() : void openPip())}
+                      aria-pressed={pipOpen}
+                      title="Keep the meeting in a small floating window while you work elsewhere">
+                <i className="ri-picture-in-picture-exit-line" />
+                {pipOpen ? 'Close' : 'Mini'}
+              </button>
+            )}
+
+            <button type="button" className={`cx-btn cx-btn--hand ${myHand ? 'is-on' : ''}`}
+                    onClick={toggleHand} aria-pressed={myHand}
+                    title={myHand ? 'Lower your hand' : 'Raise your hand'}>
+              <i className="ri-hand" />
+              {myHand ? 'Lower' : 'Hand'}
+            </button>
+
+            <span className="cx-btnwrap">
+              <button type="button" className={`cx-btn cx-btn--people ${panel === 'people' ? 'is-on' : ''}`}
+                      onClick={() => openPanel('people')} title="People">
+                <i className="ri-group-line" />People
+              </button>
+              {(knocking.length + Object.values(hands).filter(Boolean).length) > 0 && (
+                <span className="cx-count">
+                  {knocking.length + Object.values(hands).filter(Boolean).length}
+                </span>
+              )}
+            </span>
+
+            <span className="cx-btnwrap">
+              <button type="button" className={`cx-btn cx-btn--chat ${panel === 'chat' ? 'is-on' : ''}`}
+                      onClick={() => openPanel('chat')} title="Chat">
+                <i className="ri-chat-1-line" />Chat
+              </button>
+              {unread > 0 && panel !== 'chat' && <span className="cx-count">{unread}</span>}
+            </span>
+
+            <button type="button" className={`cx-btn cx-btn--set ${panel === 'devices' ? 'is-on' : ''}`}
+                    onClick={() => openPanel('devices')} title="Settings">
+              <i className="ri-settings-3-line" />Settings
+            </button>
+
+            {/* Hidden entirely when this server has no egress, rather than shown
+                and refusing. A control that is always there and never works is
+                read as a broken product, not as an unconfigured one. */}
+            {isHost && meeting && !recOff && !isPrivate && (
+              <button type="button" className={`cx-btn cx-btn--rec ${recording ? 'is-rec' : ''}`}
+                      onClick={() => { if (recording) void stopRecording(); else setRecordAsk(true); }}
+                      disabled={recBusy}
+                      aria-pressed={recording !== null}
+                      aria-haspopup={recording ? undefined : 'dialog'}
+                      title={recording
+                        ? 'Stop recording'
+                        : 'Record this meeting — you choose audio or video'}>
+                <i className={recording ? 'ri-stop-circle-fill' : 'ri-record-circle-line'} />
+                {recBusy ? '…' : recording ? 'Stop rec' : 'Record'}
+              </button>
+            )}
+
+            {isHost && meeting && (
+              <button type="button" className="cx-btn cx-btn--end"
+                      onClick={() => void hostAction(() => connectApi.end(authedFetch, meeting.id))}
+                      title="End the meeting for everyone">
+                <i className="ri-stop-circle-line" />End
+              </button>
+            )}
+
+            <button type="button" className="cx-btn cx-btn--leave" onClick={leave} title="Leave">
+              <i className="ri-logout-box-r-line" />Leave
+            </button>
+    </>
+  );
+
   return (
     <>
       <style>{CSS}</style>
-      <div className="cx-root" ref={rootRef}>
+      <div className={`cx-root${roomPrefs.bar === 'left' ? ' cx-root--bar-left' : ''}`}
+           ref={rootRef}>
+        {/* The rail lives OUTSIDE the main pane so it can be a sibling column
+            rather than something floating over the video. Everything else —
+            header, stage, strip — sits in the pane beside it. */}
+        {roomPrefs.bar === 'left' && <div className="cx-bar cx-bar--left">{barButtons}</div>}
+        <div className="cx-mainpane">
         <header className="cx-top">
           <div style={{ minWidth: 0 }}>
             <div className="cx-title">{meeting?.title ?? 'Meeting'}</div>
@@ -1279,6 +1513,7 @@ export default function Stage({ seat, meeting, prefs }: {
               )}
             </div>
           </div>
+          {roomPrefs.bar === 'top' && <div className="cx-bar cx-bar--top">{barButtons}</div>}
           <div className="cx-ghost">
             {meeting && (
               <button type="button" className="cx-mini" onClick={() => void copyLink()}>
@@ -1332,6 +1567,7 @@ export default function Stage({ seat, meeting, prefs }: {
                   showScreen={t.screen}
                   hand={!t.screen && hands[t.p.identity] === true}
                   pinned={pinnedKey === t.key}
+                  mirror={roomPrefs.mirror}
                   onPin={() => setPinned(pinnedKey === t.key ? null : t.key)}
                   canHost={!t.screen && isHost && meeting !== null
                     && t.p !== room?.localParticipant}
@@ -1343,128 +1579,31 @@ export default function Stage({ seat, meeting, prefs }: {
 
           {/* Beside the large tile, in the flow — see .cx-strip--side. */}
           {focused && (
-            <div className="cx-strip cx-strip--side">{stripTiles}</div>
+            <div className="cx-strip cx-strip--side">
+              {stripTiles}
+              {overflow > 0 && (
+                <button type="button" className="cx-mini" style={{ flex: '0 0 auto' }}
+                        onClick={() => openPanel('view')}>
+                  +{overflow} more
+                </button>
+              )}
+            </div>
           )}
         </div>
 
         {!focused && rest.length > 0 && (
-          <div className="cx-strip">{stripTiles}</div>
+          <div className="cx-strip">
+            {stripTiles}
+            {overflow > 0 && (
+              <button type="button" className="cx-mini" style={{ flex: '0 0 auto' }}
+                      onClick={() => openPanel('view')}>
+                +{overflow} more
+              </button>
+            )}
+          </div>
         )}
 
-        <div className="cx-bar">
-          <button type="button" className={`cx-btn ${micOn ? '' : 'is-off'}`}
-                  onClick={() => void toggleMic()} aria-pressed={micOn}
-                  title={micOn ? 'Mute' : 'Unmute'}>
-            <i className={micOn ? 'ri-mic-line' : 'ri-mic-off-line'} />
-            {micOn ? 'Mute' : 'Unmute'}
-          </button>
-
-          <button type="button" className={`cx-btn ${camOn ? '' : 'is-off'}`}
-                  onClick={() => void toggleCam()} aria-pressed={camOn}
-                  title={camOn ? 'Stop video' : 'Start video'}>
-            <i className={camOn ? 'ri-vidicon-line' : 'ri-vidicon-off-line'} />
-            {camOn ? 'Video' : 'Video'}
-          </button>
-
-          <button type="button" className={`cx-btn ${sharing ? 'is-on' : ''}`}
-                  onClick={() => void toggleShare()} aria-pressed={sharing}
-                  disabled={!mayShare && !sharing}
-                  title={!screenCaptureSupported()
-                    ? 'This browser cannot share a screen — join from a computer'
-                    : mayShare || sharing
-                      ? 'Share your screen'
-                      : 'The host has limited who can share in this meeting'}>
-            <i className="ri-computer-line" />
-            {sharing ? 'Stop' : 'Share'}
-          </button>
-
-          <button type="button" className="cx-btn"
-                  onClick={() => setView(view === 'gallery' ? 'speaker' : 'gallery')}
-                  title="Switch layout">
-            <i className={view === 'gallery' ? 'ri-layout-grid-line' : 'ri-user-3-line'} />
-            {view === 'gallery' ? 'Gallery' : 'Speaker'}
-          </button>
-
-          {canFull && (
-            <button type="button" className={`cx-btn ${full ? 'is-on' : ''}`}
-                    onClick={toggleFull} aria-pressed={full}
-                    title={full ? 'Leave full screen (Esc)' : 'Full screen'}>
-              <i className={full ? 'ri-fullscreen-exit-line' : 'ri-fullscreen-line'} />
-              {full ? 'Exit' : 'Full'}
-            </button>
-          )}
-
-          {canPip && (
-            <button type="button" className={`cx-btn ${pipOpen ? 'is-on' : ''}`}
-                    onClick={() => (pipOpen ? closePip() : void openPip())}
-                    aria-pressed={pipOpen}
-                    title="Keep the meeting in a small floating window while you work elsewhere">
-              <i className="ri-picture-in-picture-exit-line" />
-              {pipOpen ? 'Close' : 'Mini'}
-            </button>
-          )}
-
-          <button type="button" className={`cx-btn ${myHand ? 'is-on' : ''}`}
-                  onClick={toggleHand} aria-pressed={myHand}
-                  title={myHand ? 'Lower your hand' : 'Raise your hand'}>
-            <i className="ri-hand" />
-            {myHand ? 'Lower' : 'Hand'}
-          </button>
-
-          <span className="cx-btnwrap">
-            <button type="button" className={`cx-btn ${panel === 'people' ? 'is-on' : ''}`}
-                    onClick={() => openPanel('people')} title="People">
-              <i className="ri-group-line" />People
-            </button>
-            {(knocking.length + Object.values(hands).filter(Boolean).length) > 0 && (
-              <span className="cx-count">
-                {knocking.length + Object.values(hands).filter(Boolean).length}
-              </span>
-            )}
-          </span>
-
-          <span className="cx-btnwrap">
-            <button type="button" className={`cx-btn ${panel === 'chat' ? 'is-on' : ''}`}
-                    onClick={() => openPanel('chat')} title="Chat">
-              <i className="ri-chat-1-line" />Chat
-            </button>
-            {unread > 0 && panel !== 'chat' && <span className="cx-count">{unread}</span>}
-          </span>
-
-          <button type="button" className={`cx-btn ${panel === 'devices' ? 'is-on' : ''}`}
-                  onClick={() => openPanel('devices')} title="Settings">
-            <i className="ri-settings-3-line" />Settings
-          </button>
-
-          {/* Hidden entirely when this server has no egress, rather than shown
-              and refusing. A control that is always there and never works is
-              read as a broken product, not as an unconfigured one. */}
-          {isHost && meeting && !recOff && !isPrivate && (
-            <button type="button" className={`cx-btn ${recording ? 'is-rec' : ''}`}
-                    onClick={() => { if (recording) void stopRecording(); else setRecordAsk(true); }}
-                    disabled={recBusy}
-                    aria-pressed={recording !== null}
-                    aria-haspopup={recording ? undefined : 'dialog'}
-                    title={recording
-                      ? 'Stop recording'
-                      : 'Record this meeting — you choose audio or video'}>
-              <i className={recording ? 'ri-stop-circle-fill' : 'ri-record-circle-line'} />
-              {recBusy ? '…' : recording ? 'Stop rec' : 'Record'}
-            </button>
-          )}
-
-          {isHost && meeting && (
-            <button type="button" className="cx-btn"
-                    onClick={() => void hostAction(() => connectApi.end(authedFetch, meeting.id))}
-                    title="End the meeting for everyone">
-              <i className="ri-stop-circle-line" />End
-            </button>
-          )}
-
-          <button type="button" className="cx-btn cx-btn--leave" onClick={leave} title="Leave">
-            <i className="ri-logout-box-r-line" />Leave
-          </button>
-        </div>
+        {roomPrefs.bar === 'bottom' && <div className="cx-bar">{barButtons}</div>}
 
         {/* The host deciding what their leaving means. The two answers the
             brief names — end it for everyone, or hand it to somebody — plus
@@ -1752,6 +1891,100 @@ export default function Stage({ seat, meeting, prefs }: {
           </Panel>
         )}
 
+        {panel === 'view' && (
+          <Panel title="View" onClose={() => setPanel(null)}>
+            <div className="cx-sub" style={{ marginBottom: 8 }}>
+              Yours alone — nobody else&apos;s screen changes, and this browser
+              remembers it for next time.
+            </div>
+
+            <div className="cx-choices">
+              {([
+                ['auto', 'ri-magic-line', 'Auto',
+                  'Follows the meeting — a shared screen takes the stage, otherwise everyone is equal'],
+                ['grid', 'ri-layout-grid-line', 'Grid',
+                  'Everybody the same size'],
+                ['spotlight', 'ri-fullscreen-line', 'Spotlight',
+                  'One tile only — pinned, or the screen, or whoever is speaking'],
+                ['sidebar', 'ri-layout-right-line', 'Sidebar',
+                  'One large, the rest in a column beside it'],
+              ] as [Layout, string, string, string][]).map(([id, icon, label, hint]) => (
+                <button type="button" key={id}
+                        className={`cx-choice2${roomPrefs.layout === id ? ' is-on' : ''}`}
+                        aria-pressed={roomPrefs.layout === id}
+                        onClick={() => setRoomPref('layout', id)}>
+                  <i className={icon} />
+                  <strong>{label}</strong>
+                  <small>{hint}</small>
+                </button>
+              ))}
+            </div>
+
+            <label className="cx-label" htmlFor="cx-maxtiles" style={{ marginTop: 14 }}>
+              Most faces at once: {roomPrefs.maxTiles}
+            </label>
+            <input id="cx-maxtiles" className="cx-range" type="range"
+                   min={1} max={49} step={1} value={roomPrefs.maxTiles}
+                   onChange={(e) => setRoomPref('maxTiles', Number(e.target.value))} />
+            <div className="cx-sub" style={{ marginBottom: 10 }}>
+              The large tile never counts towards this. In a class of forty,
+              forty thumbnails help nobody — the rest are still in the meeting
+              and still heard.
+            </div>
+
+            <label className="cx-switch">
+              <span>
+                Hide people with no camera
+                <div className="cx-sub">
+                  Drops the black squares. Your own tile stays, so you can see
+                  that your camera is off.
+                </div>
+              </span>
+              <input type="checkbox" checked={roomPrefs.hideNoCam}
+                     onChange={(e) => setRoomPref('hideNoCam', e.target.checked)} />
+            </label>
+
+            <label className="cx-switch">
+              <span>
+                Mirror my own video
+                <div className="cx-sub">
+                  On, you look like a mirror. Off is right when you hold up
+                  writing — and it never changes what others see.
+                </div>
+              </span>
+              <input type="checkbox" checked={roomPrefs.mirror}
+                     onChange={(e) => setRoomPref('mirror', e.target.checked)} />
+            </label>
+
+            <label className="cx-switch">
+              <span>
+                Hide my own tile
+                <div className="cx-sub">You are still on camera for everyone else.</div>
+              </span>
+              <input type="checkbox" checked={roomPrefs.hideSelf}
+                     onChange={(e) => setRoomPref('hideSelf', e.target.checked)} />
+            </label>
+
+            <div className="cx-sub" style={{ margin: '16px 0 6px' }}>WHERE THE CONTROLS SIT</div>
+            <div className="cx-choices">
+              {([
+                ['bottom', 'ri-layout-bottom-line', 'Bottom', 'Along the foot of the screen'],
+                ['left', 'ri-layout-left-line', 'Side rail', 'A column down the left edge'],
+                ['top', 'ri-layout-top-line', 'Top', 'Beside the meeting name, icons only'],
+              ] as [BarPos, string, string, string][]).map(([id, icon, label, hint]) => (
+                <button type="button" key={id}
+                        className={`cx-choice2${roomPrefs.bar === id ? ' is-on' : ''}`}
+                        aria-pressed={roomPrefs.bar === id}
+                        onClick={() => setRoomPref('bar', id)}>
+                  <i className={icon} />
+                  <strong>{label}</strong>
+                  <small>{hint}</small>
+                </button>
+              ))}
+            </div>
+          </Panel>
+        )}
+
         {panel === 'devices' && (
           <Panel title="Settings" onClose={() => setPanel(null)}>
             <label className="cx-label" htmlFor="cx-cam">Camera</label>
@@ -1800,6 +2033,7 @@ export default function Stage({ seat, meeting, prefs }: {
             </label>
           </Panel>
         )}
+        </div>{/* /cx-mainpane */}
       </div>
     </>
   );
@@ -1847,7 +2081,8 @@ function Panel({ title, onClose, children, foot }: {
 }
 
 // ===========================================================================
-function Tile({ p, big, local, showScreen, hand, canHost, pinned, onPin, onMute, onRemove }: {
+function Tile({ p, big, local, showScreen, hand, canHost, pinned, mirror = true,
+                onPin, onMute, onRemove }: {
   p: LKParticipant;
   big: boolean;
   local: boolean;
@@ -1856,6 +2091,10 @@ function Tile({ p, big, local, showScreen, hand, canHost, pinned, onPin, onMute,
   canHost: boolean;
   /** Is THIS tile the pinned one? Local to this browser. */
   pinned?: boolean;
+  /** Mirror your OWN camera. A preference: a mirror is what people expect of
+   *  themselves, and un-mirrored reads as a stranger — but anybody holding up
+   *  writing wants it off. Never applies to other people or to a screen. */
+  mirror?: boolean;
   /** Absent on tiles that cannot be pinned; present means the button shows. */
   onPin?: () => void;
   onMute: () => void;
@@ -1900,7 +2139,7 @@ function Tile({ p, big, local, showScreen, hand, canHost, pinned, onPin, onMute,
              //   --screen switches object-fit to contain, because the default
              //            cover CROPS, and it crops off exactly whatever is at
              //            the edge of the thing somebody is presenting.
-             className={`cx-video${local && !showScreen ? ' cx-video--self' : ''}`
+             className={`cx-video${local && !showScreen && mirror ? ' cx-video--self' : ''}`
                + `${showScreen ? ' cx-video--screen' : ''}`}
              style={{ display: camOff ? 'none' : 'block' }} />
       {!local && <audio ref={audioRef} autoPlay />}
@@ -1941,18 +2180,27 @@ function Tile({ p, big, local, showScreen, hand, canHost, pinned, onPin, onMute,
       {(canHost || onPin) && (
         <div className="cx-tileacts">
           {onPin && (
-            <button type="button" className={`cx-pill${pinned ? ' cx-pill--on' : ''}`}
+            <button type="button" className={`cx-ico${pinned ? ' cx-ico--on' : ''}`}
                     onClick={onPin}
+                    aria-label={pinned ? 'Unpin' : 'Pin'}
+                    aria-pressed={pinned === true}
                     title={pinned
                       ? 'Stop keeping this one large'
                       : 'Keep this one large, whoever is talking'}>
-              {pinned ? 'Unpin' : 'Pin'}
+              <i className={pinned ? 'ri-pushpin-fill' : 'ri-pushpin-line'} />
             </button>
           )}
           {canHost && (
             <>
-              <button type="button" className="cx-pill" onClick={onMute}>Mute</button>
-              <button type="button" className="cx-pill cx-pill--bad" onClick={onRemove}>Remove</button>
+              <button type="button" className="cx-ico" onClick={onMute}
+                      aria-label="Mute this person" title="Mute their microphone">
+                <i className="ri-mic-off-line" />
+              </button>
+              <button type="button" className="cx-ico cx-ico--bad" onClick={onRemove}
+                      aria-label="Remove this person"
+                      title="Remove them from the meeting">
+                <i className="ri-user-unfollow-line" />
+              </button>
             </>
           )}
         </div>
