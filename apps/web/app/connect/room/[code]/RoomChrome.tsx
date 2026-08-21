@@ -167,12 +167,24 @@ export const CSS = `
    people reach for repeatedly during a meeting without wanting to lose
    sight of anybody. Bottom-right corner, out of the way of the rail, and
    it lifts above the control bar when the bar is along the bottom. */
-.cx-fab{position:fixed;right:18px;bottom:20px;z-index:1150;width:52px;height:52px;
-  border-radius:50%;display:grid;place-items:center;cursor:pointer;font-size:22px;
-  background:#e26bb0;border:1px solid rgba(255,255,255,.18);color:#2a0c1d;
-  box-shadow:0 10px 28px rgba(0,0,0,.45);transition:transform .14s,filter .14s}
-.cx-fab:hover{transform:translateY(-2px);filter:brightness(1.08)}
-.cx-root--bar-bottom .cx-fab{bottom:104px}
+/* Green, and clear of the edge. It was pink and pressed against the right
+   side of the window, which reads as something half off-screen. The depth is
+   a lit sphere: a highlight above, the body below, a soft ring and a cast
+   shadow — flat circles look like stickers at this size. */
+.cx-fab{position:fixed;right:28px;bottom:28px;z-index:1420;width:56px;height:56px;
+  border-radius:50%;display:grid;place-items:center;cursor:pointer;font-size:23px;
+  color:#04240f;border:1px solid rgba(255,255,255,.34);
+  background:radial-gradient(120% 120% at 32% 22%,#7bf0ae 0%,#34d67f 42%,#18a75c 100%);
+  box-shadow:0 12px 26px rgba(0,0,0,.42),0 2px 0 rgba(255,255,255,.42) inset,
+    0 -8px 14px rgba(0,0,0,.22) inset;
+  transition:transform .14s,box-shadow .14s}
+.cx-fab:hover{transform:translateY(-3px);
+  box-shadow:0 18px 34px rgba(0,0,0,.5),0 2px 0 rgba(255,255,255,.5) inset,
+    0 -8px 14px rgba(0,0,0,.22) inset}
+.cx-fab:active{transform:translateY(0)}
+.cx-root--bar-bottom .cx-fab{bottom:112px}
+/* Out of the way of an open panel rather than pinned under it. */
+@media (min-width:900px){.cx-root--panel .cx-fab{right:388px}}
 .cx-fab .cx-count{top:-4px;right:-4px}
 
 /* Files in chat. A row, not a bubble: the name and the size are the two
@@ -208,6 +220,31 @@ export const CSS = `
 .cx-choice2.is-on{border-color:var(--cx-accent);background:rgba(0,184,217,.16)}
 .cx-choice2 i{font-size:18px;color:var(--cx-accent)}
 .cx-choice2 small{color:var(--cx-dim);font-size:11px;line-height:1.35}
+/* ── ONE LINE PER DECISION. ─────────────────────────────────────────────
+   The panel explained itself in paragraphs and cost a full screen of
+   scrolling. A row of icons says the same thing in a strip: the name is on
+   hover for a mouse and under the icon for a phone, where there is no
+   hover to rely on. */
+.cx-row-pick{display:flex;gap:6px;margin-bottom:4px}
+.cx-pick{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;
+  gap:3px;padding:9px 4px;border-radius:11px;cursor:pointer;font-size:10px;
+  background:rgba(255,255,255,.05);border:1px solid var(--cx-line);
+  color:var(--cx-dim);transition:background .14s,border-color .14s}
+.cx-pick i{font-size:18px;color:var(--cx-text)}
+.cx-pick:hover{background:rgba(255,255,255,.11)}
+.cx-pick.is-on{border-color:var(--cx-accent);background:rgba(0,184,217,.16);
+  color:var(--cx-text)}
+.cx-pick.is-on i{color:var(--cx-accent)}
+.cx-pick span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+
+/* Colours need no words — the swatch IS the label. */
+.cx-swatches{display:flex;gap:8px;margin-bottom:4px}
+.cx-swatch{flex:1 1 0;height:34px;border-radius:10px;cursor:pointer;
+  border:2px solid transparent;box-shadow:0 0 0 1px var(--cx-line) inset;
+  transition:transform .12s,border-color .14s}
+.cx-swatch:hover{transform:translateY(-2px)}
+.cx-swatch.is-on{border-color:var(--cx-accent)}
+
 .cx-range{width:100%;accent-color:var(--cx-accent)}
 .cx-switch{display:flex;align-items:center;justify-content:space-between;gap:10px;
   padding:9px 2px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--cx-line)}
@@ -319,13 +356,22 @@ export const CSS = `
    up the screen. Four stay out — microphone, camera, share, leave — and
    the rest live behind More, which is where every product this size ends
    up. Anchored to wherever the bar is, so it never opens off-screen. */
-.cx-more{position:absolute;z-index:40;display:flex;flex-direction:column;gap:4px;
+/* FIXED and above the panels (1200). It was absolute at z-index 40, which
+   put it underneath an open side panel — so pressing More with View open
+   looked like a dead button: the menu WAS opening, behind the panel. */
+.cx-more{position:fixed;z-index:1400;display:flex;flex-direction:column;gap:4px;
   padding:8px;min-width:216px;max-height:70vh;overflow-y:auto;
   background:var(--cx-surface);border:1px solid var(--cx-line);
   border-radius:16px;box-shadow:0 18px 50px rgba(0,0,0,.55)}
 .cx-root--bar-bottom .cx-more{bottom:104px;left:50%;transform:translateX(-50%)}
 .cx-root--bar-left .cx-more{left:92px;bottom:16px}
 .cx-root--bar-top .cx-more{top:64px;right:16px}
+/* With a panel open the menu would land on top of it. Slide it clear so both
+   are readable at once. */
+@media (min-width:900px){
+  .cx-root--panel.cx-root--bar-top .cx-more{right:376px}
+  .cx-root--panel.cx-root--bar-bottom .cx-more{left:auto;right:376px;transform:none}
+}
 .cx-more .cx-btn{flex-direction:row;justify-content:flex-start;gap:10px;
   width:100%;min-width:0;font-size:13px;padding:9px 12px;border-radius:11px}
 .cx-more .cx-btn i{font-size:17px}

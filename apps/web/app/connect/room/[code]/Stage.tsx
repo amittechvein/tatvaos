@@ -1835,7 +1835,7 @@ export default function Stage({ seat, meeting, prefs }: {
         {/* One backdrop for both popups: a menu that only closes by pressing
             its own button is a menu people leave open by accident. */}
         {(more || picker) && (
-          <div style={{ position: 'absolute', inset: 0, zIndex: 35 }}
+          <div style={{ position: 'fixed', inset: 0, zIndex: 1390 }}
                onClick={() => { setMore(false); setPicker(false); }} />
         )}
 
@@ -2198,20 +2198,20 @@ export default function Stage({ seat, meeting, prefs }: {
               Yours alone, and remembered.
             </div>
 
-            <div className="cx-choices">
+            <div className="cx-row-pick">
               {([
                 ['auto', 'ri-magic-fill', 'Auto', 'Follows the meeting'],
-                ['grid', 'ri-layout-grid-fill', 'Grid', 'Everyone equal'],
-                ['spotlight', 'ri-fullscreen-fill', 'Spotlight', 'One tile only'],
-                ['sidebar', 'ri-layout-right-fill', 'Sidebar', 'One large, rest beside'],
+                ['grid', 'ri-layout-grid-fill', 'Grid', 'Everyone the same size'],
+                ['spotlight', 'ri-fullscreen-fill', 'Spot', 'One tile only'],
+                ['sidebar', 'ri-layout-right-fill', 'Side', 'One large, rest beside it'],
               ] as [Layout, string, string, string][]).map(([id, icon, label, hint]) => (
-                <button type="button" key={id}
-                        className={`cx-choice2${roomPrefs.layout === id ? ' is-on' : ''}`}
+                <button type="button" key={id} title={hint}
+                        className={`cx-pick${roomPrefs.layout === id ? ' is-on' : ''}`}
+                        aria-label={hint}
                         aria-pressed={roomPrefs.layout === id}
                         onClick={() => setRoomPref('layout', id)}>
                   <i className={icon} />
-                  <strong>{label}</strong>
-                  <small>{hint}</small>
+                  <span>{label}</span>
                 </button>
               ))}
             </div>
@@ -2255,42 +2255,36 @@ export default function Stage({ seat, meeting, prefs }: {
             </label>
 
             <div className="cx-sub" style={{ margin: '16px 0 6px' }}>BACKGROUND</div>
-            <div className="cx-choices">
+            <div className="cx-swatches">
               {([
                 ['midnight', 'Midnight', '#0a0a0e'],
                 ['graphite', 'Graphite', '#14161a'],
                 ['ocean', 'Ocean', '#07131f'],
                 ['plum', 'Plum', '#150d1b'],
                 ['forest', 'Forest', '#0a1712'],
-                ['mist', 'Mist — light', '#eef1f6'],
+                ['mist', 'Mist (light)', '#eef1f6'],
               ] as [Theme, string, string][]).map(([id, label, swatch]) => (
-                <button type="button" key={id}
-                        className={`cx-choice2${roomPrefs.theme === id ? ' is-on' : ''}`}
+                <button type="button" key={id} title={label} aria-label={label}
+                        className={`cx-swatch${roomPrefs.theme === id ? ' is-on' : ''}`}
+                        style={{ background: swatch }}
                         aria-pressed={roomPrefs.theme === id}
-                        onClick={() => setRoomPref('theme', id)}>
-                  <span style={{
-                    display: 'block', width: '100%', height: 16, borderRadius: 5,
-                    background: swatch, border: '1px solid rgba(255,255,255,.16)',
-                  }} />
-                  <strong>{label}</strong>
-                </button>
+                        onClick={() => setRoomPref('theme', id)} />
               ))}
             </div>
 
             <div className="cx-sub" style={{ margin: '16px 0 6px' }}>WHERE THE CONTROLS SIT</div>
-            <div className="cx-choices">
+            <div className="cx-row-pick">
               {([
-                ['bottom', 'ri-layout-bottom-fill', 'Bottom', ''],
-                ['left', 'ri-layout-left-fill', 'Side rail', ''],
-                ['top', 'ri-layout-top-fill', 'Top', 'Icons only'],
+                ['bottom', 'ri-layout-bottom-fill', 'Bottom', 'Controls along the bottom'],
+                ['left', 'ri-layout-left-fill', 'Rail', 'Controls down the left edge'],
+                ['top', 'ri-layout-top-fill', 'Top', 'Controls beside the meeting name'],
               ] as [BarPos, string, string, string][]).map(([id, icon, label, hint]) => (
-                <button type="button" key={id}
-                        className={`cx-choice2${roomPrefs.bar === id ? ' is-on' : ''}`}
+                <button type="button" key={id} title={hint} aria-label={hint}
+                        className={`cx-pick${roomPrefs.bar === id ? ' is-on' : ''}`}
                         aria-pressed={roomPrefs.bar === id}
                         onClick={() => setRoomPref('bar', id)}>
                   <i className={icon} />
-                  <strong>{label}</strong>
-                  <small>{hint}</small>
+                  <span>{label}</span>
                 </button>
               ))}
             </div>
