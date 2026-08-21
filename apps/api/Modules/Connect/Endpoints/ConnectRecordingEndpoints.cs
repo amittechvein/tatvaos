@@ -256,7 +256,33 @@ public static class ConnectRecordingEndpoints
 
         var started = await egress.StartAsync(id, mode, fileName, ct);
         if (started?.EgressId is not { Length: > 0 } egressId)
-            return Results.Problem("The media server did not start the recording.", statusCode: 502);
+            // ── A VIDEO REFUSAL HAS A KNOWN, ORDINARY CAUSE. SAY IT. ──────
+            //
+            // On 21 August every video attempt on production came back
+            //   503 {"code":"unavailable","msg":"no response from servers"}
+            // while audio recorded perfectly all day. That is not a fault:
+            // LiveKit's admission controller prices a room-composite VIDEO
+            // egress at four CPUs (it composites the meeting in a headless
+            // Chrome and re-encodes), audio-only at one. The box has two
+            // cores, so no egress instance can ever accept the video job and
+            // the dispatcher reports that nobody answered.
+            //
+            // The old sentence — "the media server did not start the
+            // recording" — was true and sent the reader looking for a broken
+            // media server. This one sends them to the thing that is
+            // actually true, and points at the option that works. It hedges
+            // ("most often") because a Chrome crash or a full disk lands
+            // here too, and stating one cause as certain would be the same
+            // mistake in the opposite direction.
+            return Results.Problem(
+                mode == "video"
+                    ? "The media server would not start a VIDEO recording. Video composites the "
+                      + "meeting in a browser on the server and needs roughly four spare processor "
+                      + "cores; when they are not free the request is declined rather than the live "
+                      + "meeting degraded. Audio recording is unaffected — start that instead, or "
+                      + "give the server more cores."
+                    : "The media server did not start the recording.",
+                statusCode: 502);
 
         var recording = new ConnectRecording
         {
