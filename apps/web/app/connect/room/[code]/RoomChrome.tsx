@@ -20,6 +20,30 @@ export const CSS = `
   --cx-dim:#9b9bab;--cx-accent:#00b8d9;--cx-good:#2ecc71;--cx-bad:#ef4757;
   position:fixed;inset:0;display:flex;flex-direction:column;background:var(--cx-bg);
   color:var(--cx-text);font-feature-settings:"tnum";overflow:hidden}
+
+/* ── THE ROOM'S BACKGROUND IS A CHOICE. ─────────────────────────────────
+   Everything above is expressed in variables, so a theme is a handful of
+   values rather than a second stylesheet. Tiles stay black whatever the
+   theme — that is the letterbox behind a video, not a surface, and tinting
+   it would tint the picture.
+
+   Mist is deliberately included even though a light video room is unusual:
+   somebody working beside a window at midday is fighting a black screen,
+   and "it is too dark to see" is not a taste question. */
+.cx-theme-graphite{--cx-bg:#14161a;--cx-surface:#1d2027;--cx-line:#2e323b;
+  --cx-dim:#9aa2b1}
+.cx-theme-ocean{--cx-bg:#07131f;--cx-surface:#0f2032;--cx-line:#1d3448;
+  --cx-dim:#8fa6bd;--cx-accent:#31c8ef}
+.cx-theme-plum{--cx-bg:#150d1b;--cx-surface:#211530;--cx-line:#352348;
+  --cx-dim:#b0a0c4;--cx-accent:#c07cf0}
+.cx-theme-forest{--cx-bg:#0a1712;--cx-surface:#12241c;--cx-line:#1e3a2c;
+  --cx-dim:#94b8a6;--cx-accent:#3ecf8e}
+.cx-theme-mist{--cx-bg:#eef1f6;--cx-surface:#ffffff;--cx-line:#d5dbe6;
+  --cx-text:#151922;--cx-dim:#5d6675;--cx-accent:#0090ab}
+.cx-theme-mist .cx-name,.cx-theme-mist .cx-hand{color:#fff}
+.cx-theme-mist .cx-mini{background:rgba(0,0,0,.05)}
+.cx-theme-mist .cx-mini:hover{background:rgba(0,0,0,.1)}
+.cx-theme-mist .cx-ico{background:rgba(255,255,255,.86);color:#151922}
 .cx-top{display:flex;align-items:center;gap:12px;padding:12px 16px;flex:0 0 auto}
 .cx-title{font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cx-meta{color:var(--cx-dim);font-size:12px;display:flex;align-items:center;gap:8px}
@@ -238,9 +262,79 @@ export const CSS = `
 .cx-btn--set{--tone:#9aa1b1}
 .cx-btn--rec{--tone:#ef6b6b}
 .cx-btn--end{--tone:#c46a2f}
+.cx-btn--react{--tone:#ffc247}
+.cx-btn--more{--tone:#8b8b9a}
 .cx-btn--leave{--tone:#ef4757;background:#ef4757;border-color:#ef4757;color:#fff}
 .cx-btn--leave i{color:#fff}
 .cx-btn--leave:hover{background:#ff5a69}
+
+/* ── "OFF" IS DRAWN, NOT LOOKED UP. ─────────────────────────────────────
+   The camera button rendered as an empty red pill for a whole afternoon
+   because ri-vidicon-off-line does not exist in this icon font — a glyph
+   that is missing costs nothing at build time and everything on screen,
+   and in the compact bar there is no label to fall back on.
+
+   So the OFF state no longer depends on a second icon existing. It reuses
+   the icon that is already proven to render and strikes it through in CSS.
+   Nothing to look up, nothing to 404, and the meaning is the universal
+   one. Apply this to any future on/off control rather than hunting for an
+   "-off" variant and hoping. */
+.cx-btn.is-off i{position:relative}
+.cx-btn.is-off i::after{content:"";position:absolute;left:-14%;top:46%;
+  width:128%;height:2px;background:currentColor;transform:rotate(-45deg);
+  border-radius:2px}
+
+/* ── MORE ───────────────────────────────────────────────────────────────
+   Twelve controls in a row wrapped onto two lines and pushed the meeting
+   up the screen. Four stay out — microphone, camera, share, leave — and
+   the rest live behind More, which is where every product this size ends
+   up. Anchored to wherever the bar is, so it never opens off-screen. */
+.cx-more{position:absolute;z-index:40;display:flex;flex-direction:column;gap:4px;
+  padding:8px;min-width:216px;max-height:70vh;overflow-y:auto;
+  background:var(--cx-surface);border:1px solid var(--cx-line);
+  border-radius:16px;box-shadow:0 18px 50px rgba(0,0,0,.55)}
+.cx-root--bar-bottom .cx-more{bottom:104px;left:50%;transform:translateX(-50%)}
+.cx-root--bar-left .cx-more{left:92px;bottom:16px}
+.cx-root--bar-top .cx-more{top:64px;right:16px}
+.cx-more .cx-btn{flex-direction:row;justify-content:flex-start;gap:10px;
+  width:100%;min-width:0;font-size:13px;padding:9px 12px;border-radius:11px}
+.cx-more .cx-btn i{font-size:17px}
+.cx-more-head{font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--cx-dim);padding:4px 6px 2px}
+
+/* ── REACTIONS ──────────────────────────────────────────────────────────
+   They float up over the meeting and disappear. No history, no storage,
+   no row in a table: a reaction is a gesture, and a gesture that is still
+   on screen a minute later has become a message. */
+.cx-reacts{position:absolute;left:0;right:0;bottom:0;height:60%;
+  pointer-events:none;z-index:30;overflow:hidden}
+.cx-react{position:absolute;bottom:0;font-size:34px;line-height:1;
+  animation:cx-float 3.4s ease-out forwards;
+  filter:drop-shadow(0 3px 8px rgba(0,0,0,.5))}
+.cx-react small{display:block;font-size:11px;text-align:center;color:var(--cx-text);
+  background:rgba(0,0,0,.5);border-radius:6px;padding:1px 5px;margin-top:2px;
+  max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@keyframes cx-float{
+  0%{transform:translateY(0) scale(.6);opacity:0}
+  12%{transform:translateY(-30px) scale(1.08);opacity:1}
+  78%{opacity:1}
+  100%{transform:translateY(-58vh) scale(.9);opacity:0}}
+.cx-picker{display:flex;gap:6px;flex-wrap:wrap;padding:8px;max-width:230px}
+.cx-emoji{font-size:24px;line-height:1;background:rgba(255,255,255,.06);
+  border:1px solid var(--cx-line);border-radius:11px;padding:7px 9px;cursor:pointer;
+  transition:transform .12s,background .15s}
+.cx-emoji:hover{background:rgba(255,255,255,.14);transform:translateY(-2px) scale(1.08)}
+
+/* ── THE RECORDING NOTICE, AS A PILL ────────────────────────────────────
+   It was a full-width band under the header, which cost a row of the room
+   permanently while recording. Beside the meeting name it is just as
+   unmissable — it is red, it pulses, and it is at the top of the screen —
+   without taking a stripe of the video away. Still not dismissible, and
+   still driven by LiveKit's own flag rather than our state. */
+.cx-recpill{display:inline-flex;align-items:center;gap:7px;flex:0 0 auto;
+  background:rgba(239,71,87,.18);border:1px solid rgba(239,71,87,.55);
+  color:#ff8b96;border-radius:999px;padding:4px 11px;font-size:12px;font-weight:600;
+  white-space:nowrap}
 .cx-btn{display:inline-flex;flex-direction:column;align-items:center;gap:4px;
   min-width:64px;padding:9px 12px;border-radius:14px;cursor:pointer;font-size:11px;
   background:rgba(255,255,255,.07);border:1px solid var(--cx-line);color:var(--cx-text);
