@@ -11,8 +11,8 @@ import {
 import { useAuth } from '@/lib/auth';
 import {
   connectApi, minutesApi, recordingApi,
-  type LobbyEntry, type Meeting, type Recording, type Seat, type SharePolicy,
-  type WaitingRoom,
+  type LobbyEntry, type Meeting, type Recording, type RecordingMode, type Seat,
+  type SharePolicy, type WaitingRoom,
 } from '@/lib/connect';
 import type { JoinPrefs } from './PreJoin';
 import {
@@ -264,6 +264,8 @@ export default function Stage({ seat, meeting, prefs }: {
   const [recording, setRecording] = useState<Recording | null>(null);
   const [recBusy, setRecBusy] = useState(false);
   const [recOff, setRecOff] = useState(false);   // no egress on this server
+  // The audio-or-video question, asked once per recording rather than assumed.
+  const [recordAsk, setRecordAsk] = useState(false);
 
   const isHost = meeting?.myRole === 'host' || meeting?.myRole === 'cohost';
 
@@ -817,25 +819,43 @@ export default function Stage({ seat, meeting, prefs }: {
     return () => { alive = false; };
   }, [isHost, meeting, authedFetch]);
 
-  async function toggleRecording() {
-    if (!meeting || recBusy) return;
+  // ── STARTING AND STOPPING ARE NOT THE SAME KIND OF ACT. ─────────────────
+  //
+  // Stopping is one obvious thing and happens on the click. STARTING now asks
+  // audio or video first, because the two are not interchangeable and the
+  // difference is not visible from the button: video costs this server roughly
+  // four times the CPU while it is also running the SFU, and the file is an
+  // order of magnitude larger on a disk that is already most of the way full.
+  //
+  // The old code chose audio silently and left a comment saying video "is
+  // offered on the meeting page". It was not offered anywhere — the API has
+  // taken mode: 'audio' | 'video' since it was written, and no screen ever
+  // sent 'video'. A capability nobody can reach is the same as one that does
+  // not exist, which is why this is the fix rather than a new feature.
+  async function stopRecording() {
+    if (!meeting || !recording || recBusy) return;
     setRecBusy(true);
     try {
-      if (recording) {
-        const stopped = await recordingApi.stop(authedFetch, meeting.id, recording.id);
-        // Keep the row only while it is still live. 'processing' means LiveKit
-        // is finalising the file and there is nothing left to stop.
-        setRecording(stopped.status === 'starting' || stopped.status === 'recording'
-          ? stopped : null);
-      } else {
-        // Audio, always, from this button. Video costs LiveKit four times the
-        // CPU on a box that is also running the SFU, so it is not something to
-        // start by tapping the obvious control — it is offered on the meeting
-        // page, where there is room to say what it costs.
-        setRecording(await recordingApi.start(authedFetch, meeting.id, 'audio', true));
-      }
+      const stopped = await recordingApi.stop(authedFetch, meeting.id, recording.id);
+      // Keep the row only while it is still live. 'processing' means LiveKit
+      // is finalising the file and there is nothing left to stop.
+      setRecording(stopped.status === 'starting' || stopped.status === 'recording'
+        ? stopped : null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not change the recording.');
+      setError(e instanceof Error ? e.message : 'Could not stop the recording.');
+    } finally {
+      setRecBusy(false);
+    }
+  }
+
+  async function startRecording(mode: RecordingMode) {
+    if (!meeting || recBusy) return;
+    setRecordAsk(false);
+    setRecBusy(true);
+    try {
+      setRecording(await recordingApi.start(authedFetch, meeting.id, mode, true));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not start the recording.');
     } finally {
       setRecBusy(false);
     }
@@ -1362,11 +1382,13 @@ export default function Stage({ seat, meeting, prefs }: {
               read as a broken product, not as an unconfigured one. */}
           {isHost && meeting && !recOff && !isPrivate && (
             <button type="button" className={`cx-btn ${recording ? 'is-rec' : ''}`}
-                    onClick={() => void toggleRecording()} disabled={recBusy}
+                    onClick={() => { if (recording) void stopRecording(); else setRecordAsk(true); }}
+                    disabled={recBusy}
                     aria-pressed={recording !== null}
+                    aria-haspopup={recording ? undefined : 'dialog'}
                     title={recording
                       ? 'Stop recording'
-                      : 'Record the audio of this meeting'}>
+                      : 'Record this meeting — you choose audio or video'}>
               <i className={recording ? 'ri-stop-circle-fill' : 'ri-record-circle-line'} />
               {recBusy ? '…' : recording ? 'Stop rec' : 'Record'}
             </button>
@@ -1441,6 +1463,48 @@ export default function Stage({ seat, meeting, prefs }: {
               <button type="button" className="cx-choice" disabled={leaveBusy}
                       onClick={() => setLeaveAsk(false)}>
                 Stay in the meeting
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Audio or video, asked once, in the words of what it costs rather
+            than the words of the API. The recommendation is stated rather
+            than implied by ordering: a host who does not know the difference
+            should be able to read one line and pick correctly. */}
+        {recordAsk && (
+          <div className="cx-modal-back" role="dialog" aria-modal="true"
+               aria-label="Start recording">
+            <div className="cx-modal">
+              <h2>Record this meeting</h2>
+              <p className="cx-sub" style={{ margin: '0 0 4px' }}>
+                Everyone here is told a recording has started, and it cannot be
+                paused — stopping ends it.
+              </p>
+
+              <button type="button" className="cx-choice" disabled={recBusy}
+                      onClick={() => void startRecording('audio')}>
+                <strong>Audio only</strong>
+                <div className="cx-sub">
+                  Voices, and everything the notes and transcript need. Light on
+                  the server and small to keep. Choose this unless you
+                  specifically need to see the screen afterwards.
+                </div>
+              </button>
+
+              <button type="button" className="cx-choice" disabled={recBusy}
+                      onClick={() => void startRecording('video')}>
+                <strong>Audio and video</strong>
+                <div className="cx-sub">
+                  Everything on screen, as an MP4. About four times the load on
+                  this server while it runs, and a much larger file — worth it
+                  for a demonstration or a class, wasteful for a conversation.
+                </div>
+              </button>
+
+              <button type="button" className="cx-choice" disabled={recBusy}
+                      onClick={() => setRecordAsk(false)}>
+                Not now
               </button>
             </div>
           </div>

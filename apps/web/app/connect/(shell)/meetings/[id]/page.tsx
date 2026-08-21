@@ -6,7 +6,8 @@ import { useAuth } from '@/lib/auth';
 import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
 import {
   connectApi, prettyCode, timeLabel, whenLabel,
-  type LobbyEntry, type Meeting, type Participant,
+  type LobbyEntry, type Meeting, type Participant, type SharePolicy,
+  type UpdateMeeting, type WaitingRoom,
 } from '@/lib/connect';
 import Recordings from './Recordings';
 
@@ -26,6 +27,31 @@ import Recordings from './Recordings';
 
 const LOBBY_POLL_MS = 3000;
 
+// ---------------------------------------------------------------------------
+//  <input type="datetime-local"> speaks LOCAL WALL TIME with no zone, while
+//  the API speaks ISO instants. These two convert between them through the
+//  browser's own zone, which is the zone the person editing is standing in.
+//
+//  Written out rather than sliced off an ISO string: `toISOString().slice(0,16)`
+//  is the tempting one-liner and it is wrong by the UTC offset — in India it
+//  shows a meeting five and a half hours earlier than it is, which reads as a
+//  bug in the meeting rather than in the field.
+// ---------------------------------------------------------------------------
+function toLocalInput(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    + `T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function fromLocalInput(value: string): string | null {
+  if (value.length === 0) return null;
+  const d = new Date(value);          // parsed in the browser's zone
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 export default function MeetingPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { authedFetch } = useAuth();
@@ -39,6 +65,87 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+
+  // ---- Editing --------------------------------------------------------
+  //
+  // The form is only mounted while `editing` is true, and it is SEEDED from
+  // the meeting at that moment rather than kept in sync with it. A form bound
+  // to live data fights the person typing in it: the lobby poll above reloads
+  // the meeting every three seconds, and a synced field would throw away a
+  // half-typed title on every tick.
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState<{
+    title: string; start: string; end: string;
+    waitingRoom: WaitingRoom; allowGuests: boolean;
+    sharePolicy: SharePolicy; autoRecord: boolean;
+    password: string; clearPassword: boolean;
+  } | null>(null);
+
+  function openEditor(m: Meeting) {
+    setForm({
+      title: m.title,
+      start: toLocalInput(m.scheduledStart),
+      end: toLocalInput(m.scheduledEnd),
+      waitingRoom: m.waitingRoom,
+      allowGuests: m.allowGuests,
+      sharePolicy: m.sharePolicy,
+      autoRecord: m.autoRecord,
+      // NEVER seeded with the real password — the server keeps a hash and
+      // could not tell us even if this screen asked. Empty means "leave it
+      // exactly as it is", which is also what the API means by null.
+      password: '',
+      clearPassword: false,
+    });
+    setEditing(true);
+    setError(null);
+    setNotice(null);
+  }
+
+  async function saveEdit(m: Meeting) {
+    if (!form) return;
+    const title = form.title.trim();
+    if (title.length === 0 || title.length > 200) {
+      setError('Give the meeting a title of up to 200 characters.');
+      return;
+    }
+    const start = fromLocalInput(form.start);
+    const end = fromLocalInput(form.end);
+    if (start && end && new Date(end) < new Date(start)) {
+      // Caught here as well as on the server, because a person who has just
+      // typed both fields should be told by the field, not by a round trip.
+      setError('The meeting cannot end before it starts.');
+      return;
+    }
+
+    const body: UpdateMeeting = {
+      title,
+      scheduledStart: start,
+      scheduledEnd: end,
+      waitingRoom: form.waitingRoom,
+      allowGuests: form.allowGuests,
+      sharePolicy: form.sharePolicy,
+    };
+
+    // ── THE THREE MEANINGS OF A PASSWORD BOX. ─────────────────────────────
+    // Absent  = leave the existing one alone   (send nothing)
+    // ''      = remove it                      (send an empty string)
+    // 'abcd'  = replace it                     (send the new one)
+    // Conflating the first two is how a password survives an edit that meant
+    // to remove it — so removal is its own explicit checkbox, never an
+    // emptied field.
+    if (form.clearPassword) body.password = '';
+    else if (form.password.length > 0) body.password = form.password;
+
+    // Auto-record is not offered at all on a Private meeting — the server
+    // refuses it in words and the database has a CHECK behind that. Sending
+    // it only when it is meaningful keeps the refusal a thing that cannot
+    // happen rather than an error somebody has to read.
+    if (m.mode !== 'private') body.autoRecord = form.autoRecord;
+
+    await run('save', () => connectApi.update(authedFetch, m.id, body).then(() => undefined),
+              'Saved.');
+    setEditing(false);
+  }
 
   const load = useCallback(async () => {
     setError(null);
@@ -145,6 +252,9 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
         </div>
         <div className="d-flex gap-2 flex-wrap">
           {!over && <Button variant="primary" href={`/connect/room/${meeting.code}`}>Join</Button>}
+          {isHost && !over && !editing && (
+            <Button onClick={() => openEditor(meeting)}>Edit</Button>
+          )}
           {isHost && meeting.status === 'active' && (
             <Button variant="danger" disabled={busy !== null}
                     onClick={() => void run('end', () => connectApi.end(authedFetch, meeting.id),
@@ -157,6 +267,130 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
 
       {error && <div className="alert alert-danger" role="alert">{error}</div>}
       {notice && <div className="alert alert-success" role="alert">{notice}</div>}
+
+      {editing && form && (
+        <Card title="Edit this meeting" className="mb-3">
+          <div className="row g-3">
+            <div className="col-12">
+              <label className="form-label" htmlFor="ed-title">Title</label>
+              <input id="ed-title" className="form-control" value={form.title} maxLength={200}
+                     onChange={(e) => setForm({ ...form, title: e.target.value })} />
+            </div>
+
+            <div className="col-md-6">
+              <label className="form-label" htmlFor="ed-start">Starts</label>
+              <input id="ed-start" type="datetime-local" className="form-control" value={form.start}
+                     onChange={(e) => setForm({ ...form, start: e.target.value })} />
+            </div>
+            <div className="col-md-6">
+              <label className="form-label" htmlFor="ed-end">Ends</label>
+              <input id="ed-end" type="datetime-local" className="form-control" value={form.end}
+                     onChange={(e) => setForm({ ...form, end: e.target.value })} />
+              <div className="form-text">
+                Times are in this computer&apos;s time zone. Leave both empty for a
+                meeting with no fixed time.
+              </div>
+            </div>
+
+            <div className="col-md-6">
+              <label className="form-label" htmlFor="ed-waiting">Waiting room</label>
+              <select id="ed-waiting" className="form-select" value={form.waitingRoom}
+                      onChange={(e) => setForm({ ...form, waitingRoom: e.target.value as WaitingRoom })}>
+                <option value="off">Off — anyone with the link joins straight in</option>
+                <option value="guests">Guests wait to be let in</option>
+                <option value="everyone">Everyone waits to be let in</option>
+              </select>
+              <div className="form-text">
+                Opening the door also lets in anybody already waiting.
+              </div>
+            </div>
+
+            <div className="col-md-6">
+              <label className="form-label" htmlFor="ed-share">Who can share their screen</label>
+              <select id="ed-share" className="form-select" value={form.sharePolicy}
+                      onChange={(e) => setForm({ ...form, sharePolicy: e.target.value as SharePolicy })}>
+                <option value="everyone">Everyone</option>
+                <option value="cohost">Only the host and co-hosts</option>
+                <option value="host">Only the host</option>
+              </select>
+              <div className="form-text">Applies to people already in the meeting, immediately.</div>
+            </div>
+
+            <div className="col-md-6">
+              <label className="form-label" htmlFor="ed-password">Password</label>
+              <input id="ed-password" type="password" className="form-control"
+                     value={form.password} disabled={form.clearPassword}
+                     placeholder={meeting.hasPassword ? 'Unchanged' : 'None'}
+                     autoComplete="new-password"
+                     onChange={(e) => setForm({ ...form, password: e.target.value })} />
+              <div className="form-text">
+                {meeting.hasPassword
+                  ? 'Leave this empty to keep the current password.'
+                  : 'Type one to start requiring a password. 4 characters or more.'}
+              </div>
+              {meeting.hasPassword && (
+                <div className="form-check mt-2">
+                  <input className="form-check-input" type="checkbox" id="ed-clearpw"
+                         checked={form.clearPassword}
+                         onChange={(e) => setForm({
+                           ...form, clearPassword: e.target.checked, password: '',
+                         })} />
+                  <label className="form-check-label" htmlFor="ed-clearpw">
+                    Remove the password
+                  </label>
+                </div>
+              )}
+            </div>
+
+            <div className="col-md-6">
+              <div className="form-check form-switch">
+                <input className="form-check-input" type="checkbox" id="ed-guests"
+                       checked={form.allowGuests}
+                       onChange={(e) => setForm({ ...form, allowGuests: e.target.checked })} />
+                <label className="form-check-label" htmlFor="ed-guests">
+                  Let people without an account join
+                </label>
+              </div>
+
+              {/* Auto-record is absent, not disabled, on a Private meeting:
+                  its media cannot be read by this server at all, so the
+                  control would be a promise the product cannot keep. */}
+              {meeting.mode !== 'private' && (
+                <div className="form-check form-switch mt-2">
+                  <input className="form-check-input" type="checkbox" id="ed-autorec"
+                         checked={form.autoRecord}
+                         onChange={(e) => setForm({ ...form, autoRecord: e.target.checked })} />
+                  <label className="form-check-label" htmlFor="ed-autorec">
+                    Start recording automatically
+                  </label>
+                </div>
+              )}
+            </div>
+
+            <div className="col-12">
+              <div className="alert alert-light border mb-0 fs-12">
+                <strong>Meeting type: {meeting.mode === 'private' ? 'Private' : 'Recorded'}</strong>
+                {' — this cannot be changed. '}
+                {meeting.mode === 'private'
+                  ? 'People were told this meeting is encrypted and cannot be recorded, and that '
+                    + 'promise has to hold for its whole life.'
+                  : 'A meeting cannot become private after people have joined it believing '
+                    + 'otherwise. Create a private meeting instead.'}
+              </div>
+            </div>
+          </div>
+
+          <div className="d-flex gap-2 mt-3">
+            <Button variant="primary" disabled={busy !== null}
+                    onClick={() => void saveEdit(meeting)}>
+              {busy === 'save' ? 'Saving…' : 'Save changes'}
+            </Button>
+            <Button disabled={busy !== null} onClick={() => { setEditing(false); setError(null); }}>
+              Cancel
+            </Button>
+          </div>
+        </Card>
+      )}
 
       <div className="row">
         <div className="col-xl-8">

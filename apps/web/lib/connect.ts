@@ -157,7 +157,19 @@ export interface CreateMeeting {
   mode?: MeetingMode;
 }
 
-export type UpdateMeeting = Partial<CreateMeeting & { locked: boolean }>;
+/**
+ * What an edit may carry — and `mode` is deliberately NOT in it.
+ *
+ * This used to be `Partial<CreateMeeting & …>`, which inherited `mode` and so
+ * type-checked a call that could never work: the server's UpdateMeetingRequest
+ * has no Mode field and the database trigger refuses the change outright, so
+ * `update(…, { mode: 'private' })` compiled, sent, and silently did nothing.
+ * The comment beside CreateMeeting.mode already claimed this type did not
+ * carry it. Now it does not — Omit makes the claim true, and an edit screen
+ * that tries to offer the choice fails at the keyboard instead of in
+ * production.
+ */
+export type UpdateMeeting = Partial<Omit<CreateMeeting, 'mode'> & { locked: boolean }>;
 
 // ---------------------------------------------------------------------------
 /**
