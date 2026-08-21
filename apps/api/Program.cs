@@ -17,6 +17,7 @@ using TatvaOS.Api.Modules.Space.Endpoints;
 using TatvaOS.Api.Modules.Calendar.Endpoints;
 using TatvaOS.Api.Modules.Connect.Endpoints;
 using TatvaOS.Api.Workers;
+using TatvaOS.Api.Shared.Ai;
 using TatvaOS.Api.Shared.Notify;
 using TatvaOS.Api.Shared.Settings;
 using TatvaOS.Api.Shared.Auth;
@@ -166,6 +167,27 @@ builder.Services.AddSingleton<TatvaOS.Api.Modules.Connect.ConnectDownloadTicket>
 //  because the binder only runs when the app starts.
 // ─────────────────────────────────────────────────────────────────────────
 builder.Services.AddSingleton<TatvaOS.Api.Modules.Connect.ConnectRoomKey>();
+
+// ---------------------------------------------------------------------------
+//  THE AI GATEWAY — the one place this platform talks to a language model.
+//
+//  Registered as the INTERFACE, deliberately. Mail, Connect and later Space
+//  take IAiGateway and know nothing else: not the provider, not the key, not
+//  the model. That is what makes moving to Azure OpenAI in an India region a
+//  settings change, and what makes extracting this into a separate
+//  tatvaos-ai-service later a second implementation plus this one line.
+//
+//  Singleton: it reads three settings at startup and holds no request state,
+//  the same shape as ConnectRoomKey above. HttpClient comes from the factory
+//  so sockets are pooled rather than exhausted.
+//
+//  Unset key is NOT an error. IsConfigured goes false, every feature built on
+//  it degrades to what it did before, and the API starts normally. Refusing
+//  to boot over an optional key would take mail and calendar down with it.
+// ---------------------------------------------------------------------------
+builder.Services.AddHttpClient();
+builder.Services.AddSingleton<TatvaOS.Api.Shared.Ai.IAiGateway,
+                              TatvaOS.Api.Shared.Ai.OpenAiGateway>();
 
 // Scoped: it writes through the request's AppDbContext and reads its
 // TenantContext. A singleton holding either would serve one tenant's scope to
@@ -415,6 +437,9 @@ app.MapConnectWebhookEndpoints();
 // three times over - the organisation, the person, and the disk. See the
 // header of ConnectRecordingEndpoints.cs.
 app.MapConnectRecordingEndpoints();
+
+// Operational: does the AI actually answer? SuperAdmin only, real round trip.
+app.MapAiStatusEndpoints();
 
 // ---------------------------------------------------------------------------
 //  Bootstrap the first super admin
