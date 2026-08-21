@@ -43,7 +43,19 @@ const CHIME_BURST_MAX = 4;
 // ===========================================================================
 //  The live meeting
 // ===========================================================================
-interface ChatLine { id: number; who: string; text: string; mine: boolean }
+interface ChatFile { name: string; size: number; url: string }
+interface ChatLine {
+  id: number; who: string; text: string; mine: boolean;
+  /** Present when this line IS a file rather than a message. */
+  file?: ChatFile;
+}
+
+/** Bytes, in the words people use. */
+function prettySize(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
 type PanelKind = 'people' | 'chat' | 'devices' | 'view' | null;
 
 // ---------------------------------------------------------------------------
@@ -76,6 +88,9 @@ interface RoomPrefs {
 }
 
 const PREFS_KEY = 'tatvaos.connect.room-prefs';
+/** The byte-stream topic files travel on, and the ceiling for one of them. */
+const FILE_TOPIC = 'connect-file';
+const FILE_MAX = 8 * 1024 * 1024;
 const DEFAULT_PREFS: RoomPrefs = {
   // The rail is the default because Amit asked for it, and because it is the
   // arrangement that gives a shared screen the most height — the thing this
@@ -174,6 +189,7 @@ export default function Stage({ seat, meeting, prefs }: {
   const reactSeq = useRef(0);
   const [picker, setPicker] = useState(false);
   const [more, setMore] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [knocking, setKnocking] = useState<LobbyEntry[]>([]);
   const [deciding, setDeciding] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -591,6 +607,31 @@ export default function Stage({ seat, meeting, prefs }: {
         }
       });
 
+    // Incoming files. Registered before connect so a file sent the instant
+    // somebody joins is not missed. The blob URL is revoked when the room is
+    // torn down — see the cleanup below — because each one pins its bytes in
+    // memory until it is.
+    r.registerByteStreamHandler(FILE_TOPIC, (reader, participantInfo) => {
+      void (async () => {
+        try {
+          const chunks = await reader.readAll();
+          const name = reader.info.name ?? 'file';
+          const blob = new Blob(chunks as BlobPart[],
+            { type: reader.info.mimeType || 'application/octet-stream' });
+          setChat((c) => [...c, {
+            id: c.length,
+            who: participantInfo.identity ?? 'Someone',
+            mine: false,
+            text: '',
+            file: { name, size: blob.size, url: URL.createObjectURL(blob) },
+          }]);
+          if (panelRef.current !== 'chat') { setUnread((n) => n + 1); chime('chat'); }
+        } catch {
+          // A partial transfer is dropped rather than shown as a broken link.
+        }
+      })();
+    });
+
     void (async () => {
       try {
         // ── THE KEY, THEN ENCRYPTION ON, THEN CONNECT. IN THAT ORDER. ──
@@ -642,6 +683,13 @@ export default function Stage({ seat, meeting, prefs }: {
     return () => {
       void r.disconnect();
       roomRef.current = null;
+      // Every received file holds its bytes alive through its blob URL until
+      // this runs. A meeting where twenty files were passed around would
+      // otherwise keep all twenty in memory for the life of the tab.
+      setChat((c) => {
+        c.forEach((line) => { if (line.file) URL.revokeObjectURL(line.file.url); });
+        return c;
+      });
       // The worker outlives the Room unless it is told otherwise, and a
       // leaked one per rejoin is a thread nobody is counting.
       e2eeWorker?.terminate();
@@ -1147,6 +1195,39 @@ export default function Stage({ seat, meeting, prefs }: {
     );
   }
 
+  // ── FILES GO BROWSER TO BROWSER. ──────────────────────────────────────
+  //
+  // livekit-client 2.22 carries byte streams, so a small file can travel the
+  // same path as chat: no upload endpoint, no bucket, no database row, no
+  // retention rule to get wrong. The price is honest and worth stating —
+  // a file reaches only the people IN THE ROOM at that moment. Somebody who
+  // joins a minute later never sees it, and nothing is kept afterwards.
+  //
+  // Hence the size cap. This is a way to pass a page around mid-meeting, not
+  // a file service; anything large belongs in Space where it can be found
+  // again tomorrow.
+  async function sendFile(file: File) {
+    const r = roomRef.current;
+    if (!r) return;
+    if (file.size > FILE_MAX) {
+      setError(`"${file.name}" is ${prettySize(file.size)}. Files here are limited to `
+        + '8 MB and are passed straight to the people in the meeting — put anything '
+        + 'bigger in Space and paste the link.');
+      return;
+    }
+    try {
+      await r.localParticipant.sendFile(file, { topic: FILE_TOPIC });
+      // Shown locally the same way a received one is, so the sender sees
+      // exactly what everybody else got.
+      setChat((c) => [...c, {
+        id: c.length, who: 'You', mine: true, text: '',
+        file: { name: file.name, size: file.size, url: URL.createObjectURL(file) },
+      }]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'That file could not be sent.');
+    }
+  }
+
   async function toggleShare() {
     const r = roomRef.current; if (!r) return;
 
@@ -1544,13 +1625,8 @@ export default function Stage({ seat, meeting, prefs }: {
         )}
       </span>
 
-      <span className="cx-btnwrap">
-        <button type="button" className={`cx-btn cx-btn--chat ${panel === 'chat' ? 'is-on' : ''}`}
-                onClick={() => { setMore(false); openPanel('chat'); }} title="Chat">
-          <i className="ri-chat-3-fill" />Chat
-        </button>
-        {unread > 0 && panel !== 'chat' && <span className="cx-count">{unread}</span>}
-      </span>
+      {/* No Chat row here: it has its own button in the corner, and one
+          feature in two menus is two places to keep in step. */}
 
       <button type="button" className={`cx-btn cx-btn--hand ${myHand ? 'is-on' : ''}`}
               onClick={() => { setMore(false); toggleHand(); }} aria-pressed={myHand}
@@ -1620,7 +1696,8 @@ export default function Stage({ seat, meeting, prefs }: {
     <>
       <style>{CSS}</style>
       <div className={`cx-root cx-theme-${roomPrefs.theme} cx-root--bar-${roomPrefs.bar}`
-        + `${roomPrefs.bar === 'left' ? ' cx-root--bar-left' : ''}`}
+        + `${roomPrefs.bar === 'left' ? ' cx-root--bar-left' : ''}`
+        + `${panel !== null ? ' cx-root--panel' : ''}`}
            ref={rootRef}>
         {/* The rail lives OUTSIDE the main pane so it can be a sibling column
             rather than something floating over the video. Everything else —
@@ -1760,6 +1837,22 @@ export default function Stage({ seat, meeting, prefs }: {
         {(more || picker) && (
           <div style={{ position: 'absolute', inset: 0, zIndex: 35 }}
                onClick={() => { setMore(false); setPicker(false); }} />
+        )}
+
+        {/* Chat, in the corner. It was buried in More, which is the wrong
+            place for the thing people reach for most often during a meeting
+            — and the one thing they want to reach WITHOUT losing sight of
+            anybody. Hidden while the chat panel is open, because then the
+            button would just be a lid on something already in front of you. */}
+        {panel !== 'chat' && (
+          <span className="cx-btnwrap">
+            <button type="button" className="cx-fab" onClick={() => openPanel('chat')}
+                    aria-label={unread > 0 ? `Chat, ${unread} unread` : 'Chat'}
+                    title="Chat and files">
+              <i className="ri-chat-3-fill" />
+            </button>
+            {unread > 0 && <span className="cx-count">{unread}</span>}
+          </span>
         )}
 
         {more && <div className="cx-more" role="menu">{moreItems}</div>}
@@ -2041,6 +2134,19 @@ export default function Stage({ seat, meeting, prefs }: {
           <Panel title="Chat" onClose={() => setPanel(null)}
                  foot={
                    <form onSubmit={send} style={{ display: 'flex', gap: 8 }}>
+                     <button type="button" className="cx-ico" style={{ flex: '0 0 auto' }}
+                             onClick={() => fileInputRef.current?.click()}
+                             aria-label="Send a file" title="Send a file (up to 8 MB)">
+                       <i className="ri-attachment-2" />
+                     </button>
+                     <input ref={fileInputRef} type="file" hidden
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              // Cleared straight away, or choosing the same
+                              // file twice in a row fires no change event.
+                              e.target.value = '';
+                              if (f) void sendFile(f);
+                            }} />
                      <input className="cx-field" value={draft} maxLength={2000}
                             onChange={(e) => setDraft(e.target.value)}
                             placeholder="Message everyone" aria-label="Message" />
@@ -2049,15 +2155,38 @@ export default function Stage({ seat, meeting, prefs }: {
                    </form>
                  }>
             <div className="cx-sub" style={{ marginBottom: 10 }}>
-              Messages are not saved. When the meeting ends, this goes with it.
+              Nothing here is saved. Files go straight to the people in the
+              meeting — up to 8 MB, and only to whoever is here now.
             </div>
+            {/* ── AN HONEST LINE ABOUT WHAT PRIVATE COVERS. ──────────────
+                A Private meeting encrypts its AUDIO AND VIDEO so the media
+                server cannot read them. Chat and files travel a different
+                path and the server can. Saying so is the same rule the rest
+                of this module follows: never let somebody assume a promise
+                wider than the one we actually keep. */}
+            {isPrivate && (
+              <div className="cx-sub" style={{ marginBottom: 10, color: 'var(--cx-bad)' }}>
+                The encryption covers the audio and video of this meeting, not
+                chat or files.
+              </div>
+            )}
             {chat.length === 0 && <div className="cx-sub">Nothing yet.</div>}
             {chat.map((c) => (
               <div key={c.id} style={{ marginBottom: 12 }}>
                 <div style={{ fontWeight: 600, fontSize: 13, color: c.mine ? '#8fe6f6' : undefined }}>
                   {c.mine ? 'You' : c.who}
                 </div>
-                <div style={{ fontSize: 14, wordBreak: 'break-word' }}>{c.text}</div>
+                {c.text.length > 0 && (
+                  <div style={{ fontSize: 14, wordBreak: 'break-word' }}>{c.text}</div>
+                )}
+                {c.file && (
+                  <a className="cx-file" href={c.file.url} download={c.file.name}>
+                    <i className="ri-file-line" />
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis',
+                                   whiteSpace: 'nowrap' }}>{c.file.name}</span>
+                    <small>{prettySize(c.file.size)}</small>
+                  </a>
+                )}
               </div>
             ))}
           </Panel>
@@ -2066,20 +2195,15 @@ export default function Stage({ seat, meeting, prefs }: {
         {panel === 'view' && (
           <Panel title="View" onClose={() => setPanel(null)}>
             <div className="cx-sub" style={{ marginBottom: 8 }}>
-              Yours alone — nobody else&apos;s screen changes, and this browser
-              remembers it for next time.
+              Yours alone, and remembered.
             </div>
 
             <div className="cx-choices">
               {([
-                ['auto', 'ri-magic-fill', 'Auto',
-                  'Follows the meeting — a shared screen takes the stage, otherwise everyone is equal'],
-                ['grid', 'ri-layout-grid-fill', 'Grid',
-                  'Everybody the same size'],
-                ['spotlight', 'ri-fullscreen-fill', 'Spotlight',
-                  'One tile only — pinned, or the screen, or whoever is speaking'],
-                ['sidebar', 'ri-layout-right-fill', 'Sidebar',
-                  'One large, the rest in a column beside it'],
+                ['auto', 'ri-magic-fill', 'Auto', 'Follows the meeting'],
+                ['grid', 'ri-layout-grid-fill', 'Grid', 'Everyone equal'],
+                ['spotlight', 'ri-fullscreen-fill', 'Spotlight', 'One tile only'],
+                ['sidebar', 'ri-layout-right-fill', 'Sidebar', 'One large, rest beside'],
               ] as [Layout, string, string, string][]).map(([id, icon, label, hint]) => (
                 <button type="button" key={id}
                         className={`cx-choice2${roomPrefs.layout === id ? ' is-on' : ''}`}
@@ -2099,18 +2223,14 @@ export default function Stage({ seat, meeting, prefs }: {
                    min={1} max={49} step={1} value={roomPrefs.maxTiles}
                    onChange={(e) => setRoomPref('maxTiles', Number(e.target.value))} />
             <div className="cx-sub" style={{ marginBottom: 10 }}>
-              The large tile never counts towards this. In a class of forty,
-              forty thumbnails help nobody — the rest are still in the meeting
-              and still heard.
+              The large tile is never counted. Everyone else is still in the
+              meeting and still heard.
             </div>
 
             <label className="cx-switch">
               <span>
                 Hide people with no camera
-                <div className="cx-sub">
-                  Drops the black squares. Your own tile stays, so you can see
-                  that your camera is off.
-                </div>
+                <div className="cx-sub">Yours always stays.</div>
               </span>
               <input type="checkbox" checked={roomPrefs.hideNoCam}
                      onChange={(e) => setRoomPref('hideNoCam', e.target.checked)} />
@@ -2119,10 +2239,7 @@ export default function Stage({ seat, meeting, prefs }: {
             <label className="cx-switch">
               <span>
                 Mirror my own video
-                <div className="cx-sub">
-                  On, you look like a mirror. Off is right when you hold up
-                  writing — and it never changes what others see.
-                </div>
+                <div className="cx-sub">Off when holding up writing. Others are unaffected.</div>
               </span>
               <input type="checkbox" checked={roomPrefs.mirror}
                      onChange={(e) => setRoomPref('mirror', e.target.checked)} />
@@ -2131,7 +2248,7 @@ export default function Stage({ seat, meeting, prefs }: {
             <label className="cx-switch">
               <span>
                 Hide my own tile
-                <div className="cx-sub">You are still on camera for everyone else.</div>
+                <div className="cx-sub">You stay on camera for others.</div>
               </span>
               <input type="checkbox" checked={roomPrefs.hideSelf}
                      onChange={(e) => setRoomPref('hideSelf', e.target.checked)} />
@@ -2163,9 +2280,9 @@ export default function Stage({ seat, meeting, prefs }: {
             <div className="cx-sub" style={{ margin: '16px 0 6px' }}>WHERE THE CONTROLS SIT</div>
             <div className="cx-choices">
               {([
-                ['bottom', 'ri-layout-bottom-fill', 'Bottom', 'Along the foot of the screen'],
-                ['left', 'ri-layout-left-fill', 'Side rail', 'A column down the left edge'],
-                ['top', 'ri-layout-top-fill', 'Top', 'Beside the meeting name, icons only'],
+                ['bottom', 'ri-layout-bottom-fill', 'Bottom', ''],
+                ['left', 'ri-layout-left-fill', 'Side rail', ''],
+                ['top', 'ri-layout-top-fill', 'Top', 'Icons only'],
               ] as [BarPos, string, string, string][]).map(([id, icon, label, hint]) => (
                 <button type="button" key={id}
                         className={`cx-choice2${roomPrefs.bar === id ? ' is-on' : ''}`}

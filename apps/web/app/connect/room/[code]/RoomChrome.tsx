@@ -154,6 +154,36 @@ export const CSS = `
    would have been a desktop-only feature by accident. */
 @media (hover:none){.cx-tileacts{opacity:1}}
 
+@media (min-width:900px){
+  .cx-root--panel .cx-mainpane{padding-right:360px;transition:padding-right .18s}
+}
+/* The rail sits ABOVE any panel: the way out of a meeting is never allowed
+   to be the thing that gets covered. */
+.cx-bar--left{z-index:1250}
+.cx-more{z-index:1260}
+
+/* ── THE CHAT BUBBLE ────────────────────────────────────────────────────
+   Chat was buried in More, which is the wrong place for the one thing
+   people reach for repeatedly during a meeting without wanting to lose
+   sight of anybody. Bottom-right corner, out of the way of the rail, and
+   it lifts above the control bar when the bar is along the bottom. */
+.cx-fab{position:fixed;right:18px;bottom:20px;z-index:1150;width:52px;height:52px;
+  border-radius:50%;display:grid;place-items:center;cursor:pointer;font-size:22px;
+  background:#e26bb0;border:1px solid rgba(255,255,255,.18);color:#2a0c1d;
+  box-shadow:0 10px 28px rgba(0,0,0,.45);transition:transform .14s,filter .14s}
+.cx-fab:hover{transform:translateY(-2px);filter:brightness(1.08)}
+.cx-root--bar-bottom .cx-fab{bottom:104px}
+.cx-fab .cx-count{top:-4px;right:-4px}
+
+/* Files in chat. A row, not a bubble: the name and the size are the two
+   things you decide on before clicking. */
+.cx-file{display:flex;align-items:center;gap:8px;margin-top:4px;padding:8px 10px;
+  border-radius:10px;background:rgba(255,255,255,.06);border:1px solid var(--cx-line);
+  color:var(--cx-text);text-decoration:none;font-size:13px}
+.cx-file:hover{background:rgba(255,255,255,.12);color:var(--cx-text)}
+.cx-file i{font-size:18px;color:var(--cx-accent);flex:0 0 auto}
+.cx-file small{color:var(--cx-dim);margin-left:auto;flex:0 0 auto}
+
 /* ── ICONS ON THE TILE, NOT WORDS. ──────────────────────────────────────
    Three word-pills across the corner of a 160px thumbnail covered the face
    they were about. Icons are a quarter of the width and survive a column
@@ -350,7 +380,13 @@ export const CSS = `
   color:#04262c;border-radius:999px;font-size:10px;font-weight:700;padding:1px 6px}
 .cx-btnwrap{position:relative;display:inline-flex}
 
-.cx-panel{position:fixed;top:0;right:0;bottom:0;width:min(360px,100vw);z-index:1200;
+/* ── A PANEL MUST NOT SWALLOW THE CONTROLS. ─────────────────────────────
+   width was min(360px,100vw), so on a narrow window it became the WHOLE
+   screen and buried the rail — the mute button vanished behind the View
+   panel. It now always leaves the rail's width uncovered, and on a wide
+   screen the meeting is INDENTED by the panel rather than hidden under it
+   (the same lay-out-don't-overlay rule as the faces column). */
+.cx-panel{position:fixed;top:0;right:0;bottom:0;width:min(360px,calc(100vw - 78px));z-index:1200;
   background:var(--cx-surface);border-left:1px solid var(--cx-line);
   display:flex;flex-direction:column;box-shadow:-14px 0 44px rgba(0,0,0,.5)}
 .cx-panel-head{display:flex;align-items:center;justify-content:space-between;
