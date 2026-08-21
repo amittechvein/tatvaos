@@ -37,22 +37,45 @@ export const CSS = `
 
 /* ── WHEN SOMEBODY IS PRESENTING, HEIGHT IS THE SCARCE THING. ──────────────
    A shared screen is letterboxed to FIT (contain, not cover — see below), so
-   on a wide monitor its width is decided entirely by how tall the stage is:
+   on a wide monitor its width is decided entirely by how TALL the stage is:
    a 16:10 laptop screen in a 1900x530 box renders 848px wide and wastes more
    than half the width on black. The first live share of a browser window
    came out smaller than the browser window it was shared from.
 
-   So while presenting, the camera strip stops taking a horizontal band of
-   its own and floats over the bottom-left corner instead — which is black
-   bar in almost every case — and the stage's padding tightens. That is
-   roughly 150px of height handed back to the picture, and the picture is
-   about 28% wider for it. The faces stay visible the whole time; they are
-   simply no longer charging rent in the one dimension that matters. */
-.cx-stage--present{padding:0 8px 4px;gap:8px}
-.cx-strip--float{position:absolute;left:12px;bottom:10px;z-index:5;padding:0;
-  max-width:calc(100% - 24px)}
-.cx-strip--float .cx-tile{flex:0 0 132px;max-width:132px;
-  box-shadow:0 6px 20px rgba(0,0,0,.55)}
+   So while presenting the faces move OUT of the horizontal band under the
+   share — which was costing the picture ~150px of height — and into a narrow
+   column beside it. That column is close to free: the picture is limited by
+   height, not width, so taking 160px off a 1900px stage does not shrink it
+   at all, while the height it releases makes it about 28% wider.
+
+   IT IS A COLUMN AND NOT AN OVERLAY, AND THAT WAS LEARNED THE HARD WAY.
+   The first version floated the tiles over the bottom-left corner on the
+   reasoning that a letterboxed share leaves black bar there. Sometimes it
+   does. With three people in a meeting the row was ~400px wide and landed
+   squarely on the shared window — the fix became the complaint, in a
+   screenshot, within the hour. A layout that only works when you can guess
+   the aspect ratio of somebody else's monitor is not a layout. Nothing
+   overlaps now; the column is laid out, so it cannot cover anything. */
+.cx-stage--focus{padding:0 8px 4px;gap:10px;flex-wrap:nowrap;
+  align-items:stretch;justify-content:flex-start}
+/* min-width:0 or the share refuses to shrink below its content and pushes
+   the column off the edge — the flex default nobody expects. */
+.cx-stage--focus .cx-tile--big{flex:1 1 auto;min-width:0}
+.cx-strip--side{flex:0 0 160px;flex-direction:column;overflow-y:auto;
+  overflow-x:hidden;padding:0;align-content:flex-start}
+.cx-strip--side .cx-tile{flex:0 0 auto;width:100%;max-width:none;aspect-ratio:16/9}
+
+/* ON A NARROW SCREEN THE TRADE GOES THE OTHER WAY, SO IT IS NOT MADE.
+   A side column costs width, and width is what a phone has least of: 160px
+   out of 390px would take 40% of the picture to show three thumbnails. Below
+   900px everything returns to the original stacked shape — share on top,
+   faces in a row beneath. */
+@media (max-width:900px){
+  .cx-stage--focus{flex-wrap:wrap}
+  .cx-strip--side{flex:0 0 100%;width:100%;flex-direction:row;
+    overflow-x:auto;overflow-y:hidden;margin-top:4px}
+  .cx-strip--side .cx-tile{flex:0 0 104px;width:auto;max-width:104px}
+}
 
 /* flex + aspect-ratio. Never grid-cols-*: YZEN's own .grid flattens those. */
 .cx-tile{position:relative;flex:1 1 clamp(240px,26vw,420px);max-width:640px;
@@ -103,11 +126,18 @@ export const CSS = `
 
 .cx-tileacts{position:absolute;right:10px;top:10px;display:flex;gap:6px;opacity:0;transition:opacity .15s}
 .cx-tile:hover .cx-tileacts,.cx-tile:focus-within .cx-tileacts{opacity:1}
+/* A touch screen has no hover, so hover-to-reveal means never-reveal. Pin
+   would have been a desktop-only feature by accident. */
+@media (hover:none){.cx-tileacts{opacity:1}}
 .cx-pill{border:none;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer;
   background:rgba(255,255,255,.15);color:#fff;backdrop-filter:blur(6px)}
 .cx-pill:hover{background:rgba(255,255,255,.28)}
 .cx-pill--bad{background:rgba(239,71,87,.85)}
 .cx-pill--bad:hover{background:#ef4757}
+/* A pin that is ON has to look different from one you could switch on, or
+   the same button reads as both states. */
+.cx-pill--on{background:var(--cx-accent);color:#04222a;font-weight:600}
+.cx-pill--on:hover{background:var(--cx-accent)}
 
 .cx-strip{flex:0 0 auto;display:flex;gap:8px;padding:0 16px 8px;overflow-x:auto}
 .cx-strip .cx-tile{flex:0 0 168px;max-width:168px;border-radius:12px}
