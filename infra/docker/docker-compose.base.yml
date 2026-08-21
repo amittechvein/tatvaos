@@ -262,6 +262,17 @@ services:
       # it should never point off this machine.
       Translate__Endpoint: ${TRANSLATE_ENDPOINT:-}
       Translate__ApiKey: ${TRANSLATE_API_KEY:-}
+
+      # The AI gateway (apps/api/Shared/Ai). Unset means AI features report
+      # themselves unavailable and everything else is untouched — the same
+      # contract as recording, transcription and the Connect room key.
+      #
+      # BaseUrl is what makes the provider swappable: OpenAI today, an Azure
+      # OpenAI resource in an India region the moment a customer needs data
+      # residency, with no code change on either side.
+      Ai__BaseUrl: ${AI_BASE_URL:-https://api.openai.com/v1}
+      Ai__ApiKey: ${AI_API_KEY:-}
+      Ai__Model: ${AI_MODEL:-}
       # Over-quota mailboxes: anything but "enforce" only LOGS would-defer
       # lines. Flip to enforce only after reading those logs shows no
       # innocent mailbox would be hit — a 4xx defer makes senders queue and
