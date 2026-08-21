@@ -124,30 +124,36 @@ export default function Stage({ seat, meeting, prefs }: {
   const chimeOnRef = useRef(true);
   useEffect(() => { chimeOnRef.current = chimeOn; }, [chimeOn]);
   const audioCtxRef = useRef<AudioContext | null>(null);
-  const chimeTimesRef = useRef<number[]>([]);
-  const chimeSuppressedRef = useRef(0);
+  // TWO SEPARATE BUDGETS, DELIBERATELY. A join or a leave is ambient — it
+  // tells you what happened. A KNOCK asks the host to make a decision, and
+  // nothing happens until they do. Sharing one budget would let four people
+  // arriving silence the single event that actually needs somebody to act.
+  const chimeTimesRef = useRef<{ ambient: number[]; knock: number[] }>({ ambient: [], knock: [] });
+  const chimeSuppressedRef = useRef<{ ambient: number; knock: number }>({ ambient: 0, knock: 0 });
 
-  const chime = useCallback((kind: 'join' | 'leave') => {
+  const chime = useCallback((kind: 'join' | 'leave' | 'knock') => {
     if (!chimeOnRef.current) return;
 
     // Burst suppression — see the constants at the top of the file.
+    const bucket: 'ambient' | 'knock' = kind === 'knock' ? 'knock' : 'ambient';
     const now = Date.now();
-    const recent = chimeTimesRef.current.filter((t) => now - t < CHIME_BURST_WINDOW_MS);
+    const recent = chimeTimesRef.current[bucket].filter((t) => now - t < CHIME_BURST_WINDOW_MS);
     if (recent.length >= CHIME_BURST_MAX) {
-      chimeSuppressedRef.current += 1;
-      chimeTimesRef.current = recent;
+      chimeSuppressedRef.current[bucket] += 1;
+      chimeTimesRef.current[bucket] = recent;
       // The measuring instrument for the review condition: after a real
       // meeting, this line says what the burst actually was.
       console.info(`[chime] suppressed a ${kind} tone — ${recent.length} played and `
-        + `${chimeSuppressedRef.current} suppressed within ${CHIME_BURST_WINDOW_MS / 1000}s`);
+        + `${chimeSuppressedRef.current[bucket]} suppressed within ${CHIME_BURST_WINDOW_MS / 1000}s`);
       return;
     }
-    if (chimeSuppressedRef.current > 0) {
-      console.info(`[chime] burst over — ${chimeSuppressedRef.current} tones were suppressed`);
-      chimeSuppressedRef.current = 0;
+    if (chimeSuppressedRef.current[bucket] > 0) {
+      console.info(`[chime] burst over (${bucket}) — `
+        + `${chimeSuppressedRef.current[bucket]} tones were suppressed`);
+      chimeSuppressedRef.current[bucket] = 0;
     }
     recent.push(now);
-    chimeTimesRef.current = recent;
+    chimeTimesRef.current[bucket] = recent;
 
     // A missing tone is nothing; a thrown one would take the handler with it.
     try {
@@ -157,16 +163,26 @@ export default function Stage({ seat, meeting, prefs }: {
       // no-op when it is already running and best-effort when it is not.
       if (ctx.state === 'suspended') void ctx.resume();
 
-      // Two soft sine notes: rising for an arrival, falling for a departure —
-      // tellable apart without looking, which is the entire point of a chime.
-      const notes = kind === 'join' ? [659.25, 880] : [880, 659.25];
+      // Two soft sine notes, and the SHAPE is what tells them apart without
+      // looking — which is the entire point of a chime:
+      //   join   rising    — somebody is here
+      //   leave  falling   — somebody is gone
+      //   knock  twice on the SAME note, spaced a little wider — the sound a
+      //          knock makes. Not a third melody to learn: a person who has
+      //          never been told what it means still reads "someone is at the
+      //          door", and it cannot be confused with an arrival, which is
+      //          the confusion that would matter.
+      const notes = kind === 'join' ? [659.25, 880]
+        : kind === 'leave' ? [880, 659.25]
+        : [587.33, 587.33];
+      const gap = kind === 'knock' ? 0.16 : 0.11;
       const at = ctx.currentTime;
       notes.forEach((freq, i) => {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.type = 'sine';
         osc.frequency.value = freq;
-        const t0 = at + i * 0.11;
+        const t0 = at + i * gap;
         // Quiet on purpose (peak 0.06): a notification, not a doorbell — it
         // sits under speech rather than over it.
         gain.gain.setValueAtTime(0.0001, t0);
@@ -528,22 +544,58 @@ export default function Stage({ seat, meeting, prefs }: {
   const lobbyLive = isHost && meeting !== null && waitingRoom !== 'off'
     && (connState === 'live' || connState === 'reconnecting');
 
+  // Which knocks this host has already been told about. null means "not yet
+  // primed" — see the first-poll rule inside the tick.
+  const knownKnocksRef = useRef<Set<string> | null>(null);
+
   useEffect(() => {
-    if (!lobbyLive || !meeting) { setKnocking([]); return; }
+    if (!lobbyLive || !meeting) {
+      setKnocking([]);
+      // Forget what was waiting, so that switching the waiting room back on
+      // primes again rather than announcing a queue that formed while the
+      // door was open.
+      knownKnocksRef.current = null;
+      return;
+    }
     let alive = true;
     const tick = async () => {
       try {
         const r = await connectApi.lobby(authedFetch, meeting.id);
-        if (alive) setKnocking(r.waiting);
+        if (!alive) return;
+        setKnocking(r.waiting);
+
+        // ── THE KNOCK TONE, AND WHY THE FIRST POLL IS SILENT. ───────────
+        //
+        // A knock is the one thing in this room that does not resolve
+        // itself: nobody comes in until the host decides, and the card can
+        // sit unseen behind a shared screen or a full-screen tile. So it
+        // gets a sound of its own — the gap this feature had, found by a
+        // host watching somebody wait.
+        //
+        // The first poll only LEARNS who is already waiting. A host opening
+        // a meeting that has a queue would otherwise be met with one tone
+        // per person already in it — announcing the status quo, exactly
+        // what the join tone deliberately refuses to do.
+        //
+        // One tone per poll however many arrived in it: three people
+        // knocking inside the same three seconds is one thing for the host
+        // to deal with, not three.
+        const seen = knownKnocksRef.current;
+        const ids = new Set(r.waiting.map((k) => k.requestId));
+        knownKnocksRef.current = ids;
+        if (seen === null) return;
+        if (r.waiting.some((k) => !seen.has(k.requestId))) chime('knock');
       } catch {
         // A failed poll is not worth a banner — the next is three seconds away,
         // and an error that clears itself teaches people to ignore errors.
+        // It also leaves the known set alone, so a blip cannot re-announce
+        // everybody who was already waiting.
       }
     };
     void tick();
     const t = setInterval(() => void tick(), LOBBY_POLL_MS);
     return () => { alive = false; clearInterval(t); };
-  }, [lobbyLive, meeting, authedFetch]);
+  }, [lobbyLive, meeting, authedFetch, chime]);
 
   // Roles, from OUR rows, fetched when a host opens the People panel or the
   // leave dialog — the two places a role is about to be read or changed.
@@ -1621,7 +1673,7 @@ export default function Stage({ seat, meeting, prefs }: {
                    alignItems: 'center', gap: 8, cursor: 'pointer' }}>
               <input type="checkbox" checked={chimeOn}
                      onChange={(e) => setChimeOn(e.target.checked)} />
-              Play a soft tone when someone joins or leaves
+              Play a soft tone when someone joins, leaves or knocks
             </label>
           </Panel>
         )}
