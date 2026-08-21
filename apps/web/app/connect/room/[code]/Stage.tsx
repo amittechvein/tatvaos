@@ -62,8 +62,11 @@ type PanelKind = 'people' | 'chat' | 'devices' | 'view' | null;
 type BarPos = 'bottom' | 'left' | 'top';
 type Layout = 'auto' | 'grid' | 'spotlight' | 'sidebar';
 
+type Theme = 'midnight' | 'graphite' | 'ocean' | 'plum' | 'forest' | 'mist';
+
 interface RoomPrefs {
   bar: BarPos;
+  theme: Theme;
   layout: Layout;
   /** Most faces drawn at once. A class of forty in forty tiles helps nobody. */
   maxTiles: number;
@@ -74,9 +77,17 @@ interface RoomPrefs {
 
 const PREFS_KEY = 'tatvaos.connect.room-prefs';
 const DEFAULT_PREFS: RoomPrefs = {
-  bar: 'bottom', layout: 'auto', maxTiles: 12,
+  // The rail is the default because Amit asked for it, and because it is the
+  // arrangement that gives a shared screen the most height — the thing this
+  // room has been short of all week. Anybody who wants the familiar bar
+  // moves it back in one click and is never asked again.
+  bar: 'left', theme: 'midnight', layout: 'auto', maxTiles: 12,
   hideNoCam: false, mirror: true, hideSelf: false,
 };
+
+/** What a reaction looks like while it floats. Emoji, not images: nothing to
+ *  download, nothing to host, and they render on every device we support. */
+const REACTIONS = ['👍', '👏', '❤️', '😂', '🎉', '😮', '🙏', '💯'] as const;
 
 function loadPrefs(): RoomPrefs {
   if (typeof window === 'undefined') return DEFAULT_PREFS;
@@ -156,6 +167,13 @@ export default function Stage({ seat, meeting, prefs }: {
   // person pinning the whiteboard must not decide what everyone else looks
   // at. Cleared by clicking Unpin, never by somebody else's actions.
   const [pinned, setPinned] = useState<string | null>(null);
+  // Reactions in flight. Each carries its own id so React can key them and
+  // its own left-offset so two at once do not overlap perfectly. They are
+  // removed by a timer, never by anything the sender does.
+  const [reacts, setReacts] = useState<{ id: number; emoji: string; who: string; x: number }[]>([]);
+  const reactSeq = useRef(0);
+  const [picker, setPicker] = useState(false);
+  const [more, setMore] = useState(false);
   const [knocking, setKnocking] = useState<LobbyEntry[]>([]);
   const [deciding, setDeciding] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -201,10 +219,12 @@ export default function Stage({ seat, meeting, prefs }: {
   const chimeTimesRef = useRef<{ ambient: number[]; knock: number[] }>({ ambient: [], knock: [] });
   const chimeSuppressedRef = useRef<{ ambient: number; knock: number }>({ ambient: 0, knock: 0 });
 
-  const chime = useCallback((kind: 'join' | 'leave' | 'knock') => {
+  const chime = useCallback((kind: 'join' | 'leave' | 'knock' | 'chat' | 'hand' | 'react' | 'rec') => {
     if (!chimeOnRef.current) return;
 
     // Burst suppression — see the constants at the top of the file.
+    // Everything that is not a knock shares the ambient budget, which is what
+    // stops a burst of reactions from turning the meeting into a fairground.
     const bucket: 'ambient' | 'knock' = kind === 'knock' ? 'knock' : 'ambient';
     const now = Date.now();
     const recent = chimeTimesRef.current[bucket].filter((t) => now - t < CHIME_BURST_WINDOW_MS);
@@ -242,10 +262,21 @@ export default function Stage({ seat, meeting, prefs }: {
       //          never been told what it means still reads "someone is at the
       //          door", and it cannot be confused with an arrival, which is
       //          the confusion that would matter.
+      //   join   rising     — somebody is here
+      //   leave  falling    — somebody is gone
+      //   knock  two taps   — somebody is at the door, and needs a decision
+      //   chat   one blip   — a message arrived
+      //   hand   rising 5th — a hand went up; higher, because it asks for you
+      //   react  light trill — a gesture, the least important thing here
+      //   rec    low pair   — recording started; the only sombre one
       const notes = kind === 'join' ? [659.25, 880]
         : kind === 'leave' ? [880, 659.25]
-        : [587.33, 587.33];
-      const gap = kind === 'knock' ? 0.16 : 0.11;
+        : kind === 'knock' ? [587.33, 587.33]
+        : kind === 'chat' ? [783.99]
+        : kind === 'hand' ? [659.25, 987.77]
+        : kind === 'react' ? [1046.5, 1318.5]
+        : [329.63, 261.63];
+      const gap = kind === 'knock' ? 0.16 : kind === 'react' ? 0.07 : 0.11;
       const at = ctx.currentTime;
       notes.forEach((freq, i) => {
         const osc = ctx.createOscillator();
@@ -268,6 +299,19 @@ export default function Stage({ seat, meeting, prefs }: {
   // The AudioContext outlives the room (it is lazily made and survives a
   // reconnect), so it is closed on unmount, not in the connect effect.
   useEffect(() => () => { void audioCtxRef.current?.close(); }, []);
+
+  // Shown to everybody, INCLUDING the person who sent it — a gesture you
+  // cannot see yourself having made feels broken, and the round trip through
+  // LiveKit would be the wrong thing to wait on for something this trivial.
+  const showReact = useCallback((emoji: string, who: string) => {
+    const id = reactSeq.current++;
+    setReacts((r) => [...r, { id, emoji, who, x: 8 + Math.floor(Math.random() * 78) }]);
+    chime('react');
+    // Matches the CSS animation. If the two ever drift, the element is
+    // removed while still visible, which reads as a flicker.
+    window.setTimeout(() => setReacts((r) => r.filter((x) => x.id !== id)), 3400);
+  }, [chime]);
+
 
   // ---- Full screen -----------------------------------------------------
   //
@@ -431,7 +475,12 @@ export default function Stage({ seat, meeting, prefs }: {
       .on(RoomEvent.Reconnected, () => { setConnState('live'); rerender(); })
       // The server tells everyone in the room, including guests. This is the
       // ONLY input to the notice on screen — see the state comment above.
-      .on(RoomEvent.RecordingStatusChanged, (on: boolean) => { setBeingRecorded(on); rerender(); })
+      .on(RoomEvent.RecordingStatusChanged, (on: boolean) => {
+        // Sound only when it STARTS. The notice on screen carries the fact;
+        // this is for the person looking somewhere else at that moment.
+        if (on) chime('rec');
+        setBeingRecorded(on); rerender();
+      })
       // The chime rides the same events the tiles do. Existing participants
       // do not fire ParticipantConnected at OUR join, so entering a full room
       // is silent — the chime announces changes, not the status quo.
@@ -477,6 +526,20 @@ export default function Stage({ seat, meeting, prefs }: {
             const up = (parsed as { hand?: unknown }).hand === true;
             const who = participant?.identity;
             if (who) setHands((h) => ({ ...h, [who]: up }));
+            // Only the raise makes a sound. A hand going DOWN is somebody
+            // withdrawing a request; announcing that is noise.
+            if (up) chime('hand');
+            return;
+          }
+
+          if ('react' in parsed) {
+            const emoji = String((parsed as { react?: unknown }).react ?? '');
+            // Whitelisted, not echoed. This arrives from another browser, and
+            // rendering whatever it sends would put arbitrary text on
+            // everybody's screen at 34px.
+            if ((REACTIONS as readonly string[]).includes(emoji)) {
+              showReact(emoji, participant?.name ?? 'Someone');
+            }
             return;
           }
 
@@ -521,7 +584,7 @@ export default function Stage({ seat, meeting, prefs }: {
           }]);
           // Not unread if they are looking at it. Counting anyway leaves a
           // badge for messages already read the moment the panel closes.
-          if (panelRef.current !== 'chat') setUnread((n) => n + 1);
+          if (panelRef.current !== 'chat') { setUnread((n) => n + 1); chime('chat'); }
         } catch {
           // Chat is ephemeral and best-effort. A malformed frame from a client
           // we do not control is dropped, never thrown.
@@ -588,7 +651,10 @@ export default function Stage({ seat, meeting, prefs }: {
     // no re-runs; it is listed because a dependency the effect reads and the
     // array omits is a lie that stays true only by luck. chime is a stable
     // useCallback with no dependencies, listed for the same reason.
-  }, [seat.wsUrl, seat.token, seat.roomKey, rerender, chime]);
+    // showReact is a stable useCallback (its own dependency is chime, which
+    // has none), so listing it costs no re-connections — and omitting a
+    // dependency the effect reads is a lie that stays true only by luck.
+  }, [seat.wsUrl, seat.token, seat.roomKey, rerender, chime, showReact]);
 
   // Device labels are blank until permission exists, so a menu built too early
   // is a list of empty strings.
@@ -1068,6 +1134,19 @@ export default function Stage({ seat, meeting, prefs }: {
     try { await r.localParticipant.setMicrophoneEnabled(!micOn); setMicOn(!micOn); setBlocked(null); }
     catch (e) { noteBlocked(e, setBlocked); }
   }
+  function sendReact(emoji: string) {
+    setPicker(false);
+    const r = roomRef.current;
+    showReact(emoji, 'You');
+    if (!r) return;
+    // Same data channel as chat and raised hands, with its own key so a
+    // reaction can never be mistaken for something somebody typed.
+    void r.localParticipant.publishData(
+      new TextEncoder().encode(JSON.stringify({ react: emoji })),
+      { reliable: false },
+    );
+  }
+
   async function toggleShare() {
     const r = roomRef.current; if (!r) return;
 
@@ -1368,132 +1447,185 @@ export default function Stage({ seat, meeting, prefs }: {
   // once here so the three placements cannot drift apart; a button added to
   // only two of them would be a bug nobody notices until somebody has moved
   // their bar.
-  const barButtons = (
+  // ── FOUR CONTROLS OUT, THE REST BEHIND "MORE". ────────────────────────
+  //
+  // Twelve buttons in a row wrapped onto two lines and pushed the meeting up
+  // the screen; in the compact bar they lost their labels too, so a wall of
+  // small coloured squares was all that was left. What stays out is what you
+  // reach for without thinking — microphone, camera, share, react — plus the
+  // way out. Everything else is one tap away and labelled in words.
+  //
+  // ICON NOTE: most icons here are the solid (-fill) variants. Two are not,
+  // and deliberately: the camera and Picture-in-Picture keep the outline
+  // names that are PROVEN to render in this icon font. A missing glyph costs
+  // nothing at build time and leaves a blank button on screen — which is
+  // exactly what ri-vidicon-off-line did for an afternoon. Where a fill
+  // variant has not been confirmed, the proven name stays.
+  const barPrimary = (
     <>
-            <button type="button" className={`cx-btn cx-btn--mic ${micOn ? '' : 'is-off'}`}
-                    onClick={() => void toggleMic()} aria-pressed={micOn}
-                    title={micOn ? 'Mute' : 'Unmute'}>
-              <i className={micOn ? 'ri-mic-line' : 'ri-mic-off-line'} />
-              {micOn ? 'Mute' : 'Unmute'}
-            </button>
+      <button type="button" className={`cx-btn cx-btn--mic ${micOn ? '' : 'is-off'}`}
+              onClick={() => void toggleMic()} aria-pressed={micOn}
+              title={micOn ? 'Mute' : 'Unmute'}>
+        <i className="ri-mic-fill" />
+        {micOn ? 'Mute' : 'Unmute'}
+      </button>
 
-            <button type="button" className={`cx-btn cx-btn--cam ${camOn ? '' : 'is-off'}`}
-                    onClick={() => void toggleCam()} aria-pressed={camOn}
-                    title={camOn ? 'Stop video' : 'Start video'}>
-              <i className={camOn ? 'ri-vidicon-line' : 'ri-vidicon-off-line'} />
-              {camOn ? 'Video' : 'Video'}
-            </button>
+      <button type="button" className={`cx-btn cx-btn--cam ${camOn ? '' : 'is-off'}`}
+              onClick={() => void toggleCam()} aria-pressed={camOn}
+              title={camOn ? 'Stop video' : 'Start video'}>
+        <i className="ri-vidicon-line" />
+        Video
+      </button>
 
-            <button type="button" className={`cx-btn cx-btn--share ${sharing ? 'is-on' : ''}`}
-                    onClick={() => void toggleShare()} aria-pressed={sharing}
-                    disabled={!mayShare && !sharing}
-                    title={!screenCaptureSupported()
-                      ? 'This browser cannot share a screen — join from a computer'
-                      : mayShare || sharing
-                        ? 'Share your screen'
-                        : 'The host has limited who can share in this meeting'}>
-              <i className="ri-computer-line" />
-              {sharing ? 'Stop' : 'Share'}
-            </button>
+      <button type="button" className={`cx-btn cx-btn--share ${sharing ? 'is-on' : ''}`}
+              onClick={() => void toggleShare()} aria-pressed={sharing}
+              disabled={!mayShare && !sharing}
+              title={!screenCaptureSupported()
+                ? 'This browser cannot share a screen — join from a computer'
+                : mayShare || sharing
+                  ? 'Share your screen'
+                  : 'The host has limited who can share in this meeting'}>
+        <i className="ri-computer-fill" />
+        {sharing ? 'Stop' : 'Share'}
+      </button>
 
-            <button type="button" className={`cx-btn cx-btn--view ${panel === 'view' ? 'is-on' : ''}`}
-                    onClick={() => openPanel('view')}
-                    title="Choose how the meeting is arranged">
-              <i className="ri-layout-grid-line" />
-              View
-            </button>
+      <button type="button" className={`cx-btn cx-btn--react ${picker ? 'is-on' : ''}`}
+              onClick={() => { setPicker(!picker); setMore(false); }}
+              aria-haspopup="menu" aria-expanded={picker}
+              title="Send a reaction">
+        <i className="ri-emotion-fill" />
+        React
+      </button>
 
-            {canFull && (
-              <button type="button" className={`cx-btn cx-btn--full ${full ? 'is-on' : ''}`}
-                      onClick={toggleFull} aria-pressed={full}
-                      title={full ? 'Leave full screen (Esc)' : 'Full screen'}>
-                <i className={full ? 'ri-fullscreen-exit-line' : 'ri-fullscreen-line'} />
-                {full ? 'Exit' : 'Full'}
-              </button>
-            )}
-
-            {canPip && (
-              <button type="button" className={`cx-btn cx-btn--mini ${pipOpen ? 'is-on' : ''}`}
-                      onClick={() => (pipOpen ? closePip() : void openPip())}
-                      aria-pressed={pipOpen}
-                      title="Keep the meeting in a small floating window while you work elsewhere">
-                <i className="ri-picture-in-picture-exit-line" />
-                {pipOpen ? 'Close' : 'Mini'}
-              </button>
-            )}
-
-            <button type="button" className={`cx-btn cx-btn--hand ${myHand ? 'is-on' : ''}`}
-                    onClick={toggleHand} aria-pressed={myHand}
-                    title={myHand ? 'Lower your hand' : 'Raise your hand'}>
-              <i className="ri-hand" />
-              {myHand ? 'Lower' : 'Hand'}
-            </button>
-
-            <span className="cx-btnwrap">
-              <button type="button" className={`cx-btn cx-btn--people ${panel === 'people' ? 'is-on' : ''}`}
-                      onClick={() => openPanel('people')} title="People">
-                <i className="ri-group-line" />People
-              </button>
-              {(knocking.length + Object.values(hands).filter(Boolean).length) > 0 && (
-                <span className="cx-count">
-                  {knocking.length + Object.values(hands).filter(Boolean).length}
-                </span>
-              )}
+      <span className="cx-btnwrap">
+        <button type="button" className={`cx-btn cx-btn--more ${more ? 'is-on' : ''}`}
+                onClick={() => { setMore(!more); setPicker(false); }}
+                aria-haspopup="menu" aria-expanded={more}
+                title="Everything else">
+          <i className="ri-more-2-fill" />
+          More
+        </button>
+        {(unread > 0 && panel !== 'chat')
+          || (knocking.length + Object.values(hands).filter(Boolean).length) > 0
+          ? <span className="cx-count">
+              {unread + knocking.length + Object.values(hands).filter(Boolean).length}
             </span>
+          : null}
+      </span>
 
-            <span className="cx-btnwrap">
-              <button type="button" className={`cx-btn cx-btn--chat ${panel === 'chat' ? 'is-on' : ''}`}
-                      onClick={() => openPanel('chat')} title="Chat">
-                <i className="ri-chat-1-line" />Chat
-              </button>
-              {unread > 0 && panel !== 'chat' && <span className="cx-count">{unread}</span>}
-            </span>
+      <button type="button" className="cx-btn cx-btn--leave" onClick={leave} title="Leave">
+        <i className="ri-logout-box-r-fill" />Leave
+      </button>
+    </>
+  );
 
-            <button type="button" className={`cx-btn cx-btn--set ${panel === 'devices' ? 'is-on' : ''}`}
-                    onClick={() => openPanel('devices')} title="Settings">
-              <i className="ri-settings-3-line" />Settings
-            </button>
+  // The contents of More. Same buttons, same handlers — only the place
+  // changed, and each one closes the menu so it never sits open over the
+  // thing it just did.
+  const moreItems = (
+    <>
+      <div className="cx-more-head">The meeting</div>
 
-            {/* Hidden entirely when this server has no egress, rather than shown
-                and refusing. A control that is always there and never works is
-                read as a broken product, not as an unconfigured one. */}
-            {isHost && meeting && !recOff && !isPrivate && (
-              <button type="button" className={`cx-btn cx-btn--rec ${recording ? 'is-rec' : ''}`}
-                      onClick={() => { if (recording) void stopRecording(); else setRecordAsk(true); }}
-                      disabled={recBusy}
-                      aria-pressed={recording !== null}
-                      aria-haspopup={recording ? undefined : 'dialog'}
-                      title={recording
-                        ? 'Stop recording'
-                        : 'Record this meeting — you choose audio or video'}>
-                <i className={recording ? 'ri-stop-circle-fill' : 'ri-record-circle-line'} />
-                {recBusy ? '…' : recording ? 'Stop rec' : 'Record'}
-              </button>
-            )}
+      <button type="button" className={`cx-btn cx-btn--view ${panel === 'view' ? 'is-on' : ''}`}
+              onClick={() => { setMore(false); openPanel('view'); }}
+              title="Choose how the meeting is arranged">
+        <i className="ri-layout-grid-fill" />View and layout
+      </button>
 
-            {isHost && meeting && (
-              <button type="button" className="cx-btn cx-btn--end"
-                      onClick={() => void hostAction(() => connectApi.end(authedFetch, meeting.id))}
-                      title="End the meeting for everyone">
-                <i className="ri-stop-circle-line" />End
-              </button>
-            )}
+      <span className="cx-btnwrap">
+        <button type="button" className={`cx-btn cx-btn--people ${panel === 'people' ? 'is-on' : ''}`}
+                onClick={() => { setMore(false); openPanel('people'); }} title="People">
+          <i className="ri-group-fill" />People
+        </button>
+        {(knocking.length + Object.values(hands).filter(Boolean).length) > 0 && (
+          <span className="cx-count">
+            {knocking.length + Object.values(hands).filter(Boolean).length}
+          </span>
+        )}
+      </span>
 
-            <button type="button" className="cx-btn cx-btn--leave" onClick={leave} title="Leave">
-              <i className="ri-logout-box-r-line" />Leave
-            </button>
+      <span className="cx-btnwrap">
+        <button type="button" className={`cx-btn cx-btn--chat ${panel === 'chat' ? 'is-on' : ''}`}
+                onClick={() => { setMore(false); openPanel('chat'); }} title="Chat">
+          <i className="ri-chat-3-fill" />Chat
+        </button>
+        {unread > 0 && panel !== 'chat' && <span className="cx-count">{unread}</span>}
+      </span>
+
+      <button type="button" className={`cx-btn cx-btn--hand ${myHand ? 'is-on' : ''}`}
+              onClick={() => { setMore(false); toggleHand(); }} aria-pressed={myHand}
+              title={myHand ? 'Lower your hand' : 'Raise your hand'}>
+        <i className="ri-hand" />
+        {myHand ? 'Lower your hand' : 'Raise your hand'}
+      </button>
+
+      <div className="cx-more-head">This screen</div>
+
+      {canFull && (
+        <button type="button" className={`cx-btn cx-btn--full ${full ? 'is-on' : ''}`}
+                onClick={() => { setMore(false); toggleFull(); }} aria-pressed={full}
+                title={full ? 'Leave full screen (Esc)' : 'Full screen'}>
+          <i className={full ? 'ri-fullscreen-exit-fill' : 'ri-fullscreen-fill'} />
+          {full ? 'Leave full screen' : 'Full screen'}
+        </button>
+      )}
+
+      {canPip && (
+        <button type="button" className={`cx-btn cx-btn--mini ${pipOpen ? 'is-on' : ''}`}
+                onClick={() => { setMore(false); if (pipOpen) closePip(); else void openPip(); }}
+                aria-pressed={pipOpen}
+                title="Keep the meeting in a small floating window while you work elsewhere">
+          <i className="ri-picture-in-picture-exit-line" />
+          {pipOpen ? 'Close small window' : 'Small window'}
+        </button>
+      )}
+
+      <button type="button" className={`cx-btn cx-btn--set ${panel === 'devices' ? 'is-on' : ''}`}
+              onClick={() => { setMore(false); openPanel('devices'); }} title="Settings">
+        <i className="ri-settings-3-line" />Camera, mic and sound
+      </button>
+
+      {/* Hidden entirely when this server has no egress, rather than shown
+          and refusing. A control that is always there and never works is
+          read as a broken product, not as an unconfigured one. */}
+      {isHost && meeting && !recOff && !isPrivate && (
+        <>
+          <div className="cx-more-head">Host</div>
+          <button type="button" className={`cx-btn cx-btn--rec ${recording ? 'is-rec' : ''}`}
+                  onClick={() => {
+                    setMore(false);
+                    if (recording) void stopRecording(); else setRecordAsk(true);
+                  }}
+                  disabled={recBusy}
+                  aria-pressed={recording !== null}
+                  aria-haspopup={recording ? undefined : 'dialog'}
+                  title={recording
+                    ? 'Stop recording'
+                    : 'Record this meeting — you choose audio or video'}>
+            <i className={recording ? 'ri-stop-circle-fill' : 'ri-record-circle-line'} />
+            {recBusy ? 'Working…' : recording ? 'Stop recording' : 'Record'}
+          </button>
+        </>
+      )}
+
+      {/* NO "End" button here. It used to sit beside Leave and do very nearly
+          the same thing, which is why they read as duplicates: pressing Leave
+          as the host already opens a dialog whose first choice is "End the
+          meeting for everyone". One way to end a meeting, and it is the one
+          that asks what you meant. */}
     </>
   );
 
   return (
     <>
       <style>{CSS}</style>
-      <div className={`cx-root${roomPrefs.bar === 'left' ? ' cx-root--bar-left' : ''}`}
+      <div className={`cx-root cx-theme-${roomPrefs.theme} cx-root--bar-${roomPrefs.bar}`
+        + `${roomPrefs.bar === 'left' ? ' cx-root--bar-left' : ''}`}
            ref={rootRef}>
         {/* The rail lives OUTSIDE the main pane so it can be a sibling column
             rather than something floating over the video. Everything else —
             header, stage, strip — sits in the pane beside it. */}
-        {roomPrefs.bar === 'left' && <div className="cx-bar cx-bar--left">{barButtons}</div>}
+        {roomPrefs.bar === 'left' && <div className="cx-bar cx-bar--left">{barPrimary}</div>}
         <div className="cx-mainpane">
         <header className="cx-top">
           <div style={{ minWidth: 0 }}>
@@ -1513,7 +1645,19 @@ export default function Stage({ seat, meeting, prefs }: {
               )}
             </div>
           </div>
-          {roomPrefs.bar === 'top' && <div className="cx-bar cx-bar--top">{barButtons}</div>}
+          {/* The recording notice, beside the name rather than as a band
+              across the room. Still not dismissible, still driven by
+              LiveKit's own flag — only the shape changed, because a
+              permanent stripe cost a row of the meeting for its whole
+              length. */}
+          {beingRecorded && (
+            <span className="cx-recpill" role="status" aria-live="polite">
+              <span className="cx-recdot" aria-hidden="true" />
+              Recording
+            </span>
+          )}
+
+          {roomPrefs.bar === 'top' && <div className="cx-bar cx-bar--top">{barPrimary}</div>}
           <div className="cx-ghost">
             {meeting && (
               <button type="button" className="cx-mini" onClick={() => void copyLink()}>
@@ -1531,13 +1675,6 @@ export default function Stage({ seat, meeting, prefs }: {
             This is a NOTICE, not consent. Several places Connect will run
             require the latter; that is a product decision and it is written
             up in docs/CONNECT_RECORDING_AND_NOTES.md rather than assumed. */}
-        {beingRecorded && (
-          <div className="cx-banner cx-banner--rec" role="status" aria-live="polite">
-            <span className="cx-recdot" aria-hidden="true" />
-            <span className="ms-2">This meeting is being recorded.</span>
-          </div>
-        )}
-
         {connState === 'reconnecting' && (
           <div className="cx-banner cx-banner--warn" role="status">
             <Spinner /> <span className="ms-2">Connection lost — reconnecting. Stay on this page.</span>
@@ -1577,6 +1714,19 @@ export default function Stage({ seat, meeting, prefs }: {
                     connectApi.remove(authedFetch, meeting?.id ?? '', t.p.identity))} />
           ))}
 
+          {/* Reactions float over everything and are pointer-transparent, so
+              they can never swallow a click meant for a tile. */}
+          {reacts.length > 0 && (
+            <div className="cx-reacts" aria-hidden="true">
+              {reacts.map((r) => (
+                <div key={r.id} className="cx-react" style={{ left: `${r.x}%` }}>
+                  {r.emoji}
+                  <small>{r.who}</small>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Beside the large tile, in the flow — see .cx-strip--side. */}
           {focused && (
             <div className="cx-strip cx-strip--side">
@@ -1603,7 +1753,29 @@ export default function Stage({ seat, meeting, prefs }: {
           </div>
         )}
 
-        {roomPrefs.bar === 'bottom' && <div className="cx-bar">{barButtons}</div>}
+        {roomPrefs.bar === 'bottom' && <div className="cx-bar">{barPrimary}</div>}
+
+        {/* One backdrop for both popups: a menu that only closes by pressing
+            its own button is a menu people leave open by accident. */}
+        {(more || picker) && (
+          <div style={{ position: 'absolute', inset: 0, zIndex: 35 }}
+               onClick={() => { setMore(false); setPicker(false); }} />
+        )}
+
+        {more && <div className="cx-more" role="menu">{moreItems}</div>}
+
+        {picker && (
+          <div className="cx-more" role="menu" style={{ minWidth: 0 }}>
+            <div className="cx-picker">
+              {REACTIONS.map((e) => (
+                <button type="button" key={e} className="cx-emoji"
+                        onClick={() => sendReact(e)} aria-label={`Send ${e}`}>
+                  {e}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* The host deciding what their leaving means. The two answers the
             brief names — end it for everyone, or hand it to somebody — plus
@@ -1900,13 +2072,13 @@ export default function Stage({ seat, meeting, prefs }: {
 
             <div className="cx-choices">
               {([
-                ['auto', 'ri-magic-line', 'Auto',
+                ['auto', 'ri-magic-fill', 'Auto',
                   'Follows the meeting — a shared screen takes the stage, otherwise everyone is equal'],
-                ['grid', 'ri-layout-grid-line', 'Grid',
+                ['grid', 'ri-layout-grid-fill', 'Grid',
                   'Everybody the same size'],
-                ['spotlight', 'ri-fullscreen-line', 'Spotlight',
+                ['spotlight', 'ri-fullscreen-fill', 'Spotlight',
                   'One tile only — pinned, or the screen, or whoever is speaking'],
-                ['sidebar', 'ri-layout-right-line', 'Sidebar',
+                ['sidebar', 'ri-layout-right-fill', 'Sidebar',
                   'One large, the rest in a column beside it'],
               ] as [Layout, string, string, string][]).map(([id, icon, label, hint]) => (
                 <button type="button" key={id}
@@ -1965,12 +2137,35 @@ export default function Stage({ seat, meeting, prefs }: {
                      onChange={(e) => setRoomPref('hideSelf', e.target.checked)} />
             </label>
 
+            <div className="cx-sub" style={{ margin: '16px 0 6px' }}>BACKGROUND</div>
+            <div className="cx-choices">
+              {([
+                ['midnight', 'Midnight', '#0a0a0e'],
+                ['graphite', 'Graphite', '#14161a'],
+                ['ocean', 'Ocean', '#07131f'],
+                ['plum', 'Plum', '#150d1b'],
+                ['forest', 'Forest', '#0a1712'],
+                ['mist', 'Mist — light', '#eef1f6'],
+              ] as [Theme, string, string][]).map(([id, label, swatch]) => (
+                <button type="button" key={id}
+                        className={`cx-choice2${roomPrefs.theme === id ? ' is-on' : ''}`}
+                        aria-pressed={roomPrefs.theme === id}
+                        onClick={() => setRoomPref('theme', id)}>
+                  <span style={{
+                    display: 'block', width: '100%', height: 16, borderRadius: 5,
+                    background: swatch, border: '1px solid rgba(255,255,255,.16)',
+                  }} />
+                  <strong>{label}</strong>
+                </button>
+              ))}
+            </div>
+
             <div className="cx-sub" style={{ margin: '16px 0 6px' }}>WHERE THE CONTROLS SIT</div>
             <div className="cx-choices">
               {([
-                ['bottom', 'ri-layout-bottom-line', 'Bottom', 'Along the foot of the screen'],
-                ['left', 'ri-layout-left-line', 'Side rail', 'A column down the left edge'],
-                ['top', 'ri-layout-top-line', 'Top', 'Beside the meeting name, icons only'],
+                ['bottom', 'ri-layout-bottom-fill', 'Bottom', 'Along the foot of the screen'],
+                ['left', 'ri-layout-left-fill', 'Side rail', 'A column down the left edge'],
+                ['top', 'ri-layout-top-fill', 'Top', 'Beside the meeting name, icons only'],
               ] as [BarPos, string, string, string][]).map(([id, icon, label, hint]) => (
                 <button type="button" key={id}
                         className={`cx-choice2${roomPrefs.bar === id ? ' is-on' : ''}`}
