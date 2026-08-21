@@ -32,8 +32,27 @@ export const CSS = `
   text-decoration:none;display:inline-block}
 .cx-mini:hover{background:rgba(255,255,255,.12);color:var(--cx-text)}
 
-.cx-stage{flex:1 1 auto;display:flex;flex-wrap:wrap;gap:12px;padding:0 16px 8px;
-  align-content:center;justify-content:center;overflow-y:auto;min-height:0}
+.cx-stage{position:relative;flex:1 1 auto;display:flex;flex-wrap:wrap;gap:12px;
+  padding:0 16px 8px;align-content:center;justify-content:center;overflow-y:auto;min-height:0}
+
+/* ── WHEN SOMEBODY IS PRESENTING, HEIGHT IS THE SCARCE THING. ──────────────
+   A shared screen is letterboxed to FIT (contain, not cover — see below), so
+   on a wide monitor its width is decided entirely by how tall the stage is:
+   a 16:10 laptop screen in a 1900x530 box renders 848px wide and wastes more
+   than half the width on black. The first live share of a browser window
+   came out smaller than the browser window it was shared from.
+
+   So while presenting, the camera strip stops taking a horizontal band of
+   its own and floats over the bottom-left corner instead — which is black
+   bar in almost every case — and the stage's padding tightens. That is
+   roughly 150px of height handed back to the picture, and the picture is
+   about 28% wider for it. The faces stay visible the whole time; they are
+   simply no longer charging rent in the one dimension that matters. */
+.cx-stage--present{padding:0 8px 4px;gap:8px}
+.cx-strip--float{position:absolute;left:12px;bottom:10px;z-index:5;padding:0;
+  max-width:calc(100% - 24px)}
+.cx-strip--float .cx-tile{flex:0 0 132px;max-width:132px;
+  box-shadow:0 6px 20px rgba(0,0,0,.55)}
 
 /* flex + aspect-ratio. Never grid-cols-*: YZEN's own .grid flattens those. */
 .cx-tile{position:relative;flex:1 1 clamp(240px,26vw,420px);max-width:640px;

@@ -1179,6 +1179,16 @@ export default function Stage({ seat, meeting, prefs }: {
     ? participants
     : (view === 'speaker' ? participants.filter((p) => p !== speaker) : []);
 
+  // Built once and placed in one of two containers — in the stage while
+  // somebody presents, below it otherwise. Two copies of this JSX would be
+  // two things to keep in step, and the one that is edited less often is the
+  // one that quietly stops matching.
+  const stripTiles = others.map((p) => (
+    <Tile key={p.identity} p={p} big={false} local={p === room?.localParticipant}
+          showScreen={false} hand={hands[p.identity] === true}
+          canHost={false} onMute={() => {}} onRemove={() => {}} />
+  ));
+
   // Who could take the meeting over: signed-in people other than you. A guest
   // cannot host — every host control keys on a user account they do not have.
   const eligibleHosts = participants.filter(
@@ -1260,7 +1270,7 @@ export default function Stage({ seat, meeting, prefs }: {
             gesture every video player has had for twenty years, so it needs
             no discovery — the button below is for the people who never learnt
             it. */}
-        <div className="cx-stage"
+        <div className={`cx-stage${presenting ? ' cx-stage--present' : ''}`}
              onDoubleClick={canFull ? toggleFull : undefined}>
           {/* The share, as a tile in its own right. Keyed separately from the
               sharer's camera tile below so React never reuses one <video> for
@@ -1282,16 +1292,18 @@ export default function Stage({ seat, meeting, prefs }: {
                   onRemove={() => void hostAction(() =>
                     connectApi.remove(authedFetch, meeting?.id ?? '', p.identity))} />
           ))}
+
+          {/* While presenting, the strip lives INSIDE the stage and floats —
+              see the note beside .cx-strip--float. Same tiles either way:
+              rendered once into `stripTiles` so the two placements cannot
+              drift apart. */}
+          {presenting && others.length > 0 && (
+            <div className="cx-strip cx-strip--float">{stripTiles}</div>
+          )}
         </div>
 
-        {others.length > 0 && (
-          <div className="cx-strip">
-            {others.map((p) => (
-              <Tile key={p.identity} p={p} big={false} local={p === room?.localParticipant}
-                    showScreen={false} hand={hands[p.identity] === true}
-                    canHost={false} onMute={() => {}} onRemove={() => {}} />
-            ))}
-          </div>
+        {!presenting && others.length > 0 && (
+          <div className="cx-strip">{stripTiles}</div>
         )}
 
         <div className="cx-bar">
