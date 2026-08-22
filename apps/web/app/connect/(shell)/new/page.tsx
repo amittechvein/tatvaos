@@ -8,6 +8,7 @@ import {
   connectApi, PRIVATE_BLURB, RECORDED_BLURB,
   type MeetingMode, type SharePolicy, type WaitingRoom,
 } from '@/lib/connect';
+import { Choice, Field, SumRow } from '../ConnectSkin';
 
 // ============================================================================
 //  Schedule a meeting
@@ -32,6 +33,46 @@ function toLocalInput(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
     + `T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+const WAITING_LABEL: Record<WaitingRoom, string> = {
+  off: 'Off — nobody waits',
+  guests: 'Guests wait',
+  everyone: 'Everyone waits',
+};
+
+const SHARE_LABEL: Record<SharePolicy, string> = {
+  everyone: 'Everyone',
+  cohost: 'Host and co-hosts',
+  host: 'Host only',
+};
+
+/**
+ * The meeting's time, as a sentence, for the summary panel.
+ *
+ * Returns a dash rather than a guess while the fields are mid-edit — a
+ * datetime input is briefly unparseable on nearly every keystroke, and a
+ * panel that flashes "Invalid Date" at somebody typing is worse than one that
+ * waits.
+ */
+function whenSummary(from: string, to: string): string {
+  const s = new Date(from);
+  const f = new Date(to);
+  if (Number.isNaN(s.getTime()) || Number.isNaN(f.getTime())) return '—';
+
+  const day = s.toLocaleDateString(undefined,
+    { weekday: 'short', day: 'numeric', month: 'short' });
+  const at = (d: Date) => d.toLocaleTimeString(undefined,
+    { hour: 'numeric', minute: '2-digit' });
+
+  const mins = Math.round((f.getTime() - s.getTime()) / 60_000);
+  if (mins <= 0) return `${day}, ${at(s)} — ends before it starts`;
+
+  const rest = mins % 60;
+  const length = mins >= 60
+    ? `${Math.floor(mins / 60)} h${rest > 0 ? ` ${rest} min` : ''}`
+    : `${mins} min`;
+  return `${day}, ${at(s)} – ${at(f)} · ${length}`;
 }
 
 function defaultStart(): Date {
@@ -121,105 +162,113 @@ export default function NewMeetingPage() {
             <Card>
               {error && <div className="alert alert-danger" role="alert">{error}</div>}
 
-              <div className="mb-3">
-                <label className="form-label" htmlFor="title">Name</label>
+              <Field label="Name" htmlFor="title"
+                     hint="What people see in their calendar and at the top of the meeting.">
                 <input id="title" className="form-control" value={title} maxLength={200}
                        onChange={(e) => setTitle(e.target.value)}
                        placeholder="Weekly review" autoComplete="off" />
-              </div>
+              </Field>
 
-              <div className="row">
-                <div className="col-md-6 mb-3">
-                  <label className="form-label" htmlFor="starts">Starts</label>
-                  <input id="starts" type="datetime-local" className="form-control"
-                         value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
+              <Field label="When" hint="Your own time zone. Everyone else sees it in theirs.">
+                <div className="row">
+                  <div className="col-md-6">
+                    <label className="cx-sublab" htmlFor="starts">Starts</label>
+                    <input id="starts" type="datetime-local" className="form-control"
+                           value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
+                  </div>
+                  <div className="col-md-6">
+                    <label className="cx-sublab" htmlFor="ends">Ends</label>
+                    <input id="ends" type="datetime-local" className="form-control"
+                           value={endsAt} onChange={(e) => setEndsAt(e.target.value)} />
+                  </div>
                 </div>
-                <div className="col-md-6 mb-3">
-                  <label className="form-label" htmlFor="ends">Ends</label>
-                  <input id="ends" type="datetime-local" className="form-control"
-                         value={endsAt} onChange={(e) => setEndsAt(e.target.value)} />
-                </div>
-              </div>
+              </Field>
 
-              {/* The first choice, because it decides what the rest of
-                  this form can even offer. Chosen once — there is no way to
-                  change it afterwards, and the form says so rather than
-                  letting somebody discover it later. */}
-              <div className="mb-3">
-                <label className="form-label" htmlFor="mode">Meeting type</label>
-                <select id="mode" className="form-select" value={mode}
-                        onChange={(e) => setMode(e.target.value as MeetingMode)}>
-                  <option value="recorded">Recorded — can be recorded and summarised</option>
-                  <option value="private">Private — encrypted, cannot be recorded</option>
-                </select>
-                <div className="form-text">
-                  {mode === 'private' ? PRIVATE_BLURB : RECORDED_BLURB}
-                  {' '}This cannot be changed once the meeting is created.
+              {/* The first choice, because it decides what the rest of this
+                  form can even offer — and the only one that can never be
+                  changed afterwards, which is why it says so on the card
+                  rather than in a paragraph somebody may not read. */}
+              <Field label="Meeting type"
+                     why={<>{mode === 'private' ? PRIVATE_BLURB : RECORDED_BLURB}</>}>
+                <div className="cx-choices cx-choices--2">
+                  <Choice name="mode" value="recorded" current={mode} onPick={setMode}
+                          title="Recorded"
+                          note="Can be recorded, transcribed and summarised. Everyone is told when recording starts." />
+                  <Choice name="mode" value="private" current={mode} onPick={setMode}
+                          title="Private"
+                          note="Audio and video are encrypted. It cannot be recorded." />
                 </div>
-              </div>
+                <div className="form-text">This cannot be changed once the meeting is created.</div>
+              </Field>
 
-              <div className="mb-3">
-                <label className="form-label" htmlFor="waiting">Waiting room</label>
-                <select id="waiting" className="form-select" value={waitingRoom}
-                        onChange={(e) => setWaitingRoom(e.target.value as WaitingRoom)}>
-                  <option value="off">Off — anyone with the link walks straight in</option>
-                  <option value="guests">Guests wait for you to let them in</option>
-                  <option value="everyone">Everyone waits, including colleagues</option>
-                </select>
-                <div className="form-text">
-                  A meeting link is a bearer token: whoever holds it can use it. The waiting
-                  room is what stands between a link going astray and a stranger in the room.
+              <Field label="Waiting room"
+                     why={'A meeting link is a bearer token: whoever holds it can use it. '
+                       + 'The waiting room is what stands between a link going astray and a '
+                       + 'stranger in the room. Guests wait is the safe default — colleagues '
+                       + 'walk in, anybody from outside knocks first.'}>
+                <div className="cx-choices cx-choices--3">
+                  <Choice name="waiting" value="off" current={waitingRoom} onPick={setWaitingRoom}
+                          title="Off" note="Anyone with the link walks straight in." />
+                  <Choice name="waiting" value="guests" current={waitingRoom} onPick={setWaitingRoom}
+                          title="Guests wait" note="You let people from outside in." />
+                  <Choice name="waiting" value="everyone" current={waitingRoom} onPick={setWaitingRoom}
+                          title="Everyone waits" note="Colleagues knock too." />
                 </div>
-              </div>
+              </Field>
 
-              <div className="form-check mb-3">
-                <input className="form-check-input" type="checkbox" id="guests"
-                       checked={allowGuests} onChange={(e) => setAllowGuests(e.target.checked)} />
-                <label className="form-check-label" htmlFor="guests">
-                  Let people without a TatvaOS account join
-                </label>
-                <div className="form-text">
-                  Turn this off and only signed-in colleagues can get in, whoever has the link.
+              <Field label="Who can get in"
+                     why={'This is about accounts, not about the link. Turn it to colleagues '
+                       + 'only and somebody outside the organisation is refused even if they '
+                       + 'are holding a working link.'}>
+                <div className="cx-choices cx-choices--2">
+                  <Choice name="guests" value="yes" current={allowGuests ? 'yes' : 'no'}
+                          onPick={() => setAllowGuests(true)}
+                          title="Anyone with the link"
+                          note="Including people with no TatvaOS account." />
+                  <Choice name="guests" value="no" current={allowGuests ? 'yes' : 'no'}
+                          onPick={() => setAllowGuests(false)}
+                          title="Colleagues only"
+                          note="Signed-in accounts, and nobody else." />
                 </div>
-              </div>
+              </Field>
 
-              <div className="mb-3">
-                <label className="form-label" htmlFor="share">Who can share their screen</label>
-                <select id="share" className="form-select" value={sharePolicy}
-                        onChange={(e) => setSharePolicy(e.target.value as SharePolicy)}>
-                  <option value="everyone">Everyone</option>
-                  <option value="cohost">Only the host and co-hosts</option>
-                  <option value="host">Only the host</option>
-                </select>
-                <div className="form-text">
-                  You can change this during the meeting from the People panel.
+              <Field label="Who can share their screen"
+                     hint="Changeable during the meeting, from the People panel.">
+                <div className="cx-choices cx-choices--3 cx-choices--tight">
+                  <Choice name="share" value="everyone" current={sharePolicy} onPick={setSharePolicy}
+                          title="Everyone" />
+                  <Choice name="share" value="cohost" current={sharePolicy} onPick={setSharePolicy}
+                          title="Host and co-hosts" />
+                  <Choice name="share" value="host" current={sharePolicy} onPick={setSharePolicy}
+                          title="Host only" />
                 </div>
-              </div>
+              </Field>
 
               {mode === 'recorded' && (
-              <div className="form-check mb-3">
-                <input className="form-check-input" type="checkbox" id="autorec"
-                       checked={autoRecord} onChange={(e) => setAutoRecord(e.target.checked)} />
-                <label className="form-check-label" htmlFor="autorec">
-                  Start recording automatically when the meeting starts
-                </label>
-                <div className="form-text">
-                  Audio recording, started when the first person joins. It still needs
-                  recording to be switched on for your organisation — if it is off,
-                  the meeting simply runs unrecorded.
-                </div>
-              </div>
+                <Field label="Recording"
+                       why={'Audio only, started when the first person joins. It still needs '
+                         + 'recording to be switched on for your organisation — if it is off, '
+                         + 'the meeting simply runs unrecorded.'}>
+                  <div className="cx-choices cx-choices--2 cx-choices--tight">
+                    <Choice name="autorec" value="no" current={autoRecord ? 'yes' : 'no'}
+                            onPick={() => setAutoRecord(false)}
+                            title="I will start it myself" />
+                    <Choice name="autorec" value="yes" current={autoRecord ? 'yes' : 'no'}
+                            onPick={() => setAutoRecord(true)}
+                            title="Start it automatically" />
+                  </div>
+                </Field>
               )}
 
-              <div className="mb-3">
-                <label className="form-label" htmlFor="password">Password <span className="text-muted fw-normal">(optional)</span></label>
+              <Field label="Password" htmlFor="password"
+                     hint="Optional. Most meetings do not need one."
+                     why={'The waiting room already covers a stray link, and a password '
+                       + 'nobody can remember becomes a support call five minutes before '
+                       + 'the meeting.'}>
                 <input id="password" className="form-control" value={password} type="text"
                        onChange={(e) => setPassword(e.target.value)}
                        autoComplete="off" spellCheck={false} />
-                <div className="form-text">
-                  Most meetings do not need one — the waiting room already covers a stray link.
-                </div>
-              </div>
+              </Field>
 
               <div className="d-flex gap-2">
                 <button className="btn btn-primary" type="submit" disabled={saving}>
@@ -229,6 +278,38 @@ export default function NewMeetingPage() {
               </div>
             </Card>
           </form>
+        </div>
+
+        {/* The form is a list of settings. This is the thing they make. */}
+        <div className="col-xl-5">
+          <Card title="What you are creating" className="cx-sum">
+            <div className={`cx-sum-title${title.trim().length > 0 ? '' : ' is-empty'}`}>
+              {title.trim().length > 0 ? title.trim() : 'Untitled meeting'}
+            </div>
+            <div className="cx-sum-when">{whenSummary(startsAt, endsAt)}</div>
+
+            <ul className="cx-sum-list">
+              <SumRow k="Type" v={mode === 'private' ? 'Private — encrypted' : 'Recorded'} />
+              <SumRow k="Who can get in"
+                      v={allowGuests ? 'Anyone with the link' : 'Colleagues only'} />
+              {/* Marked, not blocked. Off is a real answer for a meeting whose
+                  link never leaves one room — it is just the one setting worth
+                  seeing before pressing Create. */}
+              <SumRow k="Waiting room" v={WAITING_LABEL[waitingRoom]}
+                      warn={waitingRoom === 'off'} />
+              <SumRow k="Screen sharing" v={SHARE_LABEL[sharePolicy]} />
+              {mode === 'recorded' && (
+                <SumRow k="Recording"
+                        v={autoRecord ? 'Starts automatically' : 'Started by hand'} />
+              )}
+              <SumRow k="Password" v={password.length > 0 ? 'Set' : 'None'} />
+            </ul>
+
+            <div className="cx-sum-note">
+              The link and the code are made when you press Create meeting.
+              Nothing reaches anybody until you send them.
+            </div>
+          </Card>
         </div>
       </div>
     </>

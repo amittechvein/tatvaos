@@ -1,5 +1,7 @@
 'use client';
 
+import { useState } from 'react';
+
 // ============================================================================
 //  Connect's own skin for the pages that live in the app shell.
 // ============================================================================
@@ -362,6 +364,123 @@ const SKIN = `
   border-top-left-radius:0;border-bottom-left-radius:0;padding-inline:18px;
 }
 
+/* ── A choice you can see without opening it ──────────────────────────── */
+/* A <select> hides every option but one, so choosing means opening a menu,
+   reading, and closing it again — for a decision like "who has to wait in the
+   lobby", which is worth seeing all of at once. These are radio buttons
+   wearing cards: real inputs, real keyboard behaviour, real form semantics. */
+.cxs .cx-choices{display:grid;gap:10px}
+.cxs .cx-choices--2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.cxs .cx-choices--3{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media (max-width:1100px){
+  .cxs .cx-choices--2,.cxs .cx-choices--3{grid-template-columns:1fr}
+}
+.cxs .cx-choice{
+  position:relative;display:block;cursor:pointer;
+  padding:13px 14px 13px 42px;
+  border:1px solid var(--cxs-line);border-radius:12px;background:var(--cxs-surface);
+  box-shadow:0 1px 2px rgba(16,24,40,.04);
+  transition:border-color .16s ease, box-shadow .16s ease, background .16s ease;
+}
+.cxs .cx-choice:hover{border-color:#c8d2e1;background:var(--cxs-hover)}
+/* The input is still there and still focusable — it is only invisible. Hiding
+   it with display:none would take it out of the tab order and off the arrow
+   keys, which is most of what a radio group is for. */
+.cxs .cx-choice input{position:absolute;opacity:0;width:0;height:0}
+.cxs .cx-choice .cx-tick{
+  position:absolute;left:14px;top:15px;width:18px;height:18px;border-radius:50%;
+  border:1.5px solid #c6cede;background:var(--cxs-surface);
+  transition:background .16s ease, border-color .16s ease;
+}
+.cxs .cx-choice .cx-tick::after{
+  content:'';position:absolute;inset:4px;border-radius:50%;background:#fff;
+  transform:scale(0);transition:transform .16s ease;
+}
+.cxs .cx-choice.is-on{
+  border-color:rgba(3,181,98,.55);
+  background:linear-gradient(135deg,rgba(3,181,98,.075),rgba(3,181,98,.015) 62%),
+    var(--cxs-surface);
+  box-shadow:0 0 0 3px rgba(3,181,98,.13), 0 6px 16px -11px rgba(3,181,98,.85);
+}
+.cxs .cx-choice.is-on .cx-tick{background:var(--cxs-brand);border-color:#059c56}
+.cxs .cx-choice.is-on .cx-tick::after{transform:scale(1)}
+.cxs .cx-choice input:focus-visible ~ .cx-tick{
+  box-shadow:0 0 0 4px rgba(3,181,98,.22);
+}
+.cxs .cx-choice b{
+  display:block;font-size:13.5px;font-weight:640;letter-spacing:-.008em;
+  color:var(--cxs-ink);
+}
+.cxs .cx-choice .cx-note{
+  display:block;font-size:12px;line-height:1.5;color:var(--cxs-ink-3);margin-top:3px;
+}
+.cxs .cx-choices--tight .cx-choice{padding:10px 12px 10px 38px}
+.cxs .cx-choices--tight .cx-tick{top:11px;left:12px;width:16px;height:16px}
+
+/* ── The explanation, on request ──────────────────────────────────────── */
+/* The long version was written for a reason and is not being deleted — it is
+   being moved one click away, so the form reads as seven decisions rather
+   than seven paragraphs. */
+.cxs .cx-lab{display:flex;align-items:center;margin-bottom:6px}
+.cxs .cx-lab .form-label{margin-bottom:0}
+/* Starts and Ends are parts of one decision, so their labels sit a level
+   below the field's own. */
+.cxs .cx-sublab{
+  display:block;margin-bottom:5px;
+  font-size:10.5px;font-weight:650;letter-spacing:.085em;text-transform:uppercase;
+  color:var(--cxs-ink-3);
+}
+.cxs .cx-q{
+  display:inline-grid;place-items:center;flex:0 0 auto;
+  width:16px;height:16px;margin-left:7px;border-radius:50%;
+  border:1px solid var(--cxs-line);background:var(--cxs-soft);color:var(--cxs-ink-3);
+  font-size:10px;font-weight:700;line-height:1;cursor:pointer;
+  transition:background .15s ease, color .15s ease, border-color .15s ease;
+}
+.cxs .cx-q:hover{color:var(--cxs-ink);border-color:#c8d2e1}
+.cxs .cx-q[aria-expanded="true"]{
+  background:var(--cxs-brand);border-color:#059c56;color:#fff;
+}
+.cxs .cx-why{
+  margin-top:9px;padding:10px 13px;border-radius:10px;
+  background:var(--cxs-soft);border:1px solid var(--cxs-line);
+  font-size:12px;line-height:1.6;color:var(--cxs-ink-2);max-width:70ch;
+}
+
+/* One band per decision. .cx-field replaces the .mb-3 rule for forms that
+   have been rebuilt; the older rule still covers the ones that have not. */
+.cxs .cx-field{
+  padding-bottom:17px;margin-bottom:17px;border-bottom:1px solid var(--cxs-soft);
+}
+/* The last field keeps its rule on purpose — it is what separates the
+   decisions from the button that acts on them. */
+.cxs .cx-field>.row>[class*="col-"]{margin-bottom:0}
+
+/* ── What you are about to create ─────────────────────────────────────── */
+/* The form is a list of settings; this is the thing those settings make. It
+   follows the page down, because the answer to "wait, did I set the waiting
+   room" should never be a scroll. */
+.cxs .cx-sum{position:sticky;top:18px}
+.cxs .cx-sum-title{
+  font-size:19px;font-weight:660;letter-spacing:-.018em;color:var(--cxs-ink);
+  overflow-wrap:anywhere;
+}
+.cxs .cx-sum-title.is-empty{color:var(--cxs-ink-3);font-weight:540}
+.cxs .cx-sum-when{font-size:13px;color:var(--cxs-ink-2);margin-top:5px}
+.cxs .cx-sum-list{
+  margin:15px 0 0;padding:0;list-style:none;border-top:1px solid var(--cxs-soft);
+}
+.cxs .cx-sum-list li{
+  display:flex;align-items:baseline;justify-content:space-between;gap:14px;
+  padding:9px 0;border-bottom:1px solid var(--cxs-soft);font-size:12.5px;
+}
+.cxs .cx-sum-k{color:var(--cxs-ink-3);flex:0 0 auto}
+.cxs .cx-sum-v{color:var(--cxs-ink);font-weight:580;text-align:right}
+.cxs .cx-sum-v.is-warn{color:#b4690e}
+.cxs .cx-sum-note{
+  font-size:11.5px;line-height:1.6;color:var(--cxs-ink-3);margin-top:13px;
+}
+
 /* ── Everything else that shows up on these three pages ───────────────── */
 .cxs .alert{border-radius:12px;padding:12px 16px;font-size:13.5px;border:1px solid}
 .cxs .alert-danger{background:#fff1f2;border-color:#fecdd3;color:#a01133}
@@ -405,4 +524,85 @@ export function toneOf(seed: string): string {
 export function faceOf(name: string): string {
   const t = name.trim();
   return t.length > 0 ? t[0]!.toUpperCase() : '•';
+}
+
+// ---------------------------------------------------------------------------
+//  Form parts
+// ---------------------------------------------------------------------------
+
+/**
+ * One decision: a label, the control, a short line, and the long explanation
+ * folded behind a question mark.
+ *
+ * The question mark is a SIBLING of the label rather than a child of it. A
+ * button inside a <label> is also a click on the labelled control, so opening
+ * the explanation for "Waiting room" would have silently changed the waiting
+ * room — the kind of bug nobody reports because it looks like a mis-click.
+ */
+export function Field({
+  label, htmlFor, hint, why, children,
+}: {
+  label: string;
+  htmlFor?: string;
+  hint?: React.ReactNode;
+  why?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="cx-field">
+      <div className="cx-lab">
+        <label className="form-label" htmlFor={htmlFor}>{label}</label>
+        {why && (
+          <button type="button" className="cx-q" aria-expanded={open}
+                  aria-label={open ? 'Hide the explanation' : 'Why this matters'}
+                  onClick={() => setOpen(!open)}>
+            ?
+          </button>
+        )}
+      </div>
+      {children}
+      {hint && <div className="form-text">{hint}</div>}
+      {why && open && <div className="cx-why">{why}</div>}
+    </div>
+  );
+}
+
+/**
+ * A radio button wearing a card.
+ *
+ * Generic over the value so the caller keeps its union type — passing a
+ * SharePolicy in gets a SharePolicy back, with no cast at the call site and
+ * no way to hand it a string the server would reject.
+ */
+export function Choice<T extends string>({
+  name, value, current, onPick, title, note,
+}: {
+  name: string;
+  value: T;
+  current: T;
+  onPick: (v: T) => void;
+  title: string;
+  note?: string;
+}) {
+  const on = current === value;
+  return (
+    <label className={`cx-choice${on ? ' is-on' : ''}`}>
+      <input type="radio" name={name} value={value} checked={on}
+             onChange={() => onPick(value)} />
+      <span className="cx-tick" aria-hidden="true" />
+      <b>{title}</b>
+      {note && <span className="cx-note">{note}</span>}
+    </label>
+  );
+}
+
+/** One line of the summary panel. */
+export function SumRow({ k, v, warn }: { k: string; v: string; warn?: boolean }) {
+  return (
+    <li>
+      <span className="cx-sum-k">{k}</span>
+      <span className={`cx-sum-v${warn ? ' is-warn' : ''}`}>{v}</span>
+    </li>
+  );
 }
