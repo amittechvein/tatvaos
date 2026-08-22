@@ -267,6 +267,15 @@ public sealed class ConnectRecordingOptions
     public string NotesModel { get; set; } = "";
     public int NotesTimeoutMinutes { get; set; } = 10;
 
+    /// <summary>
+    /// The language the MINUTES are written in, whatever language the meeting
+    /// was held in. English by default — Amit's ruling, 22 August 2026.
+    ///
+    /// This does not touch the transcript, which stays as spoken. See the note
+    /// in ConnectNotesComposer for why those two must not be the same setting.
+    /// </summary>
+    public string NotesLanguage { get; set; } = "English";
+
     public bool TranscriptionConfigured => !string.IsNullOrWhiteSpace(TranscriptionUrl);
     public bool NotesModelConfigured =>
         !string.IsNullOrWhiteSpace(NotesUrl) && !string.IsNullOrWhiteSpace(NotesModel);
@@ -296,6 +305,7 @@ public sealed class ConnectRecordingOptions
         o.NotesUrl = (s["NotesUrl"] ?? "").Trim();
         o.NotesKey = (s["NotesKey"] ?? "").Trim();
         o.NotesModel = (s["NotesModel"] ?? "").Trim();
+        o.NotesLanguage = NonEmpty(s["NotesLanguage"], o.NotesLanguage);
         if (int.TryParse(s["NotesTimeoutMinutes"], out var nt) && nt > 0) o.NotesTimeoutMinutes = nt;
 
         return o;

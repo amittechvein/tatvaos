@@ -93,39 +93,34 @@ public sealed class ConnectTranscriber(
 
         try
         {
-            using var form = new MultipartFormDataContent();
+            // ── ASK FOR THE TIMELINE, ACCEPT LESS ─────────────────────────
+            //
+            // verbose_json is what carries per-segment timestamps, and a
+            // transcript without them is a wall of text you cannot navigate.
+            // whisper-1 supports it. gpt-4o-transcribe and its diarize sibling
+            // do NOT — they answer 400 "not compatible with model".
+            //
+            // So the format is negotiated rather than configured. A setting
+            // would work right up until somebody changed the model and not the
+            // format, and got a 400 that reads like an outage; the code can
+            // simply find out. One extra round trip, once per recording, only
+            // on services that refuse — and it means switching model stays a
+            // one-line change to .env, which is the property this whole module
+            // was built around.
+            var (status, payload) = await SendAsync(
+                uploadPath, uploadType, "verbose_json", timeout.Token);
 
-            // Streamed, not read into memory: an hour of Opus is ~30 MB and an
-            // hour of MP4 is far more, and this process is also serving
-            // requests. FileShare.Read so a concurrent download of the same
-            // recording is not blocked by the transcription of it.
-            await using var file = new FileStream(uploadPath, FileMode.Open, FileAccess.Read,
-                FileShare.Read, bufferSize: 64 * 1024, useAsync: true);
-
-            var content = new StreamContent(file);
-            content.Headers.ContentType = new MediaTypeHeaderValue(uploadType);
-            // The FILE NAME matters: most OpenAI-compatible servers decide how
-            // to decode from the extension, not from the content type.
-            form.Add(content, "file", Path.GetFileName(uploadPath));
-            form.Add(new StringContent(options.TranscriptionModel), "model");
-            form.Add(new StringContent("verbose_json"), "response_format");
-            if (!string.IsNullOrWhiteSpace(options.TranscriptionLanguage))
-                form.Add(new StringContent(options.TranscriptionLanguage), "language");
-
-            using var request = new HttpRequestMessage(HttpMethod.Post, options.TranscriptionUrl)
+            if (status == 400)
             {
-                Content = form,
-            };
-            if (!string.IsNullOrWhiteSpace(options.TranscriptionKey))
-                request.Headers.Authorization =
-                    new AuthenticationHeaderValue("Bearer", options.TranscriptionKey);
+                log.LogInformation(
+                    "{Model} refused verbose_json; retrying as plain json (no timestamps).",
+                    options.TranscriptionModel);
+                (status, payload) = await SendAsync(
+                    uploadPath, uploadType, "json", timeout.Token);
+            }
 
-            var response = await http.SendAsync(request, timeout.Token);
-            var payload = await response.Content.ReadAsStringAsync(timeout.Token);
-
-            if (!response.IsSuccessStatusCode)
+            if (status is < 200 or >= 300)
             {
-                var status = (int)response.StatusCode;
                 var permanent = IsPermanent(status);
 
                 log.LogWarning(
@@ -164,6 +159,48 @@ public sealed class ConnectTranscriber(
                 catch (UnauthorizedAccessException) { }
             }
         }
+    }
+
+    /// <summary>
+    /// One POST. Separated out so the format can be retried without the caller
+    /// worrying about a consumed stream: the file handle and the multipart body
+    /// are BUILT FRESH EACH TIME, because an HttpContent can only be sent once
+    /// and reusing one is a bug that shows up as an empty upload rather than an
+    /// exception.
+    /// </summary>
+    private async Task<(int Status, string Payload)> SendAsync(
+        string uploadPath, string uploadType, string responseFormat, CancellationToken ct)
+    {
+        using var form = new MultipartFormDataContent();
+
+        // Streamed, not read into memory: an hour of Opus is ~30 MB and an
+        // hour of MP4 is far more, and this process is also serving requests.
+        // FileShare.Read so a concurrent download of the same recording is not
+        // blocked by the transcription of it.
+        await using var file = new FileStream(uploadPath, FileMode.Open, FileAccess.Read,
+            FileShare.Read, bufferSize: 64 * 1024, useAsync: true);
+
+        var content = new StreamContent(file);
+        content.Headers.ContentType = new MediaTypeHeaderValue(uploadType);
+        // The FILE NAME matters: most OpenAI-compatible servers decide how to
+        // decode from the extension, not from the content type.
+        form.Add(content, "file", Path.GetFileName(uploadPath));
+        form.Add(new StringContent(options.TranscriptionModel), "model");
+        form.Add(new StringContent(responseFormat), "response_format");
+        if (!string.IsNullOrWhiteSpace(options.TranscriptionLanguage))
+            form.Add(new StringContent(options.TranscriptionLanguage), "language");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, options.TranscriptionUrl)
+        {
+            Content = form,
+        };
+        if (!string.IsNullOrWhiteSpace(options.TranscriptionKey))
+            request.Headers.Authorization =
+                new AuthenticationHeaderValue("Bearer", options.TranscriptionKey);
+
+        using var response = await http.SendAsync(request, ct);
+        var payload = await response.Content.ReadAsStringAsync(ct);
+        return ((int)response.StatusCode, payload);
     }
 
     /// <summary>

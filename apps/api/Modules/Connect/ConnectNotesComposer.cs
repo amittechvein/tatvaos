@@ -230,12 +230,43 @@ public sealed class ConnectNotesComposer(
     {
         var (transcript, truncated) = Fit(ConnectTranscriber.Render(segments));
 
+        // ── THE LANGUAGE OF THE REPORT IS NOT THE LANGUAGE OF THE ROOM ────
+        //
+        // Amit's ruling, 22 August 2026: minutes come out in English however
+        // the meeting was held. TatvaOS's customers hold meetings in Hindi and
+        // in Hinglish, and read reports in English — a head teacher forwarding
+        // minutes to a board, or a clinic filing them, wants one language on
+        // the page and does not want to be the one translating it.
+        //
+        // The TRANSCRIPT is untouched by this and stays in the language it was
+        // spoken. That asymmetry is deliberate: a transcript is a record of
+        // what was said, and a record that has been quietly translated is no
+        // longer evidence of anything. The minutes are a reading of it, and a
+        // reading may be in whatever language its reader needs.
+        //
+        // Doing the translation HERE, rather than at transcription, is also
+        // the better of the two: this model sees the whole meeting at once, so
+        // it translates "sir bol rahe the ki fees structure change karna hai"
+        // with the context to know that fees structure is the subject. A
+        // speech model translating line by line has no such view.
+        //
+        // A setting rather than a constant, because a Hindi-medium school will
+        // eventually want Hindi minutes and that should be a settings change.
+        var language = string.IsNullOrWhiteSpace(options.NotesLanguage)
+            ? "English" : options.NotesLanguage.Trim();
+
         var system =
             "You write minutes for a meeting from its transcript. "
             + "Reply with JSON only, no prose around it, in exactly this shape: "
             + "{\"summary\":string,\"key_points\":[string],\"decisions\":[string],"
             + "\"action_items\":[string]}. "
-            + "Write plainly, in the transcript's own language. "
+            + $"WRITE EVERYTHING IN {language.ToUpperInvariant()}. The meeting may have been "
+            + $"held in another language, or in a mixture of languages - translate it into "
+            + $"{language} rather than quoting it. Keep people's names, place names, and "
+            + "organisation names exactly as they were said; do not translate a name. "
+            + "Where a word has no good equivalent, use the plain English term a colleague "
+            + "would use rather than a literal translation. "
+            + "Write plainly. "
             + "State only what the transcript supports: if there were no decisions, "
             + "return an empty list rather than inventing one. "
             + "Attribute an action to a person only when the transcript names them.";
