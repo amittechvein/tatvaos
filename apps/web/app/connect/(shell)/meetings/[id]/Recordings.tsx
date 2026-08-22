@@ -194,7 +194,11 @@ function Row({ item, meetingId, isHost, canDelete, busy, act }: {
         <Badge tone={recordingTone(r.status)}>{RECORDING_LABEL[r.status]}</Badge>
         {r.error && <div className="fs-11 text-danger mt-1">{r.error}</div>}
         {item.transcript && (
-          <div className="fs-11 text-muted mt-1">{transcriptLine(item.transcript.status)}</div>
+          <div className={`fs-11 mt-1 ${
+            item.transcript.status === 'failed' ? 'text-danger' : 'text-muted'
+          }`}>
+            {transcriptLine(item.transcript)}
+          </div>
         )}
       </Td>
       <Td className="text-end">
@@ -229,12 +233,26 @@ function Row({ item, meetingId, isHost, canDelete, busy, act }: {
   );
 }
 
-function transcriptLine(status: TranscriptStatus): string {
-  switch (status) {
+/**
+ * The transcript's state in one line.
+ *
+ * On FAILURE this prefers the SERVER'S OWN SENTENCE over anything written
+ * here. The transcriber distinguishes half a dozen causes — the recording was
+ * too large, the service rejected our credentials, the account is out of
+ * credit, the recording may be silent — and each needs a different person to
+ * do a different thing. "Transcription failed" sends all of them to the same
+ * wrong place, which is to say to us.
+ *
+ * Those sentences existed all along and were dropped by the API one field
+ * short of this component. Fixed 22 August 2026; the lesson worth keeping is
+ * that an error message is not shipped until somebody has SEEN it on a screen.
+ */
+function transcriptLine(t: { status: TranscriptStatus; error: string | null }): string {
+  switch (t.status) {
     case 'ready': return 'Transcribed';
     case 'running': return 'Transcribing…';
     case 'queued': return 'Waiting to be transcribed';
-    case 'failed': return 'Transcription failed';
+    case 'failed': return t.error?.trim() || 'Transcription failed';
     // Not a failure — nobody switched it on. Said in those words on purpose.
     case 'unavailable': return 'No transcription service configured';
   }

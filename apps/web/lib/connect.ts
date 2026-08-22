@@ -435,7 +435,15 @@ export type TranscriptStatus = 'queued' | 'running' | 'ready' | 'failed' | 'unav
 
 export interface RecordingListItem {
   recording: Recording;
-  transcript: { status: TranscriptStatus; language: string | null } | null;
+  transcript: {
+    status: TranscriptStatus;
+    language: string | null;
+    /** The server's own sentence about what went wrong — "the recording was
+     *  too large", "an administrator needs to check the key", "the recording
+     *  may be silent". Present on 'failed'; null otherwise. Show it INSTEAD
+     *  of a generic line, never alongside one. */
+    error: string | null;
+  } | null;
 }
 
 export interface RecordingList {

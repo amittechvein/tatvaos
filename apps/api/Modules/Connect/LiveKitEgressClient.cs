@@ -258,6 +258,23 @@ public sealed class ConnectRecordingOptions
     /// </summary>
     public int TranscriptionAudioKbps { get; set; } = 24;
 
+    /// <summary>
+    /// The longest piece of audio sent in one request, in seconds. Anything
+    /// longer is split. 0 disables splitting entirely.
+    ///
+    /// 1200 (20 minutes) against gpt-4o-transcribe's hard limit of 1400. The
+    /// three minutes of margin are deliberate: the limit is the provider's and
+    /// can move, opus duration is not exact, and a chunk one second over fails
+    /// the ENTIRE recording rather than itself.
+    ///
+    /// This is a limit on the CLOCK, and it is the one that hides. Extracting
+    /// the audio brought a 31-minute meeting to 5.5 MB — well inside the 25 MB
+    /// size limit — and it still failed, because 1892 seconds is longer than
+    /// 1400. A size fix alone would have left this working in testing and
+    /// failing for every customer meeting over 23 minutes.
+    /// </summary>
+    public int TranscriptionMaxChunkSeconds { get; set; } = 1200;
+
     // ---- Notes ---------------------------------------------------------
     /// <summary>An OpenAI-compatible /v1/chat/completions endpoint. Empty means
     /// notes are assembled on this box from the transcript with no model
@@ -316,6 +333,8 @@ public sealed class ConnectRecordingOptions
             o.TranscriptionMaxUploadBytes = mx;
         if (int.TryParse(s["TranscriptionAudioKbps"], out var kb) && kb > 0)
             o.TranscriptionAudioKbps = kb;
+        if (int.TryParse(s["TranscriptionMaxChunkSeconds"], out var cs) && cs >= 0)
+            o.TranscriptionMaxChunkSeconds = cs;
 
         o.NotesUrl = (s["NotesUrl"] ?? "").Trim();
         o.NotesKey = (s["NotesKey"] ?? "").Trim();

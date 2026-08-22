@@ -132,7 +132,10 @@ public static class ConnectRecordingEndpoints
         var recordingIds = rows.Select(r => r.Id).ToList();
         var transcripts = await db.ConnectTranscripts.AsNoTracking()
             .Where(t => recordingIds.Contains(t.RecordingId))
-            .Select(t => new { t.RecordingId, t.Status, t.Language })
+            // Error comes back from the database as well as the status: it is
+            // the sentence the screen shows when a transcript failed, and a
+            // projection that leaves it out is where the good message died.
+            .Select(t => new { t.RecordingId, t.Status, t.Language, t.Error })
             .ToListAsync(ct);
 
         return Results.Ok(new
@@ -145,8 +148,19 @@ public static class ConnectRecordingEndpoints
             items = rows.Select(r => new
             {
                 recording = Shape(r),
+                // t.Error travels with the status, and that is the point.
+                //
+                // The transcriber writes a different sentence for every way
+                // this fails — too large, key rejected, service busy, silent
+                // recording — and until 22 August every one of them was
+                // dropped HERE, one field short of the screen, which then had
+                // no choice but to say "Transcription failed" to a school
+                // administrator who could do nothing with that.
+                //
+                // Writing a good error message and not shipping it is worse
+                // than not writing one: it looks handled.
                 transcript = transcripts.FirstOrDefault(t => t.RecordingId == r.Id) is { } t
-                    ? new { t.Status, t.Language }
+                    ? new { t.Status, t.Language, t.Error }
                     : null,
             }),
         });

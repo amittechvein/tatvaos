@@ -107,35 +107,115 @@ public sealed class ConnectTranscriber(
             // on services that refuse — and it means switching model stays a
             // one-line change to .env, which is the property this whole module
             // was built around.
-            var (status, payload) = await SendAsync(
-                uploadPath, uploadType, "verbose_json", timeout.Token);
-
-            if (status == 400)
+            var chunks = await SplitIfLongAsync(uploadPath, timeout.Token);
+            try
             {
-                log.LogInformation(
-                    "{Model} refused verbose_json; retrying as plain json (no timestamps).",
-                    options.TranscriptionModel);
-                (status, payload) = await SendAsync(
-                    uploadPath, uploadType, "json", timeout.Token);
-            }
+                var format = "verbose_json";
+                var merged = new List<Segment>();
+                var text = new StringBuilder();
+                string? language = null;
+                double totalSeconds = 0;
 
-            if (status is < 200 or >= 300)
+                foreach (var chunk in chunks)
+                {
+                    var (status, payload) = await SendAsync(
+                        chunk.Path, uploadType, format, timeout.Token);
+
+                    // Negotiated once, then remembered. Asking every chunk of a
+                    // three-hour meeting to rediscover the same refusal would be
+                    // one wasted round trip per twenty minutes.
+                    if (status == 400 && format == "verbose_json")
+                    {
+                        log.LogInformation(
+                            "{Model} refused verbose_json; using plain json (no timestamps).",
+                            options.TranscriptionModel);
+                        format = "json";
+                        (status, payload) = await SendAsync(
+                            chunk.Path, uploadType, format, timeout.Token);
+                    }
+
+                    if (status is < 200 or >= 300)
+                    {
+                        var permanent = IsPermanent(status);
+
+                        // ── THE PROVIDER'S OWN WORDS, ON PURPOSE ──────────
+                        //
+                        // ConnectNotesComposer deliberately logs only 'code'
+                        // and 'param' from an error body, never the message,
+                        // because there we SEND THE TRANSCRIPT and a provider's
+                        // error can quote back what it was given — which is a
+                        // meeting, in a log file, at rest, in every backup.
+                        //
+                        // Here we send AUDIO. There is no customer text in the
+                        // request for an error to echo, and the messages are
+                        // exactly the ones an operator needs: "audio duration
+                        // 1891.9 seconds is longer than 1400 seconds which is
+                        // the maximum for this model" told us in one line what
+                        // a 400 alone could not. Capped at 300 characters so a
+                        // provider that decides to be verbose cannot fill the
+                        // log.
+                        //
+                        // The distinction is what is IN the request, not which
+                        // company answered it. If a transcription endpoint ever
+                        // starts taking text prompts, this reasoning expires.
+                        log.LogWarning(
+                            "Transcription returned {Status} for {Bytes} bytes ({Kind}) — {Verdict}. Service said: {Detail}",
+                            status, new FileInfo(chunk.Path).Length, uploadType,
+                            permanent ? "permanent, will not retry" : "transient, will retry",
+                            ErrorMessage(payload) ?? "(no message)");
+
+                        // The BODY is not put in the error the user sees: it can
+                        // carry a provider's key echo or an internal path. The
+                        // status is enough to act on and the rest is in the log.
+                        return new Result(false, null, [], null, null,
+                            Explain(status), permanent);
+                    }
+
+                    var part = Parse(payload);
+
+                    // ONE BAD PIECE FAILS THE WHOLE THING, deliberately.
+                    // Returning the parts that worked would produce a transcript
+                    // with a silent hole in the middle, presented as complete —
+                    // and a record that is confidently incomplete is worse than
+                    // no record, because nobody knows to go and listen.
+                    if (!part.Ok) return part;
+
+                    language ??= part.Language;
+                    if (text.Length > 0) text.Append(' ');
+                    text.Append(part.Text);
+
+                    foreach (var s in part.Segments)
+                        merged.Add(s with
+                        {
+                            Start = s.Start + chunk.OffsetSeconds,
+                            End = s.End + chunk.OffsetSeconds,
+                        });
+
+                    totalSeconds = chunk.OffsetSeconds
+                        + (part.DurationMs is long ms ? ms / 1000.0 : 0);
+                }
+
+                return new Result(
+                    true, text.ToString().Trim(), merged, language,
+                    totalSeconds > 0 ? (long)(totalSeconds * 1000) : null, null);
+            }
+            finally
             {
-                var permanent = IsPermanent(status);
-
-                log.LogWarning(
-                    "Transcription returned {Status} for {Bytes} bytes ({Kind}) — {Verdict}",
-                    status, new FileInfo(uploadPath).Length, uploadType,
-                    permanent ? "permanent, will not retry" : "transient, will retry");
-
-                // The BODY is not put in the error the user sees: it can carry
-                // a provider's key echo or an internal path. The status is
-                // enough to act on and the rest is in the log.
-                return new Result(false, null, [], null, null,
-                    Explain(status), permanent);
+                // The chunks live in a directory of their own, so removing that
+                // removes all of them and the directory with it. A three-hour
+                // meeting leaves nine files behind otherwise, on a box whose
+                // disk is the same one Mail writes to.
+                foreach (var directory in chunks
+                    .Where(c => c.Temporary)
+                    .Select(c => Path.GetDirectoryName(c.Path))
+                    .Where(d => !string.IsNullOrEmpty(d))
+                    .Distinct())
+                {
+                    try { Directory.Delete(directory!, recursive: true); }
+                    catch (IOException) { }
+                    catch (UnauthorizedAccessException) { }
+                }
             }
-
-            return Parse(payload);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
@@ -212,7 +292,14 @@ public sealed class ConnectTranscriber(
     private static string Explain(int status) => status switch
     {
         413 => "The recording was too large for the transcription service even after the "
-             + "audio was extracted. Very long meetings need to be split.",
+             + "audio was extracted.",
+        // 400 is the provider saying the REQUEST is wrong, and for this
+        // endpoint it is nearly always the audio: too long for the model, or a
+        // format it will not decode. Named as an us-problem rather than a
+        // them-problem, because it is.
+        400 => "The transcription service would not accept this recording. It may be "
+             + "longer than the model allows, or in a format it cannot read. "
+             + "The server log names the exact reason.",
         401 or 403 => "The transcription service rejected our credentials. "
                     + "An administrator needs to check the key.",
         404 => "The transcription service could not find that address or model. "
@@ -222,6 +309,31 @@ public sealed class ConnectTranscriber(
         >= 500 => "The transcription service is having problems.",
         _ => $"The transcription service answered {status}.",
     };
+
+    /// <summary>
+    /// error.message out of an OpenAI-shaped error body, capped. Null for any
+    /// body that is not that shape — a provider being unhelpful is not a
+    /// reason to fail, and never a reason to log something unparsed.
+    /// </summary>
+    private static string? ErrorMessage(string payload)
+    {
+        try
+        {
+            var root = JsonDocument.Parse(payload).RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("error", out var error)
+                || error.ValueKind != JsonValueKind.Object
+                || !error.TryGetProperty("message", out var message)
+                || message.ValueKind != JsonValueKind.String)
+                return null;
+
+            var text = message.GetString();
+            if (string.IsNullOrWhiteSpace(text)) return null;
+
+            return text.Length > 300 ? text[..300] + "…" : text;
+        }
+        catch (JsonException) { return null; }
+    }
 
     /// <summary>
     /// Will a retry ever change this answer?
@@ -322,26 +434,126 @@ public sealed class ConnectTranscriber(
         return (path, contentType, false, null);
     }
 
-    /// <summary>
-    /// Runs ffmpeg. Returns false — never throws — for every reason it might
-    /// not work, because none of them should take a recording down with them.
-    /// </summary>
-    private async Task<bool> TryExtractAsync(string input, string output, CancellationToken ct)
-    {
-        // -vn drops the video. -ac 1 makes it mono. -ar 16000 matches what
-        // speech models resample to anyway. -nostdin so a build of ffmpeg
-        // that wants a keypress cannot hang a background worker forever.
-        var arguments =
-            $"-nostdin -hide_banner -loglevel error -y -i \"{input}\" " +
-            $"-vn -ac 1 -ar 16000 -c:a libopus -b:a {options.TranscriptionAudioKbps}k \"{output}\"";
+    /// <summary>One piece of audio to send, and where it sits in the meeting.</summary>
+    private sealed record Chunk(string Path, double OffsetSeconds, bool Temporary);
 
+    /// <summary>
+    /// Split the audio if the service will not take it in one piece.
+    ///
+    /// ──────────────────────────────────────────────────────────────────
+    ///  WHY: THERE IS A CLOCK LIMIT AS WELL AS A SIZE LIMIT, AND IT IS THE
+    ///  ONE THAT BITES.
+    ///
+    ///  Extracting the audio fixed the megabytes — 31 minutes of meeting came
+    ///  down to 5.5 MB, comfortably inside 25. It still failed, with a 400
+    ///  saying "audio duration 1891.9 seconds is longer than 1400 seconds
+    ///  which is the maximum for this model".
+    ///
+    ///  1400 seconds is 23 minutes 20. Almost every meeting worth writing
+    ///  minutes for is longer than that. So the size fix alone would have left
+    ///  the feature working for tests and failing for customers, which is the
+    ///  worst place for a limit to hide.
+    ///
+    ///  ──────────────────────────────────────────────────────────────────
+    ///  WHY 20 MINUTES AND NOT 23
+    ///
+    ///  Headroom. The limit belongs to the provider and can change, opus
+    ///  duration is not exact to the millisecond, and a chunk that lands one
+    ///  second over fails the whole recording. Three minutes of margin costs
+    ///  one extra request on a long meeting and removes a class of failure
+    ///  that would only ever appear in production.
+    ///
+    ///  Splits are at fixed times, not at silences. A word can be cut in half
+    ///  at a boundary — once every twenty minutes, and the model recovers on
+    ///  the next syllable. Finding a silence near each boundary would be
+    ///  better and is not worth the complexity until somebody shows a
+    ///  transcript it actually spoiled.
+    /// </summary>
+    private async Task<List<Chunk>> SplitIfLongAsync(string path, CancellationToken ct)
+    {
+        var single = new List<Chunk> { new(path, 0, false) };
+
+        var limit = options.TranscriptionMaxChunkSeconds;
+        if (limit <= 0) return single;
+
+        var duration = await ProbeDurationAsync(path, ct);
+
+        // Unknown duration is NOT a reason to split blindly: chunking audio
+        // that did not need it costs requests and puts a seam in a transcript
+        // for no gain. If ffprobe cannot say, send it whole and let the
+        // service refuse — which it does clearly, and which we now explain.
+        if (duration is not double seconds || seconds <= limit) return single;
+
+        var directory = Path.Combine(
+            Path.GetTempPath(), $"connect-chunks-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+
+        var pattern = Path.Combine(directory, "part-%03d.ogg");
+
+        // -c copy: the audio is ALREADY mono 16 kHz Opus from the extraction
+        // step, so re-encoding it here would cost CPU and a generation of
+        // quality to produce the same thing. -reset_timestamps so each part
+        // starts at zero and the offsets below are the only arithmetic.
+        var (exit, _, stderr) = await RunAsync("ffmpeg",
+            $"-nostdin -hide_banner -loglevel error -y -i \"{path}\" " +
+            $"-f segment -segment_time {limit} -reset_timestamps 1 -c copy \"{pattern}\"",
+            ct);
+
+        var parts = Directory.Exists(directory)
+            ? Directory.GetFiles(directory, "part-*.ogg").OrderBy(f => f).ToArray()
+            : [];
+
+        if (exit != 0 || parts.Length == 0)
+        {
+            log.LogWarning(
+                "Could not split a {Seconds:0}s recording into chunks (exit {Exit}): {Error}",
+                seconds, exit, stderr.Trim());
+            try { Directory.Delete(directory, recursive: true); } catch (IOException) { }
+            return single;
+        }
+
+        log.LogInformation(
+            "Split {Seconds:0}s of audio into {Count} chunk(s) of up to {Limit}s for transcription.",
+            seconds, parts.Length, limit);
+
+        return parts
+            .Select((p, i) => new Chunk(p, i * (double)limit, true))
+            .ToList();
+    }
+
+    /// <summary>
+    /// How long the audio is, in seconds, or null if ffprobe cannot say.
+    /// Null is a real answer here and the caller treats it as "do not split".
+    /// </summary>
+    private async Task<double?> ProbeDurationAsync(string path, CancellationToken ct)
+    {
+        var (exit, stdout, _) = await RunAsync("ffprobe",
+            $"-v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"{path}\"",
+            ct);
+
+        if (exit != 0) return null;
+
+        return double.TryParse(stdout.Trim(), NumberStyles.Float,
+            CultureInfo.InvariantCulture, out var seconds) && seconds > 0
+            ? seconds : null;
+    }
+
+    /// <summary>
+    /// Run a command and collect both its streams. Returns exit code -1 rather
+    /// than throwing for every reason it might not run at all — a missing
+    /// binary, a bad path, a full disk — because none of those should take a
+    /// recording down with them.
+    /// </summary>
+    private async Task<(int Exit, string Stdout, string Stderr)> RunAsync(
+        string fileName, string arguments, CancellationToken ct)
+    {
         try
         {
             using var process = new System.Diagnostics.Process
             {
                 StartInfo = new System.Diagnostics.ProcessStartInfo
                 {
-                    FileName = "ffmpeg",
+                    FileName = fileName,
                     Arguments = arguments,
                     RedirectStandardError = true,
                     RedirectStandardOutput = true,
@@ -362,28 +574,47 @@ public sealed class ConnectTranscriber(
             await Task.WhenAll(errorTask, outputTask);
             await process.WaitForExitAsync(ct);
 
-            var stderr = await errorTask;
-
-            if (process.ExitCode == 0 && File.Exists(output) && new FileInfo(output).Length > 0)
-                return true;
-
-            log.LogWarning(
-                "ffmpeg could not extract audio (exit {Code}): {Error}",
-                process.ExitCode, stderr.Trim());
+            return (process.ExitCode, await outputTask, await errorTask);
         }
         catch (System.ComponentModel.Win32Exception)
         {
-            // ffmpeg is not installed. Said plainly and once per recording,
-            // because it is an operator's job to fix and a silent fallback
-            // would hide the reason transcripts stopped working.
+            // Not installed. Said plainly, because it is an operator's job to
+            // fix and a silent fallback would hide the reason transcripts
+            // stopped working.
             log.LogWarning(
-                "ffmpeg is not available in this container, so video recordings cannot be "
-                + "reduced to audio before transcription. Large recordings will be refused.");
+                "{Tool} is not available in this container. Video recordings cannot be "
+                + "reduced to audio or split, so long or large recordings will be refused.",
+                fileName);
+            return (-1, "", $"{fileName} not found");
         }
         catch (Exception ex) when (ex is IOException or InvalidOperationException)
         {
-            log.LogWarning(ex, "ffmpeg failed while extracting audio");
+            log.LogWarning(ex, "{Tool} failed", fileName);
+            return (-1, "", ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Strip the picture and write mono 16 kHz Opus. Returns false — never
+    /// throws — for every reason it might not work, because none of them
+    /// should take a recording down with them.
+    /// </summary>
+    private async Task<bool> TryExtractAsync(string input, string output, CancellationToken ct)
+    {
+        // -vn drops the video. -ac 1 makes it mono. -ar 16000 matches what
+        // speech models resample to anyway. -nostdin so a build of ffmpeg
+        // that wants a keypress cannot hang a background worker forever.
+        var (exit, _, stderr) = await RunAsync("ffmpeg",
+            $"-nostdin -hide_banner -loglevel error -y -i \"{input}\" " +
+            $"-vn -ac 1 -ar 16000 -c:a libopus -b:a {options.TranscriptionAudioKbps}k \"{output}\"",
+            ct);
+
+        if (exit == 0 && File.Exists(output) && new FileInfo(output).Length > 0)
+            return true;
+
+        if (exit != -1)   // -1 is "could not run it at all", already logged by RunAsync
+            log.LogWarning(
+                "ffmpeg could not extract audio (exit {Code}): {Error}", exit, stderr.Trim());
 
         try { if (File.Exists(output)) File.Delete(output); } catch (IOException) { }
         return false;
