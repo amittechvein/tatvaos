@@ -402,10 +402,17 @@ public sealed class ConnectNotesWorker(
                 // retries a service that was merely restarting. The attempts
                 // cap in connect.pending_transcription is what stops it
                 // retrying forever.
-                row.Status = row.Attempts >= 3 ? "failed" : "queued";
+                //
+                // UNLESS THE ANSWER CANNOT CHANGE. A file the service refuses
+                // as too large, or a model name it does not have, will be
+                // refused identically next tick — the request is the same
+                // request. On 22 August that cost three uploads of the same
+                // 36 MB to collect the same 413 three times, and delayed the
+                // honest 'failed' by two minutes for no gain at all.
+                row.Status = result.Permanent || row.Attempts >= 3 ? "failed" : "queued";
                 row.Error = result.Error;
-                log.LogWarning("Transcription of {Recording} failed: {Error}",
-                    recordingId, result.Error);
+                log.LogWarning("Transcription of {Recording} failed ({Kind}): {Error}",
+                    recordingId, result.Permanent ? "permanent" : "will retry", result.Error);
             }
             row.UpdatedAt = DateTimeOffset.UtcNow;
             await db.SaveChangesAsync(ct);

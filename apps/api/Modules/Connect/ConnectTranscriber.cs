@@ -41,13 +41,29 @@ public sealed class ConnectTranscriber(
 {
     public sealed record Segment(double Start, double End, string Text, string? Speaker);
 
+    /// <param name="Permanent">
+    /// This will NEVER succeed on a retry, so the caller must stop rather than
+    /// queue it again.
+    ///
+    /// Added 22 August 2026, the day the first real recording was transcribed.
+    /// A 95-second meeting produced a 36 MB MP4, the service refused it with
+    /// 413, and the worker — which treats every failure as "the service was
+    /// probably restarting" — uploaded those same 36 MB twice more to be told
+    /// the same thing. Three refusals, 108 MB, one outcome.
+    ///
+    /// The distinction that matters is not error versus success, it is
+    /// TRANSIENT versus PERMANENT. Retrying a transient failure is the right
+    /// thing; retrying a permanent one is a way to spend bandwidth and time
+    /// arriving at the answer you already had.
+    /// </param>
     public sealed record Result(
         bool Ok,
         string? Text,
         IReadOnlyList<Segment> Segments,
         string? Language,
         long? DurationMs,
-        string? Error);
+        string? Error,
+        bool Permanent = false);
 
     public bool IsConfigured => options.TranscriptionConfigured;
 
@@ -63,6 +79,18 @@ public sealed class ConnectTranscriber(
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromMinutes(options.TranscriptionTimeoutMinutes));
 
+        // ── STRIP THE PICTURE BEFORE SENDING ──────────────────────────────
+        // A meeting recording is video. A transcription service wants speech.
+        // Sending the MP4 means paying to upload a picture nobody will look
+        // at, and on 22 August it meant a 95-second meeting arriving as 36 MB
+        // against a 25 MB limit — i.e. the feature could not work AT ALL, for
+        // any meeting, however short.
+        var (uploadPath, uploadType, isTemporary, prepError) =
+            await PrepareAudioAsync(path, contentType, timeout.Token);
+
+        if (prepError is not null)
+            return new Result(false, null, [], null, null, prepError, Permanent: true);
+
         try
         {
             using var form = new MultipartFormDataContent();
@@ -71,14 +99,14 @@ public sealed class ConnectTranscriber(
             // hour of MP4 is far more, and this process is also serving
             // requests. FileShare.Read so a concurrent download of the same
             // recording is not blocked by the transcription of it.
-            await using var file = new FileStream(path, FileMode.Open, FileAccess.Read,
+            await using var file = new FileStream(uploadPath, FileMode.Open, FileAccess.Read,
                 FileShare.Read, bufferSize: 64 * 1024, useAsync: true);
 
             var content = new StreamContent(file);
-            content.Headers.ContentType = new MediaTypeHeaderValue(contentType);
+            content.Headers.ContentType = new MediaTypeHeaderValue(uploadType);
             // The FILE NAME matters: most OpenAI-compatible servers decide how
             // to decode from the extension, not from the content type.
-            form.Add(content, "file", Path.GetFileName(path));
+            form.Add(content, "file", Path.GetFileName(uploadPath));
             form.Add(new StringContent(options.TranscriptionModel), "model");
             form.Add(new StringContent("verbose_json"), "response_format");
             if (!string.IsNullOrWhiteSpace(options.TranscriptionLanguage))
@@ -97,12 +125,19 @@ public sealed class ConnectTranscriber(
 
             if (!response.IsSuccessStatusCode)
             {
-                log.LogWarning("Transcription returned {Status}", (int)response.StatusCode);
+                var status = (int)response.StatusCode;
+                var permanent = IsPermanent(status);
+
+                log.LogWarning(
+                    "Transcription returned {Status} for {Bytes} bytes ({Kind}) — {Verdict}",
+                    status, new FileInfo(uploadPath).Length, uploadType,
+                    permanent ? "permanent, will not retry" : "transient, will retry");
+
                 // The BODY is not put in the error the user sees: it can carry
                 // a provider's key echo or an internal path. The status is
                 // enough to act on and the rest is in the log.
                 return new Result(false, null, [], null, null,
-                    $"The transcription service answered {(int)response.StatusCode}.");
+                    Explain(status), permanent);
             }
 
             return Parse(payload);
@@ -117,6 +152,204 @@ public sealed class ConnectTranscriber(
             log.LogError(ex, "Transcription failed");
             return new Result(false, null, [], null, null, "The transcription service could not be reached.");
         }
+        finally
+        {
+            // Ours to clean up, and ONLY ours: isTemporary is false when we
+            // sent the recording itself, and deleting that would destroy a
+            // customer's meeting to save a few megabytes of scratch space.
+            if (isTemporary)
+            {
+                try { File.Delete(uploadPath); }
+                catch (IOException) { /* a full /tmp is not worth failing a good transcript over */ }
+                catch (UnauthorizedAccessException) { }
+            }
+        }
+    }
+
+    /// <summary>
+    /// A status turned into a sentence, and told apart by who has to act.
+    /// "Too big" is our problem, "rejected our key" is an administrator's, and
+    /// "busy" is nobody's — they need three different responses and a single
+    /// "transcription failed" sends all three to the wrong place.
+    /// </summary>
+    private static string Explain(int status) => status switch
+    {
+        413 => "The recording was too large for the transcription service even after the "
+             + "audio was extracted. Very long meetings need to be split.",
+        401 or 403 => "The transcription service rejected our credentials. "
+                    + "An administrator needs to check the key.",
+        404 => "The transcription service could not find that address or model. "
+             + "An administrator needs to check the settings.",
+        415 or 422 => "The transcription service could not read that audio format.",
+        429 => "The transcription service is busy or the account's limit has been reached.",
+        >= 500 => "The transcription service is having problems.",
+        _ => $"The transcription service answered {status}.",
+    };
+
+    /// <summary>
+    /// Will a retry ever change this answer?
+    ///
+    /// 429 and 5xx are the service having a moment — retry. 408 is a timeout,
+    /// which can genuinely differ next time. Everything else in the 4xx range
+    /// is a statement about the REQUEST, and the request will be identical
+    /// next tick, so a retry is a slower way to receive the same refusal.
+    /// </summary>
+    private static bool IsPermanent(int status) =>
+        status is >= 400 and < 500 && status is not (408 or 429);
+
+    // ==================================================================
+    //  Getting the speech out of the recording
+    // ==================================================================
+
+    /// <summary>
+    /// Extensions that are already speech-shaped. A file with one of these is
+    /// sent as it is — re-encoding audio to audio would cost CPU and quality
+    /// for nothing.
+    /// </summary>
+    private static readonly string[] AudioExtensions =
+        [".ogg", ".oga", ".opus", ".mp3", ".m4a", ".wav", ".flac", ".webm"];
+
+    /// <summary>
+    /// Produce something worth uploading, and say whether we made it.
+    ///
+    /// ──────────────────────────────────────────────────────────────────
+    ///  WHY THIS EXISTS
+    ///
+    ///  LiveKit records MP4 when the meeting has video, because that is what
+    ///  a person wants to watch afterwards. But 95 seconds of 720p is 36 MB,
+    ///  and OpenAI's transcription endpoint stops at 25 MB. So the feature
+    ///  did not work for SHORT meetings, never mind long ones — and the
+    ///  failure looked like an AI problem when it was an arithmetic one.
+    ///
+    ///  Speech does not need the picture, or stereo, or 48 kHz. Whisper and
+    ///  everything like it works at 16 kHz mono internally, so sending more
+    ///  than that is paying to upload data the model discards. Mono Opus at
+    ///  24 kbps is about 11 MB per HOUR — roughly two hundred times smaller
+    ///  than the video, with nothing lost that a transcript can use.
+    ///
+    ///  ──────────────────────────────────────────────────────────────────
+    ///  IT DEGRADES RATHER THAN REFUSES
+    ///
+    ///  If ffmpeg is absent or fails, this returns the ORIGINAL file and lets
+    ///  the upload proceed. A box without ffmpeg then behaves exactly as this
+    ///  code did before today — which for a small audio-only recording is
+    ///  perfectly fine. The one thing it will not do is upload something it
+    ///  can already see is too large: that is checked last, against whatever
+    ///  we ended up with.
+    /// </summary>
+    private async Task<(string Path, string ContentType, bool Temporary, string? Error)>
+        PrepareAudioAsync(string path, string contentType, CancellationToken ct)
+    {
+        var extension = Path.GetExtension(path).ToLowerInvariant();
+        var alreadyAudio = AudioExtensions.Contains(extension);
+        var originalBytes = new FileInfo(path).Length;
+
+        // Small and already audio: nothing to gain. Note the ORDER — a small
+        // video is still worth stripping, because "small" is about the
+        // transfer and "audio" is about what the model can use.
+        if (alreadyAudio && originalBytes <= options.TranscriptionMaxUploadBytes)
+            return (path, contentType, false, null);
+
+        var temp = Path.Combine(
+            Path.GetTempPath(), $"connect-audio-{Guid.NewGuid():N}.ogg");
+
+        var extracted = await TryExtractAsync(path, temp, ct);
+
+        if (extracted)
+        {
+            var audioBytes = new FileInfo(temp).Length;
+            log.LogInformation(
+                "Extracted audio for transcription: {Before} bytes -> {After} bytes ({Ratio:0.0}x smaller)",
+                originalBytes, audioBytes,
+                audioBytes > 0 ? (double)originalBytes / audioBytes : 0);
+
+            if (audioBytes > options.TranscriptionMaxUploadBytes)
+            {
+                try { File.Delete(temp); } catch (IOException) { }
+                return (path, contentType, false,
+                    "This meeting is too long to transcribe in one piece. "
+                    + "The audio alone is over the service's size limit.");
+            }
+
+            return (temp, "audio/ogg", true, null);
+        }
+
+        // No ffmpeg, or it could not read the file. Fall back — but REFUSE
+        // rather than upload something already known to be over the limit.
+        // Discovering that over the wire is what cost 108 MB this morning.
+        if (originalBytes > options.TranscriptionMaxUploadBytes)
+            return (path, contentType, false,
+                "The recording is too large to transcribe, and the audio could not be "
+                + "extracted from it on this server. ffmpeg is needed in the API image.");
+
+        return (path, contentType, false, null);
+    }
+
+    /// <summary>
+    /// Runs ffmpeg. Returns false — never throws — for every reason it might
+    /// not work, because none of them should take a recording down with them.
+    /// </summary>
+    private async Task<bool> TryExtractAsync(string input, string output, CancellationToken ct)
+    {
+        // -vn drops the video. -ac 1 makes it mono. -ar 16000 matches what
+        // speech models resample to anyway. -nostdin so a build of ffmpeg
+        // that wants a keypress cannot hang a background worker forever.
+        var arguments =
+            $"-nostdin -hide_banner -loglevel error -y -i \"{input}\" " +
+            $"-vn -ac 1 -ar 16000 -c:a libopus -b:a {options.TranscriptionAudioKbps}k \"{output}\"";
+
+        try
+        {
+            using var process = new System.Diagnostics.Process
+            {
+                StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "ffmpeg",
+                    Arguments = arguments,
+                    RedirectStandardError = true,
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                },
+            };
+
+            process.Start();
+
+            // BOTH pipes, started before the wait. A redirected stream that
+            // nobody reads fills its buffer and blocks the child forever, and
+            // the child here is inside a background worker with a 30-minute
+            // timeout — so the symptom would be transcripts silently stopping,
+            // which is the worst shape a bug can take.
+            var errorTask = process.StandardError.ReadToEndAsync(ct);
+            var outputTask = process.StandardOutput.ReadToEndAsync(ct);
+            await Task.WhenAll(errorTask, outputTask);
+            await process.WaitForExitAsync(ct);
+
+            var stderr = await errorTask;
+
+            if (process.ExitCode == 0 && File.Exists(output) && new FileInfo(output).Length > 0)
+                return true;
+
+            log.LogWarning(
+                "ffmpeg could not extract audio (exit {Code}): {Error}",
+                process.ExitCode, stderr.Trim());
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            // ffmpeg is not installed. Said plainly and once per recording,
+            // because it is an operator's job to fix and a silent fallback
+            // would hide the reason transcripts stopped working.
+            log.LogWarning(
+                "ffmpeg is not available in this container, so video recordings cannot be "
+                + "reduced to audio before transcription. Large recordings will be refused.");
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException)
+        {
+            log.LogWarning(ex, "ffmpeg failed while extracting audio");
+        }
+
+        try { if (File.Exists(output)) File.Delete(output); } catch (IOException) { }
+        return false;
     }
 
     // ------------------------------------------------------------------

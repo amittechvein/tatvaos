@@ -25,8 +25,25 @@ COPY --from=build /app .
 #  of the Skia build. Installed with --no-install-recommends and the apt lists
 #  removed in the same layer, which keeps the addition to a couple of MB.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+#  ffmpeg — to get the speech out of a video recording before transcribing it.
+#
+#  Connect records MP4 when a meeting has video, because that is what somebody
+#  wants to watch back. But 95 seconds of 720p is 36 MB, and OpenAI's
+#  transcription endpoint refuses anything over 25 MB — so on 22 August 2026
+#  the very first real recording failed, and so would every meeting after it,
+#  including short ones. The failure read as an AI problem. It was arithmetic.
+#
+#  ffmpeg strips the picture and writes mono 16 kHz Opus: about 11 MB an hour
+#  instead of 36 MB a minute, and no worse for the model, which resamples to
+#  16 kHz mono regardless. See ConnectTranscriber.PrepareAudioAsync.
+#
+#  ~60 MB in the image for a feature that cannot work without it. The
+#  transcriber falls back to sending the original file if this is ever missing,
+#  so an image built without it degrades rather than breaks.
+# ---------------------------------------------------------------------------
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libfontconfig1 \
+    && apt-get install -y --no-install-recommends libfontconfig1 ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------

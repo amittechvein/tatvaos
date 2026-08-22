@@ -232,6 +232,31 @@ public sealed class ConnectRecordingOptions
     public string TranscriptionLanguage { get; set; } = "";
     public int TranscriptionTimeoutMinutes { get; set; } = 30;
 
+    /// <summary>
+    /// The largest file we will attempt to upload, in bytes. 24 MiB, sitting
+    /// just under OpenAI's 25 MB limit.
+    ///
+    /// It is OUR check rather than theirs on purpose. Learning the size limit
+    /// from a 413 means having already sent the bytes, and the worker's retry
+    /// meant sending them three times. A number we hold is a refusal that
+    /// costs nothing; a number they hold is a refusal that costs the upload.
+    ///
+    /// Raise it for a self-hosted Whisper on this box, which has no such limit
+    /// — see infra/whisper/. That is a settings change, as it should be.
+    /// </summary>
+    public long TranscriptionMaxUploadBytes { get; set; } = 24L * 1024 * 1024;
+
+    /// <summary>
+    /// Bitrate for the mono Opus track we extract from a video recording.
+    ///
+    /// 24 kbps is about 11 MB an hour and is comfortably transparent for
+    /// speech — Opus was designed for exactly this. Going lower buys length at
+    /// the cost of the consonants a transcript depends on, which is a bad
+    /// trade for Hinglish in particular, where the model is already working
+    /// harder than it does in English.
+    /// </summary>
+    public int TranscriptionAudioKbps { get; set; } = 24;
+
     // ---- Notes ---------------------------------------------------------
     /// <summary>An OpenAI-compatible /v1/chat/completions endpoint. Empty means
     /// notes are assembled on this box from the transcript with no model
@@ -263,6 +288,10 @@ public sealed class ConnectRecordingOptions
         o.TranscriptionLanguage = (s["TranscriptionLanguage"] ?? "").Trim();
         if (int.TryParse(s["TranscriptionTimeoutMinutes"], out var tt) && tt > 0)
             o.TranscriptionTimeoutMinutes = tt;
+        if (long.TryParse(s["TranscriptionMaxUploadBytes"], out var mx) && mx > 0)
+            o.TranscriptionMaxUploadBytes = mx;
+        if (int.TryParse(s["TranscriptionAudioKbps"], out var kb) && kb > 0)
+            o.TranscriptionAudioKbps = kb;
 
         o.NotesUrl = (s["NotesUrl"] ?? "").Trim();
         o.NotesKey = (s["NotesKey"] ?? "").Trim();
