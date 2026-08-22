@@ -481,6 +481,45 @@ const SKIN = `
   font-size:11.5px;line-height:1.6;color:var(--cxs-ink-3);margin-top:13px;
 }
 
+/* ── One meeting's own heading ────────────────────────────────────────── */
+.cxs .cx-head{
+  display:flex;align-items:center;justify-content:space-between;
+  gap:16px;flex-wrap:wrap;margin:26px 0 20px;
+}
+.cxs .cx-head .page-title{font-size:24px;letter-spacing:-.021em}
+.cxs .cx-face--xl{width:52px;height:52px;border-radius:15px;font-size:21px}
+.cxs .cx-headmeta{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  margin-top:7px;font-size:12.5px;color:var(--cxs-ink-3);
+}
+
+/* ── The code, set to be read aloud ───────────────────────────────────── */
+/* It is here for the person whose link did not survive a chat app, and it
+   gets read out over a phone. A form field at 13px is where an l and a 1 stop
+   being different characters. */
+.cxs .cx-bigcode{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  margin-top:2px;padding:12px 12px 12px 14px;border-radius:12px;
+  border:1px dashed var(--cxs-line);background:var(--cxs-soft);
+}
+.cxs .cx-bigcode>span{
+  font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  font-size:14px;font-weight:600;letter-spacing:.045em;line-height:1.55;
+  color:var(--cxs-ink);word-break:break-word;
+}
+.cxs .cx-bigcode .btn{flex:0 0 auto}
+
+/* ── People ───────────────────────────────────────────────────────────── */
+.cxs .cx-tag{
+  display:inline-block;margin-left:8px;padding:2px 7px;border-radius:6px;
+  font-size:10px;font-weight:700;letter-spacing:.055em;text-transform:uppercase;
+  background:rgba(200,124,12,.14);color:#9c6208;vertical-align:2px;
+}
+.dark .cxs .cx-tag{background:rgba(232,160,44,.16);color:#f0b755}
+.cxs .cx-role{
+  font-size:12.5px;font-weight:600;color:var(--cxs-ink-2);text-transform:capitalize;
+}
+
 /* ── Everything else that shows up on these three pages ───────────────── */
 .cxs .alert{border-radius:12px;padding:12px 16px;font-size:13.5px;border:1px solid}
 .cxs .alert-danger{background:#fff1f2;border-color:#fecdd3;color:#a01133}

@@ -10,6 +10,7 @@ import {
   type UpdateMeeting, type WaitingRoom,
 } from '@/lib/connect';
 import Recordings from './Recordings';
+import { SumRow, faceOf, toneOf } from '../../ConnectSkin';
 
 // ============================================================================
 //  One meeting — the organiser's view
@@ -26,6 +27,14 @@ import Recordings from './Recordings';
 // ============================================================================
 
 const LOBBY_POLL_MS = 3000;
+
+/** Kept beside the front door's copy of this on purpose — one map each, so a
+ *  change to what "cancelled" looks like is a change to one screen. */
+const STATUS_TONE: Record<string, 'ok' | 'info' | 'danger' | 'neutral'> = {
+  active: 'ok',
+  scheduled: 'info',
+  cancelled: 'danger',
+};
 
 // ---------------------------------------------------------------------------
 //  <input type="datetime-local"> speaks LOCAL WALL TIME with no zone, while
@@ -64,7 +73,7 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<'link' | 'code' | null>(null);
 
   // ---- Editing --------------------------------------------------------
   //
@@ -204,16 +213,17 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
     }
   }
 
-  async function copyLink() {
-    if (!meeting) return;
+  // One copier for both boxes. `which` is what says which button turns into
+  // "Copied", so copying the code does not claim the link was copied too.
+  async function copy(text: string, which: 'link' | 'code') {
     try {
-      await navigator.clipboard.writeText(meeting.joinUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      await navigator.clipboard.writeText(text);
+      setCopied(which);
+      setTimeout(() => setCopied(null), 2000);
     } catch {
-      // Clipboard access can be refused (insecure context, permissions). The
-      // link is on screen and selectable, so this is not worth an error.
-      setNotice('Copy the link from the box above.');
+      // Clipboard access can be refused (insecure context, permissions). Both
+      // boxes are on screen and selectable, so this is not worth an error.
+      setNotice('Select the text and copy it by hand — the clipboard was refused.');
     }
   }
 
@@ -242,13 +252,23 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
 
   return (
     <>
-      <div className="page-header-breadcrumb d-flex align-items-center justify-content-between flex-wrap gap-2 my-3">
-        <div>
-          <h1 className="page-title fw-semibold fs-20 mb-1">{meeting.title}</h1>
-          <ol className="breadcrumb mb-0">
-            <li className="breadcrumb-item"><a href="/connect">Connect</a></li>
-            <li className="breadcrumb-item active" aria-current="page">{whenLabel(meeting)}</li>
-          </ol>
+      {/* The meeting itself, rather than a page title with a breadcrumb under
+          it. When it is and what state it is in are the two things anybody
+          opening this page came to check, so they sit beside the name instead
+          of being spelled out three cards down. */}
+      <div className="cx-head">
+        <div className="cx-who">
+          <span className={`cx-face cx-face--xl ${toneOf(meeting.id)}`} aria-hidden="true">
+            {faceOf(meeting.title)}
+          </span>
+          <div>
+            <h1 className="page-title mb-0">{meeting.title}</h1>
+            <div className="cx-headmeta">
+              <Badge tone={STATUS_TONE[meeting.status] ?? 'neutral'}>{meeting.status}</Badge>
+              <span>{whenLabel(meeting)}</span>
+              <span className="cx-code">{prettyCode(meeting.code)}</span>
+            </div>
+          </div>
         </div>
         <div className="d-flex gap-2 flex-wrap">
           {!over && <Button variant="primary" href={`/connect/room/${meeting.code}`}>Join</Button>}
@@ -430,10 +450,17 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
                 {people.map((p) => (
                   <tr key={p.identity}>
                     <Td>
-                      <span className="fw-semibold">{p.displayName}</span>
-                      {p.isGuest && <span className="ms-2"><Badge tone="warn">Guest</Badge></span>}
+                      <div className="cx-who">
+                        <span className={`cx-face ${toneOf(p.identity)}`} aria-hidden="true">
+                          {faceOf(p.displayName)}
+                        </span>
+                        <div>
+                          <span className="cx-name">{p.displayName}</span>
+                          {p.isGuest && <span className="cx-tag">Guest</span>}
+                        </div>
+                      </div>
                     </Td>
-                    <Td className="text-muted">{p.role}</Td>
+                    <Td><span className="cx-role">{p.role}</span></Td>
                     <Td>
                       {p.connected
                         ? <Badge tone="ok">Yes</Badge>
@@ -479,29 +506,38 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
         <div className="col-xl-4">
           <Card title="Invite">
             <label className="form-label" htmlFor="joinurl">Link</label>
-            <div className="input-group mb-3">
+            <div className="input-group">
               <input id="joinurl" className="form-control" readOnly value={meeting.joinUrl}
                      onFocus={(e) => e.currentTarget.select()} />
-              <button className="btn btn-primary" type="button" onClick={() => void copyLink()}>
-                {copied ? 'Copied' : 'Copy'}
+              <button className="btn btn-primary" type="button"
+                      onClick={() => void copy(meeting.joinUrl, 'link')}>
+                {copied === 'link' ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+            <div className="form-text">Anyone holding this can use it — see the waiting room below.</div>
+
+            {/* The code exists for the person whose link did not survive being
+                pasted into a chat app, and it gets READ ALOUD. So it is set
+                large and spaced rather than squeezed into a form field where
+                an l and a 1 look the same. */}
+            <label className="form-label mt-3">Code</label>
+            <div className="cx-bigcode">
+              <span>{prettyCode(meeting.code)}</span>
+              <button className="btn btn-light btn-sm" type="button"
+                      onClick={() => void copy(meeting.code, 'code')}>
+                {copied === 'code' ? 'Copied' : 'Copy'}
               </button>
             </div>
 
-            <label className="form-label" htmlFor="code">Code</label>
-            <input id="code" className="form-control mb-3" readOnly value={prettyCode(meeting.code)}
-                   onFocus={(e) => e.currentTarget.select()} />
-
-            <dl className="mb-0">
-              <dt className="fs-12 text-muted">Waiting room</dt>
-              <dd>{meeting.waitingRoom === 'off' ? 'Off'
-                : meeting.waitingRoom === 'guests' ? 'Guests wait' : 'Everyone waits'}</dd>
-
-              <dt className="fs-12 text-muted">Guests</dt>
-              <dd>{meeting.allowGuests ? 'Allowed' : 'Colleagues only'}</dd>
-
-              <dt className="fs-12 text-muted">Password</dt>
-              <dd>{meeting.hasPassword ? 'Required' : 'None'}</dd>
-            </dl>
+            <ul className="cx-sum-list">
+              <SumRow k="Waiting room"
+                      v={meeting.waitingRoom === 'off' ? 'Off — nobody waits'
+                        : meeting.waitingRoom === 'guests' ? 'Guests wait' : 'Everyone waits'}
+                      warn={meeting.waitingRoom === 'off'} />
+              <SumRow k="Who can get in"
+                      v={meeting.allowGuests ? 'Anyone with the link' : 'Colleagues only'} />
+              <SumRow k="Password" v={meeting.hasPassword ? 'Required' : 'None'} />
+            </ul>
           </Card>
 
           {isHost && !over && (
