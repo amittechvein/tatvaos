@@ -169,13 +169,171 @@ const PIP_CSS = `
     background:#14141b;border-radius:7px}
   .empty{position:absolute;inset:0;display:grid;place-items:center;
     color:#9b9bab;font-size:12px}
-  .bar{flex:0 0 auto;display:flex;gap:5px;padding:5px;background:#15151c;
+  .bar{flex:0 0 auto;display:flex;gap:4px;padding:5px;background:#15151c;
     border-top:1px solid #26262f}
-  button{flex:1;border:1px solid #26262f;background:rgba(255,255,255,.06);
-    color:#f2f2f5;border-radius:8px;padding:6px 8px;font-size:12px;cursor:pointer}
+  button{flex:1 1 0;min-width:0;border:1px solid #26262f;
+    background:rgba(255,255,255,.06);border-radius:8px;padding:5px 3px;
+    font-size:9px;line-height:1.25;cursor:pointer;display:flex;
+    flex-direction:column;align-items:center;gap:2px;color:#f2f2f5}
   button:hover{background:rgba(255,255,255,.14)}
-  button.off{background:rgba(239,71,87,.2);border-color:rgba(239,71,87,.5);color:#ffb3bb}
+  .ico{display:flex}
+  .ico svg{width:17px;height:17px;fill:currentColor;display:block}
+  .lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+
+  /* Each control keeps the colour it has in the room, so the floating window
+     is recognisably the same set of buttons and not a second vocabulary. */
+  .b-mic{color:#5bd6e8}
+  .b-cam{color:#b98cf5}
+  .b-back{color:#5fd39a}
+  .b-leave{color:#ff8a94}
+  button.off{background:rgba(239,71,87,.18);border-color:rgba(239,71,87,.5);
+    color:#ff8a94}
+  /* Leave is two presses. In a window this small an accidental click would end
+     somebody's meeting, so the first press arms it and says so. */
+  .b-leave.arm{background:#ef4757;border-color:#ef4757;color:#fff}
+
+  /* Under these sizes a label is a smear. The icon and the colour carry it. */
+  @media (max-width:320px){.lbl{display:none}button{padding:7px 3px}}
+  @media (max-height:200px){.lbl{display:none}button{padding:7px 3px}}
+
+  /* The recording light. Everyone in the room sees this, host or not. */
+  .rec{position:absolute;left:7px;top:7px;z-index:5;display:none;
+    align-items:center;gap:5px;padding:2px 8px 2px 6px;border-radius:999px;
+    background:rgba(0,0,0,.62);color:#ffd9dd;font-size:9px;letter-spacing:.07em}
+  .rec.on{display:flex}
+  .rec i{width:7px;height:7px;border-radius:50%;background:#ef4757;
+    animation:blip 1.6s ease-in-out infinite}
+  @keyframes blip{0%,100%{opacity:1}50%{opacity:.2}}
 `;
+
+// ── Icons ───────────────────────────────────────────────────────────────────
+//
+// Drawn here as SVG rather than borrowed from the icon font, because the PiP
+// document does not inherit the opener's stylesheet and a font that fails to
+// load leaves a blank button — which has bitten this room once already. These
+// are filled shapes with no dependencies, so they either draw or the window
+// never opened.
+//
+// The two "off" icons are the same drawing with a bar through it. That is a
+// deliberate repeat of the room's rule: strike an icon that exists rather than
+// hunt for a second icon that might not.
+
+// Built with createElementNS rather than innerHTML. The strings here are
+// constants and could not carry a payload, but this file has no business
+// owning the codebase's only handwritten innerHTML — and the DOM route costs
+// about ten lines.
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+interface Icon {
+  d: readonly string[];
+  evenOdd?: boolean;
+  /** Struck through: off, muted, stopped. */
+  slash?: boolean;
+}
+
+/** The diagonal, as a line rather than a filled band — so one number sets its
+ *  weight and the same number, made thicker, cuts the gap beneath it. */
+const SLASH_LINE = 'M3 3 21 21';
+
+// A mask needs an id, and two icons in one document must not share one.
+let maskSeq = 0;
+
+/**
+ * The struck-through icons are drawn with a GAP around the stroke rather than
+ * a bar laid on top. Laid on top, the diagonal disappears wherever the shape
+ * beneath it is solid — which on the camera is most of its length, leaving an
+ * icon that reads as "camera" with a smudge. The gap is a mask: the body is
+ * painted through everything except a thick diagonal, and the thin diagonal
+ * goes over the top. It works on any background, including one that changes
+ * on hover, because nothing is being painted to match a colour.
+ */
+function drawIcon(doc: Document, icon: Icon): SVGSVGElement {
+  const svg = doc.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+
+  const body = doc.createElementNS(SVG_NS, 'g');
+
+  if (icon.slash) {
+    maskSeq += 1;
+    const id = 'cx-cut-' + String(maskSeq);
+
+    const defs = doc.createElementNS(SVG_NS, 'defs');
+    const mask = doc.createElementNS(SVG_NS, 'mask');
+    mask.setAttribute('id', id);
+
+    const all = doc.createElementNS(SVG_NS, 'rect');
+    all.setAttribute('width', '24');
+    all.setAttribute('height', '24');
+    all.setAttribute('fill', '#fff');
+
+    const cut = doc.createElementNS(SVG_NS, 'path');
+    cut.setAttribute('d', SLASH_LINE);
+    cut.setAttribute('stroke', '#000');
+    cut.setAttribute('stroke-width', '4.4');
+    cut.setAttribute('stroke-linecap', 'round');
+    cut.setAttribute('fill', 'none');
+
+    mask.append(all, cut);
+    defs.append(mask);
+    svg.append(defs);
+    body.setAttribute('mask', 'url(#' + id + ')');
+  }
+
+  for (const d of icon.d) {
+    const path = doc.createElementNS(SVG_NS, 'path');
+    path.setAttribute('d', d);
+    // The one icon that is a shape cut OUT of another shape.
+    if (icon.evenOdd) path.setAttribute('fill-rule', 'evenodd');
+    body.append(path);
+  }
+  svg.append(body);
+
+  if (icon.slash) {
+    const line = doc.createElementNS(SVG_NS, 'path');
+    line.setAttribute('d', SLASH_LINE);
+    line.setAttribute('stroke', 'currentColor');
+    line.setAttribute('stroke-width', '2.1');
+    line.setAttribute('stroke-linecap', 'round');
+    line.setAttribute('fill', 'none');
+    svg.append(line);
+  }
+
+  return svg;
+}
+
+const MIC_BODY = [
+  'M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z',
+  'M6 10v1a6 6 0 0 0 12 0v-1h-2v1a4 4 0 0 1-8 0v-1H6z',
+  'M11 18.4h2V21h-2z',
+];
+
+const CAM_BODY = [
+  'M3 6h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z',
+  'M17.4 10.6 22 8v8l-4.6-2.6z',
+];
+
+const I_MIC: Icon = { d: MIC_BODY };
+const I_MIC_OFF: Icon = { d: MIC_BODY, slash: true };
+const I_CAM: Icon = { d: CAM_BODY };
+const I_CAM_OFF: Icon = { d: CAM_BODY, slash: true };
+
+// An arrow travelling back INTO a window: return to where the meeting lives.
+const I_BACK: Icon = {
+  evenOdd: true,
+  d: ['M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z'
+    + 'm7.6 4L7 12l5.6 5v-3.2H17v-3.6h-4.4V7z'],
+};
+
+// The same logout shape the room's Leave button uses.
+const I_LEAVE: Icon = {
+  d: [
+    'M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h5v-2H5V5h5V3z',
+    'm16 7-1.4 1.4L17.2 11H9v2h8.2l-2.6 2.6L16 17l5-5-5-5z',
+  ],
+};
 
 export interface PipHandles {
   /** The floating window. */
@@ -184,6 +342,10 @@ export interface PipHandles {
   setTiles(tiles: PipTile[]): void;
   /** Reflects mute state on the button. */
   setMuted(muted: boolean): void;
+  /** Reflects camera state on the button. */
+  setCameraOff(off: boolean): void;
+  /** Shows or hides the recording light. Room-level: true for everyone. */
+  setRecording(on: boolean): void;
 }
 
 // ── Layout ──────────────────────────────────────────────────────────────────
@@ -231,13 +393,21 @@ export function tileBudget(w: number, h: number): number {
 /**
  * Open the floating window and build its contents.
  *
- * The two buttons are wired with plain addEventListener rather than React —
- * see note 3. They are the two things somebody in a PiP window actually needs:
- * stop talking, and come back.
+ * The buttons are wired with plain addEventListener rather than React — see
+ * note 3. Four of them, which is the most a 320-pixel-wide window can carry
+ * without them becoming targets nobody can hit: microphone, camera, come back,
+ * and go. Anything rarer than those belongs in the room, where there is space
+ * to label it.
+ *
+ * onLeave is expected to bring the person back to the page rather than end the
+ * meeting on the spot. A host leaving is a decision about everybody else's
+ * meeting, and that decision has a dialog — which cannot be shown in here.
  */
 export async function openPipWindow(opts: {
   onToggleMute: () => void;
+  onToggleCamera: () => void;
   onReturn: () => void;
+  onLeave: () => void;
   onClosed: () => void;
 }): Promise<PipHandles | null> {
   const api = typeof window !== 'undefined' ? window.documentPictureInPicture : undefined;
@@ -270,21 +440,74 @@ export async function openPipWindow(opts: {
   empty.textContent = 'Waiting for the meeting…';
   grid.append(empty);
 
+  // The recording light sits over the grid, not in the bar: it is a state of
+  // the room rather than a control, and putting it among the buttons would
+  // invite somebody to press it.
+  const recPill = doc.createElement('div');
+  recPill.className = 'rec';
+  const recDot = doc.createElement('i');
+  const recText = doc.createElement('span');
+  recText.textContent = 'REC';
+  recPill.append(recDot, recText);
+
   const bar = doc.createElement('div');
   bar.className = 'bar';
 
-  const mute = doc.createElement('button');
-  mute.type = 'button';
-  mute.textContent = 'Mute';
-  mute.addEventListener('click', opts.onToggleMute);
+  interface Btn { el: HTMLButtonElement; ico: HTMLSpanElement; lbl: HTMLSpanElement }
 
-  const back = doc.createElement('button');
-  back.type = 'button';
-  back.textContent = 'Back to meeting';
-  back.addEventListener('click', opts.onReturn);
+  function button(cls: string, icon: Icon, label: string, title: string): Btn {
+    const el = doc.createElement('button');
+    el.type = 'button';
+    el.className = cls;
+    el.title = title;
+    el.setAttribute('aria-label', title);
+    const ico = doc.createElement('span');
+    ico.className = 'ico';
+    ico.append(drawIcon(doc, icon));
+    const lbl = doc.createElement('span');
+    lbl.className = 'lbl';
+    lbl.textContent = label;
+    el.append(ico, lbl);
+    return { el, ico, lbl };
+  }
 
-  bar.append(mute, back);
-  wrap.append(grid, bar);
+  const mic = button('b-mic', I_MIC, 'Mute', 'Mute');
+  mic.el.addEventListener('click', opts.onToggleMute);
+
+  const cam = button('b-cam', I_CAM, 'Video', 'Stop video');
+  cam.el.addEventListener('click', opts.onToggleCamera);
+
+  const back = button('b-back', I_BACK, 'Meeting', 'Back to the meeting');
+  back.el.addEventListener('click', opts.onReturn);
+
+  const leave = button('b-leave', I_LEAVE, 'Leave', 'Leave the meeting');
+
+  // Two presses. A stray click in a window the size of a postage stamp should
+  // not drop somebody out of a meeting, and there is no room in here for a
+  // confirmation dialog — nor would one be welcome, since a modal in a PiP
+  // window blocks the window it came from.
+  let armed: number | null = null;
+  function disarm() {
+    if (armed !== null) pip.clearTimeout(armed);
+    armed = null;
+    leave.el.classList.remove('arm');
+    leave.lbl.textContent = 'Leave';
+    leave.el.title = 'Leave the meeting';
+  }
+  leave.el.addEventListener('click', () => {
+    if (armed === null) {
+      leave.el.classList.add('arm');
+      leave.lbl.textContent = 'Sure?';
+      leave.el.title = 'Press again to leave';
+      armed = pip.setTimeout(disarm, 3000);
+      return;
+    }
+    disarm();
+    opts.onLeave();
+  });
+
+  bar.append(mic.el, cam.el, back.el, leave.el);
+  wrap.append(recPill, grid, bar);
   doc.body.append(wrap);
 
   // ── The reconciler ────────────────────────────────────────────────────
@@ -468,8 +691,24 @@ export async function openPipWindow(opts: {
     window: pip,
     setTiles,
     setMuted: (muted: boolean) => {
-      mute.textContent = muted ? 'Unmute' : 'Mute';
-      mute.className = muted ? 'off' : '';
+      mic.ico.replaceChildren(drawIcon(doc, muted ? I_MIC_OFF : I_MIC));
+      mic.lbl.textContent = muted ? 'Unmute' : 'Mute';
+      mic.el.title = muted ? 'Unmute' : 'Mute';
+      mic.el.setAttribute('aria-label', mic.el.title);
+      // toggle rather than className, or this would wipe the colour class.
+      mic.el.classList.toggle('off', muted);
+    },
+    setCameraOff: (off: boolean) => {
+      cam.ico.replaceChildren(drawIcon(doc, off ? I_CAM_OFF : I_CAM));
+      // The label stays "Video" in both states. The mic's flips between Mute
+      // and Unmute because those are two different ACTIONS with the same icon;
+      // the camera's struck-through icon already says which way it will go.
+      cam.el.title = off ? 'Start video' : 'Stop video';
+      cam.el.setAttribute('aria-label', cam.el.title);
+      cam.el.classList.toggle('off', off);
+    },
+    setRecording: (on: boolean) => {
+      recPill.classList.toggle('on', on);
     },
   };
 }

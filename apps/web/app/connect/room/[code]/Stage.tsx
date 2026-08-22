@@ -927,6 +927,13 @@ export default function Stage({ seat, meeting, prefs }: {
   // ---------------------------------------------------------------------
   useEffect(() => { setCanPip(pipSupported()); }, []);
 
+  // The floating window's Leave has to run the CURRENT leave(), because what
+  // leaving means depends on the role we hold now. leave() is a hoisted
+  // function declaration further down, so naming it here is safe; the ref is
+  // what carries it across into a handler built once at open time.
+  const leaveRef = useRef<() => void>(() => {});
+  useEffect(() => { leaveRef.current = leave; }, [leave]);
+
   const closePip = useCallback(() => {
     const handles = pipRef.current;
     pipRef.current = null;
@@ -955,7 +962,26 @@ export default function Stage({ seat, meeting, prefs }: {
             .then(() => setMicOn(!on))
             .catch(() => { /* device gone; the room UI will show it */ });
         },
+        // Same reasoning as the microphone: read the camera from the SDK, not
+        // from a camOn captured on first render.
+        onToggleCamera: () => {
+          const r = roomRef.current;
+          if (!r) return;
+          const on = r.localParticipant.isCameraEnabled;
+          void r.localParticipant.setCameraEnabled(!on)
+            .then(() => { setCamOn(!on); setBlocked(null); })
+            .catch(() => { /* device gone; the room UI will show it */ });
+        },
         onReturn: () => { closePip(); try { window.focus(); } catch { /* denied */ } },
+        // Leaving from the floating window comes back to the page first. A
+        // host's Leave opens a dialog — end it, or hand it over — and a dialog
+        // cannot be shown in a PiP window. leaveRef is refreshed every render
+        // so this reads the current role rather than the one at open time.
+        onLeave: () => {
+          closePip();
+          try { window.focus(); } catch { /* denied */ }
+          leaveRef.current();
+        },
         onClosed: () => { pipRef.current = null; setPipOpen(false); },
       });
       if (handles) { pipRef.current = handles; setPipOpen(true); }
@@ -993,7 +1019,14 @@ export default function Stage({ seat, meeting, prefs }: {
   // dependency array is evaluated during render, so referencing them from up
   // here would read a const before its initialiser and throw.
 
+  // These three run on pipOpen as well as on the value, which is how a freshly
+  // opened window gets the CURRENT state: openPip cannot pass it in without
+  // capturing it, and a captured value is the bug these handlers avoid.
   useEffect(() => { pipRef.current?.setMuted(!micOn); }, [micOn, pipOpen]);
+  useEffect(() => { pipRef.current?.setCameraOff(!camOn); }, [camOn, pipOpen]);
+  useEffect(() => {
+    pipRef.current?.setRecording(beingRecorded);
+  }, [beingRecorded, pipOpen]);
 
   // Leaving the meeting must not leave a floating window behind showing a
   // room nobody is in.
