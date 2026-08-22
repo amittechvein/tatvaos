@@ -679,6 +679,18 @@ export default function Stage({ seat, meeting, prefs }: {
             return;
           }
 
+          // Somebody running the meeting has taken the question. Silent, for
+          // the same reason a hand going down is silent: it is the end of a
+          // request, not the start of one.
+          if ('lowerHand' in parsed) {
+            const who = String((parsed as { lowerHand?: unknown }).lowerHand ?? '');
+            if (who.length === 0) return;
+            setHands((h) => ({ ...h, [who]: false }));
+            // If it was OUR hand, the button has to come back up with it.
+            if (who === roomRef.current?.localParticipant.identity) setMyHand(false);
+            return;
+          }
+
           if ('react' in parsed) {
             const emoji = String((parsed as { react?: unknown }).react ?? '');
             // Whitelisted, not echoed. This arrives from another browser, and
@@ -1476,6 +1488,31 @@ export default function Stage({ seat, meeting, prefs }: {
     setHands((h) => ({ ...h, [r.localParticipant.identity]: up }));
     void r.localParticipant.publishData(
       new TextEncoder().encode(JSON.stringify({ hand: up })), { reliable: true });
+  }
+
+  /**
+   * Put somebody else's hand down.
+   *
+   * Whoever is running the meeting has taken the question — the hand has done
+   * its job and it should stop asking. Without this the only person who could
+   * lower it was the one who raised it, so a hand stayed up through the answer
+   * and everything after it, and a room of stale hands is a room where nobody
+   * reads them any more.
+   *
+   * It is a message, not a command: this channel is how a hand is claimed in
+   * the first place, so it is trusted exactly as far as that already is. The
+   * cost of abuse is that somebody has to raise their hand again. If we ever
+   * want this to be enforced, it belongs on the server beside mute and remove
+   * — worth raising with Core, not worth blocking this on.
+   */
+  function lowerHandFor(identity: string) {
+    const r = roomRef.current;
+    if (!r) return;
+    setHands((h) => ({ ...h, [identity]: false }));
+    if (identity === r.localParticipant.identity) setMyHand(false);
+    void r.localParticipant.publishData(
+      new TextEncoder().encode(JSON.stringify({ lowerHand: identity })),
+      { reliable: true });
   }
 
   async function switchDevice(kind: MediaDeviceKind, deviceId: string) {
@@ -2428,6 +2465,22 @@ export default function Stage({ seat, meeting, prefs }: {
                       background that reads on every theme. */}
                   {isHost && meeting && p !== room?.localParticipant && (
                     <div className="cx-acts">
+                      {/* Only while there is a hand to put down. A button that
+                          is present but does nothing most of the time is a
+                          button people stop reading. */}
+                      {up && (
+                        <button type="button" className="cx-act cx-act--hand"
+                                title="Put their hand down"
+                                aria-label="Put their hand down"
+                                onClick={() => lowerHandFor(p.identity)}>
+                          {/* ri-hand, not a drawn one. This glyph is already
+                              on the Raise your hand button, so it is PROVEN to
+                              exist in the icon font we ship — and a hand at
+                              16px is a shape worth borrowing rather than
+                              re-deriving. */}
+                          <i className="ri-hand" aria-hidden="true" />
+                        </button>
+                      )}
                       {roleable && role !== 'host' && (
                         <button type="button"
                                 className={`cx-act${role === 'cohost' ? ' cx-act--on' : ''}`}

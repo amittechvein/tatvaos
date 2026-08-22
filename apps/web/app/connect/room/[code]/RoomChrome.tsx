@@ -556,7 +556,16 @@ export const CSS = `
    shifts on hover fills the gap in at exactly the moment somebody is looking
    at it. */
 .cx-act:hover{border-color:var(--cx-accent);color:var(--cx-accent)}
+/* Nothing left to do. Dimmed rather than hidden, because the icon is still
+   saying something useful — that they are already muted, or already off. */
+.cx-act:disabled{opacity:.42;cursor:default}
+.cx-act:disabled:hover{border-color:var(--cx-line);color:var(--cx-text)}
 .cx-act svg{width:16px;height:16px;display:block;fill:currentColor}
+.cx-act i{font-size:16px;line-height:1}
+/* Putting a hand down is the answer to a request, so it reads as the friendly
+   one of the five rather than another grey square. */
+.cx-act--hand{border-color:rgba(46,204,113,.5);color:var(--cx-good)}
+.cx-act--hand:hover{border-color:var(--cx-good);color:var(--cx-good)}
 /* The gap under the diagonal is painted in the BUTTON's own background, so it
    is a hole whatever the theme makes that colour. */
 .cx-act .cx-cut{stroke:var(--cx-surface);stroke-width:4.4;stroke-linecap:round;fill:none}
