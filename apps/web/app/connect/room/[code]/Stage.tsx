@@ -16,7 +16,8 @@ import {
 } from '@/lib/connect';
 import type { JoinPrefs } from './PreJoin';
 import {
-  documentPipSupported, onAutoPip, openPipWindow, pipSupported, videoPipSupported,
+  bestColumns, documentPipSupported, onAutoPip, openPipWindow, pipSupported,
+  videoPipSupported,
   type PipHandles, type PipTile,
 } from '@/lib/pip';
 import { CSS, Centre, Spinner, initialOf } from './RoomChrome';
@@ -932,7 +933,48 @@ export default function Stage({ seat, meeting, prefs }: {
   // function declaration further down, so naming it here is safe; the ref is
   // what carries it across into a handler built once at open time.
   const leaveRef = useRef<() => void>(() => {});
-  useEffect(() => { leaveRef.current = leave; }, [leave]);
+  // No dependency array on purpose. leave() is redefined every render, so
+  // listing it would be a dependency that always changes — which is what the
+  // exhaustive-deps rule complains about, and rightly. Running after every
+  // render is exactly the intent: keep the ref pointing at the current one.
+  useEffect(() => { leaveRef.current = leave; });
+
+  // ---------------------------------------------------------------------
+  //  How big the stage actually is.
+  //
+  //  Measured rather than guessed, because a CSS-only gallery can only size
+  //  tiles from the WIDTH it has: the rows keep their height, the stage runs
+  //  out of it, and overflow-y turns a meeting into a scrolling list. Eight
+  //  people came out with two faces cut in half and two more below the fold.
+  //
+  //  A callback ref rather than useRef + useEffect. This component returns
+  //  early while joining and again once the meeting is over, so the stage
+  //  element is created and destroyed more than once in a session — and an
+  //  effect that ran on mount would be observing an element that no longer
+  //  exists. A callback ref fires on every attach and detach, which is the
+  //  question being asked.
+  // ---------------------------------------------------------------------
+  const [stageBox, setStageBox] = useState({ w: 0, h: 0 });
+  const stageObs = useRef<ResizeObserver | null>(null);
+
+  const stageRef = useCallback((el: HTMLDivElement | null) => {
+    stageObs.current?.disconnect();
+    stageObs.current = null;
+    if (el === null || typeof ResizeObserver === 'undefined') return;
+
+    const ro = new ResizeObserver((entries) => {
+      const box = entries[0]?.contentRect;
+      if (!box) return;
+      // Sub-pixel churn is ignored: a ResizeObserver that sets state on every
+      // fractional change can loop against the layout it just caused.
+      setStageBox((was) => (
+        Math.abs(was.w - box.width) < 1 && Math.abs(was.h - box.height) < 1
+          ? was
+          : { w: box.width, h: box.height }));
+    });
+    ro.observe(el);
+    stageObs.current = ro;
+  }, []);
 
   const closePip = useCallback(() => {
     const handles = pipRef.current;
@@ -1529,14 +1571,28 @@ export default function Stage({ seat, meeting, prefs }: {
     ?? tiles[0]?.key
     ?? null;
 
+  // "Most faces at once" applies to the GALLERY as well, which it did not
+  // before: mainKeys took every tile there, so the slider moved and nothing
+  // happened. It is the only view where the cap matters most — twenty live
+  // videos is real work for a laptop, and the setting is how somebody whose
+  // fan is screaming gets out of trouble.
+  const galleryCap = Math.max(1, roomPrefs.maxTiles);
+
   const mainKeys = layout === 'grid'
-    ? tiles.map((t) => t.key)
+    ? tiles.slice(0, galleryCap).map((t) => t.key)
     : focusKey !== null ? [focusKey] : [];
 
   const main = tiles.filter((t) => mainKeys.includes(t.key));
+
+  // People the gallery's cap left out. Counted, never silently dropped.
+  const galleryHidden = layout === 'grid'
+    ? Math.max(0, tiles.length - main.length)
+    : 0;
+
   // Spotlight shows ONE tile and nothing else — that is the whole point of
   // asking for it, so the others are not demoted to a column, they are gone.
-  const restAll = layout === 'spotlight'
+  // The gallery has no strip either: it IS the strip.
+  const restAll = layout === 'spotlight' || layout === 'grid'
     ? []
     : tiles.filter((t) => !mainKeys.includes(t.key));
 
@@ -1551,11 +1607,59 @@ export default function Stage({ seat, meeting, prefs }: {
   // of equals has no column and needs none.
   const focused = main.length === 1 && rest.length > 0;
 
+  // Zero while the stage is unmeasured. The first paint has no size yet, and
+  // guessing 1 would be a visible one-frame jump from a single huge tile to
+  // the real layout. See the note beside stageRef for the rest.
+  //
+  // The "+N more" chip is a cell like any other, so it is counted here. A
+  // chip squeezed in afterwards would push the last face onto a row of its
+  // own — which is how a fix for overflow becomes a cause of it.
+  const gridItems = main.length + (galleryHidden > 0 ? 1 : 0);
+  const gridCols = focused || stageBox.w === 0
+    ? 0
+    : bestColumns(Math.max(1, gridItems), stageBox.w, stageBox.h, 16 / 9);
+
+  // ---------------------------------------------------------------------
+  //  THE SIDE COLUMN HAS TO FIT TOO.
+  //
+  //  The same failure as the gallery, in one dimension. The column is a
+  //  fixed 160px wide and its tiles are 16:9, so each one costs about 100px
+  //  of height including the gap — and past about eight of them the column
+  //  simply scrolled. In an eighteen-person meeting that meant the sixth
+  //  face cut in half and everybody after it below the fold, with no hint
+  //  they were there. The "+N more" chip exists precisely so that people who
+  //  do not fit are COUNTED rather than hidden; it was being bypassed
+  //  because the cap it works from is a preference, not a measurement.
+  //
+  //  Below 900px the column becomes a horizontal row (see the media query in
+  //  RoomChrome), so there the budget is a width rather than a height.
+  //
+  //  One slot is given back to the chip whenever there is something to
+  //  count, for the same reason pip.ts does it: a chip that pushes a face
+  //  off the end makes its own number wrong.
+  // ---------------------------------------------------------------------
+  const SIDE_SLOT = 100;   // a 160px-wide tile at 16:9, plus the 10px gap
+  const ROW_SLOT = 112;    // a 104px-wide tile, plus the 8px gap
+
+  const stripFit = !focused || stageBox.w === 0
+    ? rest.length
+    : stageBox.w <= 900
+      ? Math.max(1, Math.floor((stageBox.w + 8) / ROW_SLOT))
+      : Math.max(1, Math.floor((stageBox.h + 10) / SIDE_SLOT));
+
+  const strip = rest.length > stripFit
+    ? rest.slice(0, Math.max(1, stripFit - 1))
+    : rest;
+  // Everything the preference dropped, plus everything the column could not
+  // hold. One number, because to the person looking at it there is only one
+  // question: how many people am I not seeing.
+  const unseen = overflow + (rest.length - strip.length);
+
   // Built once and placed in one of two containers — beside the large tile
   // when focused, below it otherwise. Two copies of this JSX would be two
   // things to keep in step, and the one edited less often is the one that
   // quietly stops matching.
-  const stripTiles = rest.map((t) => (
+  const stripTiles = strip.map((t) => (
     <Tile key={t.key} p={t.p} big={false} local={t.p === room?.localParticipant}
           showScreen={t.screen} hand={!t.screen && hands[t.p.identity] === true}
           canHost={false} pinned={false} mirror={roomPrefs.mirror}
@@ -1830,7 +1934,15 @@ export default function Stage({ seat, meeting, prefs }: {
             gesture every video player has had for twenty years, so it needs
             no discovery — the button below is for the people who never learnt
             it. */}
-        <div className={`cx-stage${focused ? ' cx-stage--focus' : ''}`}
+        <div ref={stageRef}
+             className={`cx-stage${focused ? ' cx-stage--focus' : ''}`
+               + `${gridCols > 0 ? ' cx-stage--grid' : ''}`}
+             // A custom property in a style object. The double assertion is
+             // for the React typings, which only learned about --* keys
+             // recently and are not worth pinning a version over.
+             style={gridCols > 0
+               ? ({ '--cx-cols': gridCols } as unknown as React.CSSProperties)
+               : undefined}
              onDoubleClick={canFull ? toggleFull : undefined}>
           {/* Screen tiles are keyed apart from their owner's camera tile so
               React never reuses one <video> element for two different
@@ -1851,6 +1963,12 @@ export default function Stage({ seat, meeting, prefs }: {
                     connectApi.remove(authedFetch, meeting?.id ?? '', t.p.identity))} />
           ))}
 
+          {/* The people the cap left out, in a cell of their own rather than
+              nowhere. They are still in the meeting and still heard. */}
+          {galleryHidden > 0 && (
+            <div className="cx-gridmore">+{galleryHidden} more</div>
+          )}
+
           {/* Reactions float over everything and are pointer-transparent, so
               they can never swallow a click meant for a tile. */}
           {reacts.length > 0 && (
@@ -1868,10 +1986,10 @@ export default function Stage({ seat, meeting, prefs }: {
           {focused && (
             <div className="cx-strip cx-strip--side">
               {stripTiles}
-              {overflow > 0 && (
+              {unseen > 0 && (
                 <button type="button" className="cx-mini" style={{ flex: '0 0 auto' }}
                         onClick={() => openPanel('view')}>
-                  +{overflow} more
+                  +{unseen} more
                 </button>
               )}
             </div>
@@ -1881,10 +1999,10 @@ export default function Stage({ seat, meeting, prefs }: {
         {!focused && rest.length > 0 && (
           <div className="cx-strip">
             {stripTiles}
-            {overflow > 0 && (
+            {unseen > 0 && (
               <button type="button" className="cx-mini" style={{ flex: '0 0 auto' }}
                       onClick={() => openPanel('view')}>
-                +{overflow} more
+                +{unseen} more
               </button>
             )}
           </div>
