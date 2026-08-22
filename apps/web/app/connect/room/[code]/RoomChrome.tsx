@@ -172,12 +172,21 @@ export const CSS = `
   flex:none;width:100%;height:100%;max-width:none;aspect-ratio:auto;
   min-width:0;min-height:0;
 }
-/* The people the cap left out, in a cell of their own. */
+/* The people the cap left out, in a cell of their own — and a way in to the
+   list of them, because a count you cannot expand is just bad news. */
 .cx-gridmore{
-  display:grid;place-items:center;min-width:0;min-height:0;
+  display:grid;place-content:center;justify-items:center;gap:3px;
+  min-width:0;min-height:0;padding:8px;
   background:var(--cx-surface);border:1px solid var(--cx-line);
   border-radius:16px;color:var(--cx-dim);font-size:13px;font-weight:600;
+  cursor:pointer;transition:background .16s,color .16s,border-color .16s;
 }
+.cx-gridmore:hover{background:rgba(255,255,255,.06);color:var(--cx-text);
+  border-color:var(--cx-accent)}
+.cx-gridmore small{font-size:10.5px;font-weight:500;opacity:.7}
+
+.cx-more-chip{flex:0 0 auto}
+.cx-more-chip:hover{border-color:var(--cx-accent)}
 .cx-tile.is-speaking{border-color:var(--cx-good);box-shadow:0 0 0 3px rgba(46,204,113,.22)}
 
 /* cover is right for a FACE and wrong for a SCREEN.
@@ -519,6 +528,17 @@ export const CSS = `
   background:rgba(255,255,255,.09);font-weight:700;font-size:13px}
 .cx-grow{flex:1 1 auto;min-width:0}
 .cx-sub{color:var(--cx-dim);font-size:11px}
+
+/* ── A NAME IS NEVER ABBREVIATED. ──────────────────────────────────────────
+   The host's controls used to share this line with the name, and five
+   buttons in a 360px panel left the name about eight characters — so the
+   panel whose whole job is telling you who is in the meeting was reporting
+   "Shruti Sin…". The controls moved to their own wrapping line underneath;
+   the name now takes the width it needs and wraps if it has to. */
+.cx-row--person{align-items:flex-start}
+.cx-row--person .cx-av{margin-top:1px}
+.cx-pname{font-size:13.5px;line-height:1.4;overflow-wrap:anywhere}
+.cx-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 
 /* Somebody is at the door. It floats over the video rather than living only in
    a panel: a request nobody sees is a person left standing outside. */

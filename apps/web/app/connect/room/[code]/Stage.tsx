@@ -24,6 +24,37 @@ import { CSS, Centre, Spinner, initialOf } from './RoomChrome';
 
 const LOBBY_POLL_MS = 3000;
 
+/**
+ * Keep a box's measured size in state, swapping the observer when the element
+ * behind a ref changes.
+ *
+ * Module level so the ref callbacks that use it can stay inline arrows — the
+ * hooks lint wants to see the function it is given, and a factory returning a
+ * callback defeats that for no gain.
+ */
+function watchBox(
+  obs: React.MutableRefObject<ResizeObserver | null>,
+  el: HTMLElement | null,
+  set: React.Dispatch<React.SetStateAction<{ w: number; h: number }>>,
+): void {
+  obs.current?.disconnect();
+  obs.current = null;
+  if (el === null || typeof ResizeObserver === 'undefined') return;
+
+  const ro = new ResizeObserver((entries) => {
+    const box = entries[0]?.contentRect;
+    if (!box) return;
+    // Sub-pixel churn is ignored: a ResizeObserver that sets state on every
+    // fractional change can loop against the layout it just caused.
+    set((was) => (
+      Math.abs(was.w - box.width) < 1 && Math.abs(was.h - box.height) < 1
+        ? was
+        : { w: box.width, h: box.height }));
+  });
+  ro.observe(el);
+  obs.current = ro;
+}
+
 // ---------------------------------------------------------------------------
 //  The join/leave chime — burst suppression.
 //
@@ -955,25 +986,20 @@ export default function Stage({ seat, meeting, prefs }: {
   //  question being asked.
   // ---------------------------------------------------------------------
   const [stageBox, setStageBox] = useState({ w: 0, h: 0 });
+  const [stripBox, setStripBox] = useState({ w: 0, h: 0 });
   const stageObs = useRef<ResizeObserver | null>(null);
+  const stripObs = useRef<ResizeObserver | null>(null);
 
+  // Both are measured. The first attempt assumed the side column was the
+  // 160px the stylesheet asks for — and a flex basis is a starting point, not
+  // a promise. It lands wider, every tile is taller than the arithmetic
+  // expected, and a capacity computed from the constant let one more tile in
+  // than fits. Measure the thing; never re-derive it from the CSS.
   const stageRef = useCallback((el: HTMLDivElement | null) => {
-    stageObs.current?.disconnect();
-    stageObs.current = null;
-    if (el === null || typeof ResizeObserver === 'undefined') return;
-
-    const ro = new ResizeObserver((entries) => {
-      const box = entries[0]?.contentRect;
-      if (!box) return;
-      // Sub-pixel churn is ignored: a ResizeObserver that sets state on every
-      // fractional change can loop against the layout it just caused.
-      setStageBox((was) => (
-        Math.abs(was.w - box.width) < 1 && Math.abs(was.h - box.height) < 1
-          ? was
-          : { w: box.width, h: box.height }));
-    });
-    ro.observe(el);
-    stageObs.current = ro;
+    watchBox(stageObs, el, setStageBox);
+  }, []);
+  const stripRef = useCallback((el: HTMLDivElement | null) => {
+    watchBox(stripObs, el, setStripBox);
   }, []);
 
   const closePip = useCallback(() => {
@@ -1599,7 +1625,34 @@ export default function Stage({ seat, meeting, prefs }: {
   // The cap applies to the COMPANY, never to the focused tile, and it counts
   // what was hidden so the number can be shown rather than the people simply
   // disappearing.
-  const rest = restAll.slice(0, Math.max(0, roomPrefs.maxTiles));
+  // ---------------------------------------------------------------------
+  //  IN SIDE VIEW THE COLUMN IS COMPANY, NOT A REGISTER.
+  //
+  //  While somebody is presenting, the column exists so you can see the
+  //  faces of the people watching. A column of black squares with initials
+  //  in them is not that — it is a list of names taking up the space the
+  //  faces would have used, and in an eighteen-person meeting it pushed
+  //  every actual camera off the bottom.
+  //
+  //  So: cameras only, EXCEPT the host and co-hosts, who stay whether their
+  //  camera is on or not. They are who you look for when you need something
+  //  to happen, and finding them should not depend on whether they happen to
+  //  be on camera. A shared screen is never filtered — it is the point.
+  //
+  //  Nobody is lost: whoever is filtered out is added to the "+N more"
+  //  count, and that chip opens People.
+  // ---------------------------------------------------------------------
+  const runsTheMeeting = (p: LKParticipant) =>
+    roles[p.identity] === 'host' || roles[p.identity] === 'cohost';
+
+  const sideList = main.length === 1
+    ? restAll.filter((t) => t.screen || hasCamera(t.p) || runsTheMeeting(t.p))
+    : restAll;
+
+  const rest = sideList.slice(0, Math.max(0, roomPrefs.maxTiles));
+  // Counted against restAll, so the people the camera filter removed are in
+  // the number too. To whoever is reading it there is one question: how many
+  // people am I not seeing.
   const overflow = restAll.length - rest.length;
 
   // Exactly one large tile with company beside it — a share, a pinned person,
@@ -1638,14 +1691,18 @@ export default function Stage({ seat, meeting, prefs }: {
   //  count, for the same reason pip.ts does it: a chip that pushes a face
   //  off the end makes its own number wrong.
   // ---------------------------------------------------------------------
-  const SIDE_SLOT = 100;   // a 160px-wide tile at 16:9, plus the 10px gap
-  const ROW_SLOT = 112;    // a 104px-wide tile, plus the 8px gap
-
-  const stripFit = !focused || stageBox.w === 0
+  //  The column's own width decides how tall each 16:9 tile is, so the
+  //  capacity is measured end to end and no number here is copied from the
+  //  stylesheet.
+  const GAP = 10;
+  const stripFit = !focused || stripBox.w === 0 || stripBox.h === 0
     ? rest.length
     : stageBox.w <= 900
-      ? Math.max(1, Math.floor((stageBox.w + 8) / ROW_SLOT))
-      : Math.max(1, Math.floor((stageBox.h + 10) / SIDE_SLOT));
+      // Narrow screens turn the column into a row: the budget is width, and
+      // the tiles are the fixed 104px the media query gives them.
+      ? Math.max(1, Math.floor((stripBox.w + 8) / 112))
+      : Math.max(1, Math.floor(
+        (stripBox.h + GAP) / (stripBox.w * (9 / 16) + GAP)));
 
   const strip = rest.length > stripFit
     ? rest.slice(0, Math.max(1, stripFit - 1))
@@ -1966,7 +2023,12 @@ export default function Stage({ seat, meeting, prefs }: {
           {/* The people the cap left out, in a cell of their own rather than
               nowhere. They are still in the meeting and still heard. */}
           {galleryHidden > 0 && (
-            <div className="cx-gridmore">+{galleryHidden} more</div>
+            <button type="button" className="cx-gridmore"
+                    title="See everyone in the meeting"
+                    onClick={() => openPanel('people')}>
+              +{galleryHidden} more
+              <small>Open People</small>
+            </button>
           )}
 
           {/* Reactions float over everything and are pointer-transparent, so
@@ -1982,13 +2044,16 @@ export default function Stage({ seat, meeting, prefs }: {
             </div>
           )}
 
-          {/* Beside the large tile, in the flow — see .cx-strip--side. */}
+          {/* Beside the large tile, in the flow — see .cx-strip--side. The ref
+              is how the column's real width and height reach the capacity
+              sum above; the stylesheet's 160px is a flex basis, not a fact. */}
           {focused && (
-            <div className="cx-strip cx-strip--side">
+            <div ref={stripRef} className="cx-strip cx-strip--side">
               {stripTiles}
               {unseen > 0 && (
-                <button type="button" className="cx-mini" style={{ flex: '0 0 auto' }}
-                        onClick={() => openPanel('view')}>
+                <button type="button" className="cx-mini cx-more-chip"
+                        title="See everyone in the meeting"
+                        onClick={() => openPanel('people')}>
                   +{unseen} more
                 </button>
               )}
@@ -2000,8 +2065,9 @@ export default function Stage({ seat, meeting, prefs }: {
           <div className="cx-strip">
             {stripTiles}
             {unseen > 0 && (
-              <button type="button" className="cx-mini" style={{ flex: '0 0 auto' }}
-                      onClick={() => openPanel('view')}>
+              <button type="button" className="cx-mini cx-more-chip"
+                      title="See everyone in the meeting"
+                      onClick={() => openPanel('people')}>
                 +{unseen} more
               </button>
             )}
@@ -2247,10 +2313,15 @@ export default function Stage({ seat, meeting, prefs }: {
                 && p !== room?.localParticipant
                 && p.identity.startsWith('user:');
               return (
-                <div className="cx-row" key={p.identity}>
+                <div className="cx-row cx-row--person" key={p.identity}>
                   <span className="cx-av">{initialOf(nm)}</span>
                   <div className="cx-grow">
-                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {/* Wraps rather than ellipsises. The controls used to sit
+                        on this line and squeezed it to about eight characters,
+                        so a panel whose entire job is telling you who is in
+                        the meeting was showing "Shruti Sin…". A name is the
+                        one thing here that must never be abbreviated. */}
+                    <div className="cx-pname">
                       {up && <span aria-label="Hand raised" title="Hand raised">✋ </span>}
                       {nm}{p === room?.localParticipant ? ' (you)' : ''}
                     </div>
@@ -2261,9 +2332,12 @@ export default function Stage({ seat, meeting, prefs }: {
                       {muted ? 'Muted' : p.isSpeaking ? 'Speaking' : 'Unmuted'}
                       {isSharing ? ' · Sharing' : ''}
                     </div>
-                  </div>
-                  {isHost && meeting && p !== room?.localParticipant && (
-                    <>
+                    {/* The host's controls live UNDER the name now, on a
+                        line of their own that wraps. Five buttons and a name
+                        never fitted across a 360px panel; something had to
+                        give, and it was always the name. */}
+                    {isHost && meeting && p !== room?.localParticipant && (
+                    <div className="cx-acts">
                       {roleable && role !== 'host' && (
                         <button type="button" className="cx-pill"
                                 title={role === 'cohost'
@@ -2297,8 +2371,9 @@ export default function Stage({ seat, meeting, prefs }: {
                               title="Remove them. A removed colleague cannot rejoin this meeting."
                               onClick={() => void hostAction(() =>
                                 connectApi.remove(authedFetch, meeting.id, p.identity))}>Remove</button>
-                    </>
-                  )}
+                    </div>
+                    )}
+                  </div>
                 </div>
               );
             })}
