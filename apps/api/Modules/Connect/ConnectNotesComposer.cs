@@ -60,6 +60,34 @@ public sealed class ConnectNotesComposer(
     /// running out of context produces a 400 the user cannot act on.</summary>
     private const int MaxTranscriptChars = 48_000;
 
+    /// <summary>
+    /// Pulls only error.code and error.param out of a provider's error body.
+    ///
+    /// Never the message, and never anything else. OpenAI-shaped errors look
+    /// like {"error":{"message":…,"code":"unsupported_value","param":"temperature"}}
+    /// — the message can quote what we sent, the other two cannot. Returns
+    /// nulls for any body that is not that shape, because a provider being
+    /// unhelpful is not a reason to fail.
+    /// </summary>
+    private static (string? Code, string? Param) ErrorHint(string payload)
+    {
+        try
+        {
+            var root = JsonDocument.Parse(payload).RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("error", out var err)
+                || err.ValueKind != JsonValueKind.Object)
+                return (null, null);
+
+            return (Field(err, "code"), Field(err, "param"));
+        }
+        catch (JsonException) { return (null, null); }
+
+        static string? Field(JsonElement e, string name) =>
+            e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
+                ? v.GetString() : null;
+    }
+
     public async Task<Notes> ComposeAsync(
         string meetingTitle,
         IReadOnlyList<ConnectTranscriber.Segment> segments,
@@ -287,16 +315,42 @@ public sealed class ConnectNotesComposer(
             .Append(transcript)
             .ToString();
 
-        var body = new
+        // ── TEMPERATURE IS SENT ONLY IF SOMEBODY ASKED FOR IT ─────────────
+        //
+        // This used to send temperature 0.2 unconditionally, which is a
+        // sensible number for minutes: low, so the same meeting does not
+        // produce a differently-worded summary each time somebody presses
+        // Write again.
+        //
+        // gpt-5.6-luna rejects it outright — "Unsupported value: 'temperature'
+        // does not support 0.2 with this model. Only the default (1) value is
+        // supported" — with a 400. The reasoning-family models fix their own
+        // sampling and refuse to be told otherwise.
+        //
+        // The symptom was much worse than the cause. A 400 here is caught and
+        // falls back to the mechanical digest, so the minutes still arrived,
+        // still looked plausible, and quietly said "no model was involved" in
+        // grey text underneath. Nothing failed loudly. The feature was simply
+        // off, for every meeting, and would have stayed off.
+        //
+        // So it is now OMITTED unless configured. A parameter nobody set is a
+        // parameter that cannot be refused, and the default the model chooses
+        // for itself is the one it was tuned for. Providers that do want a
+        // fixed temperature can have one via Connect:Recording:NotesTemperature
+        // — which is the same shape as every other provider difference in this
+        // module: a setting, not a rebuild.
+        var body = new Dictionary<string, object>
         {
-            model = options.NotesModel,
-            temperature = 0.2,
-            messages = new object[]
+            ["model"] = options.NotesModel,
+            ["messages"] = new object[]
             {
                 new { role = "system", content = system },
                 new { role = "user", content = user },
             },
         };
+
+        if (options.NotesTemperature is double temperature)
+            body["temperature"] = temperature;
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromMinutes(options.NotesTimeoutMinutes));
@@ -314,7 +368,28 @@ public sealed class ConnectNotesComposer(
             var response = await http.SendAsync(request, timeout.Token);
             if (!response.IsSuccessStatusCode)
             {
-                log.LogWarning("Notes model returned {Status}", (int)response.StatusCode);
+                // ── ENOUGH TO ACT ON, NOT ENOUGH TO LEAK ──────────────────
+                //
+                // This used to log the status and nothing else. On 22 August a
+                // 400 meant the notes silently became a mechanical digest for
+                // every meeting, and finding out why took reproducing the call
+                // by hand against the live provider. "Returned 400" is a fact;
+                // it is not a diagnosis.
+                //
+                // The BODY still must not be logged: a provider's error can
+                // echo the text we sent, and that text is a meeting. But
+                // 'code' and 'param' are short machine tokens the provider
+                // chose — here 'unsupported_value' and 'temperature' — and
+                // between them they name the fault exactly. That pair would
+                // have replaced an hour with a glance.
+                var (code, param) = ErrorHint(
+                    await response.Content.ReadAsStringAsync(timeout.Token));
+
+                log.LogWarning(
+                    "Notes model {Model} returned {Status}{Code}{Param} — falling back to the digest",
+                    options.NotesModel, (int)response.StatusCode,
+                    code is null ? "" : $" [{code}]",
+                    param is null ? "" : $" on '{param}'");
                 return null;
             }
 

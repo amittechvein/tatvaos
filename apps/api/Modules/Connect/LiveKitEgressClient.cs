@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -276,6 +277,20 @@ public sealed class ConnectRecordingOptions
     /// </summary>
     public string NotesLanguage { get; set; } = "English";
 
+    /// <summary>
+    /// Sampling temperature for the notes model, or NULL to omit it entirely —
+    /// which is the default, and deliberately so.
+    ///
+    /// Low temperature is the right idea for minutes: pressing "Write again"
+    /// should not reword the whole summary. But the reasoning-family models fix
+    /// their own sampling and answer 400 to any value but their default, and
+    /// that 400 fell back to the mechanical digest so quietly that the feature
+    /// was off for every meeting without anything looking broken.
+    ///
+    /// Set it only for a provider known to want it.
+    /// </summary>
+    public double? NotesTemperature { get; set; }
+
     public bool TranscriptionConfigured => !string.IsNullOrWhiteSpace(TranscriptionUrl);
     public bool NotesModelConfigured =>
         !string.IsNullOrWhiteSpace(NotesUrl) && !string.IsNullOrWhiteSpace(NotesModel);
@@ -306,6 +321,9 @@ public sealed class ConnectRecordingOptions
         o.NotesKey = (s["NotesKey"] ?? "").Trim();
         o.NotesModel = (s["NotesModel"] ?? "").Trim();
         o.NotesLanguage = NonEmpty(s["NotesLanguage"], o.NotesLanguage);
+        if (double.TryParse(s["NotesTemperature"], NumberStyles.Float,
+                CultureInfo.InvariantCulture, out var ntemp))
+            o.NotesTemperature = ntemp;
         if (int.TryParse(s["NotesTimeoutMinutes"], out var nt) && nt > 0) o.NotesTimeoutMinutes = nt;
 
         return o;
