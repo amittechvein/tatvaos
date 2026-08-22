@@ -13,6 +13,10 @@
 //  outside the shell, so its buttons and panels are its own. The styles are a
 //  plain <style> element with a string child — NOT dangerouslySetInnerHTML,
 //  which eslint forbids here as an error.
+//
+//  CSS below is one template literal. A BACKTICK anywhere inside it — even in
+//  a /* comment */ — closes the string and the build dies on whatever CSS came
+//  next. Quote things with "double quotes" in there, never backticks.
 // ============================================================================
 
 export const CSS = `
@@ -24,13 +28,13 @@ export const CSS = `
 /* ── THE ROOM'S BACKGROUND IS A CHOICE. ─────────────────────────────────
    Everything is expressed in variables, so a theme is a handful of values
    rather than a second stylesheet — and because --cx-bg is only ever used
-   in a `background:` shorthand, a theme can be a GRADIENT as easily as a
+   in a "background:" shorthand, a theme can be a GRADIENT as easily as a
    colour.
 
    Tiles stay black in every theme. That is the letterbox behind a video,
    not a surface; tinting it would tint the picture.
 
-   The light themes carry a shared `cx-light` class rather than repeating
+   The light themes carry a shared "cx-light" class rather than repeating
    their overrides six times — the palette differs per theme, but "dark text,
    pale surfaces, name labels stay white over video" is one rule. */
 
