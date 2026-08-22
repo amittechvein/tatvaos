@@ -74,7 +74,33 @@ type PanelKind = 'people' | 'chat' | 'devices' | 'view' | null;
 type BarPos = 'bottom' | 'left' | 'top';
 type Layout = 'auto' | 'grid' | 'spotlight' | 'sidebar';
 
-type Theme = 'midnight' | 'graphite' | 'ocean' | 'plum' | 'forest' | 'mist';
+type Theme =
+  | 'midnight' | 'graphite' | 'ocean' | 'plum' | 'forest'
+  | 'aurora' | 'ember' | 'nebula' | 'lagoon' | 'indigo'
+  | 'mist' | 'paper' | 'sky';
+
+/** Which themes need dark text. Kept beside the list so adding a pale one
+ *  and forgetting the class is a single, obvious omission rather than a
+ *  scattering of overrides. */
+const LIGHT_THEMES: ReadonlySet<string> = new Set(['mist', 'paper', 'sky']);
+
+/** Swatch, label — the preview IS the label, so no words are needed in the
+ *  row itself; the name is on hover and read aloud by a screen reader. */
+const THEMES: [Theme, string, string][] = [
+  ['midnight', 'Midnight', '#0a0a0e'],
+  ['graphite', 'Graphite', '#14161a'],
+  ['ocean', 'Ocean', '#07131f'],
+  ['plum', 'Plum', '#150d1b'],
+  ['forest', 'Forest', '#0a1712'],
+  ['aurora', 'Aurora', 'linear-gradient(150deg,#0b1026,#241a52 52%,#0d3b52)'],
+  ['ember', 'Ember', 'linear-gradient(150deg,#1b0b09,#3a1408 55%,#4a2410)'],
+  ['nebula', 'Nebula', 'linear-gradient(150deg,#12071f,#3a1150 50%,#5c1450)'],
+  ['lagoon', 'Lagoon', 'linear-gradient(150deg,#04201f,#075450 55%,#0a6f5c)'],
+  ['indigo', 'Indigo', 'linear-gradient(150deg,#0e1046,#241a8c 55%,#3d1e9e)'],
+  ['mist', 'Mist (light)', '#eef1f6'],
+  ['paper', 'Paper (light)', 'linear-gradient(160deg,#fdfaf3,#f4ece0)'],
+  ['sky', 'Sky (light)', 'linear-gradient(160deg,#eaf4ff,#d7e9fd 55%,#e9dcff)'],
+];
 
 interface RoomPrefs {
   bar: BarPos;
@@ -1696,6 +1722,7 @@ export default function Stage({ seat, meeting, prefs }: {
     <>
       <style>{CSS}</style>
       <div className={`cx-root cx-theme-${roomPrefs.theme} cx-root--bar-${roomPrefs.bar}`
+        + `${LIGHT_THEMES.has(roomPrefs.theme) ? ' cx-light' : ''}`
         + `${roomPrefs.bar === 'left' ? ' cx-root--bar-left' : ''}`
         + `${panel !== null ? ' cx-root--panel' : ''}`}
            ref={rootRef}>
@@ -2256,14 +2283,7 @@ export default function Stage({ seat, meeting, prefs }: {
 
             <div className="cx-sub" style={{ margin: '16px 0 6px' }}>BACKGROUND</div>
             <div className="cx-swatches">
-              {([
-                ['midnight', 'Midnight', '#0a0a0e'],
-                ['graphite', 'Graphite', '#14161a'],
-                ['ocean', 'Ocean', '#07131f'],
-                ['plum', 'Plum', '#150d1b'],
-                ['forest', 'Forest', '#0a1712'],
-                ['mist', 'Mist (light)', '#eef1f6'],
-              ] as [Theme, string, string][]).map(([id, label, swatch]) => (
+              {THEMES.map(([id, label, swatch]) => (
                 <button type="button" key={id} title={label} aria-label={label}
                         className={`cx-swatch${roomPrefs.theme === id ? ' is-on' : ''}`}
                         style={{ background: swatch }}

@@ -22,14 +22,19 @@ export const CSS = `
   color:var(--cx-text);font-feature-settings:"tnum";overflow:hidden}
 
 /* ── THE ROOM'S BACKGROUND IS A CHOICE. ─────────────────────────────────
-   Everything above is expressed in variables, so a theme is a handful of
-   values rather than a second stylesheet. Tiles stay black whatever the
-   theme — that is the letterbox behind a video, not a surface, and tinting
-   it would tint the picture.
+   Everything is expressed in variables, so a theme is a handful of values
+   rather than a second stylesheet — and because --cx-bg is only ever used
+   in a `background:` shorthand, a theme can be a GRADIENT as easily as a
+   colour.
 
-   Mist is deliberately included even though a light video room is unusual:
-   somebody working beside a window at midday is fighting a black screen,
-   and "it is too dark to see" is not a taste question. */
+   Tiles stay black in every theme. That is the letterbox behind a video,
+   not a surface; tinting it would tint the picture.
+
+   The light themes carry a shared `cx-light` class rather than repeating
+   their overrides six times — the palette differs per theme, but "dark text,
+   pale surfaces, name labels stay white over video" is one rule. */
+
+/* Deep and plain. */
 .cx-theme-graphite{--cx-bg:#14161a;--cx-surface:#1d2027;--cx-line:#2e323b;
   --cx-dim:#9aa2b1}
 .cx-theme-ocean{--cx-bg:#07131f;--cx-surface:#0f2032;--cx-line:#1d3448;
@@ -38,12 +43,40 @@ export const CSS = `
   --cx-dim:#b0a0c4;--cx-accent:#c07cf0}
 .cx-theme-forest{--cx-bg:#0a1712;--cx-surface:#12241c;--cx-line:#1e3a2c;
   --cx-dim:#94b8a6;--cx-accent:#3ecf8e}
+
+/* Gradients. Angled rather than vertical so the corners differ — a vertical
+   fade behind a row of tiles reads as a banding artefact. */
+.cx-theme-aurora{--cx-bg:linear-gradient(150deg,#0b1026 0%,#241a52 52%,#0d3b52 100%);
+  --cx-surface:#191b3d;--cx-line:#33356b;--cx-dim:#a4a8d8;--cx-accent:#7aa2ff}
+.cx-theme-ember{--cx-bg:linear-gradient(150deg,#1b0b09 0%,#3a1408 55%,#4a2410 100%);
+  --cx-surface:#2a1410;--cx-line:#4a2a1e;--cx-dim:#d3a894;--cx-accent:#ff9d4d}
+.cx-theme-nebula{--cx-bg:linear-gradient(150deg,#12071f 0%,#3a1150 50%,#5c1450 100%);
+  --cx-surface:#241033;--cx-line:#42204f;--cx-dim:#c9a6da;--cx-accent:#e46bd0}
+.cx-theme-lagoon{--cx-bg:linear-gradient(150deg,#04201f 0%,#075450 55%,#0a6f5c 100%);
+  --cx-surface:#0c2f2c;--cx-line:#175048;--cx-dim:#8fd0c4;--cx-accent:#2fe0bd}
+.cx-theme-indigo{--cx-bg:linear-gradient(150deg,#0e1046 0%,#241a8c 55%,#3d1e9e 100%);
+  --cx-surface:#1a1c5c;--cx-line:#33307f;--cx-dim:#aeb0e8;--cx-accent:#8f8bff}
+
+/* Light. */
 .cx-theme-mist{--cx-bg:#eef1f6;--cx-surface:#ffffff;--cx-line:#d5dbe6;
   --cx-text:#151922;--cx-dim:#5d6675;--cx-accent:#0090ab}
-.cx-theme-mist .cx-name,.cx-theme-mist .cx-hand{color:#fff}
-.cx-theme-mist .cx-mini{background:rgba(0,0,0,.05)}
-.cx-theme-mist .cx-mini:hover{background:rgba(0,0,0,.1)}
-.cx-theme-mist .cx-ico{background:rgba(255,255,255,.86);color:#151922}
+.cx-theme-paper{--cx-bg:linear-gradient(160deg,#fdfaf3 0%,#f4ece0 100%);
+  --cx-surface:#fffdf8;--cx-line:#e3d9c8;--cx-text:#211c14;--cx-dim:#6b6152;
+  --cx-accent:#b6712a}
+.cx-theme-sky{--cx-bg:linear-gradient(160deg,#eaf4ff 0%,#d7e9fd 55%,#e9dcff 100%);
+  --cx-surface:#ffffff;--cx-line:#cddcf0;--cx-text:#111a2b;--cx-dim:#586a86;
+  --cx-accent:#2f6fd0}
+
+/* One rule for every light theme, whatever its palette. */
+.cx-light .cx-name,.cx-light .cx-hand{color:#fff}
+.cx-light .cx-mini{background:rgba(0,0,0,.05)}
+.cx-light .cx-mini:hover{background:rgba(0,0,0,.1)}
+.cx-light .cx-ico{background:rgba(255,255,255,.88);color:#151922}
+.cx-light .cx-btn.is-on{color:#06212b}
+.cx-light .cx-choice2,.cx-light .cx-pick{background:rgba(0,0,0,.04)}
+.cx-light .cx-pick:hover,.cx-light .cx-choice2:hover{background:rgba(0,0,0,.08)}
+.cx-light .cx-emoji{background:rgba(0,0,0,.05)}
+.cx-light .cx-file{background:rgba(0,0,0,.05)}
 .cx-top{display:flex;align-items:center;gap:12px;padding:12px 16px;flex:0 0 auto}
 .cx-title{font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cx-meta{color:var(--cx-dim);font-size:12px;display:flex;align-items:center;gap:8px}
@@ -238,8 +271,8 @@ export const CSS = `
 .cx-pick span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
 
 /* Colours need no words — the swatch IS the label. */
-.cx-swatches{display:flex;gap:8px;margin-bottom:4px}
-.cx-swatch{flex:1 1 0;height:34px;border-radius:10px;cursor:pointer;
+.cx-swatches{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:4px}
+.cx-swatch{flex:0 0 46px;height:32px;border-radius:9px;cursor:pointer;
   border:2px solid transparent;box-shadow:0 0 0 1px var(--cx-line) inset;
   transition:transform .12s,border-color .14s}
 .cx-swatch:hover{transform:translateY(-2px)}
