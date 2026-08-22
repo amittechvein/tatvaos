@@ -4,6 +4,7 @@ import { RequireAuth } from '@/components/RequireAuth';
 import { AppShell } from '@/components/shell/AppShell';
 import { RailStorage } from '@/components/shell/RailStorage';
 import { connectNav } from '@/lib/nav';
+import { ConnectSkin } from './ConnectSkin';
 
 /**
  * Connect inside the same shell as every other product.
@@ -24,12 +25,16 @@ import { connectNav } from '@/lib/nav';
  * No `bleed`: unlike Mail and Calendar, these are ordinary padded pages that
  * scroll with the document. The room — the one full-height screen — is not in
  * this shell at all.
+ *
+ * ConnectSkin sits INSIDE AppShell, not around it. It re-dresses Connect's own
+ * pages and must not reach the rail, the topbar or any other module — see the
+ * note at the top of ConnectSkin.tsx for why that boundary is the point.
  */
 export default function ConnectLayout({ children }: { children: React.ReactNode }) {
   return (
     <RequireAuth>
       <AppShell scope="connect" brand="TatvaOS" sections={connectNav()} railFooter={<RailStorage />}>
-        {children}
+        <ConnectSkin>{children}</ConnectSkin>
       </AppShell>
     </RequireAuth>
   );

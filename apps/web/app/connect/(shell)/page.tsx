@@ -9,6 +9,7 @@ import {
   connectApi, prettyCode, whenLabel,
   type Meeting, type MeetingStatus,
 } from '@/lib/connect';
+import { faceOf, toneOf } from './ConnectSkin';
 
 // ============================================================================
 //  Connect — the front door
@@ -130,15 +131,27 @@ export default function ConnectHome() {
       <div className="row">
         <div className="col-xl-8">
           {live.length > 0 && (
-            <Card title="Happening now" className="mb-3">
+            <Card title="Happening now" className="cx-live mb-3">
               {live.map((m) => (
-                <div key={m.id}
-                     className="d-flex align-items-center justify-content-between flex-wrap gap-2 py-2">
-                  <div>
-                    <Link href={`/connect/meetings/${m.id}`} className="fw-semibold">{m.title}</Link>
-                    <div className="text-muted fs-12">{prettyCode(m.code)}</div>
+                <div key={m.id} className="cx-liverow">
+                  <div className="cx-who">
+                    <span className={`cx-face cx-face--lg ${toneOf(m.id)}`} aria-hidden="true">
+                      {faceOf(m.title)}
+                    </span>
+                    <div>
+                      <Link href={`/connect/meetings/${m.id}`} className="cx-name">{m.title}</Link>
+                      <div className="cx-sub">
+                        <span className="cx-code">{prettyCode(m.code)}</span>
+                        {m.hasPassword && (
+                          <span><i className="ri-lock-line" /> Password</span>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <Button variant="primary" href={`/connect/room/${m.code}`}>Join</Button>
+                  <Button variant="primary" href={`/connect/room/${m.code}`}>
+                    <i className="ri-vidicon-line me-1" />
+                    Join
+                  </Button>
                 </div>
               ))}
             </Card>
@@ -181,13 +194,22 @@ export default function ConnectHome() {
                 {rest.map((m) => (
                   <tr key={m.id}>
                     <Td>
-                      <Link href={`/connect/meetings/${m.id}`} className="fw-semibold">{m.title}</Link>
-                      {m.hasPassword && (
-                        <i className="ri-lock-line ms-1 text-muted" title="Password required" />
-                      )}
+                      <div className="cx-who">
+                        <span className={`cx-face ${toneOf(m.id)}`} aria-hidden="true">
+                          {faceOf(m.title)}
+                        </span>
+                        <div>
+                          <Link href={`/connect/meetings/${m.id}`} className="cx-name">
+                            {m.title}
+                          </Link>
+                          {m.hasPassword && (
+                            <i className="ri-lock-line ms-1 text-muted" title="Password required" />
+                          )}
+                        </div>
+                      </div>
                     </Td>
                     <Td className="text-muted">{whenLabel(m)}</Td>
-                    <Td className="text-muted">{prettyCode(m.code)}</Td>
+                    <Td><span className="cx-code">{prettyCode(m.code)}</span></Td>
                     <Td><Badge tone={tone(m.status)}>{m.status}</Badge></Td>
                     <Td className="text-end">
                       {m.status === 'scheduled' || m.status === 'active' ? (
