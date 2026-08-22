@@ -20,6 +20,32 @@
 // ============================================================================
 
 export const CSS = `
+/* ────────────────────────────────────────────────────────────────────────
+   NO BACKTICKS BELOW THIS LINE, INCLUDING IN COMMENTS.
+
+   Everything here lives inside a JavaScript template string, and a backtick
+   ENDS that string. On 22 August 2026 two comments used a pair of them for
+   emphasis around "background:" and "cx-light". Each pair closed the string
+   and reopened it, so the file stopped being valid JavaScript. The compiler
+   said "Expected a semicolon" and pointed at a word in prose, which reads
+   like nonsense until you know why.
+
+   It blocked EVERY deploy on the platform, not only Connect's, and it was
+   invisible to reading: a backtick in a comment looks like formatting.
+
+   Use "double quotes" for emphasis in here, per the note above the string.
+
+   Two people fixed this independently within the hour — Connect in 4af7774
+   and Core on a branch — and git could not tell that the fixes were the
+   same, because one chose double quotes and one chose single. That is worth
+   knowing: the merge conflict was not a disagreement, it was two right
+   answers arriving separately, which is what happens when a broken main
+   blocks everybody at once and nobody says out loud that they are on it.
+
+   Writing this note, the fix script's own check caught the identical
+   mistake in the warning itself — which is the best argument available that
+   a rule in prose is worth less than a check that refuses.
+   ──────────────────────────────────────────────────────────────────────── */
 .cx-root{--cx-bg:#0a0a0e;--cx-surface:#15151c;--cx-line:#26262f;--cx-text:#f2f2f5;
   --cx-dim:#9b9bab;--cx-accent:#00b8d9;--cx-good:#2ecc71;--cx-bad:#ef4757;
   position:fixed;inset:0;display:flex;flex-direction:column;background:var(--cx-bg);
