@@ -58,15 +58,25 @@ const CROSS_BODY = [
   'M5.3 3.9 3.9 5.3 10.6 12l-6.7 6.7 1.4 1.4L12 13.4l6.7 6.7 1.4-1.4-6.7-6.7 6.7-6.7-1.4-1.4L12 10.6z',
 ];
 
-const ACT_PATHS: Record<string, { d: readonly string[]; slash: boolean }> = {
-  mic: { d: MIC_BODY, slash: true },
-  cam: { d: CAM_BODY, slash: true },
+// The struck-through pair are STATES, not actions. Drawing the action meant a
+// muted person and an unmuted one had the identical struck microphone beside
+// them, in a list whose whole job is telling you who is making noise. The icon
+// now says what IS, and the button is disabled once there is nothing left to
+// do — you cannot unmute somebody else's microphone from here, and a button
+// that looks live but refuses is worse than one that admits it.
+type ActKind = 'mic' | 'micOff' | 'cam' | 'camOff' | 'screen' | 'star' | 'remove';
+
+const ACT_PATHS: Record<ActKind, { d: readonly string[]; slash: boolean }> = {
+  mic: { d: MIC_BODY, slash: false },
+  micOff: { d: MIC_BODY, slash: true },
+  cam: { d: CAM_BODY, slash: false },
+  camOff: { d: CAM_BODY, slash: true },
   screen: { d: SCREEN_BODY, slash: true },
   star: { d: STAR_BODY, slash: false },
   remove: { d: CROSS_BODY, slash: false },
 };
 
-function ActIcon({ kind }: { kind: 'mic' | 'cam' | 'screen' | 'star' | 'remove' }) {
+function ActIcon({ kind }: { kind: ActKind }) {
   const id = useId();
   const icon = ACT_PATHS[kind]!;
   return (
@@ -1825,6 +1835,12 @@ export default function Stage({ seat, meeting, prefs }: {
   // nothing at build time and leaves a blank button on screen — which is
   // exactly what ri-vidicon-off-line did for an afternoon. Where a fill
   // variant has not been confirmed, the proven name stays.
+  // What is actually waiting for you behind the More button: people at the
+  // door, and people with a hand up. Chat is deliberately NOT in this sum —
+  // see the note beside the badge itself.
+  const moreWaiting = knocking.length
+    + Object.values(hands).filter(Boolean).length;
+
   const barPrimary = (
     <>
       <button type="button" className={`cx-btn cx-btn--mic ${micOn ? '' : 'is-off'}`}
@@ -1869,12 +1885,20 @@ export default function Stage({ seat, meeting, prefs }: {
           <i className="ri-more-2-fill" />
           More
         </button>
-        {(unread > 0 && panel !== 'chat')
-          || (knocking.length + Object.values(hands).filter(Boolean).length) > 0
-          ? <span className="cx-count">
-              {unread + knocking.length + Object.values(hands).filter(Boolean).length}
-            </span>
-          : null}
+        {/* A badge is a promise that there is something behind the button it
+            sits on. Chat is NOT behind this one — it has its own floating
+            button in the corner, with its own count — so an unread message
+            lighting up More sent people into a menu to find nothing new, and
+            the same message got counted twice on the same screen.
+
+            What is behind More: somebody at the door, and somebody with a
+            hand up. Both live in People, and People lives in here. */}
+        {moreWaiting > 0 && (
+          <span className="cx-count"
+                title={`${moreWaiting} waiting for you in People`}>
+            {moreWaiting}
+          </span>
+        )}
       </span>
 
       <button type="button" className="cx-btn cx-btn--leave" onClick={leave} title="Leave">
@@ -1901,11 +1925,7 @@ export default function Stage({ seat, meeting, prefs }: {
                 onClick={() => { setMore(false); openPanel('people'); }} title="People">
           <i className="ri-group-fill" />People
         </button>
-        {(knocking.length + Object.values(hands).filter(Boolean).length) > 0 && (
-          <span className="cx-count">
-            {knocking.length + Object.values(hands).filter(Boolean).length}
-          </span>
-        )}
+        {moreWaiting > 0 && <span className="cx-count">{moreWaiting}</span>}
       </span>
 
       {/* No Chat row here: it has its own button in the corner, and one
@@ -2367,6 +2387,10 @@ export default function Stage({ seat, meeting, prefs }: {
             {listed.map((p) => {
               const nm = p.name && p.name.length > 0 ? p.name : p.identity;
               const muted = p.getTrackPublication(Track.Source.Microphone)?.isMuted !== false;
+              // NOT camOn — that is your own camera, and this row is about
+              // theirs. Shadowing it here would read correctly and mean the
+              // wrong thing to whoever edits this next.
+              const theirCam = hasCamera(p);
               const up = hands[p.identity] === true;
               const role = roles[p.identity];
               const isSharing = p.getTrackPublication(Track.Source.ScreenShare)?.videoTrack !== undefined;
@@ -2427,22 +2451,34 @@ export default function Stage({ seat, meeting, prefs }: {
                           <ActIcon kind="screen" />
                         </button>
                       )}
-                      <button type="button" className="cx-act"
-                              title="Mute their microphone"
-                              aria-label="Mute their microphone"
+                      {/* Shows the state, and goes quiet once there is
+                          nothing to do: a microphone can be muted from here
+                          but never unmuted — that is the other person's
+                          choice, and the server refuses it. */}
+                      <button type="button" className="cx-act" disabled={muted}
+                              title={muted
+                                ? 'They are already muted'
+                                : 'Mute their microphone'}
+                              aria-label={muted
+                                ? 'They are already muted'
+                                : 'Mute their microphone'}
                               onClick={() => void hostAction(() =>
                                 connectApi.mute(authedFetch, meeting.id, p.identity))}>
-                        <ActIcon kind="mic" />
+                        <ActIcon kind={muted ? 'micOff' : 'mic'} />
                       </button>
                       {/* Feature 58. The API has taken kind: 'audio' | 'video'
                           since it was written and the UI only ever sent audio —
                           one argument away the whole time. */}
-                      <button type="button" className="cx-act"
-                              title="Turn their camera off"
-                              aria-label="Turn their camera off"
+                      <button type="button" className="cx-act" disabled={!theirCam}
+                              title={theirCam
+                                ? 'Turn their camera off'
+                                : 'Their camera is already off'}
+                              aria-label={theirCam
+                                ? 'Turn their camera off'
+                                : 'Their camera is already off'}
                               onClick={() => void hostAction(() =>
                                 connectApi.mute(authedFetch, meeting.id, p.identity, 'video'))}>
-                        <ActIcon kind="cam" />
+                        <ActIcon kind={theirCam ? 'cam' : 'camOff'} />
                       </button>
                       <button type="button" className="cx-act cx-act--bad"
                               title="Remove them. A removed colleague cannot rejoin this meeting."
