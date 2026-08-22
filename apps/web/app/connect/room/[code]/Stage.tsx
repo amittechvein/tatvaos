@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ExternalE2EEKeyProvider,
@@ -23,6 +23,69 @@ import {
 import { CSS, Centre, Spinner, initialOf } from './RoomChrome';
 
 const LOBBY_POLL_MS = 3000;
+
+// ---------------------------------------------------------------------------
+//  The People panel's row actions, drawn rather than borrowed.
+//
+//  Two reasons they are SVG and not icon-font glyphs. The first is that this
+//  room has already shipped a blank button once, because a name that looked
+//  obvious (ri-vidicon-off-line) does not exist in the version we ship — and
+//  a missing glyph is an empty square, not an error. The second is that the
+//  struck-through pair have to work on a coloured button in thirteen themes,
+//  and a font cannot cut a gap around its own diagonal.
+//
+//  The gap is a mask: the shape is painted through everything except a thick
+//  diagonal, then the thin diagonal goes on top in currentColor. Laid on top
+//  without the gap, the stroke vanishes wherever the shape beneath it is
+//  solid — which on the camera is most of its length.
+// ---------------------------------------------------------------------------
+
+const MIC_BODY = [
+  'M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z',
+  'M6 10v1a6 6 0 0 0 12 0v-1h-2v1a4 4 0 0 1-8 0v-1H6z',
+  'M11 18.4h2V21h-2z',
+];
+const CAM_BODY = [
+  'M3 6h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z',
+  'M17.4 10.6 22 8v8l-4.6-2.6z',
+];
+const SCREEN_BODY = [
+  'M3 4h18a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z',
+  'M8 18h8v2H8z',
+];
+const STAR_BODY = ['m12 3 2.6 5.5 6 .9-4.3 4.2 1 6-5.3-2.8L6.7 19.6l1-6L3.4 9.4l6-.9z'];
+const CROSS_BODY = [
+  'M5.3 3.9 3.9 5.3 10.6 12l-6.7 6.7 1.4 1.4L12 13.4l6.7 6.7 1.4-1.4-6.7-6.7 6.7-6.7-1.4-1.4L12 10.6z',
+];
+
+const ACT_PATHS: Record<string, { d: readonly string[]; slash: boolean }> = {
+  mic: { d: MIC_BODY, slash: true },
+  cam: { d: CAM_BODY, slash: true },
+  screen: { d: SCREEN_BODY, slash: true },
+  star: { d: STAR_BODY, slash: false },
+  remove: { d: CROSS_BODY, slash: false },
+};
+
+function ActIcon({ kind }: { kind: 'mic' | 'cam' | 'screen' | 'star' | 'remove' }) {
+  const id = useId();
+  const icon = ACT_PATHS[kind]!;
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      {icon.slash && (
+        <defs>
+          <mask id={id}>
+            <rect width="24" height="24" fill="#fff" />
+            <path d="M3 3 21 21" className="cx-cut" />
+          </mask>
+        </defs>
+      )}
+      <g mask={icon.slash ? `url(#${id})` : undefined}>
+        {icon.d.map((d) => <path key={d} d={d} />)}
+      </g>
+      {icon.slash && <path d="M3 3 21 21" className="cx-line" />}
+    </svg>
+  );
+}
 
 /**
  * Keep a box's measured size in state, swapping the observer when the element
@@ -2332,48 +2395,64 @@ export default function Stage({ seat, meeting, prefs }: {
                       {muted ? 'Muted' : p.isSpeaking ? 'Speaking' : 'Unmuted'}
                       {isSharing ? ' · Sharing' : ''}
                     </div>
-                    {/* The host's controls live UNDER the name now, on a
-                        line of their own that wraps. Five buttons and a name
-                        never fitted across a 360px panel; something had to
-                        give, and it was always the name. */}
-                    {isHost && meeting && p !== room?.localParticipant && (
+                  </div>
+                  {/* Icons, inline, on the right. Words did not fit — five
+                      text buttons and a name across 360px left the name about
+                      eight characters — and the pill they were drawn as came
+                      out nearly invisible against the panel. Icons at 30px
+                      cost about a third of the width and can be given a solid
+                      background that reads on every theme. */}
+                  {isHost && meeting && p !== room?.localParticipant && (
                     <div className="cx-acts">
                       {roleable && role !== 'host' && (
-                        <button type="button" className="cx-pill"
+                        <button type="button"
+                                className={`cx-act${role === 'cohost' ? ' cx-act--on' : ''}`}
                                 title={role === 'cohost'
+                                  ? 'Take away their co-host controls'
+                                  : 'Let them help run the meeting'}
+                                aria-label={role === 'cohost'
                                   ? 'Take away their co-host controls'
                                   : 'Let them help run the meeting'}
                                 onClick={() => void changeRole(p.identity,
                                   role === 'cohost' ? 'participant' : 'cohost')}>
-                          {role === 'cohost' ? 'Demote' : 'Co-host'}
+                          <ActIcon kind="star" />
                         </button>
                       )}
                       {isSharing && (
-                        <button type="button" className="cx-pill"
+                        <button type="button" className="cx-act"
                                 title="Stop their screen share; their camera stays on"
+                                aria-label="Stop their screen share"
                                 onClick={() => void hostAction(() =>
                                   connectApi.mute(authedFetch, meeting.id, p.identity, 'screen'))}>
-                          Stop share
+                          <ActIcon kind="screen" />
                         </button>
                       )}
-                      <button type="button" className="cx-pill"
+                      <button type="button" className="cx-act"
+                              title="Mute their microphone"
+                              aria-label="Mute their microphone"
                               onClick={() => void hostAction(() =>
-                                connectApi.mute(authedFetch, meeting.id, p.identity))}>Mute</button>
+                                connectApi.mute(authedFetch, meeting.id, p.identity))}>
+                        <ActIcon kind="mic" />
+                      </button>
                       {/* Feature 58. The API has taken kind: 'audio' | 'video'
                           since it was written and the UI only ever sent audio —
                           one argument away the whole time. */}
-                      <button type="button" className="cx-pill"
+                      <button type="button" className="cx-act"
+                              title="Turn their camera off"
+                              aria-label="Turn their camera off"
                               onClick={() => void hostAction(() =>
                                 connectApi.mute(authedFetch, meeting.id, p.identity, 'video'))}>
-                        Camera
+                        <ActIcon kind="cam" />
                       </button>
-                      <button type="button" className="cx-pill cx-pill--bad"
+                      <button type="button" className="cx-act cx-act--bad"
                               title="Remove them. A removed colleague cannot rejoin this meeting."
+                              aria-label="Remove them from the meeting"
                               onClick={() => void hostAction(() =>
-                                connectApi.remove(authedFetch, meeting.id, p.identity))}>Remove</button>
+                                connectApi.remove(authedFetch, meeting.id, p.identity))}>
+                        <ActIcon kind="remove" />
+                      </button>
                     </div>
-                    )}
-                  </div>
+                  )}
                 </div>
               );
             })}

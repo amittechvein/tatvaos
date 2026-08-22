@@ -561,10 +561,36 @@ export const CSS = `
    panel whose whole job is telling you who is in the meeting was reporting
    "Shruti Sin…". The controls moved to their own wrapping line underneath;
    the name now takes the width it needs and wraps if it has to. */
-.cx-row--person{align-items:flex-start}
-.cx-row--person .cx-av{margin-top:1px}
+.cx-row--person{align-items:center}
 .cx-pname{font-size:13.5px;line-height:1.4;overflow-wrap:anywhere}
-.cx-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.cx-acts{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;flex:0 0 auto}
+
+/* ── ROW ACTIONS ARE ICONS, AND THEY ARE VISIBLE. ──────────────────────────
+   They were .cx-pill, which is a translucent white over whatever is behind
+   it. Over video that reads; over the panel's own dark surface it came out
+   as text with no button around it at all — reported, correctly, as "button
+   not visible". These have a real background and a real border, and the one
+   destructive action is the only coloured one. */
+.cx-act{
+  display:inline-grid;place-items:center;flex:0 0 auto;
+  width:30px;height:30px;border-radius:9px;cursor:pointer;
+  background:var(--cx-surface);border:1px solid var(--cx-line);color:var(--cx-text);
+  transition:background .15s,border-color .15s,color .15s;
+}
+/* Hover changes the BORDER and the ink, never the fill. The gap under the
+   diagonal is painted in the button's background colour, so a background that
+   shifts on hover fills the gap in at exactly the moment somebody is looking
+   at it. */
+.cx-act:hover{border-color:var(--cx-accent);color:var(--cx-accent)}
+.cx-act svg{width:16px;height:16px;display:block;fill:currentColor}
+/* The gap under the diagonal is painted in the BUTTON's own background, so it
+   is a hole whatever the theme makes that colour. */
+.cx-act .cx-cut{stroke:var(--cx-surface);stroke-width:4.4;stroke-linecap:round;fill:none}
+.cx-act .cx-line{stroke:currentColor;stroke-width:2.1;stroke-linecap:round;fill:none}
+.cx-act--on{background:var(--cx-accent);border-color:var(--cx-accent);color:#04222a}
+.cx-act--on .cx-cut{stroke:var(--cx-accent)}
+.cx-act--bad{background:rgba(239,71,87,.92);border-color:#ef4757;color:#fff}
+.cx-act--bad:hover{border-color:#fff;color:#fff}
 
 /* Somebody is at the door. It floats over the video rather than living only in
    a panel: a request nobody sees is a person left standing outside. */
