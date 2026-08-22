@@ -143,6 +143,41 @@ export const CSS = `
   aspect-ratio:16/9;background:#000;border-radius:16px;overflow:hidden;
   border:1px solid var(--cx-line);transition:border-color .18s,box-shadow .18s}
 .cx-tile--big{flex:1 1 100%;max-width:none;height:100%;aspect-ratio:auto}
+
+/* ── THE GALLERY FITS THE STAGE. BOTH WAYS. ────────────────────────────────
+   The flex rules above size a tile from its WIDTH and let the height follow
+   from the aspect ratio. That is fine for four people and wrong for eight:
+   the rows keep their height, the stage runs out of it, and overflow-y turns
+   a meeting into a scrolling list — faces cut in half at the top and bottom,
+   with no clue that the missing ones are a scroll away.
+
+   So the gallery is a real grid whose column count is computed in JS from the
+   measured stage (see the note above bestColumns in lib/pip.ts — the same
+   function, because it is the same problem: fit N rectangles of roughly one
+   shape into a box, largest-first). Rows are 1fr, so however many there are
+   they divide the height that exists. Nothing can overflow, and nothing
+   needs a scrollbar.
+
+   The column count arrives as --cx-cols on the element. It is a NUMBER in a
+   repeat(), not a class name, which also sidesteps the YZEN .grid collision
+   the note above warns about. */
+.cx-stage--grid{
+  display:grid;
+  grid-template-columns:repeat(var(--cx-cols,1),minmax(0,1fr));
+  grid-auto-rows:minmax(0,1fr);
+  align-content:stretch;justify-content:stretch;
+  overflow:hidden;
+}
+.cx-stage--grid .cx-tile{
+  flex:none;width:100%;height:100%;max-width:none;aspect-ratio:auto;
+  min-width:0;min-height:0;
+}
+/* The people the cap left out, in a cell of their own. */
+.cx-gridmore{
+  display:grid;place-items:center;min-width:0;min-height:0;
+  background:var(--cx-surface);border:1px solid var(--cx-line);
+  border-radius:16px;color:var(--cx-dim);font-size:13px;font-weight:600;
+}
 .cx-tile.is-speaking{border-color:var(--cx-good);box-shadow:0 0 0 3px rgba(46,204,113,.22)}
 
 /* cover is right for a FACE and wrong for a SCREEN.
