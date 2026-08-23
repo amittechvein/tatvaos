@@ -52,12 +52,19 @@ function recordingTone(s: RecordingStatus) {
   return 'neutral' as const;
 }
 
-export default function Recordings({ meetingId, isHost, canDelete }: {
+export default function Recordings({ meetingId, isHost, canDelete, guestNames }: {
   meetingId: string;
   /** Host or cohost: may start, stop, and ask for the notes again. */
   isHost: boolean;
   /** Host only. Deleting a recording is not the same act as stopping one. */
   canDelete: boolean;
+  /**
+   * Guests who attended. Minutes are written from what each person's OWN
+   * browser heard, and guests cannot take part in that yet — so their half of
+   * the conversation is missing from a record that will read as complete.
+   * Whoever reads the minutes has to be told that, by name.
+   */
+  guestNames: string[];
 }) {
   const { authedFetch } = useAuth();
 
@@ -123,7 +130,7 @@ export default function Recordings({ meetingId, isHost, canDelete }: {
             hint="The recorder is a separate service. Once it is deployed, hosts can record a meeting's audio and have what was said written up automatically."
           />
         </Card>
-        <NotesCard notes={notes} meetingId={meetingId} isHost={isHost}
+        <NotesCard notes={notes} meetingId={meetingId} isHost={isHost} guestNames={guestNames}
                    show={showTranscript} onToggle={() => setShowTranscript((s) => !s)}
                    onRegenerate={() => void act('notes', () =>
                      recordingApi.regenerate(authedFetch, meetingId))}
@@ -136,9 +143,14 @@ export default function Recordings({ meetingId, isHost, canDelete }: {
     <>
       <Card
         title="Recordings"
-        subtitle={list.transcription
-          ? undefined
-          : 'Transcription is not configured, so recordings are kept as audio only.'}
+        // NOT "transcription is not configured", which read as something
+        // half-installed. Nothing is broken: sending recordings away to be
+        // transcribed was switched off deliberately on 22 August 2026, because
+        // it was 97% of the AI bill and could not say who spoke. A screen that
+        // reports a decision as a fault sends people hunting for a bug.
+        subtitle={'Recordings are kept as they were made. Nothing is sent away to be '
+          + 'transcribed — the minutes come from live captions during the meeting, '
+          + 'which cost nothing and can say who said what.'}
         className="mt-3"
         actions={isHost && list.items.length > 0 ? (
           <Button onClick={() => void load()}>Refresh</Button>
@@ -162,12 +174,50 @@ export default function Recordings({ meetingId, isHost, canDelete }: {
         )}
       </Card>
 
-      <NotesCard notes={notes} meetingId={meetingId} isHost={isHost}
+      <NotesCard notes={notes} meetingId={meetingId} isHost={isHost} guestNames={guestNames}
                  show={showTranscript} onToggle={() => setShowTranscript((s) => !s)}
                  onRegenerate={() => void act('notes', () =>
                    recordingApi.regenerate(authedFetch, meetingId))}
                  busy={busyId === 'notes'} />
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+/**
+ * Who is missing from these minutes, by name.
+ *
+ * Worded with some care, because this is the sentence that decides whether
+ * somebody relies on an incomplete record:
+ *
+ *  - it says WHY, so it does not read as a fault to be reported;
+ *  - it NAMES people, so a reader can tell whether the missing half matters
+ *    for what they are about to do with this;
+ *  - it says the record will look complete, because the danger is not the
+ *    absence, it is the absence being invisible.
+ *
+ * Not styled as an error. Nothing has gone wrong: a limitation stated once,
+ * plainly, is worth more than a red box people learn to close.
+ */
+function GuestGap({ names }: { names: string[] }) {
+  const shown = names.slice(0, 3);
+  const rest = names.length - shown.length;
+  const who = rest > 0
+    ? `${shown.join(', ')} and ${rest} other${rest === 1 ? '' : 's'}`
+    : shown.length > 1
+      ? `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}`
+      : shown[0];
+
+  return (
+    <div className="cx-gap mb-3">
+      <strong>Not everything said is in here.</strong>
+      <p>
+        Minutes are written from what each person&rsquo;s own browser heard, and
+        guests cannot take part in that yet. Anything said by {who} is missing.
+        These notes will read as a complete account of the meeting, and they are
+        not one.
+      </p>
+    </div>
   );
 }
 
@@ -259,10 +309,13 @@ function transcriptLine(t: { status: TranscriptStatus; error: string | null }): 
 }
 
 // ---------------------------------------------------------------------------
-function NotesCard({ notes, meetingId, isHost, show, onToggle, onRegenerate, busy }: {
+function NotesCard({
+  notes, meetingId, isHost, guestNames, show, onToggle, onRegenerate, busy,
+}: {
   notes: NotesPayload | null;
   meetingId: string;
   isHost: boolean;
+  guestNames: string[];
   show: boolean;
   onToggle: () => void;
   onRegenerate: () => void;
@@ -335,6 +388,15 @@ function NotesCard({ notes, meetingId, isHost, show, onToggle, onRegenerate, bus
         </>
       )}
     >
+      {/* ── WHAT THIS RECORD DOES NOT CONTAIN. ──────────────────────────
+          The gap is the dangerous part, not the absence. Minutes assembled
+          from captions read as a complete account of the meeting, because
+          nothing in them says otherwise — and in a meeting with a parent, a
+          patient or a client, the missing half is exactly the half somebody
+          will later rely on. Named, so a reader can tell WHOSE words are not
+          here rather than being left with a general disclaimer to discount. */}
+      {guestNames.length > 0 && <GuestGap names={guestNames} />}
+
       {n.summary && <p className="mb-3">{n.summary}</p>}
 
       <Points title="Decisions" items={n.decisions} />

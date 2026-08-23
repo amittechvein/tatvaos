@@ -589,6 +589,40 @@ export const CSS = `
 .cx-act svg{width:16px;height:16px;display:block;fill:currentColor}
 .cx-act i{font-size:16px;line-height:1}
 
+/* ── MINUTES, BESIDE THE MEETING NAME. ─────────────────────────────────────
+   Deliberately quieter than the recording pill. Recording is a red light
+   because it is a thing being made of you; minutes are a thing being written
+   for you, and dressing them the same would teach people to ignore both. */
+.cx-minpill{
+  display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;
+  padding:5px 11px;border-radius:999px;
+  border:1px solid var(--cx-line);background:rgba(255,255,255,.05);
+  color:var(--cx-dim);font-size:12px;font-weight:600;letter-spacing:.01em;
+  white-space:nowrap;
+}
+.cx-light .cx-minpill{background:rgba(0,0,0,.04)}
+.cx-minpill i{font-size:13px;line-height:1}
+.cx-minpill--btn{cursor:pointer;transition:border-color .15s,color .15s,background .15s}
+.cx-minpill--btn:hover{border-color:var(--cx-accent);color:var(--cx-text)}
+.cx-minpill.is-on{
+  border-color:rgba(46,204,113,.55);color:var(--cx-good);
+  background:rgba(46,204,113,.10);
+}
+
+/* The one sentence on the consent sheet that must not be skimmed past. */
+.cx-warn{
+  display:block;margin:0 0 12px;padding:11px 13px;border-radius:11px;
+  border:1px solid rgba(240,180,60,.42);background:rgba(240,180,60,.10);
+}
+.cx-warn strong{display:block;font-size:13px;color:#f4c15c;margin-bottom:4px}
+.cx-warn span{display:block;font-size:12px;line-height:1.6;color:var(--cx-dim)}
+
+.cx-facts{
+  margin:0 0 14px;padding:0 0 0 18px;
+  font-size:12px;line-height:1.65;color:var(--cx-dim);
+}
+.cx-facts li{margin:2px 0}
+
 /* Chat closed. Where the composer would have been, so the answer to "why is
    there no box" is in the place the box was. */
 .cx-chatshut{

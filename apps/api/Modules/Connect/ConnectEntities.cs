@@ -62,6 +62,17 @@ public sealed class ConnectMeeting
     public string ChatPolicy { get; set; } = ConnectChat.PolicyEveryone;
 
     /// <summary>
+    /// Capture live captions from participants' browsers, so the meeting gets
+    /// attributed minutes. Off by default.
+    ///
+    /// This REPLACED per-recording transcription rather than joining it: paid
+    /// transcription was 97% of the bill and, coming from one mixed stream,
+    /// could not say who spoke. Captions cost nothing and can. See
+    /// 20260910-connect-live-minutes.sql.
+    /// </summary>
+    public bool MinutesLive { get; set; }
+
+    /// <summary>
     /// recorded | private. Chosen at creation and IMMUTABLE — a database
     /// trigger refuses any change, because the mode is a promise made to
     /// everyone who already joined under it. See

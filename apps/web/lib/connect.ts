@@ -91,6 +91,10 @@ export interface Meeting {
   autoRecord: boolean;
   sharePolicy: SharePolicy;
   chatPolicy: ChatPolicy;
+  /** Capture live captions from participants' browsers, so the meeting gets
+   *  attributed minutes. Off by default. This REPLACED paid transcription:
+   *  see useCaptions.ts for the sum, and 20260910 for the reasoning. */
+  minutesLive: boolean;
   mode: MeetingMode;
   createdByUserId: string | null;
   myRole: MeetingRole | null;
@@ -171,6 +175,7 @@ export interface CreateMeeting {
   autoRecord?: boolean;
   sharePolicy?: SharePolicy;
   chatPolicy?: ChatPolicy;
+  minutesLive?: boolean;
   /** Chosen once. There is deliberately no way to change it afterwards —
    *  UpdateMeeting below does not carry it, and the database refuses. */
   mode?: MeetingMode;

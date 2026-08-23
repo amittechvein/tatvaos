@@ -545,6 +545,22 @@ const SKIN = `
 .dark .cxs .cx-opendoor strong{color:#f4c15c}
 .dark .cxs .cx-opendoor p{color:#d9bd85}
 
+/* ── What a record does not contain ───────────────────────────────────── */
+/* Not an error colour. Nothing has gone wrong — a limitation stated plainly
+   once is worth more than a red box people learn to close without reading. */
+.cxs .cx-gap{
+  padding:13px 16px;border-radius:12px;
+  border:1px solid var(--cxs-line);border-left:3px solid #d8a53a;
+  background:var(--cxs-soft);
+}
+.cxs .cx-gap strong{
+  display:block;font-size:13px;font-weight:650;letter-spacing:-.01em;
+  color:var(--cxs-ink);margin-bottom:4px;
+}
+.cxs .cx-gap p{
+  margin:0;font-size:12.5px;line-height:1.65;color:var(--cxs-ink-2);max-width:78ch;
+}
+
 /* ── Everything else that shows up on these three pages ───────────────── */
 .cxs .alert{border-radius:12px;padding:12px 16px;font-size:13.5px;border:1px solid}
 .cxs .alert-danger{background:#fff1f2;border-color:#fecdd3;color:#a01133}

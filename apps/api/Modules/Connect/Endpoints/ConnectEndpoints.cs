@@ -70,7 +70,8 @@ public static class ConnectEndpoints
         string? Title, string? Kind,
         DateTimeOffset? ScheduledStart, DateTimeOffset? ScheduledEnd,
         string? Timezone, string? Password, string? WaitingRoom, bool? AllowGuests,
-        bool? AutoRecord, string? SharePolicy, string? ChatPolicy, string? Mode);
+        bool? AutoRecord, string? SharePolicy, string? ChatPolicy, bool? MinutesLive,
+        string? Mode);
 
     // ── NO Mode FIELD HERE, AND IT MUST STAY THAT WAY. ───────────────────
     // The mode is chosen once and cannot change: a host who could flip
@@ -83,7 +84,7 @@ public static class ConnectEndpoints
         string? Title, DateTimeOffset? ScheduledStart, DateTimeOffset? ScheduledEnd,
         string? Timezone, string? Password, string? WaitingRoom,
         bool? AllowGuests, bool? Locked, bool? AutoRecord, string? SharePolicy,
-        string? ChatPolicy);
+        string? ChatPolicy, bool? MinutesLive);
 
     public sealed record JoinRequest(string? Password);
     public sealed record MuteRequest(string? Kind);
@@ -112,6 +113,7 @@ public static class ConnectEndpoints
         m.AutoRecord,
         m.SharePolicy,
         m.ChatPolicy,
+        m.MinutesLive,
         m.Mode,
         m.CreatedByUserId,
         myRole,
@@ -339,6 +341,7 @@ public static class ConnectEndpoints
             AutoRecord = autoRecord,
             SharePolicy = share,
             ChatPolicy = chat,
+            MinutesLive = req.MinutesLive ?? false,
             Mode = mode,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow,
@@ -454,6 +457,13 @@ public static class ConnectEndpoints
                 return Results.BadRequest(new { error = "Chat is open to everyone, to the host and co-hosts, or to nobody." });
             meeting.ChatPolicy = chat;
         }
+
+        // No validation to do: it is a boolean, and unlike the mode there is
+        // nothing irreversible about it. A host may turn minutes on halfway
+        // through a meeting and the record simply starts there — which is the
+        // honest behaviour, since captions cannot be retrofitted to speech
+        // that has already happened.
+        if (req.MinutesLive is bool ml) meeting.MinutesLive = ml;
 
         meeting.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);

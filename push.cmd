@@ -84,6 +84,54 @@ if not errorlevel 1 (
     exit /b 1
 )
 
+REM ---- 1b. Refuse when a staged file has been edited since staging -------------
+REM
+REM  22 August 2026. A green build shipped a stale commit, and the deploy that
+REM  followed failed on the server with an error nobody could see locally.
+REM
+REM  The mechanism: `git add` takes a SNAPSHOT. The build below compiles the
+REM  WORKING TREE. Edit a file after staging it and the two stop being the same
+REM  thing — the build tests the good copy, the commit ships the old one, and
+REM  every signal you have says it went fine. It has now cost two deploys.
+REM
+REM  `git diff --name-only`        = working tree vs index (edited since staged)
+REM  `git diff --cached --name-only` = index vs HEAD       (staged)
+REM
+REM  A file in BOTH lists is a file whose staged copy is out of date. That is
+REM  the whole bug, and it is two commands.
+REM ------------------------------------------------------------------------------
+set "DRIFT=0"
+for /f "delims=" %%f in ('git diff --name-only') do (
+    git diff --cached --name-only | findstr /x /c:"%%f" >nul
+    if not errorlevel 1 set "DRIFT=1"
+)
+
+if "!DRIFT!"=="1" (
+    echo.
+    echo  ------------------------------------------------------------
+    echo   A STAGED FILE HAS CHANGED ON DISK SINCE YOU STAGED IT.
+    echo.
+    echo   Committing now would ship the OLDER copy, while the build
+    echo   below tests the newer one. Everything would look green and
+    echo   the deploy would fail on the server.
+    echo.
+    echo   Staged from an older version:
+    for /f "delims=" %%f in ('git diff --name-only') do (
+        git diff --cached --name-only | findstr /x /c:"%%f" >nul
+        if not errorlevel 1 echo       %%f
+    )
+    echo.
+    echo   Fix: stage them again, then run this script again.
+    echo.
+    echo       git add ^<the files listed above^>
+    echo.
+    echo   Nothing was committed.
+    echo  ------------------------------------------------------------
+    echo.
+    pause
+    exit /b 1
+)
+
 echo.
 echo  Anything NOT staged is left alone:
 git status --short -- . | findstr /b /c:" M" /c:"??"

@@ -14,6 +14,7 @@ import {
   type LobbyEntry, type Meeting, type Recording, type RecordingMode, type Seat,
   type ChatPolicy, type SharePolicy, type WaitingRoom,
 } from '@/lib/connect';
+import { captionsSupported, useCaptions } from '@/lib/useCaptions';
 import type { JoinPrefs } from './PreJoin';
 import {
   bestColumns, documentPipSupported, onAutoPip, openPipWindow, pipSupported,
@@ -348,6 +349,26 @@ export default function Stage({ seat, meeting, prefs }: {
   // server, means 'everyone' — which is what the room did before this existed.
   const [chatPolicy, setChatPolicy] = useState<ChatPolicy>(
     meeting?.chatPolicy ?? seat.chatPolicy ?? 'everyone');
+
+  // ── LIVE MINUTES ────────────────────────────────────────────────────
+  //
+  //  One switch, on the meeting, and it decides whether every browser in the
+  //  room turns its own speech into text. It replaced paid transcription
+  //  rather than joining it — see 20260910 for the sum, which is not close.
+  //
+  //  `agreed` is separate from `minutesLive` ON PURPOSE, and it is the whole
+  //  ethical shape of this feature. The host decides whether the MEETING is
+  //  minuted. Each person decides whether THEIR microphone is the thing
+  //  feeding it, because Chrome's recognition sends that audio to Google and
+  //  that is a decision about their voice, not about the meeting.
+  const [minutesLive, setMinutesLive] = useState(meeting?.minutesLive ?? false);
+  const [agreed, setAgreed] = useState(false);
+  const [askMinutes, setAskMinutes] = useState(false);
+
+  // A file chosen in a Private meeting, held back until the person has been
+  // told what Private does and does not cover. See the sheet near the bottom
+  // of this file for why it is asked HERE rather than labelled elsewhere.
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
   // The waiting-room setting, LIVE — state rather than the prop, because the
   // host can now change it from inside the room and the lobby poll below has
   // to follow the change, not the value at join.
@@ -702,6 +723,15 @@ export default function Stage({ seat, meeting, prefs }: {
           // through a whitelist rather than trusted as a string: this arrives
           // from another browser, and an unknown value here would decide
           // whether a composer opens.
+          // The host has turned minutes on or off. Everybody who can help
+          // is asked — once — rather than quietly switched on.
+          if ('minutesLive' in parsed) {
+            const on = (parsed as { minutesLive?: unknown }).minutesLive === true;
+            setMinutesLive(on);
+            if (on && !agreedRef.current && captionsSupported()) setAskMinutes(true);
+            return;
+          }
+
           if ('chatPolicy' in parsed) {
             const next = String((parsed as { chatPolicy?: unknown }).chatPolicy ?? '');
             if (next === 'everyone' || next === 'cohost' || next === 'off') {
@@ -993,6 +1023,51 @@ export default function Stage({ seat, meeting, prefs }: {
    * row it fetched when it joined — so without this message a host could close
    * chat and be the only person who knew.
    */
+  // ── THE ONE LINE THAT DOES THE WORK. ────────────────────────────────
+  //
+  //  Four conditions, and every one of them is a promise being kept:
+  //    minutesLive  the host asked for minutes
+  //    agreed       THIS person agreed their microphone may feed them
+  //    meeting      signed in — a guest token expires every ten minutes and
+  //                 the signed ticket for guest captions does not exist yet
+  //    supported    Chrome or Edge; elsewhere this is silently nothing
+  //
+  //  The hook does nothing when enabled is false, so there is no branch here.
+  useCaptions({
+    meetingId: meeting?.id ?? '',
+    enabled: minutesLive && agreed && meeting !== null && captionsSupported(),
+    authedFetch,
+  });
+
+  /**
+   * Turn minutes on or off for the whole meeting, and tell the room.
+   *
+   * Persisted AND broadcast, for two different reasons: the row is what a
+   * late joiner reads, and the message is what everybody already here needs
+   * so a switch flipped at 10:04 does not start captioning them at 10:09.
+   */
+  async function changeMinutes(next: boolean) {
+    if (!meeting) return;
+    const previous = minutesLive;
+    setMinutesLive(next);
+    // Turning it on asks THIS browser too — the host's own voice is not
+    // exempt from the question, and the sheet is where the Google sentence
+    // lives.
+    if (next && !agreed && captionsSupported()) setAskMinutes(true);
+    try {
+      await connectApi.update(authedFetch, meeting.id, { minutesLive: next });
+      const r = roomRef.current;
+      if (r) {
+        void r.localParticipant.publishData(
+          new TextEncoder().encode(JSON.stringify({ minutesLive: next })),
+          { reliable: true });
+      }
+    } catch (e) {
+      setMinutesLive(previous);
+      setError(e instanceof Error ? e.message : 'Could not change minutes.');
+    }
+  }
+
   async function changeChatPolicy(next: ChatPolicy) {
     if (!meeting) return;
     const previous = chatPolicy;
@@ -1100,6 +1175,12 @@ export default function Stage({ seat, meeting, prefs }: {
   // exhaustive-deps rule complains about, and rightly. Running after every
   // render is exactly the intent: keep the ref pointing at the current one.
   useEffect(() => { leaveRef.current = leave; });
+
+  // The data handler below is built once when the room connects, so reading
+  // `agreed` from it directly would read whatever it was at that moment —
+  // which is always false, since agreeing happens later by definition.
+  const agreedRef = useRef(false);
+  useEffect(() => { agreedRef.current = agreed; }, [agreed]);
 
   // ---------------------------------------------------------------------
   //  How big the stage actually is.
@@ -1295,7 +1376,13 @@ export default function Stage({ seat, meeting, prefs }: {
     setRecordAsk(false);
     setRecBusy(true);
     try {
-      setRecording(await recordingApi.start(authedFetch, meeting.id, mode, true));
+      // transcribe: FALSE, always, and there is no longer a switch for it.
+      // Paid transcription was 97% of the bill and could not say who spoke —
+      // one mixed stream has nothing in it to attribute. Minutes come from
+      // captions now. Passed explicitly rather than left to the default,
+      // because the default in the client library is still true and a silent
+      // Rs 16 per meeting is exactly the kind of thing a default hides.
+      setRecording(await recordingApi.start(authedFetch, meeting.id, mode, false));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not start the recording.');
     } finally {
@@ -1902,6 +1989,12 @@ export default function Stage({ seat, meeting, prefs }: {
   // chat cannot, because nothing downstream will. A setting whose whole
   // purpose is to close something must fail closed for the people it is most
   // likely aimed at.
+  // Identity is minted as user:{id} for a colleague and guest:{id} for a
+  // guest, so this reads the one fact a client can be sure of without asking
+  // the server. Roles are host-only knowledge; this is not.
+  const guestsHere = participants.filter(
+    (p) => p.identity.startsWith('guest:')).length;
+
   const myChatRole = meeting?.myRole ?? 'participant';
   const mayChat = chatPolicy === 'everyone'
     || (chatPolicy === 'cohost' && (myChatRole === 'host' || myChatRole === 'cohost'));
@@ -2131,6 +2224,31 @@ export default function Stage({ seat, meeting, prefs }: {
             </span>
           )}
 
+          {/* MINUTES, BESIDE THE NAME. Amit's placement, and it is the right
+              one: this is the only setting in the room that decides whether
+              the meeting leaves a written record, and burying it three
+              screens away in language about transcripts is how nobody found
+              it. A host sees a switch; everybody else sees the state, because
+              being minuted without being told is the thing to avoid. */}
+          {minutesLive && !isHost && (
+            <span className="cx-minpill" role="status" aria-live="polite">
+              <i className="ri-file-text-line" aria-hidden="true" />
+              Minutes on
+            </span>
+          )}
+          {isHost && meeting && (
+            <button type="button"
+                    className={`cx-minpill cx-minpill--btn ${minutesLive ? 'is-on' : ''}`}
+                    aria-pressed={minutesLive}
+                    title={minutesLive
+                      ? 'Stop writing minutes of this meeting'
+                      : 'Write minutes of this meeting'}
+                    onClick={() => void changeMinutes(!minutesLive)}>
+              <i className="ri-file-text-line" aria-hidden="true" />
+              {minutesLive ? 'Minutes on' : 'Minutes off'}
+            </button>
+          )}
+
           {roomPrefs.bar === 'top' && <div className="cx-bar cx-bar--top">{barPrimary}</div>}
           <div className="cx-ghost">
             {meeting && (
@@ -2355,6 +2473,103 @@ export default function Stage({ seat, meeting, prefs }: {
             than the words of the API. The recommendation is stated rather
             than implied by ordering: a host who does not know the difference
             should be able to read one line and pick correctly. */}
+        {/* ── ASKED, NOT ASSUMED. ──────────────────────────────────────────
+            The host decides whether the MEETING is minuted. This asks whether
+            THIS microphone may be what feeds it, and it is a separate question
+            because the answer sends this person's voice to a company they have
+            no contract with. Every limit is on the sheet, in the order that
+            matters to somebody deciding: what happens to my voice first, what
+            the record will and will not contain second. */}
+        {/* ── THE WARNING GOES WHERE THE DECISION IS. ──────────────────────
+            A Private meeting encrypts its audio and video with a key the media
+            server does not hold. Chat and files do not have that — they travel
+            a path the server can read. Amit ruled that files stay available
+            with a label rather than being blocked, and Core's disagreement is
+            on record; both of them are right that a label in a settings panel
+            protects us rather than the customer. So it is asked at the moment
+            of attaching, holding the actual file, naming it. That is the only
+            moment at which somebody can still change their mind. */}
+        {pendingFile && (
+          <div className="cx-modal-back" role="dialog" aria-modal="true"
+               aria-label="Send this file?">
+            <div className="cx-modal">
+              <h2>Send this file?</h2>
+              <div className="cx-warn">
+                <strong>This meeting is Private. Files are not.</strong>
+                <span>
+                  The encryption covers the audio and video. A file goes over a
+                  path the meeting server can read, so do not send anything
+                  here you would not send by ordinary email.
+                </span>
+              </div>
+              <p className="cx-sub" style={{ margin: '0 0 12px', overflowWrap: 'anywhere' }}>
+                {pendingFile.name} — {prettySize(pendingFile.size)}
+              </p>
+
+              <button type="button" className="cx-choice"
+                      onClick={() => {
+                        const f = pendingFile;
+                        setPendingFile(null);
+                        void sendFile(f);
+                      }}>
+                <strong>Send it anyway</strong>
+              </button>
+
+              <button type="button" className="cx-choice"
+                      onClick={() => setPendingFile(null)}>
+                <strong>Cancel</strong>
+                <div className="cx-sub">Nothing is sent and nobody is told.</div>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {askMinutes && (
+          <div className="cx-modal-back" role="dialog" aria-modal="true"
+               aria-label="Help write the minutes">
+            <div className="cx-modal">
+              <h2>Help write the minutes?</h2>
+              <p className="cx-sub" style={{ margin: '0 0 10px' }}>
+                Your browser can turn what you say into text while the meeting
+                runs, so the minutes can say who said what.
+              </p>
+
+              <div className="cx-warn">
+                <strong>Your browser sends your microphone audio to Google.</strong>
+                <span>
+                  That is how Chrome does speech recognition. It does not remove
+                  a third party from this meeting — it changes which one, from a
+                  provider we have a contract with to one we do not.
+                </span>
+              </div>
+
+              <ul className="cx-facts">
+                <li>Only your own microphone. Nobody else in the room is heard by
+                  your browser.</li>
+                <li>Chrome and Edge only. Anyone on another browser contributes
+                  nothing, so the record is partial by construction.</li>
+                <li>Guests cannot take part yet.</li>
+                <li>Nothing is stored on your device, and you can stop at any
+                  time from this same switch.</li>
+              </ul>
+
+              <button type="button" className="cx-choice"
+                      onClick={() => { setAgreed(true); setAskMinutes(false); }}>
+                <strong>Yes, include what I say</strong>
+                <div className="cx-sub">Recommended — the minutes are much better with it.</div>
+              </button>
+
+              <button type="button" className="cx-choice"
+                      onClick={() => { setAgreed(false); setAskMinutes(false); }}>
+                <strong>No, leave me out</strong>
+                <div className="cx-sub">
+                  The meeting is still minuted from everyone who said yes.
+                </div>
+              </button>
+            </div>
+          </div>
+        )}
+
         {recordAsk && (
           <div className="cx-modal-back" role="dialog" aria-modal="true"
                aria-label="Start recording">
@@ -2369,9 +2584,13 @@ export default function Stage({ seat, meeting, prefs }: {
                       onClick={() => void startRecording('audio')}>
                 <strong>Audio only</strong>
                 <div className="cx-sub">
-                  Voices, and everything the notes and transcript need. Light on
-                  the server and small to keep. Choose this unless you
-                  specifically need to see the screen afterwards.
+                  Voices only. Light on the server and small to keep. Choose
+                  this unless you specifically need to see the screen
+                  afterwards.
+
+                  Minutes do not come from this — they come from the Minutes
+                  switch beside the meeting name, which costs nothing and can
+                  say who spoke.
                 </div>
               </button>
 
@@ -2426,6 +2645,22 @@ export default function Stage({ seat, meeting, prefs }: {
 
         {panel === 'people' && (
           <Panel title={`People (${participants.length})`} onClose={() => setPanel(null)}>
+            {/* Said WHILE it is still fixable. Once the meeting is over, the
+                same gap appears on the notes — but by then the only remedy is
+                to have known earlier. */}
+            {minutesLive && guestsHere > 0 && (
+              <div className="cx-warn" style={{ marginBottom: 12 }}>
+                <strong>
+                  {guestsHere === 1 ? 'One guest is' : `${guestsHere} guests are`} here,
+                  and guests cannot be minuted.
+                </strong>
+                <span>
+                  Minutes come from each person&rsquo;s own browser, and guests
+                  cannot take part yet. Their half of the conversation will be
+                  missing from a record that reads as complete.
+                </span>
+              </div>
+            )}
             {isHost && meeting && (
               <div style={{ marginBottom: 14 }}>
                 <label className="cx-label" htmlFor="cx-share-policy">Who can share their screen</label>
@@ -2647,7 +2882,12 @@ export default function Stage({ seat, meeting, prefs }: {
                               // Cleared straight away, or choosing the same
                               // file twice in a row fires no change event.
                               e.target.value = '';
-                              if (f) void sendFile(f);
+                              if (!f) return;
+                              // In a Private meeting the warning goes HERE —
+                              // at the moment of attaching, holding the file —
+                              // not in a panel somebody read once on Tuesday.
+                              if (isPrivate) setPendingFile(f);
+                              else void sendFile(f);
                             }} />
                      <input className="cx-field" value={draft} maxLength={2000}
                             onChange={(e) => setDraft(e.target.value)}
@@ -2669,7 +2909,7 @@ export default function Stage({ seat, meeting, prefs }: {
             {isPrivate && (
               <div className="cx-sub" style={{ marginBottom: 10, color: 'var(--cx-bad)' }}>
                 The encryption covers the audio and video of this meeting, not
-                chat or files.
+                chat or files. You are asked again before any file is sent.
               </div>
             )}
             {chat.length === 0 && <div className="cx-sub">Nothing yet.</div>}

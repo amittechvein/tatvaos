@@ -654,8 +654,15 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
               leadership meeting is not readable by everyone who works there.
               Only a HOST may delete: stopping a recording and destroying one
               are not the same act. */}
+          {/* Guests who attended, by name and deduplicated, so the notes can
+              say whose words are missing from them. Computed here because the
+              attendance list already lives on this page — Recordings should
+              not fetch participants a second time to answer one question. */}
           <Recordings meetingId={meeting.id} isHost={isHost}
-                      canDelete={meeting.myRole === 'host'} />
+                      canDelete={meeting.myRole === 'host'}
+                      guestNames={attendees
+                        .filter((a) => a.who.isGuest)
+                        .map((a) => a.who.displayName)} />
         </div>
 
         <div className="col-xl-4">
