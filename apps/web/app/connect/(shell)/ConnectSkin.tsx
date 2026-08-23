@@ -592,6 +592,17 @@ const SKIN = `
   display:block;font-size:12px;color:var(--cxs-ink-3);margin-top:2px;
 }
 
+/* ── Watching a recording ─────────────────────────────────────────────── */
+.cxs .cx-player{
+  border-radius:12px;overflow:hidden;background:#000;
+  border:1px solid var(--cxs-line);
+}
+.cxs .cx-player video{display:block;width:100%;max-height:62vh;background:#000}
+/* An audio recording has no picture, so the element collapses to its control
+   strip. Given a black box the height of a video it would look broken. */
+.cxs .cx-player--audio{background:var(--cxs-soft);padding:14px}
+.cxs .cx-player--audio video{height:44px;max-height:44px;background:transparent}
+
 /* ── Everything else that shows up on these three pages ───────────────── */
 .cxs .alert{border-radius:12px;padding:12px 16px;font-size:13.5px;border:1px solid}
 .cxs .alert-danger{background:#fff1f2;border-color:#fecdd3;color:#a01133}

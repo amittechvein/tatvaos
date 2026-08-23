@@ -108,6 +108,58 @@ function isAfter(a: string | null, b: string | null): boolean {
   return Number.isNaN(y) || x > y;
 }
 
+/**
+ * The attendance list as a CSV, made in the browser.
+ *
+ * No endpoint, and that is the right call rather than a shortcut: every field
+ * below is already on this page, and a server route would be a second place
+ * for the grouping rules to live — the guest-merging in groupPeople is a
+ * judgement, and two copies of a judgement disagree eventually.
+ *
+ * Quoting is not optional. A meeting called Q3 Review, Finance would split
+ * into two columns and shift every field after it, silently, in a file
+ * somebody files as a register.
+ */
+function attendanceCsv(rows: Attendee[]): string {
+  const cell = (v: string) => `"${v.replace(/"/g, '""')}"`;
+  const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : '');
+
+  const head = ['Name', 'Type', 'Role', 'First joined', 'Last seen', 'Times joined', 'Still in the meeting'];
+  const body = rows.map((a) => [
+    cell(a.who.displayName),
+    cell(a.who.isGuest ? 'Guest' : 'Member'),
+    cell(a.who.role),
+    cell(when(a.firstJoinedAt)),
+    cell(when(a.lastSeenAt)),
+    cell(String(a.sessions)),
+    cell(a.connected ? 'Yes' : 'No'),
+  ].join(','));
+
+  // A BOM, because this file gets opened in Excel more often than anywhere
+  // else, and without it Excel reads UTF-8 as its local codepage — which
+  // turns every non-English name in the register into rubbish.
+  return `\uFEFF${head.map(cell).join(',')}\n${body.join('\n')}\n`;
+}
+
+function downloadCsv(name: string, csv: string): void {
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  // Same reasoning as the minutes download: Safari has not read the blob when
+  // click() returns, and revoking immediately gives a file of zero bytes.
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+/** Safe for a filename on every platform, and still recognisable. */
+function fileSafe(title: string): string {
+  const clean = title.replace(/[^A-Za-z0-9 _-]/g, '').trim().slice(0, 60);
+  return clean.length > 0 ? clean : 'Meeting';
+}
+
 function groupPeople(people: Participant[]): Attendee[] {
   const by = new Map<string, Attendee>();
 
@@ -582,6 +634,14 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
           )}
 
           <Card title="People"
+                actions={attendees.length > 0 ? (
+                  <Button onClick={() => downloadCsv(
+                    `${fileSafe(meeting.title)} - attendance.csv`,
+                    attendanceCsv(attendees))}>
+                    <i className="ri-download-2-line me-1" />
+                    Download attendance
+                  </Button>
+                ) : undefined}
                 subtitle={rejoiners > 0
                   ? 'One row per person. Guests are matched by the name they typed, '
                     + 'because a guest gets a new identity every time they open the link.'

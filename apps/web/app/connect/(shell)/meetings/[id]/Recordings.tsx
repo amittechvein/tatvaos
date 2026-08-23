@@ -4,10 +4,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
 import { Modal } from '@/components/ui/Modal';
+import { Player } from './Player';
 import {
   durationLabel, recordingApi, sizeLabel, timeLabel,
   minutesApi,
-  type NotesPayload, type RecordingList, type RecordingListItem, type RecordingStatus,
+  type NotesPayload, type Recording, type RecordingList, type RecordingListItem,
+  type RecordingStatus,
   type TranscriptStatus,
 } from '@/lib/connect';
 
@@ -74,6 +76,8 @@ export default function Recordings({ meetingId, isHost, canDelete, guestNames }:
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [showTranscript, setShowTranscript] = useState(false);
+  // The recording currently open in the player, if any.
+  const [playing, setPlaying] = useState<Recording | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -169,7 +173,8 @@ export default function Recordings({ meetingId, isHost, canDelete, guestNames }:
             {list.items.map((item) => (
               <Row key={item.recording.id} item={item} meetingId={meetingId}
                    isHost={isHost} canDelete={canDelete}
-                   busy={busyId === item.recording.id} act={act} />
+                   busy={busyId === item.recording.id} act={act}
+                   onPlay={setPlaying} />
             ))}
           </Table>
         )}
@@ -180,6 +185,11 @@ export default function Recordings({ meetingId, isHost, canDelete, guestNames }:
                  onRegenerate={() => void act('notes', () =>
                    recordingApi.regenerate(authedFetch, meetingId))}
                  busy={busyId === 'notes'} />
+
+      {playing && (
+        <Player meetingId={meetingId} recording={playing}
+                onClose={() => setPlaying(null)} />
+      )}
     </>
   );
 }
@@ -223,13 +233,14 @@ function GuestGap({ names }: { names: string[] }) {
 }
 
 // ---------------------------------------------------------------------------
-function Row({ item, meetingId, isHost, canDelete, busy, act }: {
+function Row({ item, meetingId, isHost, canDelete, busy, act, onPlay }: {
   item: RecordingListItem;
   meetingId: string;
   isHost: boolean;
   canDelete: boolean;
   busy: boolean;
   act: (id: string, fn: () => Promise<unknown>) => Promise<void>;
+  onPlay: (r: Recording) => void;
 }) {
   const { authedFetch } = useAuth();
   const r = item.recording;
@@ -257,11 +268,15 @@ function Row({ item, meetingId, isHost, canDelete, busy, act }: {
           {/* A BUTTON, not a link — see recordingApi.download. A plain <a>
               here answered 401 every time, because this app's access token is
               an Authorization header and a navigation does not carry one. */}
+          {/* WATCHING IS THE COMMON CASE. Downloading a file, finding it, and
+              opening it in another application is three steps to answer "what
+              did they actually say" — and for video it is half a gigabyte to
+              answer it. The file is already reachable in the shape a player
+              wants, so this is the primary action and Download moved inside
+              the player for the people who genuinely want the file. */}
           {r.hasFile && (
-            <Button className="btn-sm" disabled={busy}
-                    onClick={() => void act(r.id,
-                      () => recordingApi.download(authedFetch, meetingId, r.id))}>
-              Download
+            <Button variant="primary" className="btn-sm" onClick={() => onPlay(r)}>
+              {r.mode === 'video' ? 'Watch' : 'Listen'}
             </Button>
           )}
           {isHost && live && (
