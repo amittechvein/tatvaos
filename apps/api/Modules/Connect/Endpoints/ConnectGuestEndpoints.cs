@@ -174,7 +174,7 @@ public static class ConnectGuestEndpoints
         // the token below is minted under.
         var meeting = await db.ConnectMeetings.AsNoTracking()
             .Where(m => m.Id == row.MeetingId)
-            .Select(m => new { m.PasswordHash, m.SharePolicy, m.Mode })
+            .Select(m => new { m.PasswordHash, m.SharePolicy, m.ChatPolicy, m.Mode })
             .FirstOrDefaultAsync(ct);
         if (meeting is null) return Gone();
 
@@ -242,6 +242,12 @@ public static class ConnectGuestEndpoints
                 // rule a signed-in participant gets, read from the same column.
                 CanPublishSources: ConnectShare.SourcesFor(meeting.SharePolicy, "participant"))),
             meeting.Mode,
+            // A guest has no meeting row to read, so the one rule that governs
+            // whether they may type has to travel with the token. Without it
+            // the composer has nothing to go on and every guest gets the
+            // permissive default — which is the wrong way for a setting whose
+            // whole purpose is to close something.
+            meeting.ChatPolicy,
             // A guest who passed the door is IN the room, so they get the key
             // like anybody else — a key withheld from the people the meeting
             // is for would be theatre, not security. Null on a recorded
@@ -331,10 +337,14 @@ public static class ConnectGuestEndpoints
                 // who tightened sharing while this guest waited means it.
                 var live = await db.ConnectMeetings.AsNoTracking()
                     .Where(m => m.Id == claimed.MeetingId)
-                    .Select(m => new { m.SharePolicy, m.Mode })
+                    .Select(m => new { m.SharePolicy, m.ChatPolicy, m.Mode })
                     .FirstOrDefaultAsync(ct);
                 var sharePolicy = live?.SharePolicy ?? ConnectShare.PolicyEveryone;
                 var mode = live?.Mode ?? ConnectModes.Recorded;
+                // Same reasoning as the straight-through join above, and the
+                // same "at admission, not at the knock" rule: a host who
+                // closed chat while this guest waited meant it.
+                var chatPolicy = live?.ChatPolicy ?? ConnectChat.PolicyEveryone;
 
                 return Results.Ok(new
                 {
@@ -345,6 +355,7 @@ public static class ConnectGuestEndpoints
                     wsUrl = tokens.PublicUrl,
                     identity = person.Identity,
                     mode,
+                    chatPolicy,
                     roomKey = mode == ConnectModes.Private
                         ? roomKeys.For(claimed.MeetingId) : null,
                 });

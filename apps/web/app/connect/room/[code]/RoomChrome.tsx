@@ -562,6 +562,17 @@ export const CSS = `
 .cx-act:disabled:hover{border-color:var(--cx-line);color:var(--cx-text)}
 .cx-act svg{width:16px;height:16px;display:block;fill:currentColor}
 .cx-act i{font-size:16px;line-height:1}
+
+/* Chat closed. Where the composer would have been, so the answer to "why is
+   there no box" is in the place the box was. */
+.cx-chatshut{
+  display:flex;align-items:center;gap:9px;
+  padding:11px 13px;border-radius:11px;
+  background:rgba(255,255,255,.05);border:1px solid var(--cx-line);
+  color:var(--cx-dim);font-size:12.5px;line-height:1.5;
+}
+.cx-light .cx-chatshut{background:rgba(0,0,0,.04)}
+.cx-chatshut i{font-size:15px;flex:0 0 auto;color:var(--cx-dim)}
 /* Putting a hand down is the answer to a request, so it reads as the friendly
    one of the five rather than another grey square. */
 .cx-act--hand{border-color:rgba(46,204,113,.5);color:var(--cx-good)}

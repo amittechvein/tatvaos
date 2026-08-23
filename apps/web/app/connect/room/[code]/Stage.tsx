@@ -12,7 +12,7 @@ import { useAuth } from '@/lib/auth';
 import {
   connectApi, minutesApi, recordingApi, screenCaptureSupported,
   type LobbyEntry, type Meeting, type Recording, type RecordingMode, type Seat,
-  type SharePolicy, type WaitingRoom,
+  type ChatPolicy, type SharePolicy, type WaitingRoom,
 } from '@/lib/connect';
 import type { JoinPrefs } from './PreJoin';
 import {
@@ -341,6 +341,13 @@ export default function Stage({ seat, meeting, prefs }: {
   const [roles, setRoles] = useState<Record<string, string>>({});
   const [sharePolicy, setSharePolicy] = useState<SharePolicy>(
     meeting?.sharePolicy ?? 'everyone');
+
+  // Two sources because there are two kinds of joiner. A signed-in person has
+  // the whole meeting row; a guest has only the seat the door handed them, and
+  // the policy travels on it for exactly that reason. Neither, on an older
+  // server, means 'everyone' — which is what the room did before this existed.
+  const [chatPolicy, setChatPolicy] = useState<ChatPolicy>(
+    meeting?.chatPolicy ?? seat.chatPolicy ?? 'everyone');
   // The waiting-room setting, LIVE — state rather than the prop, because the
   // host can now change it from inside the room and the lobby poll below has
   // to follow the change, not the value at join.
@@ -691,6 +698,18 @@ export default function Stage({ seat, meeting, prefs }: {
             return;
           }
 
+          // Whoever is running the meeting has changed who may type. Read
+          // through a whitelist rather than trusted as a string: this arrives
+          // from another browser, and an unknown value here would decide
+          // whether a composer opens.
+          if ('chatPolicy' in parsed) {
+            const next = String((parsed as { chatPolicy?: unknown }).chatPolicy ?? '');
+            if (next === 'everyone' || next === 'cohost' || next === 'off') {
+              setChatPolicy(next);
+            }
+            return;
+          }
+
           if ('react' in parsed) {
             const emoji = String((parsed as { react?: unknown }).react ?? '');
             // Whitelisted, not echoed. This arrives from another browser, and
@@ -962,6 +981,33 @@ export default function Stage({ seat, meeting, prefs }: {
     } catch (e) {
       setSharePolicy(previous);
       setError(e instanceof Error ? e.message : 'Could not change who may share.');
+    }
+  }
+
+  /**
+   * Change who may type, and tell the room.
+   *
+   * The share policy needs no broadcast: it lives in a LiveKit token, so the
+   * server rewrites everybody's permissions and the SDK delivers the change.
+   * Chat has no token to rewrite, and every other client is holding a meeting
+   * row it fetched when it joined — so without this message a host could close
+   * chat and be the only person who knew.
+   */
+  async function changeChatPolicy(next: ChatPolicy) {
+    if (!meeting) return;
+    const previous = chatPolicy;
+    setChatPolicy(next);   // optimistic: the select should not lag its click
+    try {
+      await connectApi.update(authedFetch, meeting.id, { chatPolicy: next });
+      const r = roomRef.current;
+      if (r) {
+        void r.localParticipant.publishData(
+          new TextEncoder().encode(JSON.stringify({ chatPolicy: next })),
+          { reliable: true });
+      }
+    } catch (e) {
+      setChatPolicy(previous);
+      setError(e instanceof Error ? e.message : 'Could not change who may type.');
     }
   }
 
@@ -1850,6 +1896,16 @@ export default function Stage({ seat, meeting, prefs }: {
     || (sharePolicy === 'cohost' && (meeting.myRole === 'host' || meeting.myRole === 'cohost'))
     || (sharePolicy === 'host' && meeting.myRole === 'host');
 
+  // Who may TYPE. Note the difference from mayShare above: a guest with no
+  // meeting row is treated as a PARTICIPANT here, not waved through. Sharing
+  // can afford the permissive default because the server refuses it anyway;
+  // chat cannot, because nothing downstream will. A setting whose whole
+  // purpose is to close something must fail closed for the people it is most
+  // likely aimed at.
+  const myChatRole = meeting?.myRole ?? 'participant';
+  const mayChat = chatPolicy === 'everyone'
+    || (chatPolicy === 'cohost' && (myChatRole === 'host' || myChatRole === 'cohost'));
+
 
   // ── THE CONTROL BUTTONS, BUILT ONCE. ─────────────────────────────────
   //
@@ -2383,6 +2439,18 @@ export default function Stage({ seat, meeting, prefs }: {
                   Applies to everyone already here, immediately.
                 </div>
 
+                <label className="cx-label" htmlFor="cx-chat-policy"
+                       style={{ marginTop: 14, display: 'block' }}>Who can send chat messages</label>
+                <select id="cx-chat-policy" className="cx-field" value={chatPolicy}
+                        onChange={(e) => void changeChatPolicy(e.target.value as ChatPolicy)}>
+                  <option value="everyone">Everyone</option>
+                  <option value="cohost">Only the host and co-hosts</option>
+                  <option value="off">Nobody — chat is closed</option>
+                </select>
+                <div className="cx-sub" style={{ marginTop: 4 }}>
+                  Everyone can still read what was sent, whichever you choose.
+                </div>
+
                 <label className="cx-label" htmlFor="cx-waiting-room"
                        style={{ marginTop: 14, display: 'block' }}>Waiting room</label>
                 <select id="cx-waiting-room" className="cx-field" value={waitingRoom}
@@ -2553,7 +2621,20 @@ export default function Stage({ seat, meeting, prefs }: {
 
         {panel === 'chat' && (
           <Panel title="Chat" onClose={() => setPanel(null)}
-                 foot={
+                 foot={!mayChat ? (
+                   /* Closed, and it says who closed it and why rather than
+                      showing a box that swallows what you type. Reading is
+                      never restricted: a meeting whose chat was closed halfway
+                      through should not lose what was said before it. */
+                   <div className="cx-chatshut">
+                     <i className="ri-lock-line" aria-hidden="true" />
+                     <span>
+                       {chatPolicy === 'off'
+                         ? 'Chat is closed for this meeting. You can still read what was sent.'
+                         : 'Only the host and co-hosts can send messages in this meeting.'}
+                     </span>
+                   </div>
+                 ) : (
                    <form onSubmit={send} style={{ display: 'flex', gap: 8 }}>
                      <button type="button" className="cx-ico" style={{ flex: '0 0 auto' }}
                              onClick={() => fileInputRef.current?.click()}
@@ -2574,7 +2655,7 @@ export default function Stage({ seat, meeting, prefs }: {
                      <button className="cx-cta" style={{ width: 'auto', padding: '10px 16px' }}
                              type="submit">Send</button>
                    </form>
-                 }>
+                 )}>
             <div className="cx-sub" style={{ marginBottom: 10 }}>
               Nothing here is saved. Files go straight to the people in the
               meeting — up to 8 MB, and only to whoever is here now.

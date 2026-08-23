@@ -55,6 +55,12 @@ public sealed class ConnectMeeting
     /// the DATABASE — never from a client claim. See ConnectShare.</summary>
     public string SharePolicy { get; set; } = "everyone";
 
+    /// <summary>Who may SEND chat: everyone | cohost | off. Everyone always
+    /// reads. Enforced in the CLIENT, not in the token — chat shares the data
+    /// channel with hands, reactions and files, and canPublishData cannot tell
+    /// them apart. See ConnectChat and 20260909-connect-chat-policy.sql.</summary>
+    public string ChatPolicy { get; set; } = ConnectChat.PolicyEveryone;
+
     /// <summary>
     /// recorded | private. Chosen at creation and IMMUTABLE — a database
     /// trigger refuses any change, because the mode is a promise made to
@@ -220,6 +226,42 @@ public static class ConnectShare
     /// </summary>
     public static string[]? SourcesFor(string policy, string? role) =>
         MayShare(policy, role) ? null : ["camera", "microphone"];
+}
+
+/// <summary>
+/// Who may type in the meeting's chat.
+///
+/// Shaped like ConnectShare on purpose — one idea to learn, not two — but it
+/// is enforced somewhere else, and the difference matters. ConnectShare ends
+/// up in the LiveKit token, where the client cannot argue with it. This one
+/// cannot: chat, raised hands, reactions and file transfers all ride the one
+/// data channel, and canPublishData is all four or none. Silencing chat by
+/// token would also stop somebody raising a hand to ask why they had been
+/// silenced.
+///
+/// So this is a courtesy the client keeps, in the same way a client already
+/// reports its own raised hand honestly. It stops twenty people talking over
+/// a presenter, which is what it was asked for. It is not a control, and no
+/// caller should treat it as one.
+/// </summary>
+public static class ConnectChat
+{
+    public const string PolicyEveryone = "everyone";
+    public const string PolicyCohost = "cohost";
+    public const string PolicyOff = "off";
+
+    public static bool IsValidPolicy(string? policy) =>
+        policy is PolicyEveryone or PolicyCohost or PolicyOff;
+
+    /// <summary>True when this role may send under this policy. Reading is
+    /// never restricted — a meeting that closed chat halfway through should
+    /// not lose what was said before it.</summary>
+    public static bool MaySend(string policy, string? role) => policy switch
+    {
+        PolicyOff => false,
+        PolicyCohost => role is "host" or "cohost",
+        _ => true,
+    };
 }
 
 public sealed class ConnectMeetingEvent

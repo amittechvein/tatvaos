@@ -34,6 +34,19 @@ export type MeetingRole = 'host' | 'cohost' | 'participant';
 export type SharePolicy = 'host' | 'cohost' | 'everyone';
 
 /**
+ * Who may SEND chat. Everyone always READS.
+ *
+ * Unlike SharePolicy this is NOT enforced server-side. Chat shares one data
+ * channel with raised hands, reactions and file transfers, and the only token
+ * grant available covers all four — silencing chat by token would also stop
+ * somebody raising a hand to ask why. So the client keeps it, in the same way
+ * a client already reports its own raised hand honestly. Enough to stop
+ * twenty people talking over a presenter; not a security control, and nothing
+ * in this codebase should treat it as one.
+ */
+export type ChatPolicy = 'everyone' | 'cohost' | 'off';
+
+/**
  * What kind of meeting this is, chosen at creation and never changeable.
  *
  * 'private' means the media is encrypted with a key the meeting server does
@@ -77,6 +90,7 @@ export interface Meeting {
    *  recording flag and the storage gate at the moment the room starts. */
   autoRecord: boolean;
   sharePolicy: SharePolicy;
+  chatPolicy: ChatPolicy;
   mode: MeetingMode;
   createdByUserId: string | null;
   myRole: MeetingRole | null;
@@ -116,6 +130,10 @@ export interface Seat {
   wsUrl: string;
   identity: string;
   mode?: MeetingMode;
+  /** A guest has no meeting row to read, so the rule that decides whether
+   *  they may type travels with the seat. Absent on an older server, which
+   *  the room reads as 'everyone' — the same answer it had before. */
+  chatPolicy?: ChatPolicy;
   /** Present ONLY for a private meeting. It rides this one response and dies
    *  with the tab: never store it, never log it, never put it in a URL. */
   roomKey?: string | null;
@@ -152,6 +170,7 @@ export interface CreateMeeting {
   allowGuests?: boolean;
   autoRecord?: boolean;
   sharePolicy?: SharePolicy;
+  chatPolicy?: ChatPolicy;
   /** Chosen once. There is deliberately no way to change it afterwards —
    *  UpdateMeeting below does not carry it, and the database refuses. */
   mode?: MeetingMode;

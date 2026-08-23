@@ -6,7 +6,7 @@ import { useAuth } from '@/lib/auth';
 import { Button, Card } from '@/components/ui/Kit';
 import {
   connectApi, PRIVATE_BLURB, RECORDED_BLURB,
-  type MeetingMode, type SharePolicy, type WaitingRoom,
+  type ChatPolicy, type MeetingMode, type SharePolicy, type WaitingRoom,
 } from '@/lib/connect';
 import { Choice, Field, SumRow } from '../ConnectSkin';
 
@@ -39,6 +39,12 @@ const WAITING_LABEL: Record<WaitingRoom, string> = {
   off: 'Off — nobody waits',
   guests: 'Guests wait',
   everyone: 'Everyone waits',
+};
+
+const CHAT_LABEL: Record<ChatPolicy, string> = {
+  everyone: 'Everyone',
+  cohost: 'Host and co-hosts',
+  off: 'Closed',
 };
 
 const SHARE_LABEL: Record<SharePolicy, string> = {
@@ -97,6 +103,7 @@ export default function NewMeetingPage() {
   const [autoRecord, setAutoRecord] = useState(false);
   const [mode, setMode] = useState<MeetingMode>('recorded');
   const [sharePolicy, setSharePolicy] = useState<SharePolicy>('everyone');
+  const [chatPolicy, setChatPolicy] = useState<ChatPolicy>('everyone');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -135,6 +142,7 @@ export default function NewMeetingPage() {
         // checkbox cannot produce a 400 the person did not ask for.
         autoRecord: mode === 'private' ? false : autoRecord,
         sharePolicy,
+        chatPolicy,
         mode,
       });
       router.push(`/connect/meetings/${m.id}`);
@@ -232,6 +240,24 @@ export default function NewMeetingPage() {
                 </div>
               </Field>
 
+              <Field label="Who can send chat messages"
+                     hint="Everyone can read, whichever you choose. Changeable during the meeting."
+                     why={'Chat, raised hands, reactions and files all travel the same '
+                       + 'channel, and the only permission the media server offers covers '
+                       + 'all four — closing chat by force would also stop somebody raising '
+                       + 'a hand to ask why. So this is kept by the app rather than enforced '
+                       + 'by the server: it is what stops a room of twenty talking over a '
+                       + 'presenter, not a lock.'}>
+                <div className="cx-choices cx-choices--3 cx-choices--tight">
+                  <Choice name="chat" value="everyone" current={chatPolicy} onPick={setChatPolicy}
+                          title="Everyone" />
+                  <Choice name="chat" value="cohost" current={chatPolicy} onPick={setChatPolicy}
+                          title="Host and co-hosts" />
+                  <Choice name="chat" value="off" current={chatPolicy} onPick={setChatPolicy}
+                          title="Nobody" />
+                </div>
+              </Field>
+
               <Field label="Who can share their screen"
                      hint="Changeable during the meeting, from the People panel.">
                 <div className="cx-choices cx-choices--3 cx-choices--tight">
@@ -298,6 +324,8 @@ export default function NewMeetingPage() {
               <SumRow k="Waiting room" v={WAITING_LABEL[waitingRoom]}
                       warn={waitingRoom === 'off'} />
               <SumRow k="Screen sharing" v={SHARE_LABEL[sharePolicy]} />
+              <SumRow k="Chat" v={CHAT_LABEL[chatPolicy]}
+                      warn={chatPolicy === 'off'} />
               {mode === 'recorded' && (
                 <SumRow k="Recording"
                         v={autoRecord ? 'Starts automatically' : 'Started by hand'} />

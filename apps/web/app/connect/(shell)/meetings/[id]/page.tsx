@@ -6,7 +6,7 @@ import { useAuth } from '@/lib/auth';
 import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
 import {
   connectApi, prettyCode, timeLabel, whenLabel,
-  type LobbyEntry, type Meeting, type Participant, type SharePolicy,
+  type ChatPolicy, type LobbyEntry, type Meeting, type Participant, type SharePolicy,
   type UpdateMeeting, type WaitingRoom,
 } from '@/lib/connect';
 import Recordings from './Recordings';
@@ -174,7 +174,7 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
   const [form, setForm] = useState<{
     title: string; start: string; end: string;
     waitingRoom: WaitingRoom; allowGuests: boolean;
-    sharePolicy: SharePolicy; autoRecord: boolean;
+    sharePolicy: SharePolicy; chatPolicy: ChatPolicy; autoRecord: boolean;
     password: string; clearPassword: boolean;
   } | null>(null);
 
@@ -186,6 +186,7 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
       waitingRoom: m.waitingRoom,
       allowGuests: m.allowGuests,
       sharePolicy: m.sharePolicy,
+      chatPolicy: m.chatPolicy,
       autoRecord: m.autoRecord,
       // NEVER seeded with the real password — the server keeps a hash and
       // could not tell us even if this screen asked. Empty means "leave it
@@ -221,6 +222,7 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
       waitingRoom: form.waitingRoom,
       allowGuests: form.allowGuests,
       sharePolicy: form.sharePolicy,
+      chatPolicy: form.chatPolicy,
     };
 
     // ── THE THREE MEANINGS OF A PASSWORD BOX. ─────────────────────────────
@@ -459,6 +461,19 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
                 <option value="host">Only the host</option>
               </select>
               <div className="form-text">Applies to people already in the meeting, immediately.</div>
+            </div>
+
+            <div className="col-md-6">
+              <label className="form-label" htmlFor="ed-chat">Who can send chat messages</label>
+              <select id="ed-chat" className="form-select" value={form.chatPolicy}
+                      onChange={(e) => setForm({ ...form, chatPolicy: e.target.value as ChatPolicy })}>
+                <option value="everyone">Everyone</option>
+                <option value="cohost">Only the host and co-hosts</option>
+                <option value="off">Nobody — chat is closed</option>
+              </select>
+              <div className="form-text">
+                Everyone can still read what was sent, whichever you choose.
+              </div>
             </div>
 
             <div className="col-md-6">

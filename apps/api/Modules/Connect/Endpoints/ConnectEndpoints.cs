@@ -70,7 +70,7 @@ public static class ConnectEndpoints
         string? Title, string? Kind,
         DateTimeOffset? ScheduledStart, DateTimeOffset? ScheduledEnd,
         string? Timezone, string? Password, string? WaitingRoom, bool? AllowGuests,
-        bool? AutoRecord, string? SharePolicy, string? Mode);
+        bool? AutoRecord, string? SharePolicy, string? ChatPolicy, string? Mode);
 
     // ── NO Mode FIELD HERE, AND IT MUST STAY THAT WAY. ───────────────────
     // The mode is chosen once and cannot change: a host who could flip
@@ -82,7 +82,8 @@ public static class ConnectEndpoints
     public sealed record UpdateMeetingRequest(
         string? Title, DateTimeOffset? ScheduledStart, DateTimeOffset? ScheduledEnd,
         string? Timezone, string? Password, string? WaitingRoom,
-        bool? AllowGuests, bool? Locked, bool? AutoRecord, string? SharePolicy);
+        bool? AllowGuests, bool? Locked, bool? AutoRecord, string? SharePolicy,
+        string? ChatPolicy);
 
     public sealed record JoinRequest(string? Password);
     public sealed record MuteRequest(string? Kind);
@@ -110,6 +111,7 @@ public static class ConnectEndpoints
         m.Locked,
         m.AutoRecord,
         m.SharePolicy,
+        m.ChatPolicy,
         m.Mode,
         m.CreatedByUserId,
         myRole,
@@ -289,6 +291,10 @@ public static class ConnectEndpoints
         if (!ConnectShare.IsValidPolicy(share))
             return Results.BadRequest(new { error = "Sharing is open to the host, the host and co-hosts, or everyone." });
 
+        var chat = (req.ChatPolicy ?? ConnectChat.PolicyEveryone).Trim().ToLowerInvariant();
+        if (!ConnectChat.IsValidPolicy(chat))
+            return Results.BadRequest(new { error = "Chat is open to everyone, to the host and co-hosts, or to nobody." });
+
         // ── THE MODE. The only place it is ever set. ─────────────────────
         var mode = (req.Mode ?? ConnectModes.Recorded).Trim().ToLowerInvariant();
         if (!ConnectModes.IsValid(mode))
@@ -332,6 +338,7 @@ public static class ConnectEndpoints
             // "on for the org by Monday's meeting" is a normal sequence.
             AutoRecord = autoRecord,
             SharePolicy = share,
+            ChatPolicy = chat,
             Mode = mode,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow,
@@ -433,6 +440,19 @@ public static class ConnectEndpoints
                 return Results.BadRequest(new { error = "Sharing is open to the host, the host and co-hosts, or everyone." });
             shareChanged = share != meeting.SharePolicy;
             meeting.SharePolicy = share;
+        }
+
+        // No equivalent of shareChanged below: a share policy change has to be
+        // pushed into LiveKit, because the permission lives in a token that
+        // has already been minted. Chat has no token to rewrite — every client
+        // re-reads the meeting, so changing this reaches the room by the same
+        // route the panel already uses.
+        if (req.ChatPolicy is { } cp)
+        {
+            var chat = cp.Trim().ToLowerInvariant();
+            if (!ConnectChat.IsValidPolicy(chat))
+                return Results.BadRequest(new { error = "Chat is open to everyone, to the host and co-hosts, or to nobody." });
+            meeting.ChatPolicy = chat;
         }
 
         meeting.UpdatedAt = DateTimeOffset.UtcNow;
