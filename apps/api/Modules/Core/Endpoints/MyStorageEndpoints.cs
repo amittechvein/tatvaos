@@ -83,7 +83,16 @@ public static class MyStorageEndpoints
             products,
             // Said once, here, so every surface can repeat it verbatim rather
             // than inventing its own wording for the same fact.
-            note = "This is your total across all TatvaOS products. "
+            // Recordings named explicitly, and not out of tidiness. Until 23
+            // August 2026 this meter counted mail and files and nothing else,
+            // so a person could be holding gigabytes of meeting video while
+            // their bar read comfortable — an hour of video is ~1.4 GB against
+            // a 15 GB allowance shared with mail. Somebody who records
+            // regularly needs to know that BEFORE the number surprises them,
+            // and the sentence they read is written once, here.
+            note = "This is your total across all TatvaOS products, including "
+                 + "meeting recordings you started — an hour of video is about "
+                 + "1.4 GB, and recordings are deleted automatically after 30 days. "
                  + "Shared mailboxes and organisation files are not counted against you.",
         });
     }

@@ -221,6 +221,11 @@ builder.Services.AddHostedService<MaildirIngestWorker>();
 // readers with no human present: the add-user gate and the quota check.
 builder.Services.AddHostedService<StorageReconcileWorker>();
 
+// The disk-versus-database check: removes abandoned .part uploads, and
+// REPORTS (never deletes) blobs no row points at. SPACE_FAULT_MATRIX #1 and
+// #3 — both invisible failures on the filesystem Mail also writes to.
+builder.Services.AddHostedService<SpaceBlobSweepWorker>();
+
 // Answers Postfix's quota question at RCPT time — the last moment a refusal
 // still leaves the message with the sender. Starts in observe-only mode and
 // refuses nothing until Mail:QuotaEnforcement is set to "enforce".
