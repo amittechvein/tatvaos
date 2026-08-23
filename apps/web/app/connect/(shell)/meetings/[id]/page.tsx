@@ -61,6 +61,94 @@ function fromLocalInput(value: string): string | null {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
+// ---------------------------------------------------------------------------
+//  ONE ROW PER PERSON, NOT PER JOIN.
+//
+//  A signed-in colleague has ONE identity for every join they ever make, so
+//  their rows collapse on their own. A guest does not: the identity is minted
+//  when they open the link, so reconnecting after a dropped train, or opening
+//  the link twice, or a laptop lid closing and reopening, each produce a
+//  separate participant. Rishav Anand appeared five times in one meeting, in
+//  five different colours, and looked like five different people.
+//
+//  Grouping guests by the NAME they typed is a judgement, not a fact: two
+//  people who both type "Ravi" merge into one row. The alternative on show
+//  above is worse — the list is meant to answer "who was in this meeting",
+//  and five rows for one person answers it wrongly in a way nobody can
+//  correct. The row says how many times they joined, so nothing is hidden.
+//
+//  The real fix is a guest identity that survives a reconnect, which is the
+//  server's to mint. Raised with Core; this is the honest view until then.
+// ---------------------------------------------------------------------------
+
+interface Attendee {
+  key: string;
+  /** The session to ACT on — see the note in groupPeople. */
+  who: Participant;
+  sessions: number;
+  firstJoinedAt: string | null;
+  lastSeenAt: string | null;
+  connected: boolean;
+}
+
+const stamp = (iso: string | null): number => (iso ? new Date(iso).getTime() : NaN);
+
+/** True when a is a real time and is before b (or b is missing). */
+function isBefore(a: string | null, b: string | null): boolean {
+  const x = stamp(a);
+  if (Number.isNaN(x)) return false;
+  const y = stamp(b);
+  return Number.isNaN(y) || x < y;
+}
+
+function isAfter(a: string | null, b: string | null): boolean {
+  const x = stamp(a);
+  if (Number.isNaN(x)) return false;
+  const y = stamp(b);
+  return Number.isNaN(y) || x > y;
+}
+
+function groupPeople(people: Participant[]): Attendee[] {
+  const by = new Map<string, Attendee>();
+
+  for (const p of people) {
+    const key = p.isGuest
+      ? `guest:${p.displayName.trim().toLowerCase()}`
+      : p.identity;
+
+    const seen = by.get(key);
+    if (!seen) {
+      by.set(key, {
+        key,
+        who: p,
+        sessions: 1,
+        firstJoinedAt: p.firstJoinedAt,
+        lastSeenAt: p.lastSeenAt,
+        connected: p.connected,
+      });
+      continue;
+    }
+
+    seen.sessions += 1;
+    seen.connected = seen.connected || p.connected;
+    if (isBefore(p.firstJoinedAt, seen.firstJoinedAt)) seen.firstJoinedAt = p.firstJoinedAt;
+    if (isAfter(p.lastSeenAt, seen.lastSeenAt)) seen.lastSeenAt = p.lastSeenAt;
+
+    // Mute and Remove need an identity that is actually IN the room. Prefer a
+    // connected session; failing that the most recent one, because acting on
+    // a session that ended succeeds and changes nothing — the worst kind of
+    // button.
+    if (p.connected && !seen.who.connected) seen.who = p;
+    else if (!seen.who.connected && isAfter(p.lastSeenAt, seen.who.lastSeenAt)) seen.who = p;
+  }
+
+  // Whoever is still here, first. After that, whoever arrived earliest.
+  return [...by.values()].sort((a, b) => {
+    if (a.connected !== b.connected) return a.connected ? -1 : 1;
+    return isBefore(a.firstJoinedAt, b.firstJoinedAt) ? -1 : 1;
+  });
+}
+
 export default function MeetingPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { authedFetch } = useAuth();
@@ -250,6 +338,12 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
 
   const over = meeting.status === 'ended' || meeting.status === 'cancelled';
 
+  // One row per person. `rejoiners` is only used to decide whether the card
+  // needs to explain itself — with nobody having joined twice, the note would
+  // be answering a question nobody asked.
+  const attendees = groupPeople(people);
+  const rejoiners = attendees.filter((a) => a.sessions > 1).length;
+
   return (
     <>
       {/* The meeting itself, rather than a page title with a breadcrumb under
@@ -287,6 +381,37 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
 
       {error && <div className="alert alert-danger" role="alert">{error}</div>}
       {notice && <div className="alert alert-success" role="alert">{notice}</div>}
+
+      {/* THE DOOR IS OPEN, AND NOTHING SAID SO.
+          Waiting room off plus guests allowed means anybody holding the link
+          walks in, under any name they care to type — and a link is a bearer
+          token, so "holding the link" includes whoever it was forwarded to.
+          That combination is legitimate for a public briefing and a mistake
+          for everything else, and the difference is a decision the host has
+          to actually make rather than discover afterwards in the attendance
+          list. Shown, not enforced: it is their meeting. */}
+      {!over && meeting.waitingRoom === 'off' && meeting.allowGuests && (
+        <div className="cx-opendoor" role="status">
+          <div>
+            <strong>Anyone with the link can walk in.</strong>
+            <p>
+              The waiting room is off and guests are allowed, so nobody is
+              checked at the door and a guest can type any name they like. If
+              this link has been forwarded, you will not know who is in the
+              room until they are.
+            </p>
+          </div>
+          {isHost && (
+            <Button variant="primary" disabled={busy !== null}
+                    onClick={() => void run('door',
+                      () => connectApi.update(authedFetch, meeting.id,
+                        { waitingRoom: 'guests' }).then(() => undefined),
+                      'Guests now wait for you to let them in.')}>
+              Make guests wait
+            </Button>
+          )}
+        </div>
+      )}
 
       {editing && form && (
         <Card title="Edit this meeting" className="mb-3">
@@ -441,47 +566,62 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
             </Card>
           )}
 
-          <Card title="People" padded={false}>
-            {people.length === 0 ? (
+          <Card title="People"
+                subtitle={rejoiners > 0
+                  ? 'One row per person. Guests are matched by the name they typed, '
+                    + 'because a guest gets a new identity every time they open the link.'
+                  : undefined}
+                padded={false}>
+            {attendees.length === 0 ? (
               <Empty title="Nobody has joined yet"
                      hint="People appear here as they arrive, and stay listed afterwards." />
             ) : (
               <Table head={['Name', 'Role', 'In the meeting', 'First joined', '']}>
-                {people.map((p) => (
-                  <tr key={p.identity}>
+                {attendees.map((a) => (
+                  <tr key={a.key}>
                     <Td>
                       <div className="cx-who">
-                        <span className={`cx-face ${toneOf(p.identity)}`} aria-hidden="true">
-                          {faceOf(p.displayName)}
+                        {/* Coloured from the GROUP key, not the identity — a
+                            guest's identity changes on every rejoin, so their
+                            colour would too, and the colour is how you find a
+                            row again after scrolling. */}
+                        <span className={`cx-face ${toneOf(a.key)}`} aria-hidden="true">
+                          {faceOf(a.who.displayName)}
                         </span>
                         <div>
-                          <span className="cx-name">{p.displayName}</span>
-                          {p.isGuest && <span className="cx-tag">Guest</span>}
+                          <span className="cx-name">{a.who.displayName}</span>
+                          {a.who.isGuest && <span className="cx-tag">Guest</span>}
+                          {a.sessions > 1 && (
+                            <div className="cx-sub">
+                              Joined {a.sessions} times
+                              {a.lastSeenAt ? ` · last ${timeLabel(a.lastSeenAt)}` : ''}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </Td>
-                    <Td><span className="cx-role">{p.role}</span></Td>
+                    <Td><span className="cx-role">{a.who.role}</span></Td>
                     <Td>
-                      {p.connected
+                      {a.connected
                         ? <Badge tone="ok">Yes</Badge>
                         : <span className="text-muted">No</span>}
                     </Td>
                     <Td className="text-muted">
-                      {p.firstJoinedAt ? timeLabel(p.firstJoinedAt) : '—'}
+                      {a.firstJoinedAt ? timeLabel(a.firstJoinedAt) : '—'}
                     </Td>
                     <Td className="text-end">
-                      {isHost && p.connected && p.role !== 'host' && (
+                      {isHost && a.connected && a.who.role !== 'host' && (
                         <div className="d-flex gap-1 justify-content-end">
                           <Button disabled={busy !== null}
-                                  onClick={() => void run(p.identity,
-                                    () => connectApi.mute(authedFetch, meeting.id, p.identity),
-                                    `${p.displayName} was muted.`)}>
+                                  onClick={() => void run(a.who.identity,
+                                    () => connectApi.mute(authedFetch, meeting.id, a.who.identity),
+                                    `${a.who.displayName} was muted.`)}>
                             Mute
                           </Button>
                           <Button variant="danger" disabled={busy !== null}
-                                  onClick={() => void run(p.identity,
-                                    () => connectApi.remove(authedFetch, meeting.id, p.identity),
-                                    `${p.displayName} was removed.`)}>
+                                  onClick={() => void run(a.who.identity,
+                                    () => connectApi.remove(authedFetch, meeting.id, a.who.identity),
+                                    `${a.who.displayName} was removed.`)}>
                             Remove
                           </Button>
                         </div>
