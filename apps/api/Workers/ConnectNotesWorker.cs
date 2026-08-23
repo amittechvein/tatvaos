@@ -462,6 +462,26 @@ public sealed class ConnectNotesWorker(
             var segments = new List<ConnectTranscriber.Segment>();
             foreach (var t in transcripts) segments.AddRange(ReadSegments(t.Segments));
 
+            // ── CAPTIONS, WHEN THERE ARE NO PAID TRANSCRIPTS ──────────────
+            //
+            // The browsers already turned this meeting's speech into text
+            // while it was happening, for nothing. Paid transcription of a
+            // 31-minute meeting cost ₹16.6 against ₹0.40 for the model that
+            // writes the actual minutes — 97% of the bill for the part the
+            // browser does free.
+            //
+            // A TRANSCRIPT WINS WHERE ONE EXISTS, and that ordering matters:
+            // a recording heard the whole room, captions heard only the
+            // Chrome users who stayed. If somebody paid for transcription,
+            // they get the better record.
+            //
+            // Captions arrive already attributed, which paid transcription of
+            // a mixed recording does not manage at all — so the speaker's name
+            // goes into the segment, and the notes model can write "Rahul will
+            // send the pricing sheet" instead of "somebody will".
+            if (segments.Count == 0)
+                segments.AddRange(await ReadCaptionsAsync(db, meetingId, ct));
+
             // Who attended, as ONE json string rather than a multi-column
             // result: this codebase's only proven raw-query shape is
             // Database.SqlQuery<T> over a SCALAR, and a json_agg is a scalar.
@@ -655,6 +675,40 @@ public sealed class ConnectNotesWorker(
     //  ConnectWire returns null instead. A segment with a missing offset is a
     //  slightly worse transcript; an exception here is no minutes at all.
     // ══════════════════════════════════════════════════════════════════════
+    /// <summary>
+    /// The meeting's captions as transcript segments, in spoken order, with
+    /// the speaker's name attached.
+    ///
+    /// Timestamps are relative to the FIRST line rather than absolute, because
+    /// that is what a transcript's Start means everywhere else in this module
+    /// — "eleven minutes into the meeting", not "14:03 on Tuesday". Getting
+    /// that wrong would render as a timeline starting at 1,787,000,000.
+    /// </summary>
+    private static async Task<List<ConnectTranscriber.Segment>> ReadCaptionsAsync(
+        AppDbContext db, Guid meetingId, CancellationToken ct)
+    {
+        var lines = await db.ConnectCaptionLines.AsNoTracking()
+            .Where(c => c.MeetingId == meetingId)
+            .OrderBy(c => c.SpokenAt)
+            .Join(db.ConnectParticipants.AsNoTracking(),
+                  c => c.ParticipantId, p => (Guid?)p.Id,
+                  (c, p) => new { c.Text, c.SpokenAt, p.DisplayName })
+            .ToListAsync(ct);
+
+        if (lines.Count == 0) return [];
+
+        var start = lines[0].SpokenAt;
+
+        return lines
+            .Select(l =>
+            {
+                var offset = (l.SpokenAt - start).TotalSeconds;
+                return new ConnectTranscriber.Segment(
+                    offset, offset, l.Text, l.DisplayName);
+            })
+            .ToList();
+    }
+
     private static List<ConnectTranscriber.Segment> ReadSegments(string? raw)
     {
         var list = new List<ConnectTranscriber.Segment>();

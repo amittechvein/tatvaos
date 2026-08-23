@@ -437,6 +437,7 @@ app.MapConnectWebhookEndpoints();
 // three times over - the organisation, the person, and the disk. See the
 // header of ConnectRecordingEndpoints.cs.
 app.MapConnectRecordingEndpoints();
+app.MapConnectCaptionEndpoints();
 
 // Operational: does the AI actually answer? SuperAdmin only, real round trip.
 app.MapAiStatusEndpoints();
