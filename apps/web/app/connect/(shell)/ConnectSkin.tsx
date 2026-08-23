@@ -520,6 +520,31 @@ const SKIN = `
   font-size:12.5px;font-weight:600;color:var(--cxs-ink-2);text-transform:capitalize;
 }
 
+/* ── An open door ─────────────────────────────────────────────────────── */
+/* Amber, not red. Nothing is broken and nothing is being blocked — this is a
+   setting doing exactly what it says, shown to somebody who may not have
+   meant to choose it. Red here would cry wolf on every public briefing. */
+.cxs .cx-opendoor{
+  display:flex;align-items:center;justify-content:space-between;gap:18px;
+  flex-wrap:wrap;margin-bottom:18px;padding:15px 18px;
+  border:1px solid #f0d08a;border-radius:var(--cxs-radius);
+  background:linear-gradient(135deg,#fffaf0,#fff6e6);
+  box-shadow:var(--cxs-shadow);
+}
+.cxs .cx-opendoor strong{
+  display:block;font-size:14px;font-weight:650;letter-spacing:-.012em;color:#8a5a06;
+}
+.cxs .cx-opendoor p{
+  margin:5px 0 0;font-size:12.5px;line-height:1.6;color:#8f6b2c;max-width:74ch;
+}
+.cxs .cx-opendoor .btn{flex:0 0 auto}
+.dark .cxs .cx-opendoor{
+  border-color:rgba(240,180,60,.42);
+  background:linear-gradient(135deg,rgba(240,180,60,.13),rgba(240,180,60,.05));
+}
+.dark .cxs .cx-opendoor strong{color:#f4c15c}
+.dark .cxs .cx-opendoor p{color:#d9bd85}
+
 /* ── Everything else that shows up on these three pages ───────────────── */
 .cxs .alert{border-radius:12px;padding:12px 16px;font-size:13.5px;border:1px solid}
 .cxs .alert-danger{background:#fff1f2;border-color:#fecdd3;color:#a01133}
