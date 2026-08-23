@@ -573,6 +573,25 @@ const SKIN = `
   margin:0;max-width:80ch;
 }
 
+/* ── A row that opens ─────────────────────────────────────────────────── */
+/* The drawer is a second row in the same table, spanning every column, so it
+   lines up with what it belongs to instead of floating in its own box. */
+.cxs .cx-drawer-row>.cx-drawer{
+  border-top:0;padding:4px 20px 16px;background:var(--cxs-hover);
+}
+.cxs .cx-recs{display:flex;flex-direction:column;gap:8px}
+.cxs .cx-rec{
+  display:flex;align-items:center;justify-content:space-between;gap:14px;
+  flex-wrap:wrap;padding:11px 14px;border-radius:11px;
+  background:var(--cxs-surface);border:1px solid var(--cxs-line);
+}
+.cxs .cx-rec strong{
+  display:block;font-size:13px;font-weight:640;color:var(--cxs-ink);
+}
+.cxs .cx-rec span{
+  display:block;font-size:12px;color:var(--cxs-ink-3);margin-top:2px;
+}
+
 /* ── Everything else that shows up on these three pages ───────────────── */
 .cxs .alert{border-radius:12px;padding:12px 16px;font-size:13.5px;border:1px solid}
 .cxs .alert-danger{background:#fff1f2;border-color:#fecdd3;color:#a01133}

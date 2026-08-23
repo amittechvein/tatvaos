@@ -53,6 +53,12 @@ const PATHS = {
   junk: 'M10.3 3.9 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01',
   trash: 'M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6',
   compose: 'M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z',
+  // Connect's rail. A clock turned back for meetings that have happened, and
+  // a page with lines on it for the minutes — both drawn in the same single
+  // stroke as everything above so the rail reads as one set.
+  history:   'M3 12a9 9 0 1 0 3-6.7L3 8m0-5v5h5M12 7v5l3.5 2',
+  notes:     'M6 3h9l4 4v14H6zM15 3v4h4M9 12h6M9 16h6M9 8h3',
+  record:    'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z',
 };
 
 // ============================================================================
@@ -256,6 +262,13 @@ export function connectNav(): NavSection[] {
       items: [
         { href: '/connect/new', label: 'New meeting', icon: <Icon d={PATHS.compose} colour="#03b562" /> },
         { href: '/connect', label: 'Meetings', icon: <Icon d={PATHS.connect} colour="#003cf0" /> },
+        // What happened, as opposed to what is about to. It is the same list
+        // with a different range, and it is in the rail rather than behind a
+        // tab because "find that meeting from last week" is a task people
+        // arrive with, not one they discover after landing somewhere else.
+        { href: '/connect/past', label: 'Past meetings', icon: <Icon d={PATHS.history} colour="#7367f0" /> },
+        { href: '/connect/recordings', label: 'Recordings', icon: <Icon d={PATHS.record} colour="#ef4757" /> },
+        { href: '/connect/minutes', label: 'Minutes', icon: <Icon d={PATHS.notes} colour="#f0a020" /> },
       ],
     },
   ];
