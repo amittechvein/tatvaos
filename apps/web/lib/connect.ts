@@ -682,6 +682,25 @@ export const minutesApi = {
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
   },
 
+  /**
+   * The minutes as plain text, to be READ rather than saved.
+   *
+   * txt and not html, and that is a security decision rather than a taste
+   * one: rendering server HTML in this page would need dangerouslySetInnerHTML,
+   * which eslint forbids everywhere except the one audited file that shows
+   * mail bodies. Text renders as text, so there is nothing to escape and no
+   * exception to argue for. The line breaks are the document's own; CSS
+   * preserves them.
+   */
+  read: async (f: AuthedFetch, meetingId: string): Promise<string> => {
+    const r = await f(`/connect/meetings/${meetingId}/minutes?format=txt`);
+    if (!r.ok) {
+      const detail = await r.json().catch(() => null) as { error?: string } | null;
+      throw new Error(detail?.error ?? 'Could not open the minutes.');
+    }
+    return r.text();
+  },
+
   email: (f: AuthedFetch, meetingId: string) =>
     f(`/connect/meetings/${meetingId}/minutes/email`, { method: 'POST' })
       .then(async (r) => {

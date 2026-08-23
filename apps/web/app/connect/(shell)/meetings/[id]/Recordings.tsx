@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
+import { Modal } from '@/components/ui/Modal';
 import {
   durationLabel, recordingApi, sizeLabel, timeLabel,
   minutesApi,
@@ -515,6 +516,11 @@ function clock(seconds: number): string {
 function MinutesActions({ meetingId, isHost }: { meetingId: string; isHost: boolean }) {
   const { authedFetch } = useAuth();
   const [busy, setBusy] = useState<'file' | 'mail' | null>(null);
+  // The minutes themselves, once fetched. Held rather than re-fetched on every
+  // open: they do not change while the page is up unless somebody presses
+  // Write again, which reloads the card anyway.
+  const [minutes, setMinutes] = useState<string | null>(null);
+  const [showing, setShowing] = useState(false);
   const [said, setSaid] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -534,7 +540,9 @@ function MinutesActions({ meetingId, isHost }: { meetingId: string; isHost: bool
     return () => clearTimeout(t);
   }, [said, failed]);
 
-  async function run(kind: 'file' | 'mail', fn: () => Promise<string>) {
+  // Returns the sentence to show, or null when the action speaks for itself —
+  // opening a dialog needs no caption underneath it.
+  async function run(kind: 'file' | 'mail', fn: () => Promise<string | null>) {
     setBusy(kind);
     setSaid(null);
     setFailed(false);
@@ -550,14 +558,27 @@ function MinutesActions({ meetingId, isHost }: { meetingId: string; isHost: bool
 
   return (
     <>
+      {/* ── READ, NOT SAVED. ────────────────────────────────────────────────
+          This was "Download minutes", which answered a question nobody had
+          asked yet. Almost everybody pressing it wanted to KNOW what the
+          minutes said — and got a file in a downloads folder, to be found,
+          opened in another application, and read there. Three steps to answer
+          "what did we decide". Saving a copy is a real need, but it is the
+          rarer one, so it moved inside: the popup keeps it, one press away,
+          for the person who actually wants the file. */}
       <Button
+        variant="primary"
         disabled={busy !== null}
         onClick={() => void run('file', async () => {
-          await minutesApi.download(authedFetch, meetingId);
-          return 'Downloaded.';
+          const text = await minutesApi.read(authedFetch, meetingId);
+          setMinutes(text);
+          setShowing(true);
+          // No confirmation sentence: the dialog opening IS the confirmation,
+          // and a message under a dialog is a message nobody reads.
+          return null;
         })}
       >
-        {busy === 'file' ? 'Preparing…' : 'Download minutes'}
+        {busy === 'file' ? 'Opening…' : 'View minutes'}
       </Button>
 
       {isHost && (
@@ -584,6 +605,33 @@ function MinutesActions({ meetingId, isHost }: { meetingId: string; isHost: bool
           not a button and should not queue with them. */}
       {said && (
         <span className={`w-100 fs-12 ${failed ? 'text-danger' : 'text-muted'}`}>{said}</span>
+      )}
+
+      {showing && minutes !== null && (
+        <Modal
+          title="Minutes of the meeting"
+          subtitle="Written from what was said. Check anything you are going to rely on."
+          size="lg"
+          onClose={() => setShowing(false)}
+          footer={(
+            <>
+              <Button onClick={() => setShowing(false)}>Close</Button>
+              {/* Kept, and only here. Somebody filing minutes for a school or
+                  a board still needs the file; everybody else needed to read
+                  them, which is now the thing the button on the card does. */}
+              <Button variant="primary"
+                      onClick={() => void minutesApi.download(authedFetch, meetingId)}>
+                Save a copy
+              </Button>
+            </>
+          )}
+        >
+          {/* Plain text, and rendered as plain text — see minutesApi.read for
+              why it is not the HTML version. pre-wrap keeps the document's own
+              line breaks without a monospace font making it look like output
+              from a program rather than a record of a meeting. */}
+          <div className="cx-mom">{minutes}</div>
+        </Modal>
       )}
     </>
   );

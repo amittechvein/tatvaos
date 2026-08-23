@@ -561,6 +561,18 @@ const SKIN = `
   margin:0;font-size:12.5px;line-height:1.65;color:var(--cxs-ink-2);max-width:78ch;
 }
 
+/* ── The minutes, read on screen ──────────────────────────────────────── */
+/* Plain text with its own line breaks kept. NOT monospace: this is a record
+   of a meeting, and a fixed-width font would make it look like output from a
+   program rather than something a person is meant to read. */
+/* Scoped under .cxs like everything else here, which works because Modal
+   renders inline rather than through a portal — checked, not assumed. */
+.cxs .cx-mom{
+  white-space:pre-wrap;overflow-wrap:anywhere;
+  font-size:13.5px;line-height:1.7;color:var(--cxs-ink);
+  margin:0;max-width:80ch;
+}
+
 /* ── Everything else that shows up on these three pages ───────────────── */
 .cxs .alert{border-radius:12px;padding:12px 16px;font-size:13.5px;border:1px solid}
 .cxs .alert-danger{background:#fff1f2;border-color:#fecdd3;color:#a01133}
