@@ -3,6 +3,13 @@
 --  Amit's ruling, 22 August 2026.
 -- ============================================================================
 --
+--  THE FILENAME IS A LIE. Written 23 August, named 20260822, and it ALTERs a
+--  column that 20260907-connect-retention.sql creates — so it sorted before
+--  the thing it depends on and would have failed on any fresh database.
+--  Renamed to 20260911 as a workaround. See the header of
+--  20260911-connect-captions.sql for the full account and the real fix.
+-- ============================================================================
+--
 --  WHY, IN ONE SUM.
 --
 --  Connect records video at H264_720P_30, which measured at 23.5 MB a minute

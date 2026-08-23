@@ -3,6 +3,33 @@
 --  Amit's ruling, 22 August 2026.
 -- ============================================================================
 --
+--  THE FILENAME IS A LIE, AND HERE IS WHY.
+--
+--  This was written on 23 August 2026 and was named 20260822. It sorted
+--  BEFORE 20260901-connect.sql, which is the file that creates
+--  connect.meetings — the table this one's foreign keys point at. On the
+--  production database it applied cleanly, because those tables already
+--  existed. ON A FRESH DATABASE IT WOULD HAVE FAILED: a new customer, a
+--  rebuild, or the staging box.
+--
+--  The cause is that Connect's migrations are numbered 20260901 through
+--  20260910 as a SEQUENCE, not as dates — they were written in August. The
+--  date prefix was adopted so that ordering equals chronology and nobody has
+--  to ask for the next number. A future-dated file breaks both halves of
+--  that at once, and it breaks them silently: everything works until somebody
+--  builds from nothing.
+--
+--  Found by Space on 23 August, from reading the directory listing rather
+--  than from anything failing. Renamed to 20260911 so it sorts after the
+--  tables it depends on. That is a WORKAROUND: this filename now carries the
+--  same false date as the ones it is working around, and the next person to
+--  use a real date will land in the same trap.
+--
+--  THE ACTUAL FIX is Connect's: rename 20260901..20260910 to the dates of
+--  their first commits, then this file goes back to 20260823 and the rule
+--  means what it says again. Cheap today, awkward once more files pile on.
+-- ============================================================================
+--
 --  WHY THIS TABLE EXISTS: 97% OF THE BILL WAS THE PART NOBODY WANTED.
 --
 --  Measured on a real 31-minute meeting: transcription ₹16.6, minutes ₹0.40.
