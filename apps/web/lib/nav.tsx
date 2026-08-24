@@ -260,6 +260,7 @@ export function connectNav(): NavSection[] {
     {
       heading: 'Connect',
       items: [
+        { href: '/connect/dashboard', label: 'Dashboard', icon: <Icon d={PATHS.dashboard} colour="#0fbcf9" /> },
         { href: '/connect/new', label: 'New meeting', icon: <Icon d={PATHS.compose} colour="#03b562" /> },
         { href: '/connect', label: 'Meetings', icon: <Icon d={PATHS.connect} colour="#003cf0" /> },
         // What happened, as opposed to what is about to. It is the same list
