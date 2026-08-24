@@ -219,8 +219,26 @@ non_smtpd_milters    = inet:opendkim:8891
 #  Comments must sit on their own line. This applies to every Postfix map file
 #  too, including the pgsql lookups in sql/.
 #
-# 25 MB - the same limit Gmail enforces
-message_size_limit = 26214400
+# 35 MB ON THE WIRE, so that 25 MB OF ATTACHMENTS actually fits.
+#
+#  This was 26214400 with the comment "the same limit Gmail enforces", and
+#  that read the wrong number off Gmail. Gmail's 25 MB is the limit on the
+#  FILES YOU ATTACH. What travels is MIME, and attachments are base64 on the
+#  wire: four bytes out for every three in, plus a CRLF every 76 characters -
+#  about 1.37x. Gmail accepts roughly 35 MB of message precisely so that 25 MB
+#  of attachments arrives.
+#
+#  With both numbers set to 26214400 the composer accepted a 22.2 MB file,
+#  the API's own gate accepted it, and Postfix then refused the ~30 MB message
+#  it became - "5.3.4 Message size exceeds fixed limit", after the message had
+#  been written. Same arithmetic applies INBOUND: we were also bouncing mail
+#  from Gmail users whose attachments were over ~18 MB.
+#
+#  25 MB x 1.37 = 34.25 MB, so 35 MB is the smallest honest value here.
+#  The app's own 25 MB limit on attachments is unchanged and stays the number
+#  shown to people; it lives in MailEndpoints.MaxMessageBytes and the
+#  composer's MAX_TOTAL, both of which point back at this line.
+message_size_limit = 36700160
 # 0 = unlimited here; per-mailbox quotas are enforced by Dovecot
 mailbox_size_limit = 0
 

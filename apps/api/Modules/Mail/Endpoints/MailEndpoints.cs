@@ -1858,7 +1858,28 @@ public static class MailEndpoints
     /// gating here means an over-size message is refused with a clear reason
     /// instead of accepted and then bounced by Postfix minutes later.
     /// </summary>
+    /// <summary>25 MB of attachments, which is the number people are shown.</summary>
     private const long MaxMessageBytes = 26_214_400;
+
+    /// <summary>
+    /// What Postfix will accept, and it measures a DIFFERENT THING.
+    ///
+    /// message_size_limit in local/postfix/main.cf counts the encoded message.
+    /// Attachments travel as base64 — four bytes out for every three in, plus
+    /// a CRLF every 76 characters, about 1.37x. Both numbers were 26_214_400,
+    /// so a 22.2 MB file passed this gate and Postfix refused the ~30 MB
+    /// message it became, with "5.3.4 Message size exceeds fixed limit", after
+    /// the person had written their message.
+    ///
+    /// KEEP THIS EQUAL TO message_size_limit. The check below exists so the
+    /// two can never silently disagree again: if somebody lowers the Postfix
+    /// value without touching this one, sends start failing at the relay
+    /// instead of here, which is the version nobody can debug from the UI.
+    /// </summary>
+    private const long WireLimitBytes = 36_700_160;
+
+    /// <summary>Headers, MIME boundaries and encoding slack. Generous on purpose.</summary>
+    private const long WireOverheadBytes = 131_072;
 
     private static async Task<IResult> SendAsync(
         HttpRequest request, AppDbContext db, TenantContext tenant, IConfiguration config,
@@ -1899,6 +1920,19 @@ public static class MailEndpoints
             return Results.BadRequest(new
             {
                 error = "This message is over the 25 MB limit. Remove an attachment and try again.",
+            });
+
+        // The SAME measurement Postfix makes, so a message this endpoint
+        // accepts is one the relay will also accept. Base64 rounds up to the
+        // next 3 bytes, expands 4-for-3, then adds a CRLF every 76 characters.
+        long wire = bodyText.Length + bodyHtml.Length + WireOverheadBytes;
+        foreach (var f in files) wire += (f.Length + 2) / 3 * 4 * 78 / 76;
+
+        if (wire > WireLimitBytes)
+            return Results.BadRequest(new
+            {
+                error = "This message is too large to send once the attachments are encoded. "
+                      + "Remove an attachment, or send the largest one as a link instead.",
             });
 
         // ---- Hand it to the sender ---------------------------------------
