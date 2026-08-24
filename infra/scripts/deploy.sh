@@ -396,6 +396,32 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+step "Restarting postfix (its config renders at container start)"
+
+# The Caddy paragraph above, but for mail — and it cost more before anyone
+# closed it. Postfix's main.cf is RENDERED BY THE ENTRYPOINT from a mounted
+# template when the container STARTS. `up -d` does not recreate a container
+# whose definition is unchanged, and editing a mounted file changes no
+# definition — so a config change in git reaches the running Postfix only
+# when the container happens to restart for some other reason.
+#
+# Three incidents before this line existed: the outbound-TLS fix sat correct
+# in git for FOUR DAYS while real mail went out unencrypted; then on 24 August
+# the message-size fix was "deployed" twice — once by git pull, once by this
+# very script — and postconf read the old value both times.
+#
+# A restart costs a few seconds of deferral. SMTP is store-and-forward;
+# sending servers retry. Unconditional, because "only when postfix files
+# changed" is a condition somebody has to maintain, and the failure mode of
+# getting it wrong is silent — which is the exact shape being fixed.
+if $COMPOSE restart postfix 2>&1 | sed 's/^/   /'; then
+    ok "postfix restarted — the mounted config is re-rendered and live"
+    note "verify: docker exec tatvaos-postfix-1 postconf -h message_size_limit"
+else
+    bad "postfix restart failed — the running config may be STALE; restart it by hand"
+fi
+
+# ---------------------------------------------------------------------------
 step "Health"
 settled=0
 for i in $(seq 1 30); do
