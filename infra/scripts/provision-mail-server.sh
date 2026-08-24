@@ -181,8 +181,18 @@ smtpd_tls_cert_file = /etc/ssl/certs/ssl-cert-snakeoil.pem
 smtpd_tls_key_file = /etc/ssl/private/ssl-cert-snakeoil.key
 smtpd_tls_loglevel = 1
 
-# 25 MB, the same limit Gmail enforces
-message_size_limit = 26214400
+# 35 MB ON THE WIRE, so 25 MB of attachments actually fits after base64.
+#
+# THIS NUMBER MUST MATCH local/postfix/main.cf, which carries the full
+# explanation. Short version: attachments expand ~1.37x in transit, and both
+# limits being 25 MB meant a 22 MB file passed every app gate and was then
+# bounced by our own Postfix — and inbound Gmail mail over ~18 MB bounced too.
+#
+# This file was the THIRD copy of the number and was missed when the other
+# two were fixed on 23 August 2026 — a freshly provisioned server would have
+# come up with the old bug baked in. If you change one copy, grep for the
+# other: there is a matching constant in MailEndpoints.WireLimitBytes.
+message_size_limit = 36700160
 
 biff = no
 append_dot_mydomain = no
