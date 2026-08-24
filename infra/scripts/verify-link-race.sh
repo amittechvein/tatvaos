@@ -166,7 +166,7 @@ ok "one request, one download consumed — the endpoint under test is the real o
 # ---- 3. Race it -------------------------------------------------------------
 head2 "racing $ROUNDS rounds, two simultaneous requests each"
 
-WON=0; LOST=0; BROKEN=0
+WON=0; LOST=0; BROKEN=0; LIMITED=0
 
 for ((i = 1; i <= ROUNDS; i++)); do
     # Exactly one download remaining, every round.
@@ -194,6 +194,26 @@ for ((i = 1; i <= ROUNDS; i++)); do
     [[ "$CODE_A" == "200" ]] && SUCCESSES=$((SUCCESSES + 1))
     [[ "$CODE_B" == "200" ]] && SUCCESSES=$((SUCCESSES + 1))
 
+    # RATE-LIMITED IS NOT BROKEN, AND THE FIRST 100-ROUND RUN SAID IT WAS.
+    #
+    # 51 rounds came back 429/429 with count 0 and this script printed "broke
+    # the cap" and "a person would have lost a download to nothing" — about
+    # rounds where NOTHING was consumed and nobody lost anything. What had
+    # actually happened was the rate limiter on the anonymous link endpoint
+    # doing its job against 200 requests from one IP in a few seconds — a
+    # DEFENCE working, reported as the failure this script hunts.
+    #
+    # A rate-limited round is a round that never reached the database. It is
+    # not evidence for the cap and not evidence against it; it is counted
+    # separately, waited out, and the verdict is drawn only from rounds that
+    # actually raced.
+    if [[ "$CODE_A" == "429" && "$CODE_B" == "429" && "$COUNT" -eq 0 ]]; then
+        LIMITED=$((LIMITED + 1))
+        printf '  \033[33mskip\033[0m  round %-3s 429/429 — rate limiter, round never reached the database\n' "$i"
+        sleep 3
+        continue
+    fi
+
     # BOTH conditions, and the count is the one that matters: a request can be
     # refused after the count was already taken, which would still be an
     # over-count and would still be a bug.
@@ -206,11 +226,11 @@ for ((i = 1; i <= ROUNDS; i++)); do
         if [[ "$SUCCESSES" -gt 1 ]]; then
             info "BOTH requests got the file. The cap is not being enforced."
         elif [[ "$SUCCESSES" -eq 0 ]]; then
-            info "NEITHER got the file — a person would have lost a download to nothing."
+            info "NEITHER got the file, and the count says $COUNT — if it is 1 or more,"
+            info "somebody paid a download and received nothing for it."
         fi
         [[ "$COUNT" -gt 1 ]] && info "count went past the cap: a customer's limit was exceeded."
     fi
-    LOST=$((LOST + 0))
 done
 
 # Leave it usable rather than exhausted, so a re-run does not need a new link.
@@ -219,14 +239,24 @@ done
 
 # ---- 3. Verdict -------------------------------------------------------------
 head2 "verdict"
+
+RACED=$((WON + BROKEN))
+[[ "$LIMITED" -gt 0 ]] && info "$LIMITED round(s) hit the rate limiter and never raced — excluded from the verdict"
+
+if [[ "$RACED" -eq 0 ]]; then
+    bad "no round reached the database at all — everything was rate-limited"
+    info "nothing was tested. Wait a few minutes, or use fewer rounds."
+    exit 1
+fi
+
 if [[ "$BROKEN" -eq 0 ]]; then
-    ok "$WON/$ROUNDS rounds: exactly one download, count stopped at the cap"
+    ok "$WON/$RACED raced rounds: exactly one download, count stopped at the cap"
     info "the atomic UPDATE holds under concurrency — measured, not assumed"
     info "EVIDENCE, NOT PROOF: a race that appears once in fifty would survive"
-    info "$ROUNDS rounds. Re-run with a higher count before relying on this."
+    info "$RACED rounds. Re-run with a higher count before relying on this."
     exit 0
 fi
 
-bad "$BROKEN/$ROUNDS rounds broke the cap"
+bad "$BROKEN/$RACED raced rounds broke the cap"
 info "a customer setting a download limit is not getting the limit they set"
 exit 1
