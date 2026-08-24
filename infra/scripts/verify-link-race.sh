@@ -66,7 +66,7 @@ if ! [[ "$ROUNDS" =~ ^[0-9]+$ ]] || [[ "$ROUNDS" -lt 1 ]] || [[ "$ROUNDS" -gt 20
     exit 2
 fi
 
-# ---- 0. The token, and the hash the database stores -------------------------
+# ---- 0. The token, the hash, and THE URL THAT ACTUALLY CONSUMES -------------
 # SpaceLinkEndpoints.HashToken: lowercase hex SHA-256 of the token. Computed
 # here rather than asked for, so the operator pastes the thing they already
 # have — a URL — instead of looking anything up.
@@ -77,6 +77,20 @@ if [[ -z "$TOKEN" || "$TOKEN" == "$URL" && "$URL" != */* ]]; then
     exit 2
 fi
 HASH=$(printf '%s' "$TOKEN" | sha256sum | cut -d' ' -f1)
+
+# THE FIRST RUN OF THIS SCRIPT RACED THE WRONG DOOR, and reported 10/10
+# failures against code that was working. The URL a person copies —
+# space.tatvaos.com/l/{token} — is the LANDING PAGE, served by the web app:
+# 200, some HTML, consumes nothing. The download that actually runs the
+# atomic UPDATE is /api/space/l/{token}, behind an <a href> on that page.
+#
+# Both requests got 200 (the landing page is happy to render twice) and the
+# count stayed 0, which read as "the cap is not being enforced" when the
+# truth was "nothing was tested". The count staying ZERO was the tell — a
+# genuine race failure leaves it at 1 or 2 — and the calibration round below
+# now checks exactly that before any conclusion is allowed out of this file.
+HOST_PART="${URL%%/l/*}"
+RACE_URL="${HOST_PART}/api/space/l/${TOKEN}"
 
 head2 "locating postgres"
 PG=$(docker ps --format '{{.Names}}' | grep postgres | head -1)
@@ -122,7 +136,34 @@ if [[ "$USABLE" != "t" ]]; then
 fi
 ok "link is live — the race can actually be reached"
 
-# ---- 2. Race it -------------------------------------------------------------
+# ---- 2. CALIBRATION: does one request move the count by one? ----------------
+#
+# The guard this script was missing on its first outing. If a single plain
+# request does not take the count from 0 to 1, then whatever URL is being hit
+# does not consume — and every "result" after this point would be a statement
+# about the wrong endpoint. Refusing here is the difference between a test
+# and a rumour.
+head2 "calibration — one request must consume exactly one download"
+
+"${PSQL[@]}" -c "
+    update space.public_links
+       set download_count = 0, max_downloads = null
+     where id = '${LINK_ID}';" >/dev/null
+
+CAL_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$RACE_URL")
+CAL_COUNT=$("${PSQL[@]}" -c "
+    select download_count from space.public_links where id = '${LINK_ID}';")
+
+if [[ "$CAL_CODE" != "200" || "$CAL_COUNT" != "1" ]]; then
+    bad "calibration failed: HTTP $CAL_CODE, count went 0 -> $CAL_COUNT (expected 200 and 1)"
+    info "the URL being raced does not consume a download, so racing it would"
+    info "test nothing and report it confidently. Endpoint tried:"
+    info "$RACE_URL"
+    exit 1
+fi
+ok "one request, one download consumed — the endpoint under test is the real one"
+
+# ---- 3. Race it -------------------------------------------------------------
 head2 "racing $ROUNDS rounds, two simultaneous requests each"
 
 WON=0; LOST=0; BROKEN=0
@@ -138,9 +179,9 @@ for ((i = 1; i <= ROUNDS; i++)); do
     # the UPDATE inside Postgres, so what matters is that both requests are
     # in flight before either commits.
     A=/tmp/race-a.$$; B=/tmp/race-b.$$
-    curl -s -o /dev/null -w '%{http_code}' "$URL" > "$A" &
+    curl -s -o /dev/null -w '%{http_code}' "$RACE_URL" > "$A" &
     PID_A=$!
-    curl -s -o /dev/null -w '%{http_code}' "$URL" > "$B" &
+    curl -s -o /dev/null -w '%{http_code}' "$RACE_URL" > "$B" &
     PID_B=$!
     wait $PID_A $PID_B
 
