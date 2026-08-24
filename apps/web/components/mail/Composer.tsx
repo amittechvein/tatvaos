@@ -731,10 +731,10 @@ export function Composer({
           {/* Title bar. While minimised the whole bar restores the draft — the
               collapsed strip is the only target left, so all of it should work. */}
           <header
-            className={`flex items-center justify-between bg-rail px-4 py-2.5 text-white ${minimised ? 'cursor-pointer' : ''}`}
+            className={`flex items-center justify-between bg-rail px-4 py-3 text-white ${minimised ? 'cursor-pointer' : ''}`}
             onClick={minimised ? () => setPane('docked') : undefined}
           >
-            <span className="truncate text-sm font-medium">
+            <span className="truncate text-sm font-semibold tracking-tight">
               {replyTo ? 'Reply' : 'New message'}
               {minimised && subject.trim() ? ` — ${subject.trim()}` : ''}
             </span>
@@ -898,7 +898,11 @@ export function Composer({
             onChange={(e) => setPlainBody(e.target.value)}
             spellCheck={spell}
             placeholder="Write your message"
-            className="min-h-[220px] flex-1 resize-none border-0 bg-transparent px-4 py-3 font-mono text-sm text-ink outline-none placeholder:text-ink-faint"
+            // grow shrink-0 for the same spill bug as the rich editor below —
+            // a textarea clips rather than spills, but flex-1's zero basis
+            // still caps it at leftover space and forces a scrollbar INSIDE a
+            // scrolling region, which is the nested-scrollbar bug elsewhere.
+            className="min-h-[220px] grow shrink-0 resize-none border-0 bg-transparent px-4 py-3 font-mono text-sm text-ink outline-none placeholder:text-ink-faint"
           />
         ) : (
           <div
@@ -916,7 +920,19 @@ export function Composer({
             // No overflow of its own: the region above scrolls, and an
             // editor scrolling inside a scrolling pane is the nested
             // scrollbar we are also fixing in the reading pane.
-            className="composer-body min-h-[220px] flex-1 px-4 py-3 text-sm leading-relaxed text-ink outline-none"
+            //
+            // `grow shrink-0`, NOT `flex-1` — and the difference put lines of
+            // text on top of the attachment chips. flex-1 is flex:1 1 0%: the
+            // ZERO BASIS caps the editor's box at the space the column hands
+            // it, so once the message grew past that, the text OVERFLOWED THE
+            // BOX (contentEditable defaults to overflow visible) and painted
+            // straight across everything below — while the DOM, and every
+            // measurement of it, said the layout was perfectly stacked.
+            // Amit typed "chips really are floating on top" INTO the spill to
+            // prove it. grow with the default auto basis sizes the box to its
+            // content, so the region scrolls instead of the text escaping;
+            // shrink-0 stops the scroll container squashing it back.
+            className="composer-body min-h-[220px] grow shrink-0 px-4 py-3 text-sm leading-relaxed text-ink outline-none"
           />
         )}
 
@@ -948,9 +964,10 @@ export function Composer({
           </div>
         )}
 
-        {/* Attachment chips */}
+        {/* Attachment chips. shrink-0 so a long message cannot squash this
+            row while the region scrolls — same reason as the editor above. */}
         {files.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 px-4 pb-1 pt-2">
+          <div className="flex shrink-0 flex-wrap items-center gap-2 px-4 pb-1 pt-2">
             {files.map((f, i) => (
               <span
                 key={`${f.name}-${i}`}
@@ -978,7 +995,7 @@ export function Composer({
             sender's own storage, and one row of identical chips would say
             they were the same thing. */}
         {links.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 px-4 pb-1 pt-2">
+          <div className="flex shrink-0 flex-wrap items-center gap-2 px-4 pb-1 pt-2">
             {links.map((l) => (
               <span
                 key={l.fileId}
@@ -1132,7 +1149,7 @@ export function Composer({
             /* Sending while a file is still uploading would post the message
                without the link that was about to be added to it. */
             disabled={sending || parking || !to.trim()}
-            className="mr-1 flex items-center gap-2 rounded-full bg-brand-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="mr-1 flex items-center gap-2 rounded-full bg-brand-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {sending ? 'Sending…' : 'Send'}
             {!sending && <Icon name="send" className="h-4 w-4" />}
