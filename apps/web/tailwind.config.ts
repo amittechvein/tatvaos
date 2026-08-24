@@ -78,15 +78,20 @@ export default {
       },
 
       boxShadow: {
-        // One card shadow, barely there. The reference separates cards with a
-        // faint edge rather than depth; heavier shadows make a dense admin
-        // screen look cluttered.
-        card:   '0 1px 2px 0 rgba(40, 47, 83, 0.06)',
-        raised: '0 4px 16px -2px rgba(40, 47, 83, 0.12)',
+        // Calm-premium pass, 24 Aug 2026 (Amit's brief: "hero product, not a
+        // copy of Gmail"). Two layers instead of one: a hairline for the edge
+        // and a soft low wash for lift. Individually invisible, together a
+        // card that sits ON the canvas rather than being drawn on it. The
+        // raised shadow got deeper and softer — popovers should feel like
+        // they float, not like they have a border smeared under them.
+        card:   '0 1px 2px 0 rgba(40, 47, 83, 0.04), 0 2px 8px -2px rgba(40, 47, 83, 0.06)',
+        raised: '0 12px 32px -8px rgba(40, 47, 83, 0.18)',
         rail:   '0 0 20px 0 rgba(0, 0, 0, 0.10)',
       },
 
-      borderRadius: { card: '7px' },
+      // 12px, up from 7. The single cheapest "premium" signal there is:
+      // tight radii read as dense utility software, roomy ones as product.
+      borderRadius: { card: '12px' },
 
       fontFamily: {
         sans: ['ui-sans-serif', 'system-ui', 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', 'sans-serif'],

@@ -40,20 +40,13 @@ function pillClass(specialUse: string | null): string {
   return 'bg-brand-600 text-white';
 }
 
-// Decorative — matches the template's Labels block.
-const LABELS = [
-  { name: 'Personal', colour: 'bg-brand-500' },
-  { name: 'Work', colour: 'bg-ok' },
-  { name: 'Clients', colour: 'bg-warn' },
-  { name: 'Family', colour: 'bg-danger' },
-];
-
-// Decorative — the template's Online users block.
-const ONLINE = [
-  { name: 'Priya Nair', email: 'priya@acmesupplies.in' },
-  { name: 'Rahul Mehta', email: 'rahul@techvein.com' },
-  { name: 'Neha Kulkarni', email: 'neha@designstudio.co' },
-];
+// The template's decorative "Labels" and "Online users" blocks are GONE, and
+// removing them was the single biggest step this rail took toward premium.
+// They were fabricated data — four labels nothing could apply, three people
+// who were not online because presence does not exist — and invented content
+// in a product's hero surface reads as exactly what it is the moment a real
+// customer clicks a label and nothing happens. A calm rail shows what is
+// true: folders, settings, storage. Labels return WHEN the feature exists.
 
 export function Sidebar({
   folders,
@@ -78,7 +71,7 @@ export function Sidebar({
         <button
           type="button"
           onClick={onCompose}
-          className="rail-compose flex w-full items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-brand-700"
+          className="rail-compose flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-500"
         >
           <Icon name="plus-circle" className="h-4 w-4 shrink-0" />
           <span className={T}>Compose Mail</span>
@@ -149,36 +142,6 @@ export function Sidebar({
           </li>
         </ul>
 
-        {/* Labels (decorative) */}
-        <p className={`px-2 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wide text-rail-heading ${T}`}>
-          Labels
-        </p>
-        <ul className="space-y-0.5">
-          {LABELS.map((l) => (
-            <li key={l.name}>
-              <span className="flex items-center gap-3 rounded-lg px-3 py-1.5 text-sm text-rail-text">
-                <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${l.colour}`} />
-                <span className={`flex-1 truncate ${T}`}>{l.name}</span>
-              </span>
-            </li>
-          ))}
-        </ul>
-
-        {/* Online users (decorative) */}
-        <p className={`px-2 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wide text-rail-heading ${T}`}>
-          Online users
-        </p>
-        <ul className="space-y-1">
-          {ONLINE.map((u) => (
-            <li key={u.email} className="flex items-center gap-3 px-2 py-1">
-              <div className="relative shrink-0">
-                <Avatar address={u} size={28} />
-                <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-rail bg-ok" />
-              </div>
-              <span className={`truncate text-sm text-rail-text ${T}`}>{u.name}</span>
-            </li>
-          ))}
-        </ul>
       </div>
 
       {/* Storage */}
