@@ -603,6 +603,110 @@ const SKIN = `
 .cxs .cx-player--audio{background:var(--cxs-soft);padding:14px}
 .cxs .cx-player--audio video{height:44px;max-height:44px;background:transparent}
 
+/* ── The dashboard ────────────────────────────────────────────────────── */
+.cxs .cx-tiles{
+  display:grid;gap:14px;margin-bottom:18px;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+}
+@media (max-width:1100px){.cxs .cx-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:560px){.cxs .cx-tiles{grid-template-columns:1fr}}
+
+.cxs .cx-tile{
+  display:flex;flex-direction:column;gap:2px;
+  padding:16px 18px;border-radius:var(--cxs-radius);
+  background:var(--cxs-surface);border:1px solid var(--cxs-line);
+  box-shadow:var(--cxs-shadow);
+}
+.cxs .cx-tile-label{
+  font-size:11.5px;font-weight:640;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--cxs-ink-3);
+}
+/* Tabular figures, so a number changing from 9 to 10 does not shift the row.
+   The value is the thing being read; everything around it is a caption. */
+.cxs .cx-tile-value{
+  font-size:30px;font-weight:660;letter-spacing:-.028em;line-height:1.15;
+  color:var(--cxs-ink);font-variant-numeric:tabular-nums;margin-top:5px;
+}
+.cxs .cx-tile-note{font-size:12px;color:var(--cxs-ink-3);margin-top:3px}
+.cxs .cx-tile--live{
+  border-color:rgba(3,181,98,.34);
+  background:linear-gradient(135deg,rgba(3,181,98,.08),rgba(3,181,98,.02) 55%),
+    var(--cxs-surface);
+}
+.cxs .cx-tile--live .cx-tile-value{color:var(--cxs-brand-deep)}
+
+/* ── ONE SERIES, MEASURED COLOURS. ──────────────────────────────────────
+   #07834c on white and #17a06b on the dark surface. Both were run through
+   the palette checker rather than picked by eye: the brand green sits at
+   2.7:1 against white, under the 3:1 a chart mark needs to be seen, and the
+   obvious dark-mode brightening falls outside the readable lightness band.
+   Two measured greens beat one that looked fine on the machine it was
+   chosen on. */
+.cxs .cx-chart{
+  display:flex;align-items:flex-end;gap:4px;height:170px;padding-top:6px;
+}
+.cxs .cx-bar-slot{
+  flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;
+  height:100%;
+}
+.cxs .cx-bar-wrap{
+  flex:1 1 auto;width:100%;display:flex;align-items:flex-end;min-height:0;
+  /* A floor line rather than a grid: one reference, at the only value that
+     matters for a count. */
+  border-bottom:1px solid var(--cxs-line);
+}
+.cxs .cx-bar{
+  position:relative;width:100%;
+  /* Rounded at the data end only, anchored to the baseline. A bar rounded at
+     the bottom too floats, and a count starts at zero. */
+  border-radius:4px 4px 0 0;
+  background:#07834c;
+  transition:background .15s ease;
+  min-height:2px;
+}
+.dark .cxs .cx-bar{background:#17a06b}
+.cxs .cx-bar:hover{background:#0a9c5c}
+.dark .cxs .cx-bar:hover{background:#1fb87c}
+/* A day with nothing on it still gets a mark, or the axis reads as missing
+   data rather than as a quiet Sunday. */
+.cxs .cx-bar.is-zero{background:#c9d1de;min-height:3px}
+.dark .cxs .cx-bar.is-zero{background:#40434d}
+
+.cxs .cx-bar-tip{
+  position:absolute;bottom:calc(100% + 7px);left:50%;transform:translateX(-50%);
+  display:none;white-space:nowrap;z-index:5;
+  padding:7px 10px;border-radius:9px;
+  background:var(--cxs-ink);color:var(--cxs-surface);
+  font-size:11.5px;font-weight:600;line-height:1.3;
+  box-shadow:0 8px 20px -8px rgba(16,24,40,.5);
+}
+.cxs .cx-bar-tip small{display:block;font-weight:400;opacity:.75;margin-top:2px}
+.cxs .cx-bar-wrap:hover .cx-bar-tip{display:block}
+.cxs .cx-bar-day{
+  font-size:10.5px;color:var(--cxs-ink-3);margin-top:6px;
+  font-variant-numeric:tabular-nums;
+}
+
+.cxs .cx-doorlist{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.cxs .cx-doorlist a,.cxs .cx-doorlist span{
+  font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;
+  background:rgba(255,255,255,.55);border:1px solid #f0d08a;color:#8a5a06;
+  text-decoration:none;
+}
+.cxs .cx-doorlist a:hover{background:#fff}
+.dark .cxs .cx-doorlist a,.dark .cxs .cx-doorlist span{
+  background:rgba(240,180,60,.10);border-color:rgba(240,180,60,.4);color:#f4c15c;
+}
+
+.cxs .cx-nextlist{display:flex;flex-direction:column;gap:2px}
+.cxs .cx-next{
+  display:flex;align-items:center;gap:12px;padding:10px 0;
+  border-bottom:1px solid var(--cxs-soft);
+}
+.cxs .cx-next:last-child{border-bottom:0;padding-bottom:0}
+.cxs .cx-next>div{flex:1 1 auto;min-width:0}
+.cxs .cx-next .btn{flex:0 0 auto}
+
 /* ── Everything else that shows up on these three pages ───────────────── */
 .cxs .alert{border-radius:12px;padding:12px 16px;font-size:13.5px;border:1px solid}
 .cxs .alert-danger{background:#fff1f2;border-color:#fecdd3;color:#a01133}
