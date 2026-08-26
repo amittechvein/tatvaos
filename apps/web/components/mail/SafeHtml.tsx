@@ -203,15 +203,40 @@ export function SafeHtml({ html, allowRemoteInitially = false }: SafeHtmlProps) 
     const frame = frameRef.current;
     if (!frame) return;
 
+    let observer: ResizeObserver | null = null;
+
     const measure = () => {
       try {
         const doc = frame.contentDocument;
         if (!doc?.body) return;
-        const h = Math.max(doc.body.scrollHeight, doc.documentElement?.scrollHeight ?? 0);
+
+        // BODY ONLY. Not Math.max with documentElement.
+        //
+        // <html> fills the frame's viewport, so documentElement.scrollHeight
+        // reports THE FRAME'S CURRENT HEIGHT, not the content's. Taking the
+        // larger of the two meant the frame could grow and never shrink: it
+        // locked to whatever the first-paint estimate guessed and stayed
+        // there. Measured live on a real message — content 1607px, frame
+        // 2548px, and 941px of white space under the footer that no amount of
+        // re-measuring would ever reclaim.
+        const h = doc.body.scrollHeight;
         if (h > 0) setHeight(Math.min(h + 16, 4000));
+
+        // Images decode after load, and a banner arriving late changes the
+        // height after every measurement we have taken. Watching the body is
+        // cheap now that the frame is same-origin, and it is the difference
+        // between "right at load" and "right".
+        if (!observer && typeof ResizeObserver !== 'undefined') {
+          observer = new ResizeObserver(() => {
+            const next = doc.body.scrollHeight;
+            if (next > 0) setHeight(Math.min(next + 16, 4000));
+          });
+          observer.observe(doc.body);
+        }
       } catch {
-        // Cross-origin sandbox can deny access. Falling back to the default
-        // height is correct — never weaken the sandbox to fix layout.
+        // The estimate stands. A browser that declines the access for reasons
+        // of its own costs us a slightly wrong height, never a blank message —
+        // and never a reason to weaken the sandbox.
       }
     };
 
@@ -220,6 +245,7 @@ export function SafeHtml({ html, allowRemoteInitially = false }: SafeHtmlProps) 
     return () => {
       frame.removeEventListener('load', measure);
       clearTimeout(t);
+      observer?.disconnect();
     };
   }, [srcDoc]);
 
