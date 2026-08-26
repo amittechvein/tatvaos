@@ -617,11 +617,11 @@ export const CSS = `
 .cx-warn strong{display:block;font-size:13px;color:#f4c15c;margin-bottom:4px}
 .cx-warn span{display:block;font-size:12px;line-height:1.6;color:var(--cx-dim)}
 
-.cx-facts{
-  margin:0 0 14px;padding:0 0 0 18px;
-  font-size:12px;line-height:1.65;color:var(--cx-dim);
-}
-.cx-facts li{margin:2px 0}
+/* The same warning at panel scale rather than dialog scale — it sits beside a
+   control now instead of in front of a decision. */
+.cx-warn--tight{margin:0;padding:9px 11px}
+.cx-warn--tight strong{font-size:12px;margin-bottom:3px}
+.cx-warn--tight span{font-size:11.5px;line-height:1.55}
 
 /* Chat closed. Where the composer would have been, so the answer to "why is
    there no box" is in the place the box was. */
