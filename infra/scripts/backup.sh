@@ -194,8 +194,14 @@ step "Off-box copy — object storage"
 # ---------------------------------------------------------------------------
 S3_CONF="${DEST}/.backup-env"
 if [ -f "$S3_CONF" ]; then
+    # set -a EXPORTS everything the file sets. Without it the passphrase was
+    # a plain shell variable, invisible to openssl (a child process), which
+    # died on "env:" lookup and broke the whole tar|encrypt|upload pipe with
+    # a SIGPIPE that pointed at tar — the first upload failed exactly so.
+    set -a
     # shellcheck disable=SC1090
     . "$S3_CONF"
+    set +a
 fi
 
 if [ -n "${BACKUP_S3_REMOTE:-}" ] && [ -n "${BACKUP_ENC_PASSPHRASE:-}" ]; then

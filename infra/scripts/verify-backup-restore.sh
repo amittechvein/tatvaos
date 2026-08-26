@@ -38,8 +38,10 @@ S3_CONF="${DEST}/.backup-env"
 
 head2 "configuration"
 if [ ! -f "$S3_CONF" ]; then bad "no ${S3_CONF} — nothing to verify"; exit 1; fi
+set -a
 # shellcheck disable=SC1090
 . "$S3_CONF"
+set +a
 [ -n "${BACKUP_S3_REMOTE:-}" ] || { bad "BACKUP_S3_REMOTE unset"; exit 1; }
 [ -n "${BACKUP_ENC_PASSPHRASE:-}" ] || { bad "BACKUP_ENC_PASSPHRASE unset"; exit 1; }
 ok "config present"
