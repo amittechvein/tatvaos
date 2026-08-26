@@ -559,6 +559,34 @@ public class AuditLog
 //  MAIL — the first product on Core.
 // ============================================================================
 
+/// <summary>
+/// A colour category, made by the person whose mailbox it belongs to.
+///
+/// NOT a classification we perform. The ruling was user-created categories
+/// applied by the filter rules that already run at delivery, so that "from
+/// @school.edu, mark it Work" is a sentence somebody wrote and can disagree
+/// with — rather than a guess the product made about their mail.
+/// </summary>
+public class MailCategory
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid MailboxId { get; set; }
+
+    [MaxLength(60)] public string Name { get; set; } = "";
+
+    /// <summary>
+    /// A token name from the product's palette — purple, blue, green, orange,
+    /// yellow, red, pink, cyan, grey — never a hex value. A literal colour
+    /// stored here is one no theme can reach, and dark mode would show a
+    /// swatch mixed for a white page. The database CHECK enforces the set.
+    /// </summary>
+    [MaxLength(10)] public string Colour { get; set; } = "grey";
+
+    public int Position { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
 public class Mailbox
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -687,6 +715,14 @@ public class Message
     /// </summary>
     [MaxLength(500)] public string? Snippet { get; set; }
     public bool HasAttachments { get; set; }
+
+    /// <summary>
+    /// The colour category this message wears, or null for none.
+    ///
+    /// Nullable and ON DELETE SET NULL in the schema: removing a category must
+    /// lose the label and never the mail.
+    /// </summary>
+    public Guid? CategoryId { get; set; }
 
     /// <summary>
     /// The plain-text body, extracted once at ingest so search has something to

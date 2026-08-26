@@ -30,7 +30,16 @@ public static class MailFilters
 
     public sealed record Condition(string Field, string Op, string Value);
 
-    public sealed record Actions(Guid? MoveToFolderId, bool MarkRead, bool Flag)
+    /// <param name="CategoryId">
+    /// The colour category to apply, or null. APPENDED WITH A DEFAULT on
+    /// purpose: `actions` is jsonb, so every rule written before categories
+    /// existed deserialises with this null and behaves exactly as it did.
+    /// Adding a category action needed no migration and no change to the
+    /// engine — which is the payoff for the ruling that people write the
+    /// rules rather than the product guessing.
+    /// </param>
+    public sealed record Actions(
+        Guid? MoveToFolderId, bool MarkRead, bool Flag, Guid? CategoryId = null)
     {
         /// <summary>A rule that does nothing is a rule someone will file a bug about.</summary>
         public bool IsEmpty => MoveToFolderId is null && !MarkRead && !Flag;
