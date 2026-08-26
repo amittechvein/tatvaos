@@ -52,6 +52,16 @@ const PATHS = {
   draft: 'M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z',
   junk: 'M10.3 3.9 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01',
   trash: 'M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6',
+  // Mail's own two. NEW entries rather than edits to `compose` and `draft`,
+  // which Connect, Space and Family also draw - changing those strings would
+  // silently restyle three other products.
+  //
+  // A page with a folded corner, because Drafts was rendering the SAME pencil
+  // as Compose: two nav items, one glyph, told apart only by colour.
+  mailDraft: 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5zM14 3v5h5M9 13h6M9 17h4',
+  // A funnel. Filters was borrowing `junk` - the hazard triangle - so the rail
+  // showed two identical red warnings, one of which was a preferences screen.
+  filter: 'M3 5h18l-7 8v6l-4 2v-8L3 5z',
   compose: 'M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z',
   // Connect's rail. A clock turned back for meetings that have happened, and
   // a page with lines on it for the minutes — both drawn in the same single
@@ -202,12 +212,22 @@ export function mailNav(): NavSection[] {
     {
       heading: 'Mail',
       items: [
-        { href: '/mail/inbox?compose=1', label: 'Compose', icon: <Icon d={PATHS.compose} colour="#03b562" /> },
-        { href: '/mail/inbox', label: 'Inbox', icon: <Icon d={PATHS.inbox} colour="#0fbcf9" /> },
-        { href: '/mail/drafts', label: 'Drafts', icon: <Icon d={PATHS.draft} colour="#ffa909" /> },
-        { href: '/mail/sent', label: 'Sent', icon: <Icon d={PATHS.sent} colour="#7367f0" /> },
-        { href: '/mail/junk', label: 'Junk', icon: <Icon d={PATHS.junk} colour="#fd4963" /> },
-        { href: '/mail/trash', label: 'Trash', icon: <Icon d={PATHS.trash} colour="#98a2b8" /> },
+        // NO `colour` ON ANY OF THESE, deliberately. The Icon falls back to
+        // stroke="currentColor", so each one takes the colour of the nav item
+        // it sits in - muted at rest, white when active.
+        //
+        // They used to carry six hard-coded hex values: green, cyan, orange,
+        // violet, red, grey. Six colours across six items means colour tells
+        // you nothing except that the row exists, while the one thing worth
+        // signalling - which folder you are IN - had to compete with all of
+        // it. It also put six literals in a file whose rule is tokens, not
+        // hex, so a theme change moved everything except the navigation.
+        { href: '/mail/inbox?compose=1', label: 'Compose', icon: <Icon d={PATHS.compose} /> },
+        { href: '/mail/inbox', label: 'Inbox', icon: <Icon d={PATHS.inbox} /> },
+        { href: '/mail/drafts', label: 'Drafts', icon: <Icon d={PATHS.mailDraft} /> },
+        { href: '/mail/sent', label: 'Sent', icon: <Icon d={PATHS.sent} /> },
+        { href: '/mail/junk', label: 'Junk', icon: <Icon d={PATHS.junk} /> },
+        { href: '/mail/trash', label: 'Trash', icon: <Icon d={PATHS.trash} /> },
       ],
     },
     {
@@ -219,8 +239,8 @@ export function mailNav(): NavSection[] {
         // looking for "Settings" wants their signature and their filters, the
         // way Gmail's gear behaves. The personal hub is reachable from the
         // avatar menu and the app launcher instead.
-        { href: '/mail/settings', label: 'Settings', icon: <Icon d={PATHS.gear} colour="#00cfe8" /> },
-        { href: '/mail/filters', label: 'Filters and blocking', icon: <Icon d={PATHS.junk} colour="#fd4963" /> },
+        { href: '/mail/settings', label: 'Settings', icon: <Icon d={PATHS.gear} /> },
+        { href: '/mail/filters', label: 'Filters and blocking', icon: <Icon d={PATHS.filter} /> },
       ],
     },
   ];
