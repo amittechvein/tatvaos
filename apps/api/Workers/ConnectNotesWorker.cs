@@ -43,6 +43,7 @@ namespace TatvaOS.Api.Workers;
 /// </summary>
 public sealed class ConnectNotesWorker(
     IServiceScopeFactory scopes,
+    TatvaOS.Api.Shared.Ai.IAiGateway ai,
     ConnectRecordingOptions options,
     ILogger<ConnectNotesWorker> log) : BackgroundService
 {
@@ -75,7 +76,7 @@ public sealed class ConnectNotesWorker(
             "Connect notes worker running every {Seconds}s (transcription {Transcription}, notes {Notes})",
             Tick.TotalSeconds,
             options.TranscriptionConfigured ? "configured" : "NOT configured",
-            options.NotesModelConfigured ? "by model" : "digest only");
+            ai.IsConfigured ? "by model" : "digest only");
 
         using var timer = new PeriodicTimer(Tick);
         do

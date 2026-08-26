@@ -1,6 +1,4 @@
 using System.Globalization;
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -51,42 +49,51 @@ namespace TatvaOS.Api.Modules.Connect;
 ///  meeting and presenting it as the whole is the worst available outcome.
 /// ─────────────────────────────────────────────────────────────────────────
 /// </summary>
+/// <remarks>
+/// ── ROUTED THROUGH THE AI GATEWAY, 24 August 2026. ───────────────────────
+///
+/// This class used to carry its own HttpClient, its own key
+/// (Connect:Recording:NotesKey), its own URL, model name, timeout and
+/// temperature — a second, parallel copy of everything IAiGateway already
+/// owns. That bought nothing and cost three times:
+///
+///   · THE KEY LIVED IN THREE PLACES on the box, so rotating it meant
+///     remembering three names or breaking one feature silently.
+///   · TOKEN COUNTS WERE INVISIBLE. The gateway logs tokens in/out on every
+///     call; this path logged nothing, so "minutes cost about ₹1" stayed
+///     arithmetic instead of a bill that can be read.
+///   · THE TEMPERATURE BUG LIVED HERE AND NOT THERE. The gateway never sent
+///     temperature and worked; this path sent 0.2 and silently degraded every
+///     meeting's notes to a digest for two days. Two implementations of one
+///     call is two homes for the same class of bug.
+///
+/// The legacy Connect:Recording:Notes* settings are still read into options
+/// but no longer used, so existing .env files break nothing. When a hospital
+/// wants Azure India while a school stays on OpenAI, that is the GATEWAY's
+/// lookup to grow — not another per-module HTTP client.
+/// </remarks>
 public sealed class ConnectNotesComposer(
-    HttpClient http,
+    TatvaOS.Api.Shared.Ai.IAiGateway ai,
     ConnectRecordingOptions options,
     ILogger<ConnectNotesComposer> log)
 {
-    /// <summary>Roughly four characters to a token. Deliberately conservative:
-    /// running out of context produces a 400 the user cannot act on.</summary>
-    private const int MaxTranscriptChars = 48_000;
+    /// <summary>Whether a model will write the notes, for callers that used to
+    /// read options.NotesModelConfigured. One answer, owned by the gateway.</summary>
+    public bool ModelConfigured => ai.IsConfigured;
 
     /// <summary>
-    /// Pulls only error.code and error.param out of a provider's error body.
-    ///
-    /// Never the message, and never anything else. OpenAI-shaped errors look
-    /// like {"error":{"message":…,"code":"unsupported_value","param":"temperature"}}
-    /// — the message can quote what we sent, the other two cannot. Returns
-    /// nulls for any body that is not that shape, because a provider being
-    /// unhelpful is not a reason to fail.
+    /// DERIVED FROM THE GATEWAY'S CAP, minus room for the title and attendee
+    /// list that share the same input. It was an independent 48_000 while this
+    /// class owned its own HTTP call; the moment the gateway (cap 24_000)
+    /// carried the request, the larger number stopped being a limit and became
+    /// a lie — Fit() would "keep" 48k of transcript and the gateway would cut
+    /// half of it silently, WITHOUT Fit()'s careful keep-the-opening-and-the-
+    /// close shape. Deriving one cap from the other ends the drift
+    /// structurally; the warning in AskModelAsync is the tripwire if this is
+    /// ever made independent again.
     /// </summary>
-    private static (string? Code, string? Param) ErrorHint(string payload)
-    {
-        try
-        {
-            var root = JsonDocument.Parse(payload).RootElement;
-            if (root.ValueKind != JsonValueKind.Object
-                || !root.TryGetProperty("error", out var err)
-                || err.ValueKind != JsonValueKind.Object)
-                return (null, null);
-
-            return (Field(err, "code"), Field(err, "param"));
-        }
-        catch (JsonException) { return (null, null); }
-
-        static string? Field(JsonElement e, string name) =>
-            e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
-                ? v.GetString() : null;
-    }
+    private const int MaxTranscriptChars =
+        TatvaOS.Api.Shared.Ai.OpenAiGateway.MaxInputCharacters - 1_000;
 
     public async Task<Notes> ComposeAsync(
         string meetingTitle,
@@ -107,7 +114,7 @@ public sealed class ConnectNotesComposer(
         // never asked about a meeting there is no transcript for.
         if (segments.Count == 0) return AttendanceOnly(meetingTitle, attendance);
 
-        if (options.NotesModelConfigured)
+        if (ai.IsConfigured)
         {
             var written = await AskModelAsync(meetingTitle, segments, speakers, attendance, ct);
             if (written is not null) return written;
@@ -339,84 +346,47 @@ public sealed class ConnectNotesComposer(
         // fixed temperature can have one via Connect:Recording:NotesTemperature
         // — which is the same shape as every other provider difference in this
         // module: a setting, not a rebuild.
-        var body = new Dictionary<string, object>
+        // ── ONE CALL, THROUGH THE GATEWAY. ────────────────────────────────
+        //
+        // Everything that used to be here — the HttpClient, the bearer
+        // header, the timeout, the temperature that one model refused, the
+        // status-code translation, the careful never-log-the-body rule — is
+        // the gateway's single copy now. What this method keeps is what only
+        // it knows: the prompt, and how to read the JSON that comes back.
+        //
+        // The instruction and the transcript travel as SEPARATE arguments on
+        // purpose: the transcript is a customer's meeting, and anything in it
+        // that reads like an instruction to the model is a person being
+        // quoted, not an order to obey. The gateway's contract makes that
+        // distinction structural.
+        var result = await ai.CompleteAsync(system, user, ct);
+
+        if (result.Error is not null)
         {
-            ["model"] = options.NotesModel,
-            ["messages"] = new object[]
-            {
-                new { role = "system", content = system },
-                new { role = "user", content = user },
-            },
-        };
-
-        if (options.NotesTemperature is double temperature)
-            body["temperature"] = temperature;
-
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(TimeSpan.FromMinutes(options.NotesTimeoutMinutes));
-
-        try
-        {
-            using var request = new HttpRequestMessage(HttpMethod.Post, options.NotesUrl)
-            {
-                Content = JsonContent.Create(body),
-            };
-            if (!string.IsNullOrWhiteSpace(options.NotesKey))
-                request.Headers.Authorization =
-                    new AuthenticationHeaderValue("Bearer", options.NotesKey);
-
-            var response = await http.SendAsync(request, timeout.Token);
-            if (!response.IsSuccessStatusCode)
-            {
-                // ── ENOUGH TO ACT ON, NOT ENOUGH TO LEAK ──────────────────
-                //
-                // This used to log the status and nothing else. On 22 August a
-                // 400 meant the notes silently became a mechanical digest for
-                // every meeting, and finding out why took reproducing the call
-                // by hand against the live provider. "Returned 400" is a fact;
-                // it is not a diagnosis.
-                //
-                // The BODY still must not be logged: a provider's error can
-                // echo the text we sent, and that text is a meeting. But
-                // 'code' and 'param' are short machine tokens the provider
-                // chose — here 'unsupported_value' and 'temperature' — and
-                // between them they name the fault exactly. That pair would
-                // have replaced an hour with a glance.
-                var (code, param) = ErrorHint(
-                    await response.Content.ReadAsStringAsync(timeout.Token));
-
-                log.LogWarning(
-                    "Notes model {Model} returned {Status}{Code}{Param} — falling back to the digest",
-                    options.NotesModel, (int)response.StatusCode,
-                    code is null ? "" : $" [{code}]",
-                    param is null ? "" : $" on '{param}'");
-                return null;
-            }
-
-            var payload = await response.Content.ReadAsStringAsync(timeout.Token);
-            var content = ChatContent(payload);
-            if (string.IsNullOrWhiteSpace(content)) return null;
-
-            var parsed = ReadNotesJson(content);
-            if (parsed is null) return null;
-
-            var (summary, points, decisions, actions) = parsed.Value;
-            if (string.IsNullOrWhiteSpace(summary)) return null;
-
-            return new Notes("model", Host(options.NotesUrl), options.NotesModel,
-                summary, points, decisions, actions, speakers, attendance);
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            log.LogWarning("Notes model did not answer within {Minutes} minutes",
-                options.NotesTimeoutMinutes);
+            // Already a sentence a person can act on — the gateway translated
+            // the status before we saw it. Logged with the model name so the
+            // digest-fallback trail stays greppable next to the old logs.
+            log.LogWarning("Notes model {Model}: {Error} — falling back to the digest",
+                ai.Model, result.Error);
             return null;
         }
-        catch (Exception ex) when (ex is HttpRequestException or JsonException)
-        {
-            log.LogWarning(ex, "Notes model could not be reached");
-            return null;
-        }
+
+        if (result.Truncated)
+            // Fit() should have kept us inside the gateway's cap; if it did
+            // not, the summary silently covers part of a meeting. Loud, not
+            // fatal — the JSON may still be honest about what it read.
+            log.LogWarning(
+                "Notes input was truncated BY THE GATEWAY despite Fit() — "
+                + "MaxTranscriptChars and the gateway cap have drifted apart.");
+
+        var parsed = ReadNotesJson(result.Text);
+        if (parsed is null) return null;
+
+        var (summary, points, decisions, actions) = parsed.Value;
+        if (string.IsNullOrWhiteSpace(summary)) return null;
+
+        return new Notes("model", "ai-gateway", ai.Model,
+            summary, points, decisions, actions, speakers, attendance);
     }
 
     /// <summary>
@@ -437,35 +407,9 @@ public sealed class ConnectNotesComposer(
         return (head + "\n\n[... middle of the meeting omitted ...]\n\n" + tail, true);
     }
 
-    /// <summary>
-    /// The content out of an OpenAI-shaped chat completion.
-    ///
-    /// This walks three levels into JSON from a service nobody here controls —
-    /// it may be OpenAI, it may be a llama.cpp server somebody pointed at this
-    /// box, it may be a proxy in between. JsonElement.TryGetProperty THROWS
-    /// when the thing it is called on is not an object, so every level is
-    /// proved to be one before the next is touched. The catch below only
-    /// handles JsonException; an InvalidOperationException from a `choices`
-    /// array full of strings would escape it and kill the notes job for every
-    /// meeting behind it in the queue.
-    /// </summary>
-    private static string? ChatContent(string payload)
-    {
-        try
-        {
-            var root = JsonDocument.Parse(payload).RootElement;
-            if (!ConnectWire.TryArray(root, out var choices, "choices")) return null;
-
-            foreach (var choice in choices.EnumerateArray())
-            {
-                if (ConnectWire.TryObject(choice, out var message, "message")
-                    && ConnectWire.Text(message, "content") is { } content)
-                    return content;
-            }
-        }
-        catch (JsonException) { }
-        return null;
-    }
+    // ChatContent() lived here until 24 Aug 2026 — walking the provider's
+    // choices/message/content JSON is the gateway's job now, and a second
+    // parser of the same wire shape is a second place for it to be wrong.
 
     /// <summary>
     /// Models wrap JSON in prose and in ``` fences however firmly they are
@@ -515,8 +459,4 @@ public sealed class ConnectNotesComposer(
         return list;
     }
 
-    /// <summary>The host only — the provider is recorded for the operator, and
-    /// a full URL could carry a key in its query string.</summary>
-    private static string? Host(string url) =>
-        Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : null;
 }

@@ -577,7 +577,8 @@ public static class ConnectRecordingEndpoints
     // ==================================================================
     private static async Task<IResult> NotesAsync(
         Guid id, AppDbContext db, TenantContext tenant,
-        ConnectRecordingOptions options, CancellationToken ct)
+        ConnectRecordingOptions options, TatvaOS.Api.Shared.Ai.IAiGateway ai,
+        CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
         if (!await SeenMeetingAsync(db, id, uid, ct)) return NotFound();
@@ -596,7 +597,10 @@ public static class ConnectRecordingEndpoints
             // different sentence for each of these.
             recordingEnabled = options.Enabled,
             transcriptionConfigured = options.TranscriptionConfigured,
-            notesModelConfigured = options.NotesModelConfigured,
+            // The gateway's answer, not the legacy per-module setting: since
+            // 24 Aug the notes model IS the gateway, and a screen reading the
+            // old flag would say "digest only" while the model wrote away.
+            notesModelConfigured = ai.IsConfigured,
 
             transcript = transcript is null ? null : new
             {

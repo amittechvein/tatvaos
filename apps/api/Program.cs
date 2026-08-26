@@ -128,7 +128,10 @@ builder.Services.AddSingleton(
 // configured — which is nothing at all by default, so neither is ever called.
 builder.Services.AddHttpClient<TatvaOS.Api.Modules.Connect.LiveKitEgressClient>();
 builder.Services.AddHttpClient<TatvaOS.Api.Modules.Connect.ConnectTranscriber>();
-builder.Services.AddHttpClient<TatvaOS.Api.Modules.Connect.ConnectNotesComposer>();
+// A plain singleton since 24 Aug 2026: the composer no longer owns an
+// HttpClient — its one network call goes through IAiGateway, which is
+// where the key, the timeout and the token accounting live.
+builder.Services.AddSingleton<TatvaOS.Api.Modules.Connect.ConnectNotesComposer>();
 
 // The signed download ticket. Singleton because it derives one HMAC key from
 // configuration and holds no request state.
