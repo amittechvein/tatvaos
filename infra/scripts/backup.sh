@@ -48,6 +48,21 @@ warn() { printf '   %s[warn]%s %s\n' "$Y" "$X" "$1"; }
 note() { printf '   %s%s%s\n' "$D" "$1" "$X"; }
 
 DEST="${BACKUP_DIR:-/srv/backups/tatvaos}"
+
+# The config file loads FIRST, before any BACKUP_* default is read — it used
+# to load just before the upload step, which meant a BACKUP_KEEP_DAYS put in
+# it was silently ignored by the retention logic that had already run its
+# default. One file, loaded once, before anything reads a knob.
+S3_CONF="${DEST}/.backup-env"
+if [ -f "$S3_CONF" ]; then
+    # set -a EXPORTS everything the file sets — openssl and rclone are child
+    # processes and an unexported passphrase broke the first upload.
+    set -a
+    # shellcheck disable=SC1090
+    . "$S3_CONF"
+    set +a
+fi
+
 KEEP_DAYS="${BACKUP_KEEP_DAYS:-14}"
 # rsync/scp target for off-box copies, e.g. user@host:/backups/tatvaos.
 # Empty means local only — which is a single point of failure, loudly.
@@ -192,17 +207,7 @@ step "Off-box copy — object storage"
 #      BACKUP_ENC_PASSPHRASE='...'                 # also on paper, offline
 #      BACKUP_S3_KEEP_DAYS=30                      # optional
 # ---------------------------------------------------------------------------
-S3_CONF="${DEST}/.backup-env"
-if [ -f "$S3_CONF" ]; then
-    # set -a EXPORTS everything the file sets. Without it the passphrase was
-    # a plain shell variable, invisible to openssl (a child process), which
-    # died on "env:" lookup and broke the whole tar|encrypt|upload pipe with
-    # a SIGPIPE that pointed at tar — the first upload failed exactly so.
-    set -a
-    # shellcheck disable=SC1090
-    . "$S3_CONF"
-    set +a
-fi
+# (.backup-env is loaded at the top of the script, before any knob is read.)
 
 if [ -n "${BACKUP_S3_REMOTE:-}" ] && [ -n "${BACKUP_ENC_PASSPHRASE:-}" ]; then
     if ! command -v rclone >/dev/null 2>&1; then
