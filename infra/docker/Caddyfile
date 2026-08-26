@@ -6,7 +6,7 @@
 # serves staging and production.
 
 # ============================================================================
-#  EVERY DOOR SENDS EVERY PRODUCT HOME — the product_doors snippet.
+#  EVERY DOOR SENDS EVERY PRODUCT HOME — conf.d/core/product-doors.caddy.
 #
 #  The app's product switcher uses RELATIVE links (/connect/new, /mail/inbox),
 #  and every front door proxies every path to the same web container. So a
@@ -31,43 +31,12 @@
 #  which exist only where their domain variables are set — a snippet that is
 #  defined but never imported costs staging nothing.
 # ============================================================================
-(product_doors) {
-    @to_mail {
-        path /mail /mail/*
-        not host {$MAIL_DOMAIN}
-    }
-    redir @to_mail https://{$MAIL_DOMAIN}{uri}
-
-    @to_connect {
-        path /connect /connect/*
-        not host {$CONNECT_DOMAIN}
-    }
-    redir @to_connect https://{$CONNECT_DOMAIN}{uri}
-
-    @to_space {
-        path /space /space/*
-        not host {$SPACE_DOMAIN}
-    }
-    redir @to_space https://{$SPACE_DOMAIN}{uri}
-
-    @to_family {
-        path /family /family/*
-        not host {$FAMILY_DOMAIN}
-    }
-    redir @to_family https://{$FAMILY_DOMAIN}{uri}
-
-    @to_calendar {
-        path /calendar /calendar/*
-        not host {$CALENDAR_DOMAIN}
-    }
-    redir @to_calendar https://{$CALENDAR_DOMAIN}{uri}
-
-    @to_account {
-        path /account /account/*
-        not host {$ACCOUNT_DOMAIN}
-    }
-    redir @to_account https://{$ACCOUNT_DOMAIN}{uri}
-}
+#  THE SHARED CONTENT LIVES IN conf.d/core/product-doors.caddy — a plain
+#  file imported BY PATH, not a snippet. A snippet defined here is invisible
+#  to a file that is itself imported (main -> core fragment -> snippet is a
+#  nested import Caddy refuses), and the first validate said exactly that.
+#  The core/ glob at line 16 pulls it into the SITE_DOMAIN block for free;
+#  every other fragment imports the same path explicitly.
 
 {$SITE_DOMAIN} {
     encode zstd gzip
