@@ -481,12 +481,17 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
 
       <div className="flex min-h-0 flex-1 gap-3">
       {/* ---- List ---- */}
+      {/* The list is NO LONGER A CARD. Pass two of the calm-premium brief:
+          the enclosing white panel + ruled rows was the Gmail silhouette, so
+          the panel is gone and each MESSAGE is the card, floating directly on
+          the canvas. The folder name gets title typography — this column is a
+          place, not a widget. */}
       <section
-        className={`min-w-0 flex-col overflow-hidden rounded-card border border-line bg-surface lg:w-[420px] lg:shrink-0 ${
+        className={`min-w-0 flex-col overflow-hidden lg:w-[420px] lg:shrink-0 ${
           open ? (wide ? 'hidden' : 'hidden lg:flex') : 'flex flex-1'
         }`}
       >
-        <header className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3">
+        <header className="flex flex-wrap items-center gap-2 px-4 pb-1 pt-2">
           <input
             type="checkbox"
             checked={allSelected}
@@ -494,14 +499,16 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
             aria-label="Select all"
             className="hidden h-4 w-4 cursor-pointer accent-brand-600 sm:block"
           />
-          <h6 className="flex-1 truncate text-sm font-semibold text-ink">{folder?.name ?? 'Mail'}</h6>
+          <h1 className="min-w-0 flex-1 truncate text-xl font-bold tracking-tight text-ink">
+            {folder?.name ?? 'Mail'}
+          </h1>
 
-          <div className="flex items-center gap-1.5 rounded-lg bg-canvas px-3 py-1.5">
+          <div className="flex items-center gap-1.5 rounded-full bg-surface px-3.5 py-2 shadow-card">
             <Icon name="search" className="h-4 w-4 shrink-0 text-ink-faint" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search Email"
+              placeholder="Search mail"
               className="w-28 border-0 bg-transparent p-0 text-sm text-ink outline-none placeholder:text-ink-faint sm:w-36"
             />
           </div>
@@ -509,14 +516,14 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
             type="button"
             onClick={() => folder && void loadMessages(folder.id, skip)}
             title="Refresh"
-            className="flex h-9 w-9 items-center justify-center rounded-lg border border-line text-ink-muted transition hover:bg-canvas hover:text-ink"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-ink-muted transition hover:bg-surface hover:text-ink hover:shadow-card"
           >
             <Icon name="refresh" className="h-4.5 w-4.5" />
           </button>
         </header>
 
         {/* Sub-bar: bulk actions or paging */}
-        <div className="flex items-center gap-1 border-b border-line px-4 py-1.5 text-xs text-ink-muted">
+        <div className="flex items-center gap-1 px-4 py-1 text-xs text-ink-muted">
           {selectedIds.size > 0 ? (
             <>
               <button
@@ -625,9 +632,12 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
             />
           </div>
         ) : (
-          <div className="hidden h-full w-full flex-col items-center justify-center rounded-card border border-line bg-surface text-ink-faint lg:flex">
-            <Icon name="envelope" className="mb-3 h-12 w-12" />
-            <p className="text-sm">Select a message to read</p>
+          <div className="hidden h-full w-full flex-col items-center justify-center rounded-card border border-dashed border-line bg-surface/40 lg:flex">
+            <span className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-brand-50 text-brand-500 dark:bg-brand-600/15">
+              <Icon name="envelope" className="h-7 w-7" />
+            </span>
+            <p className="text-sm font-medium text-ink">Nothing open</p>
+            <p className="mt-1 text-xs text-ink-muted">Choose a message from the list to read it here.</p>
           </div>
         )}
       </section>

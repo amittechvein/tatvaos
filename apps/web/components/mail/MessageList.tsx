@@ -58,26 +58,35 @@ export function MessageList({
   // ==========================================================================
   const selecting = selectedIds.size > 0;
 
+  // PASS TWO, after Amit's verdict on pass one: "still look same as gmail."
+  // He was right, and the reason was structural: a continuous ruled table IS
+  // the Gmail signature, whatever the shadows do. So the table is gone. Each
+  // message is a CARD floating on the canvas — read mail sits translucent
+  // and calm, unread lifts with a real shadow, the open one carries the
+  // brand ring. Same data, same density within a card, unmistakably not a
+  // spreadsheet of email.
   return (
-    <ul className="scroll-thin h-full list-none overflow-y-auto pl-0">
+    <ul className="scroll-thin h-full list-none space-y-2 overflow-y-auto p-3 pl-3">
       {messages.map((m) => {
         const checked = selectedIds.has(m.id);
         const active = m.id === openId;
         return (
-          <li key={m.id} className="border-b border-line/60 last:border-0">
+          <li key={m.id}>
             <div
-              className={`group relative flex items-center gap-3 px-4 py-3.5 transition ${
+              className={`group relative flex items-center gap-3 rounded-xl px-3.5 py-3 transition ${
                 active
-                  ? 'bg-brand-50 dark:bg-brand-600/15'
+                  ? 'bg-surface shadow-card ring-1 ring-brand-500/60'
                   : checked
-                    ? 'bg-canvas'
-                    : 'hover:bg-canvas/60'
+                    ? 'bg-brand-50 dark:bg-brand-600/15'
+                    : m.isRead
+                      ? 'bg-surface/50 hover:bg-surface hover:shadow-card'
+                      : 'bg-surface shadow-card hover:shadow-raised'
               }`}
             >
-              {/* The active accent bar. */}
+              {/* The active accent — a pill, inset so the card's radius stays clean. */}
               {active && (
                 <span aria-hidden="true"
-                  className="absolute inset-y-0 left-0 w-[3px] rounded-r bg-brand-500" />
+                  className="absolute bottom-2.5 left-0 top-2.5 w-[3px] rounded-full bg-brand-500" />
               )}
 
               <input
