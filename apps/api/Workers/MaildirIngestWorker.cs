@@ -405,6 +405,20 @@ public sealed class MaildirIngestWorker(
             await autoSave.RecordAsync(db, tenant, box.UserId, ingested, "sender", ct);
         }
 
+        // ── KNOWN AND ACCEPTED: THE SAME REPLY CAN BE HANDED OVER TWICE. ──
+        //
+        // One acceptance from Gmail was observed to produce two "applied"
+        // lines on 27 Aug 2026 — the reply landed in two mailboxes (both
+        // attendee addresses were on the invitation), each sweep of each
+        // maildir found the calendar part, and the sink ran once per copy.
+        //
+        // Harmless TODAY because the sink is idempotent: setting the same
+        // PARTSTAT twice is a no-op. It stops being harmless THE MOMENT the
+        // sink notifies, counts, or audits per call — whoever adds any of
+        // those must dedupe here first (the VCALENDAR's UID+SEQUENCE+attendee
+        // is the natural key), or one click becomes two notifications.
+        // Mail's observation, recorded where the next person will trip on it.
+        //
         // ── Hand collected calendar replies to Calendar — AFTER the commit,
         // exactly like the address book above and for the same reason: a
         // reply Calendar cannot understand must not roll back delivered
