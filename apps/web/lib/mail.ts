@@ -309,7 +309,11 @@ export interface SpaceParkRefusal {
   ok: false;
   reason:
     | 'full' | 'file_too_large' | 'no_allocation' | 'suspended'
-    | 'no_user' | 'no_folder' | 'no_access' | 'bad_request' | 'error';
+    | 'no_user' | 'no_folder' | 'no_access' | 'bad_request' | 'error'
+    // Only saving a RECEIVED attachment can return this: the same refusal
+    // download gives, repeated here so Space cannot be used to launder a file
+    // past it and hand it to the internet on a public link.
+    | 'infected';
   error: string;
   quotaBytes?: number;
   usedBytes?: number;
@@ -648,6 +652,33 @@ export const mailApi = {
         error: err.message || 'The file could not be saved to Space.',
       };
     }
+  },
+
+  /**
+   * Keep a file somebody sent you, in your own Space.
+   *
+   * THE BYTES NEVER COME THROUGH THE BROWSER. The server reads the attachment
+   * out of the stored message and writes it to Space directly, so saving a
+   * 40 MB file costs the person nothing on a mobile connection — where the
+   * obvious implementation would have cost them 80 MB to move a file between
+   * two of our own services.
+   *
+   * Refusals are data, like the compose-time park, and share its vocabulary
+   * exactly — plus `infected`, which only this path can return.
+   */
+  saveAttachmentToSpace: async (
+    f: AuthedFetch, messageId: string, attachmentId: string, mailboxId?: string,
+  ): Promise<SpaceParkResult> => {
+    const res = await f(
+      withMb(`/mail/messages/${messageId}/attachments/${attachmentId}/to-space`, mailboxId),
+      { method: 'POST' },
+    );
+
+    const body = (await res.json().catch(() => null)) as SpaceParkResult | null;
+    if (body === null || typeof body.ok !== 'boolean')
+      return { ok: false, reason: 'error', error: 'The file could not be saved to Space.' };
+
+    return body;
   },
 
   /**

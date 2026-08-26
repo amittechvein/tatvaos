@@ -436,6 +436,18 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
       .downloadAttachment(authedFetch, messageId, attachmentId, filename, mailboxId)
       .catch(() => {/* download failure shows as no file; retry is a click */});
 
+  /**
+   * Keep a received attachment in the person's own Space.
+   *
+   * Returns the outcome rather than showing it: the card that was clicked is
+   * the right place for the answer, and a page-level banner would make you
+   * work out which of four files it was about.
+   */
+  const saveAttachmentToSpace = (messageId: string, attachmentId: string) =>
+    mailApi
+      .saveAttachmentToSpace(authedFetch, messageId, attachmentId, mailboxId)
+      .then((r) => (r.ok ? { ok: true } : { ok: false, error: r.error }));
+
   // ---- Render ---------------------------------------------------------
   if (loading || !boot) {
     return <div className="flex h-full items-center justify-center text-sm text-ink-faint">Loading…</div>;
@@ -623,6 +635,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
               onMarkUnread={handleMarkUnread}
               onPrint={handlePrint}
               onDownloadAttachment={(m, a: Attachment) => downloadAttachment(m.id, a.id, a.filename)}
+              onSaveAttachmentToSpace={(m, a: Attachment) => saveAttachmentToSpace(m.id, a.id)}
               threadMessages={thread ?? undefined}
               threadTotal={threadTotal}
               onOpenMessage={(id) => void handleOpen(id)}

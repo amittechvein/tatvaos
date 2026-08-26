@@ -70,6 +70,7 @@ export function MessageView({
   onMarkUnread,
   onPrint,
   onDownloadAttachment,
+  onSaveAttachmentToSpace,
   onBlockSender,
   threadMessages,
   onOpenMessage,
@@ -90,6 +91,14 @@ export function MessageView({
   onMarkUnread: (m: Message) => void;
   onPrint: (m: Message) => void;
   onDownloadAttachment?: (m: Message, a: Attachment) => void;
+  /**
+   * Save a received attachment into the person's own Space. Resolves with
+   * whether it worked and, when it did not, a sentence fit to show them.
+   * Absent means the action is not offered at all — better than a button
+   * that fails.
+   */
+  onSaveAttachmentToSpace?: (m: Message, a: Attachment)
+    => Promise<{ ok: boolean; error?: string }>;
   /**
    * Block this sender. Future mail from the address is filed to Junk at
    * ingest — never refused at SMTP, which would confirm to a spammer that the
@@ -227,6 +236,27 @@ export function MessageView({
     </div>
   );
 
+  // Per attachment, because two files save independently and a single
+  // "saving" flag would grey out a card nobody touched.
+  const [saving, setSaving] = useState<Record<string, true>>({});
+  const [saved, setSaved] = useState<Record<string, true>>({});
+  const [saveError, setSaveError] = useState<Record<string, string>>({});
+
+  async function saveToSpace(a: Attachment) {
+    if (!onSaveAttachmentToSpace || saving[a.id] || saved[a.id]) return;
+    setSaving((p) => ({ ...p, [a.id]: true }));
+    setSaveError((p) => { const n = { ...p }; delete n[a.id]; return n; });
+    try {
+      const r = await onSaveAttachmentToSpace(message, a);
+      if (r.ok) setSaved((p) => ({ ...p, [a.id]: true }));
+      else setSaveError((p) => ({ ...p, [a.id]: r.error ?? 'It could not be saved.' }));
+    } catch {
+      setSaveError((p) => ({ ...p, [a.id]: 'It could not be saved. Try again.' }));
+    } finally {
+      setSaving((p) => { const n = { ...p }; delete n[a.id]; return n; });
+    }
+  }
+
   const attachments = message.attachments && message.attachments.length > 0 ? (
     <div className="mt-6 border-t border-line pt-4">
       <div className="mb-3 flex items-center gap-1.5 text-sm font-medium text-ink">
@@ -234,23 +264,61 @@ export function MessageView({
         {message.attachments.length} attachment
         {message.attachments.length === 1 ? '' : 's'}
       </div>
+      {/* A CARD, NOT A CHIP. The chip was one big button, so the only thing an
+          attachment could do was download — and "Save to Space" had nowhere to
+          live. Two actions cannot nest inside one button, so the card is a
+          container and the actions are its own controls. */}
       <div className="flex flex-wrap gap-3">
         {message.attachments.map((a) => (
-          <button
+          <div
             key={a.id}
-            type="button"
-            onClick={() => onDownloadAttachment?.(message, a)}
-            title={`Download ${a.filename}`}
-            className="flex w-40 items-center gap-2 rounded-xl border border-line p-2.5 text-left transition hover:bg-canvas"
+            className="w-60 rounded-xl border border-line p-3 transition hover:border-brand-400"
           >
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-600/20">
-              <Icon name="attach" className="h-5 w-5" />
-            </span>
-            <span className="min-w-0">
-              <span className="block truncate text-xs font-medium text-ink">{a.filename}</span>
-              <span className="block text-[11px] text-ink-muted">{formatBytes(a.sizeBytes)}</span>
-            </span>
-          </button>
+            <div className="flex items-start gap-2.5">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-600/20">
+                <Icon name="attach" className="h-5 w-5" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-xs font-medium text-ink" title={a.filename}>
+                  {a.filename}
+                </span>
+                <span className="block text-[11px] text-ink-muted">{formatBytes(a.sizeBytes)}</span>
+              </span>
+            </div>
+
+            <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line pt-2">
+              <button
+                type="button"
+                onClick={() => onDownloadAttachment?.(message, a)}
+                className="text-[11px] font-medium text-brand-600 hover:underline"
+              >
+                Download
+              </button>
+
+              {/* Offered only when the page can actually do it. A button that
+                  is always there and sometimes works is worse than one that
+                  appears when it will. */}
+              {onSaveAttachmentToSpace && !saved[a.id] && (
+                <button
+                  type="button"
+                  onClick={() => void saveToSpace(a)}
+                  disabled={!!saving[a.id]}
+                  className="text-[11px] font-medium text-brand-600 hover:underline disabled:opacity-60 disabled:no-underline"
+                >
+                  {saving[a.id] ? 'Saving…' : 'Save to Space'}
+                </button>
+              )}
+
+              {saved[a.id] && (
+                // Naming the folder, because "Saved" leaves somebody hunting.
+                <span className="text-[11px] text-ok">Saved to Email attachments</span>
+              )}
+            </div>
+
+            {saveError[a.id] && (
+              <p className="mt-1.5 text-[11px] leading-snug text-danger">{saveError[a.id]}</p>
+            )}
+          </div>
         ))}
       </div>
     </div>
