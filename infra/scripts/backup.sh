@@ -160,7 +160,79 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-step "Off-box copy"
+step "Off-box copy — object storage"
+#
+#  THE WARNING BELOW FIRED EVERY NIGHT AND NOBODY HEARD IT. "This backup
+#  exists only on this machine" was printed into a log that lives on the same
+#  machine — the failure it warns about would have destroyed the warning too.
+#  As of 24 Aug 2026 (Amit's ruling) the nightly set also goes to an
+#  S3-compatible bucket in Mumbai.
+#
+#  ENCRYPTED BEFORE IT LEAVES, ALWAYS. env.txt inside this set is every secret
+#  the platform has; a bucket is one leaked credential away from public, and
+#  an unencrypted backup in it would be the single worst object to leak.
+#  openssl AES-256 with a passphrase that lives in TWO places: the config file
+#  below (so cron can encrypt), and ON PAPER with Amit (so losing this machine
+#  does not mean holding backups nobody can open). The passphrase is typed in,
+#  never generated-and-printed — every secret that has ever appeared on a
+#  screen in this project has ended up in a chat transcript.
+#
+#  Credentials live in ${DEST}/.backup-env (0600), DELIBERATELY NOT in
+#  infra/docker/.env: the app's env file is itself inside every backup, and
+#  bucket credentials stored inside the thing the bucket holds is a loop that
+#  hands both to whoever gets either.
+#
+#  Expected in ${DEST}/.backup-env:
+#      BACKUP_S3_REMOTE='linode:tatvaos-backups'   # rclone remote:bucket
+#      BACKUP_ENC_PASSPHRASE='...'                 # also on paper, offline
+#      BACKUP_S3_KEEP_DAYS=30                      # optional
+# ---------------------------------------------------------------------------
+S3_CONF="${DEST}/.backup-env"
+if [ -f "$S3_CONF" ]; then
+    # shellcheck disable=SC1090
+    . "$S3_CONF"
+fi
+
+if [ -n "${BACKUP_S3_REMOTE:-}" ] && [ -n "${BACKUP_ENC_PASSPHRASE:-}" ]; then
+    if ! command -v rclone >/dev/null 2>&1; then
+        bad "rclone is not installed — the off-box copy did NOT happen"
+        failed=1
+    else
+        OBJECT="${BACKUP_S3_REMOTE}/${STAMP}.tar.gz.enc"
+        # Streamed: tar -> encrypt -> upload, nothing large touches /tmp.
+        # -pbkdf2 -iter 200000 because openssl's default key derivation is
+        # weak enough to be a finding on its own.
+        if tar czf - -C "$DEST" "$STAMP" \
+             | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
+                 -pass env:BACKUP_ENC_PASSPHRASE 2>/dev/null \
+             | rclone rcat "$OBJECT" 2>&1 | sed 's/^/   /'; then
+
+            # PROVE the object exists and is a plausible size. rcat returning
+            # zero after writing zero bytes is exactly the false-pass shape
+            # this project keeps finding; the listing is the receipt.
+            SIZE=$(rclone size --json "$OBJECT" 2>/dev/null | grep -o '"bytes":[0-9]*' | cut -d: -f2)
+            if [ -n "$SIZE" ] && [ "$SIZE" -gt 1024 ]; then
+                ok "uploaded ${STAMP}.tar.gz.enc ($((SIZE / 1024 / 1024)) MB) — encrypted, off this machine"
+            else
+                bad "upload reported success but the object is missing or empty"
+                failed=1
+            fi
+
+            # Bucket retention, independent of local retention.
+            rclone delete --min-age "${BACKUP_S3_KEEP_DAYS:-30}d" "$BACKUP_S3_REMOTE" 2>/dev/null
+            note "bucket keeps ${BACKUP_S3_KEEP_DAYS:-30} days"
+        else
+            bad "encrypt/upload FAILED — this backup exists only on this machine"
+            failed=1
+        fi
+    fi
+else
+    warn "object-storage copy not configured (${S3_CONF} missing or incomplete)"
+    note "This backup exists only on this machine and will not survive losing it."
+fi
+
+# ---------------------------------------------------------------------------
+step "Off-box copy — rsync (legacy hook)"
 if [ -n "$REMOTE" ]; then
     if rsync -a --delete-after "${OUT}/" "${REMOTE}/${STAMP}/" 2>&1 | sed 's/^/   /'; then
         ok "copied to ${REMOTE}/${STAMP}"
@@ -168,9 +240,7 @@ if [ -n "$REMOTE" ]; then
         bad "off-box copy FAILED — this backup exists only on this machine"; failed=1
     fi
 else
-    warn "BACKUP_REMOTE is not set — this backup exists only on this machine."
-    note "A backup on the machine it is protecting does not survive losing it."
-    note "Set BACKUP_REMOTE=user@host:/path (ssh key, no passphrase) to fix."
+    note "BACKUP_REMOTE not set — fine, the object-storage copy above is the off-box path."
 fi
 
 # ---------------------------------------------------------------------------
