@@ -229,6 +229,12 @@ public sealed class MaildirIngestWorker(
         // the pair would split into two conversations.
         var pendingThreads = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
 
+        // Calendar replies found in this sweep: (payload, the address that the
+        // envelope says sent it). Collected during the loop, HANDED OVER ONLY
+        // AFTER THE COMMIT — a calendar reply that cannot be understood must
+        // not affect whether the mail was delivered (the sink's own contract).
+        var calendarReplies = new List<(string Payload, string From)>();
+
         var added = 0;
         foreach (var (key, path) in files)
         {
@@ -244,6 +250,46 @@ public sealed class MaildirIngestWorker(
 
                 var (fromName, fromAddr) = MailContent.FirstFrom(mime);
                 var attachments = MailContent.AttachmentParts(mime);
+
+                // ── THE §4 JOIN: does this message carry a calendar reply? ──
+                //
+                // Registered in Program.cs since the seam was designed, called
+                // by NOTHING until 27 August 2026 — Mail found the missing
+                // caller by grepping before running a test written from
+                // intention. This is the caller.
+                //
+                // Only METHOD:REPLY and COUNTER are handed over. REQUESTs and
+                // CANCELs arriving in mail are somebody inviting US — a
+                // different feature, deliberately not smuggled in through a
+                // fix. The address handed to Calendar is Return-Path (what
+                // the envelope authenticated) over the From header (what the
+                // sender typed), because the sink's whole design rests on
+                // "the address that authenticated wins".
+                foreach (var part in mime.BodyParts.OfType<MimePart>())
+                {
+                    if (part.ContentType?.IsMimeType("text", "calendar") != true) continue;
+                    // Null for a part that declares a body and carries none —
+                    // malformed, but mail is full of malformed (PartSize below
+                    // learned the same lesson). Skip, never dereference.
+                    if (part.Content is null) continue;
+
+                    string payload;
+                    using (var ms = new MemoryStream())
+                    {
+                        part.Content.DecodeTo(ms);
+                        payload = System.Text.Encoding.UTF8.GetString(ms.ToArray());
+                    }
+
+                    var isReply = payload.Contains("METHOD:REPLY", StringComparison.OrdinalIgnoreCase)
+                               || payload.Contains("METHOD:COUNTER", StringComparison.OrdinalIgnoreCase);
+                    if (!isReply) continue;
+
+                    var envelopeFrom = mime.Headers[HeaderId.ReturnPath] is { Length: > 0 } rp
+                        ? rp.Trim('<', '>', ' ')
+                        : fromAddr;
+                    if (!string.IsNullOrWhiteSpace(envelopeFrom))
+                        calendarReplies.Add((payload, envelopeFrom));
+                }
 
                 // Where this one lands. UIDs are per folder, so the target has
                 // to be chosen before ImapUid is read — filing to Junk while
@@ -357,6 +403,37 @@ public sealed class MaildirIngestWorker(
             // back delivered mail. box.UserId is null for a shared mailbox,
             // which RecordAsync treats as "no address book to write to".
             await autoSave.RecordAsync(db, tenant, box.UserId, ingested, "sender", ct);
+        }
+
+        // ── Hand collected calendar replies to Calendar — AFTER the commit,
+        // exactly like the address book above and for the same reason: a
+        // reply Calendar cannot understand must not roll back delivered
+        // mail. FALSE IS NORMAL per the sink's contract (a stranger's
+        // fragment, an unknown UID, a stale sequence); it earns one debug
+        // line and nothing else. TRUE is the whole feature working — a Yes
+        // clicked in Gmail landing on our attendance row — and that deserves
+        // to be visible in the log.
+        if (calendarReplies.Count > 0)
+        {
+            var sink = scope.ServiceProvider
+                .GetRequiredService<TatvaOS.Api.Modules.Calendar.ICalendarImipSink>();
+            foreach (var (payload, from) in calendarReplies)
+            {
+                try
+                {
+                    if (await sink.HandleReplyAsync(payload, from, ct))
+                        log.LogInformation("Calendar reply from {From} applied", from);
+                    else
+                        log.LogDebug("Calendar reply from {From} was not for us", from);
+                }
+                catch (Exception ex)
+                {
+                    // The sink promises never to throw; this catch is for the
+                    // day that promise breaks, so one bad payload cannot stop
+                    // the mailbox after it in the sweep.
+                    log.LogWarning(ex, "Calendar reply from {From} threw in the sink", from);
+                }
+            }
         }
     }
 

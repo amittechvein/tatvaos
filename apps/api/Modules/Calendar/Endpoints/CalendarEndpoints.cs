@@ -262,7 +262,9 @@ public static class CalendarEndpoints
 
     private static async Task<IResult> CreateEventAsync(
         CreateEventRequest req, AppDbContext db, TenantContext tenant,
-        AuditWriter audit, CancellationToken ct)
+        AuditWriter audit, IConfiguration config,
+        TatvaOS.Api.Modules.Family.ContactAutoSave autoSave,
+        ILoggerFactory logFactory, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
 
@@ -350,7 +352,16 @@ public static class CalendarEndpoints
             after: new { ev.Title, ev.StartsAt, calendar = calendar.Name },
             ct: ct, productCode: "calendar");
 
-        return Results.Created($"/api/calendar/events/{ev.Id}", new { ev.Id, ev.Uid, ev.Title });
+        // ── THE §2 JOIN. The event is COMMITTED above; the mail is an
+        // announcement of it, sent after and never able to unsave it. The
+        // outcome rides the response so the host learns "saved AND announced"
+        // or "saved, and here is why nobody was told" from one answer.
+        var post = await CalendarInvitationMailer.SendAsync(
+            ev, Imip.MethodRequest, db, tenant, config,
+            logFactory.CreateLogger("CalendarInvitations"), autoSave, audit, ct);
+
+        return Results.Created($"/api/calendar/events/{ev.Id}",
+            new { ev.Id, ev.Uid, ev.Title, invitationsSent = post.Sent, invitationsNote = post.Note });
     }
 
     // ==================================================================
@@ -364,7 +375,10 @@ public static class CalendarEndpoints
         DateTimeOffset? OccurrenceStartsAt);
 
     private static async Task<IResult> UpdateEventAsync(
-        Guid id, UpdateEventRequest req, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid id, UpdateEventRequest req, AppDbContext db, TenantContext tenant,
+        AuditWriter audit, IConfiguration config,
+        TatvaOS.Api.Modules.Family.ContactAutoSave autoSave,
+        ILoggerFactory logFactory, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
 
@@ -412,16 +426,35 @@ public static class CalendarEndpoints
         // SEQUENCE is bumped only for changes an attendee needs to know about.
         // Bumping it for a typo in the description makes every client re-alert
         // everybody, which is how people learn to ignore calendar updates.
-        if (moved || req.Status == "cancelled") ev.Sequence++;
+        var notify = moved || req.Status == "cancelled";
+        if (notify) ev.Sequence++;
         ev.UpdatedAt = DateTimeOffset.UtcNow;
 
         await db.SaveChangesAsync(ct);
-        return Results.Ok(new { ev.Id, ev.Title, ev.StartsAt, ev.EndsAt, ev.Sequence });
+
+        // Attendees are told about the changes the SEQUENCE bump already
+        // deems worth telling — same judgement, one flag, no second opinion.
+        // A cancellation goes out as CANCEL; everything else is an updated
+        // REQUEST against the same UID at the higher sequence.
+        CalendarInvitationMailer.Outcome? post = null;
+        if (notify)
+            post = await CalendarInvitationMailer.SendAsync(
+                ev, req.Status == "cancelled" ? Imip.MethodCancel : Imip.MethodRequest,
+                db, tenant, config,
+                logFactory.CreateLogger("CalendarInvitations"), autoSave, audit, ct);
+
+        return Results.Ok(new
+        {
+            ev.Id, ev.Title, ev.StartsAt, ev.EndsAt, ev.Sequence,
+            invitationsSent = post?.Sent, invitationsNote = post?.Note,
+        });
     }
 
     private static async Task<IResult> DeleteEventAsync(
         Guid id, DateTimeOffset? occurrenceStartsAt, AppDbContext db, TenantContext tenant,
-        AuditWriter audit, CancellationToken ct)
+        AuditWriter audit, IConfiguration config,
+        TatvaOS.Api.Modules.Family.ContactAutoSave autoSave,
+        ILoggerFactory logFactory, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
 
@@ -490,7 +523,14 @@ public static class CalendarEndpoints
         await audit.WriteAsync("calendar.event.deleted", "calendar.event", ev.Id.ToString(),
             before: new { ev.Title, ev.StartsAt }, ct: ct, productCode: "calendar");
 
-        return Results.Ok(new { cancelled = "series" });
+        // A deletion the attendees never hear about is a meeting they still
+        // show up to. CANCEL against the same UID at the bumped sequence is
+        // how every external calendar removes it.
+        var post = await CalendarInvitationMailer.SendAsync(
+            ev, Imip.MethodCancel, db, tenant, config,
+            logFactory.CreateLogger("CalendarInvitations"), autoSave, audit, ct);
+
+        return Results.Ok(new { cancelled = "series", invitationsSent = post.Sent, invitationsNote = post.Note });
     }
 
     // ==================================================================
