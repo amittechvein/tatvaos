@@ -93,11 +93,31 @@ public static class InvitationBody
         // §5.1.4: alternatives run in INCREASING order of preference and a
         // receiver takes the last one it understands. A calendar part placed
         // before the HTML is a calendar part Gmail will pass over.
+        // EVERY part's encoding is chosen, not just the calendar one.
+        //
+        // The first version of this set quoted-printable on the invitation and
+        // left these two to MimeKit, which picked 8bit for a Devanagari body.
+        // Confirmed on a real message to Gmail: the text/plain part went out
+        // as `Content-Transfer-Encoding: 8bit` carrying raw UTF-8.
+        //
+        // 8bit is legal and it arrived - but only because every hop on that
+        // route advertised 8BITMIME. It is the same "correct if the library
+        // behaves" trade we rejected one part over, made again on the part
+        // beside it. An invitation whose summary renders and whose body is
+        // mojibake is a worse failure than either half alone.
         var alternative = new Multipart("alternative");
         if (!string.IsNullOrWhiteSpace(textBody))
-            alternative.Add(new TextPart("plain") { Text = textBody });
+            alternative.Add(new TextPart("plain")
+            {
+                Text = textBody,
+                ContentTransferEncoding = ContentEncoding.QuotedPrintable,
+            });
         if (!string.IsNullOrWhiteSpace(htmlBody))
-            alternative.Add(new TextPart("html") { Text = htmlBody });
+            alternative.Add(new TextPart("html")
+            {
+                Text = htmlBody,
+                ContentTransferEncoding = ContentEncoding.QuotedPrintable,
+            });
 
         var invitation = new TextPart("calendar");
         invitation.ContentType.Parameters["method"] = method.Trim().ToUpperInvariant();
