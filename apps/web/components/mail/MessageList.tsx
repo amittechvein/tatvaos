@@ -125,8 +125,15 @@ export function MessageList({
                 className="flex min-w-0 flex-1 items-center gap-3 text-left"
               >
                 <Avatar address={m.from} size={36} />
+                {/* The sender column was a flat w-40 - 160px reserved for a
+                    name whatever the pane was doing. In a list panel beside an
+                    open reading pane that is most of the room, so subjects
+                    truncated to "Minutes: 24-08-2026 - 24 ..." with white space
+                    sitting next to them. Narrow by default and only generous
+                    where there is genuinely space; the subject is the thing
+                    being scanned for. */}
                 <span
-                  className={`hidden w-40 shrink-0 truncate text-sm sm:block ${
+                  className={`hidden w-28 shrink-0 truncate text-sm sm:block lg:w-36 ${
                     m.isRead ? 'text-ink-muted' : 'font-semibold text-ink'
                   }`}
                 >
