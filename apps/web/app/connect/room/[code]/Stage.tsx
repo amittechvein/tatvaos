@@ -356,14 +356,17 @@ export default function Stage({ seat, meeting, prefs }: {
   //  room turns its own speech into text. It replaced paid transcription
   //  rather than joining it — see 20260910 for the sum, which is not close.
   //
-  //  `agreed` is separate from `minutesLive` ON PURPOSE, and it is the whole
-  //  ethical shape of this feature. The host decides whether the MEETING is
-  //  minuted. Each person decides whether THEIR microphone is the thing
-  //  feeding it, because Chrome's recognition sends that audio to Google and
-  //  that is a decision about their voice, not about the meeting.
+  //  ONE SWITCH, HELD BY WHOEVER RUNS THE MEETING. Amit's ruling, 23 August:
+  //  asking every participant was an interruption at the worst moment, in a
+  //  product where the host already decides whether the meeting is recorded.
+  //
+  //  What that costs is worth writing down rather than leaving implied: each
+  //  browser's microphone audio goes to Google for recognition, and nobody is
+  //  asked first. So the sentence saying so sits where the switch is, in front
+  //  of the person making the decision for everybody, and the room carries a
+  //  visible "Minutes on" indicator for everybody else. Nobody is interrupted;
+  //  nobody is uninformed.
   const [minutesLive, setMinutesLive] = useState(meeting?.minutesLive ?? false);
-  const [agreed, setAgreed] = useState(false);
-  const [askMinutes, setAskMinutes] = useState(false);
 
   // A file chosen in a Private meeting, held back until the person has been
   // told what Private does and does not cover. See the sheet near the bottom
@@ -723,12 +726,11 @@ export default function Stage({ seat, meeting, prefs }: {
           // through a whitelist rather than trusted as a string: this arrives
           // from another browser, and an unknown value here would decide
           // whether a composer opens.
-          // The host has turned minutes on or off. Everybody who can help
-          // is asked — once — rather than quietly switched on.
+          // Whoever runs the meeting has turned minutes on or off. Applied
+          // without a prompt — the indicator beside the meeting name is what
+          // tells everybody it happened.
           if ('minutesLive' in parsed) {
-            const on = (parsed as { minutesLive?: unknown }).minutesLive === true;
-            setMinutesLive(on);
-            if (on && !agreedRef.current && captionsSupported()) setAskMinutes(true);
+            setMinutesLive((parsed as { minutesLive?: unknown }).minutesLive === true);
             return;
           }
 
@@ -1025,9 +1027,8 @@ export default function Stage({ seat, meeting, prefs }: {
    */
   // ── THE ONE LINE THAT DOES THE WORK. ────────────────────────────────
   //
-  //  Four conditions, and every one of them is a promise being kept:
-  //    minutesLive  the host asked for minutes
-  //    agreed       THIS person agreed their microphone may feed them
+  //  Three conditions:
+  //    minutesLive  whoever runs the meeting asked for minutes
   //    meeting      signed in — a guest token expires every ten minutes and
   //                 the signed ticket for guest captions does not exist yet
   //    supported    Chrome or Edge; elsewhere this is silently nothing
@@ -1035,7 +1036,7 @@ export default function Stage({ seat, meeting, prefs }: {
   //  The hook does nothing when enabled is false, so there is no branch here.
   useCaptions({
     meetingId: meeting?.id ?? '',
-    enabled: minutesLive && agreed && meeting !== null && captionsSupported(),
+    enabled: minutesLive && meeting !== null && captionsSupported(),
     authedFetch,
   });
 
@@ -1050,10 +1051,6 @@ export default function Stage({ seat, meeting, prefs }: {
     if (!meeting) return;
     const previous = minutesLive;
     setMinutesLive(next);
-    // Turning it on asks THIS browser too — the host's own voice is not
-    // exempt from the question, and the sheet is where the Google sentence
-    // lives.
-    if (next && !agreed && captionsSupported()) setAskMinutes(true);
     try {
       await connectApi.update(authedFetch, meeting.id, { minutesLive: next });
       const r = roomRef.current;
@@ -1176,11 +1173,6 @@ export default function Stage({ seat, meeting, prefs }: {
   // render is exactly the intent: keep the ref pointing at the current one.
   useEffect(() => { leaveRef.current = leave; });
 
-  // The data handler below is built once when the room connects, so reading
-  // `agreed` from it directly would read whatever it was at that moment —
-  // which is always false, since agreeing happens later by definition.
-  const agreedRef = useRef(false);
-  useEffect(() => { agreedRef.current = agreed; }, [agreed]);
 
   // ---------------------------------------------------------------------
   //  How big the stage actually is.
@@ -2231,7 +2223,9 @@ export default function Stage({ seat, meeting, prefs }: {
               it. A host sees a switch; everybody else sees the state, because
               being minuted without being told is the thing to avoid. */}
           {minutesLive && !isHost && (
-            <span className="cx-minpill" role="status" aria-live="polite">
+            <span className="cx-minpill" role="status" aria-live="polite"
+                  title={'Your browser is turning what you say into text so the '
+                    + 'meeting can be minuted. Chrome sends that audio to Google.'}>
               <i className="ri-file-text-line" aria-hidden="true" />
               Minutes on
             </span>
@@ -2473,103 +2467,6 @@ export default function Stage({ seat, meeting, prefs }: {
             than the words of the API. The recommendation is stated rather
             than implied by ordering: a host who does not know the difference
             should be able to read one line and pick correctly. */}
-        {/* ── ASKED, NOT ASSUMED. ──────────────────────────────────────────
-            The host decides whether the MEETING is minuted. This asks whether
-            THIS microphone may be what feeds it, and it is a separate question
-            because the answer sends this person's voice to a company they have
-            no contract with. Every limit is on the sheet, in the order that
-            matters to somebody deciding: what happens to my voice first, what
-            the record will and will not contain second. */}
-        {/* ── THE WARNING GOES WHERE THE DECISION IS. ──────────────────────
-            A Private meeting encrypts its audio and video with a key the media
-            server does not hold. Chat and files do not have that — they travel
-            a path the server can read. Amit ruled that files stay available
-            with a label rather than being blocked, and Core's disagreement is
-            on record; both of them are right that a label in a settings panel
-            protects us rather than the customer. So it is asked at the moment
-            of attaching, holding the actual file, naming it. That is the only
-            moment at which somebody can still change their mind. */}
-        {pendingFile && (
-          <div className="cx-modal-back" role="dialog" aria-modal="true"
-               aria-label="Send this file?">
-            <div className="cx-modal">
-              <h2>Send this file?</h2>
-              <div className="cx-warn">
-                <strong>This meeting is Private. Files are not.</strong>
-                <span>
-                  The encryption covers the audio and video. A file goes over a
-                  path the meeting server can read, so do not send anything
-                  here you would not send by ordinary email.
-                </span>
-              </div>
-              <p className="cx-sub" style={{ margin: '0 0 12px', overflowWrap: 'anywhere' }}>
-                {pendingFile.name} — {prettySize(pendingFile.size)}
-              </p>
-
-              <button type="button" className="cx-choice"
-                      onClick={() => {
-                        const f = pendingFile;
-                        setPendingFile(null);
-                        void sendFile(f);
-                      }}>
-                <strong>Send it anyway</strong>
-              </button>
-
-              <button type="button" className="cx-choice"
-                      onClick={() => setPendingFile(null)}>
-                <strong>Cancel</strong>
-                <div className="cx-sub">Nothing is sent and nobody is told.</div>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {askMinutes && (
-          <div className="cx-modal-back" role="dialog" aria-modal="true"
-               aria-label="Help write the minutes">
-            <div className="cx-modal">
-              <h2>Help write the minutes?</h2>
-              <p className="cx-sub" style={{ margin: '0 0 10px' }}>
-                Your browser can turn what you say into text while the meeting
-                runs, so the minutes can say who said what.
-              </p>
-
-              <div className="cx-warn">
-                <strong>Your browser sends your microphone audio to Google.</strong>
-                <span>
-                  That is how Chrome does speech recognition. It does not remove
-                  a third party from this meeting — it changes which one, from a
-                  provider we have a contract with to one we do not.
-                </span>
-              </div>
-
-              <ul className="cx-facts">
-                <li>Only your own microphone. Nobody else in the room is heard by
-                  your browser.</li>
-                <li>Chrome and Edge only. Anyone on another browser contributes
-                  nothing, so the record is partial by construction.</li>
-                <li>Guests cannot take part yet.</li>
-                <li>Nothing is stored on your device, and you can stop at any
-                  time from this same switch.</li>
-              </ul>
-
-              <button type="button" className="cx-choice"
-                      onClick={() => { setAgreed(true); setAskMinutes(false); }}>
-                <strong>Yes, include what I say</strong>
-                <div className="cx-sub">Recommended — the minutes are much better with it.</div>
-              </button>
-
-              <button type="button" className="cx-choice"
-                      onClick={() => { setAgreed(false); setAskMinutes(false); }}>
-                <strong>No, leave me out</strong>
-                <div className="cx-sub">
-                  The meeting is still minuted from everyone who said yes.
-                </div>
-              </button>
-            </div>
-          </div>
-        )}
-
         {recordAsk && (
           <div className="cx-modal-back" role="dialog" aria-modal="true"
                aria-label="Start recording">
@@ -2672,6 +2569,28 @@ export default function Stage({ seat, meeting, prefs }: {
                 </select>
                 <div className="cx-sub" style={{ marginTop: 4 }}>
                   Applies to everyone already here, immediately.
+                </div>
+
+                {/* THE SENTENCE LIVES HERE NOW. Participants are no longer
+                    asked, so the person who decides for all of them is the
+                    one who has to see what it costs — and it is beside the
+                    switch rather than behind a link, because a disclosure
+                    nobody passes is a disclosure nobody reads. */}
+                <label className="cx-label" htmlFor="cx-minutes"
+                       style={{ marginTop: 14, display: 'block' }}>Minutes of this meeting</label>
+                <div className="cx-choice2" style={{ marginBottom: 6 }}>
+                  <input id="cx-minutes" type="checkbox" checked={minutesLive}
+                         onChange={(e) => void changeMinutes(e.target.checked)} />
+                  <span>Write minutes from what is said</span>
+                </div>
+                <div className="cx-warn cx-warn--tight">
+                  <strong>Each browser sends its microphone audio to Google.</strong>
+                  <span>
+                    That is how Chrome turns speech into text. Nobody in the
+                    meeting is asked first, and the room shows a &ldquo;Minutes
+                    on&rdquo; badge while it runs. Chrome and Edge only; guests
+                    cannot take part yet.
+                  </span>
                 </div>
 
                 <label className="cx-label" htmlFor="cx-chat-policy"
