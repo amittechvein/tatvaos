@@ -33,6 +33,11 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 
+# rclone lives in ~/bin — installed WITHOUT sudo, because the deploy user has
+# none. Cron runs with a bare PATH, so the script says where to look rather
+# than hoping the environment does.
+export PATH="$HOME/bin:$PATH"
+
 c() { [ -t 1 ] && printf '%s' "$1" || true; }
 G=$(c $'\033[32m'); R=$(c $'\033[31m'); Y=$(c $'\033[33m')
 C=$(c $'\033[36m'); D=$(c $'\033[90m'); B=$(c $'\033[1m'); X=$(c $'\033[0m')
