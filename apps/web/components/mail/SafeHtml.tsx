@@ -52,6 +52,13 @@ import DOMPurify from 'dompurify';
  *  A rule in a comment is worth less than a check that refuses, so
  *  `scripts/check-sandbox.mjs` fails the web build if any sandbox attribute
  *  in this app ever contains both.
+ *
+ *  THE TWO POPUP FLAGS ARE RATIFIED SEPARATELY and are not part of the pair
+ *  rule. `allow-popups` is what lets a link in a message open at all;
+ *  `allow-popups-to-escape-sandbox` stops the opened site inheriting these
+ *  restrictions and breaking. Neither executes a byte of the sender's HTML —
+ *  a popup is user-initiated navigation, not script. Recorded here so the
+ *  attribute reads as decided rather than drifted.
  * ─────────────────────────────────────────────────────────────────────────
  */
 
