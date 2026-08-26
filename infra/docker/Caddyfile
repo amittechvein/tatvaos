@@ -5,6 +5,70 @@
 # {$SITE_DOMAIN} comes from the environment file, so the SAME Caddyfile
 # serves staging and production.
 
+# ============================================================================
+#  EVERY DOOR SENDS EVERY PRODUCT HOME — the product_doors snippet.
+#
+#  The app's product switcher uses RELATIVE links (/connect/new, /mail/inbox),
+#  and every front door proxies every path to the same web container. So a
+#  person on mail.tatvaos.com who clicked Connect STAYED on mail.tatvaos.com
+#  — the page rendered, the address was wrong, and every link they copied or
+#  bookmarked from then on carried the wrong host. Connect reported it as
+#  "links pointing at the wrong host", which is exactly what it was.
+#
+#  Fixing it in the WEB APP would mean the shared nav learning six hostnames
+#  and every future link author remembering the rule. Fixing it HERE means
+#  the doors themselves are the rule: whichever host a product path arrives
+#  on, it is redirected to that product's own door, exactly as /org and
+#  /admin already redirect to Core in every fragment.
+#
+#  THE `not host` GUARD IS LOAD-BEARING. Without it, mail.tatvaos.com would
+#  redirect /mail/* to itself, forever. With it, each door passes its own
+#  product through and redirects everyone else's — so ONE snippet is safe to
+#  import from EVERY site block, which is what keeps the matrix from being
+#  maintained by hand in seven files.
+#
+#  Used only from the production conf.d fragments (and the core/ fragment),
+#  which exist only where their domain variables are set — a snippet that is
+#  defined but never imported costs staging nothing.
+# ============================================================================
+(product_doors) {
+    @to_mail {
+        path /mail /mail/*
+        not host {$MAIL_DOMAIN}
+    }
+    redir @to_mail https://{$MAIL_DOMAIN}{uri}
+
+    @to_connect {
+        path /connect /connect/*
+        not host {$CONNECT_DOMAIN}
+    }
+    redir @to_connect https://{$CONNECT_DOMAIN}{uri}
+
+    @to_space {
+        path /space /space/*
+        not host {$SPACE_DOMAIN}
+    }
+    redir @to_space https://{$SPACE_DOMAIN}{uri}
+
+    @to_family {
+        path /family /family/*
+        not host {$FAMILY_DOMAIN}
+    }
+    redir @to_family https://{$FAMILY_DOMAIN}{uri}
+
+    @to_calendar {
+        path /calendar /calendar/*
+        not host {$CALENDAR_DOMAIN}
+    }
+    redir @to_calendar https://{$CALENDAR_DOMAIN}{uri}
+
+    @to_account {
+        path /account /account/*
+        not host {$ACCOUNT_DOMAIN}
+    }
+    redir @to_account https://{$ACCOUNT_DOMAIN}{uri}
+}
+
 {$SITE_DOMAIN} {
     encode zstd gzip
 

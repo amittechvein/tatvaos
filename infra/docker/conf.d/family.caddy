@@ -23,6 +23,11 @@
 {$FAMILY_DOMAIN} {
     encode zstd gzip
 
+    # Send every other product's paths to their own door — see the
+    # product_doors snippet in the main Caddyfile for why and for the
+    # self-redirect guard that makes this safe to import everywhere.
+    import product_doors
+
     handle /api/* {
         reverse_proxy api:8080
     }

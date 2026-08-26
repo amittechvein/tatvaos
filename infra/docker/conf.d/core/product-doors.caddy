@@ -1,0 +1,5 @@
+# Imported INSIDE the {$SITE_DOMAIN} block (see line 16 of the Caddyfile).
+# Core's door gets the same product redirects as every other door, from the
+# same snippet — core.tatvaos.com/connect belongs on connect.tatvaos.com just
+# as much as mail.tatvaos.com/connect does.
+import product_doors
