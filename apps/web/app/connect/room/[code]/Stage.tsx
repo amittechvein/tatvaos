@@ -561,6 +561,28 @@ export default function Stage({ seat, meeting, prefs }: {
 
   const isHost = meeting?.myRole === 'host' || meeting?.myRole === 'cohost';
 
+  /**
+   * Re-read the microphone, camera and screen share from the SDK.
+   *
+   * These three used to be written only by the person's own toggle, which
+   * made them a record of what somebody last PRESSED rather than of what is
+   * true. Everything that can change them from outside this browser — a host
+   * muting, a permission revoked, the browser's own "Stop sharing" bar, a
+   * reconnect that republishes — moved the truth and left the buttons saying
+   * the old thing. Somebody muted by their host went on talking.
+   *
+   * isMicrophoneEnabled and isCameraEnabled are the SDK's own answer, and the
+   * screen share is read from the publication rather than a flag, because a
+   * share can stop without anything in this file being told.
+   */
+  const syncLocal = useCallback((r: Room) => {
+    const me = r.localParticipant;
+    setMicOn(me.isMicrophoneEnabled);
+    setCamOn(me.isCameraEnabled);
+    const screen = me.getTrackPublication(Track.Source.ScreenShare);
+    setSharing(screen !== undefined && screen.isMuted !== true);
+  }, []);
+
   // A guest has no meeting row, so the seat carries the mode for them. Both
   // come from the same database column, so they cannot disagree.
   const isPrivate = (meeting?.mode ?? seat.mode) === 'private';
@@ -650,7 +672,9 @@ export default function Stage({ seat, meeting, prefs }: {
       // SDK re-establishes and the meeting continues. Saying "the meeting
       // ended" here makes people rejoin a call they never left.
       .on(RoomEvent.Reconnecting, () => { setConnState('reconnecting'); rerender(); })
-      .on(RoomEvent.Reconnected, () => { setConnState('live'); rerender(); })
+      // A reconnect republishes tracks, and they do not always come back in
+      // the state they left in.
+      .on(RoomEvent.Reconnected, () => { setConnState('live'); syncLocal(r); rerender(); })
       // The server tells everyone in the room, including guests. This is the
       // ONLY input to the notice on screen — see the state comment above.
       .on(RoomEvent.RecordingStatusChanged, (on: boolean) => {
@@ -668,20 +692,35 @@ export default function Stage({ seat, meeting, prefs }: {
       .on(RoomEvent.ParticipantDisconnected, () => { chime('leave'); rerender(); })
       .on(RoomEvent.TrackSubscribed, rerender)
       .on(RoomEvent.TrackUnsubscribed, rerender)
-      .on(RoomEvent.TrackMuted, rerender)
-      .on(RoomEvent.TrackUnmuted, rerender)
+      // ── YOUR OWN BUTTONS FOLLOW THE SDK, NOT THEIR LAST CLICK. ─────────
+      //
+      //  Reported 23 August: a host mutes somebody, the host's list shows
+      //  them muted, and on THEIR screen the microphone button still reads
+      //  as on. They carry on talking believing they can be heard.
+      //
+      //  The cause is that micOn/camOn/sharing were only ever written by the
+      //  person's own toggle. They were a cache of a decision, and the SDK is
+      //  the thing that actually knows — so any change made from outside this
+      //  browser (a host muting, a permission revoked, the browser's own
+      //  "Stop sharing" bar, a track dropped on reconnect) moved the truth
+      //  and left the buttons behind.
+      //
+      //  syncLocal re-reads all three from the SDK. It runs on every event
+      //  that can change them, including the ones this browser caused: a
+      //  cache that is only refreshed for OTHER people's actions is the same
+      //  bug waiting for a different trigger.
+      .on(RoomEvent.TrackMuted, () => { syncLocal(r); rerender(); })
+      .on(RoomEvent.TrackUnmuted, () => { syncLocal(r); rerender(); })
       // The host tightened (or loosened) who may share while people were
       // already in the room — the server pushes new permissions through
-      // UpdateParticipant, and this is that change arriving.
-      .on(RoomEvent.ParticipantPermissionsChanged, rerender)
-      .on(RoomEvent.LocalTrackPublished, rerender)
+      // UpdateParticipant, and this is that change arriving. It can force a
+      // track to stop, so the buttons are re-read here too.
+      .on(RoomEvent.ParticipantPermissionsChanged, () => { syncLocal(r); rerender(); })
+      .on(RoomEvent.LocalTrackPublished, () => { syncLocal(r); rerender(); })
       // A share can end WITHOUT the button: the browser's own "Stop sharing"
       // bar, or the server revoking the permission mid-share. The button must
       // follow the truth rather than its own last click.
-      .on(RoomEvent.LocalTrackUnpublished, (pub) => {
-        if (pub.source === Track.Source.ScreenShare) setSharing(false);
-        rerender();
-      })
+      .on(RoomEvent.LocalTrackUnpublished, () => { syncLocal(r); rerender(); })
       .on(RoomEvent.ActiveSpeakersChanged, rerender)
       // Feature 49. LiveKit publishes this for every participant and nothing
       // was listening. It is what turns "the call is bad" into a support
@@ -896,7 +935,7 @@ export default function Stage({ seat, meeting, prefs }: {
     // showReact is a stable useCallback (its own dependency is chime, which
     // has none), so listing it costs no re-connections — and omitting a
     // dependency the effect reads is a lie that stays true only by luck.
-  }, [seat.wsUrl, seat.token, seat.roomKey, rerender, chime, showReact]);
+  }, [seat.wsUrl, seat.token, seat.roomKey, rerender, chime, showReact, syncLocal]);
 
   // Device labels are blank until permission exists, so a menu built too early
   // is a list of empty strings.
@@ -1509,15 +1548,26 @@ export default function Stage({ seat, meeting, prefs }: {
   }, [pipOpen, pipKey]);
 
   // ---------------------------------------------------------------------
+  // Both of these ask the SDK what the state IS and flip that, rather than
+  // flipping the button's own idea of it. With a stale cache — which is what
+  // a host muting you produces — negating camOn sent the opposite command,
+  // so the first press after being muted did nothing visible and the second
+  // one appeared to work. syncLocal then writes back what actually happened.
   async function toggleCam() {
     const r = roomRef.current; if (!r) return;
-    try { await r.localParticipant.setCameraEnabled(!camOn); setCamOn(!camOn); setBlocked(null); }
-    catch (e) { noteBlocked(e, setBlocked); }
+    try {
+      await r.localParticipant.setCameraEnabled(!r.localParticipant.isCameraEnabled);
+      syncLocal(r);
+      setBlocked(null);
+    } catch (e) { noteBlocked(e, setBlocked); }
   }
   async function toggleMic() {
     const r = roomRef.current; if (!r) return;
-    try { await r.localParticipant.setMicrophoneEnabled(!micOn); setMicOn(!micOn); setBlocked(null); }
-    catch (e) { noteBlocked(e, setBlocked); }
+    try {
+      await r.localParticipant.setMicrophoneEnabled(!r.localParticipant.isMicrophoneEnabled);
+      syncLocal(r);
+      setBlocked(null);
+    } catch (e) { noteBlocked(e, setBlocked); }
   }
   function sendReact(emoji: string) {
     setPicker(false);
