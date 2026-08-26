@@ -597,10 +597,11 @@ public static class ConnectRecordingEndpoints
             // different sentence for each of these.
             recordingEnabled = options.Enabled,
             transcriptionConfigured = options.TranscriptionConfigured,
-            // The gateway's answer, not the legacy per-module setting: since
-            // 24 Aug the notes model IS the gateway, and a screen reading the
-            // old flag would say "digest only" while the model wrote away.
-            notesModelConfigured = ai.IsConfigured,
+            // The PER-TENANT answer since consent went per-organisation: a
+            // deployment key plus THIS org's allow_ai. The screen's "written
+            // by model / digest" wording follows what will actually happen
+            // for this organisation's meetings.
+            notesModelConfigured = await ai.EnabledForTenantAsync(ct),
 
             transcript = transcript is null ? null : new
             {

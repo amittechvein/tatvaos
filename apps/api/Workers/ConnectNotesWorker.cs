@@ -43,7 +43,6 @@ namespace TatvaOS.Api.Workers;
 /// </summary>
 public sealed class ConnectNotesWorker(
     IServiceScopeFactory scopes,
-    TatvaOS.Api.Shared.Ai.IAiGateway ai,
     ConnectRecordingOptions options,
     ILogger<ConnectNotesWorker> log) : BackgroundService
 {
@@ -72,11 +71,21 @@ public sealed class ConnectNotesWorker(
         try { await Task.Delay(StartupDelay, stopping); }
         catch (OperationCanceledException) { return; }
 
+        // The gateway went SCOPED when consent became per-organisation, so a
+        // singleton worker cannot hold one; a throwaway scope answers the
+        // deployment-capability question for this one log line. Whether a
+        // PARTICULAR meeting gets model notes is decided per-tenant inside
+        // the gateway at compose time — "by model" here means "a key exists",
+        // and per-org consent decides the rest, meeting by meeting.
+        bool aiCapable;
+        using (var probe = scopes.CreateScope())
+            aiCapable = probe.ServiceProvider
+                .GetRequiredService<TatvaOS.Api.Shared.Ai.IAiGateway>().IsConfigured;
         log.LogInformation(
             "Connect notes worker running every {Seconds}s (transcription {Transcription}, notes {Notes})",
             Tick.TotalSeconds,
             options.TranscriptionConfigured ? "configured" : "NOT configured",
-            ai.IsConfigured ? "by model" : "digest only");
+            aiCapable ? "by model, per-org consent" : "digest only");
 
         using var timer = new PeriodicTimer(Tick);
         do

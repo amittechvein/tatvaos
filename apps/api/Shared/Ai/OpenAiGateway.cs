@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.EntityFrameworkCore;
 
 namespace TatvaOS.Api.Shared.Ai;
 
@@ -72,16 +73,26 @@ public sealed class OpenAiGateway : IAiGateway
 
     private readonly IHttpClientFactory _http;
     private readonly ILogger<OpenAiGateway> _log;
+    private readonly TatvaOS.Api.Shared.Tenancy.TenantContext _tenant;
+    private readonly TatvaOS.Api.Shared.Data.AppDbContext _db;
     private readonly string _baseUrl;
     private readonly string? _apiKey;
+
+    /// <summary>Per-scope cache of the tenant's consent — one query per
+    /// request, not one per AI call within it.</summary>
+    private bool? _tenantAllowed;
 
     public string Model { get; }
 
     public OpenAiGateway(
-        IHttpClientFactory http, IConfiguration config, ILogger<OpenAiGateway> log)
+        IHttpClientFactory http, IConfiguration config, ILogger<OpenAiGateway> log,
+        TatvaOS.Api.Shared.Tenancy.TenantContext tenant,
+        TatvaOS.Api.Shared.Data.AppDbContext db)
     {
         _http = http;
         _log = log;
+        _tenant = tenant;
+        _db = db;
 
         _baseUrl = (config["Ai:BaseUrl"] ?? "https://api.openai.com/v1").TrimEnd('/');
         _apiKey = config["Ai:ApiKey"]?.Trim();
@@ -102,11 +113,64 @@ public sealed class OpenAiGateway : IAiGateway
 
     public bool IsConfigured => _apiKey is not null && Model.Length > 0;
 
+    /// <summary>
+    /// ── THE CONSENT CHECK, AND WHY IT LIVES HERE AND NOWHERE ELSE. ────────
+    ///
+    /// Mail found the gap: this gateway was deployment-wide, so the moment a
+    /// key existed, a hospital's mail could reach OpenAI without that
+    /// hospital having agreed. Amit ruled per-organisation, default off
+    /// (27 Aug 2026), and the check is enforced INSIDE CompleteAsync rather
+    /// than left to callers — a caller who has to remember a consent check
+    /// is a caller who will forget it, and a forgotten check here is not a
+    /// bug, it is a breach.
+    ///
+    /// FAIL-CLOSED THROUGHOUT: no tenant scope means NO, a query failure
+    /// means NO. The one thing consent enforcement must never do is default
+    /// to yes because something went wrong.
+    /// </summary>
+    public async Task<bool> EnabledForTenantAsync(CancellationToken ct)
+    {
+        if (!IsConfigured) return false;
+        if (_tenantAllowed is bool cached) return cached;
+
+        if (_tenant.TenantId == Guid.Empty)
+        {
+            // A background job that forgot EnterAnonymousScope, or a platform
+            // route with no tenant at all. Refused, loudly — this is the
+            // fail-closed branch doing its one job.
+            _log.LogWarning("AI call with no tenant scope — refused fail-closed.");
+            _tenantAllowed = false;
+            return false;
+        }
+
+        try
+        {
+            var allowed = await _db.Tenants.AsNoTracking()
+                .Where(t => t.Id == _tenant.TenantId)
+                .Select(t => t.AllowAi)
+                .FirstOrDefaultAsync(ct);
+            _tenantAllowed = allowed;
+            return allowed;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Could not read AI consent for tenant {Tenant} — refused fail-closed.",
+                _tenant.TenantId);
+            _tenantAllowed = false;
+            return false;
+        }
+    }
+
     public async Task<AiResult> CompleteAsync(
         string instruction, string input, CancellationToken ct)
     {
         if (!IsConfigured)
             return AiResult.Failed("AI features are not switched on for this server.");
+
+        if (!await EnabledForTenantAsync(ct))
+            return AiResult.Failed(
+                "AI is not enabled for this organisation. An administrator can switch it "
+                + "on once the organisation has agreed to it.");
 
         var truncated = input.Length > MaxInputCharacters;
         var body = truncated ? input[..MaxInputCharacters] : input;
@@ -164,9 +228,12 @@ public sealed class OpenAiGateway : IAiGateway
             // THE COST LINE. Counts only, never content. This is the number
             // that turns "about ₹1,700 a month, we think" into a fact, and
             // the first thing to look at if a bill surprises anybody.
+            // Tenant id in the cost line: with consent now per-organisation,
+            // "which org spent this" must be answerable from the same grep
+            // that answers "what did we spend".
             _log.LogInformation(
-                "AI ok: {Model} {TokensIn}in/{TokensOut}out in {Ms}ms{Cut}",
-                Model, inTokens, outTokens, watch.ElapsedMilliseconds,
+                "AI ok: {Model} {TokensIn}in/{TokensOut}out in {Ms}ms tenant {Tenant}{Cut}",
+                Model, inTokens, outTokens, watch.ElapsedMilliseconds, _tenant.TenantId,
                 truncated ? " (input truncated)" : "");
 
             return new AiResult(text.Trim(), truncated, null,

@@ -53,6 +53,15 @@ public class Tenant
     /// </summary>
     [MaxLength(16)] public string Origin { get; set; } = "signup";
 
+    /// <summary>
+    /// May this organisation's content be sent to the configured AI provider?
+    /// FALSE BY DEFAULT — consent is per-organisation, decided knowingly
+    /// (Amit, 27 Aug 2026, on Mail's finding that the gateway was
+    /// deployment-wide). Enforced INSIDE OpenAiGateway, fail-closed, so no
+    /// caller can forget the check. Column: 20260911-core-ai-per-org.sql.
+    /// </summary>
+    public bool AllowAi { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? SuspendedAt { get; set; }
     public DateTimeOffset? TrialEndsAt { get; set; }

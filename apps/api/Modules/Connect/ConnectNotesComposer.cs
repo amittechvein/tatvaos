@@ -77,9 +77,7 @@ public sealed class ConnectNotesComposer(
     ConnectRecordingOptions options,
     ILogger<ConnectNotesComposer> log)
 {
-    /// <summary>Whether a model will write the notes, for callers that used to
-    /// read options.NotesModelConfigured. One answer, owned by the gateway.</summary>
-    public bool ModelConfigured => ai.IsConfigured;
+
 
     /// <summary>
     /// DERIVED FROM THE GATEWAY'S CAP, minus room for the title and attendee
@@ -114,7 +112,10 @@ public sealed class ConnectNotesComposer(
         // never asked about a meeting there is no transcript for.
         if (segments.Count == 0) return AttendanceOnly(meetingTitle, attendance);
 
-        if (ai.IsConfigured)
+        // Per-organisation consent, checked here for HONEST WORDING (a clean
+        // digest, no per-meeting refusal warning) — the gateway enforces the
+        // same check again inside CompleteAsync regardless, fail-closed.
+        if (await ai.EnabledForTenantAsync(ct))
         {
             var written = await AskModelAsync(meetingTitle, segments, speakers, attendance, ct);
             if (written is not null) return written;

@@ -128,10 +128,12 @@ builder.Services.AddSingleton(
 // configured — which is nothing at all by default, so neither is ever called.
 builder.Services.AddHttpClient<TatvaOS.Api.Modules.Connect.LiveKitEgressClient>();
 builder.Services.AddHttpClient<TatvaOS.Api.Modules.Connect.ConnectTranscriber>();
-// A plain singleton since 24 Aug 2026: the composer no longer owns an
-// HttpClient — its one network call goes through IAiGateway, which is
-// where the key, the timeout and the token accounting live.
-builder.Services.AddSingleton<TatvaOS.Api.Modules.Connect.ConnectNotesComposer>();
+// Scoped since 27 Aug 2026, following the gateway it wraps: consent went
+// per-organisation, the gateway reads the tenant's flag per scope, and a
+// composer holding a scoped gateway must be scoped itself. (It lost its own
+// HttpClient on the 24th — key, timeout and token accounting all live in
+// the gateway.)
+builder.Services.AddScoped<TatvaOS.Api.Modules.Connect.ConnectNotesComposer>();
 
 // The signed download ticket. Singleton because it derives one HMAC key from
 // configuration and holds no request state.
@@ -180,17 +182,21 @@ builder.Services.AddSingleton<TatvaOS.Api.Modules.Connect.ConnectRoomKey>();
 //  settings change, and what makes extracting this into a separate
 //  tatvaos-ai-service later a second implementation plus this one line.
 //
-//  Singleton: it reads three settings at startup and holds no request state,
-//  the same shape as ConnectRoomKey above. HttpClient comes from the factory
-//  so sockets are pooled rather than exhausted.
+//  Scoped (was singleton until 27 Aug 2026): it still reads its three
+//  settings per construction, but it now also reads the CURRENT TENANT's
+//  allow_ai consent flag — which lives behind the scoped TenantContext and
+//  AppDbContext. HttpClient still comes from the factory, so sockets are
+//  pooled rather than exhausted.
 //
 //  Unset key is NOT an error. IsConfigured goes false, every feature built on
 //  it degrades to what it did before, and the API starts normally. Refusing
 //  to boot over an optional key would take mail and calendar down with it.
 // ---------------------------------------------------------------------------
 builder.Services.AddHttpClient();
-builder.Services.AddSingleton<TatvaOS.Api.Shared.Ai.IAiGateway,
-                              TatvaOS.Api.Shared.Ai.OpenAiGateway>();
+// SCOPED since 27 Aug 2026: consent is per-organisation, so the gateway
+// reads the current tenant's allow_ai flag (fail-closed) — which needs the
+// scoped TenantContext and AppDbContext. Nothing else changed.
+builder.Services.AddScoped<IAiGateway, OpenAiGateway>();
 
 // Scoped: it writes through the request's AppDbContext and reads its
 // TenantContext. A singleton holding either would serve one tenant's scope to

@@ -65,6 +65,19 @@ public interface IAiGateway
     string Model { get; }
 
     /// <summary>
+    /// May the CURRENT TENANT'S content actually be sent? IsConfigured says
+    /// the deployment has a key; this says this organisation consented
+    /// (core.tenants.allow_ai — Amit's ruling of 27 Aug 2026, default off).
+    ///
+    /// Callers use it to choose honest wording — "AI is not enabled for your
+    /// organisation" beside a digest, instead of a mysterious fallback. They
+    /// do NOT have to call it for safety: CompleteAsync enforces the same
+    /// check itself, fail-closed, precisely so a forgotten call is not a
+    /// consent leak.
+    /// </summary>
+    Task<bool> EnabledForTenantAsync(CancellationToken ct);
+
+    /// <summary>
     /// One request, one answer.
     ///
     /// `instruction` is what the model should do and how it should write —
