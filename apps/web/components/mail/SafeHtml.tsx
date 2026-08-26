@@ -18,15 +18,41 @@ import DOMPurify from 'dompurify';
  * Four independent layers, so no single failure is enough:
  *
  *   1. Sanitise with DOMPurify before the HTML goes anywhere.
- *   2. Render inside an iframe with `sandbox` and NO allow-scripts and NO
- *      allow-same-origin. Even if a script survives layer 1, it has no
- *      origin to act on and cannot reach our DOM, cookies or tokens.
+ *   2. Render inside an iframe with `sandbox` and NEVER `allow-scripts`.
+ *      Even if a script survives layer 1, the sandbox refuses to run it —
+ *      which is a stronger guarantee than the CSP below, because it does not
+ *      depend on a header being parsed correctly.
  *   3. A strict CSP inside the frame, denying scripts outright.
  *   4. Remote content blocked until the user asks for it — an XSS control
  *      and the tracking-pixel protection users expect.
  *
  * Layer 2 is the one that matters most. Sanitisers are bypassed periodically;
- * a sandboxed cross-origin frame has nothing worth stealing even when they are.
+ * a frame that cannot execute anything is unharmed when they are.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE PAIR RULE — read this before touching the sandbox attribute
+ *
+ *  `allow-scripts` and `allow-same-origin` are each survivable alone and
+ *  catastrophic together. Together, hostile markup that survives DOMPurify
+ *  runs as code WITH OUR ORIGIN: our cookies, our tokens, our storage. That
+ *  is a stored cross-site-scripting machine sitting in every inbox, fed by
+ *  anyone on the internet who knows a customer's address.
+ *
+ *  We grant `allow-same-origin` and never `allow-scripts`. Email HTML has no
+ *  legitimate need to execute anything, ever, so the flag we give up costs
+ *  the product nothing — and same-origin is what lets the parent read the
+ *  rendered height, which is the entire reason this came up.
+ *
+ *  An earlier proposal had it the other way round: `allow-scripts` with an
+ *  opaque origin and a CSP nonce. Tame on paper, and worse — it permits code
+ *  execution inside a document built from a stranger's HTML, and rests the
+ *  whole defence on a nonce and a correctly parsed header. This way nothing
+ *  runs at all.
+ *
+ *  A rule in a comment is worth less than a check that refuses, so
+ *  `scripts/check-sandbox.mjs` fails the web build if any sandbox attribute
+ *  in this app ever contains both.
+ * ─────────────────────────────────────────────────────────────────────────
  */
 
 /**
@@ -156,13 +182,16 @@ export function SafeHtml({ html, allowRemoteInitially = false }: SafeHtmlProps) 
   // content changes what there is to lay out.
   useEffect(() => { setHeight(estimateHeight(body)); }, [body]);
 
-  // A genuine measurement, attempted anyway and expected to fail.
+  // The real measurement, which works now that the frame is same-origin.
   //
-  // With no allow-same-origin the frame has an opaque origin, so
-  // contentDocument throws every time — this is not an edge case, it is the
-  // only case. Kept because it costs nothing, refines the estimate on any
-  // browser that permits it, and starts working the day the sandbox is
-  // revisited. NEVER weaken the sandbox to make it succeed.
+  // The estimate above still runs FIRST and stays as the first-paint value.
+  // Deleting it and waiting for this would bring back the flash of a wrongly
+  // sized frame — the 240px bug wearing a new hat — because the measurement
+  // cannot happen until the frame has laid out.
+  //
+  // It is still wrapped in try/catch. A browser that declines the access for
+  // reasons of its own must cost us a slightly wrong height, never a blank
+  // message.
   useEffect(() => {
     const frame = frameRef.current;
     if (!frame) return;
@@ -218,7 +247,14 @@ export function SafeHtml({ html, allowRemoteInitially = false }: SafeHtmlProps) 
          * allow-popups only exists so a clicked link can open a new tab.
          * Do not add to this list without understanding what it gives away.
          */
-        sandbox="allow-popups allow-popups-to-escape-sandbox"
+        /*
+         * THE PAIR RULE, in the two lines that enforce it. See the header.
+         * allow-same-origin WITHOUT allow-scripts: the parent can read the
+         * rendered height, and nothing in the document can run.
+         *
+         * NEVER add allow-scripts to this string. The build refuses it.
+         */
+        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         referrerPolicy="no-referrer"
         className="w-full border-0 bg-white"
         style={{ height }}
