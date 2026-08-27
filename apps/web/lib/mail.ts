@@ -655,6 +655,30 @@ export const mailApi = {
   },
 
   /**
+   * Folders somebody made for themselves.
+   *
+   * DELETING ONE MOVES ITS MAIL, IT DOES NOT DESTROY IT — the server returns
+   * `movedToInbox` so the client can say where the messages went. Built-in
+   * folders refuse both rename and delete.
+   */
+  createFolder: (f: AuthedFetch, name: string, mailboxId?: string) =>
+    f(withMb('/mail/folders', mailboxId), {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }).then((r) => json<{ id: string; name: string }>(r, 'The folder could not be created.')),
+
+  renameFolder: (f: AuthedFetch, folderId: string, name: string, mailboxId?: string) =>
+    f(withMb(`/mail/folders/${folderId}`, mailboxId), {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }).then((r) => json<{ id: string; name: string }>(r, 'The folder could not be renamed.')),
+
+  deleteFolder: (f: AuthedFetch, folderId: string, mailboxId?: string) =>
+    f(withMb(`/mail/folders/${folderId}`, mailboxId), { method: 'DELETE' })
+      .then((r) => json<{ deleted: string; movedToInbox: number }>(
+        r, 'The folder could not be deleted.')),
+
+  /**
    * Keep a file somebody sent you, in your own Space.
    *
    * THE BYTES NEVER COME THROUGH THE BROWSER. The server reads the attachment
