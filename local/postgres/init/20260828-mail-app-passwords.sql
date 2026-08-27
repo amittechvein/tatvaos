@@ -3,6 +3,12 @@
 --  Built for the first external SMTP/IMAP customer, 28 August 2026.
 -- ============================================================================
 --
+--  SUPERSEDED IN PART — see 20260912-mail-app-passwords-unique.sql. The
+--  reasoning below about LIMIT 1 enforcing one-active-per-mailbox is WRONG;
+--  it concealed violations rather than preventing them. The index created
+--  here is non-unique and is dropped by that file. last_used_at is dropped
+--  there too: nothing could ever write it.
+--
 --  A person's TatvaOS password opens their mail, their files, their meetings
 --  and their organisation's console. The moment it gets typed into a
 --  third-party mail client it is stored by software we do not control, on a

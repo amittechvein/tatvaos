@@ -1,4 +1,4 @@
-﻿namespace TatvaOS.Api.Modules.Mail;
+namespace TatvaOS.Api.Modules.Mail;
 
 /// <summary>
 /// One app password — the credential a third-party mail client is given so
