@@ -375,6 +375,23 @@ services:
       ACCOUNT_DOMAIN: ${ACCOUNT_DOMAIN:-}
       CALENDAR_DOMAIN: ${CALENDAR_DOMAIN:-}
       CONNECT_DOMAIN: ${CONNECT_DOMAIN:-}
+      PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:-}
+      # ⚠️  CRITICAL PATTERN — READ THIS IF YOU'RE ADDING A NEW DOMAIN
+      #
+      # Every domain variable must appear in TWO places:
+      #   1. HERE (the environment block you are reading)
+      #   2. In /srv/tatvaos-production/infra/docker/.env on the server
+      #
+      # Variables declared only in .env do NOT interpolate inside containers
+      # — Docker Compose does the interpolation BEFORE rendering the container
+      # environment. The half you can't see (this block) is the half you're
+      # standing on. If you're adding a domain, you're editing two files, and
+      # this is the one that's easy to miss.
+      #
+      # Verify: after editing here and .env, run:
+      #   docker compose config | grep $NEW_DOMAIN_VAR
+      # It must appear in the caddy service output. If it's empty or missing,
+      # Caddy will parse a site block with an empty address (a fatal error).
     ports:
       - "80:80"
       - "443:443"
