@@ -34,6 +34,9 @@ public static class MailEndpoints
 
         g.MapGet("/bootstrap", BootstrapAsync);
         g.MapGet("/folders", FoldersAsync);
+        g.MapPost("/folders", CreateFolderAsync);
+        g.MapPatch("/folders/{folderId:guid}", RenameFolderAsync);
+        g.MapDelete("/folders/{folderId:guid}", DeleteFolderAsync);
         g.MapGet("/folders/{folderId:guid}/messages", ListMessagesAsync);
         g.MapGet("/folders/{folderId:guid}/threads", ListThreadsAsync);
         g.MapGet("/search", SearchAsync);
@@ -666,6 +669,180 @@ public static class MailEndpoints
                 AttachmentsFolderName);
             return null;
         }
+    }
+
+    // ==================================================================
+    //  Folders somebody made for themselves
+    //
+    //  Until now a mailbox had exactly the six folders the database creates
+    //  and no way to add a seventh, which is why "Work / Personal / Receipts"
+    //  in the brief was not merely unstyled but impossible.
+    //
+    //  SPECIAL-USE FOLDERS ARE NOT TOUCHABLE HERE. \Inbox, \Sent, \Drafts,
+    //  \Scheduled, \Junk and \Trash are addressed by name and by flag from
+    //  ingest, the send path, the vacation worker and the scheduler. Renaming
+    //  one would not be a cosmetic change; it would be a delivery outage that
+    //  looked like a settings screen.
+    // ==================================================================
+
+    public sealed record FolderNameRequest(string? Name, Guid? ParentId);
+
+    /// <summary>
+    /// A folder name we are willing to store, or the reason we are not.
+    /// Case-insensitive against the mailbox's existing folders: "work" and
+    /// "Work" are the same folder to the person who made them, and the
+    /// database's UNIQUE(mailbox_id, name) is case-SENSITIVE, so without this
+    /// both can exist and every rule pointing at one is invisible in the other.
+    /// </summary>
+    private static async Task<(string? Name, string? Error)> CleanFolderNameAsync(
+        AppDbContext db, Guid mailboxId, string? raw, Guid? excludeId, CancellationToken ct)
+    {
+        var name = (raw ?? string.Empty).Trim();
+
+        if (name.Length == 0) return (null, "A folder needs a name.");
+        if (name.Length > 120) return (null, "That name is too long.");
+
+        // A folder whose name is a path separator breaks every IMAP client
+        // that builds a hierarchy out of it, ours included.
+        if (name.Contains('/') || name.Contains('\\'))
+            return (null, "A folder name cannot contain / or \\.");
+
+        var clash = await db.Folders.AsNoTracking()
+            .Where(f => f.MailboxId == mailboxId && f.Id != excludeId)
+            .Select(f => f.Name)
+            .ToListAsync(ct);
+
+        return clash.Any(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase))
+            ? (null, $"There is already a folder called {name}.")
+            : (name, null);
+    }
+
+    private static async Task<IResult> CreateFolderAsync(
+        FolderNameRequest req, Guid? mailboxId, AppDbContext db, TenantContext tenant,
+        CancellationToken ct)
+    {
+        // Full, not Read. A folder in a shared queue is structure everyone who
+        // opens it has to live with.
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Full, ct);
+        if (box is null) return Results.NotFound();
+
+        var (name, error) = await CleanFolderNameAsync(db, box.Id, req.Name, null, ct);
+        if (name is null) return Results.BadRequest(new { error });
+
+        // A parent must be a real folder in the SAME mailbox. Without this
+        // check the parent id is an unvalidated pointer into another mailbox's
+        // tree, and the unique-name check above would have been done against
+        // the wrong one.
+        if (req.ParentId is Guid parentId)
+        {
+            var parentExists = await db.Folders.AsNoTracking()
+                .AnyAsync(f => f.Id == parentId && f.MailboxId == box.Id, ct);
+            if (!parentExists) return Results.BadRequest(new { error = "No such parent folder." });
+        }
+
+        var folder = new Folder
+        {
+            TenantId = box.TenantId,
+            MailboxId = box.Id,
+            ParentId = req.ParentId,
+            Name = name,
+            // Null, always. Somebody must not be able to create a second
+            // \Sent and change where the send path files its copies.
+            SpecialUse = null,
+        };
+
+        db.Folders.Add(folder);
+        await db.SaveChangesAsync(ct);
+
+        return Results.Ok(new { id = folder.Id, name = folder.Name, parentId = folder.ParentId });
+    }
+
+    private static async Task<IResult> RenameFolderAsync(
+        Guid folderId, FolderNameRequest req, Guid? mailboxId, AppDbContext db,
+        TenantContext tenant, CancellationToken ct)
+    {
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Full, ct);
+        if (box is null) return Results.NotFound();
+
+        var folder = await db.Folders
+            .FirstOrDefaultAsync(f => f.Id == folderId && f.MailboxId == box.Id, ct);
+        if (folder is null) return Results.NotFound();
+
+        if (folder.SpecialUse is not null)
+            return Results.BadRequest(new
+            {
+                error = $"{folder.Name} is a built-in folder and cannot be renamed.",
+            });
+
+        var (name, error) = await CleanFolderNameAsync(db, box.Id, req.Name, folder.Id, ct);
+        if (name is null) return Results.BadRequest(new { error });
+
+        folder.Name = name;
+        await db.SaveChangesAsync(ct);
+
+        return Results.Ok(new { id = folder.Id, name = folder.Name });
+    }
+
+    // ------------------------------------------------------------------
+    //  DELETE /folders/{id}
+    //
+    //  THE MESSAGES ARE MOVED OUT FIRST, AND THAT IS THE ENTIRE POINT OF
+    //  THIS HANDLER.
+    //
+    //  mail.messages.folder_id is ON DELETE CASCADE. So the obvious
+    //  implementation - remove the row, let the database tidy up - silently
+    //  destroys every message the folder held, with no undo, triggered by
+    //  somebody tidying a folder they had stopped using. mail.folders.parent_id
+    //  cascades too, so a parent takes its children's mail with it.
+    //
+    //  Deleting a container must never delete its contents. The mail goes to
+    //  the Inbox, in the same transaction, and the count comes back so the
+    //  client can say where it went.
+    // ------------------------------------------------------------------
+    private static async Task<IResult> DeleteFolderAsync(
+        Guid folderId, Guid? mailboxId, AppDbContext db, TenantContext tenant,
+        CancellationToken ct)
+    {
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Full, ct);
+        if (box is null) return Results.NotFound();
+
+        var folder = await db.Folders
+            .FirstOrDefaultAsync(f => f.Id == folderId && f.MailboxId == box.Id, ct);
+        if (folder is null) return Results.NotFound();
+
+        if (folder.SpecialUse is not null)
+            return Results.BadRequest(new
+            {
+                error = $"{folder.Name} is a built-in folder and cannot be deleted.",
+            });
+
+        // Refused rather than cascaded. Deleting a tree in one click is a lot
+        // of consequence for one gesture, and the person can see what is
+        // inside before they decide.
+        var children = await db.Folders.AsNoTracking()
+            .CountAsync(f => f.ParentId == folder.Id, ct);
+        if (children > 0)
+            return Results.BadRequest(new
+            {
+                error = $"{folder.Name} still has {children} folder{(children == 1 ? "" : "s")} inside it. Delete those first.",
+            });
+
+        var inbox = await db.Folders
+            .FirstOrDefaultAsync(f => f.MailboxId == box.Id && f.SpecialUse == "\\Inbox", ct);
+        if (inbox is null)
+            return Results.Problem("This mailbox has no Inbox to move the messages into.");
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+
+        var moved = await db.Messages
+            .Where(m => m.FolderId == folder.Id && m.MailboxId == box.Id)
+            .ExecuteUpdateAsync(u => u.SetProperty(m => m.FolderId, inbox.Id), ct);
+
+        db.Folders.Remove(folder);
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+
+        return Results.Ok(new { deleted = folder.Id, movedToInbox = moved });
     }
 
     // ------------------------------------------------------------------
