@@ -7,8 +7,26 @@
 #  returned row, so "several named app passwords" cannot work through this
 #  mechanism — it needs a Lua auth hook, which is a different project. The
 #  API enforces the same rule from its side (generating a new password
-#  revokes the previous one), the LIMIT 1 below makes the database agree,
-#  and the UI says "your app password", singular.
+#  revokes the previous one), and the UI says "your app password", singular.
+#
+#  WHAT ENFORCES IT — corrected 12 September 2026. This block used to say
+#  "the LIMIT 1 below makes the database agree". It did not. It made the
+#  database CONCEAL a disagreement: two rows with revoked_at IS NULL were a
+#  state nothing rejected and nothing reported, and the ORDER BY simply
+#  served the newest and hid the rest — permanently, because rows here are
+#  revoked and never deleted.
+#
+#  The enforcement is now a partial unique index, ix_app_passwords_mailbox_-
+#  active, ON mail.app_passwords (mailbox_id) WHERE revoked_at IS NULL
+#  (20260912-mail-app-passwords-unique.sql). The database refuses a second
+#  live row. The ORDER BY and LIMIT 1 below are KEPT and enforce NOTHING —
+#  they are belt-and-braces, so that a future schema change which drops or
+#  weakens that index becomes a wrong-password ticket instead of a passdb
+#  returning multiple rows, which is an authentication outage.
+#
+#  If you are reading this at 2am because app-password auth is misbehaving,
+#  the question worth asking first is whether that index still exists:
+#      \d mail.app_passwords
 #
 #  Every row's hash carries an explicit {SCHEME} prefix written by the API
 #  ({SSHA512} today), so default_pass_scheme here is a formality — stated
