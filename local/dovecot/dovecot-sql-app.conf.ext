@@ -20,6 +20,7 @@
 #  Rendered by entrypoint.sh exactly like the primary file: the dev_mail_pw
 #  token below is replaced with the real database password at start.
 # ============================================================================
+driver = pgsql
 connect = "host=postgres dbname=tatvaos_mail user=tatvaos_mailedge password=dev_mail_pw"
 
 default_pass_scheme = SSHA512

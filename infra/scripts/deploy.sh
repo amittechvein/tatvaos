@@ -20,9 +20,29 @@ c() { [ -t 1 ] && printf '%s' "$1" || true; }
 G=$(c $'\033[32m'); R=$(c $'\033[31m'); Y=$(c $'\033[33m')
 C=$(c $'\033[36m'); D=$(c $'\033[90m'); B=$(c $'\033[1m'); X=$(c $'\033[0m')
 
+# ---------------------------------------------------------------------------
+#  bad() COUNTS. It used to only print.
+#
+#  On 27 August this script printed [FAIL] lines for the certificate sync and
+#  the mail-edge restart, then finished with "all 10 services running" and a
+#  green "production deployed." over a mail server refusing every login.
+#  Nothing was wrong with the checks — they fired correctly. The verdict simply
+#  did not read them.
+#
+#  A red line that never reaches the exit status is a comment. Every bad() now
+#  increments FAILURES, and the verdict at the bottom refuses to declare
+#  success while FAILURES is non-zero.
+#
+#  Deliberately NOT `set -e`: several steps below fail on purpose and are
+#  handled (the caddy reload, the certificate sync). The counter is how a
+#  HANDLED failure still reaches the verdict instead of being swallowed by the
+#  handling.
+# ---------------------------------------------------------------------------
+FAILURES=0
+
 step() { printf '\n%s%s>> %s%s\n' "$B" "$C" "$1" "$X"; }
 ok()   { printf '   %s[ ok ]%s %s\n' "$G" "$X" "$1"; }
-bad()  { printf '   %s[FAIL]%s %s\n' "$R" "$X" "$1"; }
+bad()  { printf '   %s[FAIL]%s %s\n' "$R" "$X" "$1"; FAILURES=$((FAILURES + 1)); }
 note() { printf '   %s%s%s\n' "$D" "$1" "$X"; }
 
 case "$ENV" in
@@ -456,21 +476,45 @@ fi
 
 # ---------------------------------------------------------------------------
 step "Health"
+# ---------------------------------------------------------------------------
+#  THE DENOMINATOR COMES FROM THE COMPOSE FILES, NOT FROM WHAT IS RUNNING.
+#
+#  This loop used to compare `ps --services --filter status=running` against
+#  `ps --services`. Both sides counted the same live state, so a service that
+#  never created a container at all disappeared from the numerator AND the
+#  denominator together — and 10 of 10 reported green on an 11-service stack.
+#  The one that was missing was the one nobody was told about.
+#
+#  `config --services` is the DECLARATION. It cannot shrink because something
+#  broke, which is the only property that makes it a valid denominator.
+# ---------------------------------------------------------------------------
+EXPECTED=$($COMPOSE config --services 2>/dev/null | wc -l)
+if [ "$EXPECTED" -eq 0 ]; then
+    bad "could not read the service list from the compose files"
+    note "check:  $COMPOSE config --services"
+    exit 1
+fi
+note "${EXPECTED} services declared in the compose files"
+
 settled=0
 for i in $(seq 1 30); do
     up=$($COMPOSE ps --services --filter status=running 2>/dev/null | wc -l)
-    total=$($COMPOSE ps --services 2>/dev/null | wc -l)
-    if [ "$up" -eq "$total" ] && [ "$total" -gt 0 ]; then
+    if [ "$up" -eq "$EXPECTED" ]; then
         settled=$((settled + 1)); [ "$settled" -ge 3 ] && break
     else settled=0; fi
     sleep 2
 done
 
 if [ "$settled" -ge 3 ]; then
-    ok "all ${total} services running"
+    ok "all ${EXPECTED} services running"
 else
-    bad "services did not stabilise"
+    up=$($COMPOSE ps --services --filter status=running 2>/dev/null | wc -l)
+    bad "${up} of ${EXPECTED} services running — the stack is INCOMPLETE"
     $COMPOSE ps | sed 's/^/   /'
+    note "declared but not running:"
+    comm -23 <($COMPOSE config --services 2>/dev/null | sort) \
+             <($COMPOSE ps --services --filter status=running 2>/dev/null | sort) \
+        | sed 's/^/      /'
     note "logs:  $COMPOSE logs --tail 50"
     exit 1
 fi
@@ -489,6 +533,27 @@ ok "cache bounded at 8 GB — $(df -h / | awk 'NR==2 {print $4}') free on /"
 
 # ---------------------------------------------------------------------------
 step "Verdict"
+# ---------------------------------------------------------------------------
+#  THE VERDICT READS THE COUNTER. Nothing below this block runs if anything
+#  above printed [FAIL].
+#
+#  Every step above that fails-but-continues does so for a good reason — the
+#  old config keeps serving, the running mail edge keeps serving. "Continue
+#  anyway" was always the right call for the STEP. It was never the right call
+#  for the SUMMARY, and for weeks the summary was the only part anyone read.
+#
+#  Non-zero exit, so CI and any wrapper see it too.
+# ---------------------------------------------------------------------------
+if [ "$FAILURES" -gt 0 ]; then
+    printf '\n   %s%sNOT deployed cleanly — %d step(s) failed.%s\n\n' \
+        "$B" "$R" "$FAILURES" "$X"
+    note "Scroll up: every [FAIL] line above is one of them."
+    note "Some steps continue after failing on purpose (the old config keeps"
+    note "serving). That makes them survivable, not successful."
+    printf '\n'
+    exit 1
+fi
+
 DOMAIN=$(grep '^SITE_DOMAIN=' infra/docker/.env | cut -d= -f2)
 printf '\n   %s%s deployed.%s\n\n' "$G" "$ENV" "$X"
 printf '   App        https://%s\n' "$DOMAIN"

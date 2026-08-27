@@ -357,41 +357,48 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
-    # The Caddyfile is written in terms of {$SITE_DOMAIN}. Without this block
-    # the variable is empty inside the container, Caddy reads a site address of
-    # "", refuses the config and exits - which presents as an endless restart
-    # loop with every other service healthy.
+    # ------------------------------------------------------------------------
+    #  ADDING A DOMAIN IS A TWO-FILE EDIT. THIS IS THE FILE PEOPLE MISS.
+    #
+    #  The Caddyfile is written in terms of {$SITE_DOMAIN} and friends. Compose
+    #  interpolates .env HERE, when it renders this block — the container never
+    #  sees .env itself. So a variable that exists only in .env arrives inside
+    #  Caddy as an EMPTY STRING, Caddy reads a site address of "", and refuses
+    #  the entire config. Not that site block. All of them.
+    #
+    #  On 27 August that took Core, Mail and Family down together: PLATFORM_DOMAIN
+    #  was added to .env and to a conf.d fragment, and not to this list. The
+    #  error Caddy prints is "server block without any key is global
+    #  configuration, and if used, it must be first" — which names neither the
+    #  variable nor the file, and sends you to the Caddyfile, which is fine.
+    #
+    #  EVERY DOMAIN IS `:?`, NOT `:-`. A blank default hides a missing variable
+    #  until Caddy is already running with a broken config, which means the
+    #  failure lands on production. `:?` moves it to `docker compose config` —
+    #  before anything is pulled, built or restarted. There is no environment
+    #  where an unset domain is correct; a domain with no conf.d fragment is
+    #  harmless, and a fragment with no domain is an outage.
+    #
+    #  The old comment here claimed "Caddy tolerates an empty site block; it
+    #  simply matches nothing." That was never true. It described an intention
+    #  and sat above code that did something else, and it is why the guard was
+    #  left off six of the seven for months.
+    #
+    #  So: adding a domain is (1) this list, (2) .env on the server, (3) the
+    #  conf.d fragment — in that order. Verify before deploying with
+    #      docker compose -f docker-compose.base.yml \
+    #                     -f docker-compose.production.yml config | grep DOMAIN
+    #  which now FAILS LOUDLY on a missing one instead of printing a blank.
+    # ------------------------------------------------------------------------
     environment:
       SITE_DOMAIN: ${SITE_DOMAIN:?SITE_DOMAIN must be set}
-      # Blank on staging, where one host serves everything. Caddy tolerates an
-      # empty site block; it simply matches nothing.
-      MAIL_DOMAIN: ${MAIL_DOMAIN:-}
-      FAMILY_DOMAIN: ${FAMILY_DOMAIN:-}
-      # Space. Blank default like the others: a variable with no matching
-      # conf.d file is harmless, while a conf.d file with no variable makes
-      # Caddy reject the WHOLE config and restart-loop — taking Core, Mail and
-      # Family down with it. Add the variable before the site file, never after.
-      SPACE_DOMAIN: ${SPACE_DOMAIN:-}
-      ACCOUNT_DOMAIN: ${ACCOUNT_DOMAIN:-}
-      CALENDAR_DOMAIN: ${CALENDAR_DOMAIN:-}
-      CONNECT_DOMAIN: ${CONNECT_DOMAIN:-}
-      PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:-}
-      # ⚠️  CRITICAL PATTERN — READ THIS IF YOU'RE ADDING A NEW DOMAIN
-      #
-      # Every domain variable must appear in TWO places:
-      #   1. HERE (the environment block you are reading)
-      #   2. In /srv/tatvaos-production/infra/docker/.env on the server
-      #
-      # Variables declared only in .env do NOT interpolate inside containers
-      # — Docker Compose does the interpolation BEFORE rendering the container
-      # environment. The half you can't see (this block) is the half you're
-      # standing on. If you're adding a domain, you're editing two files, and
-      # this is the one that's easy to miss.
-      #
-      # Verify: after editing here and .env, run:
-      #   docker compose config | grep $NEW_DOMAIN_VAR
-      # It must appear in the caddy service output. If it's empty or missing,
-      # Caddy will parse a site block with an empty address (a fatal error).
+      MAIL_DOMAIN: ${MAIL_DOMAIN:?MAIL_DOMAIN must be set}
+      FAMILY_DOMAIN: ${FAMILY_DOMAIN:?FAMILY_DOMAIN must be set}
+      SPACE_DOMAIN: ${SPACE_DOMAIN:?SPACE_DOMAIN must be set}
+      ACCOUNT_DOMAIN: ${ACCOUNT_DOMAIN:?ACCOUNT_DOMAIN must be set}
+      CALENDAR_DOMAIN: ${CALENDAR_DOMAIN:?CALENDAR_DOMAIN must be set}
+      CONNECT_DOMAIN: ${CONNECT_DOMAIN:?CONNECT_DOMAIN must be set}
+      PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:?PLATFORM_DOMAIN must be set}
     ports:
       - "80:80"
       - "443:443"
