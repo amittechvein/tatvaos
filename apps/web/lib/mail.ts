@@ -309,7 +309,11 @@ export interface SpaceParkRefusal {
   ok: false;
   reason:
     | 'full' | 'file_too_large' | 'no_allocation' | 'suspended'
-    | 'no_user' | 'no_folder' | 'no_access' | 'bad_request' | 'error';
+    | 'no_user' | 'no_folder' | 'no_access' | 'bad_request' | 'error'
+    // Only saving a RECEIVED attachment can return this: the same refusal
+    // download gives, repeated here so Space cannot be used to launder a file
+    // past it and hand it to the internet on a public link.
+    | 'infected';
   error: string;
   quotaBytes?: number;
   usedBytes?: number;
@@ -648,6 +652,57 @@ export const mailApi = {
         error: err.message || 'The file could not be saved to Space.',
       };
     }
+  },
+
+  /**
+   * Folders somebody made for themselves.
+   *
+   * DELETING ONE MOVES ITS MAIL, IT DOES NOT DESTROY IT — the server returns
+   * `movedToInbox` so the client can say where the messages went. Built-in
+   * folders refuse both rename and delete.
+   */
+  createFolder: (f: AuthedFetch, name: string, mailboxId?: string) =>
+    f(withMb('/mail/folders', mailboxId), {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }).then((r) => json<{ id: string; name: string }>(r, 'The folder could not be created.')),
+
+  renameFolder: (f: AuthedFetch, folderId: string, name: string, mailboxId?: string) =>
+    f(withMb(`/mail/folders/${folderId}`, mailboxId), {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }).then((r) => json<{ id: string; name: string }>(r, 'The folder could not be renamed.')),
+
+  deleteFolder: (f: AuthedFetch, folderId: string, mailboxId?: string) =>
+    f(withMb(`/mail/folders/${folderId}`, mailboxId), { method: 'DELETE' })
+      .then((r) => json<{ deleted: string; movedToInbox: number }>(
+        r, 'The folder could not be deleted.')),
+
+  /**
+   * Keep a file somebody sent you, in your own Space.
+   *
+   * THE BYTES NEVER COME THROUGH THE BROWSER. The server reads the attachment
+   * out of the stored message and writes it to Space directly, so saving a
+   * 40 MB file costs the person nothing on a mobile connection — where the
+   * obvious implementation would have cost them 80 MB to move a file between
+   * two of our own services.
+   *
+   * Refusals are data, like the compose-time park, and share its vocabulary
+   * exactly — plus `infected`, which only this path can return.
+   */
+  saveAttachmentToSpace: async (
+    f: AuthedFetch, messageId: string, attachmentId: string, mailboxId?: string,
+  ): Promise<SpaceParkResult> => {
+    const res = await f(
+      withMb(`/mail/messages/${messageId}/attachments/${attachmentId}/to-space`, mailboxId),
+      { method: 'POST' },
+    );
+
+    const body = (await res.json().catch(() => null)) as SpaceParkResult | null;
+    if (body === null || typeof body.ok !== 'boolean')
+      return { ok: false, reason: 'error', error: 'The file could not be saved to Space.' };
+
+    return body;
   },
 
   /**

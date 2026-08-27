@@ -34,6 +34,9 @@ public static class MailEndpoints
 
         g.MapGet("/bootstrap", BootstrapAsync);
         g.MapGet("/folders", FoldersAsync);
+        g.MapPost("/folders", CreateFolderAsync);
+        g.MapPatch("/folders/{folderId:guid}", RenameFolderAsync);
+        g.MapDelete("/folders/{folderId:guid}", DeleteFolderAsync);
         g.MapGet("/folders/{folderId:guid}/messages", ListMessagesAsync);
         g.MapGet("/folders/{folderId:guid}/threads", ListThreadsAsync);
         g.MapGet("/search", SearchAsync);
@@ -48,6 +51,8 @@ public static class MailEndpoints
         g.MapPost("/send", SendAsync);
         g.MapGet("/directory", DirectoryAsync);
         g.MapPost("/attachments/to-space", AttachToSpaceAsync);
+        g.MapPost("/messages/{id:guid}/attachments/{attachmentId:guid}/to-space",
+            SaveAttachmentToSpaceAsync);
 
         g.MapGet("/blocked", ListBlockedAsync);
         g.MapPost("/blocked", BlockSenderAsync);
@@ -529,6 +534,111 @@ public static class MailEndpoints
             : Results.BadRequest(body);
     }
 
+    // ------------------------------------------------------------------
+    //  POST /messages/{id}/attachments/{attachmentId}/to-space
+    //
+    //  Keep a file somebody SENT you, in your own Space.
+    //
+    //  THE BYTES NEVER LEAVE THE SERVER. The obvious implementation is to let
+    //  the browser download the attachment and post it back to the existing
+    //  /attachments/to-space, which needs no new endpoint at all - and which
+    //  makes a customer in Pune pull 40 MB down a mobile connection and push
+    //  the same 40 MB back up to move a file between two of our own services.
+    //  Here it is a read from the stored MIME and a write to Space.
+    //
+    //  The refusal shape is identical to the compose-time park, deliberately:
+    //  same reason codes, same wording, so the client branches on one
+    //  vocabulary rather than two that drift.
+    // ------------------------------------------------------------------
+    private static async Task<IResult> SaveAttachmentToSpaceAsync(
+        Guid id, Guid attachmentId, Guid? mailboxId, AppDbContext db, TenantContext tenant,
+        SpaceContentGateway space, ILoggerFactory logFactory, CancellationToken ct)
+    {
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Read, ct);
+        if (box is null) return Results.NotFound();
+
+        var m = await db.Messages.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == id && x.MailboxId == box.Id, ct);
+        if (m is null || string.IsNullOrEmpty(m.RawBody)) return Results.NotFound();
+
+        var att = await db.Attachments.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.Id == attachmentId && a.MessageId == m.Id, ct);
+        if (att?.PartIndex is not int index) return Results.NotFound();
+
+        // THE SAME REFUSAL AS DOWNLOAD, AND IT MATTERS MORE HERE.
+        //
+        // Without this, "Save to Space" is a way to launder a file past the
+        // download block: infected attachment refused by mail, saved to Space
+        // instead, and from Space a public link hands it to anyone on the
+        // internet over our domain and our reputation. The mail client's
+        // refusal would still look like it was working.
+        if (att.ScanStatus == "infected")
+            return Results.BadRequest(new
+            {
+                ok = false,
+                reason = "infected",
+                error = "This attachment was found to contain malware and cannot be saved.",
+            });
+
+        var parts = MailContent.AttachmentParts(MailContent.Parse(m.RawBody));
+        if (index < 0 || index >= parts.Count) return Results.NotFound();
+
+        var part = parts[index];
+        if (part.Content is null) return Results.NotFound();
+
+        using var buffer = new MemoryStream();
+        await part.Content.DecodeToAsync(buffer, ct);
+        buffer.Position = 0;
+
+        // Through the gateway, so the quota gate is the same one every upload
+        // uses. A second answer to "is there room" would eventually disagree
+        // with the first, and the one that refuses is the one people notice.
+        var outcome = await space.SaveAsync(
+            buffer,
+            att.Filename,
+            att.ContentType ?? "application/octet-stream",
+            buffer.Length,
+            folderId: await MailAttachmentsFolderAsync(space, logFactory, ct),
+            scope: "personal",
+            ct: ct);
+
+        if (outcome.Ok)
+            return Results.Ok(new
+            {
+                ok = true,
+                fileId = outcome.File!.Id,
+                name = outcome.File.Name,
+                sizeBytes = outcome.File.SizeBytes,
+            });
+
+        var reason = outcome.Reason ?? "error";
+        var body = new Dictionary<string, object?>
+        {
+            ["ok"] = false,
+            ["reason"] = reason,
+            ["error"] = outcome.Error ?? "The file could not be saved to Space.",
+        };
+
+        if (reason == "full" && tenant.UserId is Guid uid)
+        {
+            var rows = await db.Set<UserStorageRow>()
+                .FromSqlRaw("SELECT quota_bytes, used_bytes FROM core.user_storage({0})", uid)
+                .AsNoTracking()
+                .ToListAsync(ct);
+
+            if (rows.Count > 0 && rows[0].QuotaBytes is long quota)
+            {
+                body["quotaBytes"] = quota;
+                body["usedBytes"] = rows[0].UsedBytes;
+                body["freeBytes"] = Math.Max(0, quota - rows[0].UsedBytes);
+            }
+        }
+
+        return reason is "full" or "file_too_large"
+            ? Results.Json(body, statusCode: StatusCodes.Status413PayloadTooLarge)
+            : Results.BadRequest(body);
+    }
+
     /// <summary>The folder mailed files are parked in. One name, one place.</summary>
     private const string AttachmentsFolderName = "Email attachments";
 
@@ -559,6 +669,180 @@ public static class MailEndpoints
                 AttachmentsFolderName);
             return null;
         }
+    }
+
+    // ==================================================================
+    //  Folders somebody made for themselves
+    //
+    //  Until now a mailbox had exactly the six folders the database creates
+    //  and no way to add a seventh, which is why "Work / Personal / Receipts"
+    //  in the brief was not merely unstyled but impossible.
+    //
+    //  SPECIAL-USE FOLDERS ARE NOT TOUCHABLE HERE. \Inbox, \Sent, \Drafts,
+    //  \Scheduled, \Junk and \Trash are addressed by name and by flag from
+    //  ingest, the send path, the vacation worker and the scheduler. Renaming
+    //  one would not be a cosmetic change; it would be a delivery outage that
+    //  looked like a settings screen.
+    // ==================================================================
+
+    public sealed record FolderNameRequest(string? Name, Guid? ParentId);
+
+    /// <summary>
+    /// A folder name we are willing to store, or the reason we are not.
+    /// Case-insensitive against the mailbox's existing folders: "work" and
+    /// "Work" are the same folder to the person who made them, and the
+    /// database's UNIQUE(mailbox_id, name) is case-SENSITIVE, so without this
+    /// both can exist and every rule pointing at one is invisible in the other.
+    /// </summary>
+    private static async Task<(string? Name, string? Error)> CleanFolderNameAsync(
+        AppDbContext db, Guid mailboxId, string? raw, Guid? excludeId, CancellationToken ct)
+    {
+        var name = (raw ?? string.Empty).Trim();
+
+        if (name.Length == 0) return (null, "A folder needs a name.");
+        if (name.Length > 120) return (null, "That name is too long.");
+
+        // A folder whose name is a path separator breaks every IMAP client
+        // that builds a hierarchy out of it, ours included.
+        if (name.Contains('/') || name.Contains('\\'))
+            return (null, "A folder name cannot contain / or \\.");
+
+        var clash = await db.Folders.AsNoTracking()
+            .Where(f => f.MailboxId == mailboxId && f.Id != excludeId)
+            .Select(f => f.Name)
+            .ToListAsync(ct);
+
+        return clash.Any(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase))
+            ? (null, $"There is already a folder called {name}.")
+            : (name, null);
+    }
+
+    private static async Task<IResult> CreateFolderAsync(
+        FolderNameRequest req, Guid? mailboxId, AppDbContext db, TenantContext tenant,
+        CancellationToken ct)
+    {
+        // Full, not Read. A folder in a shared queue is structure everyone who
+        // opens it has to live with.
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Full, ct);
+        if (box is null) return Results.NotFound();
+
+        var (name, error) = await CleanFolderNameAsync(db, box.Id, req.Name, null, ct);
+        if (name is null) return Results.BadRequest(new { error });
+
+        // A parent must be a real folder in the SAME mailbox. Without this
+        // check the parent id is an unvalidated pointer into another mailbox's
+        // tree, and the unique-name check above would have been done against
+        // the wrong one.
+        if (req.ParentId is Guid parentId)
+        {
+            var parentExists = await db.Folders.AsNoTracking()
+                .AnyAsync(f => f.Id == parentId && f.MailboxId == box.Id, ct);
+            if (!parentExists) return Results.BadRequest(new { error = "No such parent folder." });
+        }
+
+        var folder = new Folder
+        {
+            TenantId = box.TenantId,
+            MailboxId = box.Id,
+            ParentId = req.ParentId,
+            Name = name,
+            // Null, always. Somebody must not be able to create a second
+            // \Sent and change where the send path files its copies.
+            SpecialUse = null,
+        };
+
+        db.Folders.Add(folder);
+        await db.SaveChangesAsync(ct);
+
+        return Results.Ok(new { id = folder.Id, name = folder.Name, parentId = folder.ParentId });
+    }
+
+    private static async Task<IResult> RenameFolderAsync(
+        Guid folderId, FolderNameRequest req, Guid? mailboxId, AppDbContext db,
+        TenantContext tenant, CancellationToken ct)
+    {
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Full, ct);
+        if (box is null) return Results.NotFound();
+
+        var folder = await db.Folders
+            .FirstOrDefaultAsync(f => f.Id == folderId && f.MailboxId == box.Id, ct);
+        if (folder is null) return Results.NotFound();
+
+        if (folder.SpecialUse is not null)
+            return Results.BadRequest(new
+            {
+                error = $"{folder.Name} is a built-in folder and cannot be renamed.",
+            });
+
+        var (name, error) = await CleanFolderNameAsync(db, box.Id, req.Name, folder.Id, ct);
+        if (name is null) return Results.BadRequest(new { error });
+
+        folder.Name = name;
+        await db.SaveChangesAsync(ct);
+
+        return Results.Ok(new { id = folder.Id, name = folder.Name });
+    }
+
+    // ------------------------------------------------------------------
+    //  DELETE /folders/{id}
+    //
+    //  THE MESSAGES ARE MOVED OUT FIRST, AND THAT IS THE ENTIRE POINT OF
+    //  THIS HANDLER.
+    //
+    //  mail.messages.folder_id is ON DELETE CASCADE. So the obvious
+    //  implementation - remove the row, let the database tidy up - silently
+    //  destroys every message the folder held, with no undo, triggered by
+    //  somebody tidying a folder they had stopped using. mail.folders.parent_id
+    //  cascades too, so a parent takes its children's mail with it.
+    //
+    //  Deleting a container must never delete its contents. The mail goes to
+    //  the Inbox, in the same transaction, and the count comes back so the
+    //  client can say where it went.
+    // ------------------------------------------------------------------
+    private static async Task<IResult> DeleteFolderAsync(
+        Guid folderId, Guid? mailboxId, AppDbContext db, TenantContext tenant,
+        CancellationToken ct)
+    {
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Full, ct);
+        if (box is null) return Results.NotFound();
+
+        var folder = await db.Folders
+            .FirstOrDefaultAsync(f => f.Id == folderId && f.MailboxId == box.Id, ct);
+        if (folder is null) return Results.NotFound();
+
+        if (folder.SpecialUse is not null)
+            return Results.BadRequest(new
+            {
+                error = $"{folder.Name} is a built-in folder and cannot be deleted.",
+            });
+
+        // Refused rather than cascaded. Deleting a tree in one click is a lot
+        // of consequence for one gesture, and the person can see what is
+        // inside before they decide.
+        var children = await db.Folders.AsNoTracking()
+            .CountAsync(f => f.ParentId == folder.Id, ct);
+        if (children > 0)
+            return Results.BadRequest(new
+            {
+                error = $"{folder.Name} still has {children} folder{(children == 1 ? "" : "s")} inside it. Delete those first.",
+            });
+
+        var inbox = await db.Folders
+            .FirstOrDefaultAsync(f => f.MailboxId == box.Id && f.SpecialUse == "\\Inbox", ct);
+        if (inbox is null)
+            return Results.Problem("This mailbox has no Inbox to move the messages into.");
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+
+        var moved = await db.Messages
+            .Where(m => m.FolderId == folder.Id && m.MailboxId == box.Id)
+            .ExecuteUpdateAsync(u => u.SetProperty(m => m.FolderId, inbox.Id), ct);
+
+        db.Folders.Remove(folder);
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+
+        return Results.Ok(new { deleted = folder.Id, movedToInbox = moved });
     }
 
     // ------------------------------------------------------------------

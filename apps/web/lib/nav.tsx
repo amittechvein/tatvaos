@@ -229,6 +229,10 @@ export function mailNav(): NavSection[] {
         { href: '/mail/inbox?compose=1', label: 'Compose', icon: <Icon d={PATHS.compose} /> },
         { href: '/mail/inbox', label: 'Inbox', icon: <Icon d={PATHS.inbox} /> },
         { href: '/mail/drafts', label: 'Drafts', icon: <Icon d={PATHS.mailDraft} /> },
+        // Scheduled has existed in every mailbox since the away-and-schedule
+        // migration and had no way in. Not a new feature - a folder full of
+        // mail with no door.
+        { href: '/mail/scheduled', label: 'Scheduled', icon: <Icon d={PATHS.history} /> },
         { href: '/mail/sent', label: 'Sent', icon: <Icon d={PATHS.sent} /> },
         { href: '/mail/junk', label: 'Junk', icon: <Icon d={PATHS.junk} /> },
         { href: '/mail/trash', label: 'Trash', icon: <Icon d={PATHS.trash} /> },

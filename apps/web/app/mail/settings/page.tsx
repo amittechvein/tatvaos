@@ -21,6 +21,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
+import type { Folder } from '@tatvaos/types';
 import { mailApi, type MailSignature } from '@/lib/mail';
 
 /**
@@ -92,6 +93,19 @@ export default function MailSettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [address, setAddress] = useState<string | null>(null);
+
+  // ---- Folders ---------------------------------------------------------
+  //
+  //  Here rather than in the rail, deliberately. The endpoints landed with
+  //  nothing calling them, which is the same fault as the Scheduled folder
+  //  that existed for weeks with no way in. A settings section is a door that
+  //  can be built today; threading user folders through the shared navigation
+  //  is a larger change, and a feature nobody can reach is not shipped.
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [newFolder, setNewFolder] = useState('');
+  const [busyFolder, setBusyFolder] = useState<string | null>(null);
+  const [folderError, setFolderError] = useState<string | null>(null);
+  const [folderNote, setFolderNote] = useState<string | null>(null);
   /** A sample waiting on "replace what I've written?". Null when nothing is. */
   const [pending, setPending] = useState<string | null>(null);
 
@@ -113,6 +127,9 @@ export default function MailSettingsPage() {
         .bootstrap(authedFetch)
         .then((b) => setAddress(b.mailbox?.address ?? null))
         .catch(() => {});
+
+      const boot = await mailApi.bootstrap(authedFetch).catch(() => null);
+      if (boot) setFolders(boot.folders);
 
       const sig = await mailApi.signature(authedFetch);
       // The plain-text half is the source of truth for the editor; the HTML
@@ -146,6 +163,74 @@ export default function MailSettingsPage() {
       return;
     }
     setPending(sample);
+  }
+
+  async function reloadFolders() {
+    const boot = await mailApi.bootstrap(authedFetch).catch(() => null);
+    if (boot) setFolders(boot.folders);
+  }
+
+  async function addFolder() {
+    const name = newFolder.trim();
+    if (name.length === 0 || busyFolder) return;
+    setBusyFolder('new');
+    setFolderError(null);
+    setFolderNote(null);
+    try {
+      await mailApi.createFolder(authedFetch, name);
+      setNewFolder('');
+      await reloadFolders();
+    } catch (e) {
+      setFolderError(e instanceof Error ? e.message : 'The folder could not be created.');
+    } finally {
+      setBusyFolder(null);
+    }
+  }
+
+  async function rename(f: Folder) {
+    const next = window.prompt(`Rename ${f.name} to`, f.name)?.trim();
+    if (!next || next === f.name) return;
+    setBusyFolder(f.id);
+    setFolderError(null);
+    setFolderNote(null);
+    try {
+      await mailApi.renameFolder(authedFetch, f.id, next);
+      await reloadFolders();
+    } catch (e) {
+      setFolderError(e instanceof Error ? e.message : 'The folder could not be renamed.');
+    } finally {
+      setBusyFolder(null);
+    }
+  }
+
+  /**
+   * Deleting says what happens to the mail BEFORE it happens.
+   *
+   * The messages move to the Inbox — the server does that in the same
+   * transaction rather than letting the database cascade them into oblivion —
+   * but somebody clicking Delete has no way to know that unless we say so.
+   */
+  async function removeFolder(f: Folder) {
+    const held = f.totalCount;
+    const warning = held > 0
+      ? `Delete ${f.name}? The ${held} message${held === 1 ? '' : 's'} inside will move to your Inbox.`
+      : `Delete ${f.name}?`;
+    if (!window.confirm(warning)) return;
+
+    setBusyFolder(f.id);
+    setFolderError(null);
+    setFolderNote(null);
+    try {
+      const r = await mailApi.deleteFolder(authedFetch, f.id);
+      setFolderNote(r.movedToInbox > 0
+        ? `${f.name} deleted. ${r.movedToInbox} message${r.movedToInbox === 1 ? '' : 's'} moved to your Inbox.`
+        : `${f.name} deleted.`);
+      await reloadFolders();
+    } catch (e) {
+      setFolderError(e instanceof Error ? e.message : 'The folder could not be deleted.');
+    } finally {
+      setBusyFolder(null);
+    }
   }
 
   async function save() {
@@ -303,6 +388,81 @@ export default function MailSettingsPage() {
             </p>
           </>
         )}
+      </section>
+
+      {/* ---- Folders ------------------------------------------------- */}
+      <section className="mt-6 max-w-2xl rounded-card border border-line bg-surface p-5">
+        <h2 className="mb-1 text-sm font-semibold text-ink">Your folders</h2>
+        <p className="mb-4 text-xs text-ink-muted">
+          Inbox, Sent, Drafts, Scheduled, Junk and Trash are built in and cannot be renamed or
+          removed — the mail server files into them by name. Anything you make here is yours.
+        </p>
+
+        {folderError && (
+          <p className="mb-3 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">{folderError}</p>
+        )}
+        {folderNote && (
+          <p className="mb-3 rounded-lg bg-ok/10 px-3 py-2 text-sm text-ok">{folderNote}</p>
+        )}
+
+        <ul className="mb-4 list-none space-y-1 p-0">
+          {folders.map((f) => {
+            const builtIn = !!f.specialUse;
+            return (
+              <li
+                key={f.id}
+                className="flex items-center gap-3 rounded-md border border-line px-3 py-2 text-sm"
+              >
+                <span className="min-w-0 flex-1 truncate text-ink">{f.name}</span>
+                <span className="shrink-0 text-xs tabular-nums text-ink-faint">
+                  {f.totalCount}
+                </span>
+                {builtIn ? (
+                  <span className="shrink-0 text-[11px] uppercase tracking-wide text-ink-faint">
+                    built in
+                  </span>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void rename(f)}
+                      disabled={busyFolder !== null}
+                      className="shrink-0 text-xs font-medium text-brand-600 hover:underline disabled:opacity-50"
+                    >
+                      Rename
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void removeFolder(f)}
+                      disabled={busyFolder !== null}
+                      className="shrink-0 text-xs font-medium text-danger hover:underline disabled:opacity-50"
+                    >
+                      Delete
+                    </button>
+                  </>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={newFolder}
+            onChange={(e) => setNewFolder(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') void addFolder(); }}
+            placeholder="New folder name"
+            className="min-w-0 flex-1 rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink outline-none transition placeholder:text-ink-faint focus:border-brand-400"
+          />
+          <button
+            type="button"
+            onClick={() => void addFolder()}
+            disabled={busyFolder !== null || newFolder.trim().length === 0}
+            className="rounded-md bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600 disabled:opacity-50"
+          >
+            {busyFolder === 'new' ? 'Creating…' : 'Create folder'}
+          </button>
+        </div>
       </section>
     </div>
   );

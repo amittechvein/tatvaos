@@ -50,6 +50,8 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   const [thread, setThread] = useState<SearchHit[] | null>(null);
   const [threadTotal, setThreadTotal] = useState(0);
   const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [searchHits, setSearchHits] = useState<SearchHit[] | null>(null);
   const [searchTotal, setSearchTotal] = useState(0);
   const [searching, setSearching] = useState(false);
@@ -436,6 +438,68 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
       .downloadAttachment(authedFetch, messageId, attachmentId, filename, mailboxId)
       .catch(() => {/* download failure shows as no file; retry is a click */});
 
+  // ---- Keyboard shortcuts ----------------------------------------------
+  //
+  //  ONLY KEYS THAT DO SOMETHING REAL. The brief lists A for archive; there
+  //  is no Archive folder anywhere in this product, so binding it would mean
+  //  inventing one or silently doing nothing. Same reason E for "mark read"
+  //  is absent on a single message: the bulk bar has it, a single-message
+  //  handler does not exist yet, and a key that works only sometimes is worse
+  //  than a key that is not documented.
+  //
+  //  THE GUARD MATTERS MORE THAN THE SHORTCUTS. Without it, typing the letter
+  //  s into the composer stars a message, and / swallows a slash mid-sentence.
+  //  Anything with a modifier is the browser's or the operating system's, and
+  //  is left alone.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      const el = e.target as HTMLElement | null;
+      const typing = !!el && (
+        el.tagName === 'INPUT' ||
+        el.tagName === 'TEXTAREA' ||
+        el.tagName === 'SELECT' ||
+        el.isContentEditable
+      );
+
+      // Escape is the one key that must work WHILE typing — it is how you get
+      // out of the thing you are in.
+      if (e.key === 'Escape') {
+        if (showShortcuts) { setShowShortcuts(false); return; }
+        if (!typing) setOpen(null);
+        return;
+      }
+
+      if (typing) return;
+
+      switch (e.key) {
+        case 'c': e.preventDefault(); startCompose(null, 'new'); break;
+        case '/': e.preventDefault(); searchRef.current?.focus(); break;
+        case '?': e.preventDefault(); setShowShortcuts(true); break;
+        case 'r': if (open) { e.preventDefault(); startCompose(open, 'reply'); } break;
+        case 'f': if (open) { e.preventDefault(); startCompose(open, 'forward'); } break;
+        case 's': if (open) { e.preventDefault(); handleToggleFlag(open.id); } break;
+        default: break;
+      }
+    }
+
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, showShortcuts]);
+
+  /**
+   * Keep a received attachment in the person's own Space.
+   *
+   * Returns the outcome rather than showing it: the card that was clicked is
+   * the right place for the answer, and a page-level banner would make you
+   * work out which of four files it was about.
+   */
+  const saveAttachmentToSpace = (messageId: string, attachmentId: string) =>
+    mailApi
+      .saveAttachmentToSpace(authedFetch, messageId, attachmentId, mailboxId)
+      .then((r) => (r.ok ? { ok: true } : { ok: false, error: r.error }));
+
   // ---- Render ---------------------------------------------------------
   if (loading || !boot) {
     return <div className="flex h-full items-center justify-center text-sm text-ink-faint">Loading…</div>;
@@ -506,6 +570,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
           <div className="flex items-center gap-1.5 rounded-full bg-surface px-3.5 py-2 shadow-card">
             <Icon name="search" className="h-4 w-4 shrink-0 text-ink-faint" />
             <input
+              ref={searchRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search mail"
@@ -623,6 +688,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
               onMarkUnread={handleMarkUnread}
               onPrint={handlePrint}
               onDownloadAttachment={(m, a: Attachment) => downloadAttachment(m.id, a.id, a.filename)}
+              onSaveAttachmentToSpace={(m, a: Attachment) => saveAttachmentToSpace(m.id, a.id)}
               threadMessages={thread ?? undefined}
               threadTotal={threadTotal}
               onOpenMessage={(id) => void handleOpen(id)}
@@ -665,6 +731,54 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
           }}
         />
       ))}
+    {/* Shortcuts. A list nobody can find is folklore, so ? opens it and the
+        page says so once at the bottom of the list. */}
+    {showShortcuts && (
+      <div
+        className="fixed inset-0 z-[1300] flex items-center justify-center bg-black/40 p-4"
+        onClick={() => setShowShortcuts(false)}
+      >
+        <div
+          role="dialog"
+          aria-label="Keyboard shortcuts"
+          onClick={(e) => e.stopPropagation()}
+          className="w-full max-w-sm rounded-card border border-line bg-surface p-5 shadow-raised"
+        >
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-ink">Keyboard shortcuts</h2>
+            <button
+              type="button"
+              onClick={() => setShowShortcuts(false)}
+              className="rounded-lg p-1 text-ink-faint transition hover:bg-canvas hover:text-ink"
+              aria-label="Close"
+            >
+              <Icon name="close" className="h-4 w-4" />
+            </button>
+          </div>
+          <dl className="space-y-1.5 text-sm">
+            {[
+              ['c', 'Write a new message'],
+              ['/', 'Search'],
+              ['r', 'Reply to the open message'],
+              ['f', 'Forward the open message'],
+              ['s', 'Star or unstar the open message'],
+              ['Esc', 'Close the open message'],
+              ['?', 'This list'],
+            ].map(([k, what]) => (
+              <div key={k} className="flex items-baseline gap-3">
+                <kbd className="min-w-[2.2rem] shrink-0 rounded border border-line bg-canvas px-1.5 py-0.5 text-center text-xs text-ink">
+                  {k}
+                </kbd>
+                <dd className="m-0 text-ink-muted">{what}</dd>
+              </div>
+            ))}
+          </dl>
+          <p className="mt-3 text-xs text-ink-faint">
+            They stay out of the way while you are typing.
+          </p>
+        </div>
+      </div>
+    )}
     </div>
   );
 }
