@@ -1,0 +1,588 @@
+using Microsoft.EntityFrameworkCore;
+
+namespace TatvaOS.Api.Modules.Connect.Endpoints;
+
+/// <summary>
+/// Sharing a recording with somebody who was not in the meeting.
+///
+/// ═════════════════════════════════════════════════════════════════════════
+///  DRAFT — NOT REGISTERED, AND NOT TO BE REGISTERED UNTIL CORE ANSWERS.
+///
+///  MapConnectShareEndpoints is not called from anywhere. Nothing in this
+///  file runs. That is deliberate and it is not laziness about wiring:
+///
+///    • The tables are a proposal
+///      (infra/proposals/20260826-connect-recording-shares.sql.draft) with
+///      four open questions on it. Registering routes against tables that do
+///      not exist turns a review comment into a 500.
+///
+///    • The one question that MATTERS is the organisation switch gating the
+///      fourth level. Until that column has a name, 'public' has no gate, and
+///      an ungated 'public' is the single change in this whole module that
+///      cannot be taken back. It is marked >>> GATE below, twice, and both
+///      places must be filled in before this is wired up.
+///
+///  The web half IS shipped and is safe: the Share button renders only when
+///  the recordings response carries a `sharing` capability, which only this
+///  file can produce. No routes, no capability, no button.
+/// ═════════════════════════════════════════════════════════════════════════
+///
+///  ── WHAT CORE RULED, AND WHERE EACH RULE LIVES ─────────────────────────
+///
+///  "The baseline never moves"           — nothing here touches it.
+///                                         SeenMeetingAsync is untouched, and
+///                                         AllowedAsync below is only ever
+///                                         consulted AFTER it has said no.
+///  "Every grant audited"                — AuditWriter on create and revoke.
+///  "Expiry mandatory, default 7 days,
+///   ceiling = remaining retention"      — CreateAsync validates; the database
+///                                         trigger clamps. Both, on purpose:
+///                                         the trigger is the guarantee and
+///                                         the check is the sentence.
+///  "Password hashed like meeting
+///   passwords"                          — IPasswordHasher, same call.
+///  "Level 4 per-organisation, off"      — >>> GATE.
+///  "Exposure stated in plain words,
+///   level 4 verbatim"                   — ConnectShareLevels.Exposure, and
+///                                         returned by the API so that no
+///                                         client can invent its own wording.
+///  "Every access beyond participants
+///   writes an audit row"                — LogAccessAsync, called from the
+///                                         download path, not from here.
+///  "Delivery stays on the ticket"       — untouched. This file mints no
+///                                         tickets and reads no files.
+///
+///  ── FOUR NAMES TO CONFIRM WHEN THIS FIRST COMPILES ─────────────────────
+///
+///  Written without a compiler to hand, so these are the places where a
+///  property name is inferred from how the rest of the module uses it rather
+///  than read off the class. None of them is a design question — each is one
+///  identifier, and the build will name any that is wrong:
+///
+///    1. db.Users .Id  .DisplayName   — used by ConnectEndpoints.NameOfAsync,
+///                                      so these two are certain.
+///    2. db.Users .Email              — needed to resolve a typed address.
+///    3. db.Users .TenantId           — needed to tell a colleague from
+///                                      somebody in another organisation.
+///    4. IPasswordHasher.Hash         — same call ConnectEndpoints makes for
+///                                      a meeting password, so certain.
+///
+///  Deliberately NOT used: any lookup of an organisation's NAME. The API says
+///  whether a named person is outside the recording's organisation, and not
+///  where they work. That is the fact a host needs, and it costs no
+///  dependency on a table this module has never touched.
+/// </summary>
+public static class ConnectShareEndpoints
+{
+    /// <summary>
+    /// NOT CALLED. See the header. When the migration lands, this is invoked
+    /// from ConnectRecordingEndpoints beside the other Connect groups.
+    /// </summary>
+    public static void MapConnectShareEndpoints(this IEndpointRouteBuilder app)
+    {
+        var g = app.MapGroup("/api/connect")
+            .RequireAuthorization("User")
+            .WithTags("Connect");
+
+        g.MapGet("/meetings/{id:guid}/recordings/{recordingId:guid}/shares", ListAsync);
+        g.MapPost("/meetings/{id:guid}/recordings/{recordingId:guid}/shares", CreateAsync);
+        g.MapDelete("/meetings/{id:guid}/recordings/{recordingId:guid}/shares/{shareId:guid}", RevokeAsync);
+        g.MapPut("/meetings/{id:guid}/recordings/{recordingId:guid}/shares/{shareId:guid}/people", PeopleAsync);
+    }
+
+    // ==================================================================
+    //  Requests
+    // ==================================================================
+
+    /// <param name="Level">organisation | named | password | public.</param>
+    /// <param name="Days">Required on the two link levels. Clamped to what the
+    /// recording has left; see the trigger.</param>
+    /// <param name="Password">'password' only. 4 to 100 characters, the same
+    /// rule as a meeting password — one rule for passwords in this product,
+    /// not two.</param>
+    /// <param name="UserIds">'named' only. Email addresses OR user ids; the
+    /// handler resolves either, because the web sends what a person typed.</param>
+    public sealed record CreateShareRequest(
+        string? Level, int? Days, string? Password, string[]? UserIds);
+
+    public sealed record PeopleRequest(string[]? UserIds);
+
+    // ==================================================================
+    //  Shapes
+    // ==================================================================
+
+    /// <summary>
+    /// NEVER INCLUDES PasswordHash, and never includes the token except as
+    /// part of a complete URL.
+    ///
+    /// The hash is obvious. The token is less so: handing a client the raw
+    /// secret separately from the URL invites somebody to build a second URL
+    /// out of it, against a route that may not exist, and to get it wrong in
+    /// a way that leaks. One shape, assembled here.
+    /// </summary>
+    private static object Shape(
+        ConnectRecordingShare s,
+        IReadOnlyList<object> people,
+        int opens,
+        string createdBy,
+        string publicBase)
+        => new
+        {
+            s.Id,
+            s.RecordingId,
+            s.Level,
+            url = s.Token is { Length: > 0 } t ? $"{publicBase}/connect/shared/{t}" : null,
+            hasPassword = s.PasswordHash is not null,
+            s.ExpiresAt,
+            people,
+            opens,
+            s.CreatedAt,
+            createdBy,
+            // Returned so no client has to keep its own copy of the wording.
+            // Two descriptions of the same row is how one of them ends up
+            // gentler than the truth.
+            exposure = ConnectShareLevels.Exposure(s.Level),
+        };
+
+    // ==================================================================
+    //  Listing
+    // ==================================================================
+    private static async Task<IResult> ListAsync(
+        Guid id, Guid recordingId, AppDbContext db, TenantContext tenant,
+        IConfiguration config, CancellationToken ct)
+    {
+        if (tenant.UserId is not Guid uid) return Results.Unauthorized();
+
+        // Reading who a recording is shared with is HOST ONLY, like sharing
+        // itself. A participant can watch the recording; being able to
+        // enumerate everybody else who can is a different thing, and it is
+        // the list an attacker would most like.
+        if (await ConnectRecordingEndpoints.RoleOfAsync(db, id, uid, ct) != "host")
+            return ConnectRecordingEndpoints.Forbidden();
+
+        var shares = await db.Set<ConnectRecordingShare>().AsNoTracking()
+            .Where(s => s.RecordingId == recordingId && s.MeetingId == id
+                     && s.RevokedAt == null)
+            .OrderBy(s => s.CreatedAt)
+            .ToListAsync(ct);
+
+        var result = new List<object>(shares.Count);
+        var publicBase = PublicBase(config);
+        foreach (var s in shares)
+        {
+            result.Add(Shape(s,
+                await PeopleOfAsync(db, s, ct),
+                await OpensOfAsync(db, s, ct),
+                await NameOfAsync(db, s.CreatedByUserId, ct),
+                publicBase));
+        }
+
+        return Results.Ok(new { shares = result });
+    }
+
+    // ==================================================================
+    //  Creating
+    // ==================================================================
+    private static async Task<IResult> CreateAsync(
+        Guid id, Guid recordingId, CreateShareRequest req,
+        AppDbContext db, TenantContext tenant, IPasswordHasher hasher,
+        IConfiguration config, AuditWriter audit, CancellationToken ct)
+    {
+        if (tenant.UserId is not Guid uid) return Results.Unauthorized();
+
+        // ── HOST ONLY. ───────────────────────────────────────────────────
+        //
+        //  Not co-host, and this is a deliberate departure from most host
+        //  controls. A co-host runs the ROOM — admits people, mutes, records.
+        //  Deciding that somebody outside the meeting may watch it afterwards
+        //  is the same weight of act as deleting the recording, which is
+        //  already host-only for exactly this reason.
+        if (await ConnectRecordingEndpoints.RoleOfAsync(db, id, uid, ct) != "host")
+            return ConnectRecordingEndpoints.Forbidden();
+
+        var level = (req.Level ?? "").Trim().ToLowerInvariant();
+        if (!ConnectShareLevels.IsValid(level))
+            return Results.BadRequest(new
+            {
+                error = "Share with your organisation, with named people, "
+                      + "with a password, or with anyone holding the link.",
+            });
+
+        // A recording with no file cannot be shared. Sharing one that is still
+        // being written would hand somebody a link that 404s for ten minutes
+        // and then works, which is worse than refusing.
+        var recording = await db.ConnectRecordings.AsNoTracking()
+            .Where(r => r.Id == recordingId && r.MeetingId == id && r.Status == "ready")
+            .FirstOrDefaultAsync(ct);
+        if (recording is null)
+            return Results.NotFound(new { error = "That recording is not ready to share." });
+
+        // ── >>> GATE (1 of 2). THE ORGANISATION SWITCH FOR LEVEL 4. ──────
+        //
+        //  Core's ruling: 'public' is off for the whole organisation until an
+        //  administrator turns it on, default OFF, same shape as Space's
+        //  public-links kill switch.
+        //
+        //  I could not find the settings table connect.recording_allowed()
+        //  reads and will not guess at a column on a table shared with other
+        //  modules. Until it has a name this REFUSES, which is the correct
+        //  direction to be wrong in: a level-4 link that should not exist
+        //  cannot be recalled, and a refusal is a support message.
+        //
+        //  Replace with the real read. Do not delete.
+        if (level == ConnectShareLevels.Public)
+            return Results.Json(new
+            {
+                error = "Public links are not switched on for this organisation. "
+                      + "An administrator can enable them.",
+            }, statusCode: 503);
+
+        // One live share per level. A second at the same level is two links
+        // with different expiries and one of them forgotten about.
+        var already = await db.Set<ConnectRecordingShare>()
+            .AnyAsync(s => s.RecordingId == recordingId && s.Level == level
+                        && s.RevokedAt == null, ct);
+        if (already)
+            return Results.Conflict(new
+            {
+                error = "This recording is already shared that way. "
+                      + "Stop the existing share first if you want to change it.",
+            });
+
+        // ── EXPIRY ───────────────────────────────────────────────────────
+        DateTimeOffset? expires = null;
+        if (ConnectShareLevels.HasLink(level))
+        {
+            var days = req.Days ?? ConnectShareLevels.DefaultDays;
+            if (days < 1)
+                return Results.BadRequest(new { error = "A link has to last at least a day." });
+
+            // >>> CORE, QUESTION 3. The recording's own end of life. Written
+            // against connect.retention_days(), which does not exist yet —
+            // see the migration draft. The TRIGGER is the guarantee; this
+            // check exists so the person gets a sentence rather than a
+            // silently shortened link.
+            expires = DateTimeOffset.UtcNow.AddDays(days);
+            if (recording.KeepUntilAt is DateTimeOffset keep && expires > keep)
+                return Results.BadRequest(new
+                {
+                    error = $"This recording is kept until {keep:d MMMM yyyy}. "
+                          + "A link cannot outlast the recording it points at.",
+                });
+        }
+
+        // ── PASSWORD ─────────────────────────────────────────────────────
+        string? hash = null;
+        if (level == ConnectShareLevels.Password)
+        {
+            var pw = req.Password ?? "";
+            // The same rule as a meeting password, word for word, because two
+            // password rules in one product is two things to explain.
+            if (pw.Length is < 4 or > 100)
+                return Results.BadRequest(new
+                {
+                    error = "A share password is between 4 and 100 characters.",
+                });
+            hash = hasher.Hash(pw);
+        }
+
+        var share = new ConnectRecordingShare
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenant.TenantId,
+            RecordingId = recordingId,
+            MeetingId = id,
+            Level = level,
+            Token = ConnectShareLevels.HasLink(level) ? ConnectCodes.New() : null,
+            PasswordHash = hash,
+            ExpiresAt = expires,
+            CreatedByUserId = uid,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow,
+        };
+        db.Set<ConnectRecordingShare>().Add(share);
+
+        // ── NAMED PEOPLE ─────────────────────────────────────────────────
+        if (level == ConnectShareLevels.Named)
+        {
+            var (grants, unknown) = await ResolveAsync(db, share, req.UserIds ?? [], ct);
+            if (unknown.Count > 0)
+                return Results.BadRequest(new
+                {
+                    // Named, not counted. "2 addresses were not found" makes
+                    // somebody re-read their own list looking for which two.
+                    error = unknown.Count == 1
+                        ? $"{unknown[0]} does not have a TatvaOS account, so they cannot be given access yet."
+                        : $"These do not have TatvaOS accounts yet: {string.Join(", ", unknown)}.",
+                });
+            if (grants.Count == 0)
+                return Results.BadRequest(new { error = "Name at least one person." });
+            db.Set<ConnectRecordingShareGrant>().AddRange(grants);
+        }
+
+        await db.SaveChangesAsync(ct);
+
+        // EVERY GRANT AUDITED, per Core. The token is NOT in the audit row:
+        // an audit log that contains working capability URLs is a second copy
+        // of the thing being protected.
+        await audit.WriteAsync("connect.recording.shared", "connect.meeting", id.ToString(),
+            after: new
+            {
+                share.Id,
+                share.RecordingId,
+                share.Level,
+                share.ExpiresAt,
+                hasPassword = hash is not null,
+            }, ct: ct, productCode: "connect");
+
+        return Results.Ok(Shape(share,
+            await PeopleOfAsync(db, share, ct), 0,
+            await NameOfAsync(db, uid, ct),
+            PublicBase(config)));
+    }
+
+    // ==================================================================
+    //  Revoking
+    // ==================================================================
+    private static async Task<IResult> RevokeAsync(
+        Guid id, Guid recordingId, Guid shareId,
+        AppDbContext db, TenantContext tenant, AuditWriter audit, CancellationToken ct)
+    {
+        if (tenant.UserId is not Guid uid) return Results.Unauthorized();
+        if (await ConnectRecordingEndpoints.RoleOfAsync(db, id, uid, ct) != "host")
+            return ConnectRecordingEndpoints.Forbidden();
+
+        var share = await db.Set<ConnectRecordingShare>()
+            .Where(s => s.Id == shareId && s.RecordingId == recordingId && s.MeetingId == id)
+            .FirstOrDefaultAsync(ct);
+        if (share is null) return Results.NotFound(new { error = "That share does not exist." });
+
+        // Already revoked is a success, not a conflict. Somebody pressing
+        // "Stop sharing" twice wants it stopped, and an error message that
+        // says it was already stopped reads like a failure.
+        if (share.RevokedAt is null)
+        {
+            share.RevokedAt = DateTimeOffset.UtcNow;
+            share.UpdatedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync(ct);
+
+            await audit.WriteAsync("connect.recording.unshared", "connect.meeting", id.ToString(),
+                after: new { share.Id, share.RecordingId, share.Level },
+                ct: ct, productCode: "connect");
+        }
+
+        return Results.NoContent();
+    }
+
+    // ==================================================================
+    //  Changing who is named
+    // ==================================================================
+    //
+    //  The one thing that IS edited rather than revoked-and-recreated. A named
+    //  list is a membership; a link is a secret. Adding somebody to a list is
+    //  what is really happening, and modelling it as "revoke and make a new
+    //  link" would be a lie about a share that has no link at all.
+    private static async Task<IResult> PeopleAsync(
+        Guid id, Guid recordingId, Guid shareId, PeopleRequest req,
+        AppDbContext db, TenantContext tenant, IConfiguration config,
+        AuditWriter audit, CancellationToken ct)
+    {
+        if (tenant.UserId is not Guid uid) return Results.Unauthorized();
+        if (await ConnectRecordingEndpoints.RoleOfAsync(db, id, uid, ct) != "host")
+            return ConnectRecordingEndpoints.Forbidden();
+
+        var share = await db.Set<ConnectRecordingShare>()
+            .Where(s => s.Id == shareId && s.RecordingId == recordingId
+                     && s.MeetingId == id && s.RevokedAt == null)
+            .FirstOrDefaultAsync(ct);
+        if (share is null) return Results.NotFound(new { error = "That share does not exist." });
+        if (share.Level != ConnectShareLevels.Named)
+            return Results.BadRequest(new
+            {
+                error = "Only a share with named people has a list to change.",
+            });
+
+        var (wanted, unknown) = await ResolveAsync(db, share, req.UserIds ?? [], ct);
+        if (unknown.Count > 0)
+            return Results.BadRequest(new
+            {
+                error = unknown.Count == 1
+                    ? $"{unknown[0]} does not have a TatvaOS account, so they cannot be given access yet."
+                    : $"These do not have TatvaOS accounts yet: {string.Join(", ", unknown)}.",
+            });
+
+        var existing = await db.Set<ConnectRecordingShareGrant>()
+            .Where(x => x.ShareId == shareId && x.RevokedAt == null)
+            .ToListAsync(ct);
+
+        var keep = wanted.Select(w => w.SubjectUserId).ToHashSet();
+        var now = DateTimeOffset.UtcNow;
+
+        // REVOKED, not deleted, for the same reason the share itself is: "who
+        // could see this, and when did that stop" survives a removal.
+        var removed = new List<Guid>();
+        foreach (var row in existing.Where(x => !keep.Contains(x.SubjectUserId)))
+        {
+            row.RevokedAt = now;
+            removed.Add(row.SubjectUserId);
+        }
+
+        var have = existing.Where(x => x.RevokedAt is null)
+            .Select(x => x.SubjectUserId).ToHashSet();
+        var added = wanted.Where(w => !have.Contains(w.SubjectUserId)).ToList();
+        db.Set<ConnectRecordingShareGrant>().AddRange(added);
+
+        share.UpdatedAt = now;
+        await db.SaveChangesAsync(ct);
+
+        if (added.Count > 0 || removed.Count > 0)
+        {
+            await audit.WriteAsync("connect.recording.share_people", "connect.meeting", id.ToString(),
+                after: new
+                {
+                    share.Id,
+                    added = added.Select(a => a.SubjectUserId).ToList(),
+                    removed,
+                }, ct: ct, productCode: "connect");
+        }
+
+        return Results.Ok(Shape(share,
+            await PeopleOfAsync(db, share, ct),
+            await OpensOfAsync(db, share, ct),
+            await NameOfAsync(db, share.CreatedByUserId, ct),
+            PublicBase(config)));
+    }
+
+    // ==================================================================
+    //  Helpers
+    // ==================================================================
+
+    /// <summary>
+    /// Turn what somebody typed into grants, and say plainly what could not be
+    /// turned into one.
+    ///
+    /// Accepts an email address or a user id, because the web sends whatever
+    /// was in the box and making the browser guess which is which would put
+    /// the guess in the wrong place.
+    ///
+    /// CROSS-TENANT IS ALLOWED AND IS THE POINT. The lookup is deliberately
+    /// NOT limited to the caller's organisation — Core permitted named grants
+    /// to reach accounts anywhere. Note what is still refused: a non-TatvaOS
+    /// address, in v1, because an invitation is a different feature and a
+    /// half-built one drops people silently.
+    /// </summary>
+    private static async Task<(List<ConnectRecordingShareGrant> Grants, List<string> Unknown)>
+        ResolveAsync(AppDbContext db, ConnectRecordingShare share, string[] raw, CancellationToken ct)
+    {
+        var grants = new List<ConnectRecordingShareGrant>();
+        var unknown = new List<string>();
+        var seen = new HashSet<Guid>();
+
+        foreach (var entry in raw.Select(x => x.Trim()).Where(x => x.Length > 0).Distinct())
+        {
+            var user = Guid.TryParse(entry, out var byId)
+                ? await db.Users.AsNoTracking()
+                    .Where(u => u.Id == byId)
+                    .Select(u => new { u.Id, u.TenantId })
+                    .FirstOrDefaultAsync(ct)
+                : await db.Users.AsNoTracking()
+                    .Where(u => u.Email == entry)
+                    .Select(u => new { u.Id, u.TenantId })
+                    .FirstOrDefaultAsync(ct);
+
+            if (user is null) { unknown.Add(entry); continue; }
+            if (!seen.Add(user.Id)) continue;
+
+            grants.Add(new ConnectRecordingShareGrant
+            {
+                Id = Guid.NewGuid(),
+                TenantId = share.TenantId,
+                ShareId = share.Id,
+                SubjectUserId = user.Id,
+                SubjectTenantId = user.TenantId,
+                CreatedAt = DateTimeOffset.UtcNow,
+            });
+        }
+
+        return (grants, unknown);
+    }
+
+    /// <summary>
+    /// The named people on a share, with the ones who are NOT colleagues
+    /// marked.
+    ///
+    /// The organisation name is filled in only when it differs from the
+    /// recording's, and it is never null-then-hidden: sharing outside your own
+    /// organisation should not be something a host has to work out from a list
+    /// of email addresses.
+    /// </summary>
+    private static async Task<IReadOnlyList<object>> PeopleOfAsync(
+        AppDbContext db, ConnectRecordingShare share, CancellationToken ct)
+    {
+        if (share.Level != ConnectShareLevels.Named) return [];
+
+        var rows = await db.Set<ConnectRecordingShareGrant>().AsNoTracking()
+            .Where(g => g.ShareId == share.Id && g.RevokedAt == null)
+            .ToListAsync(ct);
+        if (rows.Count == 0) return [];
+
+        var ids = rows.Select(r => r.SubjectUserId).ToList();
+        var users = await db.Users.AsNoTracking()
+            .Where(u => ids.Contains(u.Id))
+            .Select(u => new { u.Id, u.DisplayName, u.Email })
+            .ToListAsync(ct);
+
+        // Outside-ness is read from the GRANT, not from the user row. The
+        // grant recorded which organisation they were in when they were
+        // given access, and that is the fact the host agreed to. Somebody
+        // changing organisations later does not quietly rewrite history.
+        var outside = rows.Where(r => r.SubjectTenantId != share.TenantId)
+            .Select(r => r.SubjectUserId).ToHashSet();
+
+        return users.Select(u => (object)new
+        {
+            userId = u.Id,
+            name = string.IsNullOrWhiteSpace(u.DisplayName) ? u.Email : u.DisplayName,
+            u.Email,
+            // Whether, not where. See the header: the fact a host needs is
+            // "this person is not one of us", and the organisation's name
+            // would cost a dependency on a table this module never touches.
+            external = outside.Contains(u.Id),
+        }).ToList();
+    }
+
+    /// <summary>
+    /// How many times somebody who was NOT in the meeting has opened this.
+    ///
+    /// Participants are not in this table at all, so this is a count of reads
+    /// the share is responsible for — which is the number a host wants when
+    /// deciding whether a link is still needed.
+    /// </summary>
+    private static Task<int> OpensOfAsync(
+        AppDbContext db, ConnectRecordingShare share, CancellationToken ct)
+        => db.Set<ConnectRecordingAccess>().AsNoTracking()
+            .CountAsync(a => a.ShareId == share.Id, ct);
+
+    /// <summary>
+    /// Who made a share, for the list. A local copy rather than a call into
+    /// ConnectEndpoints: that one is private, and widening a method's
+    /// visibility to save four lines is how a module's surface grows.
+    /// </summary>
+    private static async Task<string> NameOfAsync(
+        AppDbContext db, Guid userId, CancellationToken ct)
+    {
+        var name = await db.Users.AsNoTracking()
+            .Where(u => u.Id == userId)
+            .Select(u => u.DisplayName)
+            .FirstOrDefaultAsync(ct);
+        return string.IsNullOrWhiteSpace(name) ? "Someone" : name;
+    }
+
+    /// <summary>
+    /// Where a share link lives. Configured, never derived from the request —
+    /// a public base URL taken from a Host header is a public base URL an
+    /// attacker chooses.
+    /// </summary>
+    private static string PublicBase(IConfiguration config)
+        => (config["Connect:PublicBaseUrl"] ?? "https://connect.tatvaos.com").TrimEnd('/');
+}

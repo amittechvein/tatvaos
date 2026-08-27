@@ -162,6 +162,39 @@ function prettySize(n: number): string {
   if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/**
+ * Does OUR CURRENT TOKEN let us share a screen?
+ *
+ * The share button used to answer this from the meeting row fetched at join
+ * time. That row is a snapshot: a host who tightens the policy at 10:04
+ * rewrites everybody's token, but nobody else's copy of the row changes, so
+ * every other person keeps a button that says "Share" and then fails. It is
+ * the same class of bug as the muted microphone that still looked live — a
+ * cache of an old answer standing in for the current one.
+ *
+ * canPublishSources is the grant ConnectShare.SourcesFor mints. ABSENT OR
+ * EMPTY MEANS EVERY SOURCE, not none — that is the protobuf convention and
+ * the reason SourcesFor returns null rather than a full list when sharing is
+ * allowed. Getting that backwards would hide the button from everybody.
+ *
+ * Compared loosely on purpose. The array holds a protobuf TrackSource, which
+ * has surfaced as both a number and a name across versions of the SDK, and
+ * this file cannot pin the version. Every uncertain case here answers TRUE:
+ * the server refuses an unpermitted share anyway and toggleShare turns that
+ * refusal into a sentence, so a button wrongly shown costs an error message
+ * while a button wrongly hidden costs a feature with no way to ask why.
+ */
+function screenShareGranted(me: LKParticipant): boolean {
+  const perms: unknown = (me as unknown as { permissions?: unknown }).permissions;
+  if (perms === null || typeof perms !== 'object') return true;
+  const p = perms as { canPublish?: unknown; canPublishSources?: unknown };
+  if (p.canPublish === false) return false;
+  const sources = p.canPublishSources;
+  if (!Array.isArray(sources) || sources.length === 0) return true;
+  return sources.some((s) =>
+    s === 3 || String(s).toLowerCase().includes('screen'));
+}
 type PanelKind = 'people' | 'chat' | 'devices' | 'view' | null;
 
 // ---------------------------------------------------------------------------
@@ -273,6 +306,11 @@ export default function Stage({ seat, meeting, prefs }: {
   const [camOn, setCamOn] = useState(false);
   const [micOn, setMicOn] = useState(false);
   const [sharing, setSharing] = useState(false);
+  // What the TOKEN says about screen sharing, as opposed to what the meeting
+  // row said when this browser joined. Starts true so nothing is hidden before
+  // the first sync; see screenShareGranted for why permissive is the safe
+  // direction here.
+  const [tokenAllowsShare, setTokenAllowsShare] = useState(true);
   // Read once on mount, not at module load: localStorage does not exist while
   // Next renders this on the server, and reading it in the initialiser keeps
   // the first paint correct instead of flashing the default layout.
@@ -292,6 +330,15 @@ export default function Stage({ seat, meeting, prefs }: {
   }, []);
   const [blocked, setBlocked] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Something good or neutral happened that the person should be told about,
+  // as opposed to `error`, which is something that went wrong. Separate state
+  // rather than reusing `error`, because a promotion rendered in the red
+  // failure banner reads as a problem.
+  const [notice, setNotice] = useState<string | null>(null);
+  // A role change announced in the room after this browser joined. The meeting
+  // row is only ever read once, at join, so without this being made a co-host
+  // did nothing until the page was reloaded.
+  const [rolePatch, setRolePatch] = useState<'cohost' | 'participant' | null>(null);
   const [panel, setPanel] = useState<PanelKind>(null);
   const [chat, setChat] = useState<ChatLine[]>([]);
   const [unread, setUnread] = useState(0);
@@ -539,19 +586,66 @@ export default function Stage({ seat, meeting, prefs }: {
   // A static clip, not the Web Speech API: browser voices vary by OS and are
   // absent on some Android builds, and the one sentence that has to be heard
   // must not depend on that. Autoplay is allowed here because clicking Join
-  // was a user activation and the page holds a microphone permission — but a
-  // refusal (or a missing clip) is swallowed: the WRITTEN notice below is
-  // non-dismissible and role="status", and the audio is the second channel,
-  // never the only one.
+  // was a user activation and the page holds a microphone permission.
+  //
+  // ── THE CLIP DOES NOT EXIST YET, AND UNTIL 26 AUGUST NOTHING SAID SO. ──
+  //
+  // public/connect-recording-notice.mp3 was specified in CONNECT_DECISIONS §2
+  // and never recorded. The catch below swallowed the 404 exactly as it
+  // swallows an autoplay refusal, so the spoken half of a notice that exists
+  // for consent reasons has been silently absent since the day it shipped,
+  // and every reading of this file said it was working.
+  //
+  // Three changes, in order of how much they matter:
+  //
+  //   1. A FALLBACK LADDER instead of a hole. If the clip will not play, the
+  //      browser's own speech synthesis says the sentence. The original
+  //      decision rejected speech synthesis as the PRIMARY channel because it
+  //      varies by OS and is missing on some Android builds — all true, and
+  //      none of it an argument for silence when the alternative is nothing
+  //      at all. An inconsistent voice beats no voice.
+  //
+  //   2. It says so out loud. A console warning, once, naming the missing
+  //      file — so the next person to open the console finds out in a second
+  //      rather than never.
+  //
+  //   3. The written banner is unchanged and remains the channel that must
+  //      work: non-dismissible, role="status", and never conditional on any
+  //      of this.
+  //
+  // See docs/connect-recording-notice-clip.md for what to record. It is a
+  // one-sentence voice file and it wants a person, not a synthesiser.
   const spokenRef = useRef(false);
   useEffect(() => {
     if (!beingRecorded) { spokenRef.current = false; return; }
     if (spokenRef.current) return;
     spokenRef.current = true;
+
+    const SENTENCE = 'This meeting is being recorded.';
+
+    const speak = (why: string) => {
+      console.warn(`[connect] ${why} — falling back to speech synthesis. `
+        + 'Record public/connect-recording-notice.mp3; see '
+        + 'docs/connect-recording-notice-clip.md.');
+      try {
+        const synth = window.speechSynthesis;
+        if (!synth) return;
+        const said = new SpeechSynthesisUtterance(SENTENCE);
+        said.rate = 0.95;   // a notice, read plainly, not hurried
+        synth.speak(said);
+      } catch { /* no synthesis either; the banner stands alone */ }
+    };
+
     try {
       const clip = new Audio('/connect-recording-notice.mp3');
-      void clip.play().catch(() => { /* blocked or clip absent; the banner stands */ });
-    } catch { /* no Audio in this environment; the banner stands */ }
+      // A 404 surfaces as an error EVENT, not a rejected promise, so both
+      // have to be watched. Without the error handler a missing file is
+      // simply nothing happening, which is how this went unnoticed.
+      clip.addEventListener('error', () => speak('recording notice clip missing'));
+      void clip.play().catch(() => speak('recording notice clip could not play'));
+    } catch {
+      speak('no Audio in this environment');
+    }
   }, [beingRecorded]);
   const [recording, setRecording] = useState<Recording | null>(null);
   const [recBusy, setRecBusy] = useState(false);
@@ -559,7 +653,37 @@ export default function Stage({ seat, meeting, prefs }: {
   // The audio-or-video question, asked once per recording rather than assumed.
   const [recordAsk, setRecordAsk] = useState(false);
 
-  const isHost = meeting?.myRole === 'host' || meeting?.myRole === 'cohost';
+  /**
+   * MY ROLE RIGHT NOW, not my role when I joined.
+   *
+   * The meeting row is fetched once. A promotion that happens after that
+   * arrives on the data channel and lands in rolePatch, so every question in
+   * this file about "what am I" must be asked here rather than of the row —
+   * otherwise being made a co-host does nothing until a reload.
+   *
+   * A HOST IS NEVER PATCHED DOWN. The message only ever carries 'cohost' or
+   * 'participant', so a host who somehow received one about themselves would
+   * lose the meeting's controls with no way back. The row wins for a host,
+   * always; nothing in the product demotes one, and if that ever changes it
+   * should change here, deliberately, rather than by a message arriving.
+   */
+  const myRole: 'host' | 'cohost' | 'participant' =
+    meeting?.myRole === 'host'
+      ? 'host'
+      : rolePatch ?? (meeting?.myRole === 'cohost' ? 'cohost' : 'participant');
+
+  const isHost = myRole === 'host' || myRole === 'cohost';
+
+  // A notice clears itself; an error does not. The difference is that an error
+  // is usually still true a minute later and somebody may need to read it
+  // twice, whereas "you are now a co-host" stops being news the moment it has
+  // been read. Left up, it becomes part of the furniture and the next one is
+  // not noticed.
+  useEffect(() => {
+    if (notice === null) return;
+    const t = setTimeout(() => setNotice(null), 8000);
+    return () => clearTimeout(t);
+  }, [notice]);
 
   /**
    * Re-read the microphone, camera and screen share from the SDK.
@@ -581,6 +705,7 @@ export default function Stage({ seat, meeting, prefs }: {
     setCamOn(me.isCameraEnabled);
     const screen = me.getTrackPublication(Track.Source.ScreenShare);
     setSharing(screen !== undefined && screen.isMuted !== true);
+    setTokenAllowsShare(screenShareGranted(me));
   }, []);
 
   // A guest has no meeting row, so the seat carries the mode for them. Both
@@ -777,6 +902,61 @@ export default function Stage({ seat, meeting, prefs }: {
             const next = String((parsed as { chatPolicy?: unknown }).chatPolicy ?? '');
             if (next === 'everyone' || next === 'cohost' || next === 'off') {
               setChatPolicy(next);
+            }
+            return;
+          }
+
+          // Whoever runs the meeting has changed who may share. Read through a
+          // whitelist for the same reason as chatPolicy: this arrives from
+          // another browser and an unknown string here would decide whether a
+          // button is offered.
+          //
+          // Accepted from any sender, deliberately, and it is worth being
+          // plain about why that is safe HERE and would not be everywhere.
+          // This message only ever changes a LABEL. The token decides whether
+          // a share succeeds, so the worst a forged message can do is show a
+          // button that then fails with a sentence, or hide one that would
+          // have worked — neither of which is a permission. chatPolicy sits at
+          // exactly the same trust level and has since it shipped.
+          if ('sharePolicy' in parsed) {
+            const next = String((parsed as { sharePolicy?: unknown }).sharePolicy ?? '');
+            if (next === 'everyone' || next === 'cohost' || next === 'host') {
+              setSharePolicy(next);
+            }
+            return;
+          }
+
+          // ── SOMEBODY'S ROLE CHANGED. ──────────────────────────────────
+          //
+          // Being made co-host used to need a page reload before any of the
+          // controls appeared, because myRole is read from the meeting row
+          // once, at join. Nothing told the promoted person, so the honest
+          // instruction was "refresh and it will be there" — which is the
+          // kind of thing people stop believing about software.
+          //
+          // Carries the identity so every client can keep the People panel
+          // badges right, not just the person being promoted.
+          //
+          // Same trust level as the two policies above: the SERVER decides
+          // what a co-host may do, on every request, from the row. This
+          // message only decides which buttons are drawn. A forged promotion
+          // buys a menu whose every item is refused.
+          if ('role' in parsed) {
+            const change = (parsed as { role?: unknown }).role;
+            if (typeof change !== 'object' || change === null) return;
+            const who = String((change as { identity?: unknown }).identity ?? '');
+            const what = String((change as { to?: unknown }).to ?? '');
+            if (who.length === 0) return;
+            if (what !== 'cohost' && what !== 'participant') return;
+
+            setRoles((rr) => ({ ...rr, [who]: what }));
+            if (who === r.localParticipant.identity) {
+              setRolePatch(what);
+              // Said out loud. A row of new buttons appearing with no
+              // explanation is worse than no buttons at all.
+              setNotice(what === 'cohost'
+                ? 'You are now a co-host. You can admit people, mute, and record.'
+                : 'You are no longer a co-host.');
             }
             return;
           }
@@ -1033,22 +1213,71 @@ export default function Stage({ seat, meeting, prefs }: {
     return () => { alive = false; };
   }, [rolesLive, meeting, authedFetch]);
 
+  /**
+   * Promote or demote somebody, and TELL THEM.
+   *
+   * The telling is the new half. Before it, the server row changed and nothing
+   * else did: the person promoted saw no new controls, because myRole is read
+   * from the meeting row once, at join. The honest instruction was "reload the
+   * page and they will appear", which is not an instruction anybody should
+   * have to be given.
+   *
+   * Broadcast rather than polled, because a promotion is a thing that happens
+   * at a moment — usually while the host is saying "I have made you co-host,
+   * you can let people in now" — and a three-second poll is long enough for
+   * that sentence to be wrong when it is said.
+   *
+   * The message decides which BUTTONS are drawn and nothing else. Every action
+   * behind them is re-authorised by the server against the row on each
+   * request, so a forged promotion buys a menu whose every item is refused.
+   */
   async function changeRole(identity: string, role: 'cohost' | 'participant') {
     if (!meeting) return;
     try {
       await connectApi.setRole(authedFetch, meeting.id, identity, role);
       setRoles((r) => ({ ...r, [identity]: role }));
+      const r = roomRef.current;
+      if (r) {
+        void r.localParticipant.publishData(
+          new TextEncoder().encode(JSON.stringify({ role: { identity, to: role } })),
+          { reliable: true });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not change their role.');
     }
   }
 
+  /**
+   * Change who may share a screen, and tell the room.
+   *
+   * The BROADCAST IS NOT THE ENFORCEMENT and must never be read as it. The
+   * token is: the server rewrites canPublishSources from the caller's role in
+   * the database, and a client cannot argue with that.
+   *
+   * What the broadcast fixes is the LABEL. Every other browser is holding a
+   * meeting row it fetched when it joined, so before this, a host tightening
+   * the policy left everybody else with a button that said "Share", was
+   * enabled, and failed on the press. The permission change did reach them —
+   * ParticipantPermissionsChanged fires and syncLocal reads it — but reading
+   * the token tells you WHETHER, not WHY, and "Only the host can share" is a
+   * better answer than a refusal with no reason.
+   *
+   * So the two halves have different jobs and both are wanted: the token
+   * decides, and the message explains. They are also each other's backstop,
+   * and mayShare below requires BOTH to agree before it offers the button.
+   */
   async function changeSharePolicy(next: SharePolicy) {
     if (!meeting) return;
     const previous = sharePolicy;
     setSharePolicy(next);   // optimistic: the select should not lag its click
     try {
       await connectApi.update(authedFetch, meeting.id, { sharePolicy: next });
+      const r = roomRef.current;
+      if (r) {
+        void r.localParticipant.publishData(
+          new TextEncoder().encode(JSON.stringify({ sharePolicy: next })),
+          { reliable: true });
+      }
     } catch (e) {
       setSharePolicy(previous);
       setError(e instanceof Error ? e.message : 'Could not change who may share.');
@@ -1058,11 +1287,11 @@ export default function Stage({ seat, meeting, prefs }: {
   /**
    * Change who may type, and tell the room.
    *
-   * The share policy needs no broadcast: it lives in a LiveKit token, so the
-   * server rewrites everybody's permissions and the SDK delivers the change.
-   * Chat has no token to rewrite, and every other client is holding a meeting
-   * row it fetched when it joined — so without this message a host could close
-   * chat and be the only person who knew.
+   * Chat has no token to rewrite — it shares the data channel with hands,
+   * reactions and files, and canPublishData covers all four — so unlike the
+   * share policy above, this message is the ONLY thing that carries the
+   * change. Without it a host could close chat and be the only person who
+   * knew.
    */
   // ── THE ONE LINE THAT DOES THE WORK. ────────────────────────────────
   //
@@ -1750,7 +1979,11 @@ export default function Stage({ seat, meeting, prefs }: {
     // decides nothing, so they just leave. myRole is read from OUR meeting
     // row, not from anything the client could edit; the server would refuse
     // a fake host's /end anyway — this is UX, not the control.
-    if (meeting?.myRole === 'host' && connState !== 'over') {
+    //
+    // 'host' specifically, not isHost: a co-host promoted mid-meeting has no
+    // meeting to end, and myRole never patches anybody UP to host, so this
+    // reads the row either way.
+    if (myRole === 'host' && connState !== 'over') {
       setLeaveAsk(true);
       return;
     }
@@ -2020,10 +2253,22 @@ export default function Stage({ seat, meeting, prefs }: {
   // of a hidden button. Guests have a null meeting and keep the button; if
   // the policy stops them the SDK's refusal is turned into a sentence in
   // toggleShare above.
-  const mayShare = meeting === null
+  const policyAllowsShare = meeting === null
     || sharePolicy === 'everyone'
-    || (sharePolicy === 'cohost' && (meeting.myRole === 'host' || meeting.myRole === 'cohost'))
-    || (sharePolicy === 'host' && meeting.myRole === 'host');
+    || (sharePolicy === 'cohost' && (myRole === 'host' || myRole === 'cohost'))
+    || (sharePolicy === 'host' && myRole === 'host');
+
+  // BOTH have to agree, and they answer different questions.
+  //
+  //   policyAllowsShare  what the meeting's setting says, kept current by the
+  //                      broadcast in changeSharePolicy. Knows WHY.
+  //   tokenAllowsShare   what our actual token grants, re-read from the SDK on
+  //                      every permissions change. Knows WHETHER.
+  //
+  // Requiring both means the button goes quiet the moment EITHER says no,
+  // which is the safe direction for a label: the alternative is a control that
+  // stays lit until the press fails.
+  const mayShare = policyAllowsShare && tokenAllowsShare;
 
   // Who may TYPE. Note the difference from mayShare above: a guest with no
   // meeting row is treated as a PARTICIPANT here, not waved through. Sharing
@@ -2037,9 +2282,8 @@ export default function Stage({ seat, meeting, prefs }: {
   const guestsHere = participants.filter(
     (p) => p.identity.startsWith('guest:')).length;
 
-  const myChatRole = meeting?.myRole ?? 'participant';
   const mayChat = chatPolicy === 'everyone'
-    || (chatPolicy === 'cohost' && (myChatRole === 'host' || myChatRole === 'cohost'));
+    || (chatPolicy === 'cohost' && (myRole === 'host' || myRole === 'cohost'));
 
 
   // ── THE CONTROL BUTTONS, BUILT ONCE. ─────────────────────────────────
@@ -2092,7 +2336,15 @@ export default function Stage({ seat, meeting, prefs }: {
                 ? 'This browser cannot share a screen — join from a computer'
                 : mayShare || sharing
                   ? 'Share your screen'
-                  : 'The host has limited who can share in this meeting'}>
+                  // Say which limit, when we know it. "Only the host" and
+                  // "the host and co-hosts" are different situations, and a
+                  // co-host reading the generic sentence has no way to tell
+                  // that it does not apply to them.
+                  : sharePolicy === 'host'
+                    ? 'Only the host can share a screen in this meeting'
+                    : sharePolicy === 'cohost'
+                      ? 'Only the host and co-hosts can share a screen in this meeting'
+                      : 'The host has limited who can share in this meeting'}>
         <i className="ri-computer-fill" />
         {sharing ? 'Stop' : 'Share'}
       </button>
@@ -2226,6 +2478,18 @@ export default function Stage({ seat, meeting, prefs }: {
   return (
     <>
       <style>{CSS}</style>
+
+      {/* SOUND, BEFORE ANY LAYOUT DECISION IS MADE.
+          Deliberately a sibling of the whole room rather than a child of
+          anything that gets filtered, capped, hidden or re-arranged. It reads
+          `participants` — everybody actually in the meeting — and nothing
+          about tiles, so no view preference can reach it.
+
+          `participants` already excludes nobody; `me` is dropped here because
+          attaching your own microphone plays it straight back and the room
+          howls. */}
+      <RoomAudio people={participants.filter((p) => p !== me)} />
+
       <div className={`cx-root cx-theme-${roomPrefs.theme} cx-root--bar-${roomPrefs.bar}`
         + `${LIGHT_THEMES.has(roomPrefs.theme) ? ' cx-light' : ''}`
         + `${roomPrefs.bar === 'left' ? ' cx-root--bar-left' : ''}`
@@ -2322,6 +2586,17 @@ export default function Stage({ seat, meeting, prefs }: {
             {error}
             <button type="button" className="cx-x ms-2" aria-label="Dismiss"
                     onClick={() => setError(null)}>×</button>
+          </div>
+        )}
+        {/* role="status", not "alert": this is news, not a problem, and a
+            screen reader should not interrupt somebody mid-sentence to say it.
+            It clears itself after eight seconds — long enough to read twice,
+            short enough that it is gone before it becomes furniture. */}
+        {notice && (
+          <div className="cx-banner cx-banner--good" role="status">
+            {notice}
+            <button type="button" className="cx-x ms-2" aria-label="Dismiss"
+                    onClick={() => setNotice(null)}>×</button>
           </div>
         )}
 
@@ -2595,16 +2870,24 @@ export default function Stage({ seat, meeting, prefs }: {
             {/* Said WHILE it is still fixable. Once the meeting is over, the
                 same gap appears on the notes — but by then the only remedy is
                 to have known earlier. */}
+            {/* WORDED AS A GAP BEING CLOSED, NOT AS A RULE.
+                Amit decided on 26 August that every person who joins is part
+                of the minutes; see docs/connect-minutes-for-everyone.md. Until
+                both halves of that ship, this stays — but the old wording said
+                "guests cannot be minuted", which now reads as policy rather
+                than as the temporary state it is, and a host who believes it
+                is policy will stop expecting it to change. */}
             {minutesLive && guestsHere > 0 && (
               <div className="cx-warn" style={{ marginBottom: 12 }}>
                 <strong>
                   {guestsHere === 1 ? 'One guest is' : `${guestsHere} guests are`} here,
-                  and guests cannot be minuted.
+                  and {guestsHere === 1 ? 'is' : 'are'} not in the minutes yet.
                 </strong>
                 <span>
-                  Minutes come from each person&rsquo;s own browser, and guests
-                  cannot take part yet. Their half of the conversation will be
-                  missing from a record that reads as complete.
+                  Minutes come from each person&rsquo;s own browser, and guest
+                  browsers cannot send them in yet. Until that is finished,
+                  their half of the conversation will be missing from a record
+                  that reads as complete.
                 </span>
               </div>
             )}
@@ -2705,7 +2988,7 @@ export default function Stage({ seat, meeting, prefs }: {
               const isSharing = p.getTrackPublication(Track.Source.ScreenShare)?.videoTrack !== undefined;
               // Only a signed-in person can hold controls — the same rule the
               // server enforces — and only the HOST hands roles out.
-              const roleable = meeting?.myRole === 'host'
+              const roleable = myRole === 'host'
                 && p !== room?.localParticipant
                 && p.identity.startsWith('user:');
               return (
@@ -3061,6 +3344,81 @@ export default function Stage({ seat, meeting, prefs }: {
  * what your screen can tell you, and a warning about your own connection
  * belongs in the reconnecting banner, which already exists.
  */
+// ---------------------------------------------------------------------------
+//  EVERYBODY'S SOUND, ONCE, OUTSIDE THE LAYOUT.
+//
+//  ── THE BUG THIS EXISTS TO KILL ──────────────────────────────────────────
+//
+//  The <audio> element used to live inside Tile. A tile is a picture, so it is
+//  created and destroyed by decisions about WHAT TO SHOW — and every one of
+//  those decisions was therefore silencing somebody:
+//
+//    • Side view shows cameras only. Turn your camera off while somebody is
+//      presenting and your tile went, and your VOICE went with it. This is
+//      the one Amit reported, and I introduced it: the camera filter was my
+//      change, and I did not think about what else was inside the tile.
+//    • "Most faces at once". Set it to 9 in a twenty-person meeting and
+//      eleven people were muted for you. Nothing said so.
+//    • "Hide people with no camera". Same, by name.
+//    • The gallery cap, and the "+N more" people behind it. Same again.
+//
+//  Every one of those is a display preference, and not one of them should
+//  have been able to touch what you can hear. The rule now is flat: WHAT YOU
+//  SEE IS A CHOICE, WHAT YOU HEAR IS NOT. A participant in the room is
+//  audible, full stop, and no setting in this file can change that.
+//
+//  ── AND THE SHARED SCREEN'S SOUND, WHICH NEVER WORKED AT ALL ─────────────
+//
+//  toggleShare asks for it — setScreenShareEnabled(..., { audio: true }) —
+//  with a comment saying that without it a shared video is silent. It was
+//  silent anyway: nothing in this file ever attached ScreenShareAudio, so the
+//  flag has been requesting a track that was published, subscribed, and then
+//  dropped on the floor. Both tracks are attached here.
+//
+//  Rendered inside a display:none container, which is what LiveKit's own
+//  RoomAudioRenderer does: an <audio> without controls has no box, and
+//  playback is unaffected by the container being hidden.
+// ---------------------------------------------------------------------------
+function RoomAudio({ people }: { people: LKParticipant[] }) {
+  return (
+    <div style={{ display: 'none' }} aria-hidden="true">
+      {people.map((p) => <ParticipantAudio key={p.identity} p={p} />)}
+    </div>
+  );
+}
+
+function ParticipantAudio({ p }: { p: LKParticipant }) {
+  const micRef = useRef<HTMLAudioElement | null>(null);
+  const shareRef = useRef<HTMLAudioElement | null>(null);
+
+  const mic = p.getTrackPublication(Track.Source.Microphone)?.audioTrack;
+  const share = p.getTrackPublication(Track.Source.ScreenShareAudio)?.audioTrack;
+
+  useEffect(() => {
+    const el = micRef.current;
+    if (!el || !mic) return;
+    mic.attach(el);
+    return () => { mic.detach(el); };
+  }, [mic]);
+
+  useEffect(() => {
+    const el = shareRef.current;
+    if (!el || !share) return;
+    share.attach(el);
+    return () => { share.detach(el); };
+  }, [share]);
+
+  // Two elements, always rendered, so attaching is only ever an effect and
+  // never a race with the element appearing. Muting a track is LiveKit's job;
+  // this end just plays whatever arrives.
+  return (
+    <>
+      <audio ref={micRef} autoPlay />
+      <audio ref={shareRef} autoPlay />
+    </>
+  );
+}
+
 function Quality({ p }: { p: LKParticipant }) {
   const q = p.connectionQuality;
   if (q !== ConnectionQuality.Poor && q !== ConnectionQuality.Lost) return null;
@@ -3111,13 +3469,13 @@ function Tile({ p, big, local, showScreen, hand, canHost, pinned, mirror = true,
   onRemove: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const source = showScreen ? Track.Source.ScreenShare : Track.Source.Camera;
   const videoPub = p.getTrackPublication(source);
+  // Read only to draw the muted icon on the name plate. The sound itself is
+  // nothing to do with this component — see RoomAudio.
   const audioPub = p.getTrackPublication(Track.Source.Microphone);
   const videoTrack = videoPub?.videoTrack;
-  const audioTrack = audioPub?.audioTrack;
   const camOff = !videoTrack || videoPub?.isMuted === true;
   const name = p.name && p.name.length > 0 ? p.name : p.identity;
 
@@ -3128,14 +3486,10 @@ function Tile({ p, big, local, showScreen, hand, canHost, pinned, mirror = true,
     return () => { videoTrack.detach(el); };
   }, [videoTrack]);
 
-  useEffect(() => {
-    const el = audioRef.current;
-    // Never attach your OWN microphone: the browser plays it straight back and
-    // the room howls.
-    if (!el || !audioTrack || local) return;
-    audioTrack.attach(el);
-    return () => { audioTrack.detach(el); };
-  }, [audioTrack, local]);
+  // NO AUDIO HERE ANY MORE. A tile is a picture; sound is not a picture, and
+  // putting the two in one component made every view setting a mute button.
+  // See RoomAudio, which renders every remote participant's sound once,
+  // outside the layout, regardless of who is on screen.
 
   return (
     // The speaking ring belongs on a FACE. On a screen tile it would mean the
@@ -3152,7 +3506,6 @@ function Tile({ p, big, local, showScreen, hand, canHost, pinned, mirror = true,
              className={`cx-video${local && !showScreen && mirror ? ' cx-video--self' : ''}`
                + `${showScreen ? ' cx-video--screen' : ''}`}
              style={{ display: camOff ? 'none' : 'block' }} />
-      {!local && <audio ref={audioRef} autoPlay />}
 
       {camOff && (
         <div className="cx-off">

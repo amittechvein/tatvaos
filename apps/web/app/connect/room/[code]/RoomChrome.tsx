@@ -663,6 +663,12 @@ export const CSS = `
 .cx-banner--warn{background:rgba(255,169,9,.16);color:#ffd591}
 .cx-banner--bad{background:rgba(239,71,87,.18);color:#ffb3bb}
 
+/* Something happened, and it is fine. Green, and quieter than the other two
+   on purpose: a promotion or a setting taking effect is news, not a problem,
+   and it should not compete with a failure banner for attention when both are
+   on screen at once. This one clears itself after eight seconds. */
+.cx-banner--good{background:rgba(23,160,107,.16);color:#8fe3bd}
+
 /* Recording. Deliberately the loudest thing on the screen after the video
    itself, and with NO dismiss control — a notice people can make go away is
    a notice they will make go away. Red, because that is the colour every

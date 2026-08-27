@@ -1,0 +1,462 @@
+-- ============================================================================
+--  TatvaOS Connect — sharing a recording with someone who was not in the room.
+--
+--  DRAFT. NOT FOR LANDING. Sent to Core for review on 26 August 2026, as
+--  instructed: "Send the schema past me before the migration lands — with its
+--  true date on it."
+--
+--  Written against Core's authorisation ruling of the same week. Every rule
+--  below is his; the shapes are mine, and the four places I could not decide
+--  alone are marked  >>> CORE  and listed again at the foot of this file.
+-- ============================================================================
+--
+--  ─────────────────────────────────────────────────────────────────────────
+--  CORRECTION, AND SOMETHING WORSE THAN THE THING I WAS WORRIED ABOUT.
+--
+--  An earlier version of this header said "infra/scripts/verify-migrations.sh
+--  replays the folder from empty and is green on 54 files."
+--
+--  THAT SCRIPT DID NOT EXIST. I had been asserting it for days and nobody,
+--  including me, had run it. The claim went out in the first draft of this
+--  proposal. I am leaving the correction here rather than deleting the
+--  sentence, because the reason the bug below survived this long is precisely
+--  that everyone believed something was already watching for it.
+--
+--  It exists now, and the first thing it did was fail:
+--
+--      20260822-connect-captions.sql
+--          ERROR: schema "connect" does not exist
+--      20260822-connect-retention-default-30.sql
+--          ERROR: column "connect_recording_retention_days"
+--                 of relation "tenants" does not exist
+--
+--  Both of those are Core's files, correctly named for the August day they
+--  were written, and both depend on Connect tables created by files named
+--  20260901-20260910 — August work wearing SEPTEMBER dates. 20260822 sorts
+--  before 20260901, so the dependants run first.
+--
+--  SO THIS IS NOT A FUTURE PROBLEM WITH THIS FILE. A FRESH INSTALL IS BROKEN
+--  RIGHT NOW, TODAY, BEFORE THIS MIGRATION EXISTS. Production is fine and
+--  cannot notice: the objects already exist there, so these same files re-run
+--  clean on every deploy. What is broken is every fresh database — a rebuild,
+--  A RESTORE FROM BACKUP, or a new developer's first local setup.
+--
+--  The README in local/postgres/init describes this exact failure happening
+--  once before, with 20260816-space-public-links.sql. It happened again
+--  because a filename convention is only as good as the thing enforcing it,
+--  and nothing was.
+--
+--  ─────────────────────────────────────────────────────────────────────────
+--  THE FIX, PROVEN RATHER THAN PROPOSED.
+--
+--  Renaming the ten 20260901-20260910 files to their true August dates makes
+--  the folder replay clean. I ran it: 51 files applied into an empty database
+--  and then applied a second time, both green. The exercise also turned up a
+--  dependency nobody had written down anywhere —
+--
+--      20260901-connect.sql NEEDS THE `calendar` SCHEMA,
+--      so it must sort after 20260816-calendar.sql.
+--
+--  which is worth knowing before choosing dates, because a true date earlier
+--  than the 16th would move it the wrong side of that and fail.
+--
+--  Two scripts do the work:
+--    infra/scripts/rename-migrations-to-true-dates.sh
+--        takes each file's true date from `git log --diff-filter=A` rather
+--        than from anybody's memory, adds the -a-/-b- letters the README asks
+--        for when several land on one day, and refuses to reorder anything
+--        silently.
+--    infra/scripts/verify-migrations.sh
+--        replays the folder into a throwaway database, twice, and says
+--        whether a fresh install works.
+--
+--  ─────────────────────────────────────────────────────────────────────────
+--  WHAT THAT MEANS FOR THIS FILE'S NAME.
+--
+--  It carries 26 August, which is the day it was written. That is the rule
+--  from here on. It also sorts BEFORE 20260901-20260910, so it cannot land
+--  until the rename does — but that is now the smaller half of the problem
+--  rather than the whole of it.
+--  ─────────────────────────────────────────────────────────────────────────
+--
+--  THE FOUR LEVELS, IN THE ORDER THEY GIVE AWAY MORE.
+--
+--    'organisation'  anyone signed in to the recording's own organisation.
+--    'named'         a listed TatvaOS account, in any organisation. Cross
+--                    tenant is deliberately allowed; a non-TatvaOS email
+--                    address is not, in v1.
+--    'password'      anyone holding the link AND the password.
+--    'public'        anyone holding the link. Off for the whole organisation
+--                    unless an administrator turns it on, and off by default.
+--
+--  THE BASELINE NEVER MOVES. Participants and the host can already read a
+--  recording, they can read it whether or not a share row exists, and no
+--  share row can take that away. That answer stays in exactly one place —
+--  SeenMeetingAsync in ConnectRecordingEndpoints — and nothing here repeats
+--  it. A share row only ever ADDS a reader.
+--
+--  EXPIRY IS MANDATORY on the two link-bearing levels, defaults to 7 days,
+--  and cannot outlive the recording: a link that survives the file it points
+--  at is a promise the storage sweep will break. The ceiling is enforced by a
+--  trigger rather than a CHECK because it reads another row.
+--
+--  DELIVERY DOES NOT CHANGE. ConnectDownloadTicket still signs a five-minute
+--  ticket and the file route still re-decides authorisation per request. The
+--  ticket has never been the authorisation and does not become it here; it
+--  gains one more question — "does a live share row cover this reader?" —
+--  asked server-side, against these tables, on every request including each
+--  GET of a range request.
+-- ============================================================================
+
+
+-- ============================================================================
+--  1. The share itself. One row per grant, per recording.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS connect.recording_shares (
+    id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id           uuid NOT NULL,
+    recording_id        uuid NOT NULL
+                          REFERENCES connect.recordings(id) ON DELETE CASCADE,
+
+    -- Denormalised from the recording on purpose. The download route already
+    -- holds the meeting id from its own path, so carrying it here lets the
+    -- authorisation query refuse a recording id belonging to a DIFFERENT
+    -- meeting without a join, in the same query that reads the share. The
+    -- drift risk is nil: a recording never changes meetings.
+    meeting_id          uuid NOT NULL,
+
+    level               text NOT NULL,
+
+    -- The link secret, for the two levels that have a link. Same shape as
+    -- connect.meetings.code — 22 chars of base64url over 16 CSPRNG bytes —
+    -- and stored in plaintext for the same reason: it is a capability the
+    -- creator re-reads and re-sends, and on its own it mints nothing. It is
+    -- NOT the authorisation; it names a share row, which is then read.
+    token               text,
+
+    -- Argon2id via the platform's IPasswordHasher, exactly like
+    -- connect.meetings.password_hash. Never the password.
+    password_hash       text,
+
+    -- NOT NULL for 'password' and 'public'; optional above them. Ceiling
+    -- enforced by the trigger below, not here.
+    expires_at          timestamptz,
+
+    created_by_user_id  uuid NOT NULL,
+    created_at          timestamptz NOT NULL DEFAULT now(),
+    updated_at          timestamptz NOT NULL DEFAULT now(),
+
+    -- Revoking sets a time; it never deletes the row. "Who could see this,
+    -- and when did that stop" is a question somebody will ask after an
+    -- incident, and a deleted row cannot answer it.
+    revoked_at          timestamptz,
+
+    CONSTRAINT recording_shares_level_check
+        CHECK (level IN ('organisation','named','password','public')),
+
+    -- A link exists for exactly the levels that have one.
+    CONSTRAINT recording_shares_token_check
+        CHECK ((level IN ('password','public')) = (token IS NOT NULL)),
+
+    -- A password exists for exactly the level named after it.
+    CONSTRAINT recording_shares_password_check
+        CHECK ((level = 'password') = (password_hash IS NOT NULL)),
+
+    -- Expiry is mandatory wherever a link exists.
+    CONSTRAINT recording_shares_expiry_check
+        CHECK (level NOT IN ('password','public') OR expires_at IS NOT NULL)
+);
+
+-- One live share per level per recording. A second 'public' row on the same
+-- recording is not a feature, it is two links with different expiries and one
+-- of them forgotten. Revoked rows are excluded so a recording can be shared
+-- again after a link is pulled.
+CREATE UNIQUE INDEX IF NOT EXISTS recording_shares_live_level_idx
+    ON connect.recording_shares (recording_id, level)
+    WHERE revoked_at IS NULL;
+
+-- The lookup the download route does on every request: token -> share.
+CREATE UNIQUE INDEX IF NOT EXISTS recording_shares_token_idx
+    ON connect.recording_shares (token)
+    WHERE token IS NOT NULL AND revoked_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS recording_shares_recording_idx
+    ON connect.recording_shares (recording_id) WHERE revoked_at IS NULL;
+
+COMMENT ON TABLE connect.recording_shares IS
+    'Who may read a recording BEYOND the people who were in the room. Never '
+    'narrows the baseline (participants + host), only widens it. See the '
+    'header of 20260826-connect-recording-shares.sql.';
+
+
+-- ============================================================================
+--  2. The named people, for level 'named'.
+-- ============================================================================
+--
+--  CROSS-TENANT IS THE WHOLE POINT AND THE WHOLE PROBLEM.
+--
+--  Core allowed named grants to reach accounts in other organisations. That
+--  breaks the assumption every other query in this module rests on: the row
+--  lives in the recording's tenant, and the reader is in their own. An
+--  RLS-scoped query run as the reader can never see the row that permits
+--  them.
+--
+--  So the grant is read by ONE security-definer function (section 4), which
+--  reads past RLS deliberately, answers a single yes/no, and returns no data.
+--  That is the same shape as connect.recording_allowed(), which already
+--  exists for the same class of question. Putting it anywhere else — or
+--  loosening the RLS policy to permit it — would spread a tenant-crossing
+--  read across the module, and it would be found later by somebody who did
+--  not know it was one.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS connect.recording_share_grants (
+    id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    -- The RECORDING's tenant, so this row is owned where the recording is.
+    tenant_id           uuid NOT NULL,
+
+    share_id            uuid NOT NULL
+                          REFERENCES connect.recording_shares(id) ON DELETE CASCADE,
+
+    -- The reader. May belong to another organisation; subject_tenant_id is
+    -- stored so a revoke-everything-for-that-org sweep is one statement.
+    subject_user_id     uuid NOT NULL,
+    subject_tenant_id   uuid NOT NULL,
+
+    created_at          timestamptz NOT NULL DEFAULT now(),
+    revoked_at          timestamptz
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS recording_share_grants_live_idx
+    ON connect.recording_share_grants (share_id, subject_user_id)
+    WHERE revoked_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS recording_share_grants_subject_idx
+    ON connect.recording_share_grants (subject_user_id) WHERE revoked_at IS NULL;
+
+COMMENT ON TABLE connect.recording_share_grants IS
+    'Named readers of one share. subject_tenant_id may differ from tenant_id '
+    '— cross-organisation grants are permitted, and are the reason section 4 '
+    'exists.';
+
+
+-- ============================================================================
+--  3. Every access beyond a participant writes a row.
+-- ============================================================================
+--
+--  >>> CORE, QUESTION 1 OF 4. This is a Connect-local table rather than a
+--  platform audit row, and that is a decision I did not think was mine.
+--
+--  AuditWriter wants an actor who is a user. Level 'public' and level
+--  'password' readers are not users — they are a link and, sometimes, a
+--  password. The honest actor for those rows is "the holder of share X, from
+--  address Y", which the platform audit table has no column for.
+--
+--  I can go either way and would rather you chose:
+--    (a) this table, Connect-local, shaped for the actor we actually have;
+--    (b) a nullable actor on the platform audit table, which is your file and
+--        every other module's.
+--
+--  Written on ACCESS, not on grant. Grants also get an ordinary AuditWriter
+--  row — those have a real user behind them and belong in the platform log.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS connect.recording_access_log (
+    id                  bigserial PRIMARY KEY,
+    tenant_id           uuid NOT NULL,
+    recording_id        uuid NOT NULL,
+    share_id            uuid REFERENCES connect.recording_shares(id) ON DELETE SET NULL,
+
+    -- Which of the four let them in. Never null: a row here means a share
+    -- authorised the read, because baseline participants are not logged.
+    level               text NOT NULL,
+
+    -- The reader when there is one. NULL for a link holder, which is the
+    -- entire reason this table exists rather than an audit row.
+    subject_user_id     uuid,
+    subject_tenant_id   uuid,
+
+    -- Truncated to a /24 (v4) or /48 (v6) before it is written. Enough to say
+    -- "this link was opened from twelve different places"; not a location.
+    -- >>> CORE, QUESTION 2 OF 4: truncation is my call to make conservative,
+    -- but if the platform has a house rule for storing addresses I will use
+    -- that instead of inventing a second one.
+    address_prefix      text,
+
+    -- First GET of a range request only. A two-hour video is dozens of GETs
+    -- with one ticket, and one row per GET turns this table into a log of
+    -- seeking behaviour, which is not what it is for.
+    created_at          timestamptz NOT NULL DEFAULT now(),
+
+    CONSTRAINT recording_access_log_level_check
+        CHECK (level IN ('organisation','named','password','public'))
+);
+
+CREATE INDEX IF NOT EXISTS recording_access_log_recording_idx
+    ON connect.recording_access_log (recording_id, created_at DESC);
+
+COMMENT ON TABLE connect.recording_access_log IS
+    'One row per read of a recording by somebody who was NOT in the room. '
+    'Participants and hosts are not logged here — they are the baseline. See '
+    'section 3 of 20260826-connect-recording-shares.sql.';
+
+
+-- ============================================================================
+--  4. The one function that may cross a tenant boundary.
+-- ============================================================================
+--
+--  Answers exactly one question and returns exactly one boolean. Takes the
+--  reader's user id, so it cannot be used to enumerate anything, and returns
+--  nothing about the share that let them in.
+--
+--  It does NOT answer the baseline question. A participant is authorised
+--  before this is called, by SeenMeetingAsync, and that stays the only place
+--  the baseline lives.
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION connect.share_allows_user(
+    p_recording_id uuid,
+    p_user_id      uuid,
+    p_user_tenant  uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = connect, pg_catalog
+AS $$
+    SELECT EXISTS (
+        SELECT 1
+          FROM connect.recording_shares s
+         WHERE s.recording_id = p_recording_id
+           AND s.revoked_at IS NULL
+           AND (s.expires_at IS NULL OR s.expires_at > now())
+           AND (
+                 -- Same organisation as the recording.
+                 (s.level = 'organisation' AND s.tenant_id = p_user_tenant)
+                 -- Or named, in any organisation.
+              OR (s.level = 'named' AND EXISTS (
+                    SELECT 1 FROM connect.recording_share_grants g
+                     WHERE g.share_id = s.id
+                       AND g.subject_user_id = p_user_id
+                       AND g.revoked_at IS NULL))
+               )
+    );
+$$;
+
+COMMENT ON FUNCTION connect.share_allows_user(uuid, uuid, uuid) IS
+    'Does a live share let this signed-in user read this recording? Reads '
+    'past RLS deliberately and in one place, because named grants may cross '
+    'organisations. Never answers the baseline question — that is '
+    'SeenMeetingAsync.';
+
+
+-- ============================================================================
+--  5. Expiry may not outlive the recording.
+-- ============================================================================
+--
+--  A CHECK cannot do this: the ceiling is on another row, and it moves when
+--  the host puts a retention hold on the recording. A trigger can, and it
+--  runs on the write rather than on the read, so a link is never issued that
+--  the sweep will silently break.
+--
+--  The ceiling is the recording's own end of life: its keep_until_at when the
+--  host has set a hold, otherwise the organisation's retention window from
+--  the day it was made.
+--
+--  >>> CORE, QUESTION 3 OF 4: I read the org's retention days out of the same
+--  place connect.recording_allowed() reads its flag. I could not verify the
+--  column name from my checkout, so it is written here as
+--  connect.retention_days(tenant_id) — a function that does not exist yet. If
+--  there is already a way to ask that question, name it and I will use it
+--  rather than adding a second one.
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION connect.recording_shares_cap_expiry()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_ceiling timestamptz;
+BEGIN
+    IF NEW.expires_at IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    SELECT COALESCE(r.keep_until_at,
+                    r.created_at + make_interval(days => connect.retention_days(r.tenant_id)))
+      INTO v_ceiling
+      FROM connect.recordings r
+     WHERE r.id = NEW.recording_id;
+
+    IF v_ceiling IS NOT NULL AND NEW.expires_at > v_ceiling THEN
+        -- Clamped, not refused. The person sharing asked for "30 days" from a
+        -- short list; telling them the recording only has 11 left is the UI's
+        -- job, and failing their click is not an improvement on doing what
+        -- they can actually have.
+        NEW.expires_at := v_ceiling;
+    END IF;
+
+    RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS recording_shares_cap_expiry ON connect.recording_shares;
+CREATE TRIGGER recording_shares_cap_expiry
+    BEFORE INSERT OR UPDATE OF expires_at, recording_id
+    ON connect.recording_shares
+    FOR EACH ROW EXECUTE FUNCTION connect.recording_shares_cap_expiry();
+
+
+-- ============================================================================
+--  6. The organisation switch that gates level 'public'.
+-- ============================================================================
+--
+--  >>> CORE, QUESTION 4 OF 4, AND THE ONE THAT STOPS THIS FILE RUNNING.
+--
+--  Your ruling: level 4 is gated by a per-organisation switch, default OFF,
+--  the same shape as Space's public-links kill switch. I agree with the shape
+--  and cannot write the statement, because the table
+--  connect.recording_allowed() reads is not in my checkout and I am not
+--  guessing at a column on a settings table shared with other modules.
+--
+--  What it needs to be:
+--    • one boolean, default false, on whatever holds the org's Connect
+--      settings today;
+--    • read at SHARE time and again at READ time. Read time matters more: an
+--      administrator switching it off must kill links that already exist, not
+--      merely stop new ones. That is a second condition in the download
+--      route, not a sweep.
+--    • when it flips off, existing 'public' rows are left in place and simply
+--      stop authorising. If it is switched back on they work again, and the
+--      access log shows the gap.
+--
+--  Name the table and column and I will write section 6 and the matching
+--  clause in the download route in the same pass.
+-- ============================================================================
+
+-- (intentionally empty pending the answer above)
+
+
+-- ============================================================================
+--  RLS
+-- ============================================================================
+--  >>> Not written here either. Every other Connect table gets its policies
+--  from your RLS file rather than from its own migration, and I am not going
+--  to be the first module to do it differently. The three tables need the
+--  ordinary tenant_id policy; recording_share_grants additionally must NOT be
+--  readable by subject_tenant_id, because a reader in another organisation
+--  being able to list who else a recording was shared with is a leak in the
+--  opposite direction to the one we are guarding.
+-- ============================================================================
+
+
+DO $$
+BEGIN
+    RAISE NOTICE 'connect recording sharing (DRAFT — not for landing):';
+    RAISE NOTICE '    recording_shares        — one row per grant, four levels';
+    RAISE NOTICE '    recording_share_grants  — named readers, cross-tenant allowed';
+    RAISE NOTICE '    recording_access_log    — one row per read beyond the room';
+    RAISE NOTICE '    share_allows_user()     — the only tenant-crossing read';
+    RAISE NOTICE '    4 questions open for Core; sections 6 and RLS unwritten';
+END $$;
