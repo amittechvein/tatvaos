@@ -396,6 +396,37 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+step "Syncing the mail-edge TLS certificate from Caddy"
+#
+#  Caddy earns and renews the mail.tatvaos.com certificate for the webmail
+#  door. The mail edge (Postfix submission :587, Dovecot IMAPS :993) reuses
+#  it via the mailcerts volume rather than running a second ACME client into
+#  the same rate limits. Copied on every deploy; deploys are far more
+#  frequent than 60-day renewals.
+#
+#  ON FAILURE THE MAIL-EDGE RESTART BELOW IS SKIPPED, deliberately: both
+#  entrypoints FAIL-CLOSED without a certificate (that is the fix for the
+#  cleartext-IMAP hole), so restarting them certless would take mail DOWN.
+#  The running processes keep serving on their current config instead, and
+#  the operator gets a red line to act on.
+CERT_OK=0
+if docker run --rm -v tatvaos_caddydata:/src:ro -v tatvaos_mailcerts:/dst alpine sh -c '
+        set -e
+        d=$(ls -d /src/caddy/certificates/*/mail.* 2>/dev/null | head -1)
+        [ -n "$d" ] || { echo "no mail.* certificate directory under caddydata"; exit 1; }
+        cp "$d"/*.crt /dst/fullchain.pem
+        cp "$d"/*.key /dst/privkey.pem
+        chmod 600 /dst/privkey.pem /dst/fullchain.pem
+        echo "synced from $d"
+    ' 2>&1 | sed 's/^/   /'; then
+    ok "certificate in the mailcerts volume"
+    CERT_OK=1
+else
+    bad "certificate sync FAILED — mail-edge restart will be SKIPPED"
+    note "the running postfix/dovecot keep serving; fix the sync and redeploy"
+fi
+
+# ---------------------------------------------------------------------------
 step "Restarting postfix (its config renders at container start)"
 
 # The Caddy paragraph above, but for mail — and it cost more before anyone
@@ -414,11 +445,13 @@ step "Restarting postfix (its config renders at container start)"
 # sending servers retry. Unconditional, because "only when postfix files
 # changed" is a condition somebody has to maintain, and the failure mode of
 # getting it wrong is silent — which is the exact shape being fixed.
-if $COMPOSE restart postfix 2>&1 | sed 's/^/   /'; then
-    ok "postfix restarted — the mounted config is re-rendered and live"
-    note "verify: docker exec tatvaos-postfix-1 postconf -h message_size_limit"
+if [ "${CERT_OK:-0}" != "1" ]; then
+    bad "SKIPPED: no certificate synced, and the mail edge fails closed without one"
+elif $COMPOSE restart postfix dovecot 2>&1 | sed 's/^/   /'; then
+    ok "postfix and dovecot restarted — configs re-rendered, certificate live"
+    note "verify: docker exec tatvaos-postfix-1 postconf -h submission_tls_security_level"
 else
-    bad "postfix restart failed — the running config may be STALE; restart it by hand"
+    bad "mail-edge restart failed — the running config may be STALE; restart by hand"
 fi
 
 # ---------------------------------------------------------------------------
@@ -441,6 +474,18 @@ else
     note "logs:  $COMPOSE logs --tail 50"
     exit 1
 fi
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+step "Pruning the build cache"
+#
+#  The cache once grew to 48 GB and took the disk to 85% — the disk Mail
+#  writes to — and was cleaned by hand with a note saying deploy.sh should do
+#  it. This is that note, honoured. --keep-storage retains enough for layer
+#  reuse (fast rebuilds), the rest goes; dangling images with it.
+docker builder prune -f --keep-storage=8GB 2>&1 | tail -1 | sed 's/^/   /'
+docker image prune -f 2>&1 | tail -1 | sed 's/^/   /'
+ok "cache bounded at 8 GB — $(df -h / | awk 'NR==2 {print $4}') free on /"
 
 # ---------------------------------------------------------------------------
 step "Verdict"

@@ -26,13 +26,23 @@ smtp      inet  n       -       n       -       -       smtpd
 #  submission from mynetworks so swaks and the API can send without a
 #  certificate. These three -o lines must NOT be copied to production.
 # ----------------------------------------------------------------------------
+#  PARAMETERISED since 28 Aug 2026. The three dev-only "-o" lines that the
+#  comment above warned must never reach production WERE production — one
+#  master.cf, no per-environment split, so the warning was a wish. The values
+#  now come from main.cf parameters: local defaults stay exactly as the old
+#  literals, and the entrypoint overwrites them with the authenticated-TLS
+#  posture when TATVAOS_ENV is not local. The file can no longer disagree
+#  with the environment it runs in.
 submission inet n       -       n       -       -       smtpd
     -o syslog_name=postfix/submission
-    -o smtpd_tls_security_level=none
-    -o smtpd_sasl_auth_enable=no
-    -o smtpd_client_restrictions=permit_mynetworks,reject
+    -o smtpd_tls_security_level=$submission_tls_security_level
+    -o smtpd_sasl_auth_enable=$submission_sasl_auth_enable
+    -o smtpd_sasl_type=dovecot
+    -o smtpd_sasl_path=inet:dovecot:12345
+    -o smtpd_sasl_security_options=noanonymous
+    -o smtpd_client_restrictions=$submission_client_restrictions
     -o smtpd_sender_restrictions=$submission_sender_restrictions
-    -o smtpd_recipient_restrictions=permit_mynetworks,reject_unauth_destination,reject
+    -o smtpd_recipient_restrictions=$submission_recipient_restrictions
 
 # ----------------------------------------------------------------------------
 # Standard internal services

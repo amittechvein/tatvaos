@@ -128,6 +128,8 @@ services:
       - ../../local/postfix/master.cf:/etc/postfix/master.cf:ro
       - ../../local/postfix/sql:/etc/postfix/sql-src:ro
       - maillogs:/var/log
+      # The mail edge certificate — see the mailcerts volume note above.
+      - mailcerts:/certs:ro
     networks: [mailnet]
 
   dovecot:
@@ -149,7 +151,10 @@ services:
       # refuses to read a config holding a password that is group-readable —
       # and a read-only bind mount cannot be chmod-ed.
       - ../../local/dovecot/dovecot-sql.conf.ext:/etc/dovecot/dovecot-sql.conf.ext.tmpl:ro
+      - ../../local/dovecot/dovecot-sql-app.conf.ext:/etc/dovecot/dovecot-sql-app.conf.ext.tmpl:ro
       - vmail:/var/mail/vhosts
+      # The mail edge certificate — see the mailcerts volume note above.
+      - mailcerts:/certs:ro
     networks: [mailnet]
 
   api:
@@ -552,6 +557,12 @@ networks:
     driver: bridge
 
 volumes:
+  # TLS material for the mail edge (SMTP submission + IMAPS). Populated by
+  # deploy.sh from caddydata — Caddy already earns and renews the
+  # mail.tatvaos.com certificate for the webmail door, and the mail edge
+  # reuses it rather than running a second ACME client into the same rate
+  # limits. Read-only in both mail containers.
+  mailcerts:
   dkimkeys:
   connectrec:
   spaceblobs:

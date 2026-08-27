@@ -108,6 +108,30 @@ if [ -f "$MAIN_TMPL" ]; then
                    exit 1 ;;
            esac ;;
     esac
+
+# ---------------------------------------------------------------------------
+# Submission posture — see master.cf. Local keeps the open-inside/closed-
+# outside dev shape; anything else gets authenticated TLS submission, and
+# REFUSES TO START without the certificate rather than falling back to the
+# posture that left port 587 useless and 25/587 without TLS.
+# ---------------------------------------------------------------------------
+if [ "${TATVAOS_ENV:-local}" != "local" ]; then
+    CRT=/certs/fullchain.pem
+    KEY=/certs/privkey.pem
+    if [ ! -s "$CRT" ] || [ ! -s "$KEY" ]; then
+        echo "[postfix] FATAL: no TLS certificate at $CRT / $KEY."
+        echo "[postfix] deploy.sh syncs it from Caddy into the mailcerts volume."
+        exit 1
+    fi
+    postconf -e "smtpd_tls_cert_file=$CRT"
+    postconf -e "smtpd_tls_key_file=$KEY"
+    postconf -e "smtpd_tls_security_level=may"
+    postconf -e "submission_tls_security_level=encrypt"
+    postconf -e "submission_sasl_auth_enable=yes"
+    postconf -e "submission_client_restrictions=permit_sasl_authenticated,reject"
+    postconf -e "submission_recipient_restrictions=permit_sasl_authenticated,reject_unauth_destination,reject"
+    echo "[postfix] submission: authenticated TLS posture applied"
+fi
 fi
 
 # ---------------------------------------------------------------------------

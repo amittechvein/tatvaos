@@ -130,6 +130,18 @@ internal_only =
 # Named here and referenced from master.cf: -o values there cannot contain
 # spaces, so "check_sender_access pgsql:..." cannot be written inline - a comma
 # would make Postfix read the map as a second, invalid restriction.
+# ----------------------------------------------------------------------------
+#  Submission posture — parameters, because master.cf cannot vary by
+#  environment and its dev-only literals shipped to production for weeks.
+#  These are the LOCAL values (identical to the old literals). The entrypoint
+#  replaces them with encrypt/yes/permit_sasl_authenticated when TATVAOS_ENV
+#  is not local, and refuses to start if the certificate is missing.
+# ----------------------------------------------------------------------------
+submission_tls_security_level = none
+submission_sasl_auth_enable = no
+submission_client_restrictions = permit_mynetworks,reject
+submission_recipient_restrictions = permit_mynetworks,reject_unauth_destination,reject
+
 submission_sender_restrictions =
     check_sender_access pgsql:/etc/postfix/sql/sender-external-gate.cf
 
