@@ -1,0 +1,45 @@
+# ============================================================================
+#  TatvaOS Platform — platform.tatvaos.com (the developer console)
+# ============================================================================
+#
+#  Where the platform faces PROGRAMS rather than people: mail-client settings
+#  and app passwords today; personal access tokens and the public APIs
+#  (create users, create mailboxes, create meetings) as they ship. Amit's
+#  ask of 28 Aug 2026 — one address a client's developer can be sent to.
+#
+#  Same skeleton as every other door. Requires PLATFORM_DOMAIN in the
+#  production environment file AND a DNS record — see the warning in
+#  account.caddy about what a mounted-but-unset variable does to Caddy
+#  (refuses the whole config; every product goes down). deploy.sh's
+#  validate-before-reload gate is the net, but the variable still has to
+#  exist BEFORE this file first deploys.
+# ============================================================================
+
+{$PLATFORM_DOMAIN} {
+    encode zstd gzip
+
+    # Send every other product's paths to their own door — see the
+    # product_doors snippet file for why and for the self-redirect guard.
+    import /etc/caddy/conf.d/core/product-doors.caddy
+
+    handle /api/* {
+        reverse_proxy api:8080
+    }
+
+    redir / /platform
+
+    @consolepaths path /org /org/* /admin /admin/* /signup /signup/*
+    redir @consolepaths https://{$SITE_DOMAIN}{uri}
+
+    handle {
+        reverse_proxy web:3000
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+}

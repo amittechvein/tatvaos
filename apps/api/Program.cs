@@ -426,8 +426,14 @@ app.MapAuditEndpoints();
 // Shared mailboxes are PROVISIONING — the same act as creating a person, so
 // Core owns it. Mail owns who may read one.
 app.MapSharedMailboxEndpoints();
+// App passwords for third-party SMTP/IMAP clients — new file, Core-authored
+// as a declared lane exception (see the endpoint header).
+app.MapMailAppPasswordEndpoints();
 // "How much room do I have left?" — one answer for every product's meter.
 app.MapMyStorageEndpoints();
+// The organisation's AI consent switch — the screen for allow_ai, so "can we
+// turn it off ourselves" is answered by a toggle rather than a promise.
+app.MapOrgAiEndpoints();
 // Calendar. Recurrence is expanded at read time, never stored — see
 // Modules/Calendar/Recurrence.cs.
 app.MapCalendarEndpoints();

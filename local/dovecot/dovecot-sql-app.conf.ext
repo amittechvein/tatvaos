@@ -1,0 +1,44 @@
+# ============================================================================
+#  App passwords — the SECOND password store (see the passdb blocks in
+#  dovecot.conf). Tried only after the primary mailbox password fails.
+#
+#  ONE ACTIVE APP PASSWORD PER MAILBOX, and that is a Dovecot constraint
+#  worn honestly rather than hidden: an SQL passdb verifies exactly one
+#  returned row, so "several named app passwords" cannot work through this
+#  mechanism — it needs a Lua auth hook, which is a different project. The
+#  API enforces the same rule from its side (generating a new password
+#  revokes the previous one), the LIMIT 1 below makes the database agree,
+#  and the UI says "your app password", singular.
+#
+#  Every row's hash carries an explicit {SCHEME} prefix written by the API
+#  ({SSHA512} today), so default_pass_scheme here is a formality — stated
+#  anyway, because "each hash carries its own prefix" was asserted about the
+#  primary store while its rows carried none, and that assertion cost every
+#  real user their IMAP login without anyone noticing. Trust prefixes you can
+#  see, not comments.
+#
+#  Rendered by entrypoint.sh exactly like the primary file: the dev_mail_pw
+#  token below is replaced with the real database password at start.
+# ============================================================================
+connect = "host=postgres dbname=tatvaos_mail user=tatvaos_mailedge password=dev_mail_pw"
+
+default_pass_scheme = SSHA512
+
+# Same liveness gates as the primary store: a suspended organisation or
+# person must stop authenticating IMMEDIATELY, app passwords included —
+# revoking the person and forgetting their app passwords would leave their
+# phone's mail client alive after they were let go.
+password_query = \
+    SELECT m.address AS user, \
+           ap.password_hash AS password \
+    FROM   mail.app_passwords ap \
+    JOIN   mail.mailboxes m ON m.id = ap.mailbox_id \
+    JOIN   core.tenants   t ON t.id = m.tenant_id \
+    LEFT   JOIN core.users u ON u.id = m.user_id \
+    WHERE  m.address = '%u' \
+      AND  ap.revoked_at IS NULL \
+      AND  m.is_active = true \
+      AND  t.status IN ('active', 'trial') \
+      AND  (u.id IS NULL OR u.status = 'active') \
+    ORDER  BY ap.created_at DESC \
+    LIMIT  1

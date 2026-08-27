@@ -36,9 +36,27 @@ Calendar (not the public /mail/send contract):
 
 Calendar guarantees about the part (so you don't have to check): UID stable
 for the event's life; SEQUENCE bumped only on material change; ORGANIZER and
-every ATTENDEE with PARTSTAT; DTSTART/DTEND with TZID and a full VTIMEZONE
-block (Gmail is forgiving here, Outlook is not); RRULE verbatim when
-recurring; METHOD in the body matching the content-type parameter.
+every ATTENDEE with PARTSTAT; RRULE verbatim when recurring; METHOD in the
+body matching the content-type parameter.
+
+Time zones — AMENDED 27 Aug 2026, because the first live send proved the old
+sentence here described code that does not exist. The original guarantee
+promised TZID and a full VTIMEZONE block unconditionally; what Imip.Build
+actually does, deliberately, is:
+
+- **one-off timed event**: bare UTC (`DTSTART:...Z`), no TZID, no VTIMEZONE.
+  Valid RFC 5545, and a fixed instant needs no zone rules to interpret.
+- **recurring event**: TZID on the times plus a full VTIMEZONE block — which
+  is precisely where zone rules matter, because an RRULE crossing a
+  daylight-saving boundary is the case that breaks (Gmail is forgiving here,
+  Outlook is not).
+- **all-day event**: DATE values, no zone at all.
+
+If somebody later argues unconditional TZID is friendlier to Outlook even
+for one-offs, that is a design question to decide with Core — not a bug to
+fix quietly against this paragraph. A guarantee document that overstates the
+code is worse than no guarantee: Mail read this one, trusted it, and spent a
+finding on the gap.
 
 ## Seam 2 — inbound (your ingest calls one hook)
 

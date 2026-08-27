@@ -124,6 +124,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
 
     public DbSet<TatvaOS.Api.Modules.Connect.ConnectCaptionLine> ConnectCaptionLines
         => Set<TatvaOS.Api.Modules.Connect.ConnectCaptionLine>();
+
+    public DbSet<TatvaOS.Api.Modules.Mail.MailAppPassword> MailAppPasswords
+        => Set<TatvaOS.Api.Modules.Mail.MailAppPassword>();
     public DbSet<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes> ConnectMeetingNotes
         => Set<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>();
     // Added by 20260904-connect-minutes. Chat still travels over LiveKit's
@@ -220,6 +223,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecording>().ToTable("recordings", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectTranscript>().ToTable("transcripts", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectCaptionLine>().ToTable("caption_lines", "connect");
+        b.Entity<TatvaOS.Api.Modules.Mail.MailAppPassword>().ToTable("app_passwords", "mail");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>().ToTable("meeting_notes", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingChat>().ToTable("meeting_chat", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingBlock>().ToTable("meeting_blocks", "connect");

@@ -84,9 +84,24 @@ public static class CalendarInvitationMailer
         // deliberately bilingual-safe: no templating, just the facts in the
         // order a person scans them. Clients that understand text/calendar
         // never show this; clients that don't get something honest.
+        //
+        // CONVERTED to the event's zone BEFORE printing, and this line is here
+        // because the first live send got it wrong: StartsAt is stored UTC,
+        // and formatting it raw put "09:30 (Asia/Calcutta)" in the body of an
+        // event whose card correctly read 15:00 — the UTC clock wearing an
+        // IST label, which is worse than either alone because it looks
+        // decided. Google's own render of the VCALENDAR was what caught it:
+        // the 384-assertion suite proves bytes, and this bug lived in prose.
+        TimeZoneInfo tzi;
+        try { tzi = TimeZoneInfo.FindSystemTimeZoneById(ev.Timezone); }
+        catch (TimeZoneNotFoundException) { tzi = TimeZoneInfo.Utc; }
+        catch (InvalidTimeZoneException) { tzi = TimeZoneInfo.Utc; }
+        var localStart = TimeZoneInfo.ConvertTime(ev.StartsAt, tzi);
+        var localEnd = TimeZoneInfo.ConvertTime(ev.EndsAt, tzi);
+
         var when = ev.IsAllDay
-            ? ev.StartsAt.ToString("dd MMM yyyy")
-            : $"{ev.StartsAt:dd MMM yyyy, HH:mm}–{ev.EndsAt:HH:mm} ({ev.Timezone})";
+            ? localStart.ToString("dd MMM yyyy")
+            : $"{localStart:dd MMM yyyy, HH:mm}–{localEnd:HH:mm} ({ev.Timezone})";
         var text =
             (method == Imip.MethodCancel ? "Cancelled: " : "") + ev.Title + "\n"
             + "When: " + when + "\n"
