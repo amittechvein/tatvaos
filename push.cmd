@@ -153,7 +153,13 @@ REM ---- 3. Build the API ------------------------------------------------------
 echo.
 echo [3/4] Building the API...
 pushd apps\api
-call dotnet build --nologo -v quiet
+REM  -v minimal, not -v quiet. Quiet emits NOTHING on success, which makes a
+REM  build that ran and a build that never ran produce identical transcripts -
+REM  and this log is what somebody reads to decide whether to trust the commit
+REM  underneath it. Absence of output is indistinguishable from absence of
+REM  execution. minimal prints "Build succeeded" and a timing line: still
+REM  quiet, and it can testify.
+call dotnet build --nologo -v minimal
 if errorlevel 1 ( popd & goto :buildfail )
 popd
 
