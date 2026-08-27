@@ -17,7 +17,7 @@ import { useAuth } from '@/lib/auth';
 //  unmissable "this disappears when you leave" line.
 // ============================================================================
 
-interface ActiveInfo { id: string; label: string; createdAt: string; lastUsedAt: string | null }
+interface ActiveInfo { id: string; label: string; createdAt: string }
 interface Settings {
   imapHost: string; imapPort: number; imapSecurity: string;
   smtpHost: string; smtpPort: number; smtpSecurity: string; username: string;
@@ -116,9 +116,6 @@ export default function AppPasswordsPage() {
               <p className="text-sm font-semibold text-ink">{state.active.label}</p>
               <p className="mt-0.5 text-xs text-ink-muted">
                 Created {new Date(state.active.createdAt).toLocaleDateString()}
-                {state.active.lastUsedAt
-                  ? ` · last used ${new Date(state.active.lastUsedAt).toLocaleDateString()}`
-                  : ' · never used yet'}
               </p>
             </div>
             <button type="button" onClick={() => void revoke()} disabled={busy}
