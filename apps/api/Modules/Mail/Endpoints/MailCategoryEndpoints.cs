@@ -127,6 +127,16 @@ public static class MailCategoryEndpoints
 
         // Appended, not inserted at zero. A new colour arriving at the top of
         // somebody's list every time would reorder a thing they arranged.
+        //
+        // KNOWN, TOLERATED RACE: this read and the write below are not in one
+        // transaction, so two concurrent creates can land on the SAME position.
+        // That is harmless ON PURPOSE, not by luck - position is not unique,
+        // and ListAsync orders by Position THEN Name, so a tie renders in a
+        // stable order instead of a random one. Two things follow: do not wrap
+        // this in a transaction it does not need, and do not remove the
+        // ThenBy(Name) in ListAsync - it is the tie-break that makes the race
+        // tolerable, which is a property worth writing down rather than one
+        // the next reader has to deduce.
         var last = await db.MailCategories.AsNoTracking()
             .Where(c => c.MailboxId == box.Id)
             .Select(c => (int?)c.Position)
