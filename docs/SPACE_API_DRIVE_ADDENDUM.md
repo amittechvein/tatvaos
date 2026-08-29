@@ -1,5 +1,11 @@
 # Space API — Drive-view addendum (v1.2 draft, FOR REVIEW)
 
+> **SUPERSEDED by `SPACE_API.md`.** This shipped, and the live reference is
+> now the single API document. Kept because the reasoning — and Core's
+> review decisions recorded in it — are still the best account of *why*
+> these endpoints are shaped the way they are. Where the two disagree,
+> `SPACE_API.md` is right.
+
 **Status: CONTRACT DRAFT.** Additions to `SPACE_API.md` v1.1 for the
 Drive-shaped UI: Recent/Home, Starred, owner + location columns, and the
 sharing directory. Folds into SPACE_API.md as v1.2 once approved; code

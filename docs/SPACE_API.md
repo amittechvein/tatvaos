@@ -1,328 +1,330 @@
-# TatvaOS Space — API contract
+# TatvaOS Space — API reference
 
-**Status: APPROVED CONTRACT (v1.1, 2026-08-14).** Reviewed by Core; the
-frontend builds against this. None of it works yet. Shapes follow Mail:
-`authedFetch`, JSON bodies, camelCase, and every error is
-`{ "error": "sentence." }` — the console prints it verbatim.
+**Status: LIVE.** This describes what is running in production, verified
+against the registered routes rather than written from memory. It supersedes
+`SPACE_API_DRIVE_ADDENDUM.md` (v1.2) and `SPACE_API_PUBLIC_LINKS_ADDENDUM.md`
+(v1.3); both remain in `docs/` as the record of what was reviewed and why, and
+the reasoning in them is still worth reading. Where they disagree with this
+file, this file is right.
 
-v1.1 amendments from Core's review: quota refusal is `413` + `reason`
-(never 507 — 5xx retries and false-pages), `myPermission` batched per page,
-share rows survive ownership flips, upload rejects `file`-before-`sizeBytes`,
-and the meter uses `GET /api/org/storage` instead of a Space usage endpoint.
-
-Written against migration `25-space-schema.sql`, branch `feature/space-schema`.
+Related: `STORAGE_MODEL.md` (whose bytes these are), `SPACE_ATTACH.md`
+(what other products call), `SPACE_FAULT_MATRIX.md` (what has never been
+tested).
 
 ---
 
 ## Conventions
 
-- **Base path** `/api/space/*`, same-origin behind `space.caddy` (modeled on
-  `mail.caddy`), so the refresh cookie stays first-party. Auth is the shared
-  JWT — no Space login exists.
-- **Visibility vs permission.** An item the caller cannot *see* (RLS) is a
-  **404** — not a 403, which would confirm existence. An item the caller can
-  see but lacks the level to act on is a **403**.
-- **Permission levels** `view < comment < edit < owner`. Effective permission
-  = the highest grant on the item or any ancestor folder, or `owner` for the
-  owner, or `edit` for anyone in the tenant on organisational items. The level
-  is enforced in the application; RLS answers visibility only.
-- **Status codes** used: `200`, `201`, `204`; `400` validation, `403`
-  insufficient level, `404` not visible / does not exist, `409` structural
-  conflict (cycle, duplicate share), `413` upload refused for storage
-  reasons — see Upload for the `reason` field. **Never a 5xx for quota**:
-  5xx gets auto-retried by clients and proxies (re-streaming a 2 GB upload
-  at the worst possible moment) and lands on error dashboards as a server
-  fault. Out of space is the caller's condition, not our failure.
-- **`myPermission` is computed batched**, never per row: folder access is
-  resolved once for the listing, then the page's file-level share rows are
-  fetched in ONE query keyed by file id and folded in memory —
-  `max(folder-derived, own grants)`. A recursive walk per row is a bug.
-- **Scope.** Everyone has two roots: `personal` (mine) and `organisational`
-  (the tenant's). A root is not a row — it is `folderId = null` plus a scope.
-  Endpoints that can target a root take `scope` wherever `folderId` is null.
+Everything is under `/api/space`, JSON, camelCase. Every error is
+`{ "error": "a sentence." }` — the console prints it verbatim, so it is
+written for a person.
 
-### DTOs
+**Auth.** All routes require a signed-in user except the two public-link
+routes, which are deliberately anonymous. `PUT /settings` additionally
+requires OrgAdmin.
+
+**404, not 403, for anything invisible.** An item the caller cannot see is
+indistinguishable from one that does not exist — confirming existence is
+itself a disclosure. 403 means "you can see it, but not do that to it".
+
+**Permissions.** `view < comment < edit < owner`. Effective permission is the
+highest grant on the item or any ancestor folder; the owner has `owner`;
+anyone in the tenant has `edit` on organisational items. RLS decides
+visibility; the application decides level.
+
+**Roots are not rows.** A root is `folderId: null` plus
+`scope: "personal" | "organisational"`. Anywhere a root can be addressed,
+`scope` carries it.
+
+**Decoration is batched, never per row.** Listings resolve folder access once
+and fetch stars, owner names and parent names in one query each per page. A
+recursive walk per row is a bug, not a slow path.
+
+---
+
+## DTOs
 
 ```jsonc
 // FileDto
 {
   "id": "uuid",
-  "name": "Q3 report.pdf",          // display only; duplicates allowed per folder
+  "name": "Q3 report.pdf",          // display only; duplicates allowed in a folder
   "mimeType": "application/pdf",
   "sizeBytes": 1048576,
   "folderId": "uuid | null",         // null = in a root
   "ownershipType": "personal | organisational",
-  "ownerUserId": "uuid | null",      // null on organisational AND on retained (owner deleted)
+  "ownerUserId": "uuid | null",      // null on organisational, and on retained rows
   "createdByUserId": "uuid | null",
   "myPermission": "view | comment | edit | owner",
-  "isShared": true,                  // has at least one share row (owner's badge)
+  "isShared": true,
+  "isStarred": false,
+  "ownerDisplayName": "Abhishek Sharma | null",
+  "parentName": "Projects | null",   // cross-folder views only; null if that folder is invisible
+  "activity": { "action": "opened|created|modified", "occurredAt": "iso" }, // /recent only
   "deletedAt": "iso | null",
   "createdAt": "iso",
   "updatedAt": "iso"
 }
 
-// FolderDto — same fields minus mimeType/sizeBytes, plus:
-{
-  "parentFolderId": "uuid | null",
-  "childFolderCount": 3,
-  "fileCount": 12
-}
+// FolderDto — as above minus mimeType/sizeBytes/activity, plus:
+{ "parentFolderId": "uuid | null", "childFolderCount": 3, "fileCount": 12 }
 
 // ShareDto
-{
-  "id": "uuid",
-  "userId": "uuid | null",           // null when orgWide
-  "userDisplayName": "HR Department | null",
-  "orgWide": false,
-  "permission": "view | comment | edit",
-  "sharedByUserId": "uuid | null",
-  "createdAt": "iso"
-}
+{ "id", "userId", "userDisplayName", "orgWide", "permission",
+  "sharedByUserId", "createdAt" }
 ```
+
+`ownerDisplayName` is null for organisational items and for retained rows
+whose owner was deleted. "me" is a client-side comparison against the
+caller's id, never a server string. `parentName` is null when the containing
+folder is invisible to the caller — naming a folder someone cannot see would
+leak it.
 
 ---
 
-## Browsing
+## Every route
 
-### `GET /api/space/list?folderId={uuid}` · `GET /api/space/list?scope=personal|organisational`
+### Browsing
 
-One or the other. Returns the folder's live (non-trashed) contents plus the
-breadcrumb, resolved server-side with the recursive CTE — the frontend never
-computes paths.
+| route | notes |
+|---|---|
+| `GET /list?folderId=` or `?scope=` | breadcrumb resolved server-side; folders unpaged, files paged (`page`, `pageSize` ≤ 500) |
+| `GET /shared` | items shared **to** me, top level only |
+| `GET /trash` | items whose own `deletedAt` is set; also `retentionDays` and `trashBytes` |
+| `GET /search?q=` | file names (tsvector), live only, `pageSize` ≤ 200 |
+| `GET /recent` | files by my latest activity, `pageSize` ≤ 200 — powers Recent **and** Home |
+| `GET /starred` | my starred folders and files, most recently starred first |
+| `GET /directory?q=` | people picker for sharing: `{ people: [{ id, displayName, email }] }`, capped at 20 |
 
-```jsonc
-// 200
-{
-  "breadcrumb": [ { "id": null, "name": "My Space" },      // or "Organisation"
-                  { "id": "uuid", "name": "Projects" } ],   // root → … → current
-  "folder": FolderDto | null,                               // null at a root
-  "folders": [ FolderDto ],                                 // name asc
-  "files":   [ FileDto ],                                   // name asc
-  "page": 1, "pageSize": 200, "totalFiles": 512             // files are paged; folders never are
-}
-```
+`/list` omits `parentName` — its breadcrumb already answers location. The
+cross-folder views (`/shared`, `/search`, `/recent`, `/starred`) carry it.
 
-Optional `page` (default 1), `pageSize` (default 200, max 500) — applies to
-files only. Errors: `404` folder not visible; `400` both/neither of
-`folderId`/`scope` given.
+`/directory` includes **pending** users deliberately: an admin-created person
+stays pending until first sign-in, and a person with an address can be shared
+with. It is readable by any signed-in user — person-by-person sharing is not
+an admin feature.
 
-Access is resolved **once for the folder**, then trusted for its contents —
-not per file row. (Core's listing-cost concern is handled here by design: a
-file in a visible folder is visible unless the query says otherwise.)
+### Files
 
-### `GET /api/space/shared`
+| route | notes |
+|---|---|
+| `POST /files` | multipart upload — see below |
+| `PUT /files/{id}/content` | overwrite: **new blob, repoint, then drop the old**; quota on the delta |
+| `GET /files/{id}/content` | download; range supported; works on trashed files |
+| `GET /files/{id}/thumbnail` | image types only, ~256 px webp — see below |
+| `PATCH /files/{id}` | `{ name }` and/or `{ folderId }` / `{ folderId: null, scope }` |
+| `PUT /files/{id}/ownership` | `{ ownershipType }` — personal ↔ organisational |
+| `DELETE /files/{id}` | to trash (`204`) |
+| `POST /files/{id}/restore` | from trash; lands at the nearest live ancestor |
+| `DELETE /files/{id}/permanent` | blob first, then row |
 
-Items shared **to me** (directly or org-wide), top level only — a folder
-shared to me appears once; I browse into it via `/list`.
+Moving never changes ownership — that is `PUT /ownership`, an explicit act,
+audited. Share rows **survive** ownership flips in both directions; deleting
+them silently is how access disappears on the flip back.
 
-```jsonc
-// 200
-{ "folders": [ FolderDto ], "files": [ FileDto ] }   // myPermission tells the UI what to allow
-```
+### Folders
 
-### `GET /api/space/trash`
+`POST /folders` · `PATCH /folders/{id}` · `DELETE /folders/{id}` ·
+`POST /folders/{id}/restore` · `DELETE /folders/{id}/permanent`
 
-My trash: items **I can act on** whose own `deletedAt` is set — top items
-only. Trashing a folder stamps *that folder row only*; its contents follow
-their ancestor and are not listed separately (restore is one un-stamp).
+Depth is capped at **32**. A move is refused with `409` if the destination is
+a descendant of the folder being moved (a cycle would hang every recursive
+query afterwards) or if the subtree would exceed the cap. Trashing a folder
+stamps **that row only**; its contents follow their ancestor, so restore is a
+single un-stamp.
 
-```jsonc
-// 200
-{
-  "folders": [ FolderDto ],   // deletedAt set on all
-  "files":   [ FileDto ],
-  "retentionDays": 30,        // purge deadline = deletedAt + retentionDays
-  "trashBytes": 52428800      // reclaimable now — for "empty trash frees X"
-}
-```
+### Sharing
 
-### `GET /api/space/search?q=annual+report&page=1&pageSize=50`
+`GET|PUT|DELETE /files/{id}/shares[/{shareId}]` and the same for `/folders`.
 
-Full-text on file names (tsvector `simple`), live items only, ranked.
+`PUT` is an upsert — one grant per (item, audience), so re-sharing changes the
+level rather than stacking rows. The audience is a named user **xor** the
+whole organisation. Managing shares needs `owner` on personal items, `edit` on
+organisational ones; `view`/`comment` callers get `403`, because who else can
+see a thing is not theirs to know.
 
-```jsonc
-// 200
-{ "files": [ FileDto ], "page": 1, "pageSize": 50, "total": 3 }
-```
+Folder shares reach contents **at query time** by walking ancestors. Grants
+are never copied down, so "why can this person see this?" always has a
+one-row answer.
 
-`400` when `q` is empty.
+### Stars
 
----
+`PUT|DELETE /files/{id}/star`, `PUT|DELETE /folders/{id}/star` — `204`, and
+**idempotent in both directions**. Stars are per-user and invisible to
+colleagues, enforced by RLS rather than by application code.
 
-## Files
+### Organisation policy
 
-### `POST /api/space/files` — upload
+| route | auth |
+|---|---|
+| `GET /settings` | any signed-in user |
+| `PUT /settings` | OrgAdmin, audited |
 
-`multipart/form-data`, fields **in this order** (the server checks quota
-before it will read the bytes):
-
-| field | required | notes |
-|---|---|---|
-| `folderId` | one of these two | target folder |
-| `scope` | | `personal` / `organisational` when uploading to a root |
-| `sizeBytes` | yes | declared size — quota is pre-checked against it |
-| `file` | yes, **last** | the bytes; streamed to the volume, never buffered |
-
-Actual bytes written are counted as they stream; a declared size is a claim,
-not a fact, and the stored `sizeBytes` is what actually landed. Ownership
-follows the destination: personal root / personal folder → `personal` owned
-by the caller; organisational → `organisational`.
-
-```jsonc
-// 201
-FileDto
-```
-
-Errors:
-- `404` folder not visible · `403` visible but no `edit`
-- `400` if the `file` part arrives before `sizeBytes` — rejected with a clear
-  message, bytes never read. (The frontend appends FormData in order, but the
-  server guards anyway.)
-- `413` upload refused for storage reasons →
-  `{ "error": "sentence for the console.", "reason": "full" | "suspended" | "no_allocation" | "file_too_large" }`
-  — ONE status for every storage refusal, so the UI branches on `reason`, not
-  on scattered codes: link the storage page on `full`, say something
-  different on `suspended`, name the per-file cap on `file_too_large`.
-  Mirrors what `EvaluateAcceptAsync` learned: a bare refusal makes the
-  caller guess wrong. `4xx` deliberately — see Conventions for why not 507.
-
-### `PUT /api/space/files/{id}/content` — replace content (overwrite)
-
-Same multipart shape (`sizeBytes` then `file`). Writes a **new** blob and
-repoints — the old blob is not overwritten in place. Bumps `updatedAt`.
-Requires `edit`. Quota is checked on the **delta** (new size − old size).
-Errors as upload, plus `409` if the file is in trash.
-
-### `GET /api/space/files/{id}/content` — download
-
-`200` raw bytes, `Content-Type` from `mimeType`,
-`Content-Disposition: attachment; filename="…"`, `Content-Length` set.
-Works for trashed files (restore-by-download-first is a real workflow).
-Requires `view`. `404` if not visible.
-
-### `PATCH /api/space/files/{id}` — rename / move
-
-```jsonc
-{ "name": "new name.pdf" }                  // rename, or
-{ "folderId": "uuid" }                      // move, or
-{ "folderId": null, "scope": "personal" }   // move to a root — or both name+move
-```
-
-Requires `edit` on the file **and** `edit` on the destination for a move.
-`200` FileDto. Errors: `404` file or destination not visible, `403` level,
-`409` file is in trash. Moving between personal and organisational trees
-does **not** change `ownershipType` — that is explicit, below.
-
-### `PUT /api/space/files/{id}/ownership` — personal ↔ organisational
-
-```jsonc
-{ "ownershipType": "organisational" }   // hand my file to the org, or back
-```
-
-Owner (or org-admin, for reclaiming retained owner-less files) only.
-`organisational → personal` sets the caller as owner. `200` FileDto.
-Audited to `core.audit_logs` — this is the "whose is this" trail.
-
-**Existing share rows SURVIVE the flip**, in both directions. On
-`personal → organisational` they become redundant (org-wide access
-supersedes them) but are not deleted — silent deletion is the kind of thing
-nobody notices until access disappears on the flip back. The shares list
-still shows them; removing them is an explicit DELETE by a human.
-
-### Trash lifecycle
-
-| call | effect | errors |
-|---|---|---|
-| `DELETE /api/space/files/{id}` | stamp `deletedAt` (soft) — `204` | `404`, `403` (needs `edit`), `409` already trashed |
-| `POST /api/space/files/{id}/restore` | clear stamp — `200` FileDto | `404`, `409` not in trash, `409` parent folder itself trashed → restores to the nearest live ancestor or root, stated in the response |
-| `DELETE /api/space/files/{id}/permanent` | blob removed **then** row deleted — `204` | `404`, `409` not in trash first |
-
-Trashed bytes still count toward quota until purged (the bytes are on disk);
-the 30-day purge runs in `StorageReconcileWorker`. The UI should say so next
-to the meter.
+`{ "allowPublicLinks": bool }`. The read is open because the mail composer has
+to know whether links are allowed *before* spending someone's bytes on a 40 MB
+upload it cannot then link. Turning it off closes the **tap, not the handle**:
+the anonymous resolve predicate reads the flag, so existing links stop working
+immediately — and reversibly, because the rows survive.
 
 ---
 
-## Folders
+## Upload
 
-### `POST /api/space/folders`
+`multipart/form-data`, fields **in this order**:
 
-```jsonc
-{ "name": "Projects", "parentFolderId": "uuid" }          // or
-{ "name": "Projects", "parentFolderId": null, "scope": "personal" }
-// 201 → FolderDto
-```
+| field | notes |
+|---|---|
+| `folderId` **or** `scope` | destination |
+| `sizeBytes` | declared size — the quota gate runs on it |
+| `file` | **last**; streamed to the volume, never buffered |
 
-`400` empty name or depth would exceed **32**; `404`/`403` on the parent.
+The order is load-bearing: the gate runs the moment the file part appears, so
+a doomed upload is refused before a byte is read. A `file` part arriving
+before `sizeBytes` is a `400`. The stored `sizeBytes` is what actually
+landed — the declared size is a claim.
 
-### `PATCH /api/space/folders/{id}` — rename / move
+Content inherits the destination's ownership. A file uploaded into a
+colleague's shared personal folder belongs to that colleague, as in Drive, and
+is charged to their allowance.
 
-Same shape as file PATCH (`name`, `parentFolderId` + `scope`). Two extra
-errors, both `409` with a verbatim-printable sentence:
-
-- destination **is a descendant** of the folder being moved (cycle guard —
-  checked on every move, no exceptions), and
-- the move would push any descendant past depth 32.
-
-### Trash lifecycle — same three calls as files
-
-`DELETE /{id}` · `POST /{id}/restore` · `DELETE /{id}/permanent`, same codes.
-Trash stamps the folder row only; contents follow it. Permanent delete of a
-folder purges its entire subtree — blobs first, rows second.
-
----
-
-## Sharing
-
-Share rows live on **one** object; folder shares reach contents at query
-time by ancestor walk — the API never copies grants down, so "why can this
-person see this" always has a one-row answer.
-
-### `GET /api/space/files/{id}/shares` · `GET /api/space/folders/{id}/shares`
-
-`200 { "shares": [ ShareDto ] }` — requires `view`; owners and `edit` see the
-list, `view`/`comment` callers get `403` (who-else-can-see is not theirs).
-
-### `PUT /api/space/files/{id}/shares` · `PUT /api/space/folders/{id}/shares`
-
-Upsert — one grant per (object, audience), re-sharing updates the level:
+### Refusals — always `413`, never a 5xx
 
 ```jsonc
-{ "userId": "uuid", "permission": "edit" }     // named colleague, or
-{ "orgWide": true,  "permission": "view" }     // the whole tenant
-// 200 → ShareDto (created or updated)
+{ "error": "You have used all 30 GB of your storage…", "reason": "full" }
 ```
 
-Requires `owner` (personal items) or `edit` (organisational). `400` both or
-neither audience; `404` unknown user or user in another tenant (indistinguishable
-on purpose); `403` level.
+| reason | meaning |
+|---|---|
+| `full` | the person or the organisation is out of room — the sentence says which |
+| `suspended` | the organisation is suspended |
+| `no_allocation` | no allowance is set, or the destination folder's owner was removed |
+| `file_too_large` | over the per-file cap |
 
-### `DELETE /api/space/files/{id}/shares/{shareId}` · folders alike
+A 5xx here would be wrong twice: clients and proxies retry 5xx, so a quota
+refusal would re-stream a 2 GB upload, and it would land in error dashboards
+as a platform fault rather than a customer condition.
 
-`204`. `404` share not visible. Same level rule as PUT.
+**Whose bytes.** Personal content is charged to the person who will own the
+file, read from `core.user_storage()` — the single definition of "how full is
+this person" (`STORAGE_MODEL.md`). Organisational content draws on the org
+pool and is never charged to a human. **Never compute this with a `SUM` in
+application code**: two implementations of "is there room" eventually
+disagree, and the one that refuses is the one the customer notices.
+
+Trashed files still count until purged. The bytes are on the disk; a meter
+that pretended otherwise would make "I deleted everything and I'm still full"
+an unanswerable support ticket.
 
 ---
 
-## Usage — no Space endpoint, deliberately
+## Public links
 
-The storage meter reads the existing **`GET /api/org/storage`**, which
-already returns per-product allocations including `drive`. Space adds no
-usage endpoint of its own: one product, one quota system, one place to read
-it. The Space-specific number the org endpoint cannot give — reclaimable
-trash bytes — rides on `GET /api/space/trash` above.
+A link is a **capability, treated as a credential**: 128 bits of randomness,
+stored only as a SHA-256 hash. The plaintext exists once, in the response that
+creates it. A database leak yields no working links.
 
-Reads of the drive figure reconcile this tenant on the way through, same as
-the storage console, so opening the meter repairs it.
+| route | auth |
+|---|---|
+| `POST /files/{id}/link` | owner (personal) / edit (organisational) |
+| `GET /files/{id}/links` | same — never returns tokens, only hashes exist |
+| `DELETE /files/{id}/links/{linkId}` | same; revocation is a stamp, idempotent |
+| `GET /api/space/l/{token}` | **anonymous** — the bytes |
+| `GET /api/space/l/{token}/meta` | **anonymous** — the landing page's data, counts nothing |
+
+Create takes `{ expiresInDays, maxDownloads }`. **Expiry is required** —
+default 30 days, maximum 365 — because a link that never expires outlives the
+reason it was made and nobody goes back to revoke it. The response is the only
+place the token ever appears, and its `url` is the landing page, not the raw
+API route.
+
+### The anonymous path
+
+There is no session, so `app.tenant_id` is unset and RLS cannot protect
+anything. Every database access on this path goes through two
+`SECURITY DEFINER` functions with a pinned `search_path` and **nothing else**:
+`space.peek_public_link` (reads, counts nothing) and
+`space.consume_public_link` (the atomic `UPDATE` **is** the check — the count
+increments in the same statement that validates every condition, so
+`max_downloads` cannot be raced past). Their gating predicates are textually
+identical, comment for comment, so a reviewer can diff them.
+
+**One failure answer.** Unknown, expired, revoked, over-limit, trashed file,
+suspended tenant, and policy-disabled all return the same 404 and the same
+sentence. The authenticated routes say "turned off for your organisation";
+that sentence on this path would be an oracle.
+
+**Always a download, never a rendered page.** `Content-Disposition:
+attachment` and `X-Content-Type-Options: nosniff` on every byte response —
+this origin holds sessions, and rendering a stranger's HTML from it would be
+cross-site scripting against every Space user. No range processing: one GET is
+one download is one count.
+
+**A blob we lost does not cost the recipient a download.** If consume succeeds
+and the bytes are then missing, the count is refunded and a **warning** is
+logged naming `fileId`, `linkId` and `blobKey` — the file is gone, not the
+link, and without that line the loss would be silent.
+
+Per-IP rate limited (60/minute). The client is the **last**
+`X-Forwarded-For` entry, which is the one Caddy appends; everything earlier is
+client-supplied and spoofable.
 
 ---
 
-## Non-goals in this contract (deliberate)
+## Thumbnails
 
-- **No versions endpoints** — deferred; new-blob-on-overwrite keeps the door
-  open.
-- **No presigned upload/download URLs** — the API streams. When presigned
-  arrives: quota check before issuing, content-length cap on the URL,
-  reconcile actuals after.
-- **No public/link sharing** — audiences are a tenant user or the tenant.
-- **No cross-product attach API yet** ("attach from Space" for Mail) — it
-  will be a read-only surface on top of these DTOs; nothing here blocks it.
+`GET /files/{id}/thumbnail` — image mime types, longest edge ~256 px, webp.
+
+Rendered with **SkiaSharp**, chosen on attack surface: thumbnails decode files
+uploaded by strangers. Three layered defences, in order: a source byte cap,
+then **pixel-dimension caps read from the image header before any pixel is
+decoded** (a 200 KB PNG can decompress to gigabytes, so a byte cap alone is
+theatre), then a decode timeout as the backstop.
+
+`404` is the single answer for invisible, non-image, oversized and
+undecodable alike. Cached beside the blob; the ETag hashes the blob key, so an
+overwrite — which always writes a new key — invalidates it structurally rather
+than by convention. Purging a file deletes its thumbnail with it.
+
+This is a **machine read**: it never records activity, and neither does the
+cross-product gateway. A composer listing your files must not fill Recent with
+files you never opened.
+
+---
+
+## What other products call
+
+`SpaceContentGateway`, injected — never HTTP, and never a second file store.
+Full contract in `SPACE_ATTACH.md`.
+
+| method | purpose |
+|---|---|
+| `DescribeAsync(ids)` | validate a batch before any bytes move |
+| `OpenReadAsync(id)` | stream one file, as the signed-in user |
+| `SaveAsync(...)` | store a stream — same quota gate, same reason codes |
+| `EnsureFolderAsync(name, scope)` | find-or-create a root folder, oldest wins |
+
+Everything runs on the caller's `TenantContext`, so a file the sender cannot
+see behaves exactly as one that does not exist.
+
+---
+
+## The storage meter
+
+There is no Space usage endpoint. The meter reads `GET /api/org/storage`,
+which already reports per-product allocations — one product, one quota system,
+one place to read it. The Space-specific figure the org endpoint cannot give,
+reclaimable trash bytes, rides on `GET /trash`.
+
+---
+
+## Deliberately absent
+
+Folder links; password-protected links (the column exists, unused); resumable
+or presigned uploads; range requests on public downloads; virus scanning;
+file version history (new-blob-on-overwrite means the history is recoverable
+when it arrives); sync clients; in-file content search.
+
+**Known gaps are catalogued in `SPACE_FAULT_MATRIX.md`** — paths whose
+handling code has never executed. The honest summary of that document: the one
+fault we built detection for is the only one that announces itself, and that
+was not judgement, it was the one someone asked about.
