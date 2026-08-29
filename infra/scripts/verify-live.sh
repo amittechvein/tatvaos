@@ -78,9 +78,20 @@ check_imap() {
 
     # ONE connection, two questions. Not -quiet: the verify line is half of
     # what we came for, and -quiet suppresses it.
+    #
+    # Stdin is a piped LOGOUT, NOT </dev/null. With </dev/null, s_client
+    # hits stdin EOF straight after the TLS handshake and closes — BEFORE a
+    # freshly restarted Dovecot has sent its greeting. deploy.sh restarts
+    # Dovecot moments before calling this script, so the </dev/null form
+    # false-alarmed on every deploy and passed only against a warm server:
+    # the worst calibration a check can have, because a check that cries
+    # wolf on every deploy is ignored by the third deploy, and then it is
+    # not a check. The piped LOGOUT keeps s_client reading until the server
+    # answers, captures the greeting, and ends clean with "a1 OK Logout".
+    # (Found by the CTO against production, 30 Aug 2026.)
     local out
-    out=$(timeout 10 openssl s_client -connect "$MAIL_HOST:993" \
-              -servername "$MAIL_HOST" </dev/null 2>&1 || true)
+    out=$(printf 'a1 LOGOUT\r\n' | timeout 10 openssl s_client \
+              -connect "$MAIL_HOST:993" -servername "$MAIL_HOST" 2>&1 || true)
 
     if [ -z "$out" ]; then
         # Timeout, refused, DNS failure — all of them arrive here as silence.
