@@ -30,5 +30,11 @@ public sealed class MailAppPassword
 
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? RevokedAt { get; set; }
-    public DateTimeOffset? LastUsedAt { get; set; }
+
+    // There is deliberately no LastUsedAt. Only Dovecot sees a successful
+    // IMAP or SMTP authentication, its passdb query is SELECT-only, and the
+    // mailedge role holds GRANT SELECT alone - so nothing could ever write
+    // it. A column that is always NULL reads as "never used" to the person
+    // deciding whether to revoke, when it actually means "never recorded".
+    // Those two lead to opposite decisions. Removed rather than shipped.
 }

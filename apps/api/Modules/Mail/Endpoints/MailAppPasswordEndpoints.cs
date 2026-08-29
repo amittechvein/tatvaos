@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using TatvaOS.Api.Modules.Admin;
 using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Tenancy;
@@ -28,6 +29,13 @@ namespace TatvaOS.Api.Modules.Mail.Endpoints;
 ///  · ONE ACTIVE PER MAILBOX: generating revokes the predecessor, because
 ///    Dovecot's SQL passdb verifies exactly one row. The UI says "your app
 ///    password", singular, and this endpoint is why.
+///
+///    The DATABASE enforces it too, since 28 August: a partial UNIQUE index
+///    on (mailbox_id) WHERE revoked_at IS NULL. It did not before, and the
+///    ORDER BY ... LIMIT 1 in the Dovecot query did not enforce it either -
+///    it CONCEALED a violation, permanently, because rows are never deleted.
+///    This endpoint is no longer the only thing between a customer and two
+///    live credentials.
 ///  · {SSHA512}, computed here, prefix and all. Deliberately NOT the Argon2
 ///    hasher the rest of the platform uses: Dovecot must verify this hash,
 ///    Argon2's wire format between our hasher and libsodium is exactly the
@@ -76,7 +84,7 @@ public static class MailAppPasswordEndpoints
         var active = await db.MailAppPasswords.AsNoTracking()
             .Where(p => p.MailboxId == box.Id && p.RevokedAt == null)
             .OrderByDescending(p => p.CreatedAt)
-            .Select(p => new { p.Id, p.Label, p.CreatedAt, p.LastUsedAt })
+            .Select(p => new { p.Id, p.Label, p.CreatedAt })
             .FirstOrDefaultAsync(ct);
 
         return Results.Ok(new
@@ -106,27 +114,69 @@ public static class MailAppPasswordEndpoints
         if (label.Length is < 1 or > 100)
             return Results.BadRequest(new { error = "Name the device or app this password is for." });
 
-        // Revoke-then-issue in one save: there is never a moment with two
-        // active rows, so the LIMIT 1 in the Dovecot query and this endpoint
-        // can never disagree about which password is the real one.
-        var actives = await db.MailAppPasswords
-            .Where(p => p.MailboxId == box.Id && p.RevokedAt == null)
-            .ToListAsync(ct);
-        foreach (var old in actives) old.RevokedAt = DateTimeOffset.UtcNow;
-
+        // Revoke-then-issue, ORDERED EXPLICITLY, both inside one transaction.
+        //
+        // The partial UNIQUE index means the revokes MUST reach the database
+        // before the insert, and a partial unique index cannot be declared
+        // DEFERRABLE - there is no commit-time escape. A single SaveChanges
+        // would leave that order to EF's batch preparer, which is a fine
+        // place for performance and a terrible place for correctness: the
+        // failure would be a 23505 on the SECOND password a person ever
+        // generates, which is the one they generate because the first
+        // stopped working.
+        //
+        // Two saves in one transaction. Same atomicity, and the order is
+        // written down instead of derived.
         var password = Generate();
-        db.MailAppPasswords.Add(new MailAppPassword
+        int replacedCount;
+
+        await using (var tx = await db.Database.BeginTransactionAsync(ct))
         {
-            Id = Guid.NewGuid(),
-            MailboxId = box.Id,
-            Label = label,
-            PasswordHash = Ssha512(password),
-            CreatedAt = DateTimeOffset.UtcNow,
-        });
-        await db.SaveChangesAsync(ct);
+            var actives = await db.MailAppPasswords
+                .Where(p => p.MailboxId == box.Id && p.RevokedAt == null)
+                .ToListAsync(ct);
+            foreach (var old in actives) old.RevokedAt = DateTimeOffset.UtcNow;
+            replacedCount = actives.Count;
+
+            if (replacedCount > 0) await db.SaveChangesAsync(ct);
+
+            db.MailAppPasswords.Add(new MailAppPassword
+            {
+                Id = Guid.NewGuid(),
+                MailboxId = box.Id,
+                Label = label,
+                PasswordHash = Ssha512(password),
+                CreatedAt = DateTimeOffset.UtcNow,
+            });
+
+            try
+            {
+                await db.SaveChangesAsync(ct);
+            }
+            catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: "23505" })
+            {
+                // The index doing its job. Two generate requests for the same
+                // mailbox overlapped, and one of them lost between its read
+                // and its write. Before the index this produced two live
+                // credentials and no error at all - which is the bug it was
+                // added to stop, so this exception is the fix working, not
+                // the fix failing.
+                //
+                // 409 rather than 500: nothing is wrong with the request. It
+                // lost a race it wins by being repeated.
+                await tx.RollbackAsync(ct);
+                return Results.Conflict(new
+                {
+                    error = "Another app password was just generated for this mailbox. "
+                          + "Reload the page and try again.",
+                });
+            }
+
+            await tx.CommitAsync(ct);
+        }
 
         await audit.WriteAsync("mail.app_password.generated", "mail.mailbox", box.Id.ToString(),
-            after: new { label, replaced = actives.Count > 0 }, ct: ct, productCode: "mail");
+            after: new { label, replaced = replacedCount > 0 }, ct: ct, productCode: "mail");
 
         // The one and only time the password exists in cleartext outside the
         // person's own screen. It is not logged, not stored, not recoverable.

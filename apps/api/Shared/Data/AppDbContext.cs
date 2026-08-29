@@ -77,6 +77,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<Attachment> Attachments => Set<Attachment>();
     public DbSet<BlockedSender> BlockedSenders => Set<BlockedSender>();
     public DbSet<FilterRule> FilterRules => Set<FilterRule>();
+    public DbSet<MailCategory> MailCategories => Set<MailCategory>();
     public DbSet<Signature> Signatures => Set<Signature>();
     public DbSet<VacationResponder> VacationResponders => Set<VacationResponder>();
     public DbSet<VacationSend> VacationSends => Set<VacationSend>();
@@ -181,6 +182,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<Attachment>().ToTable("attachments", "mail");
         b.Entity<BlockedSender>().ToTable("blocked_senders", "mail");
         b.Entity<FilterRule>().ToTable("filter_rules", "mail");
+        b.Entity<MailCategory>().ToTable("categories", "mail");
         b.Entity<Signature>().ToTable("signatures", "mail");
         b.Entity<VacationResponder>().ToTable("vacation_responders", "mail");
         b.Entity<VacationSend>().ToTable("vacation_sends", "mail");
@@ -352,6 +354,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<Attachment>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<BlockedSender>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<FilterRule>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<MailCategory>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Signature>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<VacationResponder>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<VacationSend>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
@@ -429,6 +432,20 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         // duplicate is.
         b.Entity<BlockedSender>().HasIndex(x => new { x.MailboxId, x.Address }).IsUnique();
         b.Entity<Signature>().HasIndex(s => s.MailboxId).IsUnique();
+
+        // MODEL METADATA ONLY. Every index in this file is created by the
+        // hand-written SQL in local/postgres/init - EF creates nothing here.
+        // Declaring it tells EF the constraint EXISTS, which is what stops
+        // the model and the schema disagreeing in silence: without it, EF
+        // orders the statements in a batch from a model that does not know
+        // one app password per mailbox is enforced, and a revoke-then-issue
+        // could reach the database insert-first. Schema:
+        // 20260828-mail-app-passwords.sql.
+        b.Entity<TatvaOS.Api.Modules.Mail.MailAppPassword>()
+            .HasIndex(p => p.MailboxId)
+            .IsUnique()
+            .HasFilter("revoked_at IS NULL")
+            .HasDatabaseName("ix_app_passwords_mailbox_active");
         b.Entity<VacationResponder>().HasIndex(v => v.MailboxId).IsUnique();
         // Composite key, matching the table: one row per mailbox per
         // correspondent is the whole point of it.
