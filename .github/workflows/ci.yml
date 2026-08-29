@@ -1,15 +1,23 @@
 # ============================================================================
-#  CI — runs on every push and pull request
+#  CI — runs on every push, to any branch, and on every pull request
 # ============================================================================
 #  Nothing deploys from here. This only answers "is the code sound", so that a
 #  deploy workflow never has to.
+#
+#  There is deliberately NO branch filter on push. There used to be one —
+#  [main, 'feat/**', 'fix/**'] — and it silently skipped every branch that
+#  didn't match: 'feature/…' missed 'feat/**' by four characters, so on the
+#  same night, from the same author, fix/mail-app-password-one-active got CI
+#  and feature/mail-verify-live-checks got nothing. A header up here claimed
+#  "every push" the whole time. If a branch pattern ever comes back, this
+#  header must change in the same commit — a comment that promises more than
+#  the trigger delivers is how a red warning becomes a missing one.
 # ============================================================================
 
 name: CI
 
 on:
   push:
-    branches: [main, 'feat/**', 'fix/**']
   pull_request:
     branches: [main]
 
