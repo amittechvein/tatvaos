@@ -242,13 +242,6 @@ therefore worse than saying nothing: anyone who distrusted chat and checked
 the repository found the superseded policy and had every reason to trust it.
 Absence makes a person ask; a stale copy makes them confident.
 
-One line from the deleted block was **not** a copy of anything and is kept:
-`deploy.sh` reads `--env-file infra/docker/.env`, not the repo-root `.env`.
-It appears nowhere else in the repository, so deleting it would lose it rather
-than de-duplicate it. Treat it as inherited, not verified — `infra/` is not a
-product lane's to read, and nobody has re-run this claim against the script.
-Rule 8 applies: grep the caller before you rely on it.
-
 ## If something still goes wrong
 
 **Check where you are before believing anything.** Most of the false alarms in
