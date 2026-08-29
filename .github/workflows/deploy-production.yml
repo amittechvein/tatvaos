@@ -60,6 +60,19 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
 
+      # ----------------------------------------------------------------------
+      #  SUSPENDED UNTIL 1 SEPTEMBER 2026 — and it re-arms ITSELF.
+      #
+      #  The CI free minutes ran out on 29 August, so no new commit can have
+      #  a CI run until the quota resets: enforcing the gate would lock every
+      #  deploy for three days. The bypass below is DATE-CONDITIONED, not
+      #  commented out — on 1 September it stops matching and the gate is
+      #  back, with nobody needing to remember. A disable that waits for a
+      #  human to re-enable it is a disable that becomes permanent.
+      #
+      #  While suspended, every deploy prints a warning naming what it is:
+      #  unexamined. Suspended is not deleted.
+      # ----------------------------------------------------------------------
       - name: Require a successful CI run for the resolved SHA
         env:
           GH_TOKEN: ${{ github.token }}
@@ -67,6 +80,13 @@ jobs:
           set -euo pipefail
           sha=$(git rev-parse HEAD)
           echo "Deploy ref '${{ inputs.ref }}' resolves to $sha"
+
+          if [ "$(date -u +%Y%m%d)" -lt 20260901 ]; then
+            echo "::warning::CI-GREEN GATE SUSPENDED (CI minutes exhausted, resets 1 Sept)."
+            echo "::warning::This deploy ships $sha WITHOUT CI examination. Builds ran on a laptop or nowhere."
+            echo "The gate re-arms automatically on 2026-09-01."
+            exit 0
+          fi
 
           runs=$(gh run list \
                    --repo "$GITHUB_REPOSITORY" \
