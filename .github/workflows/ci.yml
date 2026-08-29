@@ -1,23 +1,29 @@
 # ============================================================================
-#  CI — runs on every push, to any branch, and on every pull request
+#  CI — runs on pushes to MAIN, and on every pull request. Nothing else.
 # ============================================================================
 #  Nothing deploys from here. This only answers "is the code sound", so that a
 #  deploy workflow never has to.
 #
-#  There is deliberately NO branch filter on push. There used to be one —
-#  [main, 'feat/**', 'fix/**'] — and it silently skipped every branch that
-#  didn't match: 'feature/…' missed 'feat/**' by four characters, so on the
-#  same night, from the same author, fix/mail-app-password-one-active got CI
-#  and feature/mail-verify-live-checks got nothing. A header up here claimed
-#  "every push" the whole time. If a branch pattern ever comes back, this
-#  header must change in the same commit — a comment that promises more than
-#  the trigger delivers is how a red warning becomes a missing one.
+#  BUDGET DECISION, 29 August 2026: CI-on-every-branch exhausted the 2,000
+#  free minutes in under a month, so push builds are narrowed to main. The
+#  cost of this narrowing is stated rather than discovered: a branch that is
+#  merged locally WITHOUT a pull request is examined only AFTER it lands on
+#  main — post-hoc, like the 27th. Open a PR and CI runs before the merge;
+#  that is now the only pre-merge examination there is.
+#
+#  The trigger is exactly [main] — NOT the old [main, 'feat/**', 'fix/**'].
+#  That glob list silently skipped whatever it didn't name ('feature/…'
+#  missed 'feat/**' by four characters, same night, same author, one branch
+#  built and one didn't). A list that names SOME branches promises more than
+#  it delivers; main-only promises little and delivers exactly that. If this
+#  filter ever changes again, this header changes in the same commit.
 # ============================================================================
 
 name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
     branches: [main]
 
