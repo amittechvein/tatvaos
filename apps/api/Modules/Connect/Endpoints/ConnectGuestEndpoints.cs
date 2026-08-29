@@ -114,16 +114,36 @@ public static class ConnectGuestEndpoints
         // the two-step scope change; resolve_meeting_code deliberately does not
         // return it, because widening a definer function's shape is a
         // migration that fights the one that owns it (the 20260816 trap).
+        // MINUTES, read in the same query as the mode, and for a related
+        // reason: both are things a person should know BEFORE they join rather
+        // than after.
+        //
+        // A signed-in colleague sees the minutes switch and the disclosure
+        // beside it inside the room. A guest sees neither — they arrive by a
+        // link, nobody asks them anything, and until now nobody told them
+        // anything either. That gap gets wider the day guests are minuted too,
+        // which is the decision of 26 August: their voice would be captioned
+        // by their own browser, sent to Google by their own browser, and
+        // written into a record, having been told none of it.
+        //
+        // Being told at the door is a choice. Being told once you are already
+        // in the room and speaking is a notice. This is the cheap half of what
+        // the consent sheet was for, and it costs nobody a queue.
         tenant.EnterAnonymousScope(row.TenantId, "guest");
         await db.SyncTenantAsync(ct);
-        var mode = await db.ConnectMeetings.AsNoTracking()
+        var meeting = await db.ConnectMeetings.AsNoTracking()
             .Where(m => m.Id == row.MeetingId)
-            .Select(m => m.Mode)
-            .FirstOrDefaultAsync(ct) ?? ConnectModes.Recorded;
+            .Select(m => new { m.Mode, m.MinutesLive })
+            .FirstOrDefaultAsync(ct);
 
         return Results.Ok(new
         {
-            mode,
+            mode = meeting?.Mode ?? ConnectModes.Recorded,
+            // Defaults to FALSE when the row could not be read, which is the
+            // safe direction for a claim rather than for a permission: the
+            // door then says nothing instead of promising something untrue.
+            // Nothing is enabled by this value — it is only ever a sentence.
+            minutesLive = meeting?.MinutesLive ?? false,
             row.Title,
             row.ScheduledStart,
             state = row.Status switch

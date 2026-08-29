@@ -5,11 +5,12 @@ import { useAuth } from '@/lib/auth';
 import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
 import { Modal } from '@/components/ui/Modal';
 import { Player } from './Player';
+import { ShareDialog } from './Share';
 import {
   durationLabel, recordingApi, sizeLabel, timeLabel,
   minutesApi,
   type NotesPayload, type Recording, type RecordingList, type RecordingListItem,
-  type RecordingStatus,
+  type RecordingStatus, type ShareCapability,
   type TranscriptStatus,
 } from '@/lib/connect';
 
@@ -78,6 +79,8 @@ export default function Recordings({ meetingId, isHost, canDelete, guestNames }:
   const [showTranscript, setShowTranscript] = useState(false);
   // The recording currently open in the player, if any.
   const [playing, setPlaying] = useState<Recording | null>(null);
+  // The recording whose sharing is being looked at, if any.
+  const [sharingRec, setSharingRec] = useState<Recording | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -174,7 +177,8 @@ export default function Recordings({ meetingId, isHost, canDelete, guestNames }:
               <Row key={item.recording.id} item={item} meetingId={meetingId}
                    isHost={isHost} canDelete={canDelete}
                    busy={busyId === item.recording.id} act={act}
-                   onPlay={setPlaying} />
+                   onPlay={setPlaying} sharing={list.sharing ?? null}
+                   onShare={setSharingRec} />
             ))}
           </Table>
         )}
@@ -189,6 +193,15 @@ export default function Recordings({ meetingId, isHost, canDelete, guestNames }:
       {playing && (
         <Player meetingId={meetingId} recording={playing}
                 onClose={() => setPlaying(null)} />
+      )}
+
+      {/* list.sharing is re-read here rather than captured when the button was
+          pressed: the dialog needs maxDays, and how many days a recording has
+          left changes with the retention hold. */}
+      {sharingRec && list.sharing && (
+        <ShareDialog meetingId={meetingId} recording={sharingRec}
+                     capability={list.sharing}
+                     onClose={() => { setSharingRec(null); void load(); }} />
       )}
     </>
   );
@@ -233,7 +246,7 @@ function GuestGap({ names }: { names: string[] }) {
 }
 
 // ---------------------------------------------------------------------------
-function Row({ item, meetingId, isHost, canDelete, busy, act, onPlay }: {
+function Row({ item, meetingId, isHost, canDelete, busy, act, onPlay, sharing, onShare }: {
   item: RecordingListItem;
   meetingId: string;
   isHost: boolean;
@@ -241,6 +254,12 @@ function Row({ item, meetingId, isHost, canDelete, busy, act, onPlay }: {
   busy: boolean;
   act: (id: string, fn: () => Promise<unknown>) => Promise<void>;
   onPlay: (r: Recording) => void;
+  /** Null when this server does not do sharing — the button is then not
+   *  rendered at all, the same rule the Record button follows when there is
+   *  no egress. A control that is always there and never works reads as a
+   *  broken product, not an unconfigured one. */
+  sharing: ShareCapability | null;
+  onShare: (r: Recording) => void;
 }) {
   const { authedFetch } = useAuth();
   const r = item.recording;
@@ -277,6 +296,16 @@ function Row({ item, meetingId, isHost, canDelete, busy, act, onPlay }: {
           {r.hasFile && (
             <Button variant="primary" className="btn-sm" onClick={() => onPlay(r)}>
               {r.mode === 'video' ? 'Watch' : 'Listen'}
+            </Button>
+          )}
+          {/* SHARING IS HOST-ONLY, and deliberately not co-host. Deciding
+              that somebody outside the meeting may watch it is the same
+              weight of act as deleting the recording, which is already
+              host-only for the same reason. A co-host running the room is not
+              the same as a co-host giving a recording of it away. */}
+          {sharing !== null && isHost && r.hasFile && !live && (
+            <Button variant="ghost" className="btn-sm" onClick={() => onShare(r)}>
+              Share
             </Button>
           )}
           {isHost && live && (

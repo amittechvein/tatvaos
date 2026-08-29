@@ -248,7 +248,30 @@ public static class ConnectWebhookEndpoints
                     if (state.DurationMs is long ms) recording.DurationMs = ms;
                     if (state.StartedAt is { } startedAt) recording.StartedAt ??= startedAt;
                     if (state.EndedAt is { } endedAt) recording.EndedAt ??= endedAt;
-                    if (state.Error is { Length: > 0 } err) recording.Error = err;
+                    // ── WHAT THE HOST READS, NOT WHAT THE RECORDER SAID. ──
+                    //
+                    //  This used to store the egress message verbatim, and
+                    //  the meeting page rendered it in red under the
+                    //  recording. A host who had waited through a meeting
+                    //  was told "context deadline exceeded" and left to work
+                    //  out whether their recording existed.
+                    //
+                    //  ConnectEgressErrors answers the two questions they
+                    //  actually have — is it lost, and can I do anything —
+                    //  and passes anything it does not recognise straight
+                    //  through rather than replacing it with a shrug.
+                    //
+                    //  THE RAW TEXT IS NOT LOST. It is logged here against
+                    //  the recording id, because the translation is for the
+                    //  screen and the original is what anybody debugging
+                    //  this will need.
+                    if (state.Error is { Length: > 0 } err)
+                    {
+                        log.LogWarning(
+                            "Connect egress {EgressId} (recording {RecordingId}) failed: {RawError}",
+                            egressId, recording.Id, err);
+                        recording.Error = ConnectEgressErrors.InPlainWords(err);
+                    }
                     recording.UpdatedAt = DateTimeOffset.UtcNow;
 
                     // Derived, never incremented — see the migration header.

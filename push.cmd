@@ -62,7 +62,7 @@ echo ============================================================
 
 REM ---- 1. Show what is actually staged ----------------------------------------
 echo.
-echo [1/4] What you are about to commit:
+echo [1/5] What you are about to commit:
 echo.
 git diff --cached --stat
 git diff --cached --quiet
@@ -170,15 +170,40 @@ if /i not "%CONFIRM%"=="y" (
     exit /b 1
 )
 
-REM ---- 2. Build the web app ---------------------------------------------------
+REM ---- 2. Fast syntax pass before the slow build -------------------------------
+REM
+REM  The build below finds everything this finds, and more. This runs first
+REM  anyway, because it takes a second where the build takes minutes, and
+REM  because for the two failures that have actually bitten us it says what is
+REM  wrong in words instead of "Expected a semicolon" pointing at a word in a
+REM  comment.
+REM
+REM  Exit 1 = a real problem, stop. Exit 2 = the checker could not run at all
+REM  (no typescript package yet), which must not block a push - the build is
+REM  still the authority.
+REM ------------------------------------------------------------------------------
 echo.
-echo [2/4] Building the web app...
+echo [2/5] Quick syntax pass...
+call node infra\scripts\web-syntax-check.js apps\web
+if errorlevel 2 (
+    echo   Skipped - the checker could not run. The build below still decides.
+) else if errorlevel 1 (
+    echo.
+    echo   Fix the problems listed above. Nothing was committed.
+    echo.
+    pause
+    exit /b 1
+)
+
+REM ---- 3. Build the web app ---------------------------------------------------
+echo.
+echo [3/5] Building the web app...
 call pnpm --filter @tatvaos/web build
 if errorlevel 1 goto :buildfail
 
-REM ---- 3. Build the API -------------------------------------------------------
+REM ---- 4. Build the API -------------------------------------------------------
 echo.
-echo [3/4] Building the API...
+echo [4/5] Building the API...
 pushd apps\api
 REM  -v minimal, not -v quiet. Quiet emits NOTHING on success, which makes a
 REM  build that ran and a build that never ran produce identical transcripts -
@@ -190,9 +215,9 @@ call dotnet build --nologo -v minimal
 if errorlevel 1 ( popd & goto :buildfail )
 popd
 
-REM ---- 4. Commit and push THIS branch -----------------------------------------
+REM ---- 5. Commit and push THIS branch -----------------------------------------
 echo.
-echo [4/4] Committing and pushing %BRANCH%...
+echo [5/5] Committing and pushing %BRANCH%...
 git commit -m "%MSG%"
 if errorlevel 1 goto :commitfail
 

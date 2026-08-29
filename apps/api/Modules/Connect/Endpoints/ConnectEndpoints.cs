@@ -147,22 +147,71 @@ public static class ConnectEndpoints
             .Where(m => m.CreatedByUserId == uid || mineIds.Contains(m.Id));
 
         var now = DateTimeOffset.UtcNow;
+
+        // How long after its moment a meeting still counts as "coming up".
+        // Meetings start late; a list that drops one the second the clock
+        // passes it is a list that loses the meeting somebody is walking into.
+        var stale = now.AddHours(-2);
+
+        // ──────────────────────────────────────────────────────────────────
+        //  TWO MEETINGS USED TO FALL THROUGH THE FLOOR HERE.
+        //
+        //  Status only ever becomes 'ended' when LiveKit's room_finished
+        //  webhook says so, and that requires somebody to have JOINED. A
+        //  meeting nobody opened stays 'scheduled' for ever.
+        //
+        //    • An INSTANT meeting has no ScheduledStart at all, so
+        //      `ScheduledStart == null` waved it into Upcoming permanently.
+        //      Amit's list had instant meetings from days ago sitting under
+        //      "Upcoming", which is where the report came from.
+        //
+        //    • A SCHEDULED meeting nobody joined was worse: two hours after
+        //      its start it stopped matching Upcoming, and because it was
+        //      never 'ended' it did not match Past either. It vanished from
+        //      the product while still existing in the database.
+        //
+        //  So the two questions are asked separately now. An instant meeting
+        //  is one you are supposed to be in NOW — it is upcoming while it is
+        //  fresh, and past once it plainly is not happening. A scheduled one
+        //  is judged on the time it was given. And Past is defined as the
+        //  complement rather than as a status, so nothing can be in neither.
+        // ──────────────────────────────────────────────────────────────────
         all = which switch
         {
             // Live meetings first, then what is coming. A meeting happening
             // right now is the thing the person most likely wants.
-            "upcoming" => all.Where(m => m.Status == "active"
-                                      || (m.Status == "scheduled"
-                                          && (m.ScheduledStart == null || m.ScheduledStart >= now.AddHours(-2)))),
+            "upcoming" => all.Where(m =>
+                m.Status == "active"
+                || (m.Status == "scheduled"
+                    && (m.ScheduledStart != null
+                        ? m.ScheduledStart >= stale
+                        // No scheduled time: an instant meeting. Fresh enough
+                        // to still be the one you just made, and no longer.
+                        : m.CreatedAt >= stale))),
+
             "today" => all.Where(m => m.ScheduledStart != null
                                    && m.ScheduledStart >= now.Date
                                    && m.ScheduledStart < now.Date.AddDays(1)),
-            _ => all.Where(m => m.Status == "ended" || m.Status == "cancelled"),
+
+            _ => all.Where(m =>
+                m.Status == "ended"
+                || m.Status == "cancelled"
+                // Never joined, and its moment has gone. Exactly the inverse
+                // of the Upcoming clause above, so every meeting is in one
+                // list or the other and none is in neither.
+                || (m.Status == "scheduled"
+                    && (m.ScheduledStart != null
+                        ? m.ScheduledStart < stale
+                        : m.CreatedAt < stale))),
         };
 
         var total = await all.CountAsync(ct);
+        // ScheduledStart before CreatedAt in the Past ordering: a meeting that
+        // was never joined has no EndedAt, and sorting it by when it was
+        // CREATED puts a meeting booked for next Tuesday and made in January
+        // half a year away from the day it was supposed to happen.
         var rows = which == "past"
-            ? await all.OrderByDescending(m => m.EndedAt ?? m.CreatedAt).Skip(skip).Take(take).ToListAsync(ct)
+            ? await all.OrderByDescending(m => m.EndedAt ?? m.ScheduledStart ?? m.CreatedAt).Skip(skip).Take(take).ToListAsync(ct)
             : await all.OrderBy(m => m.ScheduledStart ?? m.CreatedAt).Skip(skip).Take(take).ToListAsync(ct);
 
         var roles = await RolesForAsync(db, uid, rows.Select(r => r.Id).ToList(), ct);
@@ -271,7 +320,26 @@ public static class ConnectEndpoints
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
 
-        var title = string.IsNullOrWhiteSpace(req.Title) ? "Meeting" : req.Title.Trim();
+        // ── AN UNTITLED MEETING IS NAMED AFTER WHOSE IT IS. ──────────────
+        //
+        //  Every instant meeting used to be called "Meeting", because that is
+        //  what the fallback said and an instant meeting is created without
+        //  anybody typing a title. A list of nine rows all reading "Meeting"
+        //  tells you nothing, and there is no way to tell them apart short of
+        //  opening each one.
+        //
+        //  "Priya's meeting" is the convention every product in this category
+        //  uses, and it is right for the same reason: whose it is, is the
+        //  question you actually have when scanning a list. FIRST NAME only —
+        //  "Priya's meeting" reads like a person said it, "Priya Sharma's
+        //  meeting" reads like a database wrote it.
+        //
+        //  Not a timestamp. The list already shows when each meeting was, and
+        //  a title that repeats the column beside it is noise.
+        var creatorName = await NameOfAsync(db, uid, ct);
+        var title = string.IsNullOrWhiteSpace(req.Title)
+            ? DefaultTitleFor(creatorName)
+            : req.Title.Trim();
         if (title.Length > 200) return Results.BadRequest(new { error = "That title is too long." });
 
         var kind = (req.Kind ?? "instant").Trim().ToLowerInvariant();
@@ -355,7 +423,7 @@ public static class ConnectEndpoints
             Id = Guid.NewGuid(),
             MeetingId = meeting.Id,
             UserId = uid,
-            DisplayName = await NameOfAsync(db, uid, ct),
+            DisplayName = creatorName,
             Role = "host",
             IsGuest = false,
             Identity = ConnectCodes.IdentityForUser(uid),
@@ -1001,6 +1069,30 @@ public static class ConnectEndpoints
             .Select(u => u.DisplayName)
             .FirstOrDefaultAsync(ct);
         return string.IsNullOrWhiteSpace(name) ? "Someone" : name;
+    }
+
+    /// <summary>
+    /// What to call a meeting nobody titled: "Priya's meeting".
+    ///
+    /// First word of the display name, because that is how a person would say
+    /// it. A single-word name works unchanged, and a name that is somehow
+    /// empty falls back to the plain word rather than to "'s meeting".
+    ///
+    /// The apostrophe is deliberate and correct for every name here including
+    /// one ending in s — "Ramesh's meeting" is what people write, and the
+    /// grammatical argument for "Ramesh' meeting" is not one to have inside a
+    /// video product.
+    /// </summary>
+    internal static string DefaultTitleFor(string? displayName)
+    {
+        var first = (displayName ?? "").Trim().Split(' ',
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(first) || first == "Someone") return "Meeting";
+        // Long enough to be a name, short enough not to blow the 200-char
+        // title limit on its own.
+        if (first.Length > 40) first = first[..40];
+        return $"{first}'s meeting";
     }
 
     private static Task<ConnectMeeting?> FindAsync(AppDbContext db, Guid id, CancellationToken ct)

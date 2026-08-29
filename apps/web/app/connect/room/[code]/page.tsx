@@ -357,6 +357,38 @@ function Door({ code, door, meeting, signedInName, onSeat, onGone }: {
           </div>
         )}
 
+        {/* ── WHAT HAPPENS TO YOUR VOICE, BEFORE YOU DECIDE TO JOIN. ─────
+            Shown only to a guest — `meeting === null` is the same test the
+            name field uses below. A signed-in colleague already has the
+            switch and its disclosure inside the room; a guest has neither,
+            and arrives by a link having been asked nothing.
+
+            Deliberately NOT a warning colour. Nothing is wrong, and a red
+            box at somebody's first sight of the product says "danger" about
+            an ordinary feature. It is a fact, stated where a fact is still
+            useful — which is before the Join button, not after it.
+
+            Deliberately NOT a checkbox either. Amit ruled against a consent
+            queue and he was right about the queue; the part of that decision
+            worth keeping is that people are TOLD, not that they are stopped.
+            Someone who does not want to be minuted can close the tab, which
+            is a real choice and the only one they had any way to make. */}
+        {door.minutesLive === true && meeting === null && (
+          <div style={{
+            borderRadius: 10, marginBottom: 14, padding: '11px 13px',
+            background: 'rgba(255,255,255,.05)',
+            border: '1px solid rgba(255,255,255,.12)',
+            fontSize: 13, lineHeight: 1.55, color: '#c9c9d6',
+          }}>
+            <b style={{ color: '#e8e8f0' }}>Notes are being written from what is said.</b>
+            <div style={{ marginTop: 4 }}>
+              Your browser turns your own speech into text and sends that audio
+              to Google to do it. What you say becomes part of the meeting
+              notes, with your name on it.
+            </div>
+          </div>
+        )}
+
         <form onSubmit={submit}>
           {meeting === null && (
             <div style={{ marginBottom: 14 }}>

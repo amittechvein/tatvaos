@@ -161,6 +161,20 @@ export interface Doorstep {
   state: 'active' | 'ended' | 'not_started';
   passwordRequired: boolean;
   locked: boolean;
+  /**
+   * Whether minutes are being written, told to a guest BEFORE they join.
+   *
+   * A signed-in colleague sees the switch and the disclosure beside it inside
+   * the room. A guest sees neither: they arrive by link, they are not asked
+   * anything, and until this they were not told anything either.
+   *
+   * The word "before" is the whole point. Being told at the door is a choice;
+   * being told once you are already in the room and speaking is a notice.
+   *
+   * Absent on an older server, which the door reads as "do not claim
+   * anything" — silence, not a false reassurance.
+   */
+  minutesLive?: boolean;
 }
 
 export interface CreateMeeting {
@@ -476,7 +490,124 @@ export interface RecordingList {
    *  list cannot. */
   enabled: boolean;
   transcription: boolean;
+  /**
+   * Absent or null when this server does not do recording sharing at all —
+   * an older API, or the feature not deployed yet. The Share control is
+   * HIDDEN in that case rather than shown and failing, which is the same rule
+   * the Record button already follows when there is no egress: a control that
+   * is always there and never works reads as a broken product.
+   *
+   * OPTIONAL, not just nullable, and the difference is not pedantry: a server
+   * that has never heard of sharing omits the field entirely, and a type that
+   * promised `ShareCapability | null` would be describing a response nobody
+   * sends. Every reader must treat missing and null the same.
+   */
+  sharing?: ShareCapability | null;
   items: RecordingListItem[];
+}
+
+// ---------------------------------------------------------------------------
+//  SHARING A RECORDING WITH SOMEBODY WHO WAS NOT IN THE MEETING.
+//
+//  Four levels, ruled by Core in August 2026, in the order they give away
+//  more. THE BASELINE NEVER MOVES: everybody who was in the meeting, and the
+//  host, can already read the recording and no share can take that away. A
+//  share only ever ADDS a reader.
+// ---------------------------------------------------------------------------
+
+export type ShareLevel = 'organisation' | 'named' | 'password' | 'public';
+
+/**
+ * What a person is agreeing to, in the words they should read BEFORE they
+ * agree to it — not after, and not in a tooltip.
+ *
+ * `public` is worded exactly as Core specified it and MUST NOT be softened.
+ * "Anyone with the link" is how every product in this category describes it
+ * and it is how people end up surprised: it sounds like a small circle. The
+ * sentence has to name the actual set of people.
+ */
+export const SHARE_EXPOSURE: Record<ShareLevel, string> = {
+  organisation: 'Anyone signed in to your organisation',
+  named: 'Only the people you list, wherever they work',
+  password: 'Anyone holding this link who also knows the password',
+  public: 'Anyone on the internet holding this link',
+};
+
+/** One line on what the level is FOR, so the choice is not made on exposure alone. */
+export const SHARE_PURPOSE: Record<ShareLevel, string> = {
+  organisation: 'For a recording your colleagues may need and you cannot list in advance.',
+  named: 'For a named few — a client, an auditor, somebody who missed it.',
+  password: 'For sending outside the organisation when you can pass on a password separately.',
+  public: 'For a recording that is genuinely meant to be published.',
+};
+
+export interface ShareCapability {
+  /**
+   * The levels this organisation permits. 'public' is ABSENT unless an
+   * administrator has switched it on — it is off by default, per
+   * organisation, the same shape as Space's public-links kill switch.
+   *
+   * Read this rather than hardcoding the four: a level missing here must not
+   * be offered, and a level added later must appear without a web deploy.
+   */
+  levels: ShareLevel[];
+  /** Default life of a new link, in days. 7 unless the server says otherwise. */
+  defaultDays: number;
+  /**
+   * The longest this particular recording can be shared for — the days left
+   * before it is deleted by the retention sweep. Expiry is mandatory on the
+   * two link levels and can never outlive the file, so a link that survives
+   * the recording is not offered rather than issued and then broken.
+   */
+  maxDays: number;
+}
+
+export interface SharePerson {
+  userId: string;
+  name: string;
+  email: string;
+  /**
+   * True when they are in a DIFFERENT organisation to the recording. Shown,
+   * always — sharing outside your own organisation should never be something
+   * you have to work out from a list of email addresses.
+   *
+   * Whether, not where. The server deliberately does not send the other
+   * organisation's NAME: "this person is not one of us" is the fact a host
+   * needs, and it is read from the grant rather than from the person's
+   * current row, so somebody changing employer later does not quietly rewrite
+   * what the host agreed to.
+   */
+  external: boolean;
+}
+
+export interface RecordingShare {
+  id: string;
+  recordingId: string;
+  level: ShareLevel;
+  /** The full link to hand somebody. Null for the two levels that have no
+   *  link — those are reached by signing in, not by holding a URL. */
+  url: string | null;
+  hasPassword: boolean;
+  /** Null only for the levels where expiry is optional; never null on
+   *  'password' or 'public'. */
+  expiresAt: string | null;
+  /** 'named' only, empty otherwise. */
+  people: SharePerson[];
+  /** How many times somebody who was NOT in the meeting has opened it.
+   *  Participants are not counted — they are the baseline, not a share. */
+  opens: number;
+  createdAt: string;
+  createdBy: string;
+}
+
+export interface NewShare {
+  level: ShareLevel;
+  /** Required for 'password' and 'public'. Must be <= capability.maxDays. */
+  days?: number;
+  /** 'password' only. Same rules as a meeting password: 4 to 100 characters. */
+  password?: string;
+  /** 'named' only. TatvaOS accounts; cross-organisation is allowed. */
+  userIds?: string[];
 }
 
 export interface TranscriptSegment {
@@ -607,6 +738,39 @@ export const recordingApi = {
     // flash a blank tab that some blockers eat.
     window.location.assign(recordingApi.ticketUrl(ticket));
   },
+
+  // ── SHARING ────────────────────────────────────────────────────────────
+  //
+  //  Four calls, deliberately not five. Changing a link's expiry or password
+  //  is REVOKE AND CREATE, not an edit, because a link whose password changed
+  //  under it is a link somebody still holds and believes in. Revoking says
+  //  that out loud; editing hides it.
+  //
+  //  The exception is the named list, which is genuinely a membership and
+  //  where add-and-remove is the honest verb.
+
+  shares: (f: AuthedFetch, meetingId: string, recordingId: string) =>
+    f(`/connect/meetings/${meetingId}/recordings/${recordingId}/shares`)
+      .then((r) => json<{ shares: RecordingShare[] }>(r, 'Could not load who this is shared with.')),
+
+  share: (f: AuthedFetch, meetingId: string, recordingId: string, body: NewShare) =>
+    f(`/connect/meetings/${meetingId}/recordings/${recordingId}/shares`, {
+      method: 'POST', body: JSON.stringify(body),
+    }).then((r) => json<RecordingShare>(r, 'Could not share that recording.')),
+
+  /** Ends a share for good. The row is kept so "who could see this, and when
+   *  did that stop" still has an answer after an incident. */
+  unshare: (f: AuthedFetch, meetingId: string, recordingId: string, shareId: string) =>
+    f(`/connect/meetings/${meetingId}/recordings/${recordingId}/shares/${shareId}`, {
+      method: 'DELETE',
+    }).then((r) => { if (!r.ok) throw new Error('Could not stop that share.'); }),
+
+  /** 'named' shares only: replace the whole list of people. */
+  shareWith: (f: AuthedFetch, meetingId: string, recordingId: string,
+              shareId: string, userIds: string[]) =>
+    f(`/connect/meetings/${meetingId}/recordings/${recordingId}/shares/${shareId}/people`, {
+      method: 'PUT', body: JSON.stringify({ userIds }),
+    }).then((r) => json<RecordingShare>(r, 'Could not change who this is shared with.')),
 
   notes: (f: AuthedFetch, meetingId: string) =>
     f(`/connect/meetings/${meetingId}/notes`)

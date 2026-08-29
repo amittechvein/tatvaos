@@ -417,6 +417,44 @@ const SKIN = `
 .cxs .cx-choices--tight .cx-choice{padding:10px 12px 10px 38px}
 .cxs .cx-choices--tight .cx-tick{top:11px;left:12px;width:16px;height:16px}
 
+/* A cx-choice used as a BUTTON rather than a radio — it takes you to a next
+   step instead of selecting one of a set. Same card, no tick, and therefore
+   no 42px of empty space where the tick would have been. The chevron says
+   "this leads somewhere", which is the whole difference from a radio. */
+.cxs button.cx-choice{
+  width:100%;padding-left:14px;padding-right:34px;
+  font:inherit;text-align:left;
+}
+.cxs button.cx-choice::after{
+  content:'';position:absolute;right:15px;top:50%;
+  width:7px;height:7px;margin-top:-4px;
+  border-right:1.5px solid var(--cxs-ink-3);border-top:1.5px solid var(--cxs-ink-3);
+  transform:rotate(45deg);
+  transition:transform .16s ease, border-color .16s ease;
+}
+.cxs button.cx-choice:hover::after{
+  border-color:var(--cxs-brand);transform:rotate(45deg) translate(1.5px,-1.5px);
+}
+
+/* ── One share that already exists ────────────────────────────────────── */
+/* A card rather than a table row: a share is a paragraph — who, until when,
+   how many times it has been opened — and none of those line up into columns
+   across four levels that carry different facts. */
+.cxs .cx-shared{
+  padding:13px 14px;margin-bottom:10px;
+  border:1px solid var(--cxs-line);border-radius:12px;background:var(--cxs-surface);
+}
+.cxs .cx-shared:last-child{margin-bottom:0}
+
+/* The link, shown in full and selectable even when the copy button works.
+   Monospace so an l and a 1 are different characters — somebody WILL read one
+   of these down a phone, and the copy button is not always available: the
+   clipboard API needs a secure context and can be refused outright. */
+.cxs .cx-linkbox{
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:11.5px;
+}
+
 /* ── The explanation, on request ──────────────────────────────────────── */
 /* The long version was written for a reason and is not being deleted — it is
    being moved one click away, so the form reads as seven decisions rather
