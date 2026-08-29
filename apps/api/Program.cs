@@ -438,6 +438,9 @@ app.MapOrgAiEndpoints();
 // Modules/Calendar/Recurrence.cs.
 app.MapCalendarEndpoints();
 app.MapMailEndpoints();
+// Mail categories - the colour system. A name and a colour somebody made for
+// themselves; filters apply them, nothing infers them (see the endpoint header).
+app.MapMailCategoryEndpoints();
 app.MapFamilyEndpoints();
 app.MapSpaceEndpoints();
 app.MapSpaceDriveEndpoints();
