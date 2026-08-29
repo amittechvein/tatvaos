@@ -6,16 +6,21 @@ and the service-count check; these are the three that need mail knowledge.
 Uses `step` / `ok` / `bad` / `note` and `$COMPOSE` exactly as `deploy.sh`
 defines them (lines 20–26 and 37), so the two compose without translation.
 
-**Two contract points for you to settle, because they belong to the script and
-not to this block:**
+**Both contract points are now settled — recorded here so the file stops
+asking a question that has been answered:**
 
-1. `MAIL_HOST`. These need the mail edge's public name. `verify-live.sh` must
-   be runnable standalone, so it cannot rely on a variable a deploy happened to
-   export. Suggest reading `MAIL_DOMAIN` out of `infra/docker/.env` with a
-   fallback, and failing loudly if neither resolves — an unset hostname must not
-   silently become an empty check.
-2. Whether `bad` increments a shared `FAILURES` counter here as it does in
-   `deploy.sh`. These call `bad` and `return 1`; wire the counting your way.
+1. **`MAIL_HOST`** — read `MAIL_DOMAIN` from `infra/docker/.env`, and **fail
+   loudly if it does not resolve**. An unset hostname must never silently
+   become an empty check; that is the whole class of bug this file exists
+   inside. `verify-live.sh` stays runnable standalone, because a verification
+   script you can only reach through a deploy is one nobody runs when they are
+   worried.
+2. **`bad` increments the shared `FAILURES` counter**, same convention as
+   `deploy.sh`, and `verify-live.sh` exits non-zero when it is non-empty.
+3. **Shebang: `#!/usr/bin/env bash`**, matching `deploy.sh` and
+   `verify-migrations.sh`. Not optional here — under `sh` (dash) both `local`
+   and `/dev/tcp` break, and `/dev/tcp` breaks in the direction that reports
+   success.
 
 Every check below fails **closed**. Not one of them can report health when it
 could not perform the test — that is the whole point, and it is the thing the
@@ -108,63 +113,66 @@ independently — "SMTP is up" would be true and useless when 587 alone is down.
 
 ## 3. The queue — the check that would have caught 27 August on its own
 
+**Rewritten to use `postqueue -j`.** Version 1 parsed the human-readable
+`postqueue -p`, which meant assuming the queue-ID alphabet and parsing a date
+string with no year in it. Both assumptions were wrong in different ways (see
+the corrections at the end). `-j` prints one JSON object per message with
+`arrival_time` already an epoch integer, so there is no alphabet to assume and
+no date to parse — **both of the earlier bugs become unreachable rather than
+fixed**. Postfix has had it since 3.1; bookworm ships 3.7. If a version ever
+lacks it, `postqueue` errors and that lands in the "could not read" branch.
+
 ```bash
 check_queue() {
     step "Mail queue"
 
     local out rc=0
-    out=$($COMPOSE exec -T postfix postqueue -p 2>&1) || rc=$?
+    out=$($COMPOSE exec -T postfix postqueue -j 2>&1) || rc=$?
 
-    # FAIL CLOSED. If the container is gone or exec errored we could not
-    # perform the test, and "could not read the queue" must never arrive at
-    # the same number as "the queue is empty". The first draft of this check
-    # piped straight into grep -c with `|| true`, which reported depth=0 -
-    # a healthy empty queue - precisely when the mail server was dead.
+    # FAIL CLOSED. A container that is gone, an exec that errored, or a
+    # postqueue without -j all arrive here. "Could not perform the test" must
+    # never reach the same branch as "the test passed".
     if [ "$rc" -ne 0 ]; then
-        bad "Could not read the mail queue (exit $rc) - Postfix is not answering."
+        bad "Could not read the mail queue (exit $rc)."
+        note "Postfix is not answering, or this version has no 'postqueue -j'."
         note "${out%%$'\n'*}"
         return 1
     fi
 
-    if printf '%s\n' "$out" | grep -q 'Mail queue is empty'; then
+    # THE ONE PLACE SILENCE IS A PASS, and only because rc was 0 - which is
+    # the evidence that the command ran. postqueue -j prints nothing at all
+    # for an empty queue. Everywhere else in this file, no output is a
+    # failure, because nothing distinguishes it from the step not running.
+    if [ -z "${out//[[:space:]]/}" ]; then
         ok "Queue empty."
         return 0
     fi
 
-    local depth
-    depth=$(printf '%s\n' "$out" | awk '$1 ~ /^[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]+[*!]?$/' | wc -l | tr -d ' ')
+    local times depth oldest now age
+    times=$(printf '%s\n' "$out" \
+            | grep -oE '"arrival_time":[[:space:]]*[0-9]+' \
+            | grep -oE '[0-9]+$')
+
+    # Output we cannot read is a failure to test, not a pass. No jq
+    # dependency: -j emits one object per line, so a line-wise grep is enough
+    # and a missing tool cannot silently become a skipped check.
+    if [ -z "$times" ]; then
+        bad "Queue is not empty and no arrival_time could be read - output not understood."
+        return 1
+    fi
+
+    depth=$(printf '%s\n' "$times" | wc -l | tr -d ' ')
+    oldest=$(printf '%s\n' "$times" | sort -n | head -1)
+    now=$(date +%s)
+    age=$(( now - oldest ))
 
     # AGE, NOT DEPTH, DECIDES.
     #
     # One depth sample cannot tell five messages in flight from five stuck,
     # and a threshold on it is a guess that goes stale the day this box gets
-    # busy. Arrival time answers the real question with one sample: on a box
-    # whose normal queue is empty, a message older than ten minutes is
-    # delivery stuck, whatever the count. A busy queue that is moving never
-    # trips it.
-    local now oldest=0 secs t
-    now=$(date +%s)
-
-    # postqueue prints: <id> <size> <dow> <mon> <day> <time> <sender>
-    while IFS= read -r t; do
-        [ -n "$t" ] || continue
-        secs=$(date -d "$t" +%s 2>/dev/null) || continue
-        # Keep the EARLIEST. oldest=0 means "nothing parsed yet", which is why
-        # it is also the sentinel the failure branch below tests for.
-        if [ "$oldest" -eq 0 ] || [ "$secs" -lt "$oldest" ]; then
-            oldest=$secs
-        fi
-    done < <(printf '%s\n' "$out" \
-             | awk '$1 ~ /^[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]+[*!]?$/ { print $3, $4, $5, $6 }')
-
-    # Queued messages exist but not one arrival time parsed: the output is in
-    # a shape we do not understand, which is a failure to test, not a pass.
-    if [ "$oldest" -eq 0 ]; then
-        bad "$depth message(s) queued and no arrival time could be read - queue output not understood."
-        return 1
-    fi
-
-    local age=$(( now - oldest ))
+    # busy. On a box whose normal queue is empty, a message older than ten
+    # minutes is delivery stuck, whatever the count. A busy queue that is
+    # moving never trips it. Depth is reported, never judged.
     note "$depth message(s) queued, oldest ${age}s old."
 
     if [ "$age" -gt 600 ]; then
@@ -178,59 +186,71 @@ check_queue() {
 }
 ```
 
-**Note on `date -d`.** `postqueue` prints no year, so `date` assumes the current
-one. Across a New Year boundary a message queued on 31 December reads as a year
-in the future and the age goes negative — which fails the `-gt 600` test and
-reports healthy. It is one night a year, on messages already stuck, and fixing
-it properly means asking Postfix for epoch times rather than parsing its
-human-readable output. **Stated rather than left for someone to find**; worth
-an open thread, not worth a clever workaround in a health check.
+---
+
+## Corrections to version 1, and one to the review
+
+**The long-queue-ID finding is right and the pattern was wrong.** With
+`enable_long_queue_ids` on, Postfix emits base-52 IDs containing letters
+outside `A-F`, and the hex pattern matched none of them.
+
+**But it failed closed, not open.** I tested it rather than agreeing:
+
+```
+== G: long (base-52) queue id ==
+   [FAIL] 0 queued, no arrival time parsed        rc=1
+```
+
+Zero IDs matched, so `oldest` stayed at its `0` sentinel, and the "no arrival
+time could be read" branch caught it and returned 1. A full queue was never
+going to report healthy.
+
+What it *would* have done is worse in a different way: fail with the message
+**"0 message(s) queued and no arrival time could be read"** — a sentence that
+contradicts itself and sends whoever reads it at 2am looking at the parser
+instead of the mail. Right to change it, wrong reason, and the difference
+matters because "fails open" and "fails closed with a confusing message" get
+fixed with different urgency.
+
+Moot either way now: `-j` never touches the ID.
+
+**Two bugs in version 1, both found by running it, neither by reading it:**
+
+- `awk` interval expressions. `{5,}` is not POSIX and **mawk does not support
+  it** — mawk is `/usr/bin/awk` on Debian and Ubuntu, which is what the box
+  has. Matched nothing, every run reported "no arrival time could be read".
+- The earliest-message comparison was inverted, so `oldest` stayed at `0`
+  forever and every non-empty queue took the unparseable branch.
+
+Different causes, identical symptom, and reading them both looked fine.
 
 ---
 
-**Note on the awk pattern.** It spells out five hex characters rather than
-using `{5,}`. Interval expressions are not in POSIX awk and **mawk does not
-support them** — Debian and Ubuntu ship mawk as `/usr/bin/awk`, which is what a
-production box has. The first draft used `{5,}`, matched nothing at all, and
-therefore reported "no arrival time could be read" on every run. It failed
-closed, which is why the failure was survivable — but a check that always fails
-is a check that gets deleted, so this is not a style point.
+## The tests I actually ran
 
-I found that by running it, not by reading it. See below.
-
----
-
-## The test I actually ran
-
-Six fixtures against the parsing logic. Two of them fail on purpose, and the
-last two are the ones worth keeping — a check nobody has seen fail is not a
-check.
+Seven fixtures against the `-j` parser. Five fail on purpose. Re-runnable after
+you wire it in, which is the point of including them.
 
 ```
-== A: empty ==                [ ok ] Queue empty.                          rc=0
-== B: exec failed ==          [FAIL] Could not read the mail queue (exit 1) rc=1
-== C: one fresh ==            [ ok ] Queue moving (oldest 30s).            rc=0
-== D: one old (stuck) ==      [FAIL] queued 2700s - stuck                  rc=1
-== E: mixed, oldest wins ==   [FAIL] queued 2700s - stuck (2 queued)       rc=1
-== F: garbage rows ==         [FAIL] 1 queued, no arrival time parsed      rc=1
+== A: empty (no output) ==        [ ok ] Queue empty.                            rc=0
+== B: exec failed ==              [FAIL] Could not read the mail queue (exit 1)  rc=1
+== C: -j unsupported ==           [FAIL] Could not read the mail queue (exit 1)  rc=1
+== D: one fresh ==                [ ok ] Queue moving (oldest 30s).              rc=0
+== E: one old, LONG base-52 id == [FAIL] queued 2700s - delivery is stuck        rc=1
+== F: mixed, earliest wins ==     [FAIL] queued 2700s - stuck (2 queued)         rc=1
+== G: json we do not understand == [FAIL] no arrival_time could be read          rc=1
 ```
 
-Fixtures, if you want to re-run them after wiring it in — `$hdr` is
-`postqueue`'s real header line, `$fresh` is `date -d '-30 seconds' '+%a %b %e
-%H:%M:%S'`, `$old` the same at `-45 minutes`:
+Fixtures — `$fresh` is `date -d '-30 seconds' +%s`, `$old` is `-45 minutes`:
 
-- **A** `Mail queue is empty`
-- **B** `Error: No such container`, rc 1
-- **C** one entry, `$fresh`
-- **D** one entry marked active (`9F8E7D6C5B4*`), `$old`
-- **E** both C and D, proving the earliest wins and not the first
-- **F** an id row whose arrival column is not a date
-
-**E is the one that caught a real bug.** My first version of the "keep the
-earliest" comparison had the test inverted and `oldest` stayed at its `0`
-sentinel forever, so every non-empty queue took the unparseable branch. Same
-failure signature as the mawk problem and a completely different cause, which
-is exactly why the fixture set is worth keeping rather than the conclusion.
+- **A** empty string, rc 0
+- **B** `Error: No such container: postfix`, rc 1
+- **C** `postqueue: fatal: usage: postqueue -j`, rc 1
+- **D** `{"queue_id":"3A1B2C","arrival_time": $fresh}`
+- **E** `{"queue_id":"3xVXyz2Sm5zK9j","arrival_time":$old}` — the case that
+  broke version 1
+- **F** D and E on two lines, proving the *earliest* wins and not the first
+- **G** `{"something_else":1}`
 
 ---
 
