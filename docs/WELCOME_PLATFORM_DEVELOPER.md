@@ -110,61 +110,19 @@ repo, some of it painfully learned.
 
 ---
 
-## 4. How we work — seven rules, each of which cost us something
+## 4. How we work
 
-These aren't style preferences. Every one has an incident behind it, and the
-incidents are documented in the files themselves.
+**The rules live in `docs/HOUSE_RULES.md`, and only there.** Read it before
+your first commit, and again before your first deploy — rule 11 governs what
+you are allowed to do alone.
 
-**1. Lanes.** Your files are yours to change freely. Another module's files
-are ask-first. If production is burning and you must cross a line, do it and
-**declare it in the commit message** — a quiet cross-lane edit is how two
-people spend a day fixing the same bug in different ways. For genuinely
-shared files (`lib/nav.tsx`, `AppDbContext.cs`): your own function is yours,
-shared registries are **additive-only** (never rename someone else's entry —
-it shows up as their icon changing), everything else is ask-first. That
-includes Core.
-
-**2. Migrations are date-prefixed, idempotent, additive** — and must survive
-`infra/scripts/verify-migrations.sh`, which builds every migration against a
-scratch database from empty, then runs the whole directory again. Both halves
-matter: the first catches a file that depends on one sorting after it; the
-second catches a file that fights a later one. Both have cost us blocked
-deploys. Use the **real date** — and ignore the `202609xx` Connect files,
-which are a documented mistake awaiting rename.
-
-**3. Build before commit. Count files before push.** `git diff --cached
---stat`, read the number, then push. A green build proves your *working
-tree*; the commit ships the *index*. Those diverged once and shipped a
-broken file to production.
-
-**4. Merged is not running.** Config that renders at container start doesn't
-change because you deployed. An outbound-TLS fix sat correct in git for four
-days while real mail went out unencrypted. `deploy.sh` now handles the known
-cases; when you add a service, decide **at birth** how its config reaches the
-running process, and write it down.
-
-**5. Secrets never appear in output.** Not in a log, not in a terminal, not
-in a chat. Generate them where they're used (`read -rsp`, or straight into
-the destination file). A command whose output is a secret is unsafe by
-construction; one that writes it to its destination is safe by construction.
-And know that every secret's blast radius includes the nightly backup —
-`backup.sh` copies `.env` verbatim, and says so in its own comments.
-
-**6. A test you've only seen pass is not a test.** Calibrate first: prove it
-can detect the thing before you believe what it says. Real examples from one
-week — a race test that raced the wrong URL and reported 10/10 failures
-against working code; a rate limiter's refusals counted as the bug being
-hunted; a link at its download cap that would have "passed" a test by
-refusing before it reached the code under test. The house style for check
-scripts is in `infra/scripts/verify-*.sh`: **guards that refuse**, not
-warnings that scroll past.
-
-**7. Documented is not built.** In one week we found three "documented
-behaviours" that had never existed — a seam whose two ends had no callers, a
-sandbox guarantee describing code that did something else, a comment
-promising production TLS on a port serving cleartext. When a document tells
-you what the code does, **grep for the caller** before you believe it. That
-habit has found more bugs here than any test suite.
+This document deliberately does not summarise them. A summary is a copy; it
+drifts, and it reads as authoritative the whole time it is wrong. That is
+rule 10, and this section was an instance of it until 29 Aug 2026: it carried
+seven rules inline, including a superseded rule 6 that taught the weaker
+habit — *"a test you've only seen pass is not a test"*, which asks you to
+distrust a result, in place of *"a check with no failure mode is not a
+check"*, which lets you reject a bad check by reading it.
 
 ---
 
@@ -181,8 +139,12 @@ habit has found more bugs here than any test suite.
    saves the next person a day.
 3. **Read `docs/PLATFORM_LANE_HANDOVER.md`** — your lane's specifics.
 4. **Ship something small end to end.** A copy fix on your landing page,
-   through commit, build, deploy, verify. Do the whole loop once while the
-   stakes are tiny, so the loop isn't new when the stakes aren't.
+   through commit, build, deploy, verify. **The sequence is rule 11 in
+   `docs/HOUSE_RULES.md`** — merge, both builds green, rollback SHA written
+   down, announce before, paste after. Read it before you start rather than
+   partway through; it is the one rule that changes what you may do without
+   asking anyone. Do the whole loop once while the stakes are tiny, so the
+   loop isn't new when the stakes aren't.
 5. **Start your open-threads page** — what you're building, what's waiting on
    whom. It's how the rest of us will know what you need.
 

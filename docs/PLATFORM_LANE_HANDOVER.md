@@ -98,60 +98,15 @@ its brochure.
 
 ---
 
-## The rules of this repo, compressed
+## The rules of this repo
 
-Each earned the hard way; details in the named files.
+**`docs/HOUSE_RULES.md`.** Read it before your first commit, and again before
+your first deploy — rule 11 governs what you may do alone.
 
-1. **Lanes.** Your files are yours; other modules' files are ask-first; a
-   cross-lane edit in an emergency is a **declared** exception in the commit
-   message, never a quiet one. Shared files: your own function is yours, `PATHS`
-   entries are additive-only (rename someone else's and it shows up as their
-   icon changing), everything else ask-first. The ratified rule is in
-   `apps/web/lib/nav.tsx`'s header. That includes Core.
-
-2. **Migrations** are date-prefixed with the **real** date, idempotent,
-   additive, and must survive `infra/scripts/verify-migrations.sh` — which
-   builds every migration against a scratch database from empty, then runs the
-   whole directory again. The first pass catches a file that depends on one
-   sorting after it; the second catches a file that fights a later one. Both
-   have cost blocked deploys. Run it before any deploy that adds one. Do not
-   imitate the September-named `202609xx` Connect files; they are a documented
-   mistake awaiting rename.
-
-3. **Build before commit; count files before push.** `git diff --cached --stat`
-   and read the number. A green build proves your *working tree*; the commit
-   ships the *index*. Those diverged once and shipped a broken file to
-   production.
-
-4. **Merged is not running.** Config that renders at container start (Postfix,
-   Dovecot, Caddy) does not change because you deployed. An outbound-TLS fix sat
-   correct in git for four days while real mail went out unencrypted. `deploy.sh`
-   handles the known cases; when you add a service, decide **at birth** how its
-   config reaches the running process, and write it down.
-
-5. **Secrets** never appear in chat, in output, or in a command that prints
-   them. Generate them where they are used (`read -rsp`, or straight into the
-   destination file). A command whose output is a secret is unsafe by
-   construction; one that writes it to its destination is safe by construction.
-   Every secret's blast radius includes the nightly backup — `backup.sh` copies
-   `.env` verbatim, and says so in its own comments.
-
-6. **A test you have only seen pass is not a test.** Calibrate: prove it can
-   detect the thing before believing what it says. Real examples from one week —
-   a race test that raced the wrong URL and reported 10/10 failures against
-   working code; a rate limiter's refusals counted as the bug being hunted; a
-   link at its download cap that would have "passed" by refusing before it
-   reached the code under test. House style is `infra/scripts/verify-*.sh`:
-   **guards that refuse**, not warnings that scroll past.
-
-7. **Documented is not built.** Three "documented behaviours" in one week had
-   never existed — a seam whose two ends had no callers, a sandbox guarantee
-   describing code that did something else, a comment promising production TLS
-   on a port serving cleartext. When a doc asserts what code does, **grep for
-   the caller** before trusting it. That habit has found more bugs here than any
-   test suite. (This document was itself rewritten once by someone who assumed
-   it did not exist instead of running `git log` on the path. The rule is not
-   theoretical.)
+Not compressed here on purpose. A compression is a copy, and this section was
+one until 29 Aug 2026: it carried the rules inline, including a superseded
+rule 6. Copies drift, and they read as authoritative while they do — which is
+rule 10, and which this section demonstrated rather than described.
 
 ---
 
