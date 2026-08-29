@@ -91,21 +91,35 @@ public static class MailAppPasswordEndpoints
         {
             address = box.Address,
             active,
-            // MAIL-CLIENT-SETTINGS (3 copies). This comment used to claim the
-            // API serves these "so the settings screen and the client sheet
-            // can never disagree about a port number". That stopped being true
-            // the day the platform landing page needed them: it is static and
-            // unauthenticated, so it cannot call this endpoint and carries its
-            // own literals. The copies, all three:
+            // MAIL-CLIENT-SETTINGS. This comment used to claim the API serves
+            // these "so the settings screen and the client sheet can never
+            // disagree about a port number". False twice over: the platform
+            // landing page is static and unauthenticated, so it cannot call
+            // this endpoint - and the values were never only ours to begin
+            // with. FIVE places carry them, and they move TOGETHER:
             //
-            //   1. HERE - the authoritative copy, because it is the only one
-            //      software reads.
-            //   2. apps/web/app/platform/page.tsx - static page, hardcoded.
-            //   3. docs/CLIENT_MAIL_SETUP.md - the printable sheet.
+            //   ROOT: infra/docker/docker-compose.production.yml (52, 71) -
+            //   the published port mappings. Not a copy: change these and the
+            //   ports genuinely move, and the other four become wrong.
             //
-            // Change a host or a port in ALL THREE, in ONE commit.
-            // git grep MAIL-CLIENT-SETTINGS finds every copy; each carries
-            // this marker precisely so the count cannot silently become four.
+            //   1. HERE - what the settings screen and client sheet render;
+            //      the copy software reads.
+            //   2. apps/web/app/platform/page.tsx (55, 57) - the landing page.
+            //   3. docs/CLIENT_MAIL_SETUP.md (17-18, 41) - the printable
+            //      sheet; two edit sites in one file.
+            //   4. infra/dns/tatvaos.com.md (99-100) - the SRV auto-config
+            //      records (_imaps._tcp / _submission._tcp), which tell mail
+            //      clients these ports before any human reads anything.
+            //
+            // Change a host or a port in ALL FIVE, in ONE commit.
+            //
+            // This marker is DOCUMENTATION, not enforcement - a signpost so a
+            // reader knows what they have found and where its siblings are.
+            // Counting markers proves nothing: an unmarked sixth copy is
+            // invisible to it (the DNS records were, the day the marker was
+            // written). The check that can actually fail greps the VALUES -
+            // \b(993|587)\b under apps docs infra local - and requires every
+            // hit to carry this marker or a reasoned exceptions-list entry.
             settings = new
             {
                 imapHost = "mail.tatvaos.com", imapPort = 993, imapSecurity = "SSL/TLS",
