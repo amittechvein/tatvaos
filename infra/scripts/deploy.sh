@@ -54,6 +54,34 @@ case "$ENV" in
     *) printf '\nUsage: ./deploy.sh production\n\n'; exit 1 ;;
 esac
 
+# ---------------------------------------------------------------------------
+#  ONE DEPLOYER AT A TIME — the lock rule 11 promised.
+#
+#  Since 29 August every lane deploys its own work, so two people reaching
+#  this script in the same minute stopped being hypothetical. Two concurrent
+#  deploys interleave `reset --hard`, container recreation and migrations on
+#  one box — each half-succeeds and the box ends in a state neither asked
+#  for. The thread announcement is etiquette; this is the mechanism.
+#
+#  flock on a file descriptor, not a touch-file: the kernel releases the
+#  lock the instant this process exits, HOWEVER it exits — crash, Ctrl-C,
+#  dropped SSH session. There is no stale-lock file to clean up, because
+#  the lock is not the file, it is the process holding it. The file only
+#  carries WHO, so the second deployer's refusal can name them.
+# ---------------------------------------------------------------------------
+LOCKFILE="/tmp/tatvaos-deploy-${ENV}.lock"
+exec 9>>"$LOCKFILE"
+if ! flock -n 9; then
+    bad "Another deploy is already running on this box."
+    note "Held by: $(cat "$LOCKFILE" 2>/dev/null || echo 'unknown — but the lock is real')"
+    note "If that deploy is truly finished, its process is gone and this"
+    note "lock is already free — re-run. If this message repeats, someone"
+    note "is mid-deploy: find them in the thread before doing anything."
+    exit 1
+fi
+printf '%s pid=%s user=%s (%s)\n' \
+    "$(date -u +%FT%TZ)" "$$" "$(id -un)" "${SSH_CONNECTION:-local}" > "$LOCKFILE"
+
 COMPOSE="docker compose \
     -f infra/docker/docker-compose.base.yml \
     -f infra/docker/docker-compose.${ENV}.yml \
