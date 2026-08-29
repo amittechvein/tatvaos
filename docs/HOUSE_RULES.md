@@ -124,10 +124,20 @@ executed.*
 Both are facts that decay silently and are trusted absolutely. Name the path;
 let grep find the line.
 
-*Cost: a marker block saying "five locations" was stale before it merged — the
-real number was six or seven depending on how you count, and one copy was
-discovered while the list was being written. An API settings block moved from
-line 91 to 99 inside a day.*
+*Cost, the obvious half: a marker block saying "five locations" was stale before
+it merged — the real number was six or seven depending on how you count, and one
+copy was found while the list was being written. That one was wrong when
+written.*
+
+*Cost, the half that makes this structural: a review cited
+`deploy.sh:547` for the `verify-live.sh` call. Read a day later, the call was at
+line 575. **Both numbers were true.** At the commit the reviewer had fetched it
+was 547; eight commits landed in between, one of them adding twenty-eight lines
+above that call, and it became 575. Nobody was hurried, nobody misread, nobody
+touched the sentence. The citation did not decay because someone was careless —
+it decayed because the file moved underneath a true statement, which no amount
+of care prevents. That is why the rule is "don't write the number", not "check
+the number".*
 
 ## 10. One implementation of a fact
 
@@ -150,6 +160,76 @@ false match.
 *Cost: the client connection ports live in six or seven places including DNS SRV
 records that configure other people's software silently. These rules themselves
 existed in three documents until this file replaced them.*
+
+## 11. Every lane merges and deploys its own work
+
+Amit's ruling, 30 Aug 2026. Nobody waits on Core to merge or deploy. Core still
+owns `Shared/`, `infra/`, migrations as a set, and rulings — he is the person you
+ask, not the person you wait for.
+
+**A deploy ships all of `main`, not your branch.** You are not deploying your
+feature; you are deploying the product, including everyone else's merged work
+and everyone else's pending migrations. So `main` must always be deployable, and
+a deploy that breaks something that isn't yours is still your deploy: roll back
+first, diagnose after, say so immediately.
+
+**The sequence, every time:**
+
+1. In your lane: `git fetch origin`, rebase onto `origin/main`, then
+   `dotnet build apps\api` and `npm --prefix apps\web run build`. Both green.
+
+   **After a rebase git will report your branch as "diverged" from its remote
+   copy and suggest `git pull`. Do not.** That merges your own pre-rebase
+   commits back in and duplicates the work. The divergence is the expected
+   result of rewriting your own history, not a problem to repair — git's
+   suggestion is wrong here because it cannot tell a rebase from someone
+   else's push. To update the remote copy of *your own* branch, use
+   `git push --force-with-lease` — never bare `--force`, which overwrites a
+   colleague's push without telling you.
+2. In `tatvaOS`: `git pull`, `git merge --no-edit <branch>`. **If the pull
+   brought anything down, build again HERE before pushing** — you rebased against
+   a `main` that has since moved, and nobody has built the combination that is
+   about to ship. Then `git push origin main`. Separate lines; PowerShell 5.1
+   has no `&&`.
+3. **Before deploying**, not before pushing: if `main` contains any migration
+   you have not already run, run `infra/scripts/verify-migrations.sh`. The
+   deploy applies *everyone's* pending migrations, so this is the deployer's
+   check, not the author's.
+
+   **While CI is unavailable, the author runs it too, before pushing.**
+   `verify-migrations.sh` lives in CI's isolation job, so when CI is down
+   nothing anywhere tests migration ordering automatically — the person
+   shipping a migration is then the only person who will ever have tested it.
+   Same standing as the two builds, for the same reason.
+4. On the server (host in `docs/setup/00-command-reference.md`): record
+   `git rev-parse --short HEAD` as the rollback point, `git fetch origin`,
+   `git reset --hard origin/main` — which must name a **different** commit than
+   the one you recorded — then `./infra/scripts/deploy.sh production`.
+
+**Rollback restores code, not schema.** `git reset --hard <sha>` and redeploy
+puts the code back; a migration that has already run stays run. That promise
+only holds because rule 2 requires migrations to be additive — which makes rule 2
+load-bearing here in a way it was not when one person deployed. The first
+destructive migration anyone writes breaks the rollback story, so it doesn't get
+written without a conversation.
+
+**One deployer at a time — the lock is enforced.** `deploy.sh` takes an
+exclusive `flock` and a second deploy is refused outright with
+`Another deploy is already running on this box.` **Announce anyway** — "deploying
+now" before, "deploy done" or "rolled back" after — so people know *why* the box
+is busy rather than only *that* it is. The lock stops the collision; the
+announcement stops the confusion.
+
+**Paste the output, not a tick.** The verdict line and the service count.
+`verify-live.sh` is already in that log — `deploy.sh` calls it and refuses
+success on its failure — so it is not a separate step to run, and a passing
+deploy is not evidence that it was skipped or optional.
+
+*Cost: a finished feature sat blocked for three days behind a three-line edit
+because one person was the gate. This trades that queue for a discipline —
+both builds green, rebuilt after the pull, rollback SHA written down, announce
+before, paste after — and the discipline only matters on the days somebody is
+in a hurry.*
 
 ---
 
