@@ -91,9 +91,30 @@ public static class MailAppPasswordEndpoints
         {
             address = box.Address,
             active,
-            // What the person pastes beside the password — served from the
-            // API so the settings screen and the client sheet can never
-            // disagree about a port number.
+            // MAIL-CLIENT-SETTINGS. This comment used to claim the API
+            // serves these "so the settings screen and the client sheet can
+            // never disagree about a port number". It cannot promise that:
+            // the values appear in several places - pages that cannot call
+            // this endpoint, printable docs, DNS SRV auto-config records,
+            // container config - and this block is only the copy software
+            // reads.
+            //
+            // The ROOT is the published port mappings in
+            // infra/docker/docker-compose.production.yml. Change those and
+            // the ports genuinely move, and every other appearance becomes
+            // wrong. Everything else, this block included, restates them.
+            //
+            // Change a host or a port EVERYWHERE IT APPEARS, in one commit.
+            // The authoritative list of appearances is not this comment and
+            // not any count - it is what the value-grep returns:
+            // \b(993|587)\b under apps docs infra local, every hit either
+            // carrying this marker or a reasoned entry on the exceptions
+            // list. Counting markers proves nothing - an unmarked copy is
+            // invisible to it, as the DNS records were on the day the marker
+            // was written. Deliberately no count and no line numbers here:
+            // both decay silently and are trusted absolutely. This comment
+            // said "3 copies", then "five", and was stale both times before
+            // it merged.
             settings = new
             {
                 imapHost = "mail.tatvaos.com", imapPort = 993, imapSecurity = "SSL/TLS",
