@@ -66,12 +66,30 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   const [listError, setListError] = useState<string | null>(null);
   const searchParams = useSearchParams();
 
+  // THE LATEST-HANDLERS REF. Two effects below (this one and the keyboard
+  // listener) need startCompose and handleToggleFlag, and neither may list
+  // them as dependencies: both are plain function declarations recreated on
+  // every render, so honest arrays would re-register a window-level key
+  // listener on every keystroke and re-run this effect per render. The naive
+  // useCallback conversion is worse - it turns hoisted declarations into
+  // consts, and this effect sits 350 lines above where startCompose is
+  // defined, which is a temporal-dead-zone crash on first render.
+  //
+  // So: the effects read the CURRENT handlers through this ref, and their
+  // dependency arrays honestly list only what they actually re-subscribe on.
+  // The ref is assigned during render, which is safe here because nothing
+  // reads it during render - only event handlers and effects do, and both
+  // run after the assignment. (Function declarations hoist, so referencing
+  // them above their definition is fine.)
+  const handlers = useRef({ startCompose, handleToggleFlag });
+  handlers.current = { startCompose, handleToggleFlag };
+
   // Compose lives in the shell rail, which cannot reach this page's state, so it
   // links to ?compose=1. Open the composer, then strip the parameter so a
   // refresh (or a back navigation) does not reopen it.
   useEffect(() => {
     if (searchParams.get('compose') === '1') {
-      startCompose(null, 'new');
+      handlers.current.startCompose(null, 'new');
       router.replace(`/mail/${folderParam}`);
     }
   }, [searchParams, folderParam, router]);
@@ -474,12 +492,12 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
       if (typing) return;
 
       switch (e.key) {
-        case 'c': e.preventDefault(); startCompose(null, 'new'); break;
+        case 'c': e.preventDefault(); handlers.current.startCompose(null, 'new'); break;
         case '/': e.preventDefault(); searchRef.current?.focus(); break;
         case '?': e.preventDefault(); setShowShortcuts(true); break;
-        case 'r': if (open) { e.preventDefault(); startCompose(open, 'reply'); } break;
-        case 'f': if (open) { e.preventDefault(); startCompose(open, 'forward'); } break;
-        case 's': if (open) { e.preventDefault(); handleToggleFlag(open.id); } break;
+        case 'r': if (open) { e.preventDefault(); handlers.current.startCompose(open, 'reply'); } break;
+        case 'f': if (open) { e.preventDefault(); handlers.current.startCompose(open, 'forward'); } break;
+        case 's': if (open) { e.preventDefault(); handlers.current.handleToggleFlag(open.id); } break;
         default: break;
       }
     }
