@@ -39,7 +39,7 @@ git add infra/docker/docker-compose.production.yml
 git add infra/scripts/connect-recording-verify.sh
 git add infra/scripts/connect-phase1-verify.sh
 git add infra/patches
-git add local/postgres/init/20260902-connect-recording.sql
+git add local/postgres/init/20260818-connect-recording.sql
 git add docs/CONNECT_RECORDING_AND_NOTES.md
 git add docs/CONNECT_RECORDING_DEPLOY.md
 ```
@@ -154,10 +154,10 @@ CONNECT_NOTES_MODEL=
 ```
 
 `deploy.sh` applies `local/postgres/init/*.sql` **before** recreating
-containers, so `20260902-connect-recording.sql` lands first. Watch for:
+containers, so `20260818-connect-recording.sql` lands first. Watch for:
 
 ```
-OK  20260902-connect-recording.sql
+OK  20260818-connect-recording.sql
 ```
 
 and for **11** services running rather than 10 — `egress` is the new one. It

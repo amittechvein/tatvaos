@@ -258,7 +258,7 @@ public static class ConnectWebhookEndpoints
                     // The mirror of the transcript rule in ConnectNotesWorker:
                     // notes written believing there was no recording are put
                     // back in the queue the moment a recording lands. With
-                    // 20260906's deferral this is a belt-and-braces race
+                    // 20260819-connect-notes-wait-recording's deferral this is a belt-and-braces race
                     // guard, not the normal path — but the normal path is
                     // exactly what the deferral was, until the first proven
                     // run showed the gap.

@@ -354,7 +354,7 @@ export default function Stage({ seat, meeting, prefs }: {
   //
   //  One switch, on the meeting, and it decides whether every browser in the
   //  room turns its own speech into text. It replaced paid transcription
-  //  rather than joining it — see 20260910 for the sum, which is not close.
+  //  rather than joining it — see 20260823-connect-live-minutes for the sum, which is not close.
   //
   //  ONE SWITCH, HELD BY WHOEVER RUNS THE MEETING. Amit's ruling, 23 August:
   //  asking every participant was an interruption at the worst moment, in a

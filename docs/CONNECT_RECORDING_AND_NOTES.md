@@ -239,7 +239,7 @@ are for.
 
 ## What was built
 
-### Schema — `local/postgres/init/20260902-connect-recording.sql`
+### Schema — `local/postgres/init/20260818-connect-recording.sql`
 
 | | |
 |---|---|
@@ -249,7 +249,7 @@ are for.
 | `core.tenants.allow_connect_recording` | the organisation's switch, default false |
 
 RLS **enabled and forced** on all three, scoped through `connect.meetings` on
-`meeting_id` — byte-identical to the loop in `20260901-connect.sql`, on
+`meeting_id` — byte-identical to the loop in `20260817-connect.sql`, on
 purpose. Eight `SECURITY DEFINER` functions, every one with a pinned
 `search_path`, every one returning **ids or a single number and never content**.
 
@@ -317,7 +317,7 @@ on INSERT — the write fails with 42804.
 
 | | |
 |---|---|
-| The migration applies, twice, cleanly | real PostgreSQL 16, from an empty database through `20260901` and `20260902` |
+| The migration applies, twice, cleanly | real PostgreSQL 16, from an empty database through `20260817-connect` and `20260818-connect-recording` |
 | Tenant A cannot see tenant B's recordings | as `tatvaos_app`, which is `NOBYPASSRLS` |
 | An INSERT with no tenant is refused | `ERROR: new row violates row-level security policy` |
 | An INSERT into another tenant's meeting is refused | same |

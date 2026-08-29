@@ -65,7 +65,7 @@ COMMENT ON COLUMN connect.meetings.chat_policy IS
     'Who may SEND chat: everyone | cohost (host + cohosts) | off. Everyone '
     'always reads. Enforced in the client, not in the token — chat shares the '
     'data channel with hands, reactions and files, and canPublishData cannot '
-    'separate them. See the header of 20260909-connect-chat-policy.sql.';
+    'separate them. See the header of 20260823-connect-chat-policy.sql.';
 
 DO $$
 BEGIN

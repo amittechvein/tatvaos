@@ -52,7 +52,7 @@ COMMENT ON COLUMN connect.meetings.minutes_live IS
     'Capture live captions from participants'' browsers, so the meeting gets '
     'attributed minutes. Off by default. Replaces the per-recording '
     'transcription flag, which cost 97% of the bill and could not attribute '
-    'anything. See 20260910-connect-live-minutes.sql.';
+    'anything. See 20260823-connect-live-minutes.sql.';
 
 DO $$
 BEGIN

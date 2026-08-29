@@ -3,8 +3,8 @@
 -- ============================================================================
 --
 --  "Minutes of meeting, record, transcribe, summarize, and analyze your
---  communications." That is the product. 20260902 built the recording,
---  20260903 made notes exist without one. This one turns notes into a
+--  communications." That is the product. 20260818 built the recording,
+--  20260818 made notes exist without one. This one turns notes into a
 --  DOCUMENT that leaves the platform: chat kept as part of the record, and a
 --  minutes email that reaches the people who were in the room.
 --

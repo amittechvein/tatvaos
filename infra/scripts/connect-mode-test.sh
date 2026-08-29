@@ -135,7 +135,7 @@ echo
 echo "== the migration is actually here =="
 n=$(q "SELECT count(*) FROM information_schema.columns
         WHERE table_schema='connect' AND table_name='meetings' AND column_name='mode'")
-[ "${n:-0}" -eq 1 ] || { bad "connect.meetings.mode is missing — 20260908 has not applied"; exit 1; }
+[ "${n:-0}" -eq 1 ] || { bad "connect.meetings.mode is missing — 20260820-connect-meeting-mode has not applied"; exit 1; }
 ok "connect.meetings.mode present"
 
 n=$(q "SELECT count(*) FROM pg_trigger

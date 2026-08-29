@@ -194,7 +194,7 @@ find yourself connecting as `postgres` to make a query work, you have
 disabled tenant isolation and the query will happily return every customer's
 data.
 
-**Migrations are date-prefixed:** `local/postgres/init/20260901-connect.sql`.
+**Migrations are date-prefixed:** `local/postgres/init/20260817-connect.sql`.
 They are plain SQL, idempotent (`IF NOT EXISTS`, `CREATE OR REPLACE`), and run
 **on every deploy** — so they must be safe to run repeatedly. Numbered
 prefixes collided three times in two days; do not revive them.

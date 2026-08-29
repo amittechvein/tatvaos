@@ -3,7 +3,7 @@
 The batch that followed the first proven end-to-end run. Read with
 docs/CONNECT_DECISIONS.md, whose two rulings it implements.
 
-## 1. Notes no longer lie about the recording (20260906)
+## 1. Notes no longer lie about the recording (20260819-connect-notes-wait-recording)
 
 The proven run exposed it: minutes said *"this meeting was not recorded"*
 beside a recording marked Ready. Two holes, both closed.
@@ -29,7 +29,7 @@ written before this fix. One click on Regenerate notes (or
 `POST /api/connect/meetings/{id}/notes/regenerate`) after deploy rewrites
 them with the recording acknowledged.
 
-## 2. Retention (20260907) — the 90-day promise, made true
+## 2. Retention (20260819-connect-retention) — the 90-day promise, made true
 
 Per the decision: `core.tenants.connect_recording_retention_days`, one of
 7/30/90/180/365, default 90, CHECK-constrained. The sweep lives in
@@ -95,7 +95,7 @@ the strict case.
 ## 4. Also in this batch
 
 - `/connect/dev` is deleted from the bundle.
-- `connect-recording-verify.sh` gained its 20260906/20260907 section the
+- `connect-recording-verify.sh` gained its 20260819-connect-notes-wait-recording/20260819-connect-retention section the
   day the migrations shipped, including a WARN naming any organisation set
   below the 90-day default.
 - Core's `core-connect-0001-roomcreate-for-deleteroom.patch` reviewed:

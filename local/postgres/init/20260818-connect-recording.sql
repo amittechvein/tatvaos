@@ -2,7 +2,7 @@
 --  TatvaOS Connect — recording, transcripts and automatic meeting notes.
 -- ============================================================================
 --
---  20260901-connect.sql said "Media lives in LiveKit; NOTHING about media
+--  20260817-connect.sql said "Media lives in LiveKit; NOTHING about media
 --  lives here." That is still true. A recording is not media to this schema:
 --  it is a FILE THE ORGANISATION NOW OWNS AND IS PAYING FOR, and a transcript
 --  is a document about a meeting. Those are exactly the questions the media
@@ -51,7 +51,7 @@
 --  ─────────────────────────────────────────────────────────────────────────
 --  Idempotent and additive, like every migration here: it runs on EVERY
 --  deploy, and deploy.sh applies it BEFORE app containers are recreated.
---  Nothing below drops or rewrites anything 20260901-connect.sql created.
+--  Nothing below drops or rewrites anything 20260817-connect.sql created.
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
@@ -305,7 +305,7 @@ EXCEPTION WHEN duplicate_object THEN
 END $$;
 
 -- ============================================================================
---  RLS — enabled AND forced, exactly as 20260901-connect.sql does it.
+--  RLS — enabled AND forced, exactly as 20260817-connect.sql does it.
 --
 --  All three tables are children scoped through connect.meetings on
 --  meeting_id, which is why connect.transcripts carries one (decision 3). The
@@ -328,7 +328,7 @@ BEGIN
     END LOOP;
 END $$;
 
--- The schema-level grant in 20260901 used GRANT ... ON ALL TABLES, which
+-- The schema-level grant in 20260817 used GRANT ... ON ALL TABLES, which
 -- applies only to tables that existed when it ran. ALTER DEFAULT PRIVILEGES
 -- covers tables created by the SAME role afterwards — true here, but stated
 -- explicitly rather than relied upon, because a grant that is merely probable

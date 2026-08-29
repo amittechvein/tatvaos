@@ -19,7 +19,7 @@
 --  the API writes participant rows at join, the SFU reports joins and leaves,
 --  and chat rides the data channel. A Private meeting gets minutes that say
 --  who came and what was typed, and say plainly that nothing was recorded —
---  the third provenance sentence 20260906 added already covers it.
+--  the third provenance sentence 20260819 added already covers it.
 --
 --  ─────────────────────────────────────────────────────────────────────────
 --  THREE DECISIONS.
@@ -57,7 +57,7 @@ ALTER TABLE connect.meetings
 
 -- ADD COLUMN IF NOT EXISTS skips its whole clause when the column already
 -- exists, so a CHECK written inline would never be applied on the second
--- deploy. Named and added separately, the 20260905 share_policy pattern.
+-- deploy. Named and added separately, the 20260819 share_policy pattern.
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -150,7 +150,7 @@ BEGIN
                        || 'not be, and nobody in the room would see it happen.',
                 HINT    = 'This is a boundary, not a bug. If the mode genuinely must '
                        || 'differ, create a new meeting. The reasoning is in '
-                       || 'local/postgres/init/20260908-connect-meeting-mode.sql and '
+                       || 'local/postgres/init/20260820-connect-meeting-mode.sql and '
                        || 'docs/CONNECT_PHASE_NEXT.md section 1. To override for a '
                        || 'one-off repair: ALTER TABLE connect.meetings DISABLE TRIGGER '
                        || 'trg_meetings_mode_immutable, then re-enable it.';

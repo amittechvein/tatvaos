@@ -107,7 +107,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<CalendarReminder> CalendarReminders => Set<CalendarReminder>();
     public DbSet<CalendarReminderSend> CalendarReminderSends => Set<CalendarReminderSend>();
 
-    // ---- Connect. RLS enabled and forced; see 20260901-connect.sql -------
+    // ---- Connect. RLS enabled and forced; see 20260817-connect.sql -------
     public DbSet<TatvaOS.Api.Modules.Connect.ConnectMeeting> ConnectMeetings
         => Set<TatvaOS.Api.Modules.Connect.ConnectMeeting>();
     public DbSet<TatvaOS.Api.Modules.Connect.ConnectParticipant> ConnectParticipants
@@ -117,7 +117,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<TatvaOS.Api.Modules.Connect.ConnectMeetingEvent> ConnectMeetingEvents
         => Set<TatvaOS.Api.Modules.Connect.ConnectMeetingEvent>();
     // ---- Connect recording. RLS enabled and forced; see
-    //      20260902-connect-recording.sql -----------------------------------
+    //      20260818-connect-recording.sql -----------------------------------
     public DbSet<TatvaOS.Api.Modules.Connect.ConnectRecording> ConnectRecordings
         => Set<TatvaOS.Api.Modules.Connect.ConnectRecording>();
     public DbSet<TatvaOS.Api.Modules.Connect.ConnectTranscript> ConnectTranscripts
@@ -130,14 +130,14 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         => Set<TatvaOS.Api.Modules.Mail.MailAppPassword>();
     public DbSet<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes> ConnectMeetingNotes
         => Set<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>();
-    // Added by 20260904-connect-minutes. Chat still travels over LiveKit's
+    // Added by 20260819-connect-minutes. Chat still travels over LiveKit's
     // data channel — that is the right transport and it is unchanged. A copy
     // is stored so it can be part of the minutes, because chat that lives
     // only in the browsers that were open is not a record of anything.
     public DbSet<TatvaOS.Api.Modules.Connect.ConnectMeetingChat> ConnectMeetingChat
         => Set<TatvaOS.Api.Modules.Connect.ConnectMeetingChat>();
     // Who a host removed, so Remove survives a rejoin. RLS forced, scoped
-    // through the meeting; see 20260905-connect-host-controls.sql.
+    // through the meeting; see 20260819-connect-host-controls.sql.
     public DbSet<TatvaOS.Api.Modules.Connect.ConnectMeetingBlock> ConnectMeetingBlocks
         => Set<TatvaOS.Api.Modules.Connect.ConnectMeetingBlock>();
     public DbSet<SpaceShare> SpaceShares => Set<SpaceShare>();
@@ -235,7 +235,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         // fails with 42804. Stated once, here, for the SEVEN json columns.
         //
         // It said six, and there were seven. connect.meeting_events.payload is
-        // jsonb in 20260901-connect.sql and was never mapped, so EVERY insert
+        // jsonb in 20260817-connect.sql and was never mapped, so EVERY insert
         // into that table failed with 42804 from the day the module shipped.
         // The webhook handler answered 500, LiveKit retried five times and
         // gave up, and connect.meeting_events stayed empty for the module's
@@ -260,7 +260,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             .Property(n => n.ActionItems).HasColumnType("jsonb");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>()
             .Property(n => n.Speakers).HasColumnType("jsonb");
-        // Added by 20260903-connect-notes-attendance: who came, and for how
+        // Added by 20260819-connect-notes-attendance: who came, and for how
         // long. Same jsonb rule as the five above — Npgsql maps a string to
         // `text` by default and `text` does not implicitly cast to `jsonb`.
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>()

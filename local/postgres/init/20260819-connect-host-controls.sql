@@ -9,7 +9,7 @@
 --  1. AUTO-RECORD IS A FLAG ON THE MEETING, ACTED ON BY THE WEBHOOK.
 --     The host asks at creation time; the room_started webhook is what
 --     actually starts the egress, because that is the moment the media server
---     says the meeting exists. The THREE GATES from 20260902 still apply at
+--     says the meeting exists. The THREE GATES from 20260818 still apply at
 --     that moment — org flag, storage headroom — re-read when the room
 --     starts, not trusted from creation time. An org that switches recording
 --     off between scheduling and starting gets no recording, silently, which
@@ -105,7 +105,7 @@ CREATE INDEX IF NOT EXISTS ix_meeting_blocks_meeting
     ON connect.meeting_blocks (meeting_id);
 
 -- RLS — enabled AND forced, scoped through the meeting, the child-table
--- pattern from 20260901 verbatim.
+-- pattern from 20260817 verbatim.
 DO $$
 BEGIN
     EXECUTE 'ALTER TABLE connect.meeting_blocks ENABLE ROW LEVEL SECURITY';
@@ -117,7 +117,7 @@ BEGIN
          || '                  AND m.tenant_id = nullif(current_setting(''app.tenant_id'', true), '''')::uuid))';
 END $$;
 
--- Default privileges from 20260901 normally cover a new table; the explicit
+-- Default privileges from 20260817 normally cover a new table; the explicit
 -- grant is here so this migration does not depend on which role created what.
 GRANT SELECT, INSERT, UPDATE, DELETE ON connect.meeting_blocks TO tatvaos_app;
 

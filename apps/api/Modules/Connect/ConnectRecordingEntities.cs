@@ -3,7 +3,7 @@ namespace TatvaOS.Api.Modules.Connect;
 /// <summary>
 /// Recording, transcript and notes rows. Columns are snake_case by EF
 /// convention; the schema is hand-written SQL
-/// (local/postgres/init/20260902-connect-recording.sql) and this file only has
+/// (local/postgres/init/20260818-connect-recording.sql) and this file only has
 /// to agree with it.
 ///
 /// Mapped explicitly with ToTable(name, "connect") in AppDbContext, never by
@@ -49,7 +49,7 @@ public sealed class ConnectRecording
 
     /// <summary>"Keep this one": the retention sweep will not touch this
     /// recording before this instant, whatever the org policy says. NULL for
-    /// the ordinary case. See 20260907-connect-retention.sql.</summary>
+    /// the ordinary case. See 20260819-connect-retention.sql.</summary>
     public DateTimeOffset? KeepUntilAt { get; set; }
 
     public string? Error { get; set; }
@@ -127,7 +127,7 @@ public sealed class ConnectMeetingNotes
     /// <summary>
     /// Who attended: names from connect.participants, timings from
     /// connect.meeting_events. Present for every ended meeting, with or
-    /// without a recording — see 20260903-connect-notes-attendance.sql.
+    /// without a recording — see 20260819-connect-notes-attendance.sql.
     /// </summary>
     public string Attendance { get; set; } = "[]";
 
@@ -143,7 +143,7 @@ public sealed class ConnectMeetingNotes
     /// the module's first proven run, had_transcript alone made the minutes
     /// say "this meeting was not recorded" beside a Ready recording — a false
     /// sentence, because "no transcript" has two causes and the notes could
-    /// only name one. See 20260906-connect-notes-wait-recording.sql.
+    /// only name one. See 20260819-connect-notes-wait-recording.sql.
     /// </summary>
     public bool HadRecording { get; set; }
 

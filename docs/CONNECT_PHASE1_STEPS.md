@@ -109,7 +109,7 @@ below in D2.
 
 ```powershell
 cd C:\Users\amitd\Downloads\tatvaOS
-git add local/postgres/init/20260901-connect.sql apps/api/Modules/Connect apps/api/Program.cs apps/api/Shared/Data/AppDbContext.cs apps/api/Shared/Tenancy/TenantContext.cs infra/docker/docker-compose.base.yml infra/docker/livekit.yaml infra/scripts/connect-phase1-verify.sh tests/isolation/test-isolation.sh docs/CONNECT_PHASE1_STEPS.md docs/CONNECT_API.md connect-phase1-0001-shared-registration.patch connect-phase1-0002-wire-api-to-livekit.patch connect-phase1-0003-isolation-tests.patch connect-phase1-0004-anonymous-scope.patch
+git add local/postgres/init/20260817-connect.sql apps/api/Modules/Connect apps/api/Program.cs apps/api/Shared/Data/AppDbContext.cs apps/api/Shared/Tenancy/TenantContext.cs infra/docker/docker-compose.base.yml infra/docker/livekit.yaml infra/scripts/connect-phase1-verify.sh tests/isolation/test-isolation.sh docs/CONNECT_PHASE1_STEPS.md docs/CONNECT_API.md connect-phase1-0001-shared-registration.patch connect-phase1-0002-wire-api-to-livekit.patch connect-phase1-0003-isolation-tests.patch connect-phase1-0004-anonymous-scope.patch
 git commit -m "Connect Phase 1: schema, module, token service, endpoints, guest path, webhook"
 git push
 ```
@@ -162,7 +162,7 @@ Watch for three things in the output:
 
 1. **`Backing up the database`** → `backups/pre-deploy-<stamp>.sql`. If the
    backup fails, `deploy.sh` stops rather than deploying over unbacked data.
-2. **`Applying schema`** → a line `OK 20260901-connect.sql`. It runs after
+2. **`Applying schema`** → a line `OK 20260817-connect.sql`. It runs after
    `20260816-calendar.sql` in the same pass, which is why the
    `calendar_event_id` foreign key resolves even on a database that had never
    seen the calendar schema.

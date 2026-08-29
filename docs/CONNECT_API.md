@@ -7,7 +7,7 @@ unexamined. Shapes follow Mail and Space: `authedFetch`, JSON bodies,
 camelCase, and every error is `{ "error": "sentence." }` — the console prints
 it verbatim.
 
-Written against migration `20260901-connect.sql` (below), branch
+Written against migration `20260817-connect.sql` (below), branch
 `feature/connect-phase1`. Covers §4 Phase 1 of `docs/CONNECT_BRIEF.md`
 (≈ features 1–73). Phases 2–4 get their own addenda, the way
 `SPACE_API_PUBLIC_LINKS_ADDENDUM.md` extended `SPACE_API.md`.
@@ -83,7 +83,7 @@ Written against migration `20260901-connect.sql` (below), branch
 
 ---
 
-## Schema — `20260901-connect.sql`
+## Schema — `20260817-connect.sql`
 
 Date-prefixed, idempotent, additive; runs on every deploy like every other
 migration. RLS follows `20260816-calendar.sql` exactly: parent table carries

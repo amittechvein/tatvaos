@@ -20,7 +20,7 @@ output — the exact text matters more than a description.
 
 | | Step | Expected | Proves |
 |---|---|---|---|
-| 1.1 | `git pull && ./infra/scripts/deploy.sh production` | `OK 20260901-connect.sql`, all 10 services running | schema, deploy |
+| 1.1 | `git pull && ./infra/scripts/deploy.sh production` | `OK 20260817-connect.sql`, all 10 services running | schema, deploy |
 | 1.2 | `bash infra/scripts/connect-phase1-verify.sh` | **14 ok, 0 failed** — including *4* SECURITY DEFINER functions | RLS, tenancy, LiveKit config |
 | 1.3 | `bash infra/scripts/connect-host-controls-test.sh` | **rows appear** in `connect.meeting_events`; mute/remove/end all OK | 34, 55, 56 + attendance |
 | 1.4 | `bash infra/scripts/connect-waiting-room-test.sh` | 14 ok — including *the same wait token yields nothing the second time* | 27, 28, 29, 33, 61 |

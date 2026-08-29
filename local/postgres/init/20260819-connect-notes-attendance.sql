@@ -2,7 +2,7 @@
 --  TatvaOS Connect — notes that exist before a transcript does.
 -- ============================================================================
 --
---  20260902 made the notes taker depend on a transcript, and a transcript
+--  20260818 made the notes taker depend on a transcript, and a transcript
 --  depends on a transcription service, and a transcription service is off by
 --  default because audio must not leave the box until somebody decides it may.
 --  The result: an "automatic meeting notes" feature that produces nothing at
@@ -60,7 +60,7 @@ ALTER TABLE connect.meeting_notes
     ADD COLUMN IF NOT EXISTS had_transcript boolean NOT NULL DEFAULT false;
 
 -- ----------------------------------------------------------------------------
---  What needs notes — REPLACES the 20260902 definition.
+--  What needs notes — REPLACES the 20260818 definition.
 --
 --  Was: a meeting with a READY TRANSCRIPT and no notes.
 --  Now: a meeting that has ENDED and no notes, unless a transcript for it is

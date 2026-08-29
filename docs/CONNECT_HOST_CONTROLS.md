@@ -21,7 +21,7 @@ host alone — promote to co-host and demote. A guest cannot be a co-host: every
 host control keys on a user account they do not have, and a cohost who cannot
 call any host endpoint would be a title, not a role.
 
-**Removed means removed.** `connect.meeting_blocks` (migration 20260905)
+**Removed means removed.** `connect.meeting_blocks` (migration 20260819-connect-host-controls)
 records who a host removed. The join path refuses a blocked user with a plain
 403 sentence — checked before the lock and the password, so a blocked person
 learns nothing about either — and the admit path refuses to wave one back in
@@ -35,7 +35,7 @@ and cohosts are not blockable via Remove; their standing changes through
 **Auto-record on create.** A checkbox on the meeting form sets
 `meetings.auto_record`; the `room_started` webhook is what acts on it,
 because that is the moment the media server says the meeting exists. The
-three gates from 20260902 are re-read AT THAT MOMENT — org flag, storage
+three gates from 20260818-connect-recording are re-read AT THAT MOMENT — org flag, storage
 headroom — so an org that switches recording off stops auto-record on
 meetings that already carry the flag. Refusals are log lines that name the
 reason (there is nobody to show a sentence to), and a failure in auto-record
@@ -101,7 +101,7 @@ in the same UpdateParticipant machinery. Left as-is (multiple) today.
 
 ## Files touched
 
-    local/postgres/init/20260905-connect-host-controls.sql     NEW  migration
+    local/postgres/init/20260819-connect-host-controls.sql     NEW  migration
     apps/api/Modules/Connect/ConnectEntities.cs                auto_record, share_policy, ConnectMeetingBlock, ConnectShare
     apps/api/Modules/Connect/LiveKitTokenService.cs            canPublishSources grant
     apps/api/Modules/Connect/LiveKitRoomClient.cs              SetPublishSourcesAsync, mute kind 'screen', LkTrack.Source
@@ -110,7 +110,7 @@ in the same UpdateParticipant machinery. Left as-is (multiple) today.
     apps/api/Modules/Connect/Endpoints/ConnectWebhookEndpoints.cs  auto-record on room_started
     apps/api/Shared/Data/AppDbContext.cs                       CORE'S FILE — via infra/patches/connect-host-0001-dbcontext.patch
     infra/patches/connect-host-0001-dbcontext.patch            NEW  the two Core-lane lines
-    infra/scripts/connect-recording-verify.sh                  + a 20260905 section (and the uncommitted 20260904 section)
+    infra/scripts/connect-recording-verify.sh                  + a 20260819-connect-host-controls section (and the uncommitted 20260819-connect-minutes section)
     apps/web/lib/connect.ts                                    types, transferHost, mute 'screen'
     apps/web/app/connect/room/[code]/PreJoin.tsx               NEW  pre-join screen
     apps/web/app/connect/room/[code]/page.tsx                  prejoin phase
@@ -140,7 +140,7 @@ needs committing, not applying.
 git status --short          # read it; push.cmd does git add -A
 git add apps/api/Program.cs apps/api/Modules/Connect apps/api/Shared/Data/AppDbContext.cs `
         apps/web/lib/connect.ts "apps/web/app/connect/room/[code]" "apps/web/app/connect/(shell)/new/page.tsx" `
-        local/postgres/init/20260905-connect-host-controls.sql `
+        local/postgres/init/20260819-connect-host-controls.sql `
         infra/patches/connect-host-0001-dbcontext.patch infra/scripts/connect-recording-verify.sh `
         docs/CONNECT_HOST_CONTROLS.md docs/CONNECT_COORDINATION.md
 git commit -m "Connect: host controls — leave dialog, co-host, blocklist, auto-record, share policy, pre-join"
@@ -155,7 +155,7 @@ git checkout -- apps/api/Program.cs   # the sed edit; the same line now comes fr
 git pull
 git log --oneline -1                  # confirm the commit you expect
 ./infra/scripts/deploy.sh production  # THE ARGUMENT IS REQUIRED
-bash infra/scripts/connect-recording-verify.sh   # now checks 20260904 AND 20260905
+bash infra/scripts/connect-recording-verify.sh   # now checks 20260819-connect-minutes AND 20260819-connect-host-controls
 ```
 
 ## What to test by hand (the parts no suite covers)

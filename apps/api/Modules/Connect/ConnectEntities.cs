@@ -4,7 +4,7 @@ namespace TatvaOS.Api.Modules.Connect;
 
 /// <summary>
 /// Connect's entities. Columns are snake_case by EF convention; the schema is
-/// hand-written SQL (local/postgres/init/20260901-connect.sql) and this file
+/// hand-written SQL (local/postgres/init/20260817-connect.sql) and this file
 /// only has to agree with it.
 ///
 /// Every table is mapped explicitly with ToTable(name, "connect") in
@@ -47,7 +47,7 @@ public sealed class ConnectMeeting
 
     /// <summary>Start an audio recording when the room starts. A REQUEST, not
     /// a bypass: the room_started webhook re-reads the org's recording flag
-    /// and the storage gate at that moment. See 20260905.</summary>
+    /// and the storage gate at that moment. See 20260819-connect-host-controls.</summary>
     public bool AutoRecord { get; set; }
 
     /// <summary>Who may share a screen: host | cohost | everyone. Enforced in
@@ -58,7 +58,7 @@ public sealed class ConnectMeeting
     /// <summary>Who may SEND chat: everyone | cohost | off. Everyone always
     /// reads. Enforced in the CLIENT, not in the token — chat shares the data
     /// channel with hands, reactions and files, and canPublishData cannot tell
-    /// them apart. See ConnectChat and 20260909-connect-chat-policy.sql.</summary>
+    /// them apart. See ConnectChat and 20260823-connect-chat-policy.sql.</summary>
     public string ChatPolicy { get; set; } = ConnectChat.PolicyEveryone;
 
     /// <summary>
@@ -68,7 +68,7 @@ public sealed class ConnectMeeting
     /// This REPLACED per-recording transcription rather than joining it: paid
     /// transcription was 97% of the bill and, coming from one mixed stream,
     /// could not say who spoke. Captions cost nothing and can. See
-    /// 20260910-connect-live-minutes.sql.
+    /// 20260823-connect-live-minutes.sql.
     /// </summary>
     public bool MinutesLive { get; set; }
 
@@ -76,7 +76,7 @@ public sealed class ConnectMeeting
     /// recorded | private. Chosen at creation and IMMUTABLE — a database
     /// trigger refuses any change, because the mode is a promise made to
     /// everyone who already joined under it. See
-    /// 20260908-connect-meeting-mode.sql.
+    /// 20260820-connect-meeting-mode.sql.
     ///
     /// A plain string, mapping to a plain text column by EF convention, so
     /// nothing is needed in AppDbContext. That is deliberate:

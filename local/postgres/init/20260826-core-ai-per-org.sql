@@ -22,8 +22,8 @@
 --  possible. The refusal is a sentence, and features degrade exactly as they
 --  do when no key is configured.
 --
---  NOTE ON THE FILENAME: 20260911 in August — sorts after Connect's
---  September-named sequence. See 20260911-connect-captions.sql for the full
+--  NOTE ON THE FILENAME: 20260823 in August — sorts after Connect's
+--  September-named sequence. See 20260823-connect-captions.sql for the full
 --  account; the real fix is still Connect's renames.
 --
 --  Idempotent and additive, like every migration here.

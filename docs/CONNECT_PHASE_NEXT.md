@@ -24,7 +24,7 @@ last.
 Attendance, chat, and minutes-from-attendance still work in a Private
 meeting: none of them touch media. A Private meeting gets minutes that say
 who came and what was typed, and say plainly that nothing was recorded —
-the third provenance sentence added in 20260906 already covers it.
+the third provenance sentence added in 20260819-connect-notes-wait-recording already covers it.
 
 ### What this means to build
 
@@ -198,7 +198,7 @@ next to `share_policy`, which is a different question: *who may* share
 versus *how many at once*.
 
 **Enforcement uses machinery that already exists.** The share-policy work
-in 20260905 added `SetPublishSourcesAsync`, which narrows a connected
+in 20260819-connect-host-controls added `SetPublishSourcesAsync`, which narrows a connected
 participant's publishing grant live. In `single` mode: when somebody starts
 sharing, remove `screen_share` from everyone else's grant; when they stop,
 restore it. The UI follows by saying "Ravi is sharing" rather than offering

@@ -6,7 +6,7 @@
 --  said "this meeting was not recorded" beside a recording marked Ready.
 --  Two separate holes, both closed here:
 --
---  1. TIMING. 20260903 taught pending_notes to defer for a transcript that is
+--  1. TIMING. 20260818 taught pending_notes to defer for a transcript that is
 --     queued or running — but only a transcript. With transcription switched
 --     off there IS no transcript coming, so notes fired the minute the
 --     meeting ended, while the egress was still finalising its file. The same
@@ -33,7 +33,7 @@ COMMENT ON COLUMN connect.meeting_notes.had_recording IS
     'recorded but no transcript, not recorded.';
 
 -- ----------------------------------------------------------------------------
---  What needs notes — REPLACES the 20260903 definition.
+--  What needs notes — REPLACES the 20260818 definition.
 --
 --  Was: ended, no notes, unless a transcript is on its way.
 --  Now: ended, no notes, unless a transcript OR A RECORDING is on its way.
@@ -50,7 +50,7 @@ AS $$
       LEFT JOIN connect.meeting_notes n ON n.meeting_id = m.id
      WHERE m.status = 'ended'
        AND (n.id IS NULL OR n.status = 'queued')
-       -- 20260903's decision 2: do not write the worse version of notes that
+       -- 20260818's decision 2: do not write the worse version of notes that
        -- are about to have a transcript.
        AND NOT EXISTS (
             SELECT 1 FROM connect.transcripts t

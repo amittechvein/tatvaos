@@ -3,7 +3,7 @@
 --  Built for the first external SMTP/IMAP customer, 28 August 2026.
 -- ============================================================================
 --
---  SUPERSEDED IN PART — see 20260912-mail-app-passwords-unique.sql. The
+--  SUPERSEDED IN PART — see 20260829-mail-app-passwords-unique.sql. The
 --  reasoning below about LIMIT 1 enforcing one-active-per-mailbox is WRONG;
 --  it concealed violations rather than preventing them. The index created
 --  here is non-unique and is dropped by that file. last_used_at is dropped
@@ -28,7 +28,7 @@
 --
 --  This file carries its REAL date. It touches only mail.mailboxes (0001),
 --  so it is immune to the September-named sequence problem documented in
---  20260911-connect-captions.sql.
+--  20260823-connect-captions.sql.
 --
 --  Idempotent and additive, like every migration here.
 -- ============================================================================

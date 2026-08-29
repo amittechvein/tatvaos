@@ -47,7 +47,7 @@ n=$(q "SELECT count(*) FROM information_schema.tables
         WHERE table_schema='connect'
           AND table_name IN ('recordings','transcripts','meeting_notes')")
 [ "${n:-0}" -eq 3 ] && ok "recordings, transcripts, meeting_notes" \
-                    || bad "expected 3 recording tables, found ${n:-0} — 20260902-connect-recording.sql has not applied"
+                    || bad "expected 3 recording tables, found ${n:-0} — 20260818-connect-recording.sql has not applied"
 
 n=$(q "SELECT count(*) FROM pg_class c JOIN pg_namespace ns ON ns.oid=c.relnamespace
         WHERE ns.nspname='connect' AND c.relname IN ('recordings','transcripts','meeting_notes')
@@ -105,7 +105,7 @@ n=$(q "SELECT count(*) FROM information_schema.columns
         WHERE table_schema='connect' AND table_name='meeting_notes'
           AND column_name IN ('attendance','had_transcript')")
 [ "${n:-0}" -eq 2 ] && ok "meeting_notes carries attendance and had_transcript" \
-                    || bad "expected both columns, found ${n:-0} — 20260903-connect-notes-attendance.sql has not applied"
+                    || bad "expected both columns, found ${n:-0} — 20260819-connect-notes-attendance.sql has not applied"
 
 n=$(q "SELECT count(*) FROM pg_proc p JOIN pg_namespace ns ON ns.oid=p.pronamespace
         WHERE ns.nspname='connect' AND p.proname='attendance'")
@@ -137,11 +137,11 @@ if [ "${meetings:-0}" -gt 0 ] && [ "${noted:-0}" -eq 0 ]; then
 fi
 
 echo
-echo "== minutes of meeting (20260904) =="
+echo "== minutes of meeting (20260819-connect-minutes) =="
 # ─────────────────────────────────────────────────────────────────────────
 #  THIS SECTION EXISTS BECAUSE ITS ABSENCE WAS NOTICED THE HARD WAY.
 #
-#  20260904 was deployed and this script reported 25 ok, 0 failed without
+#  20260819-connect-minutes was deployed and this script reported 25 ok, 0 failed without
 #  looking at a single thing the migration added. A verification script that
 #  is silent about the newest migration is worse than no script for it: the
 #  green line reads as "everything is fine" and it means "everything I was
@@ -150,7 +150,7 @@ echo "== minutes of meeting (20260904) =="
 n=$(q "SELECT count(*) FROM information_schema.tables
         WHERE table_schema='connect' AND table_name='meeting_chat'")
 if [ "${n:-0}" -ne 1 ]; then
-    bad "connect.meeting_chat is missing — 20260904-connect-minutes.sql has not applied"
+    bad "connect.meeting_chat is missing — 20260819-connect-minutes.sql has not applied"
 else
     ok "connect.meeting_chat"
 
@@ -225,15 +225,15 @@ if [ "${stuck:-0}" -gt 0 ]; then
 fi
 
 echo
-echo "== host controls (20260905) =="
-# The 20260904 lesson, applied on the day rather than a day late: the newest
+echo "== host controls (20260819-connect-host-controls) =="
+# The 20260819-connect-minutes lesson, applied on the day rather than a day late: the newest
 # migration gets its section BEFORE it ships, so a green run can never mean
 # "everything I was told about last time is fine".
 n=$(q "SELECT count(*) FROM information_schema.columns
         WHERE table_schema='connect' AND table_name='meetings'
           AND column_name IN ('auto_record','share_policy')")
 [ "${n:-0}" -eq 2 ] && ok "meetings carries auto_record and share_policy" \
-                    || bad "expected 2 host-control columns on meetings, found ${n:-0} — 20260905 has not applied"
+                    || bad "expected 2 host-control columns on meetings, found ${n:-0} — 20260819-connect-host-controls has not applied"
 
 n=$(q "SELECT count(*) FROM pg_constraint
         WHERE conname='meetings_share_policy_check'
@@ -273,7 +273,7 @@ blocks=$(q "SELECT count(*) FROM connect.meeting_blocks" 2>/dev/null)
 echo "  ..    ${autorec:-0} meeting(s) set to auto-record, ${blocks:-0} block row(s)"
 
 echo
-echo "== notes timing and retention (20260906, 20260907) =="
+echo "== notes timing and retention (20260819-connect-notes-wait-recording, 20260819-connect-retention) =="
 # The on-the-day rule again: the newest migrations get their section before
 # they ship, so a green run can never mean "everything I was told about last
 # time is fine".
@@ -296,7 +296,7 @@ n=$(q "SELECT count(*) FROM information_schema.columns
         WHERE table_schema='core' AND table_name='tenants'
           AND column_name='connect_recording_retention_days'")
 if [ "${n:-0}" -ne 1 ]; then
-    bad "core.tenants.connect_recording_retention_days is missing — 20260907 has not applied"
+    bad "core.tenants.connect_recording_retention_days is missing — 20260819-connect-retention has not applied"
 else
     ok "retention column present"
 

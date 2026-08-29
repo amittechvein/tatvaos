@@ -39,7 +39,7 @@
 --  not "recordings are full", it is mail refusing delivery.
 --
 --  Two things make it survivable, and they are now load-bearing together:
---  retention defaults to 30 days (20260911-connect-retention-default-30), so
+--  retention defaults to 30 days (20260823-connect-retention-default-30), so
 --  the charge ages off by itself; and audio-only recording is a twentieth of
 --  the size and is the default.
 --
@@ -54,15 +54,15 @@
 --
 --  Idempotent and additive, like every migration here.
 --
---  NOTE ON THE FILENAME: 20260911, not 20260823. This function references
---  connect.recordings, created in 20260901-connect.sql, so it must sort after
---  it. See the header of 20260911-connect-captions.sql for why those files
+--  NOTE ON THE FILENAME: 20260823, not 20260823. This function references
+--  connect.recordings, created in 20260817-connect.sql, so it must sort after
+--  it. See the header of 20260823-connect-captions.sql for why those files
 --  carry September dates in August and what the real fix is.
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
 --  NO NEW COLUMN. connect.recordings.requested_by_user_id has existed since
---  20260902 and has been populated all along — the fact was already being
+--  20260818 and has been populated all along — the fact was already being
 --  recorded, it was simply never used for anything.
 --
 --  Worth stating, because the first draft of this file added a

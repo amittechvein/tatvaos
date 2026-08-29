@@ -445,7 +445,7 @@ public sealed class ConnectNotesWorker(
 
         foreach (var meetingId in jobs)
         {
-            // The function 20260901 already installed for the webhook. Reused
+            // The function 20260817-connect already installed for the webhook. Reused
             // rather than duplicated — one definition of "which tenant owns
             // this meeting" is the point of having it.
             var tenantIds = await db.Database.SqlQuery<Guid>($"""

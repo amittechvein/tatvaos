@@ -52,7 +52,7 @@ qapp() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────
-#  THE COUNTS BELOW MOVED ON 2026-08-18, WHEN 20260902-connect-recording.sql
+#  THE COUNTS BELOW MOVED ON 2026-08-18, WHEN 20260818-connect-recording.sql
 #  ADDED recordings, transcripts AND meeting_notes.
 #
 #  They are still EXACT rather than "at least", deliberately. An exact count
@@ -64,7 +64,7 @@ qapp() {
 echo "== the migration landed =="
 n=$(q "SELECT count(*) FROM information_schema.tables WHERE table_schema='connect'")
 [ "${n:-0}" -eq 7 ] && ok "7 connect tables" \
-                    || bad "expected 7 connect tables, found ${n:-0} — 4 means 20260902-connect-recording.sql has not applied"
+                    || bad "expected 7 connect tables, found ${n:-0} — 4 means 20260818-connect-recording.sql has not applied"
 
 # Twelve: the guest path's three, webhook_meeting_tenant — added when the
 # first headless webhook test proved the handler's ordinary lookup read zero
@@ -101,7 +101,7 @@ echo "== the nullif() guard is present in every policy =="
 #
 # COMPARED AGAINST THE POLICY COUNT, NOT AGAINST A NUMBER.
 #
-# This line used to say 4. When 20260902 added three tables the four counts
+# This line used to say 4. When 20260818-connect-recording added three tables the four counts
 # above were updated and this fifth one was missed, so a correct database
 # reported "only 7 of 4 policies use nullif" — a red FAIL on a healthy box,
 # which is the fastest way to teach somebody to skim past this script's

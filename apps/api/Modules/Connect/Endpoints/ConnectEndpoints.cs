@@ -79,7 +79,7 @@ public static class ConnectEndpoints
     // conversation people joined believing it could not be. Its absence from
     // this record is the first lock; a trigger on connect.meetings is the one
     // that still holds if somebody adds the field back without knowing why it
-    // was missing (20260908-connect-meeting-mode.sql).
+    // was missing (20260820-connect-meeting-mode.sql).
     public sealed record UpdateMeetingRequest(
         string? Title, DateTimeOffset? ScheduledStart, DateTimeOffset? ScheduledEnd,
         string? Timezone, string? Password, string? WaitingRoom,
