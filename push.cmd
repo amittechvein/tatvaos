@@ -133,8 +133,35 @@ if "!DRIFT!"=="1" (
 )
 
 echo.
-echo  Anything NOT staged is left alone:
+echo  Anything NOT staged stays OUT of the commit - but is NOT left
+echo  alone: the builds below compile the WHOLE working tree, these
+echo  files included. A green build here can depend on a file this
+echo  commit will not carry - the server then builds without it.
+echo  (Same mechanism as the staleness guard above, other direction.)
 git status --short -- . | findstr /b /c:" M" /c:"??"
+
+REM ---- 1c. Untracked SOURCE files - work that exists in no commit --------------
+REM
+REM  An untracked .cs/.ts/.tsx/.sql is code the builds below will happily
+REM  compile and the commit will silently omit. That is the exact shape of
+REM  the 28 August rescue: finished work living only in one folder's working
+REM  tree, one `reset --hard` away from gone. A warning, not a refusal -
+REM  scratch files are legitimate - but it must be SEEN.
+REM ------------------------------------------------------------------------------
+set "ORPHANS=0"
+for /f "delims=" %%f in ('git ls-files --others --exclude-standard ^| findstr /i /e ".cs .ts .tsx .sql"') do set "ORPHANS=1"
+if "!ORPHANS!"=="1" (
+    echo.
+    echo  ------------------------------------------------------------
+    echo   WARNING: untracked SOURCE files. They are in NO commit and
+    echo   NO branch - a reset --hard deletes them with no way back:
+    echo.
+    for /f "delims=" %%f in ('git ls-files --others --exclude-standard ^| findstr /i /e ".cs .ts .tsx .sql"') do echo       %%f
+    echo.
+    echo   If they are real work:   git add ^<file^>   and re-run.
+    echo   If they are scratch, carry on - but be sure.
+    echo  ------------------------------------------------------------
+)
 echo.
 set /p CONFIRM=Commit the staged files above? (y/N):
 if /i not "%CONFIRM%"=="y" (
