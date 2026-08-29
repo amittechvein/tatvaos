@@ -91,9 +91,21 @@ public static class MailAppPasswordEndpoints
         {
             address = box.Address,
             active,
-            // What the person pastes beside the password — served from the
-            // API so the settings screen and the client sheet can never
-            // disagree about a port number.
+            // MAIL-CLIENT-SETTINGS (3 copies). This comment used to claim the
+            // API serves these "so the settings screen and the client sheet
+            // can never disagree about a port number". That stopped being true
+            // the day the platform landing page needed them: it is static and
+            // unauthenticated, so it cannot call this endpoint and carries its
+            // own literals. The copies, all three:
+            //
+            //   1. HERE - the authoritative copy, because it is the only one
+            //      software reads.
+            //   2. apps/web/app/platform/page.tsx - static page, hardcoded.
+            //   3. docs/CLIENT_MAIL_SETUP.md - the printable sheet.
+            //
+            // Change a host or a port in ALL THREE, in ONE commit.
+            // git grep MAIL-CLIENT-SETTINGS finds every copy; each carries
+            // this marker precisely so the count cannot silently become four.
             settings = new
             {
                 imapHost = "mail.tatvaos.com", imapPort = 993, imapSecurity = "SSL/TLS",
