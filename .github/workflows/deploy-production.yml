@@ -40,9 +40,59 @@ jobs:
             exit 1
           fi
 
+  # --------------------------------------------------------------------------
+  #  CI must be GREEN for the exact commit being deployed. Not for main in
+  #  general, not for a parent — for the SHA this deploy will reset the
+  #  server to. Until this job existed, a red main deployed as readily as a
+  #  green one, and on 27 August the tenant-isolation and mail-stack jobs
+  #  were warnings nobody was forced to read.
+  #
+  #  "No CI run at all" fails exactly like a red one: an unexamined commit is
+  #  not a passing commit. (CI now runs on every push to every branch, so
+  #  from here on that case means CI is still running — wait for it.)
+  # --------------------------------------------------------------------------
+  ci-green:
+    name: CI green for this exact commit
+    needs: guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Require a successful CI run for the resolved SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse HEAD)
+          echo "Deploy ref '${{ inputs.ref }}' resolves to $sha"
+
+          runs=$(gh run list \
+                   --repo "$GITHUB_REPOSITORY" \
+                   --workflow ci.yml \
+                   --commit "$sha" \
+                   --json status,conclusion,databaseId)
+          echo "CI runs for this commit: $runs"
+
+          success=$(echo "$runs" | jq '[.[] | select(.conclusion == "success")] | length')
+          total=$(echo "$runs" | jq 'length')
+
+          if [ "$total" -eq 0 ]; then
+            echo "::error::No CI run exists for $sha. An unexamined commit does not deploy."
+            echo "If CI is still running, wait for it. If this commit predates"
+            echo "CI-on-every-branch, push it to a branch and let CI examine it."
+            exit 1
+          fi
+          if [ "$success" -eq 0 ]; then
+            echo "::error::CI ran for $sha and did not succeed. A red commit does not deploy."
+            exit 1
+          fi
+          echo "CI is green for $sha — proceeding."
+
   deploy:
     name: Deploy to production
-    needs: guard
+    needs: [guard, ci-green]
     runs-on: ubuntu-latest
     # Requires a reviewer in GitHub -> Settings -> Environments -> production.
     # A typed string is a speed bump; an approval is a second person.
@@ -71,39 +121,59 @@ jobs:
             # deploy.sh takes its own pre-deploy database backup and refuses
             # to continue if that fails.
             CI=1 ./infra/scripts/deploy.sh production
+            # deploy.sh already ran verify-live.sh as its final step; this
+            # second, EXPLICIT call is the workflow's own signature on the
+            # same contract. If deploy.sh ever loses that step, the deploy
+            # still cannot go green over a mail edge that does not answer.
+            # One script, one definition of "up", every entrance.
+            bash infra/scripts/verify-live.sh
+
+      # ----------------------------------------------------------------------
+      #  What the three curls below prove — and what they do NOT.
+      #
+      #  They prove Caddy routes three HTTP paths from the outside world. All
+      #  three returned 200 on 27 August while Dovecot was dead and mail
+      #  queued for hours: an HTTP 200 proves a site block, never mail. The
+      #  checks that prove mail (IMAP greeting + certificate, SMTP banners,
+      #  queue age) live in infra/scripts/verify-live.sh, which ran on the
+      #  box in the SSH step above. These curls add exactly one thing it
+      #  cannot see from inside: that the box is reachable from OUTSIDE.
+      #
+      #  No -k on these curls. -k made a bad certificate pass the gate; a
+      #  certificate mail clients would refuse must fail a deploy, not
+      #  decorate one.
+      # ----------------------------------------------------------------------
 
       # There is no api.tatvaos.com. The API sits behind core.tatvaos.com/api,
       # so that both share a registrable domain and one auth cookie covers
       # Core and Mail. An earlier version of this step polled a hostname that
       # has never existed, which would have failed every production deploy at
       # the final gate.
-      - name: Smoke test
+      - name: HTTP reachable from outside
         run: |
           set -euo pipefail
           for i in $(seq 1 20); do
-            code=$(curl -sk -o /dev/null -w '%{http_code}' https://core.tatvaos.com/health || true)
+            code=$(curl -s -o /dev/null -w '%{http_code}' https://core.tatvaos.com/health || true)
             [ "$code" = "200" ] && { echo "healthy"; exit 0; }
             sleep 6
           done
           echo "Production did not become healthy — investigate immediately"
           exit 1
 
-      - name: Database reachable
+      - name: API sees its database
         run: |
-          # A web app that responds while mail is silently broken is the worst
-          # failure mode this product has, because nobody notices for hours.
-          code=$(curl -sk -o /dev/null -w '%{http_code}' https://core.tatvaos.com/health/db || true)
+          code=$(curl -s -o /dev/null -w '%{http_code}' https://core.tatvaos.com/health/db || true)
           [ "$code" = "200" ] || { echo "Database unreachable from the API"; exit 1; }
           echo "database reachable"
 
-      - name: Mail front door reachable
+      - name: Mail HTTP site block routes
         run: |
-          # mail.tatvaos.com is served by the same box through its own Caddy
-          # site block. If the conf.d fragment failed to mount, this is the
-          # only place it would show up before a customer found it.
-          code=$(curl -sk -o /dev/null -w '%{http_code}' https://mail.tatvaos.com/ || true)
+          # Proves the mail.tatvaos.com conf.d fragment is mounted and routing
+          # HTTP. It proves nothing about IMAP, SMTP or delivery — those are
+          # verify-live.sh's checks, which already ran on the box.
+          code=$(curl -s -o /dev/null -w '%{http_code}' https://mail.tatvaos.com/ || true)
           case "$code" in
-            200|301|302|307|308) echo "mail front door responding ($code)" ;;
+            200|301|302|307|308) echo "mail HTTP site block responding ($code)" ;;
             *) echo "mail.tatvaos.com returned $code — check the conf.d mount"; exit 1 ;;
           esac
 
