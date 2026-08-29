@@ -532,6 +532,25 @@ docker image prune -f 2>&1 | tail -1 | sed 's/^/   /'
 ok "cache bounded at 8 GB — $(df -h / | awk 'NR==2 {print $4}') free on /"
 
 # ---------------------------------------------------------------------------
+step "Verifying what is actually live"
+#
+#  verify-live.sh is the ONE definition of "up" — this call, the deploy
+#  workflow's SSH step, and a worried operator at 2am all run the same
+#  script. It checks what the steps above cannot: that the mail edge
+#  ANSWERS (IMAP greeting, certificate, SMTP banners) and that the queue is
+#  MOVING. On 27 August every HTTP gate returned 200 while mail queued
+#  behind a dead Dovecot; these are the checks that would have said so.
+#
+#  Its failures land in OUR counter: it exits non-zero on any failed check,
+#  and bad() feeds the verdict below.
+# ---------------------------------------------------------------------------
+if bash infra/scripts/verify-live.sh; then
+    ok "live verification passed"
+else
+    bad "verify-live.sh reports the deployed stack is not fully serving — its [FAIL] lines are above"
+fi
+
+# ---------------------------------------------------------------------------
 step "Verdict"
 # ---------------------------------------------------------------------------
 #  THE VERDICT READS THE COUNTER. Nothing below this block runs if anything
