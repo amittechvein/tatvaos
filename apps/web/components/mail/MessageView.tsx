@@ -46,15 +46,40 @@ function ToolButton({
       : tone === 'warn'
         ? 'text-warn'
         : 'text-ink-muted hover:text-ink';
+  // Quiet on purpose. These buttons used to each carry border + bg-surface,
+  // which put TEN identical outlined boxes in one row - every action shouted
+  // at the same volume, so none read as more important than any other, and
+  // Delete had exactly the weight of Print. The border is gone; the hover
+  // wash is the affordance. The ONE outlined control in this toolbar is
+  // Reply, below - being the only box in the row is what makes it primary.
   return (
     <button
       type="button"
       onClick={onClick}
       aria-label={label}
       title={label}
-      className={`flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface transition hover:bg-canvas ${toneClass}`}
+      className={`flex h-9 w-9 items-center justify-center rounded-lg transition hover:bg-canvas ${toneClass}`}
     >
       <Icon name={icon} filled={filled} className="h-4.5 w-4.5" />
+    </button>
+  );
+}
+
+/**
+ * Reply, labelled. The most-used action in a mail client was an unlabelled
+ * icon at the far edge of the pane, dressed identically to Delete. One
+ * labelled control, and only one: a second label would start an arms race
+ * that ends back at ten boxes.
+ */
+function ReplyButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex h-9 items-center gap-1.5 rounded-full border border-line bg-surface pl-3 pr-3.5 text-[13px] font-medium text-ink transition hover:bg-canvas"
+    >
+      <Icon name="reply" className="h-4 w-4" />
+      Reply
     </button>
   );
 }
@@ -329,10 +354,14 @@ export function MessageView({
       <div className="flex items-center gap-1 border-b border-line px-3 py-2">
         <ToolButton icon="back" label="Back" onClick={onBack} />
         <span className="mx-1 hidden h-5 w-px bg-line sm:block" />
-        <ToolButton icon="junk" label="Move to Junk" onClick={() => onArchive(message)} />
-        <ToolButton icon="trash" label="Delete" tone="danger" onClick={() => onDelete(message)} />
         <ToolButton icon="envelope" label="Mark as unread" onClick={() => onMarkUnread(message)} />
         <ToolButton icon="print" label="Print" onClick={() => onPrint(message)} />
+        {/* Junk and Delete live behind their own divider, LAST in the cluster:
+            both take the message away, and neither belongs adjacent to Back,
+            where a hurried mis-click used to land on Delete. */}
+        <span className="mx-1 hidden h-5 w-px bg-line sm:block" />
+        <ToolButton icon="junk" label="Move to Junk" onClick={() => onArchive(message)} />
+        <ToolButton icon="trash" label="Delete" tone="danger" onClick={() => onDelete(message)} />
         <div className="ml-auto flex items-center gap-1">
           {/* Gmail's split/full-page choice, as one toggle. */}
           {onToggleExpand && (
@@ -344,7 +373,7 @@ export function MessageView({
               />
             </span>
           )}
-          <ToolButton icon="reply" label="Reply" onClick={() => onReply(message, 'reply')} />
+          <ReplyButton onClick={() => onReply(message, 'reply')} />
           <ToolButton icon="reply-all" label="Reply all" onClick={() => onReply(message, 'replyAll')} />
           <ToolButton icon="forward" label="Forward" onClick={() => onReply(message, 'forward')} />
 
