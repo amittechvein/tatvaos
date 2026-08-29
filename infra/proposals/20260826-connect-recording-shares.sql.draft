@@ -316,40 +316,110 @@ COMMENT ON TABLE connect.recording_access_log IS
 --  the baseline lives.
 -- ============================================================================
 
-CREATE OR REPLACE FUNCTION connect.share_allows_user(
+-- ─────────────────────────────────────────────────────────────────────────
+--  REVISED 26 August, after writing the code that calls it. An earlier draft
+--  of this file returned BOOLEAN. That was not enough: every access beyond a
+--  participant has to write an audit row naming WHICH share let them in, and
+--  a bare yes cannot say. The obvious repair — ask a second query for the
+--  share id — does not work, because that query would be RLS-scoped and a
+--  cross-organisation grant is exactly the row it cannot see.
+--
+--  So it returns the share's id, or NULL. Same single tenant-crossing read,
+--  one more fact, and the audit requirement becomes possible rather than
+--  approximate. If two shares would both let somebody in, the NARROWER one is
+--  reported: a person who is named should be logged as named, not as a member
+--  of the organisation, because the narrower grant is the one somebody chose
+--  deliberately.
+-- ─────────────────────────────────────────────────────────────────────────
+
+DROP FUNCTION IF EXISTS connect.share_allows_user(uuid, uuid, uuid);
+
+CREATE OR REPLACE FUNCTION connect.share_for_user(
     p_recording_id uuid,
     p_user_id      uuid,
     p_user_tenant  uuid)
-RETURNS boolean
+RETURNS uuid
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
 SET search_path = connect, pg_catalog
 AS $$
-    SELECT EXISTS (
-        SELECT 1
-          FROM connect.recording_shares s
-         WHERE s.recording_id = p_recording_id
-           AND s.revoked_at IS NULL
-           AND (s.expires_at IS NULL OR s.expires_at > now())
-           AND (
-                 -- Same organisation as the recording.
-                 (s.level = 'organisation' AND s.tenant_id = p_user_tenant)
-                 -- Or named, in any organisation.
-              OR (s.level = 'named' AND EXISTS (
-                    SELECT 1 FROM connect.recording_share_grants g
-                     WHERE g.share_id = s.id
-                       AND g.subject_user_id = p_user_id
-                       AND g.revoked_at IS NULL))
-               )
-    );
+    SELECT s.id
+      FROM connect.recording_shares s
+     WHERE s.recording_id = p_recording_id
+       AND s.revoked_at IS NULL
+       AND (s.expires_at IS NULL OR s.expires_at > now())
+       AND (
+             -- Same organisation as the recording.
+             (s.level = 'organisation' AND s.tenant_id = p_user_tenant)
+             -- Or named, in any organisation.
+          OR (s.level = 'named' AND EXISTS (
+                SELECT 1 FROM connect.recording_share_grants g
+                 WHERE g.share_id = s.id
+                   AND g.subject_user_id = p_user_id
+                   AND g.revoked_at IS NULL))
+           )
+     -- Narrower first: 'named' beats 'organisation'.
+     ORDER BY CASE s.level WHEN 'named' THEN 0 ELSE 1 END
+     LIMIT 1;
 $$;
 
-COMMENT ON FUNCTION connect.share_allows_user(uuid, uuid, uuid) IS
-    'Does a live share let this signed-in user read this recording? Reads '
-    'past RLS deliberately and in one place, because named grants may cross '
-    'organisations. Never answers the baseline question — that is '
-    'SeenMeetingAsync.';
+COMMENT ON FUNCTION connect.share_for_user(uuid, uuid, uuid) IS
+    'WHICH live share lets this signed-in user read this recording, or NULL. '
+    'Reads past RLS deliberately and in one place, because named grants may '
+    'cross organisations. Never answers the baseline question — that is '
+    'SeenMeetingAsync. Returns the narrowest matching share so the audit row '
+    'records the grant somebody actually chose.';
+
+
+-- ============================================================================
+--  4b. Resolving a share LINK, for somebody with no session at all.
+-- ============================================================================
+--
+--  Levels 'password' and 'public' are reached by holding a URL. The holder is
+--  anonymous: no session, no tenant, nothing for RLS to scope by. So this is
+--  a definer function too — and it has a precedent to copy rather than a
+--  decision to make, because connect.resolve_meeting_code() already does
+--  exactly this job for a guest arriving at a meeting link.
+--
+--  Shaped like that one on purpose, including what it does NOT return: no
+--  token, no password hash, and no file name. It answers "this link names
+--  that recording, at this level, and here is whether a password is needed" —
+--  and every one of those is re-checked by the caller before a byte is read.
+--
+--  A revoked or expired link returns NOTHING, rather than a row with a flag.
+--  A caller that forgets to check a flag is a caller that leaks; a caller
+--  that forgets to check for no rows gets a null reference on its next line.
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION connect.resolve_share_token(p_token text)
+RETURNS TABLE (
+    share_id     uuid,
+    recording_id uuid,
+    meeting_id   uuid,
+    tenant_id    uuid,
+    level        text,
+    has_password boolean)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = connect, pg_catalog
+AS $$
+    SELECT s.id, s.recording_id, s.meeting_id, s.tenant_id, s.level,
+           s.password_hash IS NOT NULL
+      FROM connect.recording_shares s
+     WHERE s.token = p_token
+       AND s.revoked_at IS NULL
+       AND (s.expires_at IS NULL OR s.expires_at > now())
+     LIMIT 1;
+$$;
+
+REVOKE ALL ON FUNCTION connect.resolve_share_token(text) FROM PUBLIC;
+
+COMMENT ON FUNCTION connect.resolve_share_token(text) IS
+    'Turn a share link into the recording it names, for a holder with no '
+    'session. Same shape and same reasoning as resolve_meeting_code. Returns '
+    'no row for a revoked or expired link rather than a row with a flag.';
 
 
 -- ============================================================================

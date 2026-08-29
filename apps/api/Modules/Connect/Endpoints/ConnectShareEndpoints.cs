@@ -1,4 +1,8 @@
 using Microsoft.EntityFrameworkCore;
+using TatvaOS.Api.Modules.Admin;      // AuditWriter
+using TatvaOS.Api.Shared.Auth;        // IPasswordHasher
+using TatvaOS.Api.Shared.Data;        // AppDbContext
+using TatvaOS.Api.Shared.Tenancy;     // TenantContext
 
 namespace TatvaOS.Api.Modules.Connect.Endpoints;
 
@@ -52,20 +56,24 @@ namespace TatvaOS.Api.Modules.Connect.Endpoints;
 ///  "Delivery stays on the ticket"       — untouched. This file mints no
 ///                                         tickets and reads no files.
 ///
-///  ── FOUR NAMES TO CONFIRM WHEN THIS FIRST COMPILES ─────────────────────
+///  ── NAMES TO CONFIRM WHEN THIS IS FIRST WIRED UP ───────────────────────
 ///
-///  Written without a compiler to hand, so these are the places where a
-///  property name is inferred from how the rest of the module uses it rather
-///  than read off the class. None of them is a design question — each is one
-///  identifier, and the build will name any that is wrong:
+///  Written without a compiler to hand. The first attempt was missing every
+///  `using` above except EntityFrameworkCore and the build produced sixteen
+///  CS0246s in one go — AppDbContext, TenantContext, IPasswordHasher and
+///  AuditWriter, all of them types this module uses constantly. Fixed by
+///  copying the header of ConnectEndpoints.cs, which is where they should
+///  have come from in the first place.
 ///
-///    1. db.Users .Id  .DisplayName   — used by ConnectEndpoints.NameOfAsync,
-///                                      so these two are certain.
-///    2. db.Users .Email              — needed to resolve a typed address.
-///    3. db.Users .TenantId           — needed to tell a colleague from
-///                                      somebody in another organisation.
-///    4. IPasswordHasher.Hash         — same call ConnectEndpoints makes for
-///                                      a meeting password, so certain.
+///  The two property names I had flagged as inferred are now checked against
+///  Shared/Data/Entities.cs rather than assumed: `User` carries Id, TenantId,
+///  Email and DisplayName, all as used here. IPasswordHasher.Hash(string) and
+///  AuditWriter.WriteAsync's named parameters were checked the same way.
+///
+///  What still cannot be checked without the tables: nothing in this file
+///  runs until AppDbContext maps the three entities, so `db.Set<T>()`
+///  compiles today and would throw at first use. That is the intended state —
+///  see the top of this header.
 ///
 ///  Deliberately NOT used: any lookup of an organisation's NAME. The API says
 ///  whether a named person is outside the recording's organisation, and not
@@ -562,6 +570,207 @@ public static class ConnectShareEndpoints
         AppDbContext db, ConnectRecordingShare share, CancellationToken ct)
         => db.Set<ConnectRecordingAccess>().AsNoTracking()
             .CountAsync(a => a.ShareId == share.Id, ct);
+
+    // ==================================================================
+    //  THE READ SIDE. Everything above creates rows; this decides.
+    // ==================================================================
+    //
+    //  Called from the download path, never from this file's own routes. It
+    //  is here rather than in ConnectRecordingEndpoints so that the live,
+    //  shipping download route gains exactly ONE line when the tables land,
+    //  instead of being edited now against tables that do not exist.
+    //
+    //  THE ORDER MATTERS AND IS NOT NEGOTIABLE:
+    //
+    //      1. SeenMeetingAsync   were you in the room?      → yes, done.
+    //      2. AllowedAsync       does a share cover you?    → yes, and LOG it.
+    //      3. refuse.
+    //
+    //  Step 1 is the baseline and is never consulted here. A participant is
+    //  authorised before any of this runs, is not logged, and cannot be
+    //  affected by any share row. That is Core's rule and it holds by
+    //  construction: this file has no way to answer step 1 and no way to
+    //  make step 1 say no.
+
+    /// <summary>Which share let somebody in, for the audit row.</summary>
+    internal sealed record ShareAccess(Guid ShareId, string Level);
+
+    /// <summary>
+    /// Does a live share let this SIGNED-IN person read this recording?
+    ///
+    /// Answers through connect.share_for_user(), which is SECURITY DEFINER
+    /// because a named grant may point at somebody in another organisation
+    /// and an RLS-scoped query run as that reader can never see the row that
+    /// permits them. That is the single place in this module allowed to cross
+    /// a tenant boundary, it takes the reader's own id, and it returns one
+    /// uuid — so it can neither enumerate anything nor be talked into
+    /// answering a wider question.
+    ///
+    /// Returns null for "no", which is also the answer for a revoked share,
+    /// an expired one, and a recording nobody ever shared.
+    /// </summary>
+    internal static async Task<ShareAccess?> AllowedAsync(
+        AppDbContext db, Guid recordingId, Guid userId, Guid userTenantId,
+        CancellationToken ct)
+    {
+        var ids = await db.Database
+            .SqlQuery<Guid?>(
+                $"""SELECT connect.share_for_user({recordingId}, {userId}, {userTenantId}) AS "Value" """)
+            .ToListAsync(ct);
+
+        if (ids.FirstOrDefault() is not Guid shareId) return null;
+
+        // The LEVEL is read back under ordinary RLS, and that is safe for a
+        // reason worth writing down: we already hold the id the definer
+        // function chose, so this query cannot widen anything — at worst it
+        // finds nothing, and then nobody is let in.
+        var level = await db.Set<ConnectRecordingShare>().AsNoTracking()
+            .Where(s => s.Id == shareId)
+            .Select(s => s.Level)
+            .FirstOrDefaultAsync(ct);
+
+        return level is null ? null : new ShareAccess(shareId, level);
+    }
+
+    /// <summary>
+    /// Turn a share LINK into the recording it names, for a holder with no
+    /// session at all.
+    ///
+    /// The password is verified HERE rather than by the caller, so there is
+    /// one place that knows a level-'password' share without a correct
+    /// password is not an access. A caller that forgot to check would
+    /// otherwise be a caller that leaks.
+    ///
+    /// Returns null for every failure — wrong token, revoked, expired, wrong
+    /// password — and deliberately does not say which. A link that answers
+    /// "right link, wrong password" differently from "no such link" tells
+    /// somebody scanning for links when they have found one.
+    /// </summary>
+    internal static async Task<ShareAccess?> ByTokenAsync(
+        AppDbContext db, IPasswordHasher hasher, string? token, string? password,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return null;
+        // Shape check before it costs a query — the same rule the meeting
+        // doorstep follows, and what keeps a rate limiter meaningful.
+        if (!ConnectCodes.IsWellFormed(token)) return null;
+
+        var rows = await db.Database
+            .SqlQuery<ShareTokenRow>($"""
+                SELECT share_id     AS "ShareId",
+                       recording_id AS "RecordingId",
+                       meeting_id   AS "MeetingId",
+                       tenant_id    AS "TenantId",
+                       level        AS "Level",
+                       has_password AS "HasPassword"
+                  FROM connect.resolve_share_token({token})
+                """)
+            .ToListAsync(ct);
+
+        if (rows.FirstOrDefault() is not { } row) return null;
+
+        if (row.HasPassword)
+        {
+            if (string.IsNullOrEmpty(password)) return null;
+            // The hash is NOT returned by the definer function, on purpose —
+            // see its comment. Read it here, scoped to the share we already
+            // hold, so a wrong guess cannot be used to fish for hashes.
+            var hash = await db.Set<ConnectRecordingShare>().AsNoTracking()
+                .Where(s => s.Id == row.ShareId)
+                .Select(s => s.PasswordHash)
+                .FirstOrDefaultAsync(ct);
+            // Verify(password, encoded) — that order, checked against the two
+            // places this platform already calls it. Both arguments are
+            // strings, so getting it backwards compiles perfectly and simply
+            // never lets anybody in. I had it backwards.
+            if (hash is null || !hasher.Verify(password, hash)) return null;
+        }
+
+        return new ShareAccess(row.ShareId, row.Level);
+    }
+
+    private sealed record ShareTokenRow(
+        Guid ShareId, Guid RecordingId, Guid MeetingId, Guid TenantId,
+        string Level, bool HasPassword);
+
+    /// <summary>
+    /// One row per read of a recording by somebody who was NOT in the room.
+    ///
+    /// Participants are never passed here — they are the baseline, and
+    /// logging them would bury the rows that matter under the rows that do
+    /// not.
+    ///
+    /// FIRST GET OF A RANGE REQUEST ONLY. A two-hour video is dozens of GETs
+    /// on one ticket, and a row each would turn this into a log of somebody's
+    /// seeking behaviour, which is not what it is for. The caller decides;
+    /// this just writes.
+    ///
+    /// Best effort, always. An access that could not be logged must not
+    /// become an access that was refused — the recording is already
+    /// authorised by the time this runs, and failing the read to protect the
+    /// log would be the wrong way round.
+    /// </summary>
+    /// <param name="tenantId">
+    /// The RECORDING's tenant, passed in rather than read off the recording.
+    /// ConnectRecording has no TenantId — it is scoped through its meeting,
+    /// which is where RLS reaches it. Every caller already holds the meeting,
+    /// so asking for the value is cheaper than a join and honest about where
+    /// it comes from.
+    /// </param>
+    internal static async Task LogAccessAsync(
+        AppDbContext db, Guid tenantId, ConnectRecording recording, ShareAccess access,
+        Guid? subjectUserId, Guid? subjectTenantId, string? address,
+        CancellationToken ct)
+    {
+        try
+        {
+            db.Set<ConnectRecordingAccess>().Add(new ConnectRecordingAccess
+            {
+                TenantId = tenantId,
+                RecordingId = recording.Id,
+                ShareId = access.ShareId,
+                Level = access.Level,
+                SubjectUserId = subjectUserId,
+                SubjectTenantId = subjectTenantId,
+                AddressPrefix = Coarsen(address),
+                CreatedAt = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync(ct);
+        }
+        catch
+        {
+            // Swallowed deliberately; see the summary. Worth revisiting only
+            // if it turns out to fail often, which would itself be the bug.
+        }
+    }
+
+    /// <summary>
+    /// An address, blunted to the point where it answers "how many different
+    /// places has this link been opened from" and stops.
+    ///
+    /// /24 for v4 and /48 for v6 — a neighbourhood, not a person, and not a
+    /// location. Anything unparseable becomes null rather than being stored
+    /// raw: a value this function did not understand is exactly the value it
+    /// should not be keeping.
+    ///
+    /// >>> CORE, QUESTION 2. If the platform already has a house rule for
+    /// storing addresses, this should use it instead of being a second one.
+    /// </summary>
+    internal static string? Coarsen(string? address)
+    {
+        if (string.IsNullOrWhiteSpace(address)) return null;
+        if (!System.Net.IPAddress.TryParse(address.Trim(), out var ip)) return null;
+
+        var bytes = ip.GetAddressBytes();
+        if (bytes.Length == 4) return $"{bytes[0]}.{bytes[1]}.{bytes[2]}.0/24";
+        if (bytes.Length == 16)
+        {
+            var head = string.Join(':', Enumerable.Range(0, 3)
+                .Select(i => $"{bytes[i * 2]:x2}{bytes[i * 2 + 1]:x2}"));
+            return $"{head}::/48";
+        }
+        return null;
+    }
 
     /// <summary>
     /// Who made a share, for the list. A local copy rather than a call into
