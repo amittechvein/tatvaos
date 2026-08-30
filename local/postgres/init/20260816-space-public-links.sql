@@ -121,8 +121,11 @@ AS $$
       LEFT JOIN space.tenant_settings s ON s.tenant_id = f.tenant_id
       LEFT JOIN core.users u ON u.id = l.created_by_user_id
      WHERE l.token_hash = p_token_hash
-       -- THE PREDICATE — textually identical in consume_public_link below.
-       -- Diff them in review; any difference between the two is a bug.
+       -- THE PREDICATE. Its twin is the LIVE consume_public_link, which is
+       -- in 20260819-space-link-loss-logging.sql, not the bootstrap below.
+       -- Kept identical comment for comment by
+       -- infra/scripts/verify-space-link-predicate.sh, which is the check.
+       -- This comment is not the check, and neither is your reading of it.
        AND l.revoked_at IS NULL                                        -- not revoked
        AND l.expires_at > now()                                        -- not expired
        AND (l.max_downloads IS NULL OR l.download_count < l.max_downloads)  -- under the cap
@@ -190,8 +193,14 @@ BEGIN
                   LEFT JOIN space.tenant_settings s ON s.tenant_id = f.tenant_id
                  WHERE f.id = l.file_id
                    AND l.token_hash = p_token_hash
-                   -- THE PREDICATE — textually identical in peek_public_link above.
-                   -- Diff them in review; any difference between the two is a bug.
+                   -- THE PREDICATE, bootstrap copy. Same CONDITIONS as
+                   -- peek_public_link above; it deliberately carries no
+                   -- trailing comments, and it is not what runs on any
+                   -- database that already has this function. The live
+                   -- definition is in 20260819-space-link-loss-logging.sql.
+                   -- A condition here that differs from the live one, or a
+                   -- comment here that contradicts it, fails
+                   -- infra/scripts/verify-space-link-predicate.sh.
                    AND l.revoked_at IS NULL
                    AND l.expires_at > now()
                    AND (l.max_downloads IS NULL OR l.download_count < l.max_downloads)
