@@ -58,7 +58,7 @@ public class Tenant
     /// FALSE BY DEFAULT — consent is per-organisation, decided knowingly
     /// (Amit, 27 Aug 2026, on Mail's finding that the gateway was
     /// deployment-wide). Enforced INSIDE OpenAiGateway, fail-closed, so no
-    /// caller can forget the check. Column: 20260911-core-ai-per-org.sql.
+    /// caller can forget the check. Column: 20260826-core-ai-per-org.sql.
     /// </summary>
     public bool AllowAi { get; set; }
 
