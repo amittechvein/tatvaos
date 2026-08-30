@@ -79,22 +79,30 @@ check_imap() {
     # ONE connection, two questions. Not -quiet: the verify line is half of
     # what we came for, and -quiet suppresses it.
     #
-    # -ign_eof IS LOAD-BEARING. Without it s_client shuts the connection at
-    # stdin EOF, which arrives the instant printf finishes — often before
-    # Dovecot has finished speaking. Two earlier forms got this wrong:
-    # </dev/null closed immediately, and a bare piped LOGOUT narrowed the
-    # window without closing it. Both were called fixed after ONE passing
-    # run; measured five times each on production they scored:
+    # -ign_eof IS LOAD-BEARING. s_client must NOT exit on stdin EOF, which
+    # arrives the instant printf finishes — before a busy or just-restarted
+    # Dovecot has finished greeting. It is OUR end hanging up, not their end
+    # being slow, which is why no amount of retry, backoff or sleeping
+    # BEFORE connecting helps. Dovecot's own log said it plainly:
+    # "disconnected before auth was ready, waited 0 secs".
+    #
+    # Two earlier forms got this wrong — </dev/null closed immediately, and
+    # a bare piped LOGOUT narrowed the window without closing it — and each
+    # was called fixed after ONE passing run. Measured five times each
+    # against production on 30 Aug:
     #
     #     piped LOGOUT alone   0/5    186 ms
     #     LOGOUT + sleep 2     5/5   2007 ms
     #     LOGOUT + -ign_eof    5/5     61 ms   ← this
     #
-    # The failure this removes is worse than a plain bug: the same probe
-    # passed once for one person and failed five times for another, so the
-    # check was NONDETERMINISTIC. A check that cries wolf on some deploys
-    # teaches people the red is noise, and then it is not a check.
-    # (Found by Connect, measured by Mail, 30 Aug 2026.)
+    # Faster than the broken form it replaces, because it exits on the
+    # SERVER's close instead of racing its own stdin.
+    #
+    # What this removes is worse than a plain bug: the identical probe
+    # passed once for one person and failed five times for another. A check
+    # that reds on some deploys and not others teaches people the red is
+    # noise — that is not a check, it is a coin.
+    # (Found by Connect; five-run measurements by Mail.)
     local out
     out=$(printf 'a1 LOGOUT\r\n' | timeout 10 openssl s_client -ign_eof \
               -connect "$MAIL_HOST:993" -servername "$MAIL_HOST" 2>&1 || true)
@@ -121,11 +129,19 @@ check_imap() {
     # strict match below — with the loose one it would have joined the three
     # HTTP 200s standing guard over a dead mail server.
     #
-    # CAVEAT, stated because it was reasoned rather than observed: the
-    # "Waiting for authentication" line did not appear in any of the fifteen
-    # production runs (auth was healthy throughout). The strict match is
-    # derived from Dovecot's documented behaviour and the 27 August logs,
-    # not from a captured sample of that line.
+    # CAVEATS, both stated rather than left for someone to discover:
+    #
+    #   · The "Waiting for authentication" line was seen ONCE, in a manual
+    #     probe that held stdin open (two of them, in fact) — and in NONE of
+    #     the fifteen candidate runs, because auth was healthy throughout.
+    #     So this branch is one observation plus Dovecot's documented
+    #     behaviour and the 27 August logs, not a reproduced sample.
+    #
+    #   · All fifteen runs were against a WARM Dovecot. The restart is the
+    #     condition this check exists for, and deploy.sh restarts Dovecot
+    #     moments before calling us. The FIRST POST-RESTART DEPLOY IS THIS
+    #     CHECK'S REAL FIRST TEST — watch it, and treat a red there as data
+    #     rather than a surprise.
     # -----------------------------------------------------------------------
     if printf '%s\n' "$out" | grep -q '^\* OK \[CAPABILITY'; then
         ok "IMAP greeting received (capabilities advertised)."
