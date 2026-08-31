@@ -78,7 +78,15 @@ call() {   # call METHOD URL TOKEN [JSON]
     curl "${args[@]}" "$url"
 }
 
-login() {  # login EMAIL  -> prints token; password read here and unset here
+# Prints the token on stdout and RETURNS non-zero on failure.
+#
+# It must return rather than exit: this is called as TOK=$(login ...), and a
+# command substitution runs in a subshell, where exit kills only the subshell.
+# The first version of this script called exit here, so a failed sign-in
+# printed FAIL and the script carried on with an empty token and announced
+# "person B signed in" on the very next line. Every caller below therefore
+# checks the return status AND the token, and neither is optional.
+login() {
     local email="$1" pass r tok
     printf '  password for %s (not shown): ' "$email" >&2
     stty -echo 2>/dev/null; read -r pass; stty echo 2>/dev/null; echo >&2
@@ -90,9 +98,10 @@ login() {  # login EMAIL  -> prints token; password read here and unset here
     if [[ "$(status "$r")" != "200" || -z "$tok" ]]; then
         echo "  FAIL  sign-in for $email returned $(status "$r")" >&2
         case "$(body "$r")" in
-            *mfaRequired*) echo "        That account has MFA on. Use one without it for this test." >&2 ;;
+            *mfaRequired*) echo "        That account has MFA on; use one without it here." >&2 ;;
+            *)             echo "        $(body "$r" | head -c 200)" >&2 ;;
         esac
-        exit 1
+        return 1
     fi
     printf '%s' "$tok"
 }
@@ -105,10 +114,24 @@ lookup() { # lookup TOKEN EMAIL -> prints user id, or empty
     body "$r" | tr '{' '\n' | grep -F "\"email\":\"$email\"" | jstr id
 }
 
+# Terminals that bracket pastes wrap them in \e[200~ ... \e[201~, and an
+# arrow key pressed while correcting a paste arrives as \e[D. Both end up
+# INSIDE the variable and produce a mangled address that still looks right on
+# screen. Turn bracketed paste off, then strip anything that is not part of an
+# address, then show back exactly what was captured.
+printf '\033[?2004l'
+
+askmail() {
+    local prompt="$1" v
+    printf '  %s' "$prompt" >&2
+    read -r v
+    printf '%s' "$v" | tr -d '[:cntrl:]' | sed 's/\[20[01]~//g; s/\[[0-9]*[A-Za-z]//g; s/[[:space:]]//g'
+}
+
 head2 "who is taking part"
-printf '  UPLOADER email: ';  read -r E_UP
-printf '  PERSON B email (will be given EDIT, must sign in): '; read -r E_B
-printf '  PERSON C email (given VIEW, never signs in): ';       read -r E_C
+E_UP=$(askmail 'UPLOADER email: ')
+E_B=$(askmail  'PERSON B email (will be given EDIT, must sign in): ')
+E_C=$(askmail  'PERSON C email (given VIEW, never signs in): ')
 
 for e in "$E_UP" "$E_B" "$E_C"; do
     case "$e" in
@@ -116,6 +139,15 @@ for e in "$E_UP" "$E_B" "$E_C"; do
         *) echo "  '$e' does not look like an email address."; exit 2 ;;
     esac
 done
+
+echo
+echo "  Read back — check every character, a pasted address can lose one:"
+echo "    uploader : $E_UP"
+echo "    person B : $E_B"
+echo "    person C : $E_C"
+printf '  Correct? [y/N] '
+read -r yn
+case "$yn" in [Yy]*) : ;; *) echo "  stopped."; exit 2 ;; esac
 if [[ "$E_UP" = "$E_B" || "$E_UP" = "$E_C" || "$E_B" = "$E_C" ]]; then
     echo "  REFUSED  the three addresses must be three different people."
     echo "           With fewer, B's own row and C's row are the same row and"
@@ -124,8 +156,13 @@ if [[ "$E_UP" = "$E_B" || "$E_UP" = "$E_C" || "$E_B" = "$E_C" ]]; then
 fi
 
 head2 "signing in"
-TOK_UP=$(login "$E_UP"); ok "uploader signed in"
-TOK_B=$(login "$E_B");   ok "person B signed in"
+TOK_UP=$(login "$E_UP") || exit 1
+[[ -n "$TOK_UP" ]] || { bad "no token for the uploader"; exit 1; }
+ok "uploader signed in"
+
+TOK_B=$(login "$E_B") || exit 1
+[[ -n "$TOK_B" ]] || { bad "no token for person B"; exit 1; }
+ok "person B signed in"
 
 ID_B=$(lookup "$TOK_UP" "$E_B") || true
 ID_C=$(lookup "$TOK_UP" "$E_C") || true
