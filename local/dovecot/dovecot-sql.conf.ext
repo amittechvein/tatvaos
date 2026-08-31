@@ -27,8 +27,11 @@ driver = pgsql
 # ---------------------------------------------------------------------------
 connect = "host=postgres dbname=tatvaos_mail user=tatvaos_mailedge password=dev_mail_pw"
 
-# Fallback only. Each stored hash carries its own {SCHEME} prefix, which wins.
-# Local dev uses SHA512-CRYPT; PRODUCTION USES ARGON2ID.
+# NOT a fallback here - it is THE scheme. This comment used to claim every
+# stored hash carries its own {SCHEME} prefix; the primary rows never did.
+# They are raw $argon2id$ from the API's hasher, so this default is what
+# actually decides, and the entrypoint rewrites it to ARGON2ID outside local
+# (failing FATAL if the build lacks it). Local dev keeps SHA512-CRYPT.
 default_pass_scheme = SHA512-CRYPT
 
 # %u is the full login address, e.g. amit@techvein.local
@@ -39,13 +42,30 @@ default_pass_scheme = SHA512-CRYPT
 # revocable on its own, so removing Thunderbird's access does not lock the
 # person out of every other TatvaOS product.
 #
+# THE translate() IS LOAD-BEARING - it is why primary passwords work at all.
+#
+# The API hashes with .NET's Convert.ToBase64String, which PADS: the salt
+# ends '==', the digest ends '='. Dovecot verifies ARGON2ID through
+# libsodium, whose parser accepts ONLY its own unpadded encoding. Proven on
+# production, 31 Aug 2026, with doveadm pw -t: libsodium's own hash verified,
+# the SAME hash with '=' added was rejected; a reference-CLI p=2 unpadded
+# hash of a known password verified. Same password, same digest - two '='
+# characters decided authentication. Until this translate(), every primary
+# password failed IMAP auth, unnoticed because every configured client held
+# an app password (the {SSHA512} store below, which is immune).
+#
+# translate at READ time, deliberately: the stored format stays the
+# platform's, because Core's PasswordHasher.Verify REQUIRES the padding -
+# stripping it in storage would fix mail by breaking every product login.
+# '=' occurs in base64 only as padding, so removal is lossless.
+#
 # The core.users join is what makes a suspended PERSON stop authenticating.
 # The tenants join does the same for a suspended ORGANISATION. A shared
 # mailbox has no user_id, so the LEFT JOIN must not filter it out - hence
 # the "u.id IS NULL OR u.status = 'active'" rather than a plain WHERE.
 password_query = \
     SELECT m.address AS user, \
-           m.imap_password_hash AS password \
+           translate(m.imap_password_hash, '=', '') AS password \
     FROM   mail.mailboxes m \
     JOIN   core.tenants   t ON t.id = m.tenant_id \
     LEFT   JOIN core.users u ON u.id = m.user_id \
