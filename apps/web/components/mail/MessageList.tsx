@@ -2,6 +2,7 @@
 
 import { displayName, formatMessageDate } from '@tatvaos/core';
 import type { Message } from '@tatvaos/types';
+import { CATEGORY_COLOURS, type MailCategory } from '../../lib/mail';
 import { Avatar } from '../ui/Avatar';
 import { Icon } from '../ui/Icon';
 
@@ -20,6 +21,7 @@ export function MessageList({
   onToggleSelect,
   onOpen,
   onToggleFlag,
+  categoriesById,
 }: {
   messages: Message[];
   selectedIds: Set<string>;
@@ -27,6 +29,12 @@ export function MessageList({
   onToggleSelect: (id: string) => void;
   onOpen: (id: string) => void;
   onToggleFlag: (id: string) => void;
+  /**
+   * The person's categories, keyed by id, for the colour chip on rows whose
+   * message carries a categoryId. Optional: search results and shared views
+   * that have not loaded categories render plainly rather than wrongly.
+   */
+  categoriesById?: Record<string, MailCategory>;
 }) {
   if (messages.length === 0) {
     return (
@@ -156,6 +164,26 @@ export function MessageList({
                   </span>
                   <span className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-ink-muted/80">
                     {m.hasAttachments && <Icon name="attach" className="h-3.5 w-3.5 shrink-0 text-ink-faint" />}
+                    {(() => {
+                      /* categoryId rides on the API payload; the shared
+                         Message type does not carry it yet - a shared-types
+                         addition is Core's, so this reads it structurally
+                         rather than editing packages/types. */
+                      const catId = (m as Message & { categoryId?: string | null }).categoryId;
+                      const cat = catId && categoriesById ? categoriesById[catId] : undefined;
+                      if (!cat) return null;
+                      const c = CATEGORY_COLOURS[cat.colour] ?? CATEGORY_COLOURS.grey!;
+                      /* A NAMED CHIP, not a bare dot. Nine dots are only
+                         distinguishable to people with full colour vision
+                         and a good memory; the name makes the colour
+                         decoration rather than information. */
+                      return (
+                        <span className={`inline-flex max-w-24 shrink-0 items-center gap-1 rounded-full px-1.5 py-px text-[10px] font-medium ${c.chip}`}>
+                          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${c.dot}`} />
+                          <span className="truncate">{cat.name}</span>
+                        </span>
+                      );
+                    })()}
                     <span className="truncate">{m.snippet}</span>
                   </span>
                 </span>
