@@ -215,6 +215,44 @@ export interface BlockedSender {
 export type FilterField = 'from' | 'to' | 'subject' | 'body';
 export type FilterOp = 'contains' | 'equals';
 
+/**
+ * A category - A NAME AND A COLOUR SOMEBODY MADE FOR THEMSELVES. Filters
+ * apply them at delivery; nothing infers them. `colour` is a TOKEN NAME from
+ * the nine-name palette below, never a hex value - the database CHECK behind
+ * it and the reasoning live in 0032-mail-categories.sql.
+ */
+export interface MailCategory {
+  id: string;
+  name: string;
+  colour: string;
+  position: number;
+  messageCount: number;
+}
+
+/** The palette, in picker order - the same nine names the database accepts. */
+export const CATEGORY_PALETTE = [
+  'purple', 'blue', 'green', 'orange', 'yellow', 'red', 'pink', 'cyan', 'grey',
+] as const;
+
+/**
+ * What each token name MEANS in the current theme. This is the client-side
+ * half of "a token name, not a hex value": the database stores 'green', and
+ * this map decides what green is - including in dark mode, where the text
+ * tints lighten so a chip stays legible on a dark card. Change a colour
+ * here and every chip, dot and swatch changes with it.
+ */
+export const CATEGORY_COLOURS: Record<string, { dot: string; chip: string }> = {
+  purple: { dot: 'bg-purple-500', chip: 'bg-purple-500/15 text-purple-700 dark:text-purple-300' },
+  blue:   { dot: 'bg-blue-500',   chip: 'bg-blue-500/15 text-blue-700 dark:text-blue-300' },
+  green:  { dot: 'bg-green-600',  chip: 'bg-green-600/15 text-green-700 dark:text-green-300' },
+  orange: { dot: 'bg-orange-500', chip: 'bg-orange-500/15 text-orange-700 dark:text-orange-300' },
+  yellow: { dot: 'bg-yellow-500', chip: 'bg-yellow-500/20 text-yellow-700 dark:text-yellow-300' },
+  red:    { dot: 'bg-red-500',    chip: 'bg-red-500/15 text-red-700 dark:text-red-300' },
+  pink:   { dot: 'bg-pink-500',   chip: 'bg-pink-500/15 text-pink-700 dark:text-pink-300' },
+  cyan:   { dot: 'bg-cyan-500',   chip: 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-300' },
+  grey:   { dot: 'bg-gray-400',   chip: 'bg-gray-400/20 text-gray-600 dark:text-gray-300' },
+};
+
 export interface FilterCondition {
   field: FilterField;
   op: FilterOp;
@@ -677,6 +715,57 @@ export const mailApi = {
     f(withMb(`/mail/folders/${folderId}`, mailboxId), { method: 'DELETE' })
       .then((r) => json<{ deleted: string; movedToInbox: number }>(
         r, 'The folder could not be deleted.')),
+
+  /**
+   * Categories - list with per-category message counts, plus the palette the
+   * server considers legal (served so the picker and the CHECK constraint
+   * can never disagree about what the nine names are).
+   */
+  categories: (f: AuthedFetch, mailboxId?: string) =>
+    f(withMb('/mail/categories', mailboxId))
+      .then((r) => json<{ mailboxId: string; palette: string[]; categories: MailCategory[] }>(
+        r, 'Your categories could not be loaded.')),
+
+  createCategory: (f: AuthedFetch, name: string, colour: string, mailboxId?: string) =>
+    f(withMb('/mail/categories', mailboxId), {
+      method: 'POST',
+      body: JSON.stringify({ name, colour }),
+    }).then((r) => json<{ id: string; name: string; colour: string; position: number }>(
+      r, 'The category could not be created.')),
+
+  updateCategory: (
+    f: AuthedFetch, id: string,
+    patch: { name?: string; colour?: string; position?: number }, mailboxId?: string,
+  ) =>
+    f(withMb(`/mail/categories/${id}`, mailboxId), {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }).then((r) => json<{ id: string; name: string; colour: string; position: number }>(
+      r, 'The category could not be changed.')),
+
+  /**
+   * DELETING LOSES THE LABEL AND NEVER THE MAIL - the schema is ON DELETE
+   * SET NULL, and the server returns how many messages just lost this colour
+   * so the confirmation can have said so BEFORE the click.
+   */
+  deleteCategory: (f: AuthedFetch, id: string, mailboxId?: string) =>
+    f(withMb(`/mail/categories/${id}`, mailboxId), { method: 'DELETE' })
+      .then((r) => json<{ deleted: string; messagesUnlabelled: number }>(
+        r, 'The category could not be deleted.')),
+
+  /**
+   * One statement for the whole selection; null categoryId CLEARS the
+   * colour. Capped server-side at 500 - the bulk bar never sends more than a
+   * page, so the cap is a backstop, not a limit anyone should meet.
+   */
+  assignCategory: (
+    f: AuthedFetch, messageIds: string[], categoryId: string | null, mailboxId?: string,
+  ) =>
+    f(withMb('/mail/categories/assign', mailboxId), {
+      method: 'POST',
+      body: JSON.stringify({ messageIds, categoryId }),
+    }).then((r) => json<{ updated: number; categoryId: string | null }>(
+      r, 'The colour could not be applied.')),
 
   /**
    * Keep a file somebody sent you, in your own Space.
