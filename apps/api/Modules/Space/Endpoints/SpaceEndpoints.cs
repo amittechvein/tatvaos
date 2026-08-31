@@ -1019,10 +1019,7 @@ public static class SpaceEndpoints
         if (file is null) return Error(404, "No such file.");
         if (file.DeletedAt is not null) return Error(409, "This file is in the trash. Restore it first.");
 
-        var isOrgAdmin = await db.Users.AsNoTracking()
-            .Where(u => u.Id == uid)
-            .Select(u => u.Role == "org_owner" || u.Role == "org_admin" || u.Role == "super_admin")
-            .FirstOrDefaultAsync(ct);
+        var isOrgAdmin = await IsOrgAdminAsync(db, uid, ct);
 
         if (file.OwnershipType == "personal")
         {
@@ -1365,31 +1362,40 @@ public static class SpaceEndpoints
     // ==================================================================
 
     /// <summary>
-    /// The level needed to READ or CHANGE an item's share list: owner on
-    /// personal items, edit on organisational. view/comment callers get a
-    /// 403 — who else can see a thing is not theirs to know.
+    /// Loads the item and the caller's permission on it. Answers 404 and
+    /// nothing else — the two gates below decide what level they need. One
+    /// implementation because a second copy of "how do I find this item and
+    /// what may this person do with it" is exactly the thing that drifts.
+    /// </summary>
+    private static async Task<(IResult? Error, string Ownership, Guid? Owner, string Permission)>
+        ShareSubjectAsync(Guid id, bool isFile, AppDbContext db, Guid uid, CancellationToken ct)
+    {
+        if (isFile)
+        {
+            var f = await db.SpaceFiles.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
+            if (f is null) return (Error(404, "No such file."), "", null, "");
+            return (null, f.OwnershipType, f.OwnerUserId, await FilePermAsync(db, f, uid, ct));
+        }
+
+        var d = await db.SpaceFolders.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (d is null) return (Error(404, "No such folder."), "", null, "");
+        return (null, d.OwnershipType, d.OwnerUserId, await FolderPermAsync(db, id, uid, ct));
+    }
+
+    /// <summary>
+    /// The level needed to CHANGE an item's share list: owner on personal
+    /// items, edit on organisational.
+    ///
+    /// Reading the list is a different question with a different answer —
+    /// see ShareReadGateAsync. This gate used to serve both, and that is why
+    /// anyone with edit on an organisational file could read out the names
+    /// of everybody else it was shared with.
     /// </summary>
     internal static async Task<(IResult? Error, string Ownership, Guid? Owner)>
         ShareGateAsync(Guid id, bool isFile, AppDbContext db, Guid uid, CancellationToken ct)
     {
-        string ownership;
-        Guid? owner;
-        string perm;
-
-        if (isFile)
-        {
-            var f = await db.SpaceFiles.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
-            if (f is null) return (Error(404, "No such file."), "", null);
-            ownership = f.OwnershipType; owner = f.OwnerUserId;
-            perm = await FilePermAsync(db, f, uid, ct);
-        }
-        else
-        {
-            var f = await db.SpaceFolders.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
-            if (f is null) return (Error(404, "No such folder."), "", null);
-            ownership = f.OwnershipType; owner = f.OwnerUserId;
-            perm = await FolderPermAsync(db, id, uid, ct);
-        }
+        var (err, ownership, owner, perm) = await ShareSubjectAsync(id, isFile, db, uid, ct);
+        if (err is not null) return (err, "", null);
 
         var required = ownership == "personal" ? "owner" : "edit";
         if (Rank(perm) < Rank(required))
@@ -1398,16 +1404,82 @@ public static class SpaceEndpoints
         return (null, ownership, owner);
     }
 
+    /// <summary>
+    /// The level needed to ASK about an item's sharing: owner on personal
+    /// items, any access at all on organisational ones. Passing this gate
+    /// does not decide WHAT you are told — ListSharesAsync does that.
+    /// </summary>
+    private static async Task<(IResult? Error, string Ownership, Guid? Owner)>
+        ShareReadGateAsync(Guid id, bool isFile, AppDbContext db, Guid uid, CancellationToken ct)
+    {
+        var (err, ownership, owner, perm) = await ShareSubjectAsync(id, isFile, db, uid, ct);
+        if (err is not null) return (err, "", null);
+
+        var required = ownership == "personal" ? "owner" : "view";
+        if (Rank(perm) < Rank(required))
+            return (Error(403, "You do not have access to manage sharing for this item."), "", null);
+
+        return (null, ownership, owner);
+    }
+
+    /// <summary>
+    /// Organisation-level administrator. The role set is written out in
+    /// several modules; this is Space's only copy of it, and consolidating
+    /// them is a conversation with Core rather than a quiet edit of his files.
+    /// </summary>
+    private static Task<bool> IsOrgAdminAsync(AppDbContext db, Guid uid, CancellationToken ct) =>
+        db.Users.AsNoTracking()
+            .Where(u => u.Id == uid)
+            .Select(u => u.Role == "org_owner" || u.Role == "org_admin" || u.Role == "super_admin")
+            .FirstOrDefaultAsync(ct);
+
+    /// <summary>
+    /// Who a thing is shared with — and who is allowed to know.
+    ///
+    /// Amit's ruling, 30 Aug 2026: THE SHARE LIST IS PERSONAL DATA. A file
+    /// shared with thirty parents at a school carries, in its share list, the
+    /// names and addresses of twenty-nine other families who never agreed to
+    /// be visible to each other. A collaborative document where seeing your
+    /// colleagues is the point is the same feature with entirely different
+    /// stakes, and nothing inside this method can tell the two apart.
+    ///
+    /// So it defaults closed:
+    ///   · the uploader, and organisation admins on organisational items,
+    ///     see everyone and at what level;
+    ///   · everybody else sees that the item is shared, and sees their own
+    ///     access, and learns nothing about anyone else;
+    ///   · a share to the whole organisation is shown as itself. It names a
+    ///     group, not a person, and no membership is stored to expand.
+    ///
+    /// The asymmetry decides it: more can always be revealed later, and a
+    /// disclosure cannot be taken back.
+    ///
+    /// NO COUNT is returned either. "Shared with 29 others" is itself a fact
+    /// about those 29. And because a short list looks exactly like a complete
+    /// one, the response says which of the two views the caller is holding —
+    /// a partial list presented as whole is the defect, not the omission.
+    /// </summary>
     private static async Task<IResult> ListSharesAsync(
         Guid id, bool isFile, AppDbContext db, TenantContext tenant, CancellationToken ct)
     {
         if (!TryCaller(tenant, out var uid)) return Results.Unauthorized();
 
-        var (err, _, _) = await ShareGateAsync(id, isFile, db, uid, ct);
+        var (err, ownership, owner) = await ShareReadGateAsync(id, isFile, db, uid, ct);
         if (err is not null) return err;
 
-        var shares = await db.SpaceShares.AsNoTracking()
-            .Where(s => isFile ? s.FileId == id : s.FolderId == id)
+        var canSeeEveryone = owner == uid
+            || (ownership == "organisational" && await IsOrgAdminAsync(db, uid, ct));
+
+        var q = db.SpaceShares.AsNoTracking()
+            .Where(s => isFile ? s.FileId == id : s.FolderId == id);
+
+        // The narrowing happens HERE, in the query, not in the projection
+        // below. Rows about other people are never loaded, so no later edit
+        // to the DTO can put them back on the wire by accident.
+        if (!canSeeEveryone)
+            q = q.Where(s => s.OrgWide || s.SharedWithUserId == uid);
+
+        var shares = await q
             .OrderBy(s => s.CreatedAt)
             .ToListAsync(ct);
 
@@ -1424,7 +1496,11 @@ public static class SpaceEndpoints
             shares = shares.Select(s => new ShareDto(
                 s.Id, s.SharedWithUserId,
                 s.SharedWithUserId is Guid g ? names.GetValueOrDefault(g) : null,
-                s.OrgWide, s.Permission, s.SharedByUserId, s.CreatedAt)).ToList()
+                s.OrgWide, s.Permission, s.SharedByUserId, s.CreatedAt)).ToList(),
+
+            // Additive, and the reason it exists: without it a caller cannot
+            // tell "shared with nobody else" from "not allowed to know".
+            canSeeEveryone
         });
     }
 

@@ -66,6 +66,7 @@ info() { printf '        · %s\n' "$1"; }
 head2(){ printf '\n  %s\n  %s\n' "$1" "$(printf '%.0s─' $(seq 1 62))"; }
 
 FAILED=0
+STATIC_FAILED=0
 
 # ---- 0. Guards ---------------------------------------------------------------
 if [[ "$SCRATCH" != scratch_* ]]; then
@@ -73,6 +74,34 @@ if [[ "$SCRATCH" != scratch_* ]]; then
     echo "This script DROPs it. That prefix is what makes it impossible to" >&2
     echo "point at a real database, however this file is edited." >&2
     exit 2
+fi
+
+# ---- 0a. Static checks — no database required --------------------------------
+# Space's public-link gate is duplicated across two SECURITY DEFINER functions
+# that now live in two different files, because a later migration re-created
+# one of them with a wider return type. Neither pass below can see them drift
+# apart: both files apply cleanly and re-run cleanly whatever their WHERE
+# clauses say. The check is therefore textual, it lives in its own script, and
+# it is called from here because a check nobody runs automatically is a check
+# that does not exist.
+#
+# Run before the database work because it needs no database — a developer
+# without Docker up still gets this one.
+head2 "static checks"
+PREDICATE="infra/scripts/verify-space-link-predicate.sh"
+if [[ ! -f "$PREDICATE" ]]; then
+    bad "$PREDICATE is missing"
+    info "It is called from here deliberately. If it was removed on purpose,"
+    info "remove this block in the same commit; do not leave the call dangling."
+    STATIC_FAILED=1
+    FAILED=1
+elif bash "$PREDICATE" >/tmp/predicate.out 2>&1; then
+    ok "space public-link predicate agrees across every definition"
+else
+    bad "space public-link predicate"
+    sed 's/^/          /' /tmp/predicate.out
+    STATIC_FAILED=1
+    FAILED=1
 fi
 
 head2 "locating postgres"
@@ -153,4 +182,8 @@ fi
 
 bad "the schema directory is not safe to deploy"
 info "pass 1 failures break NEW installs; pass 2 failures break EVERY deploy"
+if [[ "$STATIC_FAILED" -eq 1 ]]; then
+    info "a STATIC check failed above, and that is neither of those: the files"
+    info "apply fine and re-run fine, and say the wrong thing. Read that section."
+fi
 exit 1
