@@ -135,12 +135,13 @@ export function MailboxSwitcher() {
           {/* Click-away, below the menu and above the page. */}
           <div className="position-fixed" style={{ inset: 0, zIndex: 1390 }}
                onClick={close} aria-hidden="true" />
+          {/* bg-surface / text-ink, NOT the '#fff'/'#1f2937' literals this
+              carried: those were mixed for a light page, and in dark mode
+              this menu was the one glaring white rectangle on the screen.
+              Tokens follow the theme; hex values follow nothing. */}
           <div
-            className="position-absolute rounded shadow"
-            style={{
-              zIndex: 1400, left: 0, right: 0, top: '100%', marginTop: 4,
-              background: '#fff', color: '#1f2937', overflow: 'hidden',
-            }}
+            className="position-absolute overflow-hidden rounded border border-line bg-surface text-ink shadow"
+            style={{ zIndex: 1400, left: 0, right: 0, top: '100%', marginTop: 4 }}
           >
             {mailboxes.map((m) => (
               <button
