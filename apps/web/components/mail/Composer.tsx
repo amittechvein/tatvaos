@@ -784,7 +784,9 @@ export function Composer({
 
         {/* Recipients */}
         <div className="px-4">
-          <div className="flex items-center gap-2 border-b border-line py-2.5 text-sm transition-colors focus-within:border-brand-500">
+          {/* No focus-within here: this row holds no input, and a border
+              that promises focus it can never show is furniture. */}
+          <div className="flex items-center gap-2 border-b border-line py-2.5 text-sm">
             <span className="w-12 shrink-0 text-ink-muted">From</span>
             <span className="truncate text-ink">{fromAddress}</span>
           </div>
@@ -860,11 +862,14 @@ export function Composer({
               </ContactPicker>
             </label>
           )}
+          {/* Labelled like From and To, so the four rows read as one aligned
+              form instead of three labelled rows and a stray. The placeholder
+              goes with the label's arrival - saying "Subject" twice is noise. */}
           <label className="flex items-center gap-2 border-b border-line py-2.5 text-sm transition-colors focus-within:border-brand-500">
+            <span className="w-12 shrink-0 text-ink-muted">Subject</span>
             <input
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
-              placeholder="Subject"
               className="w-full border-0 bg-transparent p-0 text-sm font-medium text-ink outline-none placeholder:text-ink-faint"
             />
           </label>
