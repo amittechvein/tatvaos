@@ -42,22 +42,37 @@ default_pass_scheme = SHA512-CRYPT
 # revocable on its own, so removing Thunderbird's access does not lock the
 # person out of every other TatvaOS product.
 #
-# THE translate() IS LOAD-BEARING - it is why primary passwords work at all.
+# THE PADDING STRIP IS LOAD-BEARING - it is why primary passwords work at
+# all - AND ITS FIRST VERSION CAUSED THE OUTAGE IT EXISTED TO PREVENT.
 #
 # The API hashes with .NET's Convert.ToBase64String, which PADS: the salt
 # ends '==', the digest ends '='. Dovecot verifies ARGON2ID through
-# libsodium, whose parser accepts ONLY its own unpadded encoding. Proven on
-# production, 31 Aug 2026, with doveadm pw -t: libsodium's own hash verified,
-# the SAME hash with '=' added was rejected; a reference-CLI p=2 unpadded
-# hash of a known password verified. Same password, same digest - two '='
-# characters decided authentication. Until this translate(), every primary
-# password failed IMAP auth, unnoticed because every configured client held
-# an app password (the {SSHA512} store below, which is immune).
+# libsodium, whose parser accepts ONLY unpadded encoding. Proven on
+# production, 31 Aug 2026, with doveadm pw -t: libsodium's own hash
+# verified, the SAME hash with '=' added was rejected; a reference-CLI
+# unpadded p=2 hash of a known password verified.
 #
-# translate at READ time, deliberately: the stored format stays the
-# platform's, because Core's PasswordHasher.Verify REQUIRES the padding -
-# stripping it in storage would fix mail by breaking every product login.
-# '=' occurs in base64 only as padding, so removal is lossless.
+# Version 1 of this fix was translate(hash, '=', ''), shipped over the
+# sentence "'=' occurs in base64 only as padding". FALSE: '=' also lives in
+# the PHC header (v=19, m=65536, t=3, p=2) and in crypt's rounds=5000, and
+# translate amputated all of them - '$argon2id$v19$m65536,t3,p2$...' -
+# breaking primary auth everywhere and every seeded login in CI, whose
+# cold-start mail-stack job caught it before the next deploy shipped it.
+# The one production auth that appeared to prove v1 came through the
+# app-password passdb (the immune {SSHA512} store below), not this query.
+#
+# Hence the shape: rtrim removes end-of-string padding, the two replace()
+# calls remove it at the '$' field boundaries (salt '==$'/'=$'). Header
+# '='s are followed by digits, never '$', so they survive; crypt hashes
+# contain neither pattern and pass through unchanged. LITERAL string
+# functions on purpose - this line is re-rendered by entrypoint.sh and then
+# parsed by Dovecot's config reader, and a regex's backslashes would need
+# to survive both. Verified on the live row before commit: header intact,
+# length 100 -> 97, exactly the three '=' removed.
+#
+# Strip at READ time, deliberately: the stored format stays the platform's,
+# because Core's PasswordHasher.Verify REQUIRES the padding - stripping it
+# in storage would fix mail by breaking every product login.
 #
 # The core.users join is what makes a suspended PERSON stop authenticating.
 # The tenants join does the same for a suspended ORGANISATION. A shared
@@ -65,7 +80,7 @@ default_pass_scheme = SHA512-CRYPT
 # the "u.id IS NULL OR u.status = 'active'" rather than a plain WHERE.
 password_query = \
     SELECT m.address AS user, \
-           translate(m.imap_password_hash, '=', '') AS password \
+           replace(replace(rtrim(m.imap_password_hash, '='), '==$', '$'), '=$', '$') AS password \
     FROM   mail.mailboxes m \
     JOIN   core.tenants   t ON t.id = m.tenant_id \
     LEFT   JOIN core.users u ON u.id = m.user_id \
