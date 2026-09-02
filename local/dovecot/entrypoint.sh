@@ -105,6 +105,22 @@ if [ -f "$TMPL2" ]; then
         exit 1
     fi
     echo "[dovecot] rendered dovecot-sql-app.conf.ext"
+else
+    # REFUSE, do not skip. This branch used to fall through silently, and the
+    # cost is on record: local's compose never mounted the template, dovecot.conf
+    # declares a passdb pointing at the rendered file, and every cold start from
+    # 28 Aug to 2 Sep died with "Can't open configuration file" - five days of a
+    # red mail-stack job blamed on three wrong theories before anyone was told
+    # the mount was missing. A guard that skips quietly where it should refuse
+    # loudly is a wish; this is the mechanism.
+    if grep -qs 'dovecot-sql-app.conf.ext' /etc/dovecot/dovecot.conf; then
+        echo "[dovecot] FATAL: dovecot.conf declares the app-password passdb, but"
+        echo "[dovecot]        $TMPL2 is not mounted."
+        echo "[dovecot]        Add to this environment's compose file, matching production:"
+        echo "[dovecot]          - ./dovecot/dovecot-sql-app.conf.ext:$TMPL2:ro"
+        exit 1
+    fi
+    echo "[dovecot] app-password template not mounted and dovecot.conf does not use it - skipping"
 fi
 
 # Wait for Postgres. depends_on only guarantees the container started, and
