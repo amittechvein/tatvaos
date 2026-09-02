@@ -154,6 +154,16 @@ services:
     volumes:
       - ./dovecot/dovecot.conf:/etc/dovecot/dovecot.conf:ro
       - ./dovecot/dovecot-sql.conf.ext:/etc/dovecot/dovecot-sql.conf.ext.tmpl:ro
+      # BOTH templates, matching production. dovecot.conf declares two SQL
+      # passdbs; entrypoint.sh renders one file per template. This mount was
+      # missing here and present in docker-compose.base.yml, so the app-password
+      # passdb pointed at a file that was never rendered, Dovecot's auth process
+      # died on every cold start, and the mail-stack CI job was red from 28 Aug
+      # for a reason unrelated to whatever change was under review.
+      #
+      # If you add a passdb, you are editing two compose files. The one that is
+      # easy to miss is whichever one you are not looking at.
+      - ./dovecot/dovecot-sql-app.conf.ext:/etc/dovecot/dovecot-sql-app.conf.ext.tmpl:ro
       - vmail:/var/mail/vhosts
     networks: [mailnet]
 
