@@ -387,6 +387,16 @@ function ShareDialog({ kind, item, onClose, onChanged }: {
 }) {
   const { authedFetch } = useAuth();
   const [shares, setShares] = useState<SpaceShare[] | null>(null);
+  // false => the list is deliberately PARTIAL. Not a permission error and
+  // not an empty list: rows about other people were never sent. Held
+  // separately because a partial list and a complete one look identical.
+  //
+  // Defaults to FALSE, the cautious value. Today it cannot be read before
+  // the fetch sets it (both land in the same .then, and every branch is
+  // guarded on shares !== null) - but a privacy control whose default
+  // over-discloses is one refactor away from doing so, and the cautious
+  // default costs nothing.
+  const [canSeeEveryone, setCanSeeEveryone] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -397,8 +407,8 @@ function ShareDialog({ kind, item, onClose, onChanged }: {
   const [inviteLevel, setInviteLevel] = useState<SpaceShare['permission']>('view');
 
   const reload = useCallback(() => {
-    spaceApi.shares(authedFetch, kind, item.id)
-      .then(setShares)
+    spaceApi.sharesDetail(authedFetch, kind, item.id)
+      .then((b) => { setShares(b.shares); setCanSeeEveryone(b.canSeeEveryone); })
       .catch((e: Error) => setErr(e.message));
   }, [authedFetch, kind, item.id]);
 
@@ -514,9 +524,13 @@ function ShareDialog({ kind, item, onClose, onChanged }: {
               <p className="py-1 text-xs text-ink-faint">Loading…</p>
             ) : named.length === 0 ? (
               <p className="py-1 text-xs text-ink-faint">
-                Only you. {item.ownershipType === 'organisational'
-                  ? 'This item belongs to the organisation, so colleagues may already reach it.'
-                  : 'Nobody else can open this.'}
+                {/* "Only you" is a claim about other people, and a non-owner is
+                    not shown rows about them - so only the owner may say it. */}
+                {canSeeEveryone
+                  ? <>Only you. {item.ownershipType === 'organisational'
+                      ? 'This item belongs to the organisation, so colleagues may already reach it.'
+                      : 'Nobody else can open this.'}</>
+                  : 'Shared with others.'}
               </p>
             ) : named.map((s) => (
               <div key={s.id} className="flex items-center gap-2 py-1.5 text-sm">
@@ -544,6 +558,17 @@ function ShareDialog({ kind, item, onClose, onChanged }: {
                 </button>
               </div>
             ))}
+            {/* The list above is what THIS viewer may know about. Without this
+                line a partial list is indistinguishable from a complete one,
+                which is the whole reason canSeeEveryone is on the response.
+                Deliberately no count: how many other people hold access is
+                itself a fact about them. */}
+            {shares !== null && !canSeeEveryone && (
+              <p className="py-1 text-xs text-ink-faint">
+                Shared with others. Only the person who uploaded this, and
+                organisation admins, can see everyone on the list.
+              </p>
+            )}
           </div>
 
           {/* ---- General access ---- */}
