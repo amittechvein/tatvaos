@@ -234,7 +234,12 @@ services:
       # Postfix submission port. On testing that relays to Mailpit, so signup
       # codes are readable at mail-catcher.staging rather than emailing anyone.
       Smtp__Host: postfix
-      Smtp__Port: "587"
+      # 10587, NOT 587. 587 is the customer port: production requires TLS and
+      # a SASL password there, and the API has neither. 10587 is the internal
+      # API submission service in local/postfix/master.cf - same sender gate,
+      # same DKIM, never published to the host. Pointing this at 587 made
+      # every API send on production fail as "could not be reached" (3 Sept).
+      Smtp__Port: "10587"
       Smtp__From: ${SMTP_FROM:-no-reply@tatvaos.com}
       Mail__SpfInclude: ${MAIL_SPF_INCLUDE:-_spf.tatvaos.com}
       # Zone new organisations get their free sign-in subdomain under.
