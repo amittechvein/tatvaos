@@ -151,19 +151,17 @@ END $$;
 --  place in Mail permitted to read an api_keys row without a tenant.
 -- ---------------------------------------------------------------------------
 
-CREATE OR REPLACE FUNCTION mail.resolve_api_key(p_hash text)
-RETURNS TABLE (key_id uuid, tenant_id uuid, was_revoked boolean)
-LANGUAGE sql
-SECURITY DEFINER
-SET search_path = mail, pg_temp
-AS $$
-    SELECT k.id, k.tenant_id, (k.revoked_at IS NOT NULL)
-      FROM mail.api_keys k
-     WHERE k.key_hash = p_hash;
-$$;
-
-REVOKE ALL ON FUNCTION mail.resolve_api_key(text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION mail.resolve_api_key(text) TO tatvaos_app;
+-- THE FUNCTION ITSELF IS DEFINED FURTHER DOWN, not here, and that is
+-- deliberate. It returns allowed_sender_addresses, so it cannot be created
+-- until the ALTER TABLE below has added that column.
+--
+-- A three-column version used to sit at this point and be replaced by the
+-- four-column one thirty lines later. That worked exactly once. On the second
+-- run - and this directory re-runs in full on every deploy - this statement
+-- tried to narrow the existing four-column function back to three, and
+-- Postgres refused: "cannot change return type of existing function". The
+-- file passed a fresh install and broke the deploy after it, which is the
+-- worst way round.
 
 -- ============================================================================
 --  Email address restrictions (added after initial creation)
@@ -171,13 +169,28 @@ GRANT EXECUTE ON FUNCTION mail.resolve_api_key(text) TO tatvaos_app;
 --  Keys can send ONLY from their allowed addresses.
 -- ============================================================================
 
-ALTER TABLE mail.api_keys 
-  ADD COLUMN allowed_sender_addresses TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
+-- IF NOT EXISTS because every file in this directory re-runs in full on every
+-- deploy. Without it the first re-run fails here, and deploy.sh stops on the
+-- first error and refuses to recreate the containers.
+ALTER TABLE mail.api_keys
+  ADD COLUMN IF NOT EXISTS allowed_sender_addresses TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
 
--- Constraint: active keys must have at least one allowed address
-ALTER TABLE mail.api_keys 
-  ADD CONSTRAINT check_active_keys_have_addresses 
-  CHECK (revoked_at IS NOT NULL OR array_length(allowed_sender_addresses, 1) > 0);
+-- Constraint: active keys must have at least one allowed address.
+--
+-- ADD CONSTRAINT has no IF NOT EXISTS in PostgreSQL - the syntax simply does
+-- not exist - so the guard is a lookup in pg_constraint. Same shape as
+-- meetings_chat_policy_check in the connect migrations, for the same reason.
+DO $guard$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+         WHERE conname = 'check_active_keys_have_addresses'
+           AND conrelid = 'mail.api_keys'::regclass) THEN
+        ALTER TABLE mail.api_keys
+          ADD CONSTRAINT check_active_keys_have_addresses
+          CHECK (revoked_at IS NOT NULL OR array_length(allowed_sender_addresses, 1) > 0);
+    END IF;
+END $guard$;
 
 -- Index for membership checks during send validation
 CREATE INDEX IF NOT EXISTS ix_api_keys_addresses 
@@ -186,6 +199,19 @@ CREATE INDEX IF NOT EXISTS ix_api_keys_addresses
 -- ============================================================================
 --  Update key resolution to include restrictions
 -- ============================================================================
+
+-- CREATE OR REPLACE cannot change a function's RETURN TYPE, and this widens
+-- the earlier three-column version above to four. Postgres refuses with
+-- "cannot change return type of existing function", which is what failed on
+-- an empty database.
+--
+-- DROP first, and both statements inside one transaction: psql autocommits
+-- each statement otherwise, and the schema step runs while the OLD API
+-- containers are still serving. Without the transaction there is a window,
+-- however small, where a live request finds no such function.
+BEGIN;
+
+DROP FUNCTION IF EXISTS mail.resolve_api_key(text);
 
 CREATE OR REPLACE FUNCTION mail.resolve_api_key(p_hash text)
 RETURNS TABLE (
@@ -205,6 +231,8 @@ $$;
 
 REVOKE ALL ON FUNCTION mail.resolve_api_key(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION mail.resolve_api_key(text) TO tatvaos_app;
+
+COMMIT;
 
 DO $$
 BEGIN
