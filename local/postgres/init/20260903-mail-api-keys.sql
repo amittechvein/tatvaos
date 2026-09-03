@@ -127,3 +127,40 @@ DO $$
 BEGIN
     RAISE NOTICE 'mail.api_keys + mail.api_sends - shown once, revoke-not-delete, keep everything.';
 END $$;
+
+-- ---------------------------------------------------------------------------
+--  Key resolution - the one deliberate hole, kept as small as possible
+-- ---------------------------------------------------------------------------
+--
+--  A send request arrives carrying a key and nothing else. To learn the tenant
+--  we must read a row we are not yet allowed to read: RLS needs app.tenant_id,
+--  and app.tenant_id is not knowable until the key is found. That is a circle.
+--
+--  The first version of the endpoint tried to break it with
+--  EnterPlatformScope(Guid.Empty, ...). That does NOT work and was never going
+--  to - platform scope deliberately does not disable RLS, it sets a tenant per
+--  operation - so every query ran with app.tenant_id all zeros, matched no
+--  policy row, and told every VALID key that it was invalid. EF's
+--  IgnoreQueryFilters() disguised it: that drops EF's own filter and leaves
+--  the DATABASE policy completely in force.
+--
+--  So this function does exactly one thing, modelled on
+--  core.resolve_refresh_token, which broke the identical circle for the
+--  refresh endpoint: given a key hash, return who it belongs to. It reveals
+--  nothing to a caller who does not already hold the key, and it is the only
+--  place in Mail permitted to read an api_keys row without a tenant.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION mail.resolve_api_key(p_hash text)
+RETURNS TABLE (key_id uuid, tenant_id uuid, was_revoked boolean)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = mail, pg_temp
+AS $$
+    SELECT k.id, k.tenant_id, (k.revoked_at IS NOT NULL)
+      FROM mail.api_keys k
+     WHERE k.key_hash = p_hash;
+$$;
+
+REVOKE ALL ON FUNCTION mail.resolve_api_key(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION mail.resolve_api_key(text) TO tatvaos_app;
