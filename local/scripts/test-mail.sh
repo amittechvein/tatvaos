@@ -234,13 +234,34 @@ submit() {
           --hide-all --silent 3 >/dev/null 2>&1
 }
 
-# THE assertion. If this passes when it should fail, we have an open spam
-# relay and the answer we gave Linode is untrue.
-if submit "spammer@unverified.local" "victim@gmail.com"; then
+# Like submit(), but keeps the transcript: the refusal's CODE and WORDING are
+# the assertion, not merely that something was refused.
+submit_verbose() {
+    swaks --server "$SMTP_HOST:$SUB_PORT" \
+          --from "$1" --to "$2" \
+          --header "Subject: gate test $(date +%s)" --body "x" 2>&1
+}
+
+# THE assertion. If the send SUCCEEDS we have an open spam relay and the
+# answer we gave Linode is untrue. But a bare "was it refused" is not enough
+# to pass: this test once said [PASS] while main.cf carried shell quotes
+# inside the static: value - the restriction was unparseable, Postfix refused
+# EVERYTHING with "451 4.3.5 Server configuration error", and the customer
+# story behind the green tick was an infinite retry loop with no mention of
+# domain verification. A working gate and a broken config both refuse; only
+# the code and the sentence tell them apart.
+gate_out=$(submit_verbose "spammer@unverified.local" "victim@gmail.com")
+if printf '%s' "$gate_out" | grep -q '250 2.0.0'; then
     fail "UNVERIFIED TENANT SENT TO THE OUTSIDE WORLD — the outbound gate is OFF"
     info "This is the control the Linode SMTP unblock rests on. Do not deploy."
+elif printf '%s' "$gate_out" | grep -q '550 5\.7\.1' \
+     && printf '%s' "$gate_out" | grep -q 'requires a verified domain'; then
+    pass "unverified tenant refused with 550 5.7.1 and the verification message"
 else
-    pass "unverified tenant rejected when sending off-platform"
+    fail "refused, but NOT with our 550 and our wording — the gate config is broken"
+    info "A 451 here means the static: value did not parse; the customer sees"
+    info "'server configuration error' and retries forever."
+    printf '         %s\n' "$(printf '%s' "$gate_out" | grep -E '[245][0-9][0-9] ' | tail -3)"
 fi
 
 # The gate must not be a blanket ban, or a new customer cannot email their own
