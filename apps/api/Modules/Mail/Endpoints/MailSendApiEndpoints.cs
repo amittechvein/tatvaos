@@ -94,30 +94,81 @@ public static class MailSendApiEndpoints
         var presented = header["Bearer ".Length..].Trim();
         var hash = MailApiKeyEndpoints.Sha256(presented);
 
-        // Platform scope for this one read: the tenant is not known until the
-        // key resolves, which is the whole point of the lookup. RLS is not
-        // bypassed - EnterPlatformScope sets a tenant per operation - so the
-        // scope is narrowed again the moment we know who this is.
-        tenant.EnterPlatformScope(Guid.Empty, Guid.Empty);
+        // --------------------------------------------------------------------
+        //  Breaking the circle: RLS needs a tenant, and the tenant is not
+        //  known until the key is found.
+        //
+        //  This was first written as EnterPlatformScope(Guid.Empty, ...) and
+        //  that was simply wrong. Platform scope deliberately does NOT disable
+        //  RLS - it sets a tenant per operation - so the lookup ran with
+        //  app.tenant_id all zeros, matched no policy row, and answered "that
+        //  API key is not valid" to a perfectly valid key. IgnoreQueryFilters()
+        //  disguised it by dropping EF's filter while leaving the DATABASE
+        //  policy fully in force.
+        //
+        //  mail.resolve_api_key is SECURITY DEFINER and does exactly one
+        //  thing, exactly as core.resolve_refresh_token does for the refresh
+        //  endpoint. It tells a caller nothing they do not already hold.
+        // --------------------------------------------------------------------
+        Guid keyId;
+        Guid keyTenantId;
+        bool wasRevoked;
+        {
+            var conn = db.Database.GetDbConnection();
 
-        var key = await db.MailApiKeys.IgnoreQueryFilters().AsNoTracking()
-            .FirstOrDefaultAsync(k => k.KeyHash == hash, ct);
+            // Opening the raw connection bypasses TenantConnectionInterceptor,
+            // which sets app.tenant_id ONLY in ConnectionOpenedAsync. Leaving
+            // it open here would mean every query after this point runs on a
+            // connection that never got a tenant - returning zero rows, all
+            // request long, for reasons nothing would explain. So it is closed
+            // again the moment the resolver is done, and EF opens its own
+            // through the interceptor once the scope below is set.
+            var openedHere = conn.State != System.Data.ConnectionState.Open;
+            if (openedHere) await conn.OpenAsync(ct);
+            try
+            {
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText =
+                    "SELECT key_id, tenant_id, was_revoked FROM mail.resolve_api_key(@hash)";
 
-        // Revoked and unknown get the SAME answer. Telling a caller their key
-        // once existed is telling an attacker their guess was close.
-        if (key is null || key.RevokedAt != null)
+                var p = cmd.CreateParameter();
+                p.ParameterName = "@hash";
+                p.Value = hash;
+                cmd.Parameters.Add(p);
+
+                await using var reader = await cmd.ExecuteReaderAsync(ct);
+
+                // Revoked and unknown get the SAME answer. Telling a caller
+                // their key once existed is telling an attacker their guess
+                // was close.
+                if (!await reader.ReadAsync(ct))
+                    return Unauthorized("That API key is not valid.");
+
+                keyId       = reader.GetGuid(0);
+                keyTenantId = reader.GetGuid(1);
+                wasRevoked  = reader.GetBoolean(2);
+            }
+            finally
+            {
+                if (openedHere) await conn.CloseAsync();
+            }
+        }
+
+        if (wasRevoked)
             return Unauthorized("That API key is not valid.");
+
+        // From here on this request is that organisation, and every query is
+        // RLS-scoped to it in the ordinary way.
+        tenant.EnterAnonymousScope(keyTenantId, "api");
 
         // ---- 2. The organisation must still be live ------------------------
         // Same gate as every credential store here. A suspended organisation's
         // key stops working, and Postfix's own sender gate carries the same
         // predicate - so this is the fast, clear refusal, not the only one.
-        var org = await db.Tenants.IgnoreQueryFilters().AsNoTracking()
-            .FirstOrDefaultAsync(t => t.Id == key.TenantId, ct);
+        var org = await db.Tenants.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.Id == keyTenantId, ct);
         if (org is null || org.Status is not ("active" or "trial"))
             return Unauthorized("This organisation is not active.");
-
-        tenant.EnterAnonymousScope(key.TenantId, "api");
 
         // ---- 3. The request ------------------------------------------------
         var from    = (req?.From ?? "").Trim();
@@ -192,8 +243,8 @@ public static class MailSendApiEndpoints
             db.MailApiSends.Add(new MailApiSend
             {
                 Id = Guid.NewGuid(),
-                TenantId = key.TenantId,
-                ApiKeyId = key.Id,
+                TenantId = keyTenantId,
+                ApiKeyId = keyId,
                 FromAddress = fromAddress,
                 ToAddress = recipient.Address,
                 Subject = subject,
@@ -206,7 +257,7 @@ public static class MailSendApiEndpoints
         if (accepted)
         {
             // Has a writer, so a NULL genuinely means never used.
-            var tracked = await db.MailApiKeys.FirstOrDefaultAsync(k => k.Id == key.Id, ct);
+            var tracked = await db.MailApiKeys.FirstOrDefaultAsync(k => k.Id == keyId, ct);
             if (tracked is not null) tracked.LastUsedAt = DateTimeOffset.UtcNow;
         }
 
