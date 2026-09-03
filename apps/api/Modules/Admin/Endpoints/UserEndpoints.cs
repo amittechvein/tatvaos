@@ -48,7 +48,7 @@ public static class UserEndpoints
         users.MapPost("/{id:guid}/suspend", SuspendAsync);
         users.MapPost("/{id:guid}/reactivate", ReactivateAsync);
         users.MapPost("/{id:guid}/reset-password", ResetPasswordAsync);
-        users.MapPost("/{id:guid}/reset-app-password", ResetAppPasswordAsync);
+        users.MapPost("/{id:guid}/reset-mailbox-password", ResetMailboxPasswordAsync);
         users.MapDelete("/{id:guid}", DeleteAsync);
         users.MapPost("/{id:guid}/offboard", OffboardAsync);
 
@@ -899,7 +899,7 @@ public static class UserEndpoints
     ///
     /// Deliberately does not touch the mailbox app password. Those are separate
     /// credentials so that revoking a mail client does not lock someone out of
-    /// Payroll, and the reverse. Use reset-app-password for that.
+    /// Payroll, and the reverse. Use reset-mailbox-password for that.
     /// </summary>
     private static async Task<IResult> ResetPasswordAsync(
         Guid id, AppDbContext db, TenantContext tenant, AuditWriter audit,
@@ -943,7 +943,16 @@ public static class UserEndpoints
         });
     }
 
-    private static async Task<IResult> ResetAppPasswordAsync(
+    /// <summary>
+    /// Resets the MAILBOX password — the credential mail apps (Outlook,
+    /// phones, IMAP/SMTP) sign in with. This is neither the core password
+    /// (reset-password above) nor an "app password": app passwords live in
+    /// their own store and people manage those themselves from mail
+    /// settings. The route was named reset-app-password until September
+    /// 2026; the wrong name sent an admin to the wrong reset during a live
+    /// diagnosis — names are part of the interface.
+    /// </summary>
+    private static async Task<IResult> ResetMailboxPasswordAsync(
         Guid id, AppDbContext db, AuditWriter audit, IPasswordHasher hasher, CancellationToken ct)
     {
         var mailboxes = await db.Mailboxes.Where(m => m.UserId == id).ToListAsync(ct);
@@ -953,7 +962,7 @@ public static class UserEndpoints
         foreach (var mb in mailboxes) mb.ImapPasswordHash = hasher.Hash(password);
         await db.SaveChangesAsync(ct);
 
-        await audit.WriteAsync("mailbox.app_password_reset", "user", id.ToString(), ct: ct);
+        await audit.WriteAsync("mailbox.password_reset", "user", id.ToString(), ct: ct);
 
         return Results.Ok(new
         {
