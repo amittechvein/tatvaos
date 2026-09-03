@@ -45,6 +45,36 @@ submission inet n       -       n       -       -       smtpd
     -o smtpd_recipient_restrictions=$submission_recipient_restrictions
 
 # ----------------------------------------------------------------------------
+# API submission :10587  -  our own application, inside the compose network
+#
+#  NOT published to the host in any compose file, and must never be. It is
+#  reachable only from containers on mailnet, and that is the entire trust
+#  argument: permit_mynetworks here means "a container on this box", because
+#  nothing else can open the socket.
+#
+#  WHY IT EXISTS: 587 is the CUSTOMER port. Production rightly requires TLS
+#  and a SASL password there (entrypoint.sh applies that posture), and the
+#  API has neither - it sends on behalf of shared mailboxes that by design
+#  have no password at all. The moment the authenticated posture landed on
+#  587, every send through the API on production started failing: Postfix
+#  answers MAIL FROM with 530 "Must issue a STARTTLS command first", MailKit
+#  raises that as ServiceNotAuthenticatedException, and MailSender's
+#  catch-all reported it as "The mail server could not be reached". Webmail
+#  compose included. Found on 3 September by the send API, which was simply
+#  the first caller anyone was watching.
+#
+#  Same sender gate as 587 (verified-domain outbound), same milters (DKIM
+#  signs it), no TLS and no SASL because this hop never leaves the host.
+# ----------------------------------------------------------------------------
+10587     inet  n       -       n       -       -       smtpd
+    -o syslog_name=postfix/api
+    -o smtpd_tls_security_level=none
+    -o smtpd_sasl_auth_enable=no
+    -o smtpd_client_restrictions=permit_mynetworks,reject
+    -o smtpd_sender_restrictions=$submission_sender_restrictions
+    -o smtpd_recipient_restrictions=permit_mynetworks,reject_unauth_destination,reject
+
+# ----------------------------------------------------------------------------
 # Standard internal services
 # ----------------------------------------------------------------------------
 pickup    unix  n       -       n       60      1       pickup

@@ -1,3 +1,4 @@
+using MailKit;
 using MailKit.Net.Smtp;
 using MailKit.Security;
 using Microsoft.EntityFrameworkCore;
@@ -191,12 +192,22 @@ public static class MailSender
         }
 
         // ---- Submit through our own Postfix -----------------------------
-        //  :587, same path as system mail. The verified-domain outbound gate
-        //  lives THERE, in sender-external-gate.cf — deliberately not
+        //  :10587 - the INTERNAL API submission service in master.cf, not
+        //  :587. 587 is the customer port: production requires TLS and a
+        //  SASL password there, and this code has neither (a shared mailbox
+        //  has no password by design). While this pointed at 587, every send
+        //  through the API on production failed - Postfix answered MAIL FROM
+        //  with 530, MailKit raised ServiceNotAuthenticatedException, and the
+        //  catch-all below reported "could not be reached". Nothing was
+        //  unreachable; it was the wrong door. The fallback here is 10587 so
+        //  that a missing Smtp:Port can never quietly reproduce that.
+        //
+        //  The verified-domain outbound gate lives in Postfix, in
+        //  sender-external-gate.cf, on BOTH ports - deliberately not
         //  re-implemented here, because two copies of one rule drift and the
         //  Postfix one is the one Linode was told about.
         var host = config["Smtp:Host"] ?? "postfix";
-        var port = int.TryParse(config["Smtp:Port"], out var p) ? p : 587;
+        var port = int.TryParse(config["Smtp:Port"], out var p) ? p : 10587;
 
         try
         {
@@ -221,9 +232,25 @@ public static class MailSender
             log.LogInformation(ex, "Send from {From} refused by SMTP", box.Address);
             return new SendResult(SendOutcome.Refused, null, null, CleanSmtpError(ex.Message));
         }
+        catch (ServiceNotAuthenticatedException ex)
+        {
+            // Postfix demanded credentials. That is a configuration fault on
+            // OUR side - this code is pointed at a port that requires SASL -
+            // and calling it "unreachable" cost an hour on 3 September. Say
+            // what it is.
+            log.LogError(ex, "Send from {From} refused: Postfix on {Host}:{Port} requires " +
+                             "authentication. The API must submit on the internal port.",
+                         box.Address, host, port);
+            return new SendResult(SendOutcome.Refused, null, null,
+                "The mail server requires authentication on this port. This is a " +
+                "server configuration fault, not a problem with your message.");
+        }
         catch (Exception ex)
         {
-            log.LogError(ex, "Send from {From} failed", box.Address);
+            // Everything else: socket, DNS, timeout, unexpected disconnect.
+            // The exception TYPE is in the log line; the response stays
+            // generic because the caller cannot act on it.
+            log.LogError(ex, "Send from {From} failed ({Kind})", box.Address, ex.GetType().Name);
             return new SendResult(SendOutcome.Unreachable, null, null,
                 "The mail server could not be reached. Nothing was sent.");
         }
