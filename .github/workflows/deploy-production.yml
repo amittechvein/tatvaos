@@ -158,7 +158,36 @@ jobs:
             set -euo pipefail
             cd /srv/tatvaos-production
             git fetch --all --prune
-            git reset --hard ${{ inputs.ref }}
+
+            # ------------------------------------------------------------
+            #  Two bugs lived in the single line this replaces, and only
+            #  one of them ever spoke up.
+            #
+            #  LOUD: `git reset --hard main` died with "ambiguous argument
+            #  'main': both revision and filename" on 3 Sept, because a
+            #  path named main exists in this checkout. The `--` below is
+            #  git's own prescribed cure: everything before it is a
+            #  revision, full stop.
+            #
+            #  SILENT, and the reason this is not a one-character fix:
+            #  `git fetch` does NOT move the local branch you have checked
+            #  out. So `reset --hard main` reset to the SERVER's stale
+            #  local main, not to what was just merged - it happened to
+            #  land on the right commit only because HEAD was already
+            #  there. A deploy that silently ships the previous commit is
+            #  the failure this whole gate chain exists to prevent, and it
+            #  was sitting one branch-name collision away the entire time.
+            #
+            #  So: prefer the remote-tracking ref when the input names a
+            #  branch, and fall through unchanged for a tag or a SHA,
+            #  which have no origin/ form.
+            # ------------------------------------------------------------
+            TARGET='${{ inputs.ref }}'
+            if git rev-parse --verify --quiet "refs/remotes/origin/$TARGET" >/dev/null; then
+                TARGET="origin/$TARGET"
+            fi
+            git reset --hard "$TARGET" --
+            echo "Server is now at $(git rev-parse HEAD) ($TARGET)"
             # deploy.sh takes its own pre-deploy database backup and refuses
             # to continue if that fails.
             CI=1 ./infra/scripts/deploy.sh production
