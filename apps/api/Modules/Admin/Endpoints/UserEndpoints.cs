@@ -953,8 +953,21 @@ public static class UserEndpoints
     /// diagnosis — names are part of the interface.
     /// </summary>
     private static async Task<IResult> ResetMailboxPasswordAsync(
-        Guid id, AppDbContext db, AuditWriter audit, IPasswordHasher hasher, CancellationToken ct)
+        Guid id, AppDbContext db, TenantContext tenant, AuditWriter audit, IPasswordHasher hasher, CancellationToken ct)
     {
+        // Fetch the user to authorize the action
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id, ct);
+        if (user is null) return Results.NotFound();
+
+        // Prevent admin from resetting their own mailbox password through this
+        // endpoint (they should use account settings instead).
+        if (user.Id == tenant.UserId)
+            return Results.BadRequest(new { error = "Reset your own mailbox password from your account page." });
+
+        // The privilege guard: admin can only reset a mailbox password for users
+        // they have authority over (same organisation, appropriate role).
+        if (GuardActOn(tenant, user) is IResult denied) return denied;
+
         var mailboxes = await db.Mailboxes.Where(m => m.UserId == id).ToListAsync(ct);
         if (mailboxes.Count == 0) return Results.NotFound(new { error = "No mailbox for this user." });
 
