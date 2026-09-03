@@ -226,6 +226,38 @@ export const CSS = `
 .cx-video--screen{object-fit:contain}
 .cx-video--self{transform:scaleX(-1)}
 
+/* ── A PHONE HOLDS ITS CAMERA THE TALL WAY, AND COVER WAS EATING IT. ──────
+   Every tile is 16/9 and every video was object-fit:cover. A phone joining
+   upright publishes roughly 9/16, so cover scaled it to fill the WIDTH and
+   let the height overflow by about three times — leaving a thin horizontal
+   band across the middle of the picture. In practice that band is somebody's
+   nose and mouth. Their eyes, and most of their head, were off the tile.
+
+   contain fixes the crop and introduces a different problem: two wide black
+   pillars either side of a tall picture, which is most of the tile.
+
+   So: contain for the picture, and the SAME video again behind it, scaled up
+   and blurred, to fill what contain leaves empty. It reads as a soft halo of
+   whatever is in the frame rather than as two dead bars, and it is what every
+   product in this category does with a portrait stream.
+
+   ONLY ON THE BIG TILE. The backdrop is a second painted copy with a blur
+   filter on it, and nine of those in a gallery is real work for a phone GPU —
+   which is exactly the device most likely to be sending portrait in the first
+   place. Small tiles letterbox and that is fine at that size.
+
+   scale(1.18) because a blur samples past the element's edges and leaves them
+   translucent; overscanning hides that. The mirror variant exists because a
+   backdrop that does not mirror behind a mirrored self-view looks like two
+   different people. */
+.cx-video--upright{object-fit:contain;position:relative;z-index:1}
+.cx-vbg{
+  position:absolute;inset:0;width:100%;height:100%;object-fit:cover;
+  filter:blur(22px) saturate(1.35) brightness(.55);
+  transform:scale(1.18);z-index:0;pointer-events:none;
+}
+.cx-vbg--self{transform:scale(1.18) scaleX(-1)}
+
 /* Full screen. A shared screen inside a 460px-tall stage is never comfortable
    however it is fitted, because the browser's own chrome, the sharing bar and
    the taskbar are eating half the display. Going full screen on the whole room
@@ -699,9 +731,18 @@ export const CSS = `
 
 /* The pre-join screen. The preview mirrors like the self tile does — people
    expect a mirror before a meeting, and un-mirrored feels like a stranger. */
+/* aspect-ratio here is the FALLBACK, used until the camera reports its own
+   shape; PreJoin then overrides it inline with the real one. max-height is
+   the guard that makes that safe — a 9/16 phone camera in a 460px-wide card
+   would otherwise be 818px tall and push the Join button below the fold, and
+   a preview you have to scroll past to join is worse than a cropped one. */
 .cx-preview{position:relative;aspect-ratio:16/9;background:#000;border-radius:14px;
-  overflow:hidden;border:1px solid #26262f}
-.cx-preview-video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1);display:block}
+  overflow:hidden;border:1px solid #26262f;
+  max-height:min(58vh,420px);margin-inline:auto}
+/* contain, not cover: this screen exists to answer "am I in frame", and cover
+   answers it by cropping the parts you were checking. With the box now taking
+   the camera's own shape there is nothing to letterbox anyway. */
+.cx-preview-video{width:100%;height:100%;object-fit:contain;transform:scaleX(-1);display:block}
 .cx-preview-off{position:absolute;inset:0;display:grid;place-items:center;
   background:radial-gradient(circle at 50% 40%,#1c1c25,#0d0d12)}
 .cx-meter{position:absolute;left:10px;right:10px;bottom:8px;height:5px;border-radius:99px;
