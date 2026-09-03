@@ -8,7 +8,7 @@ using TatvaOS.Api.Shared.Tenancy;
 namespace TatvaOS.Api.Modules.Mail.Endpoints;
 
 /// <summary>
-/// POST /v1/mail/send — the programmatic send endpoint.
+/// POST /api/v1/mail/send — the programmatic send endpoint.
 ///
 /// ─────────────────────────────────────────────────────────────────────────
 ///  THIS IS A WRAPPER, NOT A MAIL SERVER. Everything that makes a send safe
@@ -53,7 +53,18 @@ public static class MailSendApiEndpoints
 
     public static void MapMailSendApiEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapPost("/v1/mail/send", SendAsync)
+        // The /api prefix is not decoration - it is the routing contract.
+        // Caddy on core.tatvaos.com sends /api/* to this service and EVERY
+        // other path to Next.js. A route mapped at bare /v1/mail/send builds,
+        // starts, and answers perfectly on localhost while returning the web
+        // app's 404 to every real customer. Found before merge by reading the
+        // Caddyfile, not after by a support ticket.
+        //
+        // The Resend-shaped api.tatvaos.com/v1/... URL stays unavailable on
+        // purpose: there is no api.tatvaos.com, so that Core and Mail share a
+        // registrable domain and one auth cookie. Changing that is a domain
+        // and certificate decision, not a routing tweak.
+        app.MapPost("/api/v1/mail/send", SendAsync)
            .AllowAnonymous()
            .WithTags("Mail API");
     }

@@ -5,7 +5,7 @@ import { useAuth } from '@/lib/auth';
 
 // ============================================================================
 //  Mail API keys — the credential an organisation's own software uses to send
-//  through POST /v1/mail/send.
+//  through POST /api/v1/mail/send.
 //
 //  Shaped on mail/settings/app-passwords, which solved the same problem: a
 //  secret that renders ONCE, in the response to Create, and is never

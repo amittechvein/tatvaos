@@ -1,7 +1,7 @@
 namespace TatvaOS.Api.Modules.Mail;
 
 /// <summary>
-/// An organisation API key for POST /v1/mail/send.
+/// An organisation API key for POST /api/v1/mail/send.
 ///
 /// Shown once at creation and never retrievable — only the hash is stored.
 /// Rows are revoked, never deleted: "when was this key issued and when did it
