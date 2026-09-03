@@ -23,8 +23,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import type { Folder } from '@tatvaos/types';
 import {
-  CATEGORY_COLOURS, CATEGORY_PALETTE, mailApi,
-  type MailCategory, type MailSignature,
+  CATEGORY_COLOURS, CATEGORY_PALETTE, getInboxLayout, INBOX_LAYOUTS,
+  mailApi, setInboxLayout,
+  type InboxLayout, type MailCategory, type MailSignature,
 } from '@/lib/mail';
 
 /**
@@ -123,6 +124,15 @@ export default function MailSettingsPage() {
   const [categoryNote, setCategoryNote] = useState<string | null>(null);
   /** A sample waiting on "replace what I've written?". Null when nothing is. */
   const [pending, setPending] = useState<string | null>(null);
+
+  // ---- Inbox layout ----------------------------------------------------
+  //
+  //  A device preference, not a server one (see lib/mail.ts for why), so
+  //  there is no save round-trip: clicking a card IS the save.
+  const [inboxLayout, setInboxLayoutChoice] = useState<InboxLayout>('comfortable');
+  useEffect(() => {
+    setInboxLayoutChoice(getInboxLayout());
+  }, []);
 
   const identity: Identity = {
     name: user?.displayName ?? '[Your name]',
@@ -672,6 +682,36 @@ export default function MailSettingsPage() {
           >
             {busyCategory === 'new' ? 'Creating…' : 'Create category'}
           </button>
+        </div>
+      </section>
+
+      {/* ---- Inbox layout ------------------------------------------------ */}
+      <section className="mt-6 max-w-2xl rounded-card border border-line bg-surface p-5">
+        <h2 className="text-base font-semibold text-ink">Inbox layout</h2>
+        <p className="mt-1 text-sm text-ink-muted">
+          How your message list is drawn. Saved on this device only — a
+          different computer keeps its own choice.
+        </p>
+        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+          {INBOX_LAYOUTS.map((o) => (
+            <button
+              key={o.id}
+              type="button"
+              onClick={() => {
+                setInboxLayout(o.id);
+                setInboxLayoutChoice(o.id);
+              }}
+              aria-pressed={inboxLayout === o.id}
+              className={`rounded-card border p-3 text-left transition ${
+                inboxLayout === o.id
+                  ? 'border-brand-500 bg-brand-50 dark:bg-brand-600/15'
+                  : 'border-line hover:border-ink-faint/50'
+              }`}
+            >
+              <span className="block text-sm font-medium text-ink">{o.name}</span>
+              <span className="mt-0.5 block text-xs text-ink-muted">{o.hint}</span>
+            </button>
+          ))}
         </div>
       </section>
     </div>

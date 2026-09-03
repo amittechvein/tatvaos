@@ -827,3 +827,45 @@ export function resolveFolder(folders: Folder[], param: string): Folder | undefi
 export function folderPath(folder: Folder): string {
   return `/mail/${folder.slug ?? folder.id}`;
 }
+
+// ---------------------------------------------------------------------------
+//  Inbox layout
+//
+//  The person's choice of how the message list is drawn. Deliberately a
+//  device-level preference in localStorage rather than a server setting:
+//  layout is about the screen in front of you — a cramped laptop wants
+//  Compact, a wide monitor Reading first — so following the device is the
+//  feature, not a shortcut. The custom event keeps an open inbox in step
+//  with the settings page without a reload.
+// ---------------------------------------------------------------------------
+
+export type InboxLayout = 'comfortable' | 'grouped' | 'compact' | 'slim';
+
+export const INBOX_LAYOUTS: { id: InboxLayout; name: string; hint: string }[] = [
+  { id: 'comfortable', name: 'Comfortable', hint: 'Roomy cards with a preview line — the default.' },
+  { id: 'grouped', name: 'Grouped by day', hint: 'The same cards under Today / Yesterday / This week headings.' },
+  { id: 'compact', name: 'Compact', hint: 'Slimmer rows — more mail on screen at once.' },
+  { id: 'slim', name: 'Reading first', hint: 'A narrow list that gives the open message the room.' },
+];
+
+export const INBOX_LAYOUT_EVENT = 'tatvaos:inbox-layout';
+const INBOX_LAYOUT_KEY = 'tatvaos.mail.inboxLayout';
+
+export function getInboxLayout(): InboxLayout {
+  try {
+    const v = window.localStorage.getItem(INBOX_LAYOUT_KEY);
+    if (v === 'comfortable' || v === 'grouped' || v === 'compact' || v === 'slim') return v;
+  } catch {
+    /* Storage can be unavailable (private windows); the default costs nothing. */
+  }
+  return 'comfortable';
+}
+
+export function setInboxLayout(v: InboxLayout): void {
+  try {
+    window.localStorage.setItem(INBOX_LAYOUT_KEY, v);
+  } catch {
+    /* Same: the choice simply will not stick, which the settings copy admits. */
+  }
+  window.dispatchEvent(new CustomEvent(INBOX_LAYOUT_EVENT));
+}

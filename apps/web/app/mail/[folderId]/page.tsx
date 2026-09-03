@@ -6,8 +6,8 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Attachment, Folder, Message } from '@tatvaos/types';
 import { useAuth } from '@/lib/auth';
 import {
-  CATEGORY_COLOURS, mailApi, resolveFolder,
-  type MailBootstrap, type MailCategory, type SearchHit,
+  CATEGORY_COLOURS, getInboxLayout, INBOX_LAYOUT_EVENT, mailApi, resolveFolder,
+  type InboxLayout, type MailBootstrap, type MailCategory, type SearchHit,
 } from '@/lib/mail';
 import DOMPurify from 'dompurify';
 import { MessageList } from '@/components/mail/MessageList';
@@ -36,6 +36,22 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
 
   const [boot, setBoot] = useState<MailBootstrap | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+
+  // The person's inbox layout, chosen in Mail settings and stored on this
+  // device. Read in an effect (localStorage does not exist server-side), and
+  // kept in step with the settings page through its event — switching layout
+  // there redraws an inbox already open in another tab without a reload.
+  const [inboxLayout, setInboxLayoutState] = useState<InboxLayout>('comfortable');
+  useEffect(() => {
+    setInboxLayoutState(getInboxLayout());
+    const sync = () => setInboxLayoutState(getInboxLayout());
+    window.addEventListener(INBOX_LAYOUT_EVENT, sync);
+    window.addEventListener('storage', sync);
+    return () => {
+      window.removeEventListener(INBOX_LAYOUT_EVENT, sync);
+      window.removeEventListener('storage', sync);
+    };
+  }, []);
   const [total, setTotal] = useState(0);
   const [skip, setSkip] = useState(0);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -603,7 +619,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
           the canvas. The folder name gets title typography — this column is a
           place, not a widget. */}
       <section
-        className={`min-w-0 flex-col overflow-hidden lg:w-[420px] lg:shrink-0 ${
+        className={`min-w-0 flex-col overflow-hidden lg:shrink-0 ${inboxLayout === 'slim' ? 'lg:w-[340px]' : 'lg:w-[420px]'} ${
           open ? (wide ? 'hidden' : 'hidden lg:flex') : 'flex flex-1'
         }`}
       >
@@ -762,6 +778,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
             </div>
           ) : (
             <MessageList
+              layout={inboxLayout}
               messages={filtered}
               selectedIds={selectedIds}
               openId={open?.id ?? null}
