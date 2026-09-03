@@ -44,9 +44,10 @@ public static class MailApiKeyEndpoints
         g.MapGet("", ListAsync);
         g.MapPost("", CreateAsync);
         g.MapDelete("/{id:guid}", RevokeAsync);
+        g.MapPatch("/{id:guid}", UpdateAsync);
     }
 
-    public sealed record CreateRequest(string? Label);
+    public sealed record CreateRequest(string? Label, string[]? AllowedSenderAddresses);
 
     private static async Task<IResult> ListAsync(
         AppDbContext db, CancellationToken ct)
@@ -54,7 +55,7 @@ public static class MailApiKeyEndpoints
         var keys = await db.MailApiKeys.AsNoTracking()
             .Where(k => k.RevokedAt == null)
             .OrderByDescending(k => k.CreatedAt)
-            .Select(k => new { k.Id, k.Label, k.KeyPrefix, k.CreatedAt, k.LastUsedAt })
+            .Select(k => new { k.Id, k.Label, k.KeyPrefix, k.CreatedAt, k.LastUsedAt, AllowedAddresses = k.AllowedSenderAddresses, AllowedCount = (k.AllowedSenderAddresses ?? Array.Empty<string>()).Length })
             .ToListAsync(ct);
 
         return Results.Ok(new { keys });
@@ -73,6 +74,27 @@ public static class MailApiKeyEndpoints
         var secret = "tvos_" + Generate();
         var prefix = secret[..13];
 
+        // Validate allowed addresses
+        var allowedAddresses = req?.AllowedSenderAddresses ?? Array.Empty<string>();
+        if (allowedAddresses.Length == 0)
+            return Results.BadRequest(new { error = "Select at least one email address this key can send from." });
+
+        // Validate each address exists and is verified
+        var existingMailboxes = await db.Mailboxes
+            .Where(m => m.IsActive && m.TenantId == tenant.TenantId && allowedAddresses.Contains(m.Address))
+            .Select(m => m.Address)
+            .ToListAsync(ct);
+
+        var missingAddresses = allowedAddresses.Except(existingMailboxes, StringComparer.OrdinalIgnoreCase).ToList();
+        if (missingAddresses.Count > 0)
+            return Results.BadRequest(new
+            {
+                error = $"The following addresses do not exist or are not verified: {string.Join(", ", missingAddresses)}",
+            });
+
+        // Normalize addresses to lowercase for consistency
+        var normalizedAddresses = allowedAddresses.Select(a => a.ToLowerInvariant()).Distinct().ToArray();
+
         db.MailApiKeys.Add(new MailApiKey
         {
             Id = Guid.NewGuid(),
@@ -81,6 +103,7 @@ public static class MailApiKeyEndpoints
             KeyHash = Sha256(secret),
             KeyPrefix = prefix,
             CreatedAt = DateTimeOffset.UtcNow,
+            AllowedSenderAddresses = normalizedAddresses,
         });
         await db.SaveChangesAsync(ct);
 
@@ -90,12 +113,55 @@ public static class MailApiKeyEndpoints
         {
             label,
             prefix,
+            allowed_sender_addresses = normalizedAddresses,
             // The ONLY time this value exists outside the caller's own
             // storage. Not retrievable afterwards, by anyone, by design:
             // "view key" turns one database read into every customer's
             // sending identity.
             key = secret,
             note = "Copy this now. It is shown once and cannot be retrieved.",
+        });
+    }
+
+    private static async Task<IResult> UpdateAsync(
+        Guid id, CreateRequest? req, AppDbContext db, AuditWriter audit, CancellationToken ct)
+    {
+        var key = await db.MailApiKeys.FirstOrDefaultAsync(k => k.Id == id && k.RevokedAt == null, ct);
+        if (key is null) return Results.NotFound(new { error = "No active key with that id." });
+
+        var allowedAddresses = req?.AllowedSenderAddresses ?? Array.Empty<string>();
+        if (allowedAddresses.Length == 0)
+            return Results.BadRequest(new { error = "Select at least one email address this key can send from." });
+
+        // Validate each address exists and is verified
+        var existingMailboxes = await db.Mailboxes
+            .Where(m => m.IsActive && m.TenantId == key.TenantId && allowedAddresses.Contains(m.Address))
+            .Select(m => m.Address)
+            .ToListAsync(ct);
+
+        var missingAddresses = allowedAddresses.Except(existingMailboxes, StringComparer.OrdinalIgnoreCase).ToList();
+        if (missingAddresses.Count > 0)
+            return Results.BadRequest(new
+            {
+                error = $"The following addresses do not exist or are not verified: {string.Join(", ", missingAddresses)}",
+            });
+
+        // Normalize addresses to lowercase for consistency
+        var normalizedAddresses = allowedAddresses.Select(a => a.ToLowerInvariant()).Distinct().ToArray();
+
+        key.AllowedSenderAddresses = normalizedAddresses;
+        await db.SaveChangesAsync(ct);
+
+        await audit.WriteAsync("mail.api_key_updated", "api_key", key.Label, ct: ct);
+
+        return Results.Ok(new
+        {
+            id = key.Id,
+            label = key.Label,
+            prefix = key.KeyPrefix,
+            allowed_sender_addresses = normalizedAddresses,
+            created_at = key.CreatedAt,
+            updated_at = DateTimeOffset.UtcNow,
         });
     }
 

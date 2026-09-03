@@ -113,6 +113,7 @@ public static class MailSendApiEndpoints
         Guid keyId;
         Guid keyTenantId;
         bool wasRevoked;
+        string[]? allowedAddresses;
         {
             var conn = db.Database.GetDbConnection();
 
@@ -129,7 +130,7 @@ public static class MailSendApiEndpoints
             {
                 await using var cmd = conn.CreateCommand();
                 cmd.CommandText =
-                    "SELECT key_id, tenant_id, was_revoked FROM mail.resolve_api_key(@hash)";
+                    "SELECT key_id, tenant_id, was_revoked, allowed_sender_addresses FROM mail.resolve_api_key(@hash)";
 
                 var p = cmd.CreateParameter();
                 p.ParameterName = "@hash";
@@ -147,6 +148,9 @@ public static class MailSendApiEndpoints
                 keyId       = reader.GetGuid(0);
                 keyTenantId = reader.GetGuid(1);
                 wasRevoked  = reader.GetBoolean(2);
+                
+                // Read allowed_sender_addresses - can be NULL for backward compat
+                allowedAddresses = reader.IsDBNull(3) ? null : (string[]?)reader.GetFieldValue<string[]>(3);
             }
             finally
             {
@@ -222,6 +226,19 @@ public static class MailSendApiEndpoints
                 error = $"{fromAddress} is not a mailbox on this organisation. "
                       + "Create it under Mailboxes, on a domain you have verified.",
             });
+
+        // ---- 4b. Validate sender is in allowed addresses if restricted -----
+        if (allowedAddresses is not null && allowedAddresses.Length > 0)
+        {
+            var isAllowed = allowedAddresses.Any(addr => 
+                addr.Equals(fromAddress, StringComparison.OrdinalIgnoreCase));
+            
+            if (!isAllowed)
+                return Results.BadRequest(new
+                {
+                    error = $"This API key is restricted to: {string.Join(", ", allowedAddresses)}",
+                });
+        }
 
         // ---- 5. Hand it to the one send path -------------------------------
         var result = await MailSender.SubmitAsync(

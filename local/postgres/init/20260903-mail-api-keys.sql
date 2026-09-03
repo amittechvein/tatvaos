@@ -164,3 +164,49 @@ $$;
 
 REVOKE ALL ON FUNCTION mail.resolve_api_key(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION mail.resolve_api_key(text) TO tatvaos_app;
+
+-- ============================================================================
+--  Email address restrictions (added after initial creation)
+--  Admin must select at least one sender address when creating a key.
+--  Keys can send ONLY from their allowed addresses.
+-- ============================================================================
+
+ALTER TABLE mail.api_keys 
+  ADD COLUMN allowed_sender_addresses TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
+
+-- Constraint: active keys must have at least one allowed address
+ALTER TABLE mail.api_keys 
+  ADD CONSTRAINT check_active_keys_have_addresses 
+  CHECK (revoked_at IS NOT NULL OR array_length(allowed_sender_addresses, 1) > 0);
+
+-- Index for membership checks during send validation
+CREATE INDEX IF NOT EXISTS ix_api_keys_addresses 
+  ON mail.api_keys USING GIN(allowed_sender_addresses);
+
+-- ============================================================================
+--  Update key resolution to include restrictions
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION mail.resolve_api_key(p_hash text)
+RETURNS TABLE (
+  key_id uuid, 
+  tenant_id uuid, 
+  was_revoked boolean,
+  allowed_sender_addresses TEXT[]
+)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = mail, pg_temp
+AS $$
+    SELECT k.id, k.tenant_id, (k.revoked_at IS NOT NULL), k.allowed_sender_addresses
+      FROM mail.api_keys k
+     WHERE k.key_hash = p_hash;
+$$;
+
+REVOKE ALL ON FUNCTION mail.resolve_api_key(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION mail.resolve_api_key(text) TO tatvaos_app;
+
+DO $$
+BEGIN
+    RAISE NOTICE 'mail.api_keys - added allowed_sender_addresses column with restrictions.';
+END $$;
