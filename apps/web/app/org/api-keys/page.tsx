@@ -92,9 +92,17 @@ export default function ApiKeysPage() {
       title="Mail API keys"
       subtitle="Let your own software send mail through TatvaOS"
       actions={
-        <Button variant="primary" onClick={() => setCreating(true)}>
-          New API key
-        </Button>
+        <div className="d-flex gap-2">
+          {/* The same content as the card below, as a file a developer can be
+              sent. Served from /public so it is one static file, versioned
+              with the code that it documents. */}
+          <a className="btn btn-secondary" href="/docs/TatvaOS-Mail-API-Integration-Guide.pdf" download>
+            Integration guide (PDF)
+          </a>
+          <Button variant="primary" onClick={() => setCreating(true)}>
+            New API key
+          </Button>
+        </div>
       }
     >
       {error && (
@@ -276,6 +284,11 @@ function FreshKeyCard({ fresh, endpoint, onDismiss }: {
 function HowToUse({ endpoint }: { endpoint: string }) {
   return (
     <Card title="How to send mail with a key" subtitle="Three steps. The whole API is one request.">
+      <p className="fs-13 text-muted mb-3">
+        Handing this to a developer? The{' '}
+        <a href="/docs/TatvaOS-Mail-API-Integration-Guide.pdf" download>integration guide (PDF)</a>{' '}
+        has everything on this page plus working examples in curl, Node.js, Python and PHP.
+      </p>
       <ol className="ps-3 mb-4">
         <li className="mb-3">
           <div className="fw-semibold">Choose the sender</div>
