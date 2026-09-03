@@ -41,6 +41,7 @@ const PATHS = {
   inbox:     'M4 13h4l2 3h4l2-3h4M4 13l2-8h12l2 8v6H4v-6z',
   gear:      'M10.3 3h3.4l.5 2.3 1.9 1.1 2.2-.8 1.7 3-1.7 1.6v2.2l1.7 1.6-1.7 3-2.2-.8-1.9 1.1-.5 2.3h-3.4l-.5-2.3-1.9-1.1-2.2.8-1.7-3 1.7-1.6v-2.2L4 8.6l1.7-3 2.2.8 1.9-1.1.5-2.3zM12 14.6a2.6 2.6 0 100-5.2 2.6 2.6 0 000 5.2z',
   mail:      'M3 7l9 6 9-6M3 7h18v10H3z',
+  key:       'M21 2l-2 2m-7.6 7.6a5.5 5.5 0 1 1-7.8 7.8 5.5 5.5 0 0 1 7.8-7.8zM11.4 11.6L19 4m-3 3l2 2',
   drive:     'M12 3l8 14H4L12 3zM9 17l-3 4M15 17l3 4',
   // People, Payroll, Sheet and Word left the catalogue with their tiles —
   // when one is actually started, its path comes back in the same commit as
@@ -182,6 +183,10 @@ export function organisationNav(): NavSection[] {
         },
         { href: '/org/domains', label: 'Domains', icon: <Icon d={PATHS.globe} /> },
         { href: '/org/mailboxes', label: 'Shared mailboxes', icon: <Icon d={PATHS.mail} /> },
+        // The credential an organisation's own software sends with. Beside
+        // Shared mailboxes because that is where its sender addresses come
+        // from — the two screens link to each other.
+        { href: '/org/api-keys', label: 'API keys', icon: <Icon d={PATHS.key} /> },
         { href: '/org/storage', label: 'Storage', icon: <Icon d={PATHS.database} /> },
         // Org-wide policy over what leaves by link. One switch today (Space's
         // public links); Connect's recording-retention choice lands here next,

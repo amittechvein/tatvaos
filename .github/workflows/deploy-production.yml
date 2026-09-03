@@ -55,13 +55,34 @@ jobs:
     name: CI green for this exact commit
     needs: guard
     runs-on: ubuntu-latest
+    # ------------------------------------------------------------------
+    #  actions:read is what lets `gh run list` see CI's runs. Without it
+    #  the API answers 403 and this job fails no matter how green CI is —
+    #  which is exactly what happened on the first deploy after the date
+    #  bypass expired, 3 September. The gate was written on 29 August
+    #  WHILE the bypass was active, so the bypass `exit 0`d before the gh
+    #  call and the API request was never executed once. It failed closed,
+    #  which is the right direction, but it spent five days untested.
+    #
+    #  Stated so it is not rediscovered: a permissions block here REPLACES
+    #  the default for this job, so contents:read must be listed too or
+    #  actions/checkout above loses its access.
+    # ------------------------------------------------------------------
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
 
       # ----------------------------------------------------------------------
-      #  SUSPENDED UNTIL 1 SEPTEMBER 2026 — and it re-arms ITSELF.
+      #  EXPIRED, AS DESIGNED — this bypass stopped matching on 1 Sept 2026
+      #  and nobody had to remember. Kept, not deleted: it is the record of
+      #  what was disabled, why, and that it re-armed on its own. The first
+      #  deploy after it expired (3 Sept) is what finally exercised the gh
+      #  call below and found the missing actions:read — the cost of a
+      #  bypass is that it also bypasses the testing of what it bypasses.
       #
       #  The CI free minutes ran out on 29 August, so no new commit can have
       #  a CI run until the quota resets: enforcing the gate would lock every
@@ -137,7 +158,36 @@ jobs:
             set -euo pipefail
             cd /srv/tatvaos-production
             git fetch --all --prune
-            git reset --hard ${{ inputs.ref }}
+
+            # ------------------------------------------------------------
+            #  Two bugs lived in the single line this replaces, and only
+            #  one of them ever spoke up.
+            #
+            #  LOUD: `git reset --hard main` died with "ambiguous argument
+            #  'main': both revision and filename" on 3 Sept, because a
+            #  path named main exists in this checkout. The `--` below is
+            #  git's own prescribed cure: everything before it is a
+            #  revision, full stop.
+            #
+            #  SILENT, and the reason this is not a one-character fix:
+            #  `git fetch` does NOT move the local branch you have checked
+            #  out. So `reset --hard main` reset to the SERVER's stale
+            #  local main, not to what was just merged - it happened to
+            #  land on the right commit only because HEAD was already
+            #  there. A deploy that silently ships the previous commit is
+            #  the failure this whole gate chain exists to prevent, and it
+            #  was sitting one branch-name collision away the entire time.
+            #
+            #  So: prefer the remote-tracking ref when the input names a
+            #  branch, and fall through unchanged for a tag or a SHA,
+            #  which have no origin/ form.
+            # ------------------------------------------------------------
+            TARGET='${{ inputs.ref }}'
+            if git rev-parse --verify --quiet "refs/remotes/origin/$TARGET" >/dev/null; then
+                TARGET="origin/$TARGET"
+            fi
+            git reset --hard "$TARGET" --
+            echo "Server is now at $(git rev-parse HEAD) ($TARGET)"
             # deploy.sh takes its own pre-deploy database backup and refuses
             # to continue if that fails.
             CI=1 ./infra/scripts/deploy.sh production

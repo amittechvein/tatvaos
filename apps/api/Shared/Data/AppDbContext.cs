@@ -128,6 +128,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
 
     public DbSet<TatvaOS.Api.Modules.Mail.MailAppPassword> MailAppPasswords
         => Set<TatvaOS.Api.Modules.Mail.MailAppPassword>();
+    // Added by 20260903-mail-api-keys. Registering a DbSet for an entity your
+    // own module owns is additive and needs no ask (standing rule, 30 Aug).
+    public DbSet<TatvaOS.Api.Modules.Mail.MailApiKey> MailApiKeys
+        => Set<TatvaOS.Api.Modules.Mail.MailApiKey>();
+    public DbSet<TatvaOS.Api.Modules.Mail.MailApiSend> MailApiSends
+        => Set<TatvaOS.Api.Modules.Mail.MailApiSend>();
     public DbSet<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes> ConnectMeetingNotes
         => Set<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>();
     // Added by 20260904-connect-minutes. Chat still travels over LiveKit's
@@ -226,6 +232,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectTranscript>().ToTable("transcripts", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectCaptionLine>().ToTable("caption_lines", "connect");
         b.Entity<TatvaOS.Api.Modules.Mail.MailAppPassword>().ToTable("app_passwords", "mail");
+        b.Entity<TatvaOS.Api.Modules.Mail.MailApiKey>().ToTable("api_keys", "mail");
+        b.Entity<TatvaOS.Api.Modules.Mail.MailApiSend>().ToTable("api_sends", "mail");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>().ToTable("meeting_notes", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingChat>().ToTable("meeting_chat", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingBlock>().ToTable("meeting_blocks", "connect");

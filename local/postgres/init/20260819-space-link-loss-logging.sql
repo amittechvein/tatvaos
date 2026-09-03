@@ -53,8 +53,10 @@ AS $$
       LEFT JOIN space.tenant_settings s ON s.tenant_id = f.tenant_id
      WHERE f.id = l.file_id
        AND l.token_hash = p_token_hash
-       -- THE PREDICATE — textually identical in peek_public_link above.
-       -- Diff them in review; any difference between the two is a bug.
+       -- THE PREDICATE. This is the LIVE consume; its twin is
+       -- peek_public_link in 20260816-space-public-links.sql. The two are
+       -- kept identical comment for comment by
+       -- infra/scripts/verify-space-link-predicate.sh, which is the check.
        AND l.revoked_at IS NULL                                        -- not revoked
        AND l.expires_at > now()                                        -- not expired
        AND (l.max_downloads IS NULL OR l.download_count < l.max_downloads)  -- under the cap

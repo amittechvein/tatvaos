@@ -22,7 +22,10 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import type { Folder } from '@tatvaos/types';
-import { mailApi, type MailSignature } from '@/lib/mail';
+import {
+  CATEGORY_COLOURS, CATEGORY_PALETTE, mailApi,
+  type MailCategory, type MailSignature,
+} from '@/lib/mail';
 
 /**
  * The details a sample signature fills in for you.
@@ -106,6 +109,18 @@ export default function MailSettingsPage() {
   const [busyFolder, setBusyFolder] = useState<string | null>(null);
   const [folderError, setFolderError] = useState<string | null>(null);
   const [folderNote, setFolderNote] = useState<string | null>(null);
+
+  // ---- Categories ------------------------------------------------------
+  //
+  //  Same door-that-exists-today argument as folders, one section down: the
+  //  endpoints shipped on 29 August and this section is what makes them a
+  //  feature rather than an API.
+  const [categories, setCategories] = useState<MailCategory[]>([]);
+  const [newCategory, setNewCategory] = useState('');
+  const [newColour, setNewColour] = useState<string>('blue');
+  const [busyCategory, setBusyCategory] = useState<string | null>(null);
+  const [categoryError, setCategoryError] = useState<string | null>(null);
+  const [categoryNote, setCategoryNote] = useState<string | null>(null);
   /** A sample waiting on "replace what I've written?". Null when nothing is. */
   const [pending, setPending] = useState<string | null>(null);
 
@@ -130,6 +145,12 @@ export default function MailSettingsPage() {
 
       const boot = await mailApi.bootstrap(authedFetch).catch(() => null);
       if (boot) setFolders(boot.folders);
+
+      // Quiet like the bootstrap: a failed category load costs one section,
+      // not the page.
+      void mailApi.categories(authedFetch)
+        .then((r) => setCategories(r.categories))
+        .catch(() => {});
 
       const sig = await mailApi.signature(authedFetch);
       // The plain-text half is the source of truth for the editor; the HTML
@@ -168,6 +189,87 @@ export default function MailSettingsPage() {
   async function reloadFolders() {
     const boot = await mailApi.bootstrap(authedFetch).catch(() => null);
     if (boot) setFolders(boot.folders);
+  }
+
+  async function reloadCategories() {
+    const r = await mailApi.categories(authedFetch).catch(() => null);
+    if (r) setCategories(r.categories);
+  }
+
+  async function addCategory() {
+    const name = newCategory.trim();
+    if (name.length === 0 || busyCategory) return;
+    setBusyCategory('new');
+    setCategoryError(null);
+    setCategoryNote(null);
+    try {
+      await mailApi.createCategory(authedFetch, name, newColour);
+      setNewCategory('');
+      await reloadCategories();
+    } catch (e) {
+      setCategoryError(e instanceof Error ? e.message : 'The category could not be created.');
+    } finally {
+      setBusyCategory(null);
+    }
+  }
+
+  async function renameCategory(c: MailCategory) {
+    const next = window.prompt(`Rename ${c.name} to`, c.name)?.trim();
+    if (!next || next === c.name) return;
+    setBusyCategory(c.id);
+    setCategoryError(null);
+    setCategoryNote(null);
+    try {
+      await mailApi.updateCategory(authedFetch, c.id, { name: next });
+      await reloadCategories();
+    } catch (e) {
+      setCategoryError(e instanceof Error ? e.message : 'The category could not be renamed.');
+    } finally {
+      setBusyCategory(null);
+    }
+  }
+
+  async function recolourCategory(c: MailCategory, colour: string) {
+    if (colour === c.colour || busyCategory) return;
+    setBusyCategory(c.id);
+    setCategoryError(null);
+    try {
+      await mailApi.updateCategory(authedFetch, c.id, { colour });
+      await reloadCategories();
+    } catch (e) {
+      setCategoryError(e instanceof Error ? e.message : 'The colour could not be changed.');
+    } finally {
+      setBusyCategory(null);
+    }
+  }
+
+  /**
+   * Deleting says what happens to the mail BEFORE it happens - the folder
+   * section's rule, applied to colours. Nothing is deleted but the label:
+   * the schema is ON DELETE SET NULL, and the confirmation says so in the
+   * only words that matter to the person reading it.
+   */
+  async function removeCategory(c: MailCategory) {
+    const held = c.messageCount;
+    const warning = held > 0
+      ? `Delete ${c.name}? The ${held} message${held === 1 ? '' : 's'} wearing it keep their place and lose only this colour.`
+      : `Delete ${c.name}?`;
+    if (!window.confirm(warning)) return;
+
+    setBusyCategory(c.id);
+    setCategoryError(null);
+    setCategoryNote(null);
+    try {
+      const r = await mailApi.deleteCategory(authedFetch, c.id);
+      setCategoryNote(r.messagesUnlabelled > 0
+        ? `${c.name} deleted. ${r.messagesUnlabelled} message${r.messagesUnlabelled === 1 ? '' : 's'} lost the colour, none lost their place.`
+        : `${c.name} deleted.`);
+      await reloadCategories();
+    } catch (e) {
+      setCategoryError(e instanceof Error ? e.message : 'The category could not be deleted.');
+    } finally {
+      setBusyCategory(null);
+    }
   }
 
   async function addFolder() {
@@ -461,6 +563,114 @@ export default function MailSettingsPage() {
             className="rounded-md bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600 disabled:opacity-50"
           >
             {busyFolder === 'new' ? 'Creating…' : 'Create folder'}
+          </button>
+        </div>
+      </section>
+
+      {/* ---- Categories ---------------------------------------------- */}
+      <section className="mt-6 max-w-2xl rounded-card border border-line bg-surface p-5">
+        <h2 className="mb-1 text-sm font-semibold text-ink">Categories</h2>
+        <p className="mb-4 text-xs text-ink-muted">
+          A name and a colour for sorting your mail your way — Work, School fees, Newsletters.
+          Your filters can apply them automatically, and deleting one never touches the mail
+          itself.
+        </p>
+
+        {categoryError && (
+          <p className="mb-3 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">{categoryError}</p>
+        )}
+        {categoryNote && (
+          <p className="mb-3 rounded-lg bg-ok/10 px-3 py-2 text-sm text-ok">{categoryNote}</p>
+        )}
+
+        {categories.length > 0 && (
+          <ul className="mb-4 list-none space-y-1 p-0">
+            {categories.map((c) => {
+              const colours = CATEGORY_COLOURS[c.colour] ?? CATEGORY_COLOURS.grey!;
+              return (
+                <li
+                  key={c.id}
+                  className="flex items-center gap-3 rounded-md border border-line px-3 py-2 text-sm"
+                >
+                  <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${colours.dot}`} />
+                  <span className="min-w-0 flex-1 truncate text-ink">{c.name}</span>
+                  <span className="shrink-0 text-xs tabular-nums text-ink-faint">
+                    {c.messageCount}
+                  </span>
+
+                  {/* The nine swatches inline, not behind a dialog: recolouring
+                      is a one-click decision and a dialog would make it three. */}
+                  <span className="hidden shrink-0 items-center gap-1 sm:flex">
+                    {CATEGORY_PALETTE.map((name) => (
+                      <button
+                        key={name}
+                        type="button"
+                        title={name}
+                        aria-label={`Colour ${c.name} ${name}`}
+                        onClick={() => void recolourCategory(c, name)}
+                        disabled={busyCategory !== null}
+                        className={`h-4 w-4 rounded-full transition disabled:opacity-50 ${
+                          (CATEGORY_COLOURS[name] ?? CATEGORY_COLOURS.grey!).dot
+                        } ${name === c.colour
+                          ? 'ring-2 ring-brand-500 ring-offset-1 ring-offset-surface'
+                          : 'opacity-45 hover:opacity-100'}`}
+                      />
+                    ))}
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={() => void renameCategory(c)}
+                    disabled={busyCategory !== null}
+                    className="shrink-0 text-xs font-medium text-brand-600 hover:underline disabled:opacity-50"
+                  >
+                    Rename
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void removeCategory(c)}
+                    disabled={busyCategory !== null}
+                    className="shrink-0 text-xs font-medium text-danger hover:underline disabled:opacity-50"
+                  >
+                    Delete
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={newCategory}
+            onChange={(e) => setNewCategory(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') void addCategory(); }}
+            placeholder="New category name"
+            className="min-w-0 flex-1 rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink outline-none transition placeholder:text-ink-faint focus:border-brand-400"
+          />
+          <span className="flex items-center gap-1">
+            {CATEGORY_PALETTE.map((name) => (
+              <button
+                key={name}
+                type="button"
+                title={name}
+                aria-label={`New category colour ${name}`}
+                onClick={() => setNewColour(name)}
+                className={`h-5 w-5 rounded-full transition ${
+                  (CATEGORY_COLOURS[name] ?? CATEGORY_COLOURS.grey!).dot
+                } ${name === newColour
+                  ? 'ring-2 ring-brand-500 ring-offset-1 ring-offset-surface'
+                  : 'opacity-45 hover:opacity-100'}`}
+              />
+            ))}
+          </span>
+          <button
+            type="button"
+            onClick={() => void addCategory()}
+            disabled={busyCategory !== null || newCategory.trim().length === 0}
+            className="rounded-md bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600 disabled:opacity-50"
+          >
+            {busyCategory === 'new' ? 'Creating…' : 'Create category'}
           </button>
         </div>
       </section>

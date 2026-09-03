@@ -187,10 +187,34 @@ export const spaceApi = {
         r, 'Could not load your directory.'))
       .then((b) => b.people),
 
+  /**
+   * The rows only. Kept exactly as it was so existing callers are unaffected
+   * — but be careful what you conclude from it: since 30 Aug 2026 a caller
+   * who is not the uploader or an organisation admin receives only their own
+   * access and any organisation-wide grant, and that short list is
+   * indistinguishable from a complete one. Rendering it as "everyone with
+   * access" would be a false statement the API cannot correct for you.
+   * Use sharesDetail when the answer is shown to a person.
+   */
   shares: (f: AuthedFetch, kind: 'files' | 'folders', id: string) =>
     f(`/space/${kind}/${id}/shares`)
       .then((r) => json<{ shares: SpaceShare[] }>(r, 'Could not load who has access.'))
       .then((b) => b.shares),
+
+  /**
+   * The rows plus whether they are all of them.
+   *
+   * `canSeeEveryone: false` means the list is deliberately partial: the share
+   * list is personal data about the other people on it (Amit's ruling, 30 Aug
+   * 2026), so only the uploader and organisation admins get the whole thing.
+   * Show something like "Shared with others" rather than a list that looks
+   * complete — and note there is deliberately no count, because the number of
+   * other recipients is itself a fact about them.
+   */
+  sharesDetail: (f: AuthedFetch, kind: 'files' | 'folders', id: string) =>
+    f(`/space/${kind}/${id}/shares`)
+      .then((r) => json<{ shares: SpaceShare[]; canSeeEveryone: boolean }>(
+        r, 'Could not load who has access.')),
 
   share: (
     f: AuthedFetch, kind: 'files' | 'folders', id: string,

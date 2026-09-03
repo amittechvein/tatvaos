@@ -1,9 +1,11 @@
 # House rules
 
-*The single source. `WELCOME_CORE_DEVELOPER.md`, `WELCOME_PLATFORM_DEVELOPER.md`
-and `PLATFORM_LANE_HANDOVER.md` point here rather than restating these — they
-each carried a full copy until 30 Aug 2026, which is exactly the defect rule 10
-describes.*
+*The single source. `WELCOME_CORE_DEVELOPER.md`, `WELCOME_PLATFORM_DEVELOPER.md`,
+`PLATFORM_LANE_HANDOVER.md` and `WORKING_IN_LANES.md` point here rather than
+restating these. Each carried its own copy until 29 Aug 2026 — and the claim in
+this paragraph was written before that was true, so for two days the file
+asserting rule 8 opened with an instance of it. The copies were removed rather
+than corrected: a corrected copy is still a copy.*
 
 Every rule below has an incident behind it. The incidents are named because a
 rule without its cost gets optimised away by the next person in a hurry.
@@ -163,7 +165,7 @@ existed in three documents until this file replaced them.*
 
 ## 11. Every lane merges and deploys its own work
 
-Amit's ruling, 30 Aug 2026. Nobody waits on Core to merge or deploy. Core still
+Amit's ruling, 29 Aug 2026. Nobody waits on Core to merge or deploy. Core still
 owns `Shared/`, `infra/`, migrations as a set, and rulings — he is the person you
 ask, not the person you wait for.
 
@@ -205,6 +207,13 @@ first, diagnose after, say so immediately.
    `git rev-parse --short HEAD` as the rollback point, `git fetch origin`,
    `git reset --hard origin/main` — which must name a **different** commit than
    the one you recorded — then `./infra/scripts/deploy.sh production`.
+
+   **Run `deploy.sh`; do not hand-roll the compose command.** It builds its
+   invocation with `--env-file infra/docker/.env` — not the repo-root `.env`,
+   which is a different file with different contents. A compose command typed
+   by hand reads the wrong one silently: the containers start, and their
+   environment is quietly not production's. Read the compose block in
+   `deploy.sh` rather than trusting this sentence.
 
 **Rollback restores code, not schema.** `git reset --hard <sha>` and redeploy
 puts the code back; a migration that has already run stays run. That promise

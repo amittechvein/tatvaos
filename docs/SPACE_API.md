@@ -139,9 +139,29 @@ single un-stamp.
 
 `PUT` is an upsert — one grant per (item, audience), so re-sharing changes the
 level rather than stacking rows. The audience is a named user **xor** the
-whole organisation. Managing shares needs `owner` on personal items, `edit` on
-organisational ones; `view`/`comment` callers get `403`, because who else can
-see a thing is not theirs to know.
+whole organisation. **Changing** shares needs `owner` on personal items,
+`edit` on organisational ones.
+
+**Reading the list is a separate question with a stricter answer.** The share
+list is personal data about the people on it — a file shared with thirty
+parents carries, in its list, the addresses of twenty-nine other families
+(Amit's ruling, 30 Aug 2026). So `GET`:
+
+| Caller | Sees |
+|---|---|
+| the uploader; an organisation admin on an organisational item | every grant, and `canSeeEveryone: true` |
+| anyone else with access | their own grant, plus any organisation-wide grant, and `canSeeEveryone: false` |
+| no access | `403` |
+
+`canSeeEveryone` exists because a short list is indistinguishable from a
+complete one, and showing a partial list as if it were whole is the defect —
+worse than omitting it. **There is deliberately no count of the others:** how
+many people also have a file is itself a fact about them.
+
+An organisation-wide grant is shown to everyone. It names a group rather than
+a person, and no membership is stored that could be expanded into one. Space
+has no other group audience today; when folder- or department-level sharing
+arrives it inherits this rule rather than re-deciding it.
 
 Folder shares reach contents **at query time** by walking ancestors. Grants
 are never copied down, so "why can this person see this?" always has a

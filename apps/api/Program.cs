@@ -429,6 +429,8 @@ app.MapSharedMailboxEndpoints();
 // App passwords for third-party SMTP/IMAP clients — new file, Core-authored
 // as a declared lane exception (see the endpoint header).
 app.MapMailAppPasswordEndpoints();
+app.MapMailApiKeyEndpoints();
+app.MapMailSendApiEndpoints();
 // "How much room do I have left?" — one answer for every product's meter.
 app.MapMyStorageEndpoints();
 // The organisation's AI consent switch — the screen for allow_ai, so "can we

@@ -5,7 +5,10 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Attachment, Folder, Message } from '@tatvaos/types';
 import { useAuth } from '@/lib/auth';
-import { mailApi, resolveFolder, type MailBootstrap, type SearchHit } from '@/lib/mail';
+import {
+  CATEGORY_COLOURS, mailApi, resolveFolder,
+  type MailBootstrap, type MailCategory, type SearchHit,
+} from '@/lib/mail';
 import DOMPurify from 'dompurify';
 import { MessageList } from '@/components/mail/MessageList';
 import { MessageView } from '@/components/mail/MessageView';
@@ -36,6 +39,8 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   const [total, setTotal] = useState(0);
   const [skip, setSkip] = useState(0);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [categories, setCategories] = useState<MailCategory[]>([]);
+  const [labelMenu, setLabelMenu] = useState(false);
   const [open, setOpen] = useState<Message | null>(null);
   const [openLoading, setOpenLoading] = useState(false);
 
@@ -106,6 +111,16 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     } catch {
       /* counts refresh is best-effort; the next navigation corrects them */
     }
+  }, [authedFetch, mailboxId]);
+
+  // Categories load once per mailbox, quietly - a failure costs the chips
+  // and the Colour menu, never the list.
+  useEffect(() => {
+    let cancelled = false;
+    void mailApi.categories(authedFetch, mailboxId)
+      .then((r) => { if (!cancelled) setCategories(r.categories); })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, [authedFetch, mailboxId]);
 
   const loadMessages = useCallback(
@@ -396,6 +411,25 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     void refreshFolders();
   }
 
+  /**
+   * Colour the whole selection in ONE request - the endpoint takes the list,
+   * so forty messages is one round trip, not forty. A null category CLEARS.
+   * The rows update in place rather than reloading the page: the person is
+   * mid-triage, and yanking the list out from under them loses their scroll.
+   */
+  async function bulkSetCategory(categoryId: string | null) {
+    const ids = [...selectedIds];
+    setLabelMenu(false);
+    try {
+      await mailApi.assignCategory(authedFetch, ids, categoryId, mailboxId);
+      setMessages((prev) => prev.map((m) =>
+        selectedIds.has(m.id) ? { ...m, categoryId } as typeof m : m));
+      setSelectedIds(new Set());
+    } catch {
+      setListError('The colour could not be applied. Reload and try again.');
+    }
+  }
+
   async function bulkSetRead(isRead: boolean) {
     const ids = [...selectedIds];
     setSelectedIds(new Set());
@@ -633,6 +667,55 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
               >
                 <Icon name="envelope" className="h-4.5 w-4.5" />
               </button>
+
+              {/* Colour the selection. A LABELLED text button, not an icon:
+                  there is no icon that says "category" without a legend, and
+                  this bar has room for a word. */}
+              {categories.length > 0 && (
+                <span className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setLabelMenu((v) => !v)}
+                    className="rounded-lg px-2 py-1.5 font-medium transition hover:bg-canvas hover:text-ink"
+                  >
+                    Colour
+                  </button>
+                  {labelMenu && (
+                    <>
+                      <span className="fixed inset-0 z-10" onClick={() => setLabelMenu(false)} aria-hidden="true" />
+                      <span
+                        role="menu"
+                        className="absolute left-0 top-full z-20 mt-1 flex w-48 flex-col overflow-hidden rounded-xl border border-line bg-surface py-1.5 shadow-raised"
+                      >
+                        {categories.map((c) => {
+                          const colours = CATEGORY_COLOURS[c.colour] ?? CATEGORY_COLOURS.grey!;
+                          return (
+                            <button
+                              key={c.id}
+                              type="button"
+                              role="menuitem"
+                              onClick={() => void bulkSetCategory(c.id)}
+                              className="flex items-center gap-2 px-3 py-1.5 text-left text-sm text-ink transition hover:bg-canvas"
+                            >
+                              <span className={`h-2 w-2 shrink-0 rounded-full ${colours.dot}`} />
+                              <span className="truncate">{c.name}</span>
+                            </button>
+                          );
+                        })}
+                        <span className="my-1 border-t border-line" />
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => void bulkSetCategory(null)}
+                          className="px-3 py-1.5 text-left text-sm text-ink-muted transition hover:bg-canvas"
+                        >
+                          No colour
+                        </button>
+                      </span>
+                    </>
+                  )}
+                </span>
+              )}
               <span className="ml-1">{selectedIds.size} selected</span>
             </>
           ) : (
@@ -685,6 +768,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
               onToggleSelect={toggleSelect}
               onOpen={(id) => void handleOpen(id)}
               onToggleFlag={handleToggleFlag}
+              categoriesById={Object.fromEntries(categories.map((c) => [c.id, c]))}
             />
           )}
         </div>

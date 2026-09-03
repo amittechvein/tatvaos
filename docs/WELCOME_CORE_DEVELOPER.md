@@ -99,61 +99,19 @@ afternoon. Your instinct will be to tidy. Resist it in shared files.
 
 ---
 
-## 4. Seven rules, each of which cost us something
+## 4. How we work
 
-These aren't style preferences. Every one has an incident behind it, and the
-incidents are documented in the files themselves.
+**The rules live in `docs/HOUSE_RULES.md`, and only there.** Read it before
+your first commit, and again before your first deploy — rule 11 governs what
+you are allowed to do alone.
 
-**1. Lanes.** Your files are yours to change freely. Another module's files are
-ask-first. If production is burning and you must cross a line, do it and
-**declare it in the commit message** — a quiet cross-lane edit is how two people
-spend a day fixing the same bug in different ways. That happened, to a single
-backtick in a Connect file, and cost a merge conflict and a blocked deploy.
-
-**2. Migrations are date-prefixed, idempotent, additive** — and must survive
-`infra/scripts/verify-migrations.sh`, which builds every migration against a
-scratch database from empty, then runs the whole directory again. Both halves
-matter: the first catches a file that depends on one sorting after it; the
-second catches a file that fights a later one. Use the **real date**. Ignore
-the `202609xx` Connect files — they are a sequence wearing September dates in
-August, a documented mistake awaiting rename, and two of Core's own files
-already had to adopt the same false dates to sort after them. That rename is
-on Connect's list; you'll review it.
-
-**3. Build before commit. Count files before push.** `git diff --cached --stat`,
-read the number, then push. A green build proves your *working tree*; the
-commit ships the *index*. Those diverged once and shipped a broken file.
-
-**4. Merged is not running.** Config that renders at container start doesn't
-change because you deployed. An outbound-TLS fix sat correct in git for four
-days while real mail went out unencrypted. `deploy.sh` now handles the known
-cases (Postfix restart, the mail-edge cert sync). When you add a service,
-decide **at birth** how its config reaches the running process, and write it down.
-
-**5. Secrets never appear in output.** Not in a log, not in a terminal, not in
-a chat window. Generate them where they're used — `read -rsp`, or written
-straight into the destination file. **A command whose output is a secret is
-unsafe by construction; one that writes it to its destination is safe by
-construction.** Every key generated on Amit's laptop so far has ended up
-pasted into a transcript and had to be burned. And know that every secret's
-blast radius includes the nightly backup: `backup.sh` copies `infra/docker/.env`
-verbatim, and says so in its own comments. That's why the bucket credentials
-live in `/srv/backups/tatvaos/.backup-env` and deliberately not in `.env`.
-
-**6. A test you've only seen pass is not a test.** Calibrate first: prove it can
-detect the thing before you believe what it says. Real examples from one week —
-a race test that raced the landing page instead of the API and reported 10/10
-failures against working code; a rate limiter's 429s counted as the bug being
-hunted; a link at its download cap that would have "passed" by refusing before
-reaching the code under test. The house style is in `infra/scripts/verify-*.sh`:
-**guards that refuse**, not warnings that scroll past.
-
-**7. Documented is not built.** In one week we found three "documented
-behaviours" that had never existed — a seam whose two ends had no callers, a
-sandbox guarantee describing code that did something else, a comment promising
-production TLS on a port serving cleartext. When a document tells you what the
-code does, **grep for the caller** before you believe it. That habit has found
-more bugs here than any test suite. It applies to this document too.
+This document deliberately does not summarise them. A summary is a copy; it
+drifts, and it reads as authoritative the whole time it is wrong. That is
+rule 10, and this section was an instance of it until 29 Aug 2026: it carried
+seven rules inline, including a superseded rule 6 that taught the weaker
+habit — *"a test you've only seen pass is not a test"*, which asks you to
+distrust a result, in place of *"a check with no failure mode is not a
+check"*, which lets you reject a bad check by reading it.
 
 ---
 

@@ -546,7 +546,7 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
   const [role, setRole] = useState(person.role);
   const [quotaGb, setQuotaGb] = useState(Math.max(1, Math.round(person.quotaBytes / GB)));
   const [busy, setBusy] = useState(false);
-  const [tempPassword, setTempPassword] = useState<string | null>(null);
+  const [tempPassword, setTempPassword] = useState<{ password: string; mailbox: boolean } | null>(null);
   // undefined = untouched, null = remove, string = a newly picked photo.
   const [photo, setPhoto] = useState<string | null | undefined>(undefined);
   const [storedPhoto, setStoredPhoto] = useState<string | null>(null);
@@ -660,32 +660,42 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
   // never retrievable, and closing the dialog is an explicit "I have copied
   // it" step rather than something a stray click can do.
   if (tempPassword) {
+    const closed = tempPassword.mailbox
+      ? `Mailbox password reset for ${person.email}.`
+      : `Password reset for ${person.email}.`;
     return (
       <Modal
-        title={`New password for ${person.displayName}`}
-        onClose={() => onSaved(`Password reset for ${person.email}.`)}
+        title={tempPassword.mailbox
+          ? `New mailbox password for ${person.displayName}`
+          : `New password for ${person.displayName}`}
+        onClose={() => onSaved(closed)}
         footer={
-          <Button variant="primary" onClick={() => onSaved(`Password reset for ${person.email}.`)}>
+          <Button variant="primary" onClick={() => onSaved(closed)}>
             Done
           </Button>
         }
       >
         <div className="alert alert-warning mb-3">
-          Shown once — copy it now and pass it to them directly. They must
-          change it at first sign-in, and every session they had is already
-          signed out.
+          {tempPassword.mailbox
+            ? 'Shown once — copy it now and pass it to them directly. This is '
+              + 'the password their mail apps (Outlook, phones) sign in with. '
+              + 'How they sign in to TatvaOS is unchanged, and existing mail '
+              + 'clients will stop working until reconfigured with this one.'
+            : 'Shown once — copy it now and pass it to them directly. They '
+              + 'must change it at first sign-in, and every session they had '
+              + 'is already signed out.'}
         </div>
         <div className="d-flex gap-2 align-items-center">
           <div className="flex-fill font-monospace bg-light rounded"
                style={{ padding: 12, fontSize: 15 }}>
-            {tempPassword}
+            {tempPassword.password}
           </div>
           <button
             type="button"
             className="btn btn-light btn-icon"
             title="Copy"
             aria-label="Copy password"
-            onClick={() => void navigator.clipboard.writeText(tempPassword)}
+            onClick={() => void navigator.clipboard.writeText(tempPassword.password)}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                  strokeWidth="1.8" strokeLinecap="round">
@@ -806,7 +816,7 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
       {!editingSelf && !targetLocked && person.status !== 'deleted' && (
         <Button variant="ghost" disabled={busy}
                 onClick={() => void act('/reset-password', 'POST',
-                  (body) => { setTempPassword(String(body.temporaryPassword)); setBusy(false); })}>
+                  (body) => { setTempPassword({ password: String(body.temporaryPassword), mailbox: false }); setBusy(false); })}>
           Reset password
         </Button>
       )}
@@ -821,6 +831,18 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
           ? <span className="fs-13 font-monospace">{person.mailboxAddress}</span>
           : <span className="fs-13 text-muted">None — this person has no email</span>}
       </div>
+
+      {/* The other reset. "Reset password" above changes how they SIGN IN;
+          this one changes what their mail apps authenticate with. They are
+          separate credentials on purpose — and until this button existed,
+          the only reset an admin could reach was the wrong one for mail. */}
+      {person.mailboxAddress && !targetLocked && person.status !== 'deleted' && (
+        <Button variant="ghost" disabled={busy}
+                onClick={() => void act('/reset-mailbox-password', 'POST',
+                  (body) => { setTempPassword({ password: String(body.temporaryPassword), mailbox: true }); setBusy(false); })}>
+          Reset mailbox password
+        </Button>
+      )}
 
       {/* ONE allowance, spent across every product. It used to be the
           mailbox's quota, which is why "you have 30 GB" was only ever true of

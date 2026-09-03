@@ -79,18 +79,32 @@ check_imap() {
     # ONE connection, two questions. Not -quiet: the verify line is half of
     # what we came for, and -quiet suppresses it.
     #
-    # Stdin is a piped LOGOUT, NOT </dev/null. With </dev/null, s_client
-    # hits stdin EOF straight after the TLS handshake and closes — BEFORE a
-    # freshly restarted Dovecot has sent its greeting. deploy.sh restarts
-    # Dovecot moments before calling this script, so the </dev/null form
-    # false-alarmed on every deploy and passed only against a warm server:
-    # the worst calibration a check can have, because a check that cries
-    # wolf on every deploy is ignored by the third deploy, and then it is
-    # not a check. The piped LOGOUT keeps s_client reading until the server
-    # answers, captures the greeting, and ends clean with "a1 OK Logout".
-    # (Found by the CTO against production, 30 Aug 2026.)
+    # -ign_eof IS LOAD-BEARING. s_client must NOT exit on stdin EOF, which
+    # arrives the instant printf finishes — before a busy or just-restarted
+    # Dovecot has finished greeting. It is OUR end hanging up, not their end
+    # being slow, which is why no amount of retry, backoff or sleeping
+    # BEFORE connecting helps. Dovecot's own log said it plainly:
+    # "disconnected before auth was ready, waited 0 secs".
+    #
+    # Two earlier forms got this wrong — </dev/null closed immediately, and
+    # a bare piped LOGOUT narrowed the window without closing it — and each
+    # was called fixed after ONE passing run. Measured five times each
+    # against production on 30 Aug:
+    #
+    #     piped LOGOUT alone   0/5    186 ms
+    #     LOGOUT + sleep 2     5/5   2007 ms
+    #     LOGOUT + -ign_eof    5/5     61 ms   ← this
+    #
+    # Faster than the broken form it replaces, because it exits on the
+    # SERVER's close instead of racing its own stdin.
+    #
+    # What this removes is worse than a plain bug: the identical probe
+    # passed once for one person and failed five times for another. A check
+    # that reds on some deploys and not others teaches people the red is
+    # noise — that is not a check, it is a coin.
+    # (Found by Connect; five-run measurements by Mail.)
     local out
-    out=$(printf 'a1 LOGOUT\r\n' | timeout 10 openssl s_client \
+    out=$(printf 'a1 LOGOUT\r\n' | timeout 10 openssl s_client -ign_eof \
               -connect "$MAIL_HOST:993" -servername "$MAIL_HOST" 2>&1 || true)
 
     if [ -z "$out" ]; then
@@ -100,8 +114,46 @@ check_imap() {
         return 1
     fi
 
-    if printf '%s\n' "$out" | grep -q '^\* OK'; then
-        ok "IMAP greeting received."
+    # ---- THREE STATES, NOT TWO --------------------------------------------
+    #
+    # The pass condition is the CAPABILITY greeting specifically, because
+    # Dovecot also answers with a bare "* OK Waiting for authentication
+    # process to respond.." when its auth process is dead — and that line
+    # matches a loose '^\* OK' perfectly.
+    #
+    # That is not hypothetical: it is the 27 August state. The container was
+    # up, imap-login answered TLS on 993, and `auth` was in a Fatal restart
+    # loop over a missing sql driver. A loose match would have printed
+    # GREEN through the entire outage. So the patch note's claim that this
+    # check "would have caught 27 August on its own" holds only with the
+    # strict match below — with the loose one it would have joined the three
+    # HTTP 200s standing guard over a dead mail server.
+    #
+    # CAVEATS, both stated rather than left for someone to discover:
+    #
+    #   · The "Waiting for authentication" line was seen ONCE, in a manual
+    #     probe that held stdin open (two of them, in fact) — and in NONE of
+    #     the fifteen candidate runs, because auth was healthy throughout.
+    #     So this branch is one observation plus Dovecot's documented
+    #     behaviour and the 27 August logs, not a reproduced sample.
+    #
+    #   · All fifteen runs were against a WARM Dovecot. The restart is the
+    #     condition this check exists for, and deploy.sh restarts Dovecot
+    #     moments before calling us. The FIRST POST-RESTART DEPLOY IS THIS
+    #     CHECK'S REAL FIRST TEST — watch it, and treat a red there as data
+    #     rather than a surprise.
+    # -----------------------------------------------------------------------
+    if printf '%s\n' "$out" | grep -q '^\* OK \[CAPABILITY'; then
+        ok "IMAP greeting received (capabilities advertised)."
+    elif printf '%s\n' "$out" | grep -q '^\* OK'; then
+        # Serving, but not ready to authenticate anyone. Mail still arrives
+        # and queues; every client login fails. Naming it precisely saves
+        # the hour it took on the 27th.
+        bad "IMAP is answering but NOT ready — no capability greeting."
+        note "$(printf '%s\n' "$out" | grep -m1 '^\* OK')"
+        note "Dovecot is serving the port while its AUTH process is down."
+        note "Check: docker logs --since 5m tatvaos-dovecot-1 2>&1 | grep -i fatal"
+        return 1
     else
         bad "No IMAP greeting on $MAIL_HOST:993 — Dovecot is not serving."
         note "Check: docker compose ps dovecot, then its logs."

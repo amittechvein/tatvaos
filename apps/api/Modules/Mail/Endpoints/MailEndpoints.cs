@@ -1522,7 +1522,7 @@ public static class MailEndpoints
             {
                 m.Id, m.FolderId, m.ThreadId, m.FromName, m.FromAddr, m.ToAddrs,
                 m.CcAddrs, m.Subject, m.Snippet, m.SentAt, m.ReceivedAt,
-                m.SizeBytes, m.IsRead, m.IsFlagged, m.HasAttachments,
+                m.SizeBytes, m.IsRead, m.IsFlagged, m.HasAttachments, m.CategoryId,
             })
             .ToListAsync(ct);
 
@@ -1557,6 +1557,7 @@ public static class MailEndpoints
                 isRead = m.IsRead,
                 isFlagged = m.IsFlagged,
                 hasAttachments = m.HasAttachments,
+            categoryId = m.CategoryId,
             }).ToList(),
         });
     }
@@ -1609,7 +1610,7 @@ public static class MailEndpoints
             {
                 m.Id, m.FolderId, m.ThreadId, m.FromName, m.FromAddr, m.ToAddrs,
                 m.CcAddrs, m.Subject, m.Snippet, m.SentAt, m.ReceivedAt,
-                m.SizeBytes, m.IsRead, m.IsFlagged, m.HasAttachments,
+                m.SizeBytes, m.IsRead, m.IsFlagged, m.HasAttachments, m.CategoryId,
             })
             .ToListAsync(ct);
 
@@ -1644,6 +1645,7 @@ public static class MailEndpoints
                 isRead = m.IsRead,
                 isFlagged = m.IsFlagged,
                 hasAttachments = m.HasAttachments,
+            categoryId = m.CategoryId,
             }).ToList(),
         });
     }
@@ -1722,7 +1724,7 @@ public static class MailEndpoints
             {
                 m.Id, m.FolderId, m.ThreadId, m.FromName, m.FromAddr, m.ToAddrs,
                 m.Subject, m.Snippet, m.SentAt, m.ReceivedAt, m.SizeBytes,
-                m.IsRead, m.IsFlagged, m.HasAttachments,
+                m.IsRead, m.IsFlagged, m.HasAttachments, m.CategoryId,
             })
             .ToListAsync(ct);
 
@@ -1752,6 +1754,7 @@ public static class MailEndpoints
             isRead = m.IsRead,
             isFlagged = m.IsFlagged,
             hasAttachments = m.HasAttachments,
+            categoryId = m.CategoryId,
             attachments = chips[m.Id].Select(a => new
             {
                 id = a.Id,
@@ -1929,6 +1932,7 @@ public static class MailEndpoints
             isRead = m.IsRead,
             isFlagged = m.IsFlagged,
             hasAttachments = m.HasAttachments,
+            categoryId = m.CategoryId,
             attachments,
         });
     }

@@ -231,18 +231,16 @@ branch went nowhere while appearing to succeed.
 
 ## Merging to main
 
-Only in `tatvaOS\`, only after review:
+**Rule 11 in `docs/HOUSE_RULES.md`.** Every lane merges and deploys its own
+work; the full sequence, the rollback step and the two non-negotiables live
+there.
 
-```powershell
-cd C:\Users\amitd\Downloads\tatvaOS
-git checkout main
-git pull
-git merge --no-ff feature/whatever
-git push origin main
-```
-
-Then deploy from the box. `deploy.sh` reads `--env-file infra/docker/.env`, not
-the repo-root `.env`.
+The commands are deliberately not repeated here. This section carried them
+until 29 Aug 2026, along with the sentence *"only after review"* — a gate
+that had been removed. It was committed, and therefore authoritative, and
+therefore worse than saying nothing: anyone who distrusted chat and checked
+the repository found the superseded policy and had every reason to trust it.
+Absence makes a person ask; a stale copy makes them confident.
 
 ## If something still goes wrong
 
