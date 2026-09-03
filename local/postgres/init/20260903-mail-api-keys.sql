@@ -171,13 +171,31 @@ GRANT EXECUTE ON FUNCTION mail.resolve_api_key(text) TO tatvaos_app;
 --  Keys can send ONLY from their allowed addresses.
 -- ============================================================================
 
-ALTER TABLE mail.api_keys 
-  ADD COLUMN allowed_sender_addresses TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT FROM information_schema.columns 
+    WHERE table_schema = 'mail' AND table_name = 'api_keys' 
+      AND column_name = 'allowed_sender_addresses'
+  ) THEN
+    ALTER TABLE mail.api_keys 
+      ADD COLUMN allowed_sender_addresses TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
+  END IF;
+END $$;
 
 -- Constraint: active keys must have at least one allowed address
-ALTER TABLE mail.api_keys 
-  ADD CONSTRAINT check_active_keys_have_addresses 
-  CHECK (revoked_at IS NOT NULL OR array_length(allowed_sender_addresses, 1) > 0);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT FROM information_schema.table_constraints 
+    WHERE table_schema = 'mail' AND table_name = 'api_keys' 
+      AND constraint_name = 'check_active_keys_have_addresses'
+  ) THEN
+    ALTER TABLE mail.api_keys 
+      ADD CONSTRAINT check_active_keys_have_addresses 
+      CHECK (revoked_at IS NOT NULL OR array_length(allowed_sender_addresses, 1) > 0);
+  END IF;
+END $$;
 
 -- Index for membership checks during send validation
 CREATE INDEX IF NOT EXISTS ix_api_keys_addresses 
