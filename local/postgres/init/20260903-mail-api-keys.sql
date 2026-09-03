@@ -187,6 +187,8 @@ CREATE INDEX IF NOT EXISTS ix_api_keys_addresses
 --  Update key resolution to include restrictions
 -- ============================================================================
 
+DROP FUNCTION IF EXISTS mail.resolve_api_key(text);
+
 CREATE OR REPLACE FUNCTION mail.resolve_api_key(p_hash text)
 RETURNS TABLE (
   key_id uuid, 

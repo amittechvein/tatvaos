@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "TatvaOS",
+    "slug": "tatvaos",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "tatvaos",
+    "splash": {
+      "backgroundColor": "#0F6E56",
+      "resizeMode": "contain"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.techvein.tatvaos"
+    },
+    "android": {
+      "package": "com.techvein.tatvaos",
+      "adaptiveIcon": {
+        "backgroundColor": "#0F6E56"
+      }
+    },
+    "plugins": [
+      "expo-asset",
+      "expo-font"
+    ]
+  }
+}
