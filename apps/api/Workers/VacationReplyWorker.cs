@@ -2,6 +2,7 @@ using MailKit.Net.Smtp;
 using MailKit.Security;
 using Microsoft.EntityFrameworkCore;
 using MimeKit;
+using MimeKit.Utils;
 using TatvaOS.Api.Modules.Mail;
 using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Tenancy;
@@ -268,6 +269,9 @@ public sealed class VacationReplyWorker(
                 ? $"Re: {original.Subject}"
                 : responder.Subject;
             reply.Body = builder.ToMessageBody();
+            // Message-ID on the mailbox's domain, not the container's hex ID -
+            // see MailSender for the Gmail evidence.
+            reply.MessageId = MimeUtils.GenerateMessageId(box.Address[(box.Address.IndexOf('@') + 1)..]);
 
             // So the next autoresponder in the chain refuses to answer this,
             // exactly as we refuse to answer theirs.
@@ -282,9 +286,11 @@ public sealed class VacationReplyWorker(
             }
 
             var host = config["Smtp:Host"] ?? "postfix";
-            var port = int.TryParse(config["Smtp:Port"], out var p) ? p : 587;
+            // 10587, the internal API submission port - see MailSender for why 587 is wrong here.
+            var port = int.TryParse(config["Smtp:Port"], out var p) ? p : 10587;
 
             using var client = new SmtpClient();
+            if (config["Mail:Host"] is { Length: > 0 } helo) client.LocalDomain = helo;
             await client.ConnectAsync(host, port, SecureSocketOptions.None, ct);
             await client.SendAsync(reply, ct);
             await client.DisconnectAsync(true, ct);
