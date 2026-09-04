@@ -2796,6 +2796,55 @@ export default function Stage({ seat, meeting, prefs }: {
           </div>
         )}
 
+        {/* THE SECOND ASKING — THE ONE THE CHAT PANEL ALREADY PROMISES.
+            Every Private meeting prints "You are asked again before any file
+            is sent" in red above the message box. Nothing asked. Attaching a
+            file in a Private meeting called setPendingFile, no code anywhere
+            read that state back, and the file went nowhere: no warning, no
+            send, no error — the person picked a file and watched nothing
+            happen. The only trace was a lint warning about an unused
+            variable, which is the whole argument against tolerating those. */}
+        {pendingFile && (
+          <div className="cx-modal-back" role="dialog" aria-modal="true"
+               aria-label="Sending a file in a private meeting">
+            <div className="cx-modal">
+              <h2>Send this file?</h2>
+              <p className="cx-sub" style={{ margin: '0 0 4px' }}>
+                <strong>{pendingFile.name}</strong> — {prettySize(pendingFile.size)}
+              </p>
+              {/* The same sentence the panel carries, said again at the moment
+                  it costs something. Private is a promise about audio and
+                  video; a file is not covered by it, and the person deciding
+                  should be told that while holding the file rather than
+                  afterwards. */}
+              <p className="cx-sub" style={{ margin: '0 0 4px' }}>
+                This meeting is Private, which encrypts its audio and video so the
+                server cannot read them. Files do not travel that path. This one
+                goes through the server like any other file, and everyone here
+                keeps their copy once they have it.
+              </p>
+
+              <button type="button" className="cx-choice cx-choice--bad"
+                      onClick={() => {
+                        // Read out before clearing: the state is what the
+                        // dialog is rendered from, so sending after the reset
+                        // would send from a value React has already replaced.
+                        const f = pendingFile;
+                        setPendingFile(null);
+                        void sendFile(f);
+                      }}>
+                <strong>Send it anyway</strong>
+                <div className="cx-sub">Everyone in the meeting right now receives it.</div>
+              </button>
+
+              <button type="button" className="cx-choice"
+                      onClick={() => setPendingFile(null)}>
+                Don&rsquo;t send
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Audio or video, asked once, in the words of what it costs rather
             than the words of the API. The recommendation is stated rather
             than implied by ordering: a host who does not know the difference
