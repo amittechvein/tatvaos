@@ -429,11 +429,18 @@ public static class MailSendApiEndpoints
     private static string BuildBounceAddress(Guid id, string keyId, string secret, string domain)
     {
         var idHex = id.ToString("N"); // 32 hex, no hyphens: a clean local part
+        // Send-day stamp, in the SIGNED payload, so the policy service can
+        // reject an over-age address at RCPT with no DB hit. Days since the
+        // Unix epoch — compact, invariant, leaks nothing past the send date the
+        // row already holds. PostfixPolicyWorker.ValidateBounce parses this
+        // exact format and signs the same "idHex.keyId.ts" string.
+        var ts = (System.DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 86_400)
+            .ToString(System.Globalization.CultureInfo.InvariantCulture);
         using var mac = new System.Security.Cryptography.HMACSHA256(
             System.Text.Encoding.UTF8.GetBytes(secret));
-        var sig = mac.ComputeHash(System.Text.Encoding.ASCII.GetBytes(idHex + "." + keyId));
+        var sig = mac.ComputeHash(System.Text.Encoding.ASCII.GetBytes($"{idHex}.{keyId}.{ts}"));
         var sigHex = Convert.ToHexString(sig, 0, 8).ToLowerInvariant(); // 16 hex chars
-        return $"{idHex}.{keyId}.{sigHex}@{domain}";
+        return $"{idHex}.{keyId}.{ts}.{sigHex}@{domain}";
     }
 
     private static IResult Unauthorized(string message)

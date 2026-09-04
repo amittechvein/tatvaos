@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using TatvaOS.Api.Modules.Admin;
 using TatvaOS.Api.Shared.Data;
@@ -156,6 +158,29 @@ public sealed class PostfixPolicyWorker(
             if (!req.TryGetValue("recipient", out var recipient) || recipient.Length == 0)
                 return Dunno;
 
+            // ---- BOUNCE PATH ---------------------------------------------
+            //  Branch on the recipient DOMAIN first — one string compare —
+            //  before the size read, the DB scope, or any crypto, because
+            //  every inbound RCPT on the platform reaches this handler and the
+            //  99.9% that is not a bounce must not pay for the 0.1% that is.
+            //
+            //  Exception-isolated on purpose: a fault in bounce validation
+            //  returns defer for THIS recipient and never falls through to the
+            //  quota answer below. Quota fails open (DUNNO); an unguarded throw
+            //  here would ride that and make real mail flow unmetered. Contained
+            //  on purpose, not by luck.
+            var bounceDomain = config["Bounce:Domain"];
+            if (!string.IsNullOrEmpty(bounceDomain)
+                && recipient.EndsWith("@" + bounceDomain, StringComparison.OrdinalIgnoreCase))
+            {
+                try { return ValidateBounce(recipient); }
+                catch (Exception ex)
+                {
+                    log.LogError(ex, "Bounce validation threw; deferring this bounce only");
+                    return "DEFER_IF_PERMIT 451 4.7.0 Bounce validation temporarily unavailable";
+                }
+            }
+
             // The size the SENDER announced on MAIL FROM, which many clients
             // omit. Zero is fine and expected: the allocator then asks "is this
             // mailbox already at its limit" with no headroom, and the accrual
@@ -279,6 +304,78 @@ public sealed class PostfixPolicyWorker(
             mailbox.TenantId, departmentId, null, "mail", ct);
 
         return (inherited, row.UsedBytes);
+    }
+
+    // A bounce local part is exactly: 32-hex id . keyid . ts . 16-hex sig.
+    // The shape check is the CHEAP first gate (§ design): a public catch-all
+    // attracts floods, and every RCPT in a flood would otherwise be an HMAC on
+    // the same handler that answers quota for real mail. Anything that is not
+    // this shape is refused before a single hash is computed.
+    private static readonly Regex BounceLocalPart =
+        new(@"^([0-9a-f]{32})\.([A-Za-z0-9]{1,16})\.([0-9]{1,7})\.([0-9a-f]{16})$",
+            RegexOptions.Compiled);
+
+    /// <summary>
+    /// Validate a VERP bounce address at RCPT time. Returns a Postfix action:
+    /// DUNNO (valid — let it through to the intake transport), a 5xx REJECT
+    /// (malformed, forged, stale, wrong/absent key), or — only from the caller's
+    /// catch — a 4xx defer on an internal fault.
+    ///
+    /// NO SECRET IS A REJECT, NOT AN ACCEPT. Once bounces.tatvaos.com is a
+    /// relay domain the config is live whether or not Bounce:Secret is set. If
+    /// a missing secret meant "can't check, allow", a single absent config
+    /// value would turn the whole domain into an accept-everything catch-all
+    /// that looked healthy while doing it. So an unset secret, or a keyid this
+    /// server does not hold, rejects every address on the domain — loudly
+    /// wrong beats silently wrong. (VERP is dormant until the secret is set, so
+    /// there is no legitimate traffic to lose while it is unset.)
+    /// </summary>
+    private string ValidateBounce(string recipient)
+    {
+        var at = recipient.LastIndexOf('@');
+        var local = at > 0 ? recipient[..at] : recipient;
+
+        // Cheap shape gate — no crypto yet.
+        var m = BounceLocalPart.Match(local);
+        if (!m.Success)
+            return "REJECT 5.7.1 Not a valid bounce address";
+
+        var idHex = m.Groups[1].Value;
+        var keyId = m.Groups[2].Value;
+        var ts    = m.Groups[3].Value;
+        var sig   = m.Groups[4].Value;
+
+        // No secret, or a keyid we do not hold: reject the whole domain.
+        var secret = config["Bounce:Secret"];
+        var currentKeyId = config["Bounce:KeyId"] ?? "k1";
+        if (string.IsNullOrEmpty(secret)
+            || !string.Equals(keyId, currentKeyId, StringComparison.OrdinalIgnoreCase))
+            return "REJECT 5.7.1 Bounce address not recognised";
+
+        // Expiry — a captured address must not be replayable for years. The
+        // send-day stamp is in the SIGNED payload, so forging it just fails the
+        // HMAC; checking it first keeps a replay flood off the crypto path.
+        // 30 days is generous against the ~5-day DSN retry reality.
+        if (!long.TryParse(ts, out var tsDays))
+            return "REJECT 5.7.1 Not a valid bounce address";
+        var nowDays = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 86_400;
+        if (nowDays - tsDays > 30 || tsDays - nowDays > 1)
+            return "REJECT 5.7.1 Bounce address expired";
+
+        // Constant-time HMAC check — it is a signature check reachable by
+        // anyone who can talk to port 25. Compare the raw bytes, never the hex.
+        var mac = HMACSHA256.HashData(
+            Encoding.UTF8.GetBytes(secret),
+            Encoding.ASCII.GetBytes($"{idHex}.{keyId}.{ts}"));
+        var expected = mac.AsSpan(0, 8).ToArray();
+        var provided = Convert.FromHexString(sig);
+        if (!CryptographicOperations.FixedTimeEquals(expected, provided))
+            return "REJECT 5.7.1 Bounce address failed verification";
+
+        // Valid — let it continue to `permit` and the intake transport. The
+        // intake (a later slice) does the idempotent bounced_at write; this
+        // gate's only job is to keep everything unsigned out of the queue.
+        return Dunno;
     }
 
     /// <summary>
