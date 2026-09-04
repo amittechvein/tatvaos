@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 
 type State = 'working' | 'ok' | 'fail';
 
@@ -41,7 +42,7 @@ export default function VerifyRecoveryEmailPage() {
             <p style={{ margin: '0 0 20px', color: '#4d5875' }}>
               You can now use this address to get back into your account if you are ever locked out.
             </p>
-            <a href="/org/users" style={{ display: 'inline-block', padding: '11px 22px', background: '#03b562', color: '#fff', textDecoration: 'none', borderRadius: 10, fontWeight: 600 }}>Continue</a>
+            <Link href="/org/users" style={{ display: 'inline-block', padding: '11px 22px', background: '#03b562', color: '#fff', textDecoration: 'none', borderRadius: 10, fontWeight: 600 }}>Continue</Link>
           </>
         )}
         {state === 'fail' && (
@@ -49,7 +50,7 @@ export default function VerifyRecoveryEmailPage() {
             <div style={{ fontSize: 40, marginBottom: 12 }}>&#9888;</div>
             <h1 style={{ fontSize: 22, margin: '0 0 8px', color: '#0a0a0a' }}>Couldn&apos;t confirm this link</h1>
             <p style={{ margin: '0 0 20px', color: '#4d5875' }}>{message}</p>
-            <a href="/" style={{ display: 'inline-block', padding: '11px 22px', background: '#eef1f5', color: '#0a0a0a', textDecoration: 'none', borderRadius: 10, fontWeight: 600 }}>Go to sign in</a>
+            <Link href="/" style={{ display: 'inline-block', padding: '11px 22px', background: '#eef1f5', color: '#0a0a0a', textDecoration: 'none', borderRadius: 10, fontWeight: 600 }}>Go to sign in</Link>
           </>
         )}
       </div>
