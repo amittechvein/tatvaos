@@ -345,11 +345,17 @@ public sealed class PostfixPolicyWorker(
         var ts    = m.Groups[3].Value;
         var sig   = m.Groups[4].Value;
 
-        // No secret, or a keyid we do not hold: reject the whole domain.
-        var secret = config["Bounce:Secret"];
-        var currentKeyId = config["Bounce:KeyId"] ?? "k1";
-        if (string.IsNullOrEmpty(secret)
-            || !string.Equals(keyId, currentKeyId, StringComparison.OrdinalIgnoreCase))
+        // KEYSET, not a single secret. The address names WHICH key signed it,
+        // and a RETIRED key must still verify bounces already in flight — a DSN
+        // can arrive days after a rotation, which is the whole reason <keyid>
+        // is in the address. Look the keyid up in Bounce:Keys; an unknown key,
+        // a retired-beyond-window one, or none configured at all rejects the
+        // whole domain. keyid is [A-Za-z0-9]{1,16} from the shape gate, so it
+        // cannot escape the config path. A key stays in Bounce:Keys for at
+        // least the 30-day address expiry after it stops signing (see
+        // BOUNCE-ROUTING.md), so expiry and rotation agree on an address's life.
+        var secret = config[$"Bounce:Keys:{keyId}"];
+        if (string.IsNullOrEmpty(secret))
             return "REJECT 5.7.1 Bounce address not recognised";
 
         // Expiry — a captured address must not be replayable for years. The

@@ -287,9 +287,13 @@ public static class MailSendApiEndpoints
         //  signing secret are configured; until then EnvelopeSender is null and
         //  this sends exactly as before. That is deliberate: this endpoint must
         //  not wait on the Postfix + DNS routing PR to keep working.
-        var bounceSecret = config["Bounce:Secret"];
+        // Sign with the CURRENT key from the keyset (Bounce:KeyId names it,
+        // Bounce:Keys:<id> holds it). The policy service verifies against ANY
+        // keyid still in Bounce:Keys, which is what keeps a rotation safe for
+        // bounces already in flight.
         var bounceDomain = config["Bounce:Domain"];
         var bounceKeyId  = config["Bounce:KeyId"] ?? "k1";
+        var bounceSecret = config[$"Bounce:Keys:{bounceKeyId}"];
         var bounceOn = !string.IsNullOrEmpty(bounceSecret) && !string.IsNullOrEmpty(bounceDomain);
 
         // NOTE for v1.5 (bulk): each SubmitAsync opens and closes its own SMTP
