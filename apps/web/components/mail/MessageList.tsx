@@ -2,7 +2,7 @@
 
 import { displayName, formatMessageDate } from '@tatvaos/core';
 import type { Message } from '@tatvaos/types';
-import { CATEGORY_COLOURS, type MailCategory } from '../../lib/mail';
+import { CATEGORY_COLOURS, type InboxLayout, type MailCategory } from '../../lib/mail';
 import { Avatar } from '../ui/Avatar';
 import { Icon } from '../ui/Icon';
 
@@ -14,6 +14,23 @@ import { Icon } from '../ui/Icon';
  * NOTE for Phase 1: renders every row. Fine at a page of 50; a huge folder
  * needs TanStack Virtual, swapped in here only.
  */
+/**
+ * Day-group heading for a message time, for the 'grouped' layout. Calendar
+ * days, not 24h windows — mail from 11pm yesterday belongs to Yesterday at
+ * 8am today, whatever the clock distance says.
+ */
+function groupLabel(iso: string): string {
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const day = 86_400_000;
+  const that = startOfDay(new Date(iso));
+  const today = startOfDay(new Date());
+  if (that >= today) return 'Today';
+  if (that >= today - day) return 'Yesterday';
+  if (that >= today - 6 * day) return 'This week';
+  if (that >= today - 27 * day) return 'This month';
+  return 'Older';
+}
+
 export function MessageList({
   messages,
   selectedIds,
@@ -22,6 +39,7 @@ export function MessageList({
   onOpen,
   onToggleFlag,
   categoriesById,
+  layout = 'comfortable',
 }: {
   messages: Message[];
   selectedIds: Set<string>;
@@ -35,6 +53,13 @@ export function MessageList({
    * that have not loaded categories render plainly rather than wrongly.
    */
   categoriesById?: Record<string, MailCategory>;
+  /**
+   * How the list is drawn — the person's choice from Mail settings.
+   * 'comfortable' is today's cards; 'grouped' adds day headings; 'compact'
+   * tightens the rows and drops the preview; 'slim' stacks sender over
+   * subject for a narrow column beside a wide reading pane.
+   */
+  layout?: InboxLayout;
 }) {
   if (messages.length === 0) {
     return (
@@ -65,6 +90,9 @@ export function MessageList({
   //    controls are the opposite of premium.
   // ==========================================================================
   const selecting = selectedIds.size > 0;
+  const dense = layout === 'compact';
+  const slim = layout === 'slim';
+  const grouped = layout === 'grouped';
 
   // PASS TWO, after Amit's verdict on pass one: "still look same as gmail."
   // He was right, and the reason was structural: a continuous ruled table IS
@@ -74,14 +102,28 @@ export function MessageList({
   // brand ring. Same data, same density within a card, unmistakably not a
   // spreadsheet of email.
   return (
-    <ul className="scroll-thin h-full list-none space-y-2 overflow-y-auto p-3 pl-3">
-      {messages.map((m) => {
+    <ul className={`scroll-thin h-full list-none overflow-y-auto p-3 pl-3 ${dense || slim ? 'space-y-1' : 'space-y-2'}`}>
+      {messages.map((m, i) => {
+        // A heading is owed when this message opens a new day-group. Computed
+        // against the PREVIOUS row, so an unsorted list degrades to extra
+        // headings rather than wrong grouping.
+        const heading = grouped
+          ? (() => {
+              const label = groupLabel(m.sentAt);
+              return i === 0 || groupLabel(messages[i - 1]!.sentAt) !== label ? label : null;
+            })()
+          : null;
         const checked = selectedIds.has(m.id);
         const active = m.id === openId;
         return (
           <li key={m.id}>
+            {heading && (
+              <div className="px-1 pb-1.5 pt-3 text-[11px] font-bold uppercase tracking-wider text-ink-faint">
+                {heading}
+              </div>
+            )}
             <div
-              className={`group relative flex items-center gap-3 rounded-xl px-3.5 py-3 transition ${
+              className={`group relative flex items-center gap-3 rounded-xl transition ${dense ? 'px-3 py-1.5' : slim ? 'px-3 py-2' : 'px-3.5 py-3'} ${
                 active
                   ? 'bg-surface shadow-card ring-1 ring-brand-500/60'
                   : checked
@@ -132,7 +174,7 @@ export function MessageList({
                 onClick={() => onOpen(m.id)}
                 className="flex min-w-0 flex-1 items-center gap-3 text-left"
               >
-                <Avatar address={m.from} size={36} />
+                <Avatar address={m.from} size={dense ? 28 : slim ? 30 : 36} />
                 {/* The sender column was a flat w-40 - 160px reserved for a
                     name whatever the pane was doing. In a list panel beside an
                     open reading pane that is most of the room, so subjects
@@ -141,7 +183,7 @@ export function MessageList({
                     where there is genuinely space; the subject is the thing
                     being scanned for. */}
                 <span
-                  className={`hidden w-28 shrink-0 truncate text-sm sm:block lg:w-36 ${
+                  className={`w-28 shrink-0 truncate text-sm lg:w-36 ${slim ? 'hidden' : 'hidden sm:block'} ${
                     m.isRead ? 'text-ink-muted' : 'font-semibold text-ink'
                   }`}
                 >
@@ -149,7 +191,7 @@ export function MessageList({
                 </span>
                 <span className="min-w-0 flex-1">
                   <span
-                    className={`block truncate text-sm sm:hidden ${
+                    className={`block truncate text-sm ${slim ? '' : 'sm:hidden'} ${
                       m.isRead ? 'text-ink-muted' : 'font-semibold text-ink'
                     }`}
                   >
@@ -162,6 +204,14 @@ export function MessageList({
                   >
                     {m.subject || '(no subject)'}
                   </span>
+                  {/* Compact and slim trade the preview line for rows; the
+                      attachment marker moves up beside the subject so it is
+                      not lost with it. */}
+                  {(dense || slim) ? (
+                    m.hasAttachments && (
+                      <Icon name="attach" className="mt-0.5 h-3 w-3 text-ink-faint" />
+                    )
+                  ) : (
                   <span className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-ink-muted/80">
                     {m.hasAttachments && <Icon name="attach" className="h-3.5 w-3.5 shrink-0 text-ink-faint" />}
                     {(() => {
@@ -186,6 +236,7 @@ export function MessageList({
                     })()}
                     <span className="truncate">{m.snippet}</span>
                   </span>
+                  )}
                 </span>
               </button>
 
