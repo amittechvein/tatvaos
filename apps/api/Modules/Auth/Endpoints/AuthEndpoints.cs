@@ -286,6 +286,7 @@ public static class AuthEndpoints
         g.MapGet("/me", MeAsync).RequireAuthorization("User");
         g.MapPost("/change-password", ChangePasswordAsync).RequireAuthorization("User");
         g.MapGet("/sessions", SessionsAsync).RequireAuthorization("User");
+        g.MapGet("/recovery-status", RecoveryStatusAsync).RequireAuthorization("User");
 
         // ---- forgot password (anonymous: the whole point is no session) --
         // Email link and phone OTP, each a request/complete pair. Every
@@ -1095,6 +1096,32 @@ public static class AuthEndpoints
             organisation = org is null ? null : new { org.Id, org.Name, org.Type, org.Status },
             products,
             mailboxAddress = mailbox,
+        });
+    }
+
+    // ------------------------------------------------------------------
+    /// <summary>
+    /// GET /api/auth/recovery-status — can the current user get back in? Read-
+    /// only; the login reminder reads this to decide whether to nudge. A
+    /// recovery email counts only once VERIFIED.
+    /// </summary>
+    private static async Task<IResult> RecoveryStatusAsync(
+        AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var row = await db.Users.AsNoTracking()
+            .Where(u => u.Id == tenant.UserId)
+            .Select(u => new
+            {
+                HasPhone = u.Phone != null && u.Phone != "",
+                HasVerifiedRecoveryEmail = u.RecoveryEmailVerifiedAt != null,
+            })
+            .FirstOrDefaultAsync(ct);
+        if (row is null) return Results.NotFound();
+        return Results.Ok(new
+        {
+            row.HasPhone,
+            row.HasVerifiedRecoveryEmail,
+            needsAttention = !row.HasPhone || !row.HasVerifiedRecoveryEmail,
         });
     }
 

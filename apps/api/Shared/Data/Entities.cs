@@ -194,6 +194,21 @@ public class User
     public DateTimeOffset? PasswordResetSentAt { get; set; }
     public int PasswordResetAttempts { get; set; }
     [MaxLength(8)] public string? PasswordResetChannel { get; set; }
+    // ---- Recovery email (20260904-user-recovery-email.sql) --------------
+    /// <summary>
+    /// A secondary address (typically personal) for proving account ownership.
+    /// VERIFIED-BEFORE-IT-COUNTS: RecoveryEmailVerifiedAt stays null until the
+    /// owner clicks the link, and only a verified address may be used for
+    /// recovery. Non-unique on purpose (one person, two mailboxes) — the API
+    /// requires exactly one live match or refuses, exactly like phone.
+    /// </summary>
+    [MaxLength(320)] public string? RecoveryEmail { get; set; }
+    public DateTimeOffset? RecoveryEmailVerifiedAt { get; set; }
+    // Verification token is never stored raw — SHA-256 over the token, same
+    // shape as login_otp_hash / password_reset_hash.
+    [MaxLength(64)] public string? RecoveryEmailTokenHash { get; set; }
+    public DateTimeOffset? RecoveryEmailTokenSentAt { get; set; }
+    public int RecoveryEmailTokenAttempts { get; set; }
 
     [MaxLength(200)] public required string DisplayName { get; set; }
 
