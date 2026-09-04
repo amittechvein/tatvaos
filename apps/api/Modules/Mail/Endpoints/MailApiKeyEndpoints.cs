@@ -55,7 +55,7 @@ public static class MailApiKeyEndpoints
         var keys = await db.MailApiKeys.AsNoTracking()
             .Where(k => k.RevokedAt == null)
             .OrderByDescending(k => k.CreatedAt)
-            .Select(k => new { k.Id, k.Label, k.KeyPrefix, k.CreatedAt, k.LastUsedAt, AllowedAddresses = k.AllowedSenderAddresses, AllowedCount = (k.AllowedSenderAddresses ?? Array.Empty<string>()).Length })
+            .Select(k => new { k.Id, k.Label, k.KeyPrefix, k.CreatedAt, k.LastUsedAt, AllowedAddresses = k.AllowedSenderAddresses, AllowedCount = k.AllowedSenderAddresses.Length })
             .ToListAsync(ct);
 
         return Results.Ok(new { keys });
