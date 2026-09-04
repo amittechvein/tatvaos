@@ -24,13 +24,17 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? '/api';
  */
 export default function ForgotPasswordPage() {
   const router = useRouter();
-  const [tab, setTab] = useState<'email' | 'phone'>('email');
+  const [tab, setTab] = useState<'email' | 'recovery' | 'phone'>('email');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   // --- email ---
   const [email, setEmail] = useState('');
   const [emailSent, setEmailSent] = useState(false);
+
+  // --- recovery email ---
+  const [recoveryEmail, setRecoveryEmail] = useState('');
+  const [recoverySent, setRecoverySent] = useState(false);
 
   // --- phone ---
   const [phone, setPhone] = useState('');
@@ -41,7 +45,7 @@ export default function ForgotPasswordPage() {
   const [confirm, setConfirm] = useState('');
   const [done, setDone] = useState(false);
 
-  function switchTab(t: 'email' | 'phone') {
+  function switchTab(t: 'email' | 'recovery' | 'phone') {
     setTab(t);
     setError(null);
   }
@@ -58,6 +62,26 @@ export default function ForgotPasswordPage() {
       });
       // Deliberately not checking res.ok — see the note above.
       setEmailSent(true);
+    } catch {
+      setError('Could not reach the server. Check your connection and try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendRecovery(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await fetch(`${API}/auth/password/forgot-recovery`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: recoveryEmail.trim() }),
+      });
+      // Same anti-enumeration stance as the email flow — never reveal whether
+      // the address matched. Only a request that never completed is a failure.
+      setRecoverySent(true);
     } catch {
       setError('Could not reach the server. Check your connection and try again.');
     } finally {
@@ -130,20 +154,20 @@ export default function ForgotPasswordPage() {
     <AuthCard>
       <h1 className="mb-1 text-xl font-semibold text-ink">Reset your password</h1>
       <p className="mb-5 text-sm leading-relaxed text-ink-muted">
-        Recover by email, or with a code sent to your mobile.
+        Recover by email, a verified recovery email, or a code sent to your mobile.
       </p>
 
       <div className="mb-5 flex rounded-lg border border-line p-1">
-        {(['email', 'phone'] as const).map((t) => (
+        {(['email', 'recovery', 'phone'] as const).map((t) => (
           <button
             key={t}
             type="button"
             onClick={() => switchTab(t)}
-            className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium capitalize transition ${
+            className={`flex-1 whitespace-nowrap rounded-md px-2 py-1.5 text-sm font-medium transition ${
               tab === t ? 'bg-brand-600 text-white' : 'text-ink-muted hover:text-ink'
             }`}
           >
-            {t === 'email' ? 'Email' : 'Mobile OTP'}
+            {t === 'email' ? 'Email' : t === 'recovery' ? 'Recovery' : 'Mobile OTP'}
           </button>
         ))}
       </div>
@@ -181,6 +205,43 @@ export default function ForgotPasswordPage() {
             </label>
             <button type="submit" className={`${AUTH_BUTTON} mt-5`}
                     disabled={busy || email.trim().length < 5}>
+              {busy ? 'Sending…' : 'Send reset link'}
+            </button>
+          </form>
+        )
+      )}
+
+      {/* ------------------------------------------------------- recovery */}
+      {tab === 'recovery' && (
+        recoverySent ? (
+          <>
+            <div className="rounded-lg bg-ok/10 px-3 py-3 text-sm text-ink">
+              If that address is a verified recovery email on an account, we&apos;ve
+              sent a link to reset the password. The link expires shortly, and using
+              it signs out every other session.
+            </div>
+            <p className="mt-3 text-xs text-ink-muted">
+              Nothing arrived? Check spam, then try again — or use a mobile code instead.
+            </p>
+            <button type="button" className={`${AUTH_BUTTON} mt-5`}
+                    onClick={() => { setRecoverySent(false); setRecoveryEmail(''); }}>
+              Try another address
+            </button>
+          </>
+        ) : (
+          <form onSubmit={sendRecovery} noValidate>
+            <p className="mb-4 text-sm leading-relaxed text-ink-muted">
+              Locked out of your mailbox? Enter the recovery email you verified on
+              your account and we&apos;ll send the reset link there instead.
+            </p>
+            <label className="block">
+              <span className="mb-1.5 block text-sm font-medium text-ink">Recovery email address</span>
+              <input type="email" required autoComplete="email" className={AUTH_INPUT}
+                     placeholder="you@personal.com"
+                     value={recoveryEmail} onChange={(e) => setRecoveryEmail(e.target.value)} />
+            </label>
+            <button type="submit" className={`${AUTH_BUTTON} mt-5`}
+                    disabled={busy || recoveryEmail.trim().length < 5}>
               {busy ? 'Sending…' : 'Send reset link'}
             </button>
           </form>
