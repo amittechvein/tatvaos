@@ -382,7 +382,37 @@ export default function MailSettingsPage() {
 
       {error && <p className="mb-4 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">{error}</p>}
 
+      {/* ---- Inbox layout ------------------------------------------------ */}
       <section className="max-w-2xl rounded-card border border-line bg-surface p-5">
+        <h2 className="text-base font-semibold text-ink">Inbox layout</h2>
+        <p className="mt-1 text-sm text-ink-muted">
+          How your message list is drawn. Saved on this device only — a
+          different computer keeps its own choice.
+        </p>
+        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+          {INBOX_LAYOUTS.map((o) => (
+            <button
+              key={o.id}
+              type="button"
+              onClick={() => {
+                setInboxLayout(o.id);
+                setInboxLayoutChoice(o.id);
+              }}
+              aria-pressed={inboxLayout === o.id}
+              className={`rounded-card border p-3 text-left transition ${
+                inboxLayout === o.id
+                  ? 'border-brand-500 bg-brand-50 dark:bg-brand-600/15'
+                  : 'border-line hover:border-ink-faint/50'
+              }`}
+            >
+              <span className="block text-sm font-medium text-ink">{o.name}</span>
+              <span className="mt-0.5 block text-xs text-ink-muted">{o.hint}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="mt-6 max-w-2xl rounded-card border border-line bg-surface p-5">
         <h2 className="mb-1 text-sm font-semibold text-ink">Signature</h2>
         <p className="mb-4 text-xs text-ink-muted">
           Added to the bottom of messages sent from this mailbox. Plain text — it is escaped
@@ -685,35 +715,6 @@ export default function MailSettingsPage() {
         </div>
       </section>
 
-      {/* ---- Inbox layout ------------------------------------------------ */}
-      <section className="mt-6 max-w-2xl rounded-card border border-line bg-surface p-5">
-        <h2 className="text-base font-semibold text-ink">Inbox layout</h2>
-        <p className="mt-1 text-sm text-ink-muted">
-          How your message list is drawn. Saved on this device only — a
-          different computer keeps its own choice.
-        </p>
-        <div className="mt-4 grid gap-2 sm:grid-cols-2">
-          {INBOX_LAYOUTS.map((o) => (
-            <button
-              key={o.id}
-              type="button"
-              onClick={() => {
-                setInboxLayout(o.id);
-                setInboxLayoutChoice(o.id);
-              }}
-              aria-pressed={inboxLayout === o.id}
-              className={`rounded-card border p-3 text-left transition ${
-                inboxLayout === o.id
-                  ? 'border-brand-500 bg-brand-50 dark:bg-brand-600/15'
-                  : 'border-line hover:border-ink-faint/50'
-              }`}
-            >
-              <span className="block text-sm font-medium text-ink">{o.name}</span>
-              <span className="mt-0.5 block text-xs text-ink-muted">{o.hint}</span>
-            </button>
-          ))}
-        </div>
-      </section>
     </div>
   );
 }
