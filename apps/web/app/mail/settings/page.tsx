@@ -23,10 +23,23 @@ import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import type { Folder } from '@tatvaos/types';
 import {
-  CATEGORY_COLOURS, CATEGORY_PALETTE, getInboxLayout, INBOX_LAYOUTS,
-  mailApi, setInboxLayout,
-  type InboxLayout, type MailCategory, type MailSignature,
+  CATEGORY_COLOURS, CATEGORY_PALETTE, mailApi,
+  type MailCategory, type MailSignature,
 } from '@/lib/mail';
+import { FiltersPanel } from '@/components/mail/FiltersPanel';
+import { BlockedPanel } from '@/components/mail/BlockedPanel';
+
+// The settings screen is now tab-wise: one concern per tab, so the page is a
+// short list of doors rather than a long scroll. Inbox LAYOUT is deliberately
+// NOT here — it lives in the inbox toolbar, where the thing it changes is.
+type SettingsTab = 'signature' | 'folders' | 'categories' | 'filters' | 'blocking';
+const TABS: { id: SettingsTab; label: string }[] = [
+  { id: 'signature', label: 'Signature' },
+  { id: 'folders', label: 'Folders' },
+  { id: 'categories', label: 'Categories' },
+  { id: 'filters', label: 'Filters' },
+  { id: 'blocking', label: 'Blocking' },
+];
 
 /**
  * The details a sample signature fills in for you.
@@ -125,14 +138,9 @@ export default function MailSettingsPage() {
   /** A sample waiting on "replace what I've written?". Null when nothing is. */
   const [pending, setPending] = useState<string | null>(null);
 
-  // ---- Inbox layout ----------------------------------------------------
-  //
-  //  A device preference, not a server one (see lib/mail.ts for why), so
-  //  there is no save round-trip: clicking a card IS the save.
-  const [inboxLayout, setInboxLayoutChoice] = useState<InboxLayout>('comfortable');
-  useEffect(() => {
-    setInboxLayoutChoice(getInboxLayout());
-  }, []);
+  // Which settings tab is showing. Signature first — it is the one people open
+  // settings to change most often.
+  const [tab, setTab] = useState<SettingsTab>('signature');
 
   const identity: Identity = {
     name: user?.displayName ?? '[Your name]',
@@ -370,48 +378,37 @@ export default function MailSettingsPage() {
       <header className="mb-6 flex flex-wrap items-center gap-3">
         <div className="min-w-0 flex-1">
           <h1 className="text-lg font-semibold text-ink">Mail settings</h1>
-          <p className="text-sm text-ink-muted">Signature and message preferences for this mailbox.</p>
+          <p className="text-sm text-ink-muted">
+            Manage your signature, folders, categories, filters and blocking for this mailbox.
+          </p>
         </div>
         <Link href="/mail/inbox" className="text-sm font-medium text-brand-600 hover:underline">
           Back to inbox
         </Link>
-        <Link href="/mail/filters" className="text-sm font-medium text-brand-600 hover:underline">
-          Filters
-        </Link>
       </header>
+
+      <nav className="mb-6 flex flex-wrap gap-1 border-b border-line">
+        {TABS.map((tb) => (
+          <button
+            key={tb.id}
+            type="button"
+            onClick={() => setTab(tb.id)}
+            aria-current={tab === tb.id ? 'page' : undefined}
+            className={`-mb-px border-b-2 px-4 py-2.5 text-sm font-medium transition ${
+              tab === tb.id
+                ? 'border-brand-500 text-brand-600'
+                : 'border-transparent text-ink-muted hover:text-ink'
+            }`}
+          >
+            {tb.label}
+          </button>
+        ))}
+      </nav>
 
       {error && <p className="mb-4 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">{error}</p>}
 
-      {/* ---- Inbox layout ------------------------------------------------ */}
-      <section className="max-w-2xl rounded-card border border-line bg-surface p-5">
-        <h2 className="text-base font-semibold text-ink">Inbox layout</h2>
-        <p className="mt-1 text-sm text-ink-muted">
-          How your message list is drawn. Saved on this device only — a
-          different computer keeps its own choice.
-        </p>
-        <div className="mt-4 grid gap-2 sm:grid-cols-2">
-          {INBOX_LAYOUTS.map((o) => (
-            <button
-              key={o.id}
-              type="button"
-              onClick={() => {
-                setInboxLayout(o.id);
-                setInboxLayoutChoice(o.id);
-              }}
-              aria-pressed={inboxLayout === o.id}
-              className={`rounded-card border p-3 text-left transition ${
-                inboxLayout === o.id
-                  ? 'border-brand-500 bg-brand-50 dark:bg-brand-600/15'
-                  : 'border-line hover:border-ink-faint/50'
-              }`}
-            >
-              <span className="block text-sm font-medium text-ink">{o.name}</span>
-              <span className="mt-0.5 block text-xs text-ink-muted">{o.hint}</span>
-            </button>
-          ))}
-        </div>
-      </section>
-
+      {/* ---- Signature ---------------------------------------------- */}
+      {tab === 'signature' && (
       <section className="mt-6 max-w-2xl rounded-card border border-line bg-surface p-5">
         <h2 className="mb-1 text-sm font-semibold text-ink">Signature</h2>
         <p className="mb-4 text-xs text-ink-muted">
@@ -531,8 +528,10 @@ export default function MailSettingsPage() {
           </>
         )}
       </section>
+      )}
 
       {/* ---- Folders ------------------------------------------------- */}
+      {tab === 'folders' && (
       <section className="mt-6 max-w-2xl rounded-card border border-line bg-surface p-5">
         <h2 className="mb-1 text-sm font-semibold text-ink">Your folders</h2>
         <p className="mb-4 text-xs text-ink-muted">
@@ -606,8 +605,10 @@ export default function MailSettingsPage() {
           </button>
         </div>
       </section>
+      )}
 
       {/* ---- Categories ---------------------------------------------- */}
+      {tab === 'categories' && (
       <section className="mt-6 max-w-2xl rounded-card border border-line bg-surface p-5">
         <h2 className="mb-1 text-sm font-semibold text-ink">Categories</h2>
         <p className="mb-4 text-xs text-ink-muted">
@@ -714,6 +715,21 @@ export default function MailSettingsPage() {
           </button>
         </div>
       </section>
+      )}
+
+      {/* ---- Filters ------------------------------------------------- */}
+      {tab === 'filters' && (
+        <section className="mt-6 max-w-2xl rounded-card border border-line bg-surface p-5">
+          <FiltersPanel />
+        </section>
+      )}
+
+      {/* ---- Blocking ------------------------------------------------ */}
+      {tab === 'blocking' && (
+        <section className="mt-6 max-w-2xl rounded-card border border-line bg-surface p-5">
+          <BlockedPanel />
+        </section>
+      )}
 
     </div>
   );
