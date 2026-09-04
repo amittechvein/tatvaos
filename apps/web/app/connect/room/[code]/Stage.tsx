@@ -3486,6 +3486,56 @@ function Tile({ p, big, local, showScreen, hand, canHost, pinned, mirror = true,
     return () => { videoTrack.detach(el); };
   }, [videoTrack]);
 
+  // ── IS THIS STREAM TALLER THAN IT IS WIDE? ────────────────────────────
+  //
+  //  Measured from the <video> element, not guessed from the device. There
+  //  is no reliable way to ask "is this person on a phone", and it is the
+  //  wrong question anyway: a tablet in landscape is a phone that is wide,
+  //  and a laptop with a rotated monitor is a computer that is tall. The
+  //  only thing that matters is the shape of the picture arriving.
+  //
+  //  BOTH events are needed. loadedmetadata fires once when the dimensions
+  //  first exist; resize fires when they CHANGE, which is what happens the
+  //  moment somebody turns their phone over mid-meeting. Without the second
+  //  one the layout would be correct until the first rotation and wrong for
+  //  the rest of the call.
+  const [upright, setUpright] = useState(false);
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+    const read = () => {
+      const w = el.videoWidth;
+      const h = el.videoHeight;
+      // Zeros mean the metadata has not arrived; leaving `upright` alone is
+      // right — a momentary flip to landscape and back would be a visible
+      // jump for everyone watching.
+      if (w > 0 && h > 0) setUpright(h > w);
+    };
+    read();
+    el.addEventListener('loadedmetadata', read);
+    el.addEventListener('resize', read);
+    return () => {
+      el.removeEventListener('loadedmetadata', read);
+      el.removeEventListener('resize', read);
+    };
+  }, [videoTrack]);
+
+  // A screen share is already contained, so it needs none of this; and the
+  // blurred backdrop is confined to the big tile for the reason in the CSS.
+  const tall = upright && !showScreen;
+  const backdrop = tall && big;
+
+  const bgRef = useRef<HTMLVideoElement | null>(null);
+  useEffect(() => {
+    const el = bgRef.current;
+    if (!el || !videoTrack || !backdrop) return;
+    // The same track attached twice. LiveKit keeps a list of attached
+    // elements, and the browser decodes once and paints twice, so this costs
+    // a composite rather than a second decode.
+    videoTrack.attach(el);
+    return () => { videoTrack.detach(el); };
+  }, [videoTrack, backdrop]);
+
   // NO AUDIO HERE ANY MORE. A tile is a picture; sound is not a picture, and
   // putting the two in one component made every view setting a mute button.
   // See RoomAudio, which renders every remote participant's sound once,
@@ -3496,6 +3546,14 @@ function Tile({ p, big, local, showScreen, hand, canHost, pinned, mirror = true,
     // presenter's slides are talking.
     <div className={`cx-tile${big ? ' cx-tile--big' : ''}`
       + `${p.isSpeaking && !showScreen ? ' is-speaking' : ''}`}>
+      {/* The blurred fill behind a portrait picture. Rendered BEFORE the real
+          video so it sits underneath without needing a stacking hack, and
+          hidden from assistive technology — it is the same picture twice and
+          announcing it twice would be worse than not announcing it. */}
+      {backdrop && !camOff && (
+        <video ref={bgRef} autoPlay playsInline muted aria-hidden="true"
+               className={`cx-vbg${local && mirror ? ' cx-vbg--self' : ''}`} />
+      )}
       <video ref={videoRef} autoPlay playsInline muted={local}
              // Two things a screen share must not do, for the same underlying
              // reason — you have to be able to READ it.
@@ -3503,8 +3561,12 @@ function Tile({ p, big, local, showScreen, hand, canHost, pinned, mirror = true,
              //   --screen switches object-fit to contain, because the default
              //            cover CROPS, and it crops off exactly whatever is at
              //            the edge of the thing somebody is presenting.
+             //   --upright is the portrait case: contain rather than cover, so
+             //            a phone held the tall way shows a whole person
+             //            instead of a horizontal slice through their face.
              className={`cx-video${local && !showScreen && mirror ? ' cx-video--self' : ''}`
-               + `${showScreen ? ' cx-video--screen' : ''}`}
+               + `${showScreen ? ' cx-video--screen' : ''}`
+               + `${tall ? ' cx-video--upright' : ''}`}
              style={{ display: camOff ? 'none' : 'block' }} />
 
       {camOff && (

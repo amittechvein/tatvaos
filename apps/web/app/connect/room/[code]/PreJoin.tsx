@@ -44,6 +44,19 @@ export default function PreJoin({ title, name, onJoin }: {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const rafRef = useRef<number>(0);
 
+  // ── THE PREVIEW TAKES THE CAMERA'S SHAPE, NOT 16/9. ──────────────────
+  //
+  //  The card was a fixed 16/9 box with object-fit:cover in it. A phone held
+  //  upright sends about 9/16, so cover filled the width and threw away most
+  //  of the height — the first thing a mobile joiner saw was a letterbox slice
+  //  of their own face, on the one screen whose entire job is "check how you
+  //  look before anybody else sees you".
+  //
+  //  Measured from the video element rather than from the viewport width: a
+  //  tablet in landscape is not a phone, and a phone turned sideways mid-check
+  //  should follow. `resize` is what fires on rotation.
+  const [shape, setShape] = useState<string | null>(null);
+
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
   const [cams, setCams] = useState<MediaDeviceInfo[]>([]);
@@ -112,6 +125,27 @@ export default function PreJoin({ title, name, onJoin }: {
     return () => { alive = false; stopStream(); };
   }, [camId, micId, stopStream]);
 
+  // Watches the element, not the stream, so it also catches a camera swap and
+  // a rotation. Registered once; the element outlives every stream it shows.
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+    const read = () => {
+      const w = el.videoWidth;
+      const h = el.videoHeight;
+      // Zeros mean metadata has not arrived. Keeping the last known shape
+      // avoids the card snapping to a default and back while a camera starts.
+      if (w > 0 && h > 0) setShape(`${w} / ${h}`);
+    };
+    read();
+    el.addEventListener('loadedmetadata', read);
+    el.addEventListener('resize', read);
+    return () => {
+      el.removeEventListener('loadedmetadata', read);
+      el.removeEventListener('resize', read);
+    };
+  }, []);
+
   // The speaker test: a soft two-note chime from an oscillator — no asset to
   // load, nothing to buffer, works offline. If you hear it, your speakers
   // work; there is nothing else it needs to prove.
@@ -155,7 +189,12 @@ export default function PreJoin({ title, name, onJoin }: {
         <div style={{ fontSize: 17, fontWeight: 600, marginBottom: 4 }}>Ready to join?</div>
         <div className="cx-sub" style={{ marginBottom: 14 }}>{title}</div>
 
-        <div className="cx-preview">
+        {/* The box follows the camera. Capped in CSS so a very tall phone
+            camera cannot push the Join button off the bottom of the screen —
+            a preview you have to scroll past to join is worse than a cropped
+            one. */}
+        <div className="cx-preview"
+             style={shape !== null ? { aspectRatio: shape } : undefined}>
           {camOn && !denied ? (
             <video ref={videoRef} autoPlay playsInline muted className="cx-preview-video" />
           ) : (
