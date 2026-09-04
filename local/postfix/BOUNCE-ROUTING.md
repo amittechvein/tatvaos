@@ -1,10 +1,20 @@
 # Bounce routing + intake — design for review
 
 The bounce key (schema #25) and the VERP envelope (#28) are in. This is the
-slice that makes them real: getting `<id>.<keyid>.<hmac>@bounces.tatvaos.com`
-delivered, validated, and written back — and it is the live SMTP attack
-surface, so it is put up for design review before any of it is built. None of
-the below is built yet; this file is the thing to shoot at.
+slice that makes them real: getting the bounce address delivered, validated,
+and written back — and it is the live SMTP attack surface, so it is put up for
+design review before any of it is built. None of the below is built yet.
+
+## 0. Address format (updated — see §5, expiry)
+
+    <id>.<keyid>.<ts>.<hmac>@bounces.tatvaos.com
+
+`id` = api_sends primary key (correlation). `keyid` = which secret signed it
+(rotation). `ts` = a coarse send-day stamp for expiry (§5). `hmac` signs
+`id.keyid.ts`. #28's BuildBounceAddress currently emits `id.keyid.hmac`; it
+gains `ts` in lockstep with the policy service (§2). Both are dormant until DNS
+(§1) and `Bounce:Domain`/`Bounce:Secret` are set, so the format can change now
+at no live cost — which is the whole reason to do it now.
 
 ## 1. DNS (manual — Amit, at the registrar)
 
@@ -12,38 +22,58 @@ Two records on the bounce subdomain. Neither touches the main domain.
 
 - `bounces.tatvaos.com.  MX  10 mx.tatvaos.com.` — bounces come to our host.
 - `bounces.tatvaos.com.  TXT  "v=spf1 a:mx.tatvaos.com -all"` — so the VERP
-  envelope domain passes SPF alignment for our sending IP. (DMARC on customer
-  mail is unaffected: it aligns on the customer domain's DKIM, which Postfix
-  already signs. The envelope domain only has to authenticate itself.)
+  envelope domain passes SPF for our sending IP. (DMARC on customer mail is
+  unaffected: it aligns on the customer domain's DKIM, which Postfix already
+  signs. The envelope domain only authenticates itself.)
 
 Until these exist, `Bounce:Domain`/`Bounce:Secret` stay unset and VERP is
-dormant (that is why #28 shipped safe).
+dormant — which is why #28 shipped safe.
 
 ## 2. SMTP-TIME validation — a policy service, not post-queue (requirement A)
 
-The requirement: verify the HMAC DURING the SMTP conversation and reject there,
-so junk to a public subdomain never enters the queue and never becomes the
-attack surface `verify-live.sh`'s "queue empty" check would then flap on.
+Verify the HMAC DURING the SMTP conversation and reject there, so junk to a
+public subdomain never enters the queue and never becomes the attack surface
+`verify-live.sh`'s "queue empty" check would then flap on.
 
-Mechanism: a small **policy service** (Postfix `check_policy_service
-inet:bounce-policy:PORT` in `smtpd_recipient_restrictions`, only for the
-`bounces.tatvaos.com` recipient). Postfix queries it at RCPT TO; it parses the
-local part, recomputes `HMAC(secret[keyid], "id.keyid")`, and returns
+Mechanism: a small **policy service** (`check_policy_service inet:...` in
+`smtpd_recipient_restrictions`, only for the `bounces.tatvaos.com` recipient).
+Postfix queries it at RCPT TO; it parses the local part, checks `ts` is within
+the window (§5), recomputes `HMAC(secret[keyid], "id.keyid.ts")`, and returns
 `action=DUNNO` (accept) or `action=REJECT` (5xx, no queue). It holds the same
 `Bounce:Secret` keyset the API signs with — one secret, two readers.
 
-Why not a PCRE `check_recipient_access` map: a regex can match the address
-SHAPE but cannot compute an HMAC, so it would accept any correctly-shaped
-forgery into the queue. Shape-matching is a cheap FIRST gate (reject obvious
-junk with no daemon round-trip) but not the requirement; the policy service is.
+Not a PCRE `check_recipient_access` map: a regex can match the address SHAPE
+but cannot compute an HMAC, so it would accept any correctly-shaped forgery
+into the queue. Shape-matching is a cheap FIRST gate; the policy service is the
+real check.
 
-Rejected addresses never reach the intake or the database.
+**When the policy service is DOWN — fail CLOSED.** Set explicitly:
+
+    smtpd_policy_service_default_action = 4xx defer   (Postfix default)
+
+A deferral means the far server retries the bounce; we lose time, not events.
+Do NOT "fix" a deferral storm by setting `default_action = DUNNO` — that opens
+the gate for every forgery while it reports healthy. A check whose failure mode
+is undocumented is one config change from decorative; this is the config change
+to refuse.
+
+**Binding.** The service binds loopback (or the internal compose network),
+NEVER a public interface. It is a new daemon on the mail host that holds the
+signing secret; nothing outside the host talks to it directly.
+
+**Comparison.** The HMAC check uses a constant-time compare
+(`CryptographicOperations.FixedTimeEquals` / `hmac.compare_digest`), not `==`.
+It is a signature check reachable by anyone who can talk to port 25.
+
+**Null envelope sender.** DSNs arrive as `MAIL FROM:<>`. The policy service
+runs at RCPT TO, so it fires regardless of the empty sender — but any upstream
+restriction that assumes a non-empty sender (SPF checks, the sender gate) must
+NOT reject `<>` on this domain.
 
 ## 3. Intake — idempotent write (requirement B)
 
-Accepted bounces are delivered by a transport to the intake (LMTP/pipe to the
-API, or a dedicated small worker). It parses the DSN for status
-(hard/soft) and the diagnostic text, then:
+Accepted bounces are delivered by a transport to the intake, which parses the
+DSN for status (hard/soft) and diagnostic text, then:
 
 ```
 UPDATE mail.api_sends
@@ -51,43 +81,57 @@ UPDATE mail.api_sends
  WHERE id = $id AND bounced_at IS NULL;
 ```
 
-The `AND bounced_at IS NULL` is the point: a DSN can be delivered more than
-once. Setting `bounced_at` twice is harmless, but counting a hard bounce twice
-toward a suppression/reputation threshold is not. The guard makes the second
-delivery a no-op. Suppression (a later slice) keys off this transition, so it
-fires once.
+`AND bounced_at IS NULL`: a DSN can be delivered more than once. Setting
+`bounced_at` twice is harmless; counting a hard bounce twice toward a
+suppression/reputation threshold is not. The guard makes the second delivery a
+no-op, and suppression (a later slice) fires once.
+
+**A valid HMAC naming a row that does not exist** (id gone, or never was):
+the UPDATE affects zero rows. Log it at info and DROP — do not error. A 500 in
+a mail path is discovered by a queue backing up; this path returns success to
+Postfix so the (validly-signed but orphaned) DSN is consumed, not retried
+forever.
 
 ## 4. Valid HMAC, mismatched recipient (requirement C — the decision)
 
-A DSN can arrive with a valid HMAC (so the id/keyid are ours) but a reported
-original recipient that differs from `api_sends.to_address` for that id. That
-is either a forwarding chain (recipient forwarded; the far server bounced the
-final hop) or a replay (someone captured a valid VERP address and is feeding
-it a DSN naming a different victim).
+A DSN can carry a valid HMAC (id/keyid ours) but a reported original recipient
+that differs from `api_sends.to_address` for that id — a forwarding chain, or a
+replay of a captured address naming a different victim.
 
 Decision: **the api_sends ROW is authoritative for who bounced; the DSN's
 claimed recipient is evidence, never authority.**
 
-- The bounce is recorded against the row the validated id names — that part is
-  cryptographically ours.
-- Suppression, when it comes, keys off the row's OWN `to_address` (what WE
-  recorded at send time), NEVER off the address the DSN claims. So a replay
-  cannot suppress an arbitrary third-party address — the worst it can do is
-  mark one of our own already-sent rows bounced, which the idempotency guard
-  already bounds to once.
+- The bounce is recorded against the row the validated id names.
+- Suppression keys off the row's OWN `to_address` (what WE recorded at send
+  time), NEVER the address the DSN claims — so a replay cannot suppress an
+  arbitrary third party. The worst a replay does is mark one of our own
+  already-sent rows bounced, once (the §3 guard bounds it).
 - The DSN's claimed recipient and text go into `bounce_reason` as-is (already
-  flagged PII/untrusted), and a mismatch is logged, not trusted.
+  flagged untrusted PII); a mismatch is logged, not trusted.
 
-This is chosen deliberately so it is not decided by whichever branch got
-written first.
+## 5. Expiry — a signed timestamp (decision)
+
+As first designed a signed address was valid forever: capture one, feed it DSNs
+in two years. Bounded by §3 and §4, so not urgent — but free now, expensive
+later, because the format is not yet in production.
+
+Decision: **a coarse send-day stamp `ts` in the SIGNED payload**, enforced by
+the policy service at SMTP time. The service rejects `now - ts > 30 days`
+before verifying the HMAC — a generous window against the ~5-day DSN retry
+reality — so a stale-but-authentic replay is refused at RCPT TO without a queue
+entry or a DB hit. Chosen over bounding on `api_sends.sent_at` age (which would
+need a DB lookup inside the SMTP path, or push the expiry check to the intake
+after the address had already been accepted). Day granularity keeps `ts` short
+and leaks nothing beyond the send date, which the row already holds.
 
 ## Build order, once acked
 1. Postfix config: `bounces.tatvaos.com` as a routed domain + the policy
-   service hook (config only; the service is 2).
-2. The policy service (SMTP-time HMAC check) + its secret wiring.
-3. The intake (DSN parse + the idempotent write above).
+   service hook and its fail-closed/binding settings (config only).
+2. The policy service (shape → ts window → constant-time HMAC) + secret
+   wiring, and #28's builder gains `ts` to match.
+3. The intake (DSN parse + the idempotent write, orphan-drop, mismatch log).
 4. Suppression table + admin un-suppression (its own PR, off hard bounces).
 
-DNS (section 1) is Amit's and gates nothing in code — VERP stays dormant until
+DNS (§1) is Amit's and gates nothing in code — VERP stays dormant until
 `Bounce:Domain`/`Bounce:Secret` are set, so these can land and be verified on a
 staging subdomain before the main one is pointed.
