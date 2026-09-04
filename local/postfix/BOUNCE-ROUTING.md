@@ -9,9 +9,21 @@ design review before any of it is built. None of the below is built yet.
 
     <id>.<keyid>.<ts>.<hmac>@bounces.tatvaos.com
 
-`id` = api_sends primary key (correlation). `keyid` = which secret signed it
-(rotation). `ts` = a coarse send-day stamp for expiry (§5). `hmac` signs
-`id.keyid.ts`. #28's BuildBounceAddress currently emits `id.keyid.hmac`; it
+`id` = api_sends primary key (correlation). `keyid` = which secret in the
+KEYSET signed it (see below). `ts` = a coarse send-day stamp for expiry (§5).
+`hmac` signs `id.keyid.ts`.
+
+The secret is a KEYSET, not one value: `Bounce:KeyId` names the CURRENT key
+(what new sends sign with) and `Bounce:Keys:<keyid>` holds each key. The policy
+service verifies against whichever `keyid` the address carries, as long as that
+key is still in `Bounce:Keys` — so a rotation retires a key for SIGNING while
+bounces already in flight, signed by the old key, keep verifying. A single
+`Bounce:Secret` (an earlier shape) could not do that: rotating it rejected
+every bounce in flight, which is the whole failure `<keyid>` exists to prevent.
+A retired key is kept in `Bounce:Keys` for AT LEAST the §5 address-expiry window
+after it stops signing, so expiry and rotation agree on how long an address
+lives; past that window an address is rejected on age anyway and the key can be
+dropped. #28's BuildBounceAddress currently emits `id.keyid.hmac`; it
 gains `ts` in lockstep with the policy service (§2). Both are dormant until DNS
 (§1) and `Bounce:Domain`/`Bounce:Secret` are set, so the format can change now
 at no live cost — which is the whole reason to do it now.
@@ -187,6 +199,25 @@ service" describes what is true rather than working around it.
 Delivery of accepted bounces routes via `transport_maps` to the intake
 transport (§3). `relay_domains` + `transport_maps` + empty `relay_recipient_maps`
 for this one domain; nothing else in the recipient path changes.
+
+## Deploy precondition — do NOT set the keyset before slice 3
+
+Once `bounces.tatvaos.com` is a relay domain (slices 1+2), the config is LIVE
+whether or not the signing keyset is. VERP stays dormant only while
+`Bounce:Keys` is unset — that is what keeps 1+2 safe to deploy before the
+intake exists. But `transport_maps` routes the domain to `bounce-intake:`,
+which does not exist in `master.cf` until slice 3.
+
+So: **`Bounce:KeyId`/`Bounce:Keys` MUST NOT be set until slice 3 has landed.**
+Set it earlier and the first validly-signed bounce is accepted at RCPT and then
+queues against a transport that is not there — accepted mail piling up behind a
+missing destination, which `verify-live.sh`'s queue check will flag without
+saying why. This is a sequencing rule that must not live only in someone's
+head: the day it is set "just to test the new thing" is the day it bites.
+
+Order that is safe: deploy 1+2 (keyset unset, nothing accepted) → deploy slice 3
+(intake + the real `bounce-intake` transport) → THEN set `Bounce:Keys` and
+`Bounce:Domain`, which is the single act that lifts VERP out of dormancy.
 
 ## Build order, once acked
 1+2 (ONE deployable unit — a recognised bounce domain with no validator would
