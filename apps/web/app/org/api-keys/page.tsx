@@ -390,7 +390,7 @@ function CreateDialog({ onClose, onCreated, onError }: {
     const loadMailboxes = async () => {
       setLoadingMailboxes(true);
       try {
-        const r = await authedFetch('/api/org/mailboxes');
+        const r = await authedFetch('/org/mailboxes');
         if (r.ok) {
           const data = await r.json();
           setMailboxes((data.mailboxes || []).map((m: { address: string }) => m.address).sort());
@@ -530,7 +530,7 @@ function EditDialog({ keyRow, onClose, onUpdated, onError }: {
     const loadMailboxes = async () => {
       setLoadingMailboxes(true);
       try {
-        const r = await authedFetch('/api/org/mailboxes');
+        const r = await authedFetch('/org/mailboxes');
         if (r.ok) {
           const data = await r.json();
           setMailboxes((data.mailboxes || []).map((m: { address: string }) => m.address).sort());
