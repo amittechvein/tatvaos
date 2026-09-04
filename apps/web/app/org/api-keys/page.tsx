@@ -353,7 +353,7 @@ Content-Type: application/json
               </tr>
               <tr>
                 <td><Badge tone="danger">502</Badge></td>
-                <td>Our mail server refused it. Usually the sender's domain is not verified.</td>
+                <td>Our mail server refused it. Usually the sender&apos;s domain is not verified.</td>
               </tr>
             </tbody>
           </table>
