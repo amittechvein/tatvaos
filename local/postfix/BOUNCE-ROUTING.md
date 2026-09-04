@@ -47,15 +47,35 @@ but cannot compute an HMAC, so it would accept any correctly-shaped forgery
 into the queue. Shape-matching is a cheap FIRST gate; the policy service is the
 real check.
 
-**When the policy service is DOWN — fail CLOSED.** Set explicitly:
+**When the policy service is DOWN — fail CLOSED, but PER-SERVICE.**
 
-    smtpd_policy_service_default_action = 4xx defer   (Postfix default)
+CORRECTION found wiring slice 1: this codebase already sets
+`smtpd_policy_service_default_action = DUNNO` GLOBALLY, and on purpose — the
+existing `check_policy_service inet:api:10025` is the quota gate, which MUST
+fail open, because "the API is restarting" failing closed means "nobody in the
+company receives mail." The global setting cannot be flipped to defer without
+breaking all inbound mail.
 
-A deferral means the far server retries the bounce; we lose time, not events.
-Do NOT "fix" a deferral storm by setting `default_action = DUNNO` — that opens
-the gate for every forgery while it reports healthy. A check whose failure mode
-is undocumented is one config change from decorative; this is the config change
-to refuse.
+So the bounce check gets its OWN failure mode inline, leaving the global alone
+(Postfix 3.0+, and this box is 3.7):
+
+    check_policy_service { inet:api:10025, default_action=defer }
+
+invoked only for bounce-domain recipients via a scoped restriction class (a
+`bounce_verify` class mapped to `bounces.tatvaos.com` through
+check_recipient_access), so the quota gate keeps DUNNO and the bounce gate
+defers. A deferral means the far server retries the bounce; we lose time, not
+events. The wrong "fix" to refuse in the same breath: do NOT drop the inline
+`default_action=defer` to inherit the global DUNNO — that opens the bounce gate
+for every forgery while it reports healthy.
+
+Reuse vs new daemon: because api:10025 already receives every RCPT, the bounce
+HMAC check is cheapest as a BRANCH in that same policy handler keyed on the
+recipient domain — no new daemon, and the signing secret is already in the
+API's config. The per-service `default_action=defer` above is what still makes
+the bounce path fail closed while the shared service's global default stays
+DUNNO for quota. (If a separate daemon is preferred for blast-radius reasons,
+say so; the config shape is the same, only the port changes.)
 
 **Binding.** The service binds loopback (or the internal compose network),
 NEVER a public interface. It is a new daemon on the mail host that holds the
