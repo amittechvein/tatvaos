@@ -240,6 +240,12 @@ builder.Services.AddHostedService<SpaceBlobSweepWorker>();
 // refuses nothing until Mail:QuotaEnforcement is set to "enforce".
 builder.Services.AddHostedService<PostfixPolicyWorker>();
 
+// Receives the accepted, RCPT-validated bounce over LMTP (master.cf routes
+// bounces.tatvaos.com here), parses the DSN, and records it idempotently on
+// the api_sends row its VERP address named. Dormant until the bounce domain
+// and keyset are set, like the rest of the pipeline.
+builder.Services.AddHostedService<BounceIntakeWorker>();
+
 // OFF unless Mail:ThreadBackfill says otherwise. A one-off repair that fills
 // thread_id on mail stored before threading existed - "report" to see what it
 // would do, "run" to commit it. Left unset it returns immediately, which is

@@ -51,14 +51,16 @@ virtual_transport = lmtp:inet:dovecot:24
 #  transport_maps MUST have an entry in the same breath as relay_domains: the
 #  subdomain's MX points at THIS host, so a recognised relay destination with
 #  no transport match would loop mail back to ourselves. It routes to the
-#  bounce-intake transport, which a later slice defines in master.cf; until
-#  then delivery defers (safe — nothing is accepted while Bounce:Keys is
-#  unset, so nothing ever reaches the transport).
+#  bounce-intake transport (defined in master.cf), an LMTP client that hands
+#  the message to the API's intake worker at [api]:10035 — the [] disables MX
+#  lookup so it goes straight to the compose host. Nothing reaches it until
+#  Bounce:Keys is set (VERP stays dormant), so the path is quiet until the
+#  intake is proven.
 #
 #  inline: keeps both maps in this one reviewed file — no external map to
 #  mount, postmap, or drift.
 relay_domains  = bounces.tatvaos.com
-transport_maps = inline:{ bounces.tatvaos.com=bounce-intake: }
+transport_maps = inline:{ bounces.tatvaos.com=bounce-intake:[api]:10035 }
 # relay_recipient_maps is intentionally NOT set. Setting it to any map would
 # turn reject_unlisted_recipient back on for this domain and refuse every VERP
 # address before the policy service is consulted.
