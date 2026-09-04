@@ -189,7 +189,7 @@ export default function PeoplePage() {
               : undefined}
           />
         ) : (
-          <Table head={['Person', 'Department', 'Role', 'Storage', 'MFA', 'Status']}>
+          <Table head={['Person', 'Department', 'Role', 'Storage', 'MFA', 'Status', 'Last sign-in']}>
             {filtered.map((p) => {
               const dept = flat.find((f) => f.d.id === p.departmentId)?.d;
               return (
@@ -240,6 +240,11 @@ export default function PeoplePage() {
                       : <span className="fs-12 text-muted">Off</span>}
                   </Td>
                   <Td><Badge tone={statusTone(p.status)}>{p.status}</Badge></Td>
+                  <Td>
+                    <span className="fs-13">
+                      {p.lastLoginAt ? formatDateTime(p.lastLoginAt) : 'Never'}
+                    </span>
+                  </Td>
                 </tr>
               );
             })}
