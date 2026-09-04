@@ -246,37 +246,70 @@ public static class MailSendApiEndpoints
                 error = $"This API key is restricted to: {string.Join(", ", allowedAddresses)}",
             });
         // ---- 5. Hand it to the one send path -------------------------------
-        var result = await MailSender.SubmitAsync(
-            box,
-            new MailSubmission(
-                To: to,
-                Cc: Array.Empty<MailboxAddress>(),
-                Subject: subject,
-                BodyText: text,
-                BodyHtml: html,
-                Attachments: Array.Empty<MailAttachment>()),
-            db, tenant, config, log, autoSave, audit, ct);
+        // ---- 5. Send, ONE MESSAGE PER RECIPIENT ----------------------------
+        //  Per-recipient because the bounce key is per-recipient: each message
+        //  leaves with its OWN envelope sender carrying its OWN api_sends row
+        //  id, so a DSN days later names the exact row (see the bounce
+        //  migration). It also means no recipient sees another's address —
+        //  the disclosure the low MaxRecipients was guarding against.
+        //
+        //  The VERP address switches ON only once the bounce subdomain and its
+        //  signing secret are configured; until then EnvelopeSender is null and
+        //  this sends exactly as before. That is deliberate: this endpoint must
+        //  not wait on the Postfix + DNS routing PR to keep working.
+        var bounceSecret = config["Bounce:Secret"];
+        var bounceDomain = config["Bounce:Domain"];
+        var bounceKeyId  = config["Bounce:KeyId"] ?? "k1";
+        var bounceOn = !string.IsNullOrEmpty(bounceSecret) && !string.IsNullOrEmpty(bounceDomain);
 
-        var accepted = result.Outcome is SendOutcome.Sent or SendOutcome.SentButNotFiled;
-
-        // ---- 6. One row per recipient, whatever happened -------------------
+        var sends = new List<(MailboxAddress Recipient, Guid Id, bool Accepted, string? Error)>();
         foreach (var recipient in to)
+        {
+            var sendId = Guid.NewGuid();
+            MailboxAddress? envelope = bounceOn
+                ? new MailboxAddress(string.Empty, BuildBounceAddress(sendId, bounceKeyId, bounceSecret!, bounceDomain!))
+                : null;
+
+            var result = await MailSender.SubmitAsync(
+                box,
+                new MailSubmission(
+                    To: new[] { recipient },
+                    Cc: Array.Empty<MailboxAddress>(),
+                    Subject: subject,
+                    BodyText: text,
+                    BodyHtml: html,
+                    Attachments: Array.Empty<MailAttachment>(),
+                    EnvelopeSender: envelope),
+                db, tenant, config, log, autoSave, audit, ct);
+
+            var ok = result.Outcome is SendOutcome.Sent or SendOutcome.SentButNotFiled;
+            sends.Add((recipient, sendId, ok, ok ? null : result.Error));
+        }
+
+        // ---- 6. One row per recipient, keyed by the id its bounce carries --
+        foreach (var s in sends)
         {
             db.MailApiSends.Add(new MailApiSend
             {
-                Id = Guid.NewGuid(),
+                Id = s.Id,               // the same id encoded in the VERP address
                 TenantId = keyTenantId,
                 ApiKeyId = keyId,
                 FromAddress = fromAddress,
-                ToAddress = recipient.Address,
+                ToAddress = s.Recipient.Address,
                 Subject = subject,
-                Outcome = accepted ? "accepted" : "refused",
-                Error = accepted ? null : result.Error,
+                Outcome = s.Accepted ? "accepted" : "refused",
+                Error = s.Accepted ? null : s.Error,
                 SentAt = DateTimeOffset.UtcNow,
             });
         }
 
-        if (accepted)
+        // The response is a summary: accepted only when EVERY recipient was
+        // taken. The per-recipient rows above are the truth if they diverge —
+        // which through one domain-based gate they almost never do.
+        var accepted = sends.All(s => s.Accepted);
+        var firstError = sends.FirstOrDefault(s => !s.Accepted).Error;
+
+        if (sends.Any(s => s.Accepted))
         {
             // Has a writer, so a NULL genuinely means never used.
             var tracked = await db.MailApiKeys.FirstOrDefaultAsync(k => k.Id == keyId, ct);
@@ -293,7 +326,7 @@ public static class MailSendApiEndpoints
             // refusal, which tells them precisely what to do next.
             return Results.Json(new
             {
-                error = result.Error ?? "The mail server refused the message.",
+                error = firstError ?? "The mail server refused the message.",
                 outcome = "refused",
             }, statusCode: StatusCodes.Status502BadGateway);
         }
@@ -306,6 +339,24 @@ public static class MailSendApiEndpoints
             recipients = to.Count,
             note = "Accepted for delivery. This is not confirmation of arrival.",
         }, statusCode: StatusCodes.Status202Accepted);
+    }
+
+    /// <summary>
+    /// The per-recipient VERP bounce address: id.keyid.hmac@bounce-domain.
+    /// The id is the api_sends primary key (correlation); keyid names the
+    /// signing secret so it can rotate without invalidating bounces in flight;
+    /// hmac signs "id.keyid" so a random address to the subdomain is rejected
+    /// before any lookup. The secret is never stored in a row — it lives in
+    /// config (infra/docker/.env) and the intake recomputes to validate.
+    /// </summary>
+    private static string BuildBounceAddress(Guid id, string keyId, string secret, string domain)
+    {
+        var idHex = id.ToString("N"); // 32 hex, no hyphens: a clean local part
+        using var mac = new System.Security.Cryptography.HMACSHA256(
+            System.Text.Encoding.UTF8.GetBytes(secret));
+        var sig = mac.ComputeHash(System.Text.Encoding.ASCII.GetBytes(idHex + "." + keyId));
+        var sigHex = Convert.ToHexString(sig, 0, 8).ToLowerInvariant(); // 16 hex chars
+        return $"{idHex}.{keyId}.{sigHex}@{domain}";
     }
 
     private static IResult Unauthorized(string message)

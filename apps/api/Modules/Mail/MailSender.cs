@@ -67,7 +67,14 @@ public sealed record MailSubmission(
     string? ICalendar = null,
     // REQUEST | CANCEL | REPLY. Must agree with the METHOD: line inside
     // ICalendar; SubmitAsync refuses the send if it does not.
-    string? ICalendarMethod = null);
+    string? ICalendarMethod = null,
+    // The envelope sender (Return-Path) to submit with. Null — the default,
+    // and every interactive send — leaves the envelope as the From address,
+    // so a person's bounces come back to their own mailbox. The send API sets
+    // this to a per-recipient VERP bounce address so a DSN correlates to the
+    // exact api_sends row. Setting it switches SendAsync to the overload that
+    // takes an explicit sender and recipient list.
+    MailboxAddress? EnvelopeSender = null);
 
 public enum SendOutcome
 {
@@ -233,7 +240,18 @@ public static class MailSender
             // smtp_tls_security_level. Different hop, different setting;
             // "fixing" this one would break submission and leave the leak open.
             await client.ConnectAsync(host, port, SecureSocketOptions.None, ct);
-            await client.SendAsync(mime, ct);
+            if (s.EnvelopeSender is { } envelope)
+            {
+                // Explicit envelope sender: the Return-Path the receiving
+                // server bounces to, deliberately different from the visible
+                // From. Recipients are To + Cc, unfolded from the message.
+                var recipients = mime.To.Mailboxes.Concat(mime.Cc.Mailboxes).ToList();
+                await client.SendAsync(mime, envelope, recipients, ct);
+            }
+            else
+            {
+                await client.SendAsync(mime, ct);
+            }
             await client.DisconnectAsync(true, ct);
         }
         catch (SmtpCommandException ex)
