@@ -41,12 +41,12 @@ public sealed class MailApiKey
     public DateTimeOffset? LastUsedAt { get; set; }
 
     /// <summary>
-    /// Email addresses this key is restricted to. An empty or null array is
+    /// Email addresses this key is restricted to. An empty array is
     /// stored but cannot be in effect (a CHECK constraint blocks it). At least
     /// one address must be present on an active key.
     /// Normalized to lowercase; case-insensitive matching during send.
     /// </summary>
-    public string[]? AllowedSenderAddresses { get; set; }
+    public string[] AllowedSenderAddresses { get; set; } = Array.Empty<string>();
 }
 
 /// <summary>
