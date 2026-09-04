@@ -117,6 +117,7 @@ public sealed record UserResponse(
     string[] Products,
     long QuotaBytes, long UsedBytes,
     bool MfaEnabled, DateTimeOffset? LastLoginAt, DateTimeOffset CreatedAt,
+    bool HasVerifiedRecoveryEmail = false,
     // Whether a profile photo exists. The list carries only the flag, never the
     // bytes — the client fetches the image from /org/users/{id}/avatar for the
     // rows that have one.

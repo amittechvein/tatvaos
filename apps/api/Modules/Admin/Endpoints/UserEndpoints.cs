@@ -155,6 +155,7 @@ public static class UserEndpoints
                 u.Id, u.Email, u.DisplayName, u.DepartmentId,
                 DepartmentName = u.Department != null ? u.Department.Name : null,
                 u.Role, u.Status, u.MfaEnabled, u.LastLoginAt, u.CreatedAt,
+                HasVerifiedRecoveryEmail = u.RecoveryEmailVerifiedAt != null,
             })
             .ToListAsync(ct);
 
@@ -210,6 +211,7 @@ public static class UserEndpoints
                 usageByUser.TryGetValue(r.Id, out var use2)
                     ? use2.UsedBytes : box?.UsedBytes ?? 0,
                 r.MfaEnabled, r.LastLoginAt, r.CreatedAt,
+                r.HasVerifiedRecoveryEmail,
                 withAvatar.Contains(r.Id));
         }).ToList();
 
