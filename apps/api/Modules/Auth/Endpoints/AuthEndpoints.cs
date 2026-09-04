@@ -287,6 +287,8 @@ public static class AuthEndpoints
         g.MapPost("/change-password", ChangePasswordAsync).RequireAuthorization("User");
         g.MapGet("/sessions", SessionsAsync).RequireAuthorization("User");
         g.MapGet("/recovery-status", RecoveryStatusAsync).RequireAuthorization("User");
+        g.MapPost("/recovery-email", SetRecoveryEmailAsync).RequireAuthorization("User");
+        g.MapPost("/recovery-email/verify", VerifyRecoveryEmailAsync).AllowAnonymous();
 
         // ---- forgot password (anonymous: the whole point is no session) --
         // Email link and phone OTP, each a request/complete pair. Every
@@ -1126,6 +1128,90 @@ public static class AuthEndpoints
     }
 
     // ------------------------------------------------------------------
+    /// <summary>
+    /// POST /api/auth/recovery-email — set (or change) the current user's
+    /// recovery email. Stored UNVERIFIED; a link is emailed to the address and
+    /// it counts for nothing until that link is opened.
+    /// </summary>
+    private static async Task<IResult> SetRecoveryEmailAsync(
+        SetRecoveryEmailRequest req, AppDbContext db, TenantContext tenant,
+        SystemMailer mailer, IConfiguration config, CancellationToken ct)
+    {
+        var email = req.Email?.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(email) || !System.Net.Mail.MailAddress.TryCreate(email, out _))
+            return Results.BadRequest(new { error = "Enter a valid email address." });
+
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == tenant.UserId, ct);
+        if (user is null) return Results.NotFound();
+
+        if (string.Equals(email, user.Email, StringComparison.OrdinalIgnoreCase))
+            return Results.BadRequest(new { error = "Your recovery email must differ from your sign-in email." });
+
+        if (string.Equals(user.RecoveryEmail, email, StringComparison.OrdinalIgnoreCase)
+            && user.RecoveryEmailVerifiedAt is not null)
+            return Results.Ok(new { sent = false, message = "That address is already your verified recovery email." });
+
+        // Resend throttle for the same address, matching the reset flow's gap.
+        if (user.RecoveryEmailTokenSentAt is DateTimeOffset last
+            && DateTimeOffset.UtcNow - last < OtpResendGap
+            && string.Equals(user.RecoveryEmail, email, StringComparison.OrdinalIgnoreCase))
+            return Results.Ok(new { sent = true, message = RecoveryVerifySentReply });
+
+        var token = TokenIssuer.GenerateRefreshToken();
+        user.RecoveryEmail = email;
+        user.RecoveryEmailVerifiedAt = null;          // a changed address must be re-proven
+        user.RecoveryEmailTokenHash = TokenIssuer.HashRefreshToken(token);
+        user.RecoveryEmailTokenSentAt = DateTimeOffset.UtcNow;
+        user.RecoveryEmailTokenAttempts = 0;
+        await db.SaveChangesAsync(ct);
+
+        var baseUrl = (config["Jwt:Issuer"] ?? "https://core.tatvaos.com").TrimEnd('/');
+        var verifyUrl = $"{baseUrl}/verify-recovery-email?token={Uri.EscapeDataString(token)}";
+        await mailer.SendHtmlAsync(
+            email,
+            RecoveryVerifyEmail.Subject(),
+            RecoveryVerifyEmail.Html(user.DisplayName, baseUrl, verifyUrl, (int)RecoveryVerifyLifetime.TotalMinutes),
+            from: "no_reply@tatvaos.com", ct);
+
+        return Results.Ok(new { sent = true, message = RecoveryVerifySentReply });
+    }
+
+    // ------------------------------------------------------------------
+    /// <summary>
+    /// POST /api/auth/recovery-email/verify — consume the verification link.
+    /// Anonymous: the token in the link IS the proof. Found by the token hash
+    /// (unique per issuance), so a shared recovery address is unambiguous here;
+    /// the one-live-match rule only governs RESET, a later stage.
+    /// </summary>
+    private static async Task<IResult> VerifyRecoveryEmailAsync(
+        VerifyRecoveryEmailRequest req, AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req.Token))
+            return Results.BadRequest(new { error = "A verification token is required." });
+
+        var hash = TokenIssuer.HashRefreshToken(req.Token.Trim());
+        var user = await db.Users.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(u => u.RecoveryEmailTokenHash == hash
+                                      && u.Status != "deleted" && u.Status != "suspended", ct);
+        var expired = user?.RecoveryEmailTokenSentAt is null
+            || DateTimeOffset.UtcNow - user.RecoveryEmailTokenSentAt > RecoveryVerifyLifetime;
+        if (user is null || expired)
+            return Results.Json(new
+            {
+                error = "This verification link is invalid or has expired. Request a new one.",
+            }, statusCode: 400);
+
+        tenant.Set(user.TenantId, user.Id, user.Role);
+        await db.SyncTenantAsync(ct);
+        user.RecoveryEmailVerifiedAt = DateTimeOffset.UtcNow;
+        user.RecoveryEmailTokenHash = null;           // single-use
+        user.RecoveryEmailTokenSentAt = null;
+        await db.SaveChangesAsync(ct);
+
+        return Results.Ok(new { verified = true });
+    }
+
+    // ------------------------------------------------------------------
     private static async Task<IResult> ChangePasswordAsync(
         ChangePasswordRequest req, AppDbContext db, IPasswordHasher hasher,
         TenantContext tenant, AuditWriter audit, CancellationToken ct)
@@ -1316,6 +1402,11 @@ public static class AuthEndpoints
     // Longer than the login OTP's five minutes: an email hop can be slow, and a
     // link the recipient opens twenty minutes later must still work.
     private static readonly TimeSpan ResetLinkLifetime = TimeSpan.FromHours(1);
+    // Recovery-email verification link. Longer than the reset link because it
+    // only confirms ownership and grants no access.
+    private static readonly TimeSpan RecoveryVerifyLifetime = TimeSpan.FromHours(24);
+    private const string RecoveryVerifySentReply =
+        "We've sent a link to that address. Open it to confirm your recovery email.";
 
     private const int MinPasswordLength = 12;
     private const string ShortPasswordMessage =
@@ -1643,6 +1734,8 @@ public sealed record LoginRequest(string? Email, string? Password);
 public sealed record OtpRequest(string? Phone);
 public sealed record OtpVerifyRequest(string? Phone, string? Code);
 public sealed record RefreshRequest(string? RefreshToken);
+public sealed record SetRecoveryEmailRequest(string? Email);
+public sealed record VerifyRecoveryEmailRequest(string? Token);
 
 /// <summary>Which account slot to act on. See the multi-account block above.</summary>
 public sealed record SwitchRequest(int Slot);
