@@ -322,12 +322,13 @@ public sealed class PostfixPolicyWorker(
     /// catch — a 4xx defer on an internal fault.
     ///
     /// NO SECRET IS A REJECT, NOT AN ACCEPT. Once bounces.tatvaos.com is a
-    /// relay domain the config is live whether or not Bounce:Secret is set. If
-    /// a missing secret meant "can't check, allow", a single absent config
-    /// value would turn the whole domain into an accept-everything catch-all
-    /// that looked healthy while doing it. So an unset secret, or a keyid this
-    /// server does not hold, rejects every address on the domain — loudly
-    /// wrong beats silently wrong. (VERP is dormant until the secret is set, so
+    /// relay domain the config is live whether or not the Bounce:Keys keyset
+    /// is set. If a missing key meant "can't check, allow", a single absent
+    /// config value would turn the whole domain into an accept-everything
+    /// catch-all that looked healthy while doing it. So an unset keyset, or a
+    /// keyid this server does not hold, rejects every address on the domain —
+    /// loudly
+    /// wrong beats silently wrong. (VERP is dormant until Bounce:Keys is set, so
     /// there is no legitimate traffic to lose while it is unset.)
     /// </summary>
     private string ValidateBounce(string recipient)

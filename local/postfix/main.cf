@@ -52,7 +52,7 @@ virtual_transport = lmtp:inet:dovecot:24
 #  subdomain's MX points at THIS host, so a recognised relay destination with
 #  no transport match would loop mail back to ourselves. It routes to the
 #  bounce-intake transport, which a later slice defines in master.cf; until
-#  then delivery defers (safe — nothing is accepted while Bounce:Secret is
+#  then delivery defers (safe — nothing is accepted while Bounce:Keys is
 #  unset, so nothing ever reaches the transport).
 #
 #  inline: keeps both maps in this one reviewed file — no external map to
