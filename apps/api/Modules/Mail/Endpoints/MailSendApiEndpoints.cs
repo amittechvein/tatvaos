@@ -262,6 +262,9 @@ public static class MailSendApiEndpoints
         var bounceKeyId  = config["Bounce:KeyId"] ?? "k1";
         var bounceOn = !string.IsNullOrEmpty(bounceSecret) && !string.IsNullOrEmpty(bounceDomain);
 
+        // NOTE for v1.5 (bulk): each SubmitAsync opens and closes its own SMTP
+        // connection. Fine at five recipients; at bulk it must pool one
+        // connection across the batch instead of one per message.
         var sends = new List<(MailboxAddress Recipient, Guid Id, bool Accepted, string? Error)>();
         foreach (var recipient in to)
         {
@@ -279,7 +282,11 @@ public static class MailSendApiEndpoints
                     BodyText: text,
                     BodyHtml: html,
                     Attachments: Array.Empty<MailAttachment>(),
-                    EnvelopeSender: envelope),
+                    EnvelopeSender: envelope,
+                    // No Sent-folder copy and no quota charge per recipient —
+                    // this send's record is its api_sends row, not N messages
+                    // in the sender's Sent folder.
+                    FileSentCopy: false),
                 db, tenant, config, log, autoSave, audit, ct);
 
             var ok = result.Outcome is SendOutcome.Sent or SendOutcome.SentButNotFiled;
@@ -303,13 +310,10 @@ public static class MailSendApiEndpoints
             });
         }
 
-        // The response is a summary: accepted only when EVERY recipient was
-        // taken. The per-recipient rows above are the truth if they diverge —
-        // which through one domain-based gate they almost never do.
-        var accepted = sends.All(s => s.Accepted);
+        var acceptedCount = sends.Count(s => s.Accepted);
         var firstError = sends.FirstOrDefault(s => !s.Accepted).Error;
 
-        if (sends.Any(s => s.Accepted))
+        if (acceptedCount > 0)
         {
             // Has a writer, so a NULL genuinely means never used.
             var tracked = await db.MailApiKeys.FirstOrDefaultAsync(k => k.Id == keyId, ct);
@@ -318,7 +322,20 @@ public static class MailSendApiEndpoints
 
         await db.SaveChangesAsync(ct);
 
-        if (!accepted)
+        // PER-RECIPIENT RESULTS in the body, because sends are per-recipient.
+        // A caller cannot read api_sends rows, so without this a partial
+        // failure (three accepted, two refused) returns one status and a
+        // blanket retry sends the three accepted ones a second time. Each
+        // result carries the id so a retry is targeted and de-dupable.
+        var results = sends.Select(x => new
+        {
+            to = x.Recipient.Address,
+            id = x.Id,
+            status = x.Accepted ? "accepted" : "refused",
+            error = x.Accepted ? null : x.Error,
+        }).ToArray();
+
+        if (acceptedCount == 0)
         {
             // Postfix's own words, passed through. A generic "send failed"
             // sends the customer hunting through server logs for a policy
@@ -326,9 +343,24 @@ public static class MailSendApiEndpoints
             // refusal, which tells them precisely what to do next.
             return Results.Json(new
             {
-                error = firstError ?? "The mail server refused the message.",
                 outcome = "refused",
+                error = firstError ?? "The mail server refused the message.",
+                results,
             }, statusCode: StatusCodes.Status502BadGateway);
+        }
+
+        if (acceptedCount < sends.Count)
+        {
+            // Some accepted, some refused. 207 so a caller cannot read it as a
+            // clean success and retry everything; results says which to retry.
+            return Results.Json(new
+            {
+                outcome = "partial",
+                accepted = acceptedCount,
+                total = sends.Count,
+                note = "Some recipients were accepted and some refused. Retry only the refused ids.",
+                results,
+            }, statusCode: StatusCodes.Status207MultiStatus);
         }
 
         // "accepted" and never "sent" or "delivered": Postfix has taken
@@ -336,8 +368,9 @@ public static class MailSendApiEndpoints
         return Results.Json(new
         {
             outcome = "accepted",
-            recipients = to.Count,
+            recipients = acceptedCount,
             note = "Accepted for delivery. This is not confirmation of arrival.",
+            results,
         }, statusCode: StatusCodes.Status202Accepted);
     }
 

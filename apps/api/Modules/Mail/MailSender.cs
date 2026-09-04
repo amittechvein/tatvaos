@@ -74,7 +74,14 @@ public sealed record MailSubmission(
     // this to a per-recipient VERP bounce address so a DSN correlates to the
     // exact api_sends row. Setting it switches SendAsync to the overload that
     // takes an explicit sender and recipient list.
-    MailboxAddress? EnvelopeSender = null);
+    MailboxAddress? EnvelopeSender = null,
+    // Whether to file a copy in the mailbox's Sent folder and charge its
+    // quota. True for every interactive send — a person expects to find what
+    // they sent. The send API passes false: it fans one call out to one
+    // message PER recipient, so filing here would put N near-identical copies
+    // in the Sent folder and charge the quota N times for a single API call.
+    // The api_sends log is that send's record instead.
+    bool FileSentCopy = true);
 
 public enum SendOutcome
 {
@@ -245,6 +252,9 @@ public static class MailSender
                 // Explicit envelope sender: the Return-Path the receiving
                 // server bounces to, deliberately different from the visible
                 // From. Recipients are To + Cc, unfolded from the message.
+                // Bcc is intentionally NOT here — no caller sets it today, and
+                // the day one does this must add it or the Bcc'd copy is
+                // silently never sent.
                 var recipients = mime.To.Mailboxes.Concat(mime.Cc.Mailboxes).ToList();
                 await client.SendAsync(mime, envelope, recipients, ct);
             }
@@ -285,6 +295,13 @@ public static class MailSender
             return new SendResult(SendOutcome.Unreachable, null, null,
                 "The mail server could not be reached. Nothing was sent.");
         }
+
+        // Programmatic senders opt out of the Sent copy and its quota charge
+        // (see FileSentCopy). The submit has already succeeded, so this is a
+        // deliberate "went out, filed nowhere" — the same shape as a mailbox
+        // with no Sent folder, which the caller already treats as sent.
+        if (!s.FileSentCopy)
+            return new SendResult(SendOutcome.SentButNotFiled, null, null, null);
 
         // ---- File the Sent copy -----------------------------------------
         //  After the submit succeeds, never before: a Sent copy of a message
