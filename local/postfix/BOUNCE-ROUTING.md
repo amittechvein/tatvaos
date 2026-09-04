@@ -77,6 +77,16 @@ the bounce path fail closed while the shared service's global default stays
 DUNNO for quota. (If a separate daemon is preferred for blast-radius reasons,
 say so; the config shape is the same, only the port changes.)
 
+**Two conditions on the shared handler (ruling):**
+- **Branch on the recipient domain FIRST**, before any parsing or crypto.
+  Every inbound RCPT on the platform goes through api:10025; the bounce path
+  must cost ONE string compare for the 99.9% of traffic that is not a bounce.
+- **Exception-isolate the bounce branch.** A bug in it must not be able to
+  change a quota answer. Quota fails open (DUNNO), so an unguarded throw would
+  make mail flow unmetered rather than stop — contained, but contained on
+  purpose, not by luck. The bounce branch is wrapped; on any internal error it
+  returns defer for the bounce recipient and never touches the quota path.
+
 **Binding.** The service binds loopback (or the internal compose network),
 NEVER a public interface. It is a new daemon on the mail host that holds the
 signing secret; nothing outside the host talks to it directly.
@@ -144,11 +154,47 @@ need a DB lookup inside the SMTP path, or push the expiry check to the intake
 after the address had already been accepted). Day granularity keeps `ts` short
 and leaks nothing beyond the send date, which the row already holds.
 
+## 6. Recipient validation — the reject_unlisted_recipient blocker (decision)
+
+`smtpd_recipient_restrictions` on port 25 runs, in order:
+
+    reject_unauth_destination
+    reject_unlisted_recipient
+    check_policy_service inet:api:10025
+
+A VERP address is a unique local part in NO lookup table, so
+`reject_unlisted_recipient` would refuse it two lines BEFORE the policy service
+— correct by the letter of the config, useless by intent, and the HMAC check
+would never run.
+
+Decision: **make `bounces.tatvaos.com` a catch-all** — a `relay_domain` with
+NO entry in `relay_recipient_maps`. Postfix then accepts every recipient for
+that domain (there is no map to fail against, so `reject_unlisted_recipient`
+passes and `reject_unauth_destination` passes because it is a recognised relay
+destination), and the accept/reject decision falls to `check_policy_service`,
+which is exactly where the HMAC lives. Junk still dies at RCPT — the policy
+service rejects it before the queue — it just dies at the policy line instead
+of the reject_unlisted line.
+
+Chosen over the alternative (ordering a bounce restriction class AHEAD of
+`reject_unlisted_recipient`): that reorders the SHARED global restriction list
+that gates all inbound mail, and a mistake there hits every tenant. The
+catch-all touches only this one domain's recipient validation and leaves the
+global order alone. It is also the honest model — a VERP domain genuinely has
+unlimited unique recipients, so "no recipient map, validate in the policy
+service" describes what is true rather than working around it.
+
+Delivery of accepted bounces routes via `transport_maps` to the intake
+transport (§3). `relay_domains` + `transport_maps` + empty `relay_recipient_maps`
+for this one domain; nothing else in the recipient path changes.
+
 ## Build order, once acked
-1. Postfix config: `bounces.tatvaos.com` as a routed domain + the policy
-   service hook and its fail-closed/binding settings (config only).
-2. The policy service (shape → ts window → constant-time HMAC) + secret
-   wiring, and #28's builder gains `ts` to match.
+1+2 (ONE deployable unit — a recognised bounce domain with no validator would
+   accept junk, so config and validator are not separately deployable):
+   the Postfix routing (catch-all relay_domain, transport to intake, scoped
+   bounce_verify with inline default_action=defer) AND the api:10025 bounce
+   branch (domain-branch first, exception-isolated, shape → ts window →
+   constant-time HMAC), plus #28's builder gaining `ts` to match.
 3. The intake (DSN parse + the idempotent write, orphan-drop, mismatch log).
 4. Suppression table + admin un-suppression (its own PR, off hard bounces).
 
