@@ -227,19 +227,24 @@ public static class MailSendApiEndpoints
                       + "Create it under Mailboxes, on a domain you have verified.",
             });
 
-        // ---- 4b. Validate sender is in allowed addresses if restricted -----
-        if (allowedAddresses is not null && allowedAddresses.Length > 0)
-        {
-            var isAllowed = allowedAddresses.Any(addr => 
-                addr.Equals(fromAddress, StringComparison.OrdinalIgnoreCase));
-            
-            if (!isAllowed)
-                return Results.BadRequest(new
-                {
-                    error = $"This API key is restricted to: {string.Join(", ", allowedAddresses)}",
-                });
-        }
+        // ---- 4b. Sender must be one of the key's allowed addresses ---------
+        // An empty (or null) list means the key may not send at all. It does
+        // NOT mean "unrestricted" - that inversion was the September 2026 hole.
+        if (allowedAddresses is null || allowedAddresses.Length == 0)
+            return Results.BadRequest(new
+            {
+                error = "This API key has no allowed sender addresses, so it cannot send. "
+                      + "Add at least one under Platform → API keys → [this key] → Edit, "
+                      + "or create a new key with the addresses it should send from.",
+            });
 
+        var isAllowed = allowedAddresses.Any(addr =>
+            addr.Equals(fromAddress, StringComparison.OrdinalIgnoreCase));
+        if (!isAllowed)
+            return Results.BadRequest(new
+            {
+                error = $"This API key is restricted to: {string.Join(", ", allowedAddresses)}",
+            });
         // ---- 5. Hand it to the one send path -------------------------------
         var result = await MailSender.SubmitAsync(
             box,
