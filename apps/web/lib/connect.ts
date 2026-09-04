@@ -127,6 +127,19 @@ export interface LobbyEntry {
   requestedAt: string;
 }
 
+/** Somebody a host removed from this meeting, and who therefore cannot rejoin. */
+export interface MeetingBlock {
+  id: string;
+  displayName: string;
+  identity: string;
+  createdAt: string;
+  /** False for a guest: the row is a record of what happened, and stops
+   *  nothing — a guest's identity is minted fresh at every door, so the
+   *  waiting room is the only thing between them and the meeting. The list
+   *  says so rather than showing a block it is not enforcing. */
+  enforced: boolean;
+}
+
 /** A seat: everything needed to open a LiveKit connection. */
 export interface Seat {
   status: 'joined' | 'admitted';
@@ -432,6 +445,21 @@ export const connectApi = {
   end: (f: AuthedFetch, id: string) =>
     f(`/connect/meetings/${id}/end`, { method: 'POST' })
       .then((r) => { if (!r.ok) throw new Error('Could not end the meeting.'); }),
+
+  // --- undoing the two above. Neither reaches LiveKit: reopening a meeting
+  // changes a row, and the next person through the door is what makes a room
+  // exist again.
+  reopen: (f: AuthedFetch, id: string) =>
+    f(`/connect/meetings/${id}/reopen`, { method: 'POST' })
+      .then((r) => { if (!r.ok) throw new Error('Could not reopen that meeting.'); }),
+
+  blocks: (f: AuthedFetch, id: string) =>
+    f(`/connect/meetings/${id}/blocks`)
+      .then((r) => json<MeetingBlock[]>(r, 'Could not load who was removed.')),
+
+  unblock: (f: AuthedFetch, id: string, blockId: string) =>
+    f(`/connect/meetings/${id}/blocks/${blockId}`, { method: 'DELETE' })
+      .then((r) => { if (!r.ok) throw new Error('Could not let that person back in.'); }),
 };
 
 // ---------------------------------------------------------------------------

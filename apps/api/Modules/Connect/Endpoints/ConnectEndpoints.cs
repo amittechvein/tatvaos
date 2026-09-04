@@ -61,6 +61,22 @@ public static class ConnectEndpoints
         // the controls, this one gives them away.
         g.MapPost("/meetings/{id:guid}/host", TransferHostAsync);
         g.MapPost("/meetings/{id:guid}/end", EndAsync);
+
+        // THE OTHER HALF OF TWO ONE-WAY DOORS.
+        //
+        // /end and the Remove button both wrote something permanent and gave
+        // nobody a way back: a meeting could be ended but not reopened, and a
+        // person removed but never let in again. The rows existed; nothing in
+        // the product could see them. On 3 September a host misclicked Remove
+        // on a live meeting and the only cure was an UPDATE against production
+        // typed at five in the morning. That is the bug these three fix.
+        //
+        // Guarded the same as the action each one reverses — whoever can shut
+        // a door can open it. Anything stricter just recreates the problem for
+        // whoever is on shift instead.
+        g.MapPost("/meetings/{id:guid}/reopen", ReopenAsync);
+        g.MapGet("/meetings/{id:guid}/blocks", ListBlocksAsync);
+        g.MapDelete("/meetings/{id:guid}/blocks/{blockId:guid}", UnblockAsync);
     }
 
     // ==================================================================
@@ -1041,6 +1057,103 @@ public static class ConnectEndpoints
         await db.SaveChangesAsync(ct);
 
         await audit.WriteAsync("connect.meeting.ended", "connect.meeting", id.ToString(),
+            ct: ct, productCode: "connect");
+        return Results.NoContent();
+    }
+
+    private static async Task<IResult> ReopenAsync(
+        Guid id, AppDbContext db, TenantContext tenant, AuditWriter audit, CancellationToken ct)
+    {
+        if (tenant.UserId is not Guid uid) return Results.Unauthorized();
+        var meeting = await FindAsync(db, id, ct);
+        if (meeting is null) return NotFound();
+        if (await RoleOfAsync(db, id, uid, ct) is not ("host" or "cohost")) return Forbidden();
+
+        // 'cancelled' is deliberately NOT reopened here. Ending a meeting says
+        // it finished; cancelling says it is not happening at all, and
+        // un-cancelling is a decision about a plan rather than the undo of a
+        // click. If anybody wants that, it is a different button with a
+        // different sentence next to it.
+        if (meeting.Status != "ended")
+            return Results.Conflict(new { error = "That meeting is not ended." });
+
+        var wasEndedAt = meeting.EndedAt;
+        meeting.Status = "scheduled";
+        // Cleared, not kept. ended_at is what the Past list reads, so a
+        // meeting that is live again while still carrying the moment it
+        // stopped would appear in two lists at once.
+        meeting.EndedAt = null;
+        meeting.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+
+        // Nothing is asked of the media server. LiveKit keeps no memory of a
+        // finished room: the next person through the door creates a fresh one
+        // under the same name, which is precisely what is wanted. A room the
+        // API tried to "restore" would be an empty room that then times out.
+        //
+        // First Connect caller to fill before_state. The column has been in
+        // the schema and empty on every row, which makes the log answer "what
+        // is it now" — a question the table itself answers — instead of "what
+        // did this person change", which is the only reason to keep a log.
+        await audit.WriteAsync("connect.meeting.reopened", "connect.meeting", id.ToString(),
+            before: new { status = "ended", ended_at = wasEndedAt },
+            after: new { status = "scheduled" },
+            ct: ct, productCode: "connect");
+        return Results.NoContent();
+    }
+
+    private static async Task<IResult> ListBlocksAsync(
+        Guid id, AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        if (tenant.UserId is not Guid uid) return Results.Unauthorized();
+        if (await FindAsync(db, id, ct) is null) return NotFound();
+        if (await RoleOfAsync(db, id, uid, ct) is not ("host" or "cohost")) return Forbidden();
+
+        var rows = await db.ConnectMeetingBlocks.AsNoTracking()
+            .Where(b => b.MeetingId == id)
+            .OrderByDescending(b => b.CreatedAt)
+            .ToListAsync(ct);
+
+        return Results.Ok(rows.Select(b => new
+        {
+            id = b.Id,
+            displayName = b.DisplayName,
+            identity = b.Identity,
+            createdAt = b.CreatedAt,
+            // A guest's row carries no user id, and the join path keys on user
+            // id — so for a guest this row records what happened and prevents
+            // nothing; they are back in as soon as they reopen the link, with
+            // only the waiting room in the way. Sent to the client because a
+            // list that shows a guest and a colleague identically is promising
+            // a block it is not making.
+            enforced = b.UserId != null,
+        }));
+    }
+
+    private static async Task<IResult> UnblockAsync(
+        Guid id, Guid blockId, AppDbContext db, TenantContext tenant,
+        AuditWriter audit, CancellationToken ct)
+    {
+        if (tenant.UserId is not Guid uid) return Results.Unauthorized();
+        if (await FindAsync(db, id, ct) is null) return NotFound();
+        if (await RoleOfAsync(db, id, uid, ct) is not ("host" or "cohost")) return Forbidden();
+
+        // Scoped by meeting as well as by id. A block id belonging to one
+        // meeting must not lift a block in another, even for somebody who
+        // hosts both — the id alone would be enough without this line.
+        var block = await db.ConnectMeetingBlocks
+            .Where(b => b.Id == blockId && b.MeetingId == id)
+            .FirstOrDefaultAsync(ct);
+        if (block is null) return NotFound();
+
+        db.ConnectMeetingBlocks.Remove(block);
+        await db.SaveChangesAsync(ct);
+
+        // Lifting the block does not put anybody back in the room. It restores
+        // what the link is worth: they open it again and arrive at the waiting
+        // room, or straight in, exactly as any other invitee would.
+        await audit.WriteAsync("connect.participant.unblocked", "connect.meeting", id.ToString(),
+            before: new { identity = block.Identity, displayName = block.DisplayName },
             ct: ct, productCode: "connect");
         return Results.NoContent();
     }
