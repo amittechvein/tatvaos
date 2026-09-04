@@ -35,7 +35,6 @@ export default function ApiKeysPage() {
   const [editingKey, setEditingKey] = useState<KeyRow | null>(null);
   const [fresh, setFresh] = useState<{ key: string; label: string; allowed_sender_addresses?: string[] } | null>(null);
   const [endpoint, setEndpoint] = useState('https://core.tatvaos.com/api/v1/mail/send');
-  const [mailboxes, setMailboxes] = useState<string[]>([]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') setEndpoint(`${window.location.origin}/api/v1/mail/send`);
@@ -197,7 +196,7 @@ export default function ApiKeysPage() {
             <>
               <Button variant="ghost" onClick={() => setRevoking(null)}>Keep it</Button>
               <Button variant="primary" onClick={() => void revoke(revoking)}>
-                Revoke &ldquo;{revoking.label}&rdquo;
+                Revoke &quot;{revoking.label}&quot;
               </Button>
             </>
           }
@@ -239,7 +238,7 @@ function FreshKeyCard({ fresh, endpoint, onDismiss }: {
     <Card className="mb-3 border-success">
       <div className="d-flex align-items-start justify-content-between gap-3 mb-2">
         <div>
-          <div className="fw-semibold">Your new key for &ldquo;{fresh.label}&rdquo;</div>
+          <div className="fw-semibold">Your new key for &quot;{fresh.label}&quot;</div>
           <div className="fs-12 text-danger fw-semibold">
             This is the only time it will be shown. Copy it now — once you leave this
             page it cannot be recovered, only replaced.
@@ -288,7 +287,7 @@ function HowToUse({ endpoint }: { endpoint: string }) {
         <li className="mb-3">
           <div className="fw-semibold">Choose the sender</div>
           <div className="fs-13 text-muted">
-            The <code>from</code> address must be in your key&rsquo;s allowed addresses. Create a key
+            The <code>from</code> address must be in your key&apos;s allowed addresses. Create a key
             and select which mailboxes it can send from. Set one up under{' '}
             <Link href="/org/mailboxes">Shared mailboxes</Link>; verify the domain under{' '}
             <Link href="/org/domains">Domains</Link>.
@@ -327,7 +326,7 @@ Content-Type: application/json
           <div className="fw-semibold mb-2">Fields</div>
           <table className="table table-sm fs-13 mb-0">
             <tbody>
-              <tr><td><code>from</code></td><td>Required. Must be in your key&rsquo;s allowed addresses.</td></tr>
+              <tr><td><code>from</code></td><td>Required. Must be in your key&apos;s allowed addresses.</td></tr>
               <tr><td><code>to</code></td><td>Required. Up to {MAX_RECIPIENTS} addresses, separated by commas.</td></tr>
               <tr><td><code>subject</code></td><td>Required.</td></tr>
               <tr><td><code>text</code></td><td>Plain-text body. Give <code>text</code>, <code>html</code>, or both.</td></tr>
@@ -354,7 +353,7 @@ Content-Type: application/json
               </tr>
               <tr>
                 <td><Badge tone="danger">502</Badge></td>
-                <td>Our mail server refused it. Usually the sender&rsquo;s domain is not verified.</td>
+                <td>Our mail server refused it. Usually the sender&apos;s domain is not verified.</td>
               </tr>
             </tbody>
           </table>
@@ -363,7 +362,7 @@ Content-Type: application/json
 
       <div className="alert alert-info fs-12 mt-4 mb-0">
         <strong>First messages from a new address often land in spam.</strong> That is the
-        receiver&rsquo;s reputation system, not a fault here — every message is DKIM-signed and
+        receiver&apos;s reputation system, not a fault here — every message is DKIM-signed and
         passes SPF and DMARC. Reputation builds with real mail people open and reply to.
       </div>
     </Card>

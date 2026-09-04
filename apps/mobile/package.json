@@ -1,0 +1,25 @@
+{
+  "name": "tatvaos-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios"
+  },
+  "dependencies": {
+    "@expo/vector-icons": "^15.1.1",
+    "expo": "~57.0.19",
+    "expo-asset": "~57.0.16",
+    "expo-constants": "~57.0.17",
+    "expo-font": "~57.0.3",
+    "expo-status-bar": "~57.0.1",
+    "react": "19.2.3",
+    "react-native": "0.86.3"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.18",
+    "typescript": "~6.0.3"
+  }
+}
