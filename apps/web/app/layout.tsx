@@ -3,6 +3,7 @@ import { Plus_Jakarta_Sans } from 'next/font/google';
 import { AuthProvider } from '@/lib/auth';
 import { ThemeProvider } from '@/lib/theme';
 import { BuildBadge } from '@/components/BuildBadge';
+import { RecoveryReminder } from '@/components/RecoveryReminder';
 // YZEN's real stylesheet (licensed to Techvein) drives the console look. Order
 // matters: our Tailwind/globals baseline first, then Bootstrap, then YZEN's
 // styles.css last so its component rules win. Icon fonts (Tabler, RemixIcon)
@@ -91,7 +92,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       */}
       <body className={`h-full ${inter.variable} ${inter.className}`}>
         <ThemeProvider>
-          <AuthProvider>{children}</AuthProvider>
+          <AuthProvider><RecoveryReminder />{children}</AuthProvider>
         </ThemeProvider>
         {/* Outside the providers on purpose: the version must still render
             even if a provider below it throws. */}

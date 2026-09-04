@@ -27,6 +27,7 @@ interface Person {
   role: string; status: string; products: string[];
   quotaBytes: number; usedBytes: number;
   mfaEnabled: boolean; lastLoginAt: string | null;
+  hasVerifiedRecoveryEmail?: boolean;
   hasAvatar?: boolean;
 }
 
@@ -189,7 +190,7 @@ export default function PeoplePage() {
               : undefined}
           />
         ) : (
-          <Table head={['Person', 'Department', 'Role', 'Storage', 'MFA', 'Status', 'Last sign-in']}>
+          <Table head={['Person', 'Department', 'Role', 'Storage', 'MFA', 'Status', 'Last sign-in', 'Recovery']}>
             {filtered.map((p) => {
               const dept = flat.find((f) => f.d.id === p.departmentId)?.d;
               return (
@@ -243,6 +244,11 @@ export default function PeoplePage() {
                   <Td>
                     <span className="fs-13">
                       {p.lastLoginAt ? formatDateTime(p.lastLoginAt) : 'Never'}
+                    </span>
+                  </Td>
+                  <Td>
+                    <span className="fs-13">
+                      {p.hasVerifiedRecoveryEmail ? 'Verified' : '\u2014'}
                     </span>
                   </Td>
                 </tr>
