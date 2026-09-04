@@ -67,7 +67,21 @@ public sealed record MailSubmission(
     string? ICalendar = null,
     // REQUEST | CANCEL | REPLY. Must agree with the METHOD: line inside
     // ICalendar; SubmitAsync refuses the send if it does not.
-    string? ICalendarMethod = null);
+    string? ICalendarMethod = null,
+    // The envelope sender (Return-Path) to submit with. Null — the default,
+    // and every interactive send — leaves the envelope as the From address,
+    // so a person's bounces come back to their own mailbox. The send API sets
+    // this to a per-recipient VERP bounce address so a DSN correlates to the
+    // exact api_sends row. Setting it switches SendAsync to the overload that
+    // takes an explicit sender and recipient list.
+    MailboxAddress? EnvelopeSender = null,
+    // Whether to file a copy in the mailbox's Sent folder and charge its
+    // quota. True for every interactive send — a person expects to find what
+    // they sent. The send API passes false: it fans one call out to one
+    // message PER recipient, so filing here would put N near-identical copies
+    // in the Sent folder and charge the quota N times for a single API call.
+    // The api_sends log is that send's record instead.
+    bool FileSentCopy = true);
 
 public enum SendOutcome
 {
@@ -233,7 +247,21 @@ public static class MailSender
             // smtp_tls_security_level. Different hop, different setting;
             // "fixing" this one would break submission and leave the leak open.
             await client.ConnectAsync(host, port, SecureSocketOptions.None, ct);
-            await client.SendAsync(mime, ct);
+            if (s.EnvelopeSender is { } envelope)
+            {
+                // Explicit envelope sender: the Return-Path the receiving
+                // server bounces to, deliberately different from the visible
+                // From. Recipients are To + Cc, unfolded from the message.
+                // Bcc is intentionally NOT here — no caller sets it today, and
+                // the day one does this must add it or the Bcc'd copy is
+                // silently never sent.
+                var recipients = mime.To.Mailboxes.Concat(mime.Cc.Mailboxes).ToList();
+                await client.SendAsync(mime, envelope, recipients, ct);
+            }
+            else
+            {
+                await client.SendAsync(mime, ct);
+            }
             await client.DisconnectAsync(true, ct);
         }
         catch (SmtpCommandException ex)
@@ -267,6 +295,13 @@ public static class MailSender
             return new SendResult(SendOutcome.Unreachable, null, null,
                 "The mail server could not be reached. Nothing was sent.");
         }
+
+        // Programmatic senders opt out of the Sent copy and its quota charge
+        // (see FileSentCopy). The submit has already succeeded, so this is a
+        // deliberate "went out, filed nowhere" — the same shape as a mailbox
+        // with no Sent folder, which the caller already treats as sent.
+        if (!s.FileSentCopy)
+            return new SendResult(SendOutcome.SentButNotFiled, null, null, null);
 
         // ---- File the Sent copy -----------------------------------------
         //  After the submit succeeds, never before: a Sent copy of a message
