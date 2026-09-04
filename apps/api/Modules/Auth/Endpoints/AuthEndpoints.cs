@@ -300,6 +300,7 @@ public static class AuthEndpoints
 
         g.MapPost("/password/forgot", ForgotPasswordAsync).AllowAnonymous();
         g.MapPost("/password/reset", ResetPasswordAsync).AllowAnonymous();
+        g.MapPost("/password/forgot-recovery", ForgotPasswordViaRecoveryAsync).AllowAnonymous();
         g.MapPost("/password/forgot-otp", ForgotPasswordOtpAsync).AllowAnonymous();
         g.MapPost("/password/reset-otp", ResetPasswordOtpAsync).AllowAnonymous();
 
@@ -1212,6 +1213,61 @@ public static class AuthEndpoints
     }
 
     // ------------------------------------------------------------------
+    /// <summary>
+    /// POST /api/auth/password/forgot-recovery — start a password reset using a
+    /// VERIFIED recovery email. The link goes to the recovery address, because
+    /// the whole point is that the person cannot reach their primary mailbox.
+    ///
+    /// A recovery address may sit on more than one account, so — exactly like
+    /// the phone paths — this resolves to ONE live match or refuses; it never
+    /// guesses which account a shared address means. The reply is identical for
+    /// zero, one, or many matches, so nothing leaks. Only VERIFIED addresses
+    /// qualify, so an unverified one can never start a reset. Completion reuses
+    /// the ordinary /password/reset endpoint (email channel), untouched.
+    /// </summary>
+    private static async Task<IResult> ForgotPasswordViaRecoveryAsync(
+        ForgotPasswordRecoveryRequest req, AppDbContext db, TenantContext tenant,
+        SystemMailer mailer, IConfiguration config, CancellationToken ct)
+    {
+        var email = req.RecoveryEmail?.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(email))
+            return Results.BadRequest(new { error = "A recovery email address is required." });
+
+        var matches = await db.Users.IgnoreQueryFilters()
+            .Where(u => u.RecoveryEmail == email
+                        && u.RecoveryEmailVerifiedAt != null
+                        && u.Status != "deleted" && u.Status != "suspended")
+            .Take(2)
+            .ToListAsync(ct);
+        if (matches.Count != 1)
+            return Results.Ok(new { sent = true, message = ForgotRecoveryReply });
+        var user = matches[0];
+
+        if (user.PasswordResetSentAt is DateTimeOffset last
+            && DateTimeOffset.UtcNow - last < OtpResendGap)
+            return Results.Ok(new { sent = true, message = ForgotRecoveryReply });
+
+        tenant.Set(user.TenantId, user.Id, user.Role);
+        await db.SyncTenantAsync(ct);
+        var token = TokenIssuer.GenerateRefreshToken();
+        user.PasswordResetHash = TokenIssuer.HashRefreshToken(token);
+        user.PasswordResetSentAt = DateTimeOffset.UtcNow;
+        user.PasswordResetAttempts = 0;
+        user.PasswordResetChannel = "email";   // completion is the ordinary email reset
+        await db.SaveChangesAsync(ct);
+
+        var baseUrl = (config["Jwt:Issuer"] ?? "https://core.tatvaos.com").TrimEnd('/');
+        var resetUrl = $"{baseUrl}/reset-password?token={Uri.EscapeDataString(token)}";
+        await mailer.SendHtmlAsync(
+            user.RecoveryEmail!,                    // to the proven-owned recovery address
+            ResetEmail.Subject(),
+            ResetEmail.Html(user.DisplayName, baseUrl, resetUrl, (int)ResetLinkLifetime.TotalMinutes),
+            from: "no_reply@tatvaos.com", ct);
+
+        return Results.Ok(new { sent = true, message = ForgotRecoveryReply });
+    }
+
+    // ------------------------------------------------------------------
     private static async Task<IResult> ChangePasswordAsync(
         ChangePasswordRequest req, AppDbContext db, IPasswordHasher hasher,
         TenantContext tenant, AuditWriter audit, CancellationToken ct)
@@ -1398,6 +1454,10 @@ public static class AuthEndpoints
         "If an account exists for that address, a link to reset the password has been sent to it.";
     private const string ForgotPhoneReply =
         "If that number is registered, a code to reset the password has been sent to it.";
+    // Identical for zero, one, or many matches — so it never reveals whether an
+    // account (or how many) use this recovery address.
+    private const string ForgotRecoveryReply =
+        "If that address is a verified recovery email, a link to reset the password has been sent to it.";
 
     // Longer than the login OTP's five minutes: an email hop can be slow, and a
     // link the recipient opens twenty minutes later must still work.
@@ -1736,6 +1796,7 @@ public sealed record OtpVerifyRequest(string? Phone, string? Code);
 public sealed record RefreshRequest(string? RefreshToken);
 public sealed record SetRecoveryEmailRequest(string? Email);
 public sealed record VerifyRecoveryEmailRequest(string? Token);
+public sealed record ForgotPasswordRecoveryRequest(string? RecoveryEmail);
 
 /// <summary>Which account slot to act on. See the multi-account block above.</summary>
 public sealed record SwitchRequest(int Slot);
