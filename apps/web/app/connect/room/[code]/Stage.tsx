@@ -1749,6 +1749,10 @@ export default function Stage({ seat, meeting, prefs }: {
       micMuted: !micPub || micPub.isMuted === true,
       hand: hands[p.identity] === true,
       local: p === room?.localParticipant,
+      // The floating window follows the room's mirror preference rather than
+      // hardcoding one: a self-view that is mirrored on the stage and not in
+      // PiP is the same face two ways round in two windows at once.
+      mirror: p === room?.localParticipant && roomPrefs.mirror,
       trackId: camTrack ? camPub?.trackSid ?? '' : '',
       attach: camTrack ? (el) => camTrack.attach(el) : undefined,
       detach: camTrack ? (el) => camTrack.detach(el) : undefined,
@@ -1765,6 +1769,10 @@ export default function Stage({ seat, meeting, prefs }: {
   const pipKey = pipTiles.map((t) => [
     t.id, t.trackId, t.name,
     t.screen ? 's' : '', t.speaking ? 'v' : '', t.micMuted ? 'm' : '', t.hand ? 'h' : '',
+    // Mirror is in the signature because Settings can toggle it while the
+    // floating window is open, and a preference that only takes effect after
+    // somebody's camera happens to change is a preference that looks broken.
+    t.mirror ? 'r' : '',
   ].join('|')).join(';');
 
   // The freshest tiles, readable from an effect that does not depend on them.

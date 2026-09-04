@@ -130,6 +130,9 @@ export interface PipTile {
   micMuted?: boolean;
   hand?: boolean;
   local?: boolean;
+  /** Mirror this tile. Set for your own camera, following the room's own
+   *  preference — never for a screen share, where mirrored text is unusable. */
+  mirror?: boolean;
   /** The publication currently on show, or '' for none. Changing this is what
    *  makes the video re-attach; leaving it alone is what stops the flicker. */
   trackId?: string;
@@ -155,6 +158,18 @@ const PIP_CSS = `
      usually the point of the slide. */
   .tile.scr video{object-fit:contain;background:#000}
   .tile.scr{background:#000}
+  /* A PHONE HELD UPRIGHT. Its camera sends about 9/16 into a tile that is
+     wider than it is tall, and cover answers that by throwing away the top and
+     bottom — which on a face is the forehead and the chin, leaving a band of
+     eyes. contain keeps the whole frame and lets the tile's own background
+     fill the rest. No blurred backdrop here, unlike the stage: these tiles are
+     a few centimetres across and a second decoded copy of every portrait
+     camera is a real cost for an effect nobody can see at this size. */
+  .tile.up video{object-fit:contain}
+  /* Your own camera, mirrored, for the reason the stage mirrors it: people
+     expect a mirror of themselves and read an un-mirrored self-view as a
+     stranger. Never on a screen share. */
+  .tile.self video{transform:scaleX(-1)}
   .ph{position:absolute;inset:0;display:grid;place-items:center}
   .ph b{display:grid;place-items:center;border-radius:50%;background:#2b2b36;
     color:#d8d8e2;font-weight:600;line-height:1;
@@ -542,6 +557,24 @@ export async function openPipWindow(opts: {
     video.muted = true;
     video.style.display = 'none';
 
+    // Orientation is READ from the element, never inferred from the device or
+    // the window. A tablet in landscape is not a phone, and a phone turned
+    // sideways mid-call should follow — 'resize' is the event that fires on a
+    // rotation, and it fires on this element without the track re-attaching.
+    // Registered once: the element outlives every track it shows, and it is
+    // dropped along with its listeners when the tile goes.
+    //
+    // Zeros mean metadata has not arrived. Keeping the last known shape is
+    // deliberate — the alternative is the tile snapping to landscape and back
+    // every time a camera starts.
+    const readShape = () => {
+      const w = video.videoWidth;
+      const h = video.videoHeight;
+      if (w > 0 && h > 0) root.classList.toggle('up', h > w);
+    };
+    video.addEventListener('loadedmetadata', readShape);
+    video.addEventListener('resize', readShape);
+
     const photo = doc.createElement('div');
     photo.className = 'ph';
     const initial = doc.createElement('b');
@@ -628,6 +661,7 @@ export async function openPipWindow(opts: {
 
       entry.root.classList.toggle('scr', t.screen === true);
       entry.root.classList.toggle('spk', t.speaking === true && t.screen !== true);
+      entry.root.classList.toggle('self', t.mirror === true && t.screen !== true);
       entry.initial.textContent = t.initial;
 
       const bits: string[] = [t.name];
