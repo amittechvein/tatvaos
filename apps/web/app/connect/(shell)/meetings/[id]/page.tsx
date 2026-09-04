@@ -6,8 +6,8 @@ import { useAuth } from '@/lib/auth';
 import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
 import {
   connectApi, prettyCode, timeLabel, whenLabel,
-  type ChatPolicy, type LobbyEntry, type Meeting, type Participant, type SharePolicy,
-  type UpdateMeeting, type WaitingRoom,
+  type ChatPolicy, type LobbyEntry, type Meeting, type MeetingBlock, type Participant,
+  type SharePolicy, type UpdateMeeting, type WaitingRoom,
 } from '@/lib/connect';
 import Recordings from './Recordings';
 import { SumRow, faceOf, toneOf } from '../../ConnectSkin';
@@ -209,6 +209,7 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
   const [meeting, setMeeting] = useState<Meeting | null>(null);
   const [people, setPeople] = useState<Participant[]>([]);
   const [lobby, setLobby] = useState<LobbyEntry[]>([]);
+  const [blocks, setBlocks] = useState<MeetingBlock[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -307,6 +308,18 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
       ]);
       setMeeting(m);
       setPeople(p.participants);
+
+      // Asked for after the meeting rather than beside it, because the role
+      // is not known until the meeting arrives — and because a refusal here
+      // is a normal answer for a participant, not something to put in a red
+      // banner. Loaded inside load() so that run() refreshes it: letting
+      // somebody back in and then still seeing their name is the kind of
+      // small lie that makes people click twice.
+      if (m.myRole === 'host' || m.myRole === 'cohost') {
+        setBlocks(await connectApi.blocks(authedFetch, id).catch(() => []));
+      } else {
+        setBlocks([]);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not open that meeting.');
     } finally {
@@ -428,6 +441,23 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
                     onClick={() => void run('end', () => connectApi.end(authedFetch, meeting.id),
                                             'The meeting has ended for everyone.')}>
               End for everyone
+            </Button>
+          )}
+          {/* THE UNDO FOR THE BUTTON ABOVE IT.
+              Ending a meeting was permanent: status went to 'ended' and
+              nothing in the product could move it back, so a meeting ended by
+              a misclick — or ended properly and then needed again an hour
+              later — was gone, and the only cure was SQL against production.
+              Offered only on 'ended'. A CANCELLED meeting is not reopened
+              here: ending says it finished, cancelling says it is not
+              happening, and reversing that is a decision about a plan rather
+              than the undo of a click. */}
+          {isHost && meeting.status === 'ended' && (
+            <Button variant="primary" disabled={busy !== null}
+                    onClick={() => void run('reopen',
+                      () => connectApi.reopen(authedFetch, meeting.id),
+                      'The meeting is open again. The same link and code still work.')}>
+              Reopen
             </Button>
           )}
         </div>
@@ -784,6 +814,46 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
                           .then(() => { router.push('/connect'); }))}>
                 Cancel this meeting
               </Button>
+            </Card>
+          )}
+
+          {/* WHO WAS REMOVED — AND THE WAY BACK.
+              Removing somebody writes a row that the join path reads for ever,
+              and until now nothing displayed that row or deleted it. A host
+              who misclicked Remove on a crowded People panel had locked that
+              person out of the meeting permanently, with no screen anywhere
+              admitting it had happened.
+
+              Shown after the meeting ends as well as during it, because that
+              is exactly when somebody notices a name that should not be on
+              this list. */}
+          {isHost && blocks.length > 0 && (
+            <Card title="Removed from this meeting" className="mt-3">
+              {blocks.map((b) => (
+                <div key={b.id}
+                     className="d-flex align-items-center justify-content-between gap-2 py-2 border-bottom">
+                  <div style={{ minWidth: 0 }}>
+                    <div className="fw-semibold text-truncate">{b.displayName}</div>
+                    <div className="fs-12 text-muted">
+                      {timeLabel(b.createdAt)}
+                      {!b.enforced && ' · joined as a guest'}
+                    </div>
+                  </div>
+                  <Button disabled={busy !== null}
+                          onClick={() => void run(`unblock-${b.id}`,
+                            () => connectApi.unblock(authedFetch, meeting.id, b.id),
+                            `${b.displayName} can join again.`)}>
+                    Let back in
+                  </Button>
+                </div>
+              ))}
+              {blocks.some((b) => !b.enforced) && (
+                <div className="form-text mt-2">
+                  A guest was never actually kept out: guests are recognised only
+                  for as long as they stay connected, so anyone removed as a guest
+                  can return through the link. The waiting room is what stops them.
+                </div>
+              )}
             </Card>
           )}
         </div>
