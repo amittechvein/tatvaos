@@ -33,11 +33,18 @@ import { faceOf, toneOf } from '../ConnectSkin';
 //  afternoon.
 //
 //  The green is #07834c in light and #17a06b in dark. Both were CHECKED, not
-//  chosen by eye: the brand green at #03b562 comes out at 2.7:1 against white,
-//  under the 3:1 a chart mark needs, and the obvious dark-mode brightening
-//  lands outside the readable lightness band. Two greens, both measured, is
-//  the honest answer — one green that looks fine on the machine it was picked
-//  on is not.
+//  chosen by eye: the brand colour AT THE TIME was green #03b562, which comes
+//  out at 2.7:1 against white — under the 3:1 a chart mark needs — and the
+//  obvious dark-mode brightening lands outside the readable lightness band.
+//  Two greens, both measured, is the honest answer; one green that looks fine
+//  on the machine it was picked on is not.
+//
+//  5 Sept 2026: THE PREMISE HAS CHANGED. The brand is now violet #6C3CE9,
+//  which measures about 6.1:1 against white and clears 3:1 comfortably — so
+//  the reason these marks diverge from the brand no longer holds. They are
+//  deliberately LEFT AS THEY ARE, because they are Connect's chart colours and
+//  changing them changes every chart; that is Connect's call to make and
+//  measure, not a side effect of a palette change. Flagged, not touched.
 // ============================================================================
 
 const DAYS = 14;

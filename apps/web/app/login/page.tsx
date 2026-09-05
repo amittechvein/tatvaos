@@ -30,10 +30,24 @@ import { homeFor } from '@/components/RequireAuth';
 //  explicit classes rather than relying on a reset that is not there.
 // ============================================================================
 
-/** The brand ramp, fixed here now that MUI's palette has gone. */
-const BRAND_DARK = '#0a8a4b';
-const BRAND = '#03b562';
-const BRAND_LIGHT = '#35d68c';
+/**
+ * The brand ramp, fixed here now that MUI's palette has gone.
+ *
+ * These are LITERALS and that is a known debt, not a choice: the two gradients
+ * below interpolate between three stops, and a CSS custom property cannot be
+ * read into a template string at build time. They must be kept in step with
+ * --brand-700 / --brand-500 / --brand-400 in styles/globals.css by hand.
+ *
+ * On 5 Sept 2026 they were the last green left in the product after the
+ * palette moved to violet — on the login page, which is the first thing every
+ * customer sees. If you are changing the palette again, grep for '#' in
+ * app/login, app/signup and app/(marketing): those three pages carry their own
+ * colours and no token change will reach them. Ending that is stage 3 of
+ * docs/UI_LANE_BRIEF.md.
+ */
+const BRAND_DARK = '#4A29A8';   // --brand-700
+const BRAND = '#6C3CE9';        // --brand-500
+const BRAND_LIGHT = '#8F6BEC';  // --brand-400
 
 const CAPABILITIES = [
   {

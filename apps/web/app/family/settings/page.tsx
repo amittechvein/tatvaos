@@ -114,7 +114,7 @@ export default function FamilySettingsPage() {
           <div className="d-flex justify-content-center py-4">
             <span className="d-inline-block animate-spin rounded-circle"
                   style={{ width: 28, height: 28, border: '3px solid rgba(0,0,0,.12)',
-                           borderTopColor: '#03b562' }} />
+                           borderTopColor: '#6C3CE9' }} />
           </div>
         ) : (
           <div className="d-flex flex-column gap-3">

@@ -47,7 +47,7 @@ const SKIN = `
   --cxs-line:#e6eaf2;
   --cxs-soft:#eff2f7;
   --cxs-hover:#f6f8fc;
-  --cxs-brand:#03b562;
+  --cxs-brand:#6C3CE9;
   --cxs-brand-deep:#07834c;
   --cxs-radius:16px;
   /* Two shadows, always. The 1px one is contact; the wide one is lift. */
