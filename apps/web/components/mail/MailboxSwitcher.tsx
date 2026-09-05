@@ -117,9 +117,16 @@ export function MailboxSwitcher() {
         disabled={soleMailbox}
         className="d-flex align-items-center gap-2 w-100 rounded"
         style={{
-          background: isShared ? 'rgba(255,169,9,0.18)' : 'rgba(255,255,255,0.08)',
-          border: isShared ? '1px solid rgba(255,169,9,0.55)' : '1px solid transparent',
-          color: 'inherit', padding: '7px 10px', textAlign: 'left',
+          // TOKENS, not white-alpha. This carried rgba(255,255,255,0.08) with
+          // color:'inherit', which reads as a subtle chip on a near-black rail
+          // and is INVISIBLE on a light one — white text on white, measured at
+          // a contrast ratio of 1.0 the day the rail went light (5 Sept 2026).
+          // --rail-soft, --line and --ink all flip with the theme, so this
+          // survives either. The shared-mailbox amber stays as it is: it warns
+          // you that you are reading someone else's mail and must not blend in.
+          background: isShared ? 'rgba(255,169,9,0.18)' : 'rgb(var(--rail-soft))',
+          border: isShared ? '1px solid rgba(255,169,9,0.55)' : '1px solid rgb(var(--line))',
+          color: 'rgb(var(--ink))', padding: '7px 10px', textAlign: 'left',
         }}
         title={current.address}
       >
