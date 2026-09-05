@@ -72,7 +72,12 @@ public static class MailSendApiEndpoints
 
     public sealed record SendRequest(
         string? From, string? To, string? Subject,
-        string? Html, string? Text, string? ReplyTo);
+        string? Html, string? Text, string? ReplyTo,
+        // Default true: one copy of the call is filed in the sender's Sent
+        // folder, addressed to every recipient, charged to quota once. A bulk
+        // or machine-generated job that does not want its output in a
+        // person's mailbox sends false; api_sends is its record regardless.
+        bool? SaveToSent = null);
 
     private static async Task<IResult> SendAsync(
         HttpContext http,
@@ -290,6 +295,14 @@ public static class MailSendApiEndpoints
         // NOTE for v1.5 (bulk): each SubmitAsync opens and closes its own SMTP
         // connection. Fine at five recipients; at bulk it must pool one
         // connection across the batch instead of one per message.
+        // One Sent copy per CALL, not per recipient. The first submit that
+        // Postfix accepts files it (addressed to everyone — see
+        // SentCopyRecipients); every later submit passes false. If the first
+        // recipient is refused, the next accepted one files instead, so a
+        // call that reached anybody leaves exactly one entry in Sent.
+        var saveToSent = req.SaveToSent ?? true;
+        var allRecipients = to.ToList();
+        var filed = false;
         var sends = new List<(MailboxAddress Recipient, Guid Id, bool Accepted, string? Error)>();
         foreach (var recipient in to)
         {
@@ -308,13 +321,17 @@ public static class MailSendApiEndpoints
                     BodyHtml: html,
                     Attachments: Array.Empty<MailAttachment>(),
                     EnvelopeSender: envelope,
-                    // No Sent-folder copy and no quota charge per recipient —
-                    // this send's record is its api_sends row, not N messages
-                    // in the sender's Sent folder.
-                    FileSentCopy: false),
+                    // Filed once for the whole call (see above), never once
+                    // per recipient — that would put N near-identical copies
+                    // in Sent and charge the quota N times for one API call.
+                    FileSentCopy: saveToSent && !filed,
+                    SentCopyRecipients: allRecipients),
                 db, tenant, config, log, autoSave, audit, ct);
 
             var ok = result.Outcome is SendOutcome.Sent or SendOutcome.SentButNotFiled;
+            // Only a real filing counts — SentButNotFiled (no Sent folder, or
+            // FileSentCopy was false) must not stop a later recipient trying.
+            if (saveToSent && !filed && result.Outcome == SendOutcome.Sent) filed = true;
             sends.Add((recipient, sendId, ok, ok ? null : result.Error));
         }
 
@@ -384,6 +401,7 @@ public static class MailSendApiEndpoints
                 accepted = acceptedCount,
                 total = sends.Count,
                 note = "Some recipients were accepted and some refused. Retry only the refused ids.",
+                sentCopy = filed,
                 results,
             }, statusCode: StatusCodes.Status207MultiStatus);
         }
@@ -395,6 +413,7 @@ public static class MailSendApiEndpoints
             outcome = "accepted",
             recipients = acceptedCount,
             note = "Accepted for delivery. This is not confirmation of arrival.",
+            sentCopy = filed,
             results,
         }, statusCode: StatusCodes.Status202Accepted);
     }
