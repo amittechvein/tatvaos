@@ -20,12 +20,13 @@ password = dev_mail_pw
 dbname   = tatvaos_mail
 
 # Same MX rule as virtual-domains.cf: a domain counts as one we host only
-# when its MX points at us. Without it an UNVERIFIED sender could be
+# when its MX points at us, or it is a platform domain we provision
+# ourselves (hosted by definition). Without it an UNVERIFIED sender could be
 # permitted to relay to a send-only domain (inbox at Google) as if it were
 # internal -- exactly the off-platform delivery this class exists to stop.
 query = SELECT 'OK'
         FROM   core.domains d
         JOIN   core.tenants t ON t.id = d.tenant_id
         WHERE  d.fqdn = '%d'
-          AND  d.is_active AND d.mx_verified_at IS NOT NULL
+          AND  d.is_active AND (d.mx_verified_at IS NOT NULL OR d.is_platform)
           AND  t.status IN ('active', 'trial')
