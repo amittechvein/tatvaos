@@ -61,14 +61,19 @@
    Brand header — product logo lockup on the sidebar
    ----------------------------------------------------------------------------
    The supplied wordmarks (TatvaOS Core / TatvaOS Mail) are dark artwork on a
-   transparent ground, so they would be invisible on the dark rail. The brand
-   header therefore sits on white — which also lines it up with the white
-   topbar to read as one continuous top strip — and stays white in dark mode so
-   the lockup remains legible. !important because YZEN's dark menu sets the
-   header background with a higher-specificity, attribute-qualified selector.
+   transparent ground. Until 5 Sept 2026 the rail was near-black, so they were
+   invisible on it, and this block forced `background: #fff !important` behind
+   the header to rescue them — which produced a white slab at the top of a dark
+   sidebar, the seam Amit spotted.
+
+   THE RAIL IS NOW LIGHT (data-menu-styles="light" in app/layout.tsx), so the
+   dark artwork reads on it directly and the override is gone. Do not put it
+   back: if the logo ever looks wrong again, the answer is SVG lockups whose
+   colour comes from CSS, not a coloured patch behind PNGs. See
+   docs/UI_LANE_BRIEF.md §4.1.
+
    The collapsed icon rail shows only the square mark; the wordmark is hidden.
    ============================================================================ */
-.app-sidebar .main-sidebar-header { background: #fff !important; }
 .app-sidebar .main-sidebar-header .header-logo {
   display: flex;
   align-items: center;
