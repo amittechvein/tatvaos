@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using MimeKit;
 using TatvaOS.Api.Modules.Admin;
@@ -74,7 +75,6 @@ public static class MailSendApiEndpoints
         string? Html, string? Text, string? ReplyTo);
 
     private static async Task<IResult> SendAsync(
-        SendRequest? req,
         HttpContext http,
         AppDbContext db,
         TenantContext tenant,
@@ -175,6 +175,31 @@ public static class MailSendApiEndpoints
             return Unauthorized("This organisation is not active.");
 
         // ---- 3. The request ------------------------------------------------
+        // The body is read HERE, not bound by the framework. When a body does
+        // not fit SendRequest - most often "to" sent as a JSON array where a
+        // string is expected - framework binding answers with an empty 400 and
+        // no log line, which took three round-trips to diagnose on 4 Sept.
+        // Reading it ourselves lets the refusal name the field. Same JSON
+        // options the framework would have used, so a correct body binds
+        // exactly as before. It also means the body is only parsed for a
+        // caller who has already presented a valid key.
+        if (!http.Request.HasJsonContentType())
+            return Results.BadRequest(new { error = "Send the request body as JSON (Content-Type: application/json)." });
+
+        SendRequest? req;
+        try
+        {
+            req = await http.Request.ReadFromJsonAsync<SendRequest>(ct);
+        }
+        catch (JsonException ex)
+        {
+            return Results.BadRequest(new
+            {
+                error = "The request body is not in the expected shape. " + ex.Message
+                      + " Note: to is a single string; for several recipients, separate them with commas.",
+            });
+        }
+
         var from    = (req?.From ?? "").Trim();
         var toRaw   = (req?.To ?? "").Trim();
         var subject = (req?.Subject ?? "").Trim();
