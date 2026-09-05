@@ -24,7 +24,7 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? '/api';
  */
 export default function ForgotPasswordPage() {
   const router = useRouter();
-  const [tab, setTab] = useState<'email' | 'recovery' | 'phone'>('email');
+  const [tab, setTab] = useState<'email' | 'recovery' | 'phone'>('recovery');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -154,11 +154,11 @@ export default function ForgotPasswordPage() {
     <AuthCard>
       <h1 className="mb-1 text-xl font-semibold text-ink">Reset your password</h1>
       <p className="mb-5 text-sm leading-relaxed text-ink-muted">
-        Recover by email, a verified recovery email, or a code sent to your mobile.
+        Recover with your verified recovery email, a code sent to your mobile, or a link to your mailbox.
       </p>
 
       <div className="mb-5 flex rounded-lg border border-line p-1">
-        {(['email', 'recovery', 'phone'] as const).map((t) => (
+        {(['recovery', 'phone', 'email'] as const).map((t) => (
           <button
             key={t}
             type="button"
@@ -197,6 +197,10 @@ export default function ForgotPasswordPage() {
           </>
         ) : (
           <form onSubmit={sendEmail} noValidate>
+            <p className="mb-4 text-sm leading-relaxed text-ink-muted">
+              This sends the link to your TatvaOS mailbox, so it only helps if you can
+              still open that inbox. Locked out? Use your recovery email or mobile instead.
+            </p>
             <label className="block">
               <span className="mb-1.5 block text-sm font-medium text-ink">Email address</span>
               <input type="email" required autoComplete="email" className={AUTH_INPUT}
