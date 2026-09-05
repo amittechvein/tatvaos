@@ -1,0 +1,19 @@
+# ---------------------------------------------------------------------------
+#  Build-context hygiene.
+#
+#  The web image is built from the REPO ROOT (compose: context ../.., see
+#  apps/web/Dockerfile) so that packages/ is reachable - which means every
+#  file under the root is shipped to the Docker daemon unless excluded here.
+#  With no .dockerignore, the untracked 11 GB backups/ folder rode along on
+#  every web build, each build left an ~11 GB entry in the build cache, and
+#  ten of them filled the production disk to 100% on 5 Sept 2026.
+#
+#  Nothing below is needed inside any image: the Dockerfiles copy source,
+#  package manifests and packages/, and never read .git or a host build.
+#  .env files are deliberately NOT excluded - Next may read them at build.
+# ---------------------------------------------------------------------------
+.git
+backups/
+node_modules
+**/node_modules
+**/.next
