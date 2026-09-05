@@ -5,6 +5,13 @@ import type { FormEvent } from 'react';
 import { useAuth } from '@/lib/auth';
 import { AUTH_INPUT } from '@/components/ui/AuthCard';
 
+// A snooze, not a per-tab flag. The first version used sessionStorage, which
+// forgets the dismissal the moment a new tab opens - so the card came back on
+// every visit. 48 hours, and also after a successful submit so it does not
+// nag while the verification link is still sitting in the inbox.
+const SNOOZE_KEY = 'recoveryReminderSnoozedUntil';
+const SNOOZE_MS = 48 * 60 * 60 * 1000;
+
 interface RecoveryStatus {
   hasPhone: boolean;
   hasVerifiedRecoveryEmail: boolean;
@@ -15,7 +22,7 @@ interface RecoveryStatus {
  * A non-blocking nudge to add a recovery email. Reads /api/auth/recovery-status
  * and, if the signed-in user has no VERIFIED recovery email, offers to add one.
  * Submitting stores it unverified and emails a confirmation link (the backend
- * does that); this only shows "check your inbox". Dismissible for the session,
+ * does that); this only shows "check your inbox". Dismissible for 48 hours,
  * and silent on any error — a reminder must never break the page it sits on.
  *
  * Colours come from the design tokens only (brand / ink / line / surface plus
@@ -34,7 +41,7 @@ export function RecoveryReminder() {
 
   useEffect(() => {
     let hide = false;
-    try { hide = sessionStorage.getItem('recoveryReminderDismissed') === '1'; } catch { /* ignore */ }
+    try { hide = Number(localStorage.getItem(SNOOZE_KEY) ?? 0) > Date.now(); } catch { /* ignore */ }
     setDismissed(hide);
   }, []);
 
@@ -53,9 +60,12 @@ export function RecoveryReminder() {
   if (!user || dismissed) return null;
   if (!status || status.hasVerifiedRecoveryEmail) return null;
 
+  const snooze = () => {
+    try { localStorage.setItem(SNOOZE_KEY, String(Date.now() + SNOOZE_MS)); } catch { /* ignore */ }
+  };
   const close = () => {
     setDismissed(true);
-    try { sessionStorage.setItem('recoveryReminderDismissed', '1'); } catch { /* ignore */ }
+    snooze();
   };
 
   const submit = async (e: FormEvent) => {
@@ -76,6 +86,7 @@ export function RecoveryReminder() {
       const data = await r.json().catch(() => ({} as { error?: string }));
       if (!r.ok) { setError(data.error ?? 'Could not save that address.'); return; }
       setSent(true);
+      snooze();
     } catch {
       setError('Something went wrong. Please try again.');
     } finally {
