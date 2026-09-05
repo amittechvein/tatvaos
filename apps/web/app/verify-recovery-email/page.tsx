@@ -3,8 +3,15 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 
+import { AuthCard, AUTH_BUTTON } from '@/components/ui/AuthCard';
+
 type State = 'working' | 'ok' | 'fail';
 
+/**
+ * Lands the verification link from the recovery-email flow. Built on AuthCard
+ * like the other anonymous auth screens, so it takes its colours from the
+ * design tokens with them — no hex literals.
+ */
 export default function VerifyRecoveryEmailPage() {
   const [state, setState] = useState<State>('working');
   const [message, setMessage] = useState('');
@@ -32,28 +39,35 @@ export default function VerifyRecoveryEmailPage() {
   }, []);
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f2f4f9', padding: 16, fontFamily: 'system-ui, sans-serif' }}>
-      <div style={{ background: '#fff', border: '1px solid #e6e9ee', borderRadius: 14, padding: 40, maxWidth: 440, width: '100%', textAlign: 'center' }}>
-        {state === 'working' && <p style={{ margin: 0, color: '#4d5875' }}>Confirming your recovery email...</p>}
+    <AuthCard>
+      <div className="text-center">
+        {state === 'working' && (
+          <p className="m-0 text-sm text-ink-muted">Confirming your recovery email...</p>
+        )}
         {state === 'ok' && (
           <>
-            <div style={{ fontSize: 40, marginBottom: 12, color: '#03b562' }}>&#10003;</div>
-            <h1 style={{ fontSize: 22, margin: '0 0 8px', color: '#0a0a0a' }}>Recovery email confirmed</h1>
-            <p style={{ margin: '0 0 20px', color: '#4d5875' }}>
+            <div className="mb-3 text-4xl text-ok">✓</div>
+            <h1 className="mb-2 text-xl font-semibold text-ink">Recovery email confirmed</h1>
+            <p className="mb-5 text-sm leading-relaxed text-ink-muted">
               You can now use this address to get back into your account if you are ever locked out.
             </p>
-            <Link href="/org/users" style={{ display: 'inline-block', padding: '11px 22px', background: '#03b562', color: '#fff', textDecoration: 'none', borderRadius: 10, fontWeight: 600 }}>Continue</Link>
+            <Link href="/org/users" className={`${AUTH_BUTTON} inline-block text-center no-underline`}>
+              Continue
+            </Link>
           </>
         )}
         {state === 'fail' && (
           <>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>&#9888;</div>
-            <h1 style={{ fontSize: 22, margin: '0 0 8px', color: '#0a0a0a' }}>Couldn&apos;t confirm this link</h1>
-            <p style={{ margin: '0 0 20px', color: '#4d5875' }}>{message}</p>
-            <Link href="/" style={{ display: 'inline-block', padding: '11px 22px', background: '#eef1f5', color: '#0a0a0a', textDecoration: 'none', borderRadius: 10, fontWeight: 600 }}>Go to sign in</Link>
+            <div className="mb-3 text-4xl text-warn">⚠</div>
+            <h1 className="mb-2 text-xl font-semibold text-ink">Couldn&apos;t confirm this link</h1>
+            <p className="mb-5 text-sm leading-relaxed text-ink-muted">{message}</p>
+            <Link href="/"
+              className="inline-block rounded-lg border border-line bg-surface px-5 py-2.5 text-sm font-semibold text-ink no-underline transition hover:bg-canvas">
+              Go to sign in
+            </Link>
           </>
         )}
       </div>
-    </div>
+    </AuthCard>
   );
 }
