@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import type { CSSProperties, FormEvent } from 'react';
+import type { FormEvent } from 'react';
 import { useAuth } from '@/lib/auth';
+import { AUTH_INPUT } from '@/components/ui/AuthCard';
 
 interface RecoveryStatus {
   hasPhone: boolean;
@@ -16,6 +17,11 @@ interface RecoveryStatus {
  * Submitting stores it unverified and emails a confirmation link (the backend
  * does that); this only shows "check your inbox". Dismissible for the session,
  * and silent on any error — a reminder must never break the page it sits on.
+ *
+ * Colours come from the design tokens only (brand / ink / line / surface plus
+ * the shadow and radius tokens) — no hex literals. This shipped on 4 Sept with
+ * ten hardcoded values and was the one element left green when the palette
+ * changed; it now recolours with the rest of the product.
  */
 export function RecoveryReminder() {
   const { user, authedFetch } = useAuth();
@@ -77,38 +83,42 @@ export function RecoveryReminder() {
     }
   };
 
-  const card: CSSProperties = {
-    position: 'fixed', right: 20, bottom: 20, zIndex: 1050, width: 340,
-    maxWidth: 'calc(100vw - 32px)', background: '#ffffff', border: '1px solid #e6e9ee',
-    borderRadius: 12, boxShadow: '0 10px 30px rgba(10,20,40,0.14)', padding: 18,
-    fontSize: 14, color: '#0a0a0a',
-  };
+  // Preflight is off in this app, so buttons declare their own border/cursor.
+  const btnBase = 'cursor-pointer rounded-lg px-4 py-2 text-sm transition disabled:cursor-not-allowed disabled:opacity-50';
 
   return (
-    <div style={card} role="dialog" aria-label="Add a recovery email">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-        <strong style={{ fontSize: 15 }}>Add a recovery email</strong>
-        <button onClick={close} aria-label="Dismiss"
-          style={{ border: 'none', background: 'none', fontSize: 20, lineHeight: 1, cursor: 'pointer', color: '#8d9eb5' }}>&times;</button>
+    <div
+      role="dialog"
+      aria-label="Add a recovery email"
+      className="fixed bottom-5 right-5 z-[1050] w-[340px] max-w-[calc(100vw-32px)] rounded-card border border-line bg-surface p-[18px] text-sm text-ink shadow-raised"
+    >
+      <div className="mb-2 flex items-start justify-between">
+        <strong className="text-[15px] font-semibold text-ink">Add a recovery email</strong>
+        <button type="button" onClick={close} aria-label="Dismiss"
+          className="cursor-pointer border-0 bg-transparent p-0 text-xl leading-none text-ink-faint transition hover:text-ink">
+          &times;
+        </button>
       </div>
       {sent ? (
-        <p style={{ margin: 0, color: '#4d5875' }}>
+        <p className="m-0 leading-relaxed text-ink-muted">
           Check that inbox &mdash; we&apos;ve sent a link to confirm it. You can close this.
         </p>
       ) : (
         <form onSubmit={submit}>
-          <p style={{ margin: '0 0 10px', color: '#4d5875' }}>
+          <p className="mb-2.5 mt-0 leading-relaxed text-ink-muted">
             A recovery email helps you get back in if you&apos;re ever locked out of your account.
           </p>
           <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
             placeholder="you@personal.com" disabled={busy}
-            style={{ width: '100%', padding: '9px 11px', border: '1px solid #d5dae2', borderRadius: 8, fontSize: 14, marginBottom: 8, boxSizing: 'border-box' }} />
-          {error && <div style={{ color: '#c0392b', fontSize: 13, marginBottom: 8 }}>{error}</div>}
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            className={`${AUTH_INPUT} mb-2`} />
+          {error && <div className="mb-2 text-[13px] text-danger">{error}</div>}
+          <div className="flex justify-end gap-2">
             <button type="button" onClick={close} disabled={busy}
-              style={{ padding: '8px 14px', border: 'none', background: '#eef1f5', borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>Not now</button>
+              className={`${btnBase} border border-line bg-surface text-ink hover:bg-canvas`}>
+              Not now
+            </button>
             <button type="submit" disabled={busy}
-              style={{ padding: '8px 16px', border: 'none', background: '#6C3CE9', color: '#fff', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
+              className={`${btnBase} border-0 bg-brand-600 font-semibold text-white hover:bg-brand-700`}>
               {busy ? 'Sending...' : 'Send link'}
             </button>
           </div>
