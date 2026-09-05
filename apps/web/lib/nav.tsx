@@ -268,7 +268,7 @@ export function calendarNav(): NavSection[] {
       heading: 'Calendar',
       items: [
         { href: '/calendar/day', label: 'Day', icon: <Icon d={PATHS.calendar} colour="#4285f4" /> },
-        { href: '/calendar/week', label: 'Week', icon: <Icon d={PATHS.calendar} colour="#03b562" /> },
+        { href: '/calendar/week', label: 'Week', icon: <Icon d={PATHS.calendar} colour="#6C3CE9" /> },
         { href: '/calendar/month', label: 'Month', icon: <Icon d={PATHS.calendar} colour="#7367f0" /> },
         { href: '/calendar/agenda', label: 'Agenda', icon: <Icon d={PATHS.inbox} colour="#ffa909" /> },
       ],
@@ -294,7 +294,7 @@ export function connectNav(): NavSection[] {
       heading: 'Connect',
       items: [
         { href: '/connect/dashboard', label: 'Dashboard', icon: <Icon d={PATHS.dashboard} colour="#0fbcf9" /> },
-        { href: '/connect/new', label: 'New meeting', icon: <Icon d={PATHS.compose} colour="#03b562" /> },
+        { href: '/connect/new', label: 'New meeting', icon: <Icon d={PATHS.compose} colour="#6C3CE9" /> },
         { href: '/connect', label: 'Meetings', icon: <Icon d={PATHS.connect} colour="#003cf0" /> },
         // What happened, as opposed to what is about to. It is the same list
         // with a different range, and it is in the rail rather than behind a
@@ -318,7 +318,7 @@ export function spaceNav(): NavSection[] {
       items: [
         { href: '/space/personal', label: 'My Space', icon: <Icon d={PATHS.draft} colour="#0fbcf9" /> },
         { href: '/space/organisational', label: 'Organisation', icon: <Icon d={PATHS.inbox} colour="#7367f0" /> },
-        { href: '/space/shared', label: 'Shared with me', icon: <Icon d={PATHS.sent} colour="#03b562" /> },
+        { href: '/space/shared', label: 'Shared with me', icon: <Icon d={PATHS.sent} colour="#6C3CE9" /> },
         { href: '/space/trash', label: 'Trash', icon: <Icon d={PATHS.trash} colour="#98a2b8" /> },
       ],
     },
@@ -358,7 +358,7 @@ export function familyNav(opts: {
       heading: 'Family',
       items: [
         { href: '/family/contacts?create=1', label: 'Create contact',
-          icon: <Icon d={PATHS.compose} colour="#03b562" /> },
+          icon: <Icon d={PATHS.compose} colour="#6C3CE9" /> },
         { href: '/family/contacts', label: 'Contacts',
           icon: <Icon d={PATHS.users} colour="#00b8d9" />,
           badge: total !== undefined && total > 0 ? String(total) : undefined },

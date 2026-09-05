@@ -22,9 +22,9 @@ import { Suspense, useCallback, useEffect, useState } from 'react';
 const API = process.env.NEXT_PUBLIC_API_URL ?? '/api';
 
 /** The brand ramp, fixed here now that MUI's palette has gone. */
-const BRAND_DARK = '#0a8a4b';
-const BRAND = '#03b562';
-const BRAND_LIGHT = '#35d68c';
+const BRAND_DARK = '#4A29A8';
+const BRAND = '#6C3CE9';
+const BRAND_LIGHT = '#8F6BEC';
 
 /**
  * A 500 from ASP.NET has an empty body, and res.json() on an empty body

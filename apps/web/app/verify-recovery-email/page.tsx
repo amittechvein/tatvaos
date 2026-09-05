@@ -37,12 +37,12 @@ export default function VerifyRecoveryEmailPage() {
         {state === 'working' && <p style={{ margin: 0, color: '#4d5875' }}>Confirming your recovery email...</p>}
         {state === 'ok' && (
           <>
-            <div style={{ fontSize: 40, marginBottom: 12, color: '#03b562' }}>&#10003;</div>
+            <div style={{ fontSize: 40, marginBottom: 12, color: '#6C3CE9' }}>&#10003;</div>
             <h1 style={{ fontSize: 22, margin: '0 0 8px', color: '#0a0a0a' }}>Recovery email confirmed</h1>
             <p style={{ margin: '0 0 20px', color: '#4d5875' }}>
               You can now use this address to get back into your account if you are ever locked out.
             </p>
-            <Link href="/org/users" style={{ display: 'inline-block', padding: '11px 22px', background: '#03b562', color: '#fff', textDecoration: 'none', borderRadius: 10, fontWeight: 600 }}>Continue</Link>
+            <Link href="/org/users" style={{ display: 'inline-block', padding: '11px 22px', background: '#6C3CE9', color: '#fff', textDecoration: 'none', borderRadius: 10, fontWeight: 600 }}>Continue</Link>
           </>
         )}
         {state === 'fail' && (

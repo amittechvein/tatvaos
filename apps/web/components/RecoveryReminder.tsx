@@ -108,7 +108,7 @@ export function RecoveryReminder() {
             <button type="button" onClick={close} disabled={busy}
               style={{ padding: '8px 14px', border: 'none', background: '#eef1f5', borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>Not now</button>
             <button type="submit" disabled={busy}
-              style={{ padding: '8px 16px', border: 'none', background: '#03b562', color: '#fff', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
+              style={{ padding: '8px 16px', border: 'none', background: '#6C3CE9', color: '#fff', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
               {busy ? 'Sending...' : 'Send link'}
             </button>
           </div>

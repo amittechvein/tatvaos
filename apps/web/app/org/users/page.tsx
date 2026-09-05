@@ -180,7 +180,7 @@ export default function PeoplePage() {
           <div className="d-flex justify-content-center py-5">
             <span className="d-inline-block animate-spin rounded-circle"
                   style={{ width: 30, height: 30, border: '3px solid rgba(0,0,0,.12)',
-                           borderTopColor: '#03b562' }} />
+                           borderTopColor: '#6C3CE9' }} />
           </div>
         ) : filtered.length === 0 ? (
           <Empty

@@ -64,7 +64,7 @@ interface Me {
 
 /** The console green. Fixed rather than read from the theme — MUI's palette
  *  went with MUI, and this is the one brand colour the page needs. */
-const BRAND = '#03b562';
+const BRAND = '#6C3CE9';
 
 /** Replaces MUI's alpha(). Takes #rrggbb and returns an rgba() string. */
 function tint(hex: string, a: number): string {

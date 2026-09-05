@@ -558,7 +558,7 @@ export default function FamilyViewPage() {
             {bulkBusy && (
               <span className="d-inline-block animate-spin rounded-circle"
                     style={{ width: 18, height: 18, border: '2px solid rgba(0,0,0,.12)',
-                             borderTopColor: '#03b562' }} />
+                             borderTopColor: '#6C3CE9' }} />
             )}
           </div>
         )}
@@ -569,7 +569,7 @@ export default function FamilyViewPage() {
           <div className="d-flex justify-content-center py-5">
             <span className="d-inline-block animate-spin rounded-circle"
                   style={{ width: 30, height: 30, border: '3px solid rgba(0,0,0,.12)',
-                           borderTopColor: '#03b562' }} />
+                           borderTopColor: '#6C3CE9' }} />
           </div>
         ) : visible.length === 0 ? (
           <Empty
@@ -621,7 +621,7 @@ export default function FamilyViewPage() {
                       className="d-grid rounded-circle flex-shrink-0 text-white"
                       style={{
                         width: 36, height: 36, placeItems: 'center',
-                        fontSize: 13, fontWeight: 700, background: '#03b562',
+                        fontSize: 13, fontWeight: 700, background: '#6C3CE9',
                       }}
                     >
                       {initials(c.displayName)}
@@ -1031,7 +1031,7 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
           <div className="d-flex justify-content-center py-5">
             <span className="d-inline-block animate-spin rounded-circle"
                   style={{ width: 28, height: 28, border: '3px solid rgba(0,0,0,.12)',
-                           borderTopColor: '#03b562' }} />
+                           borderTopColor: '#6C3CE9' }} />
           </div>
         ) : (
           <div className="d-flex flex-column gap-3">
