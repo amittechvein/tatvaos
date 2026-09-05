@@ -77,11 +77,18 @@ public sealed record MailSubmission(
     MailboxAddress? EnvelopeSender = null,
     // Whether to file a copy in the mailbox's Sent folder and charge its
     // quota. True for every interactive send — a person expects to find what
-    // they sent. The send API passes false: it fans one call out to one
-    // message PER recipient, so filing here would put N near-identical copies
-    // in the Sent folder and charge the quota N times for a single API call.
-    // The api_sends log is that send's record instead.
-    bool FileSentCopy = true);
+    // they sent. The send API fans one call out to one message PER recipient,
+    // so it passes true for exactly ONE of those submits (with
+    // SentCopyRecipients naming everyone) and false for the rest: one entry
+    // in Sent and one quota charge per API call, not N. A caller can opt out
+    // entirely (saveToSent: false); the api_sends log is the record either way.
+    bool FileSentCopy = true,
+    // When FileSentCopy is true, the recipients the Sent copy should show in
+    // place of To. The send API submits one message per recipient (each with
+    // its own VERP bounce address) but files a single copy for the whole
+    // call, and that copy should read as the call was written — to everyone.
+    // Null keeps To, which is every interactive send.
+    IReadOnlyList<MailboxAddress>? SentCopyRecipients = null);
 
 public enum SendOutcome
 {
@@ -316,6 +323,16 @@ public static class MailSender
             return new SendResult(SendOutcome.SentButNotFiled, null, null, null);
         }
 
+        // The send API submits per recipient but files once: the copy shows
+        // everyone the call addressed, not the one recipient this submit
+        // carried. The message has already gone out, so this changes only
+        // what is filed.
+        var shownTo = s.SentCopyRecipients is { Count: > 0 } ? s.SentCopyRecipients : s.To;
+        if (!ReferenceEquals(shownTo, s.To))
+        {
+            mime.To.Clear();
+            mime.To.AddRange(shownTo);
+        }
         var raw = mime.ToString();
         var attParts = MailContent.AttachmentParts(mime);
 
@@ -342,7 +359,7 @@ public static class MailSender
             MessageIdHeader = mime.MessageId,
             FromAddr = box.Address,
             FromName = isShared ? box.DisplayName ?? box.LocalPart : user?.DisplayName,
-            ToAddrs = s.To.Select(a => a.Address).ToArray(),
+            ToAddrs = shownTo.Select(a => a.Address).ToArray(),
             CcAddrs = s.Cc.Count > 0 ? s.Cc.Select(a => a.Address).ToArray() : null,
             Subject = mime.Subject,
             Snippet = MailContent.Snippet(mime),
@@ -422,7 +439,7 @@ public static class MailSender
                 "mail.sent_as",
                 targetType: "mail.mailbox",
                 targetId: box.Id.ToString(),
-                after: new { messageId = message.Id, from = box.Address, recipients = s.To.Count },
+                after: new { messageId = message.Id, from = box.Address, recipients = shownTo.Count },
                 ct: ct,
                 productCode: "mail");
 
