@@ -10,9 +10,11 @@
    A Tailwind class like bg-brand-600 compiles to rgb(var(--brand-600)), so
    these variables are the single source the Tailwind surfaces (the Mail
    client) draw from. They are STATIC now: the runtime accent switcher is
-   gone, the product has one brand colour — YZEN's green — and the values
-   below are derived from the same #03b562 that styles/yzen/styles.css ships
-   as --primary-rgb. Only light/dark switches at runtime (the .dark class).
+   gone, the product has one brand colour — violet #6C3CE9 — and the values
+   below are the same colour styles/yzen/styles.css ships as --primary-rgb.
+   BOTH must change together or half the product stays on the old colour;
+   YZEN reads its own variable 791 times and is not affected by these.
+   Only light/dark switches at runtime (the .dark class).
 
    Values are space-separated RGB channels, NOT hex. Tailwind needs to insert
    an alpha channel for things like bg-brand-600/50, and it can only do that
@@ -21,36 +23,44 @@
 
 @layer base {
   :root {
-    /* Primary — YZEN's green, #03b562. One ramp, fixed at build time. */
-    --brand-50:  240 251 246;
-    --brand-100: 220 245 233;
-    --brand-200: 179 233 208;
-    --brand-300: 129 218 177;
-    --brand-400:  69 200 139;
-    --brand-500:   3 181  98;
-    --brand-600:   7 152  89;
-    --brand-700:  11 124  79;
-    --brand-800:  14  95  70;
-    --brand-900:  18  70  62;
+    /* Primary — violet #6C3CE9. One ramp, fixed at build time.
+       Replaced YZEN's green #03b562 on 5 Sept 2026; see
+       docs/UI_LANE_BRIEF.md §4.1 for the decision and the reasoning. */
+    --brand-50:  245 241 254;
+    --brand-100: 234 226 252;
+    --brand-200: 211 196 248;
+    --brand-300: 179 155 242;
+    --brand-400: 143 107 236;
+    --brand-500: 108  60 233;
+    --brand-600:  90  47 204;
+    --brand-700:  74  41 168;
+    --brand-800:  58  33 131;
+    --brand-900:  42  25  97;
 
-    /* The sidebar rail */
-    --rail:         28  28  43;
-    --rail-soft:    37  37  58;
-    --rail-text:   163 164 185;
-    --rail-heading: 107 108 133;
+    /* The sidebar rail — LIGHT since 5 Sept. It used to be near-black, which
+       is why overrides.css had to force a white block behind the logo: the
+       wordmark is dark artwork and vanished on a dark rail. Cream rail, no
+       block, no seam. The dark variant is selected by data-menu-styles in
+       app/layout.tsx, not here — changing these alone would not have done it. */
+    --rail:         250 246 239;  /* same as the canvas */
+    --rail-soft:    245 241 254;  /* brand-50: the active-item tint */
+    --rail-text:    107 104 128;
+    --rail-heading: 156 153 171;
 
-    /* The page behind the cards, and the topbar. Matches YZEN's body
-       background (--body-bg-rgb: 242 244 249) so a Tailwind page and a YZEN
-       page sit on the identical canvas. */
-    --canvas:  242 244 249;
+    /* The page behind the cards, and the topbar. WARM, not grey — the warmth
+       is what stops it reading as every other admin dashboard, and the
+       contrast against white cards is what gives a reading pane its
+       sheet-of-paper quality. Must stay equal to YZEN's --body-bg-rgb so a
+       Tailwind page and a YZEN page sit on the identical canvas. */
+    --canvas:  250 246 239;
     --surface: 255 255 255;
 
     /* Text */
-    --ink:       40  47  83;
-    --ink-muted:123 129 145;
-    --ink-faint:168 173 184;
+    --ink:       21  20  27;
+    --ink-muted:107 104 128;
+    --ink-faint:156 153 171;
 
-    --line: 237 237 245;
+    --line: 236 231 221;
   }
 
   /* ------------------------------------------------------------------------

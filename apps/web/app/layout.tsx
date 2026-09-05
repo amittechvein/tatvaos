@@ -48,13 +48,21 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html
       lang="en"
       dir="ltr"
-      // YZEN reads these to activate its layout: a dark vertical menu over a
-      // light page and light header — the default from their index.html.
+      // YZEN reads these to activate its layout: a vertical menu over a light
+      // page and light header.
+      //
+      // data-menu-styles WAS "dark", and that single attribute is what painted
+      // the near-black rail — not our --rail token, which is why changing the
+      // token alone would have done nothing. It went light on 5 Sept 2026 with
+      // the violet palette (docs/UI_LANE_BRIEF.md §4.1). That also retired the
+      // white block overrides.css used to force behind the logo: the wordmarks
+      // are dark artwork, invisible on a dark rail, and the block was the
+      // visible seam at the top of the sidebar.
       data-nav-layout="vertical"
       data-vertical-style="overlay"
       data-theme-mode="light"
       data-header-styles="light"
-      data-menu-styles="dark"
+      data-menu-styles="light"
       data-width="fullwidth"
       // Icons-only rail by default; it expands on hover (see Sidebar) and can be
       // pinned open from the header toggle. Client JS switches this to "close"
