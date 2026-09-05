@@ -58,8 +58,16 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     root.classList.toggle('dark', mode === 'dark');
     root.dataset.themeMode = mode;
     root.dataset.headerStyles = mode;
-    // The rail is dark in both modes — YZEN's default and ours.
-    root.dataset.menuStyles = 'dark';
+    // The rail FOLLOWS THE MODE since 5 Sept 2026: light rail in light mode,
+    // dark in dark. It used to be pinned to 'dark' in both, which is what put
+    // a near-black rail under a light page and forced overrides.css to paint a
+    // white block behind the logo so the dark wordmark stayed visible.
+    //
+    // This line and the static attribute in app/layout.tsx must agree. They
+    // are two separate places and this one wins, because it runs after
+    // hydration — changing only the layout looked correct in the served HTML
+    // and reverted in the browser. See docs/UI_LANE_BRIEF.md §4.1.
+    root.dataset.menuStyles = mode;
 
     try {
       localStorage.setItem(KEY, JSON.stringify({ mode }));
