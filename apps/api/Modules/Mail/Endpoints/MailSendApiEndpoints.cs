@@ -300,7 +300,7 @@ public static class MailSendApiEndpoints
         // SentCopyRecipients); every later submit passes false. If the first
         // recipient is refused, the next accepted one files instead, so a
         // call that reached anybody leaves exactly one entry in Sent.
-        var saveToSent = req.SaveToSent ?? true;
+        var saveToSent = req?.SaveToSent ?? true;
         var allRecipients = to.ToList();
         var filed = false;
         var sends = new List<(MailboxAddress Recipient, Guid Id, bool Accepted, string? Error)>();
