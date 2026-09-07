@@ -526,29 +526,34 @@ public static class UserEndpoints
         AuditWriter audit, IPasswordHasher hasher,
         IServiceScopeFactory scopeFactory, IConfiguration config, CancellationToken ct)
     {
+        if (req.Users is null || req.Users.Count == 0)
+            return Results.BadRequest(new { error = "No rows to import." });
         var capacity = await storage.GetCapacityAsync(tenant.TenantId, "mail", ct);
         if (!capacity.CanAddUser)
             return Results.BadRequest(new { error = capacity.Reason });
-
         if (capacity.MaxUsers is int max && capacity.UserCount + req.Users.Count > max)
             return Results.BadRequest(new
             {
                 error = $"Creating {req.Users.Count} users would exceed the limit of {max}. " +
                         $"Currently {capacity.UserCount}.",
             });
-
         var domain = await db.Domains.FirstOrDefaultAsync(d => d.Id == req.DomainId, ct);
         if (domain is null || domain.OwnershipVerifiedAt is null)
             return Results.BadRequest(new { error = "Domain is unknown or not verified." });
 
-        var category = req.DepartmentId is Guid cid
-            ? await db.Departments.FirstOrDefaultAsync(c => c.Id == cid, ct)
+        // Every department once, so a row can name its own ("Class 5A") and
+        // be matched by name, case-insensitively. Two departments sharing a
+        // name make it ambiguous: the row is skipped and says so, rather than
+        // guessing which one a spreadsheet meant.
+        var departments = await db.Departments.ToListAsync(ct);
+        var byName = departments
+            .GroupBy(d => d.Name.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+        var defaultDept = req.DepartmentId is Guid cid
+            ? departments.FirstOrDefault(c => c.Id == cid)
             : null;
-
-        var products = category?.DefaultProducts ?? ["mail"];
-        var wantsMailbox = products.Contains("mail");
-        var quota = await storage.ResolveQuotaAsync(
-            tenant.TenantId, req.DepartmentId, null, "mail", ct);
+        if (req.DepartmentId is not null && defaultDept is null)
+            return Results.BadRequest(new { error = "Department is unknown." });
 
         var created = new List<object>();
         var skipped = new List<object>();
@@ -556,40 +561,77 @@ public static class UserEndpoints
         // emails are sent AFTER the response, in the background, because 200
         // synchronous SMTP sends would turn a fast bulk import into a timeout.
         var welcomes = new List<(string Email, string Name)>();
-
+        // Addresses claimed by an earlier row of THIS batch: the database
+        // check below cannot see rows that are not saved yet.
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in req.Users)
         {
-            var localPart = entry.LocalPart.Trim().ToLowerInvariant();
+            var localPart = (entry.LocalPart ?? string.Empty).Trim().ToLowerInvariant();
+            var displayName = (entry.DisplayName ?? string.Empty).Trim();
             var address = $"{localPart}@{domain.Fqdn}";
-
             if (!IsValidLocalPart(localPart))
             {
-                skipped.Add(new { address, reason = "invalid local part" });
+                skipped.Add(new { address, displayName, reason = "invalid local part" });
                 continue;
             }
-
+            if (displayName.Length < 2)
+            {
+                skipped.Add(new { address, displayName, reason = "name is missing" });
+                continue;
+            }
+            if (!seen.Add(address))
+            {
+                skipped.Add(new { address, displayName, reason = "repeated in this batch" });
+                continue;
+            }
+            var dept = defaultDept;
+            var deptName = entry.Department?.Trim();
+            if (!string.IsNullOrEmpty(deptName))
+            {
+                if (!byName.TryGetValue(deptName, out var matches))
+                {
+                    skipped.Add(new { address, displayName, reason = $"unknown department '{deptName}'" });
+                    continue;
+                }
+                if (matches.Count > 1)
+                {
+                    skipped.Add(new
+                    {
+                        address, displayName,
+                        reason = $"'{deptName}' names {matches.Count} departments — rename one, or leave the column blank and pick it above",
+                    });
+                    continue;
+                }
+                dept = matches[0];
+            }
             if (await db.Users.IgnoreQueryFilters().AnyAsync(u => u.Email == address, ct) ||
                 await db.Mailboxes.IgnoreQueryFilters().AnyAsync(m => m.Address == address, ct))
             {
-                skipped.Add(new { address, reason = "already exists" });
+                skipped.Add(new { address, displayName, reason = "already exists" });
                 continue;
             }
-
+            var products = dept?.DefaultProducts ?? ["mail"];
+            var wantsMailbox = products.Contains("mail");
+            if (req.DryRun)
+            {
+                created.Add(new { email = address, displayName, department = dept?.Name, mailbox = wantsMailbox });
+                continue;
+            }
+            var quota = await storage.ResolveQuotaAsync(
+                tenant.TenantId, dept?.Id, null, "mail", ct);
             var password = PasswordGenerator.Generate();
-
             var user = new User
             {
                 TenantId = tenant.TenantId,
                 DomainId = domain.Id,
                 Email = address,
-                DisplayName = entry.DisplayName.Trim(),
-                DepartmentId = category?.Id,
-                Role = category?.DefaultRole ?? "employee",
+                DisplayName = displayName,
+                DepartmentId = dept?.Id,
+                Role = dept?.DefaultRole ?? "employee",
                 Status = "pending",
                 PasswordHash = hasher.Hash(password),
             };
             db.Users.Add(user);
-
             foreach (var code in products.Distinct())
                 db.ProductAccess.Add(new ProductAccess
                 {
@@ -597,7 +639,6 @@ public static class UserEndpoints
                     UserId = user.Id,
                     ProductCode = code,
                 });
-
             if (wantsMailbox)
             {
                 db.Mailboxes.Add(new Mailbox
@@ -611,16 +652,17 @@ public static class UserEndpoints
                     ImapPasswordHash = hasher.Hash(password),
                     QuotaBytes = quota,
                 });
-                welcomes.Add((address, entry.DisplayName.Trim()));
+                welcomes.Add((address, displayName));
             }
-
-            created.Add(new { email = address, temporaryPassword = password });
+            created.Add(new { email = address, displayName, department = dept?.Name, temporaryPassword = password });
         }
+        // A dry run reports and stops: no save, no audit row, no mail.
+        if (req.DryRun)
+            return Results.Ok(new { dryRun = true, created, skipped });
 
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("user.bulk_created", "user", null,
             after: new { count = created.Count, skipped = skipped.Count }, ct: ct);
-
         // Fire the welcome emails after the response, on a fresh DI scope (the
         // request's is disposed the moment we return). Best-effort: a school
         // importing 200 students gets its list instantly, and the inboxes fill
@@ -633,8 +675,7 @@ public static class UserEndpoints
             var baseUrl = config["Jwt:Issuer"] ?? "https://core.tatvaos.com";
             SendWelcomesInBackground(scopeFactory, welcomes, orgName, baseUrl);
         }
-
-        return Results.Ok(new { created, skipped });
+        return Results.Ok(new { dryRun = false, created, skipped });
     }
 
     /// <summary>
