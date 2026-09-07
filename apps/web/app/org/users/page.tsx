@@ -9,6 +9,7 @@ import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 import { UserPhoto } from '@/components/ui/UserPhoto';
 import { PhotoPicker } from '@/components/ui/PhotoPicker';
+import { AddManyPeople } from '@/components/org/AddManyPeople';
 import { avatarObjectUrl, bustAvatar } from '@/lib/avatars';
 
 const GB = 1024 ** 3;
@@ -75,6 +76,7 @@ export default function PeoplePage() {
   const [filterDept, setFilterDept] = useState('all');
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
+  const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<Person | null>(null);
 
   const load = useCallback(async () => {
@@ -125,11 +127,24 @@ export default function PeoplePage() {
       title="People"
       subtitle={`${people.length} in this organisation`}
       actions={
-        <Button variant="primary" onClick={() => setCreating(true)} disabled={usable.length === 0}>
-          Add person
-        </Button>
+        <div className="d-flex gap-2">
+          <Button variant="ghost" onClick={() => setAdding(true)} disabled={usable.length === 0}>
+            Add many
+          </Button>
+          <Button variant="primary" onClick={() => setCreating(true)} disabled={usable.length === 0}>
+            Add person
+          </Button>
+        </div>
       }
     >
+      {adding && (
+        <AddManyPeople
+          departments={flat.map(({ d, depth }) => ({ id: d.id, name: d.name, depth }))}
+          domains={usable}
+          onClose={() => setAdding(false)}
+          onDone={async (msg) => { setAdding(false); setNotice(msg); await load(); }}
+        />
+      )}
       {error && (
         <div className="alert alert-danger d-flex align-items-start mb-3">
           <div className="flex-fill">{error}</div>
