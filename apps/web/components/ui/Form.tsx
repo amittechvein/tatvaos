@@ -56,7 +56,22 @@ export function Field({
   required?: boolean;
   /** Supply when the control has its own id; otherwise Field makes one. */
   htmlFor?: string;
-  children: (props: { id: string; invalid: boolean; describedBy?: string }) => React.ReactNode;
+  /**
+   * PREFER THE FUNCTION FORM. Given a function, Field hands down the generated
+   * id, the invalid flag and the aria-describedby, so the label is tied to the
+   * control and the error is announced — the whole point of the component.
+   *
+   * Plain children are also accepted, and that is a MIGRATION AFFORDANCE, not
+   * an equal choice: the label cannot be linked to a control it never sees, so
+   * clicking it will not focus the input and a screen reader will read the two
+   * as unrelated. It exists because several pages already call a local Field
+   * this way, and holding the whole migration hostage to rewriting every call
+   * site would keep those pages on Bootstrap for longer — which is worse.
+   * Convert to the function form whenever you are in the file anyway.
+   */
+  children:
+    | React.ReactNode
+    | ((props: { id: string; invalid: boolean; describedBy?: string }) => React.ReactNode);
   className?: string;
 }) {
   const generated = useId();
@@ -65,16 +80,26 @@ export function Field({
   const errorId = error ? `${id}-error` : undefined;
   const describedBy = [hintId, errorId].filter(Boolean).join(' ') || undefined;
 
+  // Only claim a `for` when something will actually carry that id: the render
+  // function receives it, and an explicit htmlFor means the caller wired it.
+  // With plain children the label has no control to point at, and a `for`
+  // aimed at an id that does not exist is worse than none — a screen reader
+  // follows it, finds nothing, and reads the field as unlabelled.
+  const linked = typeof children === 'function' || Boolean(htmlFor);
+
   return (
     <div className={`mb-4 ${className}`.trim()}>
-      <label htmlFor={id} className="mb-1.5 block text-[13px] font-medium text-ink">
+      <label htmlFor={linked ? id : undefined}
+             className="mb-1.5 block text-[13px] font-medium text-ink">
         {label}
         {/* The asterisk is decoration; the control carries `required`, which is
             what a screen reader and the browser both act on. */}
         {required && <span aria-hidden="true" className="ml-0.5 text-danger">*</span>}
       </label>
 
-      {children({ id, invalid: Boolean(error), describedBy })}
+      {typeof children === 'function'
+        ? children({ id, invalid: Boolean(error), describedBy })
+        : children}
 
       {hint && (
         <p id={hintId} className="mt-1.5 text-xs text-ink-muted">{hint}</p>
