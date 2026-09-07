@@ -59,6 +59,12 @@ export interface LabelSummary extends ContactGroup {
   count: number;
 }
 
+export interface NewAddress {
+  streetLine1?: string; streetLine2?: string; city?: string;
+  stateProvince?: string; postalCode?: string; country?: string;
+  type?: string; isPrimary?: boolean;
+}
+
 export interface BulkLabelResult {
   /** How many contacts were touched. */
   contacts: number;
@@ -358,6 +364,12 @@ export const familyApi = {
     f(`/family/contacts/${id}/emails/${emailId}`, { method: 'DELETE' })
       .then((r) => ok(r, 'Could not remove the address.')),
 
+  addAddress: (f: AuthedFetch, id: string, body: NewAddress) =>
+    f(`/family/contacts/${id}/addresses`, { method: 'POST', body: JSON.stringify(body) })
+      .then((r) => ok(r, 'Could not add the address.')),
+  removeAddress: (f: AuthedFetch, id: string, addressId: string) =>
+    f(`/family/contacts/${id}/addresses/${addressId}`, { method: 'DELETE' })
+      .then((r) => ok(r, 'Could not remove the address.')),
   addPhone: (f: AuthedFetch, id: string, phone: string, type = 'mobile', isPrimary = false) =>
     f(`/family/contacts/${id}/phones`, {
       method: 'POST', body: JSON.stringify({ phone, type, isPrimary }),

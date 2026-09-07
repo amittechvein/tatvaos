@@ -7,6 +7,7 @@ import type { Address, Attachment, Message } from '@tatvaos/types';
 import { Avatar } from '../ui/Avatar';
 import { Icon } from '../ui/Icon';
 import { SafeHtml } from './SafeHtml';
+import { SenderName } from '../family/SenderName';
 
 /**
  * One row of the conversation strip. Deliberately the fields a strip needs and
@@ -199,7 +200,8 @@ export function MessageView({
       <Avatar address={message.from} size={34} />
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-baseline gap-2">
-          <span className="truncate text-sm font-semibold text-ink">{displayName(message.from)}</span>
+          <SenderName address={message.from} label={displayName(message.from)}
+                      className="truncate text-sm font-semibold text-ink" />
           <span className="hidden truncate text-xs text-ink-muted sm:inline">{message.from.email}</span>
         </div>
         <div className="flex min-w-0 items-center gap-1 text-xs text-ink-muted">

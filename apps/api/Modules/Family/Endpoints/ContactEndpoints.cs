@@ -49,6 +49,8 @@ public static class ContactEndpoints
 
         g.MapPost("/contacts/{id:guid}/emails", AddEmailAsync);
         g.MapDelete("/contacts/{id:guid}/emails/{emailId:guid}", RemoveEmailAsync);
+        g.MapPost("/contacts/{id:guid}/addresses", AddAddressAsync);
+        g.MapDelete("/contacts/{id:guid}/addresses/{addressId:guid}", RemoveAddressAsync);
         g.MapPost("/contacts/{id:guid}/phones", AddPhoneAsync);
         g.MapDelete("/contacts/{id:guid}/phones/{phoneId:guid}", RemovePhoneAsync);
 
@@ -522,6 +524,72 @@ public static class ContactEndpoints
     // ==================================================================
     //  Addresses and numbers
     // ==================================================================
+
+    // Postal addresses. Same shape as emails and phones; the one difference
+    // is that there is nothing to de-duplicate on — two contacts can share a
+    // house — so there is no conflict path.
+    private static async Task<IResult> AddAddressAsync(
+        Guid id, AddAddressRequest req, AppDbContext db, TenantContext tenant,
+        HttpContext http, CancellationToken ct)
+    {
+        if (!TryCaller(tenant, out var uid)) return Results.Unauthorized();
+        static string? Clean(string? v) => string.IsNullOrWhiteSpace(v) ? null : v.Trim();
+        var line1 = Clean(req.StreetLine1);
+        var line2 = Clean(req.StreetLine2);
+        var city = Clean(req.City);
+        var state = Clean(req.StateProvince);
+        var postal = Clean(req.PostalCode);
+        var country = Clean(req.Country);
+        // One line is enough — "Mumbai" alone is what half a real address book
+        // looks like — but nothing at all is not an address.
+        if (line1 is null && line2 is null && city is null && state is null && postal is null && country is null)
+            return Results.BadRequest(new { error = "Enter at least one line of the address." });
+        var type = Clean(req.Type) ?? "work";
+        if (type.Length > 16)
+            return Results.BadRequest(new { error = "Address type is too long." });
+        var c = await Live(db).FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (c is null) return Results.NotFound();
+        if (req.IsPrimary == true)
+            await db.ContactAddresses.Where(a => a.ContactId == id && a.IsPrimary)
+                .ForEachAsync(a => a.IsPrimary = false, ct);
+        db.ContactAddresses.Add(new ContactAddress
+        {
+            TenantId = tenant.TenantId,
+            ContactId = id,
+            Type = type,
+            StreetLine1 = line1,
+            StreetLine2 = line2,
+            City = city,
+            StateProvince = state,
+            PostalCode = postal,
+            Country = country,
+            IsPrimary = req.IsPrimary ?? false,
+        });
+        c.UpdatedAt = DateTimeOffset.UtcNow;
+        var summary = string.Join(", ", new[] { line1, line2, city, state, postal, country }
+            .Where(v => v is not null));
+        Audit(db, tenant, id, uid, "update",
+            new Dictionary<string, object?> { ["addAddress"] = summary }, http);
+        await db.SaveChangesAsync(ct);
+        return Results.NoContent();
+    }
+
+    private static async Task<IResult> RemoveAddressAsync(
+        Guid id, Guid addressId, AppDbContext db, TenantContext tenant,
+        HttpContext http, CancellationToken ct)
+    {
+        if (!TryCaller(tenant, out var uid)) return Results.Unauthorized();
+        var a = await db.ContactAddresses.FirstOrDefaultAsync(
+            x => x.Id == addressId && x.ContactId == id, ct);
+        if (a is null) return Results.NotFound();
+        db.ContactAddresses.Remove(a);
+        var summary = string.Join(", ", new[] { a.StreetLine1, a.StreetLine2, a.City, a.StateProvince, a.PostalCode, a.Country }
+            .Where(v => v is not null));
+        Audit(db, tenant, id, uid, "update",
+            new Dictionary<string, object?> { ["removeAddress"] = summary }, http);
+        await db.SaveChangesAsync(ct);
+        return Results.NoContent();
+    }
 
     private static async Task<IResult> AddEmailAsync(
         Guid id, AddEmailRequest req, AppDbContext db, TenantContext tenant,
@@ -1161,6 +1229,9 @@ public record PatchContactRequest(
 
 public record AddEmailRequest(string? Email, string? Type, bool? IsPrimary);
 public record AddPhoneRequest(string? Phone, string? Type, bool? IsPrimary);
+public record AddAddressRequest(
+    string? StreetLine1, string? StreetLine2, string? City, string? StateProvince,
+    string? PostalCode, string? Country, string? Type, bool? IsPrimary);
 public record CreateGroupRequest(string? Name, string? Description, string? Colour);
 
 /// <summary>Every field optional: absent means leave it alone.</summary>
