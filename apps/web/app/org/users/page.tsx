@@ -10,6 +10,7 @@ import { useAuth } from '@/lib/auth';
 import { UserPhoto } from '@/components/ui/UserPhoto';
 import { PhotoPicker } from '@/components/ui/PhotoPicker';
 import { avatarObjectUrl, bustAvatar } from '@/lib/avatars';
+import { Input, Select } from '@/components/ui/Form';
 
 const GB = 1024 ** 3;
 
@@ -170,7 +171,7 @@ export default function PeoplePage() {
         </div>
 
         <div className="ms-auto" style={{ minWidth: 260 }}>
-          <input className="form-control form-control-sm" placeholder="Search name or address"
+          <Input  placeholder="Search name or address"
                  value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
       </div>
@@ -433,7 +434,7 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
       </div>
 
       <Field label="Full name" required>
-        <input className="form-control" value={displayName}
+        <Input  value={displayName}
                onChange={(e) => setDisplayName(e.target.value)} />
       </Field>
 
@@ -443,8 +444,8 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
             {/* input-group replaces MUI's endAdornment: the @ becomes part of
                 the control rather than text floating beside it. */}
             <div className="input-group">
-              <input
-                className="form-control"
+              <Input
+                
                 value={localPart}
                 autoCapitalize="none"
                 spellCheck={false}
@@ -456,17 +457,17 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
         </div>
         <div style={{ minWidth: 200 }}>
           <Field label="Domain">
-            <select className="form-select" value={domainId}
+            <Select  value={domainId}
                     onChange={(e) => setDomainId(e.target.value)}>
               {domains.map((d) => <option key={d.id} value={d.id}>{d.fqdn}</option>)}
-            </select>
+            </Select>
           </Field>
         </div>
       </div>
 
       <Field label="Department"
              hint="Sets their role, storage and whether they can email outsiders">
-        <select className="form-select" value={departmentId}
+        <Select  value={departmentId}
                 onChange={(e) => { setDepartmentId(e.target.value); setOverride(false); }}>
           <option value="">No department — organisation defaults</option>
           {departments.map(({ d, depth }) => (
@@ -474,19 +475,19 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
               {' '.repeat(depth * 3)}{depth > 0 ? '└ ' : ''}{d.name}
             </option>
           ))}
-        </select>
+        </Select>
       </Field>
 
       <Field label="Role"
              hint="What they can administer. Leave on the default unless this person runs things.">
-        <select className="form-select" value={role} onChange={(e) => setRole(e.target.value)}>
+        <Select  value={role} onChange={(e) => setRole(e.target.value)}>
           <option value="">
             {dept ? `Department default (${dept.defaultRole.replace(/_/g, ' ')})` : 'Default (employee)'}
           </option>
           {roleOptions(me?.role === 'org_owner' || me?.role === 'super_admin').map(([v, label]) => (
             <option key={v} value={v}>{label}</option>
           ))}
-        </select>
+        </Select>
       </Field>
 
       {/* Storage. The inherited value is shown BEFORE the override, so the
@@ -516,9 +517,9 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
           <div style={{ width: 240, marginTop: 12 }}>
             <Field label="Storage for this person" hint="Applies to this person only">
               <div className="input-group">
-                <input
+                <Input
                   type="number"
-                  className="form-control"
+                  
                   min={1}
                   max={5000}
                   value={quotaGb}
@@ -763,12 +764,12 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
       </div>
 
       <Field label="Full name" required>
-        <input className="form-control" value={displayName}
+        <Input  value={displayName}
                onChange={(e) => setDisplayName(e.target.value)} />
       </Field>
 
       <Field label="Department">
-        <select className="form-select" value={departmentId}
+        <Select  value={departmentId}
                 onChange={(e) => setDepartmentId(e.target.value)}>
           <option value="">No department — organisation defaults</option>
           {departments.map(({ d, depth }) => (
@@ -776,7 +777,7 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
               {' '.repeat(depth * 3)}{depth > 0 ? '└ ' : ''}{d.name}
             </option>
           ))}
-        </select>
+        </Select>
       </Field>
 
       </div>
@@ -815,13 +816,13 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
             ? 'Only an organisation owner can manage an owner.'
             : 'What they can administer. Mail access is unaffected.'}
       >
-        <select className="form-select" value={role}
+        <Select  value={role}
                 disabled={editingSelf || targetLocked}
                 onChange={(e) => setRole(e.target.value)}>
           {roleOptions(canMakeOwner, person.role).map(([v, label]) => (
             <option key={v} value={v}>{label}</option>
           ))}
-        </select>
+        </Select>
       </Field>
 
       {!editingSelf && !targetLocked && person.status !== 'deleted' && (
@@ -872,9 +873,9 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
               files are not counted against a person."
       >
         <div className="input-group" style={{ maxWidth: 200 }}>
-          <input
+          <Input
             type="number"
-            className="form-control"
+            
             min={1}
             max={5000}
             value={quotaGb}
@@ -957,7 +958,7 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
                 Their stored mail is retained. Choose what happens to mail
                 still sent to {person.mailboxAddress ?? 'their address'}:
               </p>
-              <select className="form-select mb-2" value={forwardTo}
+              <Select className="mb-2" value={forwardTo}
                       disabled={busy}
                       onChange={(e) => setForwardTo(e.target.value)}>
                 <option value="">No forwarding — new mail to their address bounces</option>
@@ -966,7 +967,7 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
                     Forward to {p.displayName} ({p.mailboxAddress})
                   </option>
                 ))}
-              </select>
+              </Select>
               <div className="d-flex gap-2">
                 <Button variant="primary" disabled={busy} onClick={() => void offboard()}>
                   {busy ? 'Working…' : `Offboard ${person.displayName}`}

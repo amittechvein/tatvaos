@@ -6,6 +6,7 @@ import { AdminShell } from '@/components/admin/AdminShell';
 import { Button } from '@/components/ui/Kit';
 import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
+import { Input } from '@/components/ui/Form';
 
 // ============================================================================
 //  Domains
@@ -283,8 +284,8 @@ export default function DomainsPage() {
             to publish a record proving you control it.
           </p>
           <Field label="Domain">
-            <input
-              className="form-control" autoFocus placeholder="abcschool.edu.in"
+            <Input
+               autoFocus placeholder="abcschool.edu.in"
               autoCapitalize="none" spellCheck={false}
               value={newFqdn} onChange={(e) => setNewFqdn(e.target.value)}
             />

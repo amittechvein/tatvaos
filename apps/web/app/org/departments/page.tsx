@@ -6,6 +6,7 @@ import { AdminShell } from '@/components/admin/AdminShell';
 import { Button, Card, Empty, Meter, Stat } from '@/components/ui/Kit';
 import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
+import { Input, Select } from '@/components/ui/Form';
 
 // ============================================================================
 //  Departments — what Google calls Organisational Units
@@ -390,12 +391,12 @@ function DeptDialog({ node, parent, storage, onClose, onSaved, onError }: {
       }
     >
       <Field label="Name" required>
-        <input className="form-control" autoFocus placeholder="Engineering"
+        <Input  autoFocus placeholder="Engineering"
                value={name} onChange={(e) => setName(e.target.value)} />
       </Field>
 
       <Field label="Description">
-        <input className="form-control" value={description}
+        <Input  value={description}
                onChange={(e) => setDescription(e.target.value)} />
       </Field>
 
@@ -405,18 +406,18 @@ function DeptDialog({ node, parent, storage, onClose, onSaved, onError }: {
       <div className="d-flex gap-3 flex-wrap align-items-start">
         <div className="flex-fill" style={{ minWidth: 180 }}>
           <Field label="Default role" hint="Given to new people added here">
-            <select className="form-select" value={role} onChange={(e) => setRole(e.target.value)}>
+            <Select  value={role} onChange={(e) => setRole(e.target.value)}>
               {ROLES.map((r) => (
                 <option key={r} value={r} style={{ textTransform: 'capitalize' }}>
                   {r.replace('_', ' ')}
                 </option>
               ))}
-            </select>
+            </Select>
           </Field>
         </div>
 
         <Field label="Colour">
-          <input type="color" className="form-control form-control-color" value={colour}
+          <Input type="color"  value={colour}
                  onChange={(e) => setColour(e.target.value)}
                  title="Colour used for this department" />
         </Field>
@@ -441,7 +442,7 @@ function DeptDialog({ node, parent, storage, onClose, onSaved, onError }: {
             <Field label="Storage per person"
                    hint="Applies here and to every sub-department that inherits">
               <div className="input-group" style={{ maxWidth: 220 }}>
-                <input type="number" className="form-control" min={1} max={5000} value={quotaGb}
+                <Input type="number"  min={1} max={5000} value={quotaGb}
                        onChange={(e) => setQuotaGb(Math.max(1, Number(e.target.value)))} />
                 <span className="input-group-text">GB</span>
               </div>

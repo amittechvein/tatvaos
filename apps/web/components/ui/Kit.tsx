@@ -214,7 +214,6 @@ export function Table({ head, children }: { head: React.ReactNode[]; children: R
             {head.map((h, i) => (
               // Keyed by position: a heading may be an element, and two blank
               // headings are not distinguishable by their content.
-              // eslint-disable-next-line react/no-array-index-key
               <th key={i} scope="col">{h}</th>
             ))}
           </tr>

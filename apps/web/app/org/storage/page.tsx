@@ -7,6 +7,7 @@ import { AdminShell } from '@/components/admin/AdminShell';
 import { Button, Card, Empty, Meter, Stat, Table, Td } from '@/components/ui/Kit';
 import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
+import { Input } from '@/components/ui/Form';
 import {
   AllocationError, fetchMailboxUsage, fetchOrgStorage, setAllocation,
   type MailboxUsage, type OrgStorage, type StorageProduct,
@@ -264,7 +265,7 @@ function AllocationDialog({ product, pool, onClose, onSaved }: {
           label="Allocation (GB)"
           hint={`The pool holds ${formatBytes(pool.totalBytes)} in total. An allocation cannot be smaller than what the product already uses.`}
         >
-          <input className="form-control" type="number" min={1} value={gb}
+          <Input  type="number" min={1} value={gb}
                  onChange={(e) => setGb(e.target.value.replace(/\D/g, ''))} />
         </Field>
       )}

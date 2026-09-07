@@ -365,8 +365,7 @@ function Wizard() {
             <div className="d-flex gap-3 flex-wrap mb-1">
               <div className="flex-fill" style={{ minWidth: 180 }}>
                 <Field label="Email code" hint={emailOk ? 'Verified' : undefined}>
-                  <input
-                    invalid={false}
+                  <Input
                     value={emailCode} disabled={emailOk}
                     inputMode="numeric" maxLength={6}
                     onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, ''))}
@@ -375,8 +374,7 @@ function Wizard() {
               </div>
               <div className="flex-fill" style={{ minWidth: 180 }}>
                 <Field label="SMS code" hint={phoneOk ? 'Verified' : undefined}>
-                  <input
-                    invalid={false}
+                  <Input
                     value={phoneCode} disabled={phoneOk}
                     inputMode="numeric" maxLength={6}
                     onChange={(e) => setPhoneCode(e.target.value.replace(/\D/g, ''))}
