@@ -119,6 +119,25 @@
   }
   button:disabled { cursor: default; }
   input, textarea, select { font: inherit; }
+
+  /* ------------------------------------------------------------------------
+     Border STYLE only — the other half of the missing preflight.
+
+     Tailwind's `border` utility sets border-WIDTH and nothing else; preflight
+     normally supplies `border-style: solid` for every element. With preflight
+     off, `border border-line` on a <div> or a <table> sets a width against a
+     style of `none` and renders NOTHING. The button reset above happens to
+     cover buttons, which is why this went unnoticed while only buttons were
+     Tailwind-built.
+
+     Deliberately style WITHOUT width. Preflight also zeroes every
+     border-width, and that is what stripped the outlines off MUI's inputs
+     when preflight was last enabled here — YZEN's borders would go the same
+     way. A `*` selector is specificity 0-0-0, so any class or component rule
+     overrides it; an element with the default width of 0 still shows nothing.
+     Added 7 Sept 2026 with the component library (docs/UI_LANE_BRIEF.md §4.2).
+     ------------------------------------------------------------------------ */
+  *, ::before, ::after { border-style: solid; }
 }
 
 @layer utilities {
