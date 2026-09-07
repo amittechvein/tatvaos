@@ -1,4 +1,30 @@
 /* ============================================================================
+   YZEN's muted text is unreadable — one variable, sixty-three failures
+   ----------------------------------------------------------------------------
+   MEASURED, 7 Sept 2026, on the live /org/storage page: 65 elements fell below
+   the 4.5:1 contrast a body text needs. Sixty-three of them were one colour —
+   YZEN's `--text-muted: #8d9eb5` (styles.css :root) — at 2.73:1 on white and
+   2.48:1 on their own grey panel. That is roughly HALF the required contrast,
+   and it is the colour their stylesheet uses for captions, hints, table
+   sub-text and secondary labels across the whole console. It has been that way
+   since the template shipped; nobody measured it.
+
+   Repointing it at our own --ink-muted (#6B6880, 4.82:1 on white) fixes all
+   sixty-three without editing a single page. It is a colour change, not a
+   layout one, so nothing moves.
+
+   Scoped to :root ONLY, deliberately. YZEN re-declares --text-muted inside its
+   dark-theme block with a higher-specificity selector, so dark mode keeps its
+   own value and is untouched by this.
+
+   This is a patch over a purchased stylesheet, and it stops being needed the
+   day YZEN is deleted (stage 4, docs/UI_LANE_BRIEF.md). Until then it is the
+   difference between readable and not for most of the secondary text in the
+   product.
+   ============================================================================ */
+:root { --text-muted: #6B6880; }
+
+/* ============================================================================
    Grid utility collision fix — Tailwind vs YZEN (Bootstrap) .grid
    ----------------------------------------------------------------------------
    YZEN's styles.css bundles Bootstrap's .grid utility:
