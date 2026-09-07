@@ -8,6 +8,7 @@ import { FamilyShell, useFamilyChrome } from '@/components/family/FamilyShell';
 import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
 import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
+import { Input, Select } from '@/components/ui/Form';
 import {
   DuplicateContactError, familyApi, isAutoSaved, sourceLabel,
   type ContactDetail, type ContactGroup, type ContactSummary, type Ownership,
@@ -465,8 +466,8 @@ export default function FamilyViewPage() {
           <div className="position-relative" style={{ minWidth: 280, flex: '1 1 280px' }}>
             <span className="position-absolute d-flex align-items-center"
                   style={{ left: 10, top: 0, bottom: 0, pointerEvents: 'none' }}>🔍</span>
-            <input
-              className="form-control form-control-sm"
+            <Input
+              
               placeholder="Search name, company or address…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -507,15 +508,14 @@ export default function FamilyViewPage() {
 
           {groups.length > 0 && (
             <div style={{ minWidth: 160 }}>
-              <select
-                className="form-select form-select-sm"
+              <Select
                 value={groupId}
                 aria-label="Group"
                 onChange={(e) => chooseGroup(e.target.value)}
               >
                 <option value="">All groups</option>
                 {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-              </select>
+              </Select>
             </div>
           )}
         </div>
@@ -772,8 +772,8 @@ export default function FamilyViewPage() {
             hint={`It will be created and put on ${
               selectionCount === 1 ? 'this contact' : `these ${selectionCount} contacts`}.`}
           >
-            <input
-              className="form-control"
+            <Input
+              
               autoFocus
               value={newLabel ?? ''}
               onChange={(e) => setNewLabel(e.target.value)}
@@ -872,32 +872,32 @@ function CreateDialog({ groups, onClose, onCreated, onOpenExisting }: {
       )}
 
       <Field label="Name" required hint="How this person appears in every list">
-        <input className="form-control" autoFocus value={displayName}
+        <Input  autoFocus value={displayName}
                onChange={(e) => setDisplayName(e.target.value)} />
       </Field>
 
       <div className="d-flex gap-3">
         <div className="flex-fill">
           <Field label="Company">
-            <input className="form-control" value={companyName}
+            <Input  value={companyName}
                    onChange={(e) => setCompanyName(e.target.value)} />
           </Field>
         </div>
         <div className="flex-fill">
           <Field label="Job title">
-            <input className="form-control" value={jobTitle}
+            <Input  value={jobTitle}
                    onChange={(e) => setJobTitle(e.target.value)} />
           </Field>
         </div>
       </div>
 
       <Field label="Email" hint="Becomes the primary address">
-        <input className="form-control" type="email" value={email}
+        <Input  type="email" value={email}
                onChange={(e) => setEmail(e.target.value)} />
       </Field>
 
       <Field label="Phone">
-        <input className="form-control" value={phone}
+        <Input  value={phone}
                onChange={(e) => setPhone(e.target.value)} />
       </Field>
 
@@ -907,20 +907,20 @@ function CreateDialog({ groups, onClose, onCreated, onOpenExisting }: {
           ? 'Only you can see this contact.'
           : 'Everyone in your organisation can see this contact. This cannot be undone later.'}
       >
-        <select className="form-select" value={ownership}
+        <Select value={ownership}
                 onChange={(e) => setOwnership(e.target.value as Ownership)}>
           <option value="personal">Only me</option>
           <option value="organisational">Everyone in my organisation</option>
-        </select>
+        </Select>
       </Field>
 
       {groups.length > 0 && (
         <Field label="Add to group">
-          <select className="form-select" value={groupToJoin}
+          <Select value={groupToJoin}
                   onChange={(e) => setGroupToJoin(e.target.value)}>
             <option value="">None</option>
             {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-          </select>
+          </Select>
         </Field>
       )}
 
@@ -1037,19 +1037,19 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
           <div className="d-flex flex-column gap-3">
             <div className="d-flex flex-column gap-2">
               <Field label="Name">
-                <input className="form-control" value={form.displayName}
+                <Input  value={form.displayName}
                        onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))} />
               </Field>
               <div className="d-flex gap-3">
                 <div className="flex-fill">
                   <Field label="Company">
-                    <input className="form-control" value={form.companyName}
+                    <Input  value={form.companyName}
                            onChange={(e) => setForm((f) => ({ ...f, companyName: e.target.value }))} />
                   </Field>
                 </div>
                 <div className="flex-fill">
                   <Field label="Job title">
-                    <input className="form-control" value={form.jobTitle}
+                    <Input  value={form.jobTitle}
                            onChange={(e) => setForm((f) => ({ ...f, jobTitle: e.target.value }))} />
                   </Field>
                 </div>
@@ -1267,8 +1267,8 @@ function AddRow({ label, value, onChange, onAdd, busy }: {
 }) {
   return (
     <div className="d-flex gap-2">
-      <input
-        className="form-control form-control-sm"
+      <Input
+        
         placeholder={label}
         value={value}
         onChange={(e) => onChange(e.target.value)}

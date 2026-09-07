@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { Button, Card } from '@/components/ui/Kit';
 import { useAuth } from '@/lib/auth';
+import { Input } from '@/components/ui/Form';
 import {
   fetchRecoveryStatus, removePhone, removeRecoveryEmail, requestPhoneChange,
   setRecoveryEmail, verifyPhoneChange, type RecoveryStatus,
@@ -203,7 +204,7 @@ export function RecoveryCard() {
       <Row label="Recovery email">
         {emailMode === 'edit' ? (
           <form onSubmit={submitEmail} className="d-flex flex-column flex-sm-row gap-2">
-            <input className="form-control" type="email" autoComplete="email"
+            <Input  type="email" autoComplete="email"
                    placeholder="you@example.com" value={email}
                    onChange={(e) => setEmail(e.target.value)} disabled={busy} />
             <div className="d-flex gap-2">
@@ -259,7 +260,7 @@ export function RecoveryCard() {
       <Row label="Recovery number" last>
         {phoneMode === 'edit' && (
           <form onSubmit={submitPhone} className="d-flex flex-column flex-sm-row gap-2">
-            <input className="form-control" type="tel" autoComplete="tel"
+            <Input  type="tel" autoComplete="tel"
                    placeholder="+91 98765 43210" value={phone}
                    onChange={(e) => setPhone(e.target.value)} disabled={busy} />
             <div className="d-flex gap-2">
@@ -275,7 +276,7 @@ export function RecoveryCard() {
               {devCode && <> (Testing mode &mdash; code: <strong>{devCode}</strong>)</>}
             </p>
             <div className="d-flex flex-column flex-sm-row gap-2">
-              <input className="form-control" inputMode="numeric" pattern="[0-9]*" maxLength={6}
+              <Input  inputMode="numeric" pattern="[0-9]*" maxLength={6}
                      placeholder="123456" value={code} style={{ maxWidth: 160 }}
                      onChange={(e) => setCode(e.target.value)} disabled={busy} />
               <div className="d-flex gap-2">

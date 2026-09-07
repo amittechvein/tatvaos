@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { AdminShell } from '@/components/admin/AdminShell';
 import { Button } from '@/components/ui/Kit';
 import { useAuth } from '@/lib/auth';
+import { Input, Select } from '@/components/ui/Form';
 
 // ============================================================================
 //  Platform settings — YZEN Bootstrap, no MUI
@@ -175,21 +176,21 @@ export default function SettingsPage() {
                       </label>
 
                       {s.key === 'sms.provider' ? (
-                        <select className="form-select" value={val(s) || 'auto'}
+                        <Select value={val(s) || 'auto'}
                                 onChange={(e) => setEdits((p) => ({ ...p, [s.key]: e.target.value }))}>
                           <option value="auto">Auto — Infobip if configured, else MSG91</option>
                           <option value="infobip">Infobip</option>
                           <option value="msg91">MSG91</option>
-                        </select>
+                        </Select>
                       ) : s.key === 'sms.show_otp_on_screen' ? (
-                        <select className="form-select" value={val(s) || 'false'}
+                        <Select value={val(s) || 'false'}
                                 onChange={(e) => setEdits((p) => ({ ...p, [s.key]: e.target.value }))}>
                           <option value="false">OFF — send by SMS only (production)</option>
                           <option value="true">ON — show code on screen when SMS fails</option>
-                        </select>
+                        </Select>
                       ) : (
-                        <input
-                          className="form-control"
+                        <Input
+                          
                           type={s.isSecret ? 'password' : 'text'}
                           value={s.isSecret ? (edits[s.key] ?? '') : val(s)}
                           placeholder={s.isSecret && s.hasValue ? '••••••••  (unchanged)' : undefined}
@@ -207,7 +208,7 @@ export default function SettingsPage() {
                   <div className="mt-2 pt-3 border-top">
                     <div className="fw-semibold mb-2">Send a test SMS</div>
                     <div className="d-flex gap-2 flex-wrap align-items-start">
-                      <input className="form-control" style={{ maxWidth: 240 }}
+                      <Input  style={{ maxWidth: 240 }}
                              placeholder="+91 98765 43210" value={testPhone}
                              onChange={(e) => setTestPhone(e.target.value)} />
                       <button className="btn btn-outline-light" onClick={testSms}

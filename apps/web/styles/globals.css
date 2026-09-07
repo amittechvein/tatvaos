@@ -119,6 +119,32 @@
   }
   button:disabled { cursor: default; }
   input, textarea, select { font: inherit; }
+
+  /* ------------------------------------------------------------------------
+     The border half of the missing preflight — BOTH properties, together.
+
+     Tailwind's `border` utility sets border-WIDTH only; preflight normally
+     supplies `border-style: solid` for every element. With preflight off,
+     `border border-line` on a <div> or a <table> sets a width against a style
+     of `none` and renders nothing.
+
+     BOTH LINES ARE REQUIRED AND THIS IS THE TRAP: CSS's initial border-width
+     is `medium` (about 3px), not zero — it is invisible only because the
+     initial style is `none`. Setting the style alone therefore does not
+     "reveal borders where we asked for them", it draws a 3px box around
+     EVERY ELEMENT ON THE PAGE. Tried exactly that on 7 Sept 2026 and the
+     login screen came back as a wireframe.
+
+     Zeroing the width is safe for YZEN: real components set their border
+     width explicitly, and nothing sane depends on the initial `medium`. The
+     old worry — that preflight strips outlines — was about MUI, which has
+     since been removed from this project entirely.
+     ------------------------------------------------------------------------ */
+  *, ::before, ::after {
+    border-width: 0;
+    border-style: solid;
+    border-color: rgb(var(--line));
+  }
 }
 
 @layer utilities {

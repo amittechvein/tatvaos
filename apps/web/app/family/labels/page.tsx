@@ -7,6 +7,7 @@ import { Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
 import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 import { familyApi, type LabelSummary } from '@/lib/family';
+import { Input } from '@/components/ui/Form';
 
 // ============================================================================
 //  Manage labels.
@@ -284,8 +285,8 @@ function LabelDialog({ label, onClose, onSaved }: {
           ? 'Renaming keeps every contact already in this label.'
           : 'Names are unique. Suppliers, Dealers, Fair 2026 — whatever you will look for later.'}
       >
-        <input
-          className="form-control"
+        <Input
+          
           autoFocus
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -296,8 +297,8 @@ function LabelDialog({ label, onClose, onSaved }: {
       </Field>
 
       <Field label="Description" hint="Optional. Only shown on this screen.">
-        <input
-          className="form-control"
+        <Input
+          
           value={description}
           onChange={(e) => setDescription(e.target.value)}
         />

@@ -40,6 +40,7 @@ import { Button, Card } from '@/components/ui/Kit';
 import { RecoveryCard } from '@/components/account/RecoveryCard';
 import { useAuth } from '@/lib/auth';
 import { fetchMyStorage, formatBytes, meterColour, type MyStorage } from '@/lib/myStorage';
+import { Input } from '@/components/ui/Form';
 import {
   beginMfa, confirmMfa, disableMfa, fetchMfaStatus, groupSecret,
   regenerateRecoveryCodes, type MfaBegin, type MfaStatus,
@@ -377,9 +378,9 @@ function AccountHub() {
                       <circle cx="11" cy="11" r="7" /><path d="m20 20-3.8-3.8" />
                     </svg>
                   </span>
-                  <input
+                  <Input
                     type="text"
-                    className="form-control rounded-pill"
+                    
                     style={{ paddingLeft: 46, height: 46 }}
                     placeholder="Search your account settings"
                     value={q}
@@ -727,9 +728,9 @@ function MfaCard() {
           <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-mfa-confirm">
             Code from your app
           </label>
-          <input
+          <Input
             id="tv-mfa-confirm"
-            className="form-control"
+            
             inputMode="numeric"
             maxLength={6}
             autoComplete="one-time-code"
@@ -772,9 +773,9 @@ function MfaCard() {
           <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-mfa-pw">
             Your password
           </label>
-          <input
+          <Input
             id="tv-mfa-pw"
-            className="form-control"
+            
             type="password"
             autoComplete="current-password"
             value={password}

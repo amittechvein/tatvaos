@@ -7,6 +7,7 @@ import { AdminShell } from '@/components/admin/AdminShell';
 import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
 import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
+import { Input } from '@/components/ui/Form';
 
 interface KeyRow {
   id: string;
@@ -246,7 +247,7 @@ function FreshKeyCard({ fresh, endpoint, onDismiss }: {
       </div>
 
       <div className="input-group mb-3">
-        <input className="form-control font-monospace" readOnly value={fresh.key}
+        <Input  readOnly value={fresh.key}
                onFocus={(e) => e.currentTarget.select()} />
         <Button variant="primary" onClick={() => void copy('key', fresh.key)}>
           {copied === 'key' ? 'Copied' : 'Copy key'}
@@ -457,8 +458,8 @@ function CreateDialog({ onClose, onCreated, onError }: {
         required
         hint="The program that will use it. You will see this name when deciding what to revoke."
       >
-        <input
-          className="form-control"
+        <Input
+          
           value={label}
           placeholder="Website contact form"
           maxLength={100}
