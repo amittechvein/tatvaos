@@ -288,7 +288,7 @@ export function AddManyPeople({ departments, domains, onClose, onDone }: {
               <Td>{s.address}</Td>
               <Td>{s.displayName}</Td>
               <Td />
-              <Td><span className="badge bg-warning text-dark">Skipped</span> <span className="fs-13">{s.reason}</span></Td>
+              <Td className="text-wrap"><span className="badge bg-warning text-dark">Skipped</span> <span className="fs-13">{s.reason}</span></Td>
             </tr>
           ))}
           {bad.map((r) => (
@@ -296,7 +296,7 @@ export function AddManyPeople({ departments, domains, onClose, onDone }: {
               <Td>{r.localPart ? `${r.localPart}@${domain?.fqdn ?? ''}` : <span className="text-muted">line {r.line}</span>}</Td>
               <Td>{r.name}</Td>
               <Td>{r.department ?? <span className="text-muted">—</span>}</Td>
-              <Td><span className="badge bg-warning text-dark">Skipped</span> <span className="fs-13">{r.problem}</span></Td>
+              <Td className="text-wrap"><span className="badge bg-warning text-dark">Skipped</span> <span className="fs-13">{r.problem}</span></Td>
             </tr>
           ))}
         </Table>

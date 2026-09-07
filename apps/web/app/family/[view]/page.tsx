@@ -200,6 +200,13 @@ export default function FamilyViewPage() {
       setCreating(true);
       router.replace(`/family/${view}`);
     }
+    // ?open=<id> is how a sender's name in Mail lands on their card. Same
+    // consume-and-strip rule as ?create, for the same reason.
+    const open = search.get('open');
+    if (open) {
+      setOpenId(open);
+      router.replace(`/family/${view}`);
+    }
   }, [search, router, view]);
 
   // ---------------------------------------------------------------------
@@ -952,6 +959,8 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [newEmail, setNewEmail] = useState('');
   const [newPhone, setNewPhone] = useState('');
+  const [newAddr, setNewAddr] = useState(EMPTY_ADDRESS);
+  const addrFilled = Object.values(newAddr).some((v) => v.trim().length > 0);
 
   // Editable fields, held separately so Cancel is just "close".
   const [form, setForm] = useState({ displayName: '', jobTitle: '', companyName: '', notes: '' });
@@ -1126,6 +1135,50 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
                 })}
               />
             </Section>
+            <Section title="Postal addresses">
+              {c.addresses.length === 0 && <Muted>No postal addresses.</Muted>}
+              {c.addresses.map((a) => (
+                <Row key={a.id}>
+                  <span>
+                    {formatAddress(a)}
+                    {a.isPrimary && <span className="badge bg-light text-muted ms-2">primary</span>}
+                  </span>
+                  <Button variant="ghost" disabled={busy}
+                          onClick={() => run(() => familyApi.removeAddress(authedFetch, id, a.id))}>
+                    Remove
+                  </Button>
+                </Row>
+              ))}
+              <div className="d-flex flex-wrap gap-2">
+                <div className="flex-grow-1" style={{ minWidth: 200 }}>
+                  <Input placeholder="Street" value={newAddr.streetLine1}
+                         onChange={(e) => setNewAddr({ ...newAddr, streetLine1: e.target.value })} />
+                </div>
+                <div style={{ width: 140 }}>
+                  <Input placeholder="City" value={newAddr.city}
+                         onChange={(e) => setNewAddr({ ...newAddr, city: e.target.value })} />
+                </div>
+                <div style={{ width: 120 }}>
+                  <Input placeholder="State" value={newAddr.stateProvince}
+                         onChange={(e) => setNewAddr({ ...newAddr, stateProvince: e.target.value })} />
+                </div>
+                <div style={{ width: 100 }}>
+                  <Input placeholder="PIN" value={newAddr.postalCode}
+                         onChange={(e) => setNewAddr({ ...newAddr, postalCode: e.target.value })} />
+                </div>
+                <div style={{ width: 130 }}>
+                  <Input placeholder="Country" value={newAddr.country}
+                         onChange={(e) => setNewAddr({ ...newAddr, country: e.target.value })} />
+                </div>
+                <Button variant="secondary" disabled={busy || !addrFilled}
+                        onClick={() => run(async () => {
+                          await familyApi.addAddress(authedFetch, id, newAddr);
+                          setNewAddr(EMPTY_ADDRESS);
+                        })}>
+                  Add
+                </Button>
+              </div>
+            </Section>
 
             {groups.length > 0 && (
               <Section title="Groups">
@@ -1260,6 +1313,17 @@ const Row = ({ children }: { children: React.ReactNode }) => (
 const Muted = ({ children }: { children: React.ReactNode }) => (
   <span className="fs-14 text-muted">{children}</span>
 );
+
+const EMPTY_ADDRESS = { streetLine1: '', city: '', stateProvince: '', postalCode: '', country: '' };
+
+function formatAddress(a: {
+  streetLine1?: string | null; streetLine2?: string | null; city?: string | null;
+  stateProvince?: string | null; postalCode?: string | null; country?: string | null;
+}): string {
+  return [a.streetLine1, a.streetLine2, a.city, a.stateProvince, a.postalCode, a.country]
+    .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+    .join(', ');
+}
 
 function AddRow({ label, value, onChange, onAdd, busy }: {
   label: string; value: string; onChange: (v: string) => void;
