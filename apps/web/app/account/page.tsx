@@ -37,6 +37,7 @@ import { RequireAuth } from '@/components/RequireAuth';
 import { AppLauncher } from '@/components/shell/AppLauncher';
 import { AccountMenu } from '@/components/shell/AccountMenu';
 import { Button, Card } from '@/components/ui/Kit';
+import { RecoveryCard } from '@/components/account/RecoveryCard';
 import { useAuth } from '@/lib/auth';
 import { fetchMyStorage, formatBytes, meterColour, type MyStorage } from '@/lib/myStorage';
 import {
@@ -453,6 +454,7 @@ function AccountHub() {
                   <Button variant="primary" href="/change-password">Change password</Button>
                 </Card>
                 <MfaCard />
+                <RecoveryCard />
                 <Card title="Where you are signed in"
                       subtitle="Every device holding a live session"
                       actions={
