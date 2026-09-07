@@ -21,14 +21,19 @@
 --  to a caller who does not already hold the id. Modelled on
 --  mail.resolve_api_key / core.resolve_refresh_token.
 --
---  WHY NO `GRANT UPDATE ... TO tatvaos_app`.
---  The app role is deliberately left with SELECT, INSERT only on api_sends
---  (the base grant is unchanged). It gets EXECUTE on THIS function and nothing
---  more, so the ONLY write it can make to a delivered row is a bounce stamp,
---  through the idempotent guard below. The table stays append-only from the
---  application's side — which is the whole "shown once, revoke-not-delete, keep
---  everything" posture the api_sends comment sets out. A blanket UPDATE grant
---  would hand the app the power to rewrite send history; it never needs it.
+--  APPEND-ONLY FROM THE APP — ENFORCED HERE, NOT ASSUMED.
+--  0001-mail-schema.sql grants tatvaos_app SELECT, INSERT, UPDATE, DELETE on
+--  EVERY table in the mail schema (a blanket GRANT ON ALL TABLES, plus ALTER
+--  DEFAULT PRIVILEGES for tables added later). So api_sends STARTS with UPDATE
+--  and DELETE the app never needs: it writes a delivered row exactly once
+--  (INSERT at send time), and a bounce is recorded only through the SECURITY
+--  DEFINER function below, which runs as its owner and does not lean on the
+--  app's own grant. Leaving those two writes in place would make "append-only"
+--  a comment the grants contradict — the exact defect this codebase keeps
+--  removing. So the migration REVOKEs UPDATE and DELETE on api_sends (below),
+--  restoring the "shown once, revoke-not-delete, keep everything" posture the
+--  table's own comment states. SELECT and INSERT stay: the app still reads its
+--  log and appends new rows.
 --
 --  IDEMPOTENT ON PURPOSE (design §3). A DSN can be delivered more than once —
 --  the far MTA retries, or two MX hosts both report. Setting bounced_at twice
@@ -102,6 +107,14 @@ COMMENT ON FUNCTION mail.record_bounce(uuid, text, text) IS
 
 REVOKE ALL     ON FUNCTION mail.record_bounce(uuid, text, text) FROM PUBLIC;
 GRANT  EXECUTE ON FUNCTION mail.record_bounce(uuid, text, text) TO tatvaos_app;
+
+-- Close the direct-write hole the mail-schema blanket grant leaves open (see
+-- the header note). The bounce stamp is the ONLY mutation the app makes to a
+-- delivered row, and it goes through the function above — never a direct
+-- UPDATE. 0001 re-grants the blanket on every deploy, so this REVOKE lives in a
+-- later file and re-runs alongside it; REVOKE of an already-absent privilege is
+-- a harmless no-op, which keeps the whole init/ re-run idempotent.
+REVOKE UPDATE, DELETE ON mail.api_sends FROM tatvaos_app;
 
 COMMIT;
 

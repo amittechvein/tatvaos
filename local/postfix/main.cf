@@ -64,6 +64,17 @@ transport_maps = inline:{ bounces.tatvaos.com=bounce-intake:[api]:10035 }
 # relay_recipient_maps is intentionally NOT set. Setting it to any map would
 # turn reject_unlisted_recipient back on for this domain and refuse every VERP
 # address before the policy service is consulted.
+#
+#  INVARIANT — bounces.tatvaos.com must NEVER become a core.domains row (nor any
+#  fqdn under it). virtual-domains.cf and local-recipient-domains.cf match a
+#  recipient domain by EXACT fqdn against core.domains; a row for this subdomain
+#  would make Postfix treat it as a hosted virtual_mailbox_domain, and then
+#  reject_unlisted_recipient would refuse every VERP address BEFORE the policy
+#  service runs — the catch-all above stops working, and does so silently. This
+#  line does not enforce that; it records it. Enforcement is a guard in Core's
+#  domain-creation path that refuses a core.domains row for the bounce subdomain
+#  or anything under it (Core ticket, tracked separately). If you are here
+#  because bounces are failing, check that guard holds and that no such row exists.
 
 # ----------------------------------------------------------------------------
 # Recipient validation
