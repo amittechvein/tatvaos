@@ -121,23 +121,30 @@
   input, textarea, select { font: inherit; }
 
   /* ------------------------------------------------------------------------
-     Border STYLE only — the other half of the missing preflight.
+     The border half of the missing preflight — BOTH properties, together.
 
-     Tailwind's `border` utility sets border-WIDTH and nothing else; preflight
-     normally supplies `border-style: solid` for every element. With preflight
-     off, `border border-line` on a <div> or a <table> sets a width against a
-     style of `none` and renders NOTHING. The button reset above happens to
-     cover buttons, which is why this went unnoticed while only buttons were
-     Tailwind-built.
+     Tailwind's `border` utility sets border-WIDTH only; preflight normally
+     supplies `border-style: solid` for every element. With preflight off,
+     `border border-line` on a <div> or a <table> sets a width against a style
+     of `none` and renders nothing.
 
-     Deliberately style WITHOUT width. Preflight also zeroes every
-     border-width, and that is what stripped the outlines off MUI's inputs
-     when preflight was last enabled here — YZEN's borders would go the same
-     way. A `*` selector is specificity 0-0-0, so any class or component rule
-     overrides it; an element with the default width of 0 still shows nothing.
-     Added 7 Sept 2026 with the component library (docs/UI_LANE_BRIEF.md §4.2).
+     BOTH LINES ARE REQUIRED AND THIS IS THE TRAP: CSS's initial border-width
+     is `medium` (about 3px), not zero — it is invisible only because the
+     initial style is `none`. Setting the style alone therefore does not
+     "reveal borders where we asked for them", it draws a 3px box around
+     EVERY ELEMENT ON THE PAGE. Tried exactly that on 7 Sept 2026 and the
+     login screen came back as a wireframe.
+
+     Zeroing the width is safe for YZEN: real components set their border
+     width explicitly, and nothing sane depends on the initial `medium`. The
+     old worry — that preflight strips outlines — was about MUI, which has
+     since been removed from this project entirely.
      ------------------------------------------------------------------------ */
-  *, ::before, ::after { border-style: solid; }
+  *, ::before, ::after {
+    border-width: 0;
+    border-style: solid;
+    border-color: rgb(var(--line));
+  }
 }
 
 @layer utilities {
