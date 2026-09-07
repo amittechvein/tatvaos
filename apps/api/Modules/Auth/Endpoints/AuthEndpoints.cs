@@ -289,6 +289,11 @@ public static class AuthEndpoints
         g.MapGet("/recovery-status", RecoveryStatusAsync).RequireAuthorization("User");
         g.MapPost("/recovery-email", SetRecoveryEmailAsync).RequireAuthorization("User");
         g.MapPost("/recovery-email/verify", VerifyRecoveryEmailAsync).AllowAnonymous();
+        g.MapDelete("/recovery-email", RemoveRecoveryEmailAsync).RequireAuthorization("User");
+        // Recovery number: code to the NEW number, then verify swaps it in.
+        g.MapPost("/phone", RequestPhoneChangeAsync).RequireAuthorization("User");
+        g.MapPost("/phone/verify", VerifyPhoneChangeAsync).RequireAuthorization("User");
+        g.MapDelete("/phone", RemovePhoneAsync).RequireAuthorization("User");
 
         // ---- forgot password (anonymous: the whole point is no session) --
         // Email link and phone OTP, each a request/complete pair. Every
@@ -1108,6 +1113,10 @@ public static class AuthEndpoints
     /// only; the login reminder reads this to decide whether to nudge. A
     /// recovery email counts only once VERIFIED.
     /// </summary>
+    // ---- Recovery: what the nudge card and the account page read ----------
+    //  The nudge (RecoveryReminder) uses hasPhone / hasVerifiedRecoveryEmail /
+    //  needsAttention and nothing else; the account page uses the rest. One
+    //  endpoint, one definition of "how can this person get back in".
     private static async Task<IResult> RecoveryStatusAsync(
         AppDbContext db, TenantContext tenant, CancellationToken ct)
     {
@@ -1115,16 +1124,34 @@ public static class AuthEndpoints
             .Where(u => u.Id == tenant.UserId)
             .Select(u => new
             {
-                HasPhone = u.Phone != null && u.Phone != "",
-                HasVerifiedRecoveryEmail = u.RecoveryEmailVerifiedAt != null,
+                u.Phone,
+                u.PendingPhone,
+                u.PendingPhoneOtpSentAt,
+                u.RecoveryEmail,
+                u.RecoveryEmailVerifiedAt,
+                u.RecoveryEmailTokenSentAt,
             })
             .FirstOrDefaultAsync(ct);
         if (row is null) return Results.NotFound();
+
+        var hasPhone = !string.IsNullOrEmpty(row.Phone);
+        var verified = row.RecoveryEmailVerifiedAt is not null;
+        // A pending number is only worth showing while its code can still be
+        // entered; after that the page offers a fresh start, not a dead box.
+        var pendingLive = row.PendingPhone is not null
+            && row.PendingPhoneOtpSentAt is DateTimeOffset sentAt
+            && DateTimeOffset.UtcNow - sentAt <= OtpLifetime;
+
         return Results.Ok(new
         {
-            row.HasPhone,
-            row.HasVerifiedRecoveryEmail,
-            needsAttention = !row.HasPhone || !row.HasVerifiedRecoveryEmail,
+            hasPhone,
+            hasVerifiedRecoveryEmail = verified,
+            needsAttention = !hasPhone || !verified,
+            phone = row.Phone,
+            pendingPhone = pendingLive ? row.PendingPhone : null,
+            recoveryEmail = row.RecoveryEmail,
+            recoveryEmailVerified = verified,
+            recoveryEmailSentAt = verified ? null : row.RecoveryEmailTokenSentAt,
         });
     }
 
@@ -1134,6 +1161,154 @@ public static class AuthEndpoints
     /// recovery email. Stored UNVERIFIED; a link is emailed to the address and
     /// it counts for nothing until that link is opened.
     /// </summary>
+    private static async Task<IResult> RemoveRecoveryEmailAsync(
+        AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == tenant.UserId, ct);
+        if (user is null) return Results.NotFound();
+        user.RecoveryEmail = null;
+        user.RecoveryEmailVerifiedAt = null;
+        user.RecoveryEmailTokenHash = null;
+        user.RecoveryEmailTokenSentAt = null;
+        user.RecoveryEmailTokenAttempts = 0;
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(new { removed = true });
+    }
+
+    // ---- Recovery number change ------------------------------------------
+    //  The new number must answer a code before it replaces the old one, and
+    //  the old one keeps working until then: a mistyped number is a wasted
+    //  SMS, never a lockout. The hash is domain-separated from the login OTP
+    //  ("phone-change:" prefix) so neither code can be replayed at the other
+    //  endpoint, and the person is already signed in, so replies can be
+    //  specific — there is nothing to enumerate that they cannot see.
+    private const string PhoneChangeSentReply =
+        "We've sent a 6-digit code to that number. Enter it below within 5 minutes.";
+
+    private static string PhoneChangeHash(Guid userId, string code)
+        => OtpHash(userId, "phone-change:" + code);
+
+    private static async Task<IResult> RequestPhoneChangeAsync(
+        SetPhoneRequest req, AppDbContext db, TenantContext tenant,
+        Shared.Notify.ISmsSender sms, Shared.Settings.SettingsReader settings,
+        CancellationToken ct)
+    {
+        var phone = Shared.PhoneNumber.Normalise(req.Phone);
+        if (phone is null)
+            return Results.BadRequest(new
+            {
+                error = "Enter the mobile number with its country code, like +91 98765 43210.",
+            });
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == tenant.UserId, ct);
+        if (user is null) return Results.NotFound();
+        if (phone == user.Phone)
+            return Results.BadRequest(new { error = "That is already your recovery number." });
+        // OTP sign-in and the phone reset both require exactly one live account
+        // per number; a second claim would silently break both for the first.
+        // Cross-tenant on purpose, like the login lookup.
+        var taken = await db.Users.IgnoreQueryFilters()
+            .AnyAsync(u => u.Id != user.Id && u.Phone == phone
+                           && u.Status != "deleted" && u.Status != "suspended", ct);
+        if (taken)
+            return Results.BadRequest(new { error = "That number is already linked to another account." });
+        // Resend throttle, same gap as every other code on this file.
+        if (user.PendingPhone == phone
+            && user.PendingPhoneOtpSentAt is DateTimeOffset last
+            && DateTimeOffset.UtcNow - last < OtpResendGap)
+            return Results.Ok(new { sent = true, message = PhoneChangeSentReply, devCode = (string?)null });
+
+        var code = System.Security.Cryptography.RandomNumberGenerator
+            .GetInt32(0, 1_000_000).ToString("D6");
+        user.PendingPhone = phone;
+        user.PendingPhoneOtpHash = PhoneChangeHash(user.Id, code);
+        user.PendingPhoneOtpSentAt = DateTimeOffset.UtcNow;
+        user.PendingPhoneOtpAttempts = 0;
+        await db.SaveChangesAsync(ct);
+
+        var result = await sms.SendOtpAsync(phone, code, ct);
+        // Same self-securing echo rule as the login and signup OTPs.
+        var showOtp = await settings.FlagAsync(
+            Shared.Settings.SettingKeys.ShowOtpOnScreen, fallback: false, ct);
+        return Results.Ok(new
+        {
+            sent = true,
+            message = PhoneChangeSentReply,
+            devCode = showOtp && !result.Sent ? code : null,
+        });
+    }
+
+    private static async Task<IResult> VerifyPhoneChangeAsync(
+        VerifyPhoneRequest req, AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var code = req.Code?.Trim();
+        if (string.IsNullOrEmpty(code) || code.Length != 6 || !code.All(char.IsDigit))
+            return Results.BadRequest(new { error = "Enter the 6-digit code." });
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == tenant.UserId, ct);
+        if (user is null) return Results.NotFound();
+        if (user.PendingPhone is null || user.PendingPhoneOtpHash is null)
+            return Results.BadRequest(new { error = "No number change is waiting for a code. Start again." });
+
+        var expired = user.PendingPhoneOtpSentAt is null
+            || DateTimeOffset.UtcNow - user.PendingPhoneOtpSentAt > OtpLifetime;
+        if (expired || user.PendingPhoneOtpAttempts >= OtpMaxAttempts
+            || PhoneChangeHash(user.Id, code) != user.PendingPhoneOtpHash)
+        {
+            user.PendingPhoneOtpAttempts++;
+            if (expired || user.PendingPhoneOtpAttempts >= OtpMaxAttempts)
+            {
+                // Burn it: five guesses per code, and an expired code is dead.
+                user.PendingPhoneOtpHash = null;
+                user.PendingPhone = null;
+            }
+            await db.SaveChangesAsync(ct);
+            return Results.BadRequest(new
+            {
+                error = expired
+                    ? "That code has expired. Request a new one."
+                    : "That code is not right. Check the message and try again.",
+            });
+        }
+
+        // The number may have been claimed between request and verify.
+        var pending = user.PendingPhone;
+        var taken = await db.Users.IgnoreQueryFilters()
+            .AnyAsync(u => u.Id != user.Id && u.Phone == pending
+                           && u.Status != "deleted" && u.Status != "suspended", ct);
+        user.PendingPhone = null;
+        user.PendingPhoneOtpHash = null;
+        user.PendingPhoneOtpSentAt = null;
+        user.PendingPhoneOtpAttempts = 0;
+        if (taken)
+        {
+            await db.SaveChangesAsync(ct);
+            return Results.BadRequest(new { error = "That number is already linked to another account." });
+        }
+        user.Phone = pending;
+        // A login code minted for the old number must not survive the change.
+        user.LoginOtpHash = null;
+        user.LoginOtpSentAt = null;
+        user.LoginOtpAttempts = 0;
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(new { verified = true, phone = user.Phone });
+    }
+
+    private static async Task<IResult> RemovePhoneAsync(
+        AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == tenant.UserId, ct);
+        if (user is null) return Results.NotFound();
+        user.Phone = null;
+        user.PendingPhone = null;
+        user.PendingPhoneOtpHash = null;
+        user.PendingPhoneOtpSentAt = null;
+        user.PendingPhoneOtpAttempts = 0;
+        user.LoginOtpHash = null;
+        user.LoginOtpSentAt = null;
+        user.LoginOtpAttempts = 0;
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(new { removed = true });
+    }
+
     private static async Task<IResult> SetRecoveryEmailAsync(
         SetRecoveryEmailRequest req, AppDbContext db, TenantContext tenant,
         SystemMailer mailer, IConfiguration config, CancellationToken ct)
@@ -1795,6 +1970,8 @@ public sealed record OtpRequest(string? Phone);
 public sealed record OtpVerifyRequest(string? Phone, string? Code);
 public sealed record RefreshRequest(string? RefreshToken);
 public sealed record SetRecoveryEmailRequest(string? Email);
+public sealed record SetPhoneRequest(string? Phone);
+public sealed record VerifyPhoneRequest(string? Code);
 public sealed record VerifyRecoveryEmailRequest(string? Token);
 public sealed record ForgotPasswordRecoveryRequest(string? RecoveryEmail);
 

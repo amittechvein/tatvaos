@@ -210,6 +210,15 @@ public class User
     public DateTimeOffset? RecoveryEmailTokenSentAt { get; set; }
     public int RecoveryEmailTokenAttempts { get; set; }
 
+    // ---- Recovery number change (20260907-user-phone-change.sql) ---------
+    // A new number waits here until a code sent TO IT is entered; only then
+    // does it replace Phone. Separate from the login OTP columns on purpose:
+    // a login code minted for the old number must not verify the new one.
+    [MaxLength(32)] public string? PendingPhone { get; set; }
+    [MaxLength(64)] public string? PendingPhoneOtpHash { get; set; }
+    public DateTimeOffset? PendingPhoneOtpSentAt { get; set; }
+    public int PendingPhoneOtpAttempts { get; set; }
+
     [MaxLength(200)] public required string DisplayName { get; set; }
 
     /// <summary>Argon2id. Never any other scheme in production.</summary>
