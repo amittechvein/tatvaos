@@ -202,8 +202,12 @@ export function Table({ head, children }: { head: React.ReactNode[]; children: R
         className={
           'w-full border-collapse whitespace-nowrap text-sm text-ink '
           + '[&_th]:border-b [&_th]:border-line [&_th]:px-4 [&_th]:py-3 '
+          // ink-MUTED, not ink-faint. Faint measured 2.78 against white on
+          // /org/users — below the 4.5 a column heading needs, and a heading
+          // is functional text: you cannot read the table without it. Faint is
+          // for decoration and disabled states only.
           + '[&_th]:text-left [&_th]:text-[11px] [&_th]:font-semibold '
-          + '[&_th]:uppercase [&_th]:tracking-wider [&_th]:text-ink-faint '
+          + '[&_th]:uppercase [&_th]:tracking-wider [&_th]:text-ink-muted '
           + '[&_td]:px-4 [&_td]:py-3 [&_td]:align-middle '
           + '[&_tbody_tr]:border-b [&_tbody_tr]:border-line '
           + '[&_tbody_tr:last-child]:border-0 [&_tbody_tr:hover]:bg-canvas'
