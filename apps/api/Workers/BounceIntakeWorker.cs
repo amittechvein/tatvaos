@@ -62,6 +62,8 @@ public sealed class BounceIntakeWorker(
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
         var port = int.TryParse(config["Mail:BounceIntakePort"], out var p) ? p : 10035;
+        var idleMs = 1000 * (int.TryParse(config["Mail:BounceIntakeIdleSeconds"], out var idle) && idle > 0 ? idle : 30);
+        var maxConns = int.TryParse(config["Mail:BounceIntakeMaxConnections"], out var mc) && mc > 0 ? mc : 20;
         var listener = new TcpListener(IPAddress.Any, port);
 
         try
@@ -77,7 +79,15 @@ public sealed class BounceIntakeWorker(
             return;
         }
 
-        log.LogInformation("Bounce intake LMTP listening on {Port}", port);
+        log.LogInformation(
+            "Bounce intake LMTP listening on {Port} (idle {Idle}s, max {Max} concurrent)",
+            port, idleMs / 1000, maxConns);
+
+        // Cap concurrent connections so a flood of half-open peers cannot spawn
+        // unbounded tasks. At the cap the accept loop waits — the OS holds the
+        // next connection in its backlog — the right backpressure for a
+        // low-volume path like bounces.
+        using var gate = new SemaphoreSlim(maxConns);
 
         try
         {
@@ -87,7 +97,10 @@ public sealed class BounceIntakeWorker(
                 try { client = await listener.AcceptTcpClientAsync(ct); }
                 catch (OperationCanceledException) { break; }
 
-                _ = ServeAsync(client, ct);
+                try { await gate.WaitAsync(ct); }
+                catch (OperationCanceledException) { client.Dispose(); break; }
+
+                _ = ServeGuardedAsync(client, gate, idleMs, ct);
             }
         }
         finally
@@ -96,14 +109,22 @@ public sealed class BounceIntakeWorker(
         }
     }
 
-    private async Task ServeAsync(TcpClient client, CancellationToken ct)
+    // One connection, guarded by the concurrency semaphore: the slot is always
+    // returned, however the connection ends.
+    private async Task ServeGuardedAsync(TcpClient client, SemaphoreSlim gate, int idleMs, CancellationToken ct)
+    {
+        try { await ServeAsync(client, idleMs, ct); }
+        finally { gate.Release(); }
+    }
+
+    private async Task ServeAsync(TcpClient client, int idleMs, CancellationToken ct)
     {
         using (client)
         {
             try
             {
                 using var stream = client.GetStream();
-                var reader = new LineReader(stream);
+                var reader = new LineReader(stream, idleMs);
 
                 await WriteAsync(stream, $"220 {Hostname()} LMTP TatvaOS bounce intake ready\r\n", ct);
 
@@ -226,6 +247,22 @@ public sealed class BounceIntakeWorker(
 
         foreach (var rcpt in rcpts)
         {
+            // The domain match BounceAddress.Verify documents as the caller's
+            // job. The RCPT policy gate performs it; the intake must too, or the
+            // contract is a claim nothing here honours. Only bounces.tatvaos.com
+            // routes to this socket today — but a doc asserting an unperformed
+            // check is exactly the defect we are removing, not adding.
+            var domain = BounceDomain;
+            if (domain.Length == 0
+                || !rcpt.EndsWith("@" + domain, StringComparison.OrdinalIgnoreCase))
+            {
+                log.LogWarning(
+                    "Bounce intake received {Recipient} outside the bounce domain '{Domain}'; consuming, no write",
+                    rcpt, domain);
+                replies.Add("250 2.1.5 Ok\r\n");
+                continue;
+            }
+
             // Defence in depth: the RCPT gate already verified this, but the
             // format lives in BounceAddress and so does the check.
             var verified = BounceAddress.Verify(
@@ -486,7 +523,7 @@ public sealed class BounceIntakeWorker(
     /// bytes with the trailing CRLF stripped. Overlong lines are drained, not
     /// stored past the cap.
     /// </summary>
-    private sealed class LineReader(Stream stream)
+    private sealed class LineReader(Stream stream, int idleMs)
     {
         private readonly byte[] _buf = new byte[8192];
         private int _pos;
@@ -499,7 +536,19 @@ public sealed class BounceIntakeWorker(
             {
                 if (_pos >= _len)
                 {
-                    _len = await stream.ReadAsync(_buf.AsMemory(0, _buf.Length), ct);
+                    // Idle read timeout: a peer that connects and says nothing
+                    // must not hold a task and a socket until shutdown. Reset
+                    // per read, so a slow-but-alive sender is fine.
+                    using var idleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    idleCts.CancelAfter(idleMs);
+                    try
+                    {
+                        _len = await stream.ReadAsync(_buf.AsMemory(0, _buf.Length), idleCts.Token);
+                    }
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                    {
+                        throw new TimeoutException("bounce intake: idle timeout waiting for input");
+                    }
                     _pos = 0;
                     if (_len == 0)
                         return line.Count == 0 ? null : line.ToArray();
