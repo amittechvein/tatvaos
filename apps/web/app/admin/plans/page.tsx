@@ -9,6 +9,7 @@ import {
 import { useAuth } from '@/lib/auth';
 import { AdminShell } from '@/components/admin/AdminShell';
 import { Empty } from '@/components/ui/Kit';
+import { Input } from '@/components/ui/Form';
 
 // Storage is stored in bytes; the form works in GB and converts on the way in
 // and out — the same GB convention the onboarding form and org pages use.
@@ -364,7 +365,7 @@ function PlanFormModal({
               <div className="row g-3">
                 <div className="col-12">
                   <label className="form-label" htmlFor="plan-name">Name</label>
-                  <input id="plan-name" className="form-control" value={form.name} autoFocus
+                  <Input id="plan-name"  value={form.name} autoFocus
                          placeholder="Business" onChange={(e) => set('name', e.target.value)} />
                 </div>
 
@@ -388,14 +389,14 @@ function PlanFormModal({
                   {form.storageModel === 'per_user' ? (
                     <>
                       <label className="form-label" htmlFor="plan-per-user">Storage per user (GB)</label>
-                      <input id="plan-per-user" type="number" min={1} className="form-control"
+                      <Input id="plan-per-user" type="number" min={1} 
                              value={form.perUserQuotaGb}
                              onChange={(e) => set('perUserQuotaGb', e.target.value)} />
                     </>
                   ) : (
                     <>
                       <label className="form-label" htmlFor="plan-pooled">Total pooled storage (GB)</label>
-                      <input id="plan-pooled" type="number" min={1} className="form-control"
+                      <Input id="plan-pooled" type="number" min={1} 
                              value={form.pooledStorageGb}
                              onChange={(e) => set('pooledStorageGb', e.target.value)} />
                     </>
@@ -404,14 +405,14 @@ function PlanFormModal({
 
                 <div className="col-sm-6">
                   <label className="form-label" htmlFor="plan-seats">Max users</label>
-                  <input id="plan-seats" type="number" min={1} className="form-control"
+                  <Input id="plan-seats" type="number" min={1} 
                          placeholder="Unlimited" value={form.maxUsers}
                          onChange={(e) => set('maxUsers', e.target.value)} />
                 </div>
 
                 <div className="col-sm-6">
                   <label className="form-label" htmlFor="plan-domains">Max domains</label>
-                  <input id="plan-domains" type="number" min={1} className="form-control"
+                  <Input id="plan-domains" type="number" min={1} 
                          placeholder="Unlimited" value={form.maxDomains}
                          onChange={(e) => set('maxDomains', e.target.value)} />
                 </div>
@@ -438,7 +439,7 @@ function PlanFormModal({
                   {form.pricingModel !== 'custom' && (
                     <div className="input-group">
                       <span className="input-group-text">₹</span>
-                      <input type="number" min={0} className="form-control" value={form.price}
+                      <Input type="number" min={0}  value={form.price}
                              placeholder={form.pricingModel === 'per_user' ? 'per user, per month' : 'per month'}
                              onChange={(e) => set('price', e.target.value)} />
                     </div>

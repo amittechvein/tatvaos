@@ -9,6 +9,7 @@ import { useAuth } from '@/lib/auth';
 import { AdminShell } from '@/components/admin/AdminShell';
 import { StatusBadge } from '@/components/admin/StatusBadge';
 import { Button, Card, Empty, Meter, Table, Td } from '@/components/ui/Kit';
+import { Input, Select } from '@/components/ui/Form';
 
 const NAV = [
   { href: '/admin', label: 'Dashboard' },
@@ -290,39 +291,39 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
       <h6 className="fw-semibold mb-3">Details</h6>
 
       <Field label="Organisation name">
-        <input className="form-control" value={name} onChange={(e) => setName(e.target.value)} />
+        <Input  value={name} onChange={(e) => setName(e.target.value)} />
       </Field>
 
       <Field label="Type">
-        <select className="form-select" value={type} onChange={(e) => setType(e.target.value)}>
+        <Select value={type} onChange={(e) => setType(e.target.value)}>
           {Object.entries(TYPE_LABEL).map(([v, label]) => (
             <option key={v} value={v}>{label}</option>
           ))}
-        </select>
+        </Select>
       </Field>
 
       <div className="row g-3">
         <div className="col-sm-6">
           <Field label="Owner name">
-            <input className="form-control" value={adminName}
+            <Input  value={adminName}
                    onChange={(e) => setAdminName(e.target.value)} />
           </Field>
         </div>
         <div className="col-sm-6">
           <Field label="Owner email">
-            <input className="form-control" value={adminEmail}
+            <Input  value={adminEmail}
                    onChange={(e) => setAdminEmail(e.target.value)} />
           </Field>
         </div>
         <div className="col-sm-6">
           <Field label="Phone">
-            <input className="form-control" value={phone}
+            <Input  value={phone}
                    onChange={(e) => setPhone(e.target.value)} />
           </Field>
         </div>
         <div className="col-sm-6">
           <Field label="GSTIN">
-            <input className="form-control" value={gstin}
+            <Input  value={gstin}
                    onChange={(e) => setGstin(e.target.value)} />
           </Field>
         </div>
@@ -370,7 +371,7 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
       <h6 className="fw-semibold mb-3">Plan</h6>
 
       <Field label="Plan">
-        <select className="form-select" value={planId} onChange={(e) => setPlanId(e.target.value)}>
+        <Select value={planId} onChange={(e) => setPlanId(e.target.value)}>
           {plans.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}
@@ -379,7 +380,7 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
                 : p.priceMonthly ? `, ₹${p.priceMonthly}/mo` : ''}
             </option>
           ))}
-        </select>
+        </Select>
       </Field>
 
       <Field
@@ -388,7 +389,7 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
           ? `Billable seats. Leave empty to keep the current value; the plan caps people at ${chosen.maxUsers}.`
           : 'Billable seats. Leave empty to keep the current value.'}
       >
-        <input className="form-control" value={seats}
+        <Input  value={seats}
                onChange={(e) => setSeats(e.target.value.replace(/\D/g, ''))} />
       </Field>
 
