@@ -44,16 +44,43 @@ import { Modal } from '@/components/ui/Modal';
 // and out — the same GB convention the onboarding form and org pages use.
 const GB = 1024 ** 3;
 
-// Every product a plan can grant, kept in step with RAIL_PRODUCTS in lib/nav.
-// This list being short is not cosmetic: a plan that includes Sheet, with no
-// Sheet checkbox to reflect it, would lose Sheet the moment anyone pressed Save.
+// ---------------------------------------------------------------------------
+//  THE PRODUCTS A PLAN CAN GRANT. This list must match core.products, and for
+//  months it did not.
+//
+//  It offered People, Payroll, Sheet and Word — all four DELETED from
+//  core.products by 0028-product-catalogue.sql — while omitting Connect,
+//  Calendar and Family, which are the products that actually exist. The
+//  consequence, found on 9 Sept 2026 when Amit tried to give his own
+//  organisation Connect and could not: there was no checkbox for it. Granting
+//  Connect was impossible from the admin console, on any plan, for anyone.
+//
+//  Codes, not labels, and two do not match their names — the same trap
+//  apps/mobile/theme.js documents:
+//      Space    -> code 'drive'   (renamed; the code stayed because
+//                                  allocations, audit rows and storage all
+//                                  point at it)
+//      Contacts -> code 'family'
+//  Get one wrong and the product silently vanishes from every plan that had
+//  it, which reads as an entitlement bug rather than a typo.
+//
+//  Verified against local/postgres/init: 0000-core-schema.sql seeds mail,
+//  drive, calendar, connect; 0022-family-departure.sql adds family;
+//  0025-space-schema.sql renames drive to Space; 0028 removes the four
+//  placeholders. `soon` marks a product that exists in the catalogue but is
+//  not shipped yet (is_available = false).
+//
+//  Unknown codes are still preserved on save — see formFromPlan, which unions
+//  this list with whatever the plan already grants. That is what stops a stale
+//  list here silently stripping entitlements, and it is why the damage above
+//  was invisible rather than loud.
+// ---------------------------------------------------------------------------
 const PRODUCTS: { key: string; label: string; soon?: boolean }[] = [
   { key: 'mail', label: 'Mail' },
-  { key: 'drive', label: 'Drive', soon: true },
-  { key: 'people', label: 'People', soon: true },
-  { key: 'payroll', label: 'Payroll', soon: true },
-  { key: 'sheet', label: 'Sheet', soon: true },
-  { key: 'word', label: 'Word', soon: true },
+  { key: 'family', label: 'Contacts' },
+  { key: 'drive', label: 'Space' },
+  { key: 'connect', label: 'Connect', soon: true },
+  { key: 'calendar', label: 'Calendar', soon: true },
 ];
 
 type StorageModel = 'per_user' | 'pooled';

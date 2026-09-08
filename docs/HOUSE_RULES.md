@@ -1,11 +1,15 @@
 # House rules
 
-*The single source. `WELCOME_CORE_DEVELOPER.md`, `WELCOME_PLATFORM_DEVELOPER.md`,
+*The single source. Every welcome document under `onboarding/`,
 `PLATFORM_LANE_HANDOVER.md` and `WORKING_IN_LANES.md` point here rather than
 restating these. Each carried its own copy until 29 Aug 2026 — and the claim in
 this paragraph was written before that was true, so for two days the file
 asserting rule 8 opened with an instance of it. The copies were removed rather
-than corrected: a corrected copy is still a copy.*
+than corrected: a corrected copy is still a copy. The welcomes moved into
+`onboarding/<lane>/WELCOME.md` on 9 Sept 2026, when the mobile and Hire/People
+developers were hired; this paragraph now names the folder rather than the
+files, because a list of filenames here is itself a copy — one that goes stale
+the next time somebody is hired.*
 
 Every rule below has an incident behind it. The incidents are named because a
 rule without its cost gets optimised away by the next person in a hurry.

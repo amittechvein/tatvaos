@@ -4,7 +4,7 @@ For the developer taking `platform.tatvaos.com`. Written 28 Aug 2026 by Core,
 who built the skeleton you are inheriting. Read this before your first commit;
 it is decisions, not mysteries.
 
-Read `WELCOME_PLATFORM_DEVELOPER.md` first for the shape of the place. This
+Read `onboarding/platform/WELCOME.md` first for the shape of the place. This
 document is your lane's specifics — and where a specific has a file behind it,
 the file is named. Go and read it. Rule 7 applies to this document too.
 

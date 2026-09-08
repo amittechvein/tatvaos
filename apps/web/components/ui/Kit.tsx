@@ -257,7 +257,25 @@ export function Table({ head, children }: { head: React.ReactNode[]; children: R
     // edges and scroll. Stacked rows never scroll, so those negative margins
     // only make the element 40px wider than its parent - which is where the
     // stubborn 7px of page overflow on every table page came from.
-    + `.${cls}-w{margin-left:0;margin-right:0;padding-left:0;padding-right:0;overflow-x:visible}`
+    // The doubled class and the !important are BOTH required, and neither is
+    // sloppiness. Bootstrap defines .px-5 as 3rem with !important, and YZEN's
+    // stylesheet loads after Tailwind's — so `px-5` on this wrapper computes to
+    // 48px, not Tailwind's 20px. Measured on /org/audit: a 281px stacked table
+    // started at x=109 and its right edge fell outside the viewport, where
+    // body{overflow-x:clip} hid it. Not scrolled — clipped, i.e. gone.
+    //
+    // A plain `.tv-x-w{padding:0}` cannot win against an !important rule, and
+    // matching !important at equal specificity is decided by source order,
+    // which React controls when it hoists this <style>. Doubling the class
+    // takes specificity to 0-2-0 and settles it regardless of order.
+    //
+    // The underlying collision is NOT fixed here and is much wider than this
+    // rule: every Card in the product renders 48px padding instead of 20px,
+    // desktop included, and Bootstrap's .gap-3/.gap-4/.gap-5 differ from
+    // Tailwind's too. That is stage 4 — deleting YZEN — and it is the best
+    // argument for it we have found. See docs/UI_LANE_BRIEF.md.
+    + `.${cls}-w.${cls}-w{margin-left:0!important;margin-right:0!important;`
+    + `padding-left:0!important;padding-right:0!important;overflow-x:visible}`
     + `.${cls}{white-space:normal}`
     // display:none rather than a clipped off-screen thead. Absolutely
     // positioning a <thead> inside a table is asking the layout engine to do

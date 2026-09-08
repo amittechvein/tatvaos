@@ -128,18 +128,46 @@ attention as desktop, not against the approach.
 
 ---
 
-## 7. Who builds it — open
+## 7. Who builds it — ASSIGNED, 9 September 2026
 
-**Nobody is assigned.** Core, Mail and Connect are all fully loaded, and this
-is a genuinely different skill: store submissions, signing certificates,
-native permissions, two platforms' review processes.
+**A mobile developer has been hired.** The recommendation below was taken.
 
-**The CTO's recommendation is to hire for it.** Connect is the most complex
-product in the suite and pausing it to learn app development is expensive in
-both directions.
+**Read `docs/onboarding/mobile/WELCOME.md`** — this brief remains the decision
+record for *why* and *what*; that document is what exists in the repository
+today, what is blocked and on whom, and the five environment traps that each
+cost a day on 8 September.
 
-**Until someone is assigned, this brief is a decision record, not a plan.**
-Nothing here is started. Nothing here is blocked on anything except a person.
+**What changed since this brief was written, and it matters:**
+
+The app is no longer nothing. `apps/mobile` signs in against production, stores
+its refresh token in the Android keystore, comes back signed in after a
+restart, shows the person's real entitlements, and opens each product. About 8%
+of v1, but a real foundation rather than a demo.
+
+**Section 3's web-view decision is currently NOT what ships.** The tiles open
+the system browser instead, because the web apps authenticate by cookie and the
+app holds a token — a web view lands on a login page inside our own app, and
+teaches people to type passwords into app-shaped screens. **That objection
+disappears the moment Core ships the sign-in handoff endpoint** (token → short-
+lived authenticated URL), at which point section 3 becomes correct as written.
+Chasing that endpoint is the highest-value thing on this lane.
+
+**Section 6's "build screen sharing first" is reinforced, not softened.**
+`getDisplayMedia` does not exist on Android Chrome or iOS Safari, so screen
+sharing from a phone is the one capability no browser can provide — which makes
+it the capability that justifies the app. Prove it before building around it,
+and check `connect_server_capacity` first: we are on a 2 vCPU box that already
+cannot record.
+
+---
+
+**The CTO's original recommendation, kept for the record:**
+
+Nobody was assigned. Core, Mail and Connect were all fully loaded, and this is a
+genuinely different skill: store submissions, signing certificates, native
+permissions, two platforms' review processes. The recommendation was to hire,
+because Connect is the most complex product in the suite and pausing it to learn
+app development is expensive in both directions.
 
 ---
 
