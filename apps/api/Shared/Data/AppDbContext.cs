@@ -448,7 +448,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         // orders the statements in a batch from a model that does not know
         // one app password per mailbox is enforced, and a revoke-then-issue
         // could reach the database insert-first. Schema:
-        // 20260828-mail-app-passwords.sql.
+        // 20260827-a-mail-app-passwords.sql.
         b.Entity<TatvaOS.Api.Modules.Mail.MailAppPassword>()
             .HasIndex(p => p.MailboxId)
             .IsUnique()
