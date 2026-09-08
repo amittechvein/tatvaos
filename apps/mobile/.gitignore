@@ -1,0 +1,44 @@
+# ============================================================================
+#  The native projects are GENERATED, and deliberately not committed.
+# ============================================================================
+#
+#  `npx expo prebuild` writes android/ (and ios/) from app.json and the Expo
+#  config plugins. Keeping them out of git is what preserves the reason we
+#  chose Expo in the first place: app.json stays the single source of truth
+#  for the app name, icon, permissions, scheme and SDK versions, and one
+#  command regenerates both platforms from it.
+#
+#  Commit them the day we need a native change Expo cannot express — a custom
+#  Gradle dependency, a hand-edited manifest, a native module of our own. That
+#  is a real decision with a real cost (from then on, every Expo config change
+#  is ours to apply by hand, on two platforms), and it should be made
+#  deliberately rather than by accidentally running `git add .` after a build.
+#
+#  To rebuild the native project from scratch at any time:
+#      cd apps/mobile
+#      npx expo prebuild --clean
+#
+#  8 Sept 2026 — Amit's call: Android Studio for building and debugging, Expo
+#  still managing the app itself.
+
+android/
+ios/
+
+# Build and tooling output
+.expo/
+.gradle/
+local.properties
+*.keystore
+!debug.keystore
+*.jks
+
+# Signing material must never reach the repository. A release keystore is not
+# recoverable: lose it and the app can never be updated under the same
+# identity again, and anyone who has it can publish as us. It belongs in a
+# password manager and in EAS, nowhere else.
+keystore.properties
+
+# Firebase config. Not a secret - it ships inside the app - but it is
+# per-environment, and a committed one is how a debug build ends up reporting
+# into production. Supply it per build.
+google-services.json
