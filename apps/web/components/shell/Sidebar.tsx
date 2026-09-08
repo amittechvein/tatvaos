@@ -89,7 +89,68 @@ export function Sidebar({ sections, brand, scope, footer, header }: {
   };
   const peekClose = () => { delete document.documentElement.dataset.iconOverlay; };
 
+  // --------------------------------------------------------------------------
+  //  CLOSING THE RAIL ON A PHONE.
+  //
+  //  Below 992px the rail slides over the page as a full-height panel, and
+  //  until now the ONLY way to dismiss it was the header toggle — which the
+  //  open rail covers. Tapping the page did nothing, Escape did nothing, and
+  //  following a link left it sitting on top of the page you had just opened.
+  //  On a phone that is a trap: the app looks frozen behind a menu.
+  //
+  //  YZEN drives all of this from a data attribute rather than React state, so
+  //  this observes the attribute instead of owning it. Fighting it for
+  //  ownership would mean reimplementing the header toggle too.
+  const [railOpen, setRailOpen] = useState(false);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const read = () => setRailOpen(
+      root.dataset.toggled === 'open' && !window.matchMedia('(min-width: 992px)').matches,
+    );
+    read();
+    const mo = new MutationObserver(read);
+    mo.observe(root, { attributes: true, attributeFilter: ['data-toggled'] });
+    window.addEventListener('resize', read);
+    return () => { mo.disconnect(); window.removeEventListener('resize', read); };
+  }, []);
+
+  const closeRail = () => { document.documentElement.dataset.toggled = 'close'; };
+
+  useEffect(() => {
+    if (!railOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') document.documentElement.dataset.toggled = 'close';
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [railOpen]);
+
+  // Following a link must dismiss it. Otherwise you tap "People", the page
+  // loads underneath, and the menu is still covering it — which reads as the
+  // tap not having worked, so people tap it again.
+  //
+  // GUARDED TO MOBILE, and the guard is the whole point. On DESKTOP
+  // data-toggled="close" does not mean closed — it means the rail is PINNED
+  // OPEN at full width (see Topbar, which toggles between "close" and
+  // "icon-overlay-close"). Without this check, every navigation would pin the
+  // desktop sidebar open: a mobile fix silently changing desktop behaviour,
+  // which is the kind of regression nobody connects back to this commit.
+  useEffect(() => {
+    if (window.matchMedia('(min-width: 992px)').matches) return;
+    document.documentElement.dataset.toggled = 'close';
+  }, [pathname]);
+
   return (
+    <>
+    {railOpen && (
+      <button
+        type="button"
+        aria-label="Close menu"
+        onClick={closeRail}
+        className="fixed inset-0 z-[1035] bg-[rgb(21_20_27_/_0.45)] lg:hidden"
+      />
+    )}
     <aside className="app-sidebar sticky" id="sidebar" onMouseEnter={peekOpen} onMouseLeave={peekClose}>
       {/* Brand — the product logo lockup. The mark is a self-contained badge;
           the wordmark is dark artwork, so the header sits on white (overrides.css)
@@ -178,5 +239,6 @@ export function Sidebar({ sections, brand, scope, footer, header }: {
         {footer && <div className="sidebar-footer">{footer}</div>}
       </div>
     </aside>
+    </>
   );
 }

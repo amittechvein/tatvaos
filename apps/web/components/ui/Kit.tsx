@@ -267,9 +267,16 @@ export function Table({ head, children }: { head: React.ReactNode[]; children: R
 
   return (
     <div className="-mx-5 overflow-x-auto px-5">
-      {/* The heading text is ours, from `head`, and escaped above — it is never
-          user-supplied, which is what makes a generated stylesheet safe here. */}
-      <style dangerouslySetInnerHTML={{ __html: css }} />
+      {/* A STRING CHILD, not dangerouslySetInnerHTML. React 19 supports style
+          tags with their CSS as children, so there is no need to reach for the
+          escape hatch — and `react/no-danger` is an error in this repo's lint,
+          which caught the first version of this in CI. Disabling that rule to
+          keep a habit would have been the wrong trade: the rule is right, the
+          code just did not need the API.
+
+          The heading text is ours, from `head`, and escaped above; it is never
+          user-supplied, which is what makes generating a stylesheet safe. */}
+      <style>{css}</style>
       <table
         className={
           `${cls} w-full border-collapse whitespace-nowrap text-sm text-ink `
