@@ -113,7 +113,8 @@ if docker info >/dev/null 2>&1; then
   echo
 elif command -v initdb >/dev/null 2>&1 || [[ -x /usr/lib/postgresql/16/bin/initdb ]]; then
   BIN="$(command -v initdb >/dev/null 2>&1 && dirname "$(command -v initdb)" || echo /usr/lib/postgresql/16/bin)"
-\1  command -v psql >/dev/null 2>&1 \
+  echo "No docker daemon; using a throwaway cluster from $BIN."
+  command -v psql >/dev/null 2>&1 \
     || { echo "Found $BIN but no psql on PATH - the check cannot run."; exit 2; }
   DATA="$(mktemp -d)"
   chmod 777 "$DATA"
@@ -148,7 +149,7 @@ fi
 "${PSQL[@]}" -d "$DBNAME" -c 'select 1' >/dev/null 2>&1 \
   || { echo "Could not reach the throwaway database. The check did NOT run."; exit 2; }
 
-\1 ───────────────────────────────────────────
+# ── Pass 1: build it from nothing ───────────────────────────────────────────
 echo
 echo "Pass 1 — applying every file in filename order, into an empty database."
 echo
