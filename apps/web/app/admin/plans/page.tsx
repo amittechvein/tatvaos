@@ -8,8 +8,37 @@ import {
 } from '@/lib/adminData';
 import { useAuth } from '@/lib/auth';
 import { AdminShell } from '@/components/admin/AdminShell';
-import { Empty } from '@/components/ui/Kit';
+import { Button, Card, Empty } from '@/components/ui/Kit';
 import { Input } from '@/components/ui/Form';
+import { Alert } from '@/components/ui/Page';
+import { Modal } from '@/components/ui/Modal';
+
+// ============================================================================
+//  MIGRATED OFF BOOTSTRAP, 8 Sept 2026 — stage 3 of docs/UI_LANE_BRIEF.md.
+//
+//  This page went first of the remaining six because it is platform-admin only:
+//  if a layout here is wrong, we see it and no customer does. It is the pattern
+//  for the other five, so the substitutions are worth stating plainly:
+//
+//    .card custom-card / .card-body   -> <Card>
+//    .alert-*                         -> <Alert tone>
+//    .btn .btn-primary / .btn-light   -> <Button variant>
+//    hand-rolled .modal markup        -> <Modal> (components/ui/Modal.tsx)
+//    .row + .col-xxl-3 col-lg-6       -> a Tailwind grid
+//    .form-check                      -> a labelled native checkbox
+//
+//  NOTHING ABOUT WHAT THIS PAGE DOES CHANGED. Same state, same validation, same
+//  requests, same copy. That is the stage 3 rule — migrate while it still looks
+//  and behaves the same — and it is what makes a regression here obviously this
+//  commit's fault rather than something to go hunting for.
+//
+//  TWO THINGS DELIBERATELY LEFT. The `ri-*` icons are Remix Icon's font, which
+//  YZEN loads; they are not Bootstrap and swapping them would change the look
+//  for no gain today. And the grid classes below must stay inside the list
+//  re-declared in styles/overrides.css — YZEN's own `.grid` utility outranks
+//  Tailwind's `grid-cols-*` by source order, so a count that is not in that
+//  list silently collapses to one column.
+// ============================================================================
 
 // Storage is stored in bytes; the form works in GB and converts on the way in
 // and out — the same GB convention the onboarding form and org pages use.
@@ -150,17 +179,9 @@ export default function AdminPlansPage() {
 
   useEffect(() => { reload(); }, [reload]);
 
-  // Escape closes whichever dialog is open — except mid-save, where it would
-  // leave the operator unsure whether the write went through.
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key !== 'Escape' || saving || deleting) return;
-      setForm(null);
-      setToDelete(null);
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [saving, deleting]);
+  // Escape used to be handled here for both dialogs. Modal now owns it — and
+  // owns the "not while busy" rule too, so a dialog cannot be dismissed mid-save
+  // and leave the operator unsure whether the write went through.
 
   function openAdd() { setFormErrors([]); setForm(blankForm()); }
   function openEdit(p: PlanRow) { setFormErrors([]); setForm(formFromPlan(p)); }
@@ -210,92 +231,47 @@ export default function AdminPlansPage() {
     }
   }
 
+  const addButton = (
+    <Button variant="primary" onClick={openAdd}>
+      <i className="ri-add-line" aria-hidden="true" /> Add plan
+    </Button>
+  );
+
   return (
     <AdminShell
       scope="platform"
       title="Plans"
       subtitle="The catalogue every organisation is billed against"
-      actions={
-        <button type="button" className="btn btn-primary" onClick={openAdd}>
-          <i className="ri-add-line me-1" /> Add plan
-        </button>
-      }
+      actions={addButton}
     >
       {notice && (
-        <div className={`alert alert-${notice.kind} d-flex align-items-center justify-content-between`} role="alert">
-          <span>{notice.text}</span>
-          <button type="button" className="btn-close" aria-label="Dismiss" onClick={() => setNotice(null)} />
-        </div>
+        <Alert
+          tone={notice.kind === 'success' ? 'ok' : 'danger'}
+          onDismiss={() => setNotice(null)}
+        >
+          {notice.text}
+        </Alert>
       )}
 
       {loading ? (
-        <div className="card custom-card"><div className="card-body"><Empty title="Loading…" /></div></div>
+        <Card padded={false}><Empty title="Loading…" /></Card>
       ) : plans.length === 0 ? (
-        <div className="card custom-card">
-          <div className="card-body">
-            <Empty
-              title="No plans yet"
-              hint="Add the first plan and it becomes assignable from any organisation's Manage dialog."
-              action={
-                <button type="button" className="btn btn-primary" onClick={openAdd}>
-                  <i className="ri-add-line me-1" /> Add plan
-                </button>
-              }
-            />
-          </div>
-        </div>
+        <Card padded={false}>
+          <Empty
+            title="No plans yet"
+            hint="Add the first plan and it becomes assignable from any organisation's Manage dialog."
+            action={addButton}
+          />
+        </Card>
       ) : (
-        <div className="row">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {plans.map((p) => (
-            <div className="col-xxl-3 col-lg-6 col-md-6" key={p.id}>
-              <div className="card custom-card">
-                <div className="card-body">
-                  <div className="d-flex align-items-center gap-2 mb-3">
-                    <span className="avatar avatar-md bg-primary-transparent">
-                      <i className="ri-price-tag-3-line fs-18" />
-                    </span>
-                    <h6 className="fw-semibold mb-0 flex-fill">{p.name}</h6>
-                  </div>
-
-                  <div className="mb-3">
-                    {p.pricePerUserMonthly ? (
-                      <><span className="fs-24 fw-bold">₹{p.pricePerUserMonthly}</span>
-                        <span className="text-muted fs-12"> / user / month</span></>
-                    ) : p.priceMonthly ? (
-                      <><span className="fs-24 fw-bold">₹{p.priceMonthly}</span>
-                        <span className="text-muted fs-12"> / month</span></>
-                    ) : (
-                      <span className="fs-20 fw-semibold text-muted">Custom pricing</span>
-                    )}
-                  </div>
-
-                  <ul className="list-unstyled fs-13 mb-0">
-                    <Feature>{p.maxUsers ? `Up to ${p.maxUsers} people` : 'Unlimited people'}</Feature>
-                    <Feature>
-                      {p.storageModel === 'pooled'
-                        ? `${formatBytes(p.pooledStorageBytes ?? 0)} pooled storage`
-                        : `${formatBytes(p.perUserQuotaBytes ?? 0)} per user`}
-                    </Feature>
-                    <Feature>{p.maxDomains ? `${p.maxDomains} domain${p.maxDomains > 1 ? 's' : ''}` : 'Unlimited domains'}</Feature>
-                    <Feature><span className="text-capitalize">{p.includedProducts.join(', ') || 'mail'}</span></Feature>
-                  </ul>
-
-                  <div className="d-flex gap-2 mt-3 pt-3 border-top">
-                    <button type="button" className="btn btn-sm btn-light flex-fill" onClick={() => openEdit(p)}>
-                      <i className="ri-pencil-line me-1" /> Edit
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-outline-danger"
-                      aria-label={`Delete ${p.name}`}
-                      onClick={() => { setDeleteError(null); setToDelete(p); }}
-                    >
-                      <i className="ri-delete-bin-line" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <PlanCard
+              key={p.id}
+              plan={p}
+              onEdit={() => openEdit(p)}
+              onDelete={() => { setDeleteError(null); setToDelete(p); }}
+            />
           ))}
         </div>
       )}
@@ -318,11 +294,137 @@ export default function AdminPlansPage() {
 }
 
 // ---------------------------------------------------------------------------
+/**
+ * One plan. The card is a flex column with the actions pushed to the bottom, so
+ * a row of plans with different numbers of features still has its Edit buttons
+ * on one line — with Bootstrap's grid they sat wherever the text ended.
+ */
+function PlanCard({ plan: p, onEdit, onDelete }: {
+  plan: PlanRow;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="flex flex-col rounded-card border border-line bg-surface p-5 shadow-card">
+      <div className="mb-3 flex items-center gap-2">
+        <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-500/10 text-brand-700">
+          <i className="ri-price-tag-3-line text-lg" aria-hidden="true" />
+        </span>
+        <h6 className="min-w-0 flex-1 truncate font-semibold text-ink" title={p.name}>{p.name}</h6>
+      </div>
+
+      <div className="mb-3">
+        {p.pricePerUserMonthly ? (
+          <>
+            <span className="text-2xl font-bold text-ink">₹{p.pricePerUserMonthly}</span>
+            <span className="text-xs text-ink-muted"> / user / month</span>
+          </>
+        ) : p.priceMonthly ? (
+          <>
+            <span className="text-2xl font-bold text-ink">₹{p.priceMonthly}</span>
+            <span className="text-xs text-ink-muted"> / month</span>
+          </>
+        ) : (
+          <span className="text-xl font-semibold text-ink-muted">Custom pricing</span>
+        )}
+      </div>
+
+      <ul className="mb-0 list-none space-y-2 p-0 text-[13px]">
+        <Feature>{p.maxUsers ? `Up to ${p.maxUsers} people` : 'Unlimited people'}</Feature>
+        <Feature>
+          {p.storageModel === 'pooled'
+            ? `${formatBytes(p.pooledStorageBytes ?? 0)} pooled storage`
+            : `${formatBytes(p.perUserQuotaBytes ?? 0)} per user`}
+        </Feature>
+        <Feature>{p.maxDomains ? `${p.maxDomains} domain${p.maxDomains > 1 ? 's' : ''}` : 'Unlimited domains'}</Feature>
+        <Feature><span className="capitalize">{p.includedProducts.join(', ') || 'mail'}</span></Feature>
+      </ul>
+
+      {/* mt-auto is what pins this row to the bottom of the tallest card. */}
+      <div className="mt-auto flex gap-2 border-t border-line pt-3">
+        <Button className="flex-1" onClick={onEdit}>
+          <i className="ri-pencil-line" aria-hidden="true" /> Edit
+        </Button>
+        {/* Hand-rolled rather than <Button variant="secondary" className="text-danger">.
+            Two utilities that set the same property — text-ink and text-danger —
+            do not resolve by their order in the className string; they resolve by
+            their order in Tailwind's generated stylesheet, which is not something
+            the caller controls. That is the quiet way a "red" button ships grey.
+            Where a variant needs different colours, write the classes once. */}
+        <button
+          type="button"
+          aria-label={`Delete ${p.name}`}
+          onClick={onDelete}
+          className={
+            'inline-flex items-center justify-center rounded-lg border border-danger '
+            + 'px-3 py-2 text-sm font-semibold text-danger transition-colors '
+            + 'hover:bg-danger hover:text-white focus-visible:outline-none '
+            + 'focus-visible:ring-2 focus-visible:ring-danger/40'
+          }
+        >
+          <i className="ri-delete-bin-line" aria-hidden="true" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+/**
+ * A joined row of mutually exclusive choices — what `.btn-group` was doing.
+ *
+ * These are toggle buttons, so each carries aria-pressed: the selected one is
+ * currently signalled by being violet, and colour alone is not a state anyone
+ * using a screen reader can perceive. Same rule the sidebar's active item and
+ * the Alert's coloured bar follow.
+ */
+function Segmented<T extends string>({ label, value, options, onChange, size = 'md' }: {
+  label: string;
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (v: T) => void;
+  size?: 'sm' | 'md';
+}) {
+  return (
+    <div className="flex w-full" role="group" aria-label={label}>
+      {options.map((o, i) => {
+        const active = o.value === value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(o.value)}
+            className={
+              'flex-1 border border-brand-500 font-semibold transition-colors '
+              + (size === 'sm' ? 'px-3 py-1.5 text-xs ' : 'px-4 py-2 text-sm ')
+              + (i === 0 ? 'rounded-l-lg ' : '')
+              + (i === options.length - 1 ? 'rounded-r-lg ' : '')
+              // The shared edge is one line, not two stacked on each other.
+              + (i > 0 ? '-ml-px ' : '')
+              + (active
+                ? 'z-10 bg-brand-500 text-white'
+                : 'bg-surface text-brand-700 hover:bg-brand-50')
+            }
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function FieldLabel({ children, htmlFor }: { children: React.ReactNode; htmlFor?: string }) {
+  return (
+    <label htmlFor={htmlFor} className="mb-1.5 block text-[13px] font-medium text-ink">
+      {children}
+    </label>
+  );
+}
+
+// ---------------------------------------------------------------------------
 //  Add / Edit
-//
-//  Rendered as YZEN's modal markup with the backdrop as a sibling, driven by
-//  React state rather than Bootstrap's JS — the bundle ships no Bootstrap
-//  JavaScript, and `.modal.show.d-block` needs none.
 // ---------------------------------------------------------------------------
 function PlanFormModal({
   form, setForm, errors, saving, onClose, onSave,
@@ -339,144 +441,144 @@ function PlanFormModal({
   const editing = Boolean(form.id);
 
   return (
-    <>
-      <div className="modal fade show d-block" tabIndex={-1} role="dialog" aria-modal="true">
-        <div className="modal-dialog modal-dialog-centered modal-lg" role="document">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h6 className="modal-title">{editing ? 'Edit plan' : 'Add plan'}</h6>
-              <button type="button" className="btn-close" aria-label="Close" onClick={onClose} />
+    <Modal
+      title={editing ? 'Edit plan' : 'Add plan'}
+      size="lg"
+      busy={saving}
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button variant="primary" onClick={onSave} disabled={saving}>
+            {saving ? 'Saving…' : editing ? 'Save changes' : 'Create plan'}
+          </Button>
+        </>
+      }
+    >
+      {editing && (
+        <Alert tone="warn">
+          Changes apply to new growth only — organisations already on this plan keep the
+          limits they were given and are not resized.
+        </Alert>
+      )}
+
+      {errors.length > 0 && (
+        <Alert tone="danger">
+          <ul className="mb-0 list-disc space-y-0.5 pl-4">
+            {errors.map((e) => <li key={e}>{e}</li>)}
+          </ul>
+        </Alert>
+      )}
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="sm:col-span-2">
+          <FieldLabel htmlFor="plan-name">Name</FieldLabel>
+          <Input id="plan-name" value={form.name} autoFocus
+                 placeholder="Business" onChange={(e) => set('name', e.target.value)} />
+        </div>
+
+        <div className="sm:col-span-2">
+          <FieldLabel>Storage model</FieldLabel>
+          <Segmented
+            label="Storage model"
+            value={form.storageModel}
+            onChange={(v) => set('storageModel', v)}
+            options={[
+              { value: 'per_user', label: 'Per-user quota' },
+              { value: 'pooled', label: 'Pooled' },
+            ]}
+          />
+        </div>
+
+        <div>
+          {form.storageModel === 'per_user' ? (
+            <>
+              <FieldLabel htmlFor="plan-per-user">Storage per user (GB)</FieldLabel>
+              <Input id="plan-per-user" type="number" min={1}
+                     value={form.perUserQuotaGb}
+                     onChange={(e) => set('perUserQuotaGb', e.target.value)} />
+            </>
+          ) : (
+            <>
+              <FieldLabel htmlFor="plan-pooled">Total pooled storage (GB)</FieldLabel>
+              <Input id="plan-pooled" type="number" min={1}
+                     value={form.pooledStorageGb}
+                     onChange={(e) => set('pooledStorageGb', e.target.value)} />
+            </>
+          )}
+        </div>
+
+        <div>
+          <FieldLabel htmlFor="plan-seats">Max users</FieldLabel>
+          <Input id="plan-seats" type="number" min={1}
+                 placeholder="Unlimited" value={form.maxUsers}
+                 onChange={(e) => set('maxUsers', e.target.value)} />
+        </div>
+
+        <div>
+          <FieldLabel htmlFor="plan-domains">Max domains</FieldLabel>
+          <Input id="plan-domains" type="number" min={1}
+                 placeholder="Unlimited" value={form.maxDomains}
+                 onChange={(e) => set('maxDomains', e.target.value)} />
+        </div>
+
+        <div className="sm:col-span-2">
+          <FieldLabel>Pricing</FieldLabel>
+          <div className="mb-2">
+            <Segmented
+              label="Pricing model"
+              size="sm"
+              value={form.pricingModel}
+              onChange={(v) => set('pricingModel', v)}
+              options={[
+                { value: 'per_user', label: 'Per user / month' },
+                { value: 'flat', label: 'Flat / month' },
+                { value: 'custom', label: 'Custom' },
+              ]}
+            />
+          </div>
+          {form.pricingModel !== 'custom' && (
+            // The rupee sign sits inside the field rather than in a joined
+            // prefix box: one control, one border, and the caret lands after
+            // the symbol where you expect it.
+            <div className="relative">
+              <span aria-hidden="true"
+                    className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm text-ink-muted">
+                ₹
+              </span>
+              <Input type="number" min={0} value={form.price} className="pl-7"
+                     aria-label={form.pricingModel === 'per_user' ? 'Price per user per month' : 'Price per month'}
+                     placeholder={form.pricingModel === 'per_user' ? 'per user, per month' : 'per month'}
+                     onChange={(e) => set('price', e.target.value)} />
             </div>
+          )}
+        </div>
 
-            <div className="modal-body">
-              {editing && (
-                <div className="alert alert-warning" role="alert">
-                  Changes apply to new growth only — organisations already on this plan keep the
-                  limits they were given and are not resized.
-                </div>
-              )}
-
-              {errors.length > 0 && (
-                <div className="alert alert-danger" role="alert">
-                  <ul className="mb-0 ps-3">{errors.map((e) => <li key={e}>{e}</li>)}</ul>
-                </div>
-              )}
-
-              <div className="row g-3">
-                <div className="col-12">
-                  <label className="form-label" htmlFor="plan-name">Name</label>
-                  <Input id="plan-name"  value={form.name} autoFocus
-                         placeholder="Business" onChange={(e) => set('name', e.target.value)} />
-                </div>
-
-                <div className="col-12">
-                  <label className="form-label d-block">Storage model</label>
-                  <div className="btn-group w-100" role="group" aria-label="Storage model">
-                    <button type="button"
-                      className={`btn ${form.storageModel === 'per_user' ? 'btn-primary' : 'btn-outline-primary'}`}
-                      onClick={() => set('storageModel', 'per_user')}>
-                      Per-user quota
-                    </button>
-                    <button type="button"
-                      className={`btn ${form.storageModel === 'pooled' ? 'btn-primary' : 'btn-outline-primary'}`}
-                      onClick={() => set('storageModel', 'pooled')}>
-                      Pooled
-                    </button>
-                  </div>
-                </div>
-
-                <div className="col-sm-6">
-                  {form.storageModel === 'per_user' ? (
-                    <>
-                      <label className="form-label" htmlFor="plan-per-user">Storage per user (GB)</label>
-                      <Input id="plan-per-user" type="number" min={1} 
-                             value={form.perUserQuotaGb}
-                             onChange={(e) => set('perUserQuotaGb', e.target.value)} />
-                    </>
-                  ) : (
-                    <>
-                      <label className="form-label" htmlFor="plan-pooled">Total pooled storage (GB)</label>
-                      <Input id="plan-pooled" type="number" min={1} 
-                             value={form.pooledStorageGb}
-                             onChange={(e) => set('pooledStorageGb', e.target.value)} />
-                    </>
-                  )}
-                </div>
-
-                <div className="col-sm-6">
-                  <label className="form-label" htmlFor="plan-seats">Max users</label>
-                  <Input id="plan-seats" type="number" min={1} 
-                         placeholder="Unlimited" value={form.maxUsers}
-                         onChange={(e) => set('maxUsers', e.target.value)} />
-                </div>
-
-                <div className="col-sm-6">
-                  <label className="form-label" htmlFor="plan-domains">Max domains</label>
-                  <Input id="plan-domains" type="number" min={1} 
-                         placeholder="Unlimited" value={form.maxDomains}
-                         onChange={(e) => set('maxDomains', e.target.value)} />
-                </div>
-
-                <div className="col-12">
-                  <label className="form-label d-block">Pricing</label>
-                  <div className="btn-group w-100 mb-2" role="group" aria-label="Pricing model">
-                    <button type="button"
-                      className={`btn btn-sm ${form.pricingModel === 'per_user' ? 'btn-primary' : 'btn-outline-primary'}`}
-                      onClick={() => set('pricingModel', 'per_user')}>
-                      Per user / month
-                    </button>
-                    <button type="button"
-                      className={`btn btn-sm ${form.pricingModel === 'flat' ? 'btn-primary' : 'btn-outline-primary'}`}
-                      onClick={() => set('pricingModel', 'flat')}>
-                      Flat / month
-                    </button>
-                    <button type="button"
-                      className={`btn btn-sm ${form.pricingModel === 'custom' ? 'btn-primary' : 'btn-outline-primary'}`}
-                      onClick={() => set('pricingModel', 'custom')}>
-                      Custom
-                    </button>
-                  </div>
-                  {form.pricingModel !== 'custom' && (
-                    <div className="input-group">
-                      <span className="input-group-text">₹</span>
-                      <Input type="number" min={0}  value={form.price}
-                             placeholder={form.pricingModel === 'per_user' ? 'per user, per month' : 'per month'}
-                             onChange={(e) => set('price', e.target.value)} />
-                    </div>
-                  )}
-                </div>
-
-                <div className="col-12">
-                  <label className="form-label d-block">Included products</label>
-                  {Object.keys(form.products).map((key) => {
-                    const known = PRODUCTS.find((x) => x.key === key);
-                    return (
-                      <div className="form-check form-check-inline" key={key}>
-                        <input className="form-check-input" type="checkbox" id={`prod-${key}`}
-                               checked={Boolean(form.products[key])}
-                               onChange={(e) => setProduct(key, e.target.checked)} />
-                        <label className="form-check-label text-capitalize" htmlFor={`prod-${key}`}>
-                          {known?.label ?? key}
-                          {known?.soon && <span className="text-muted fs-11"> (soon)</span>}
-                        </label>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            <div className="modal-footer">
-              <button type="button" className="btn btn-light" onClick={onClose} disabled={saving}>Cancel</button>
-              <button type="button" className="btn btn-primary" onClick={onSave} disabled={saving}>
-                {saving ? 'Saving…' : editing ? 'Save changes' : 'Create plan'}
-              </button>
-            </div>
+        <div className="sm:col-span-2">
+          <FieldLabel>Included products</FieldLabel>
+          <div className="flex flex-wrap gap-x-5 gap-y-2">
+            {Object.keys(form.products).map((key) => {
+              const known = PRODUCTS.find((x) => x.key === key);
+              return (
+                <label key={key} htmlFor={`prod-${key}`}
+                       className="flex cursor-pointer items-center gap-2 text-sm text-ink">
+                  <input
+                    id={`prod-${key}`}
+                    type="checkbox"
+                    className="h-4 w-4 cursor-pointer rounded border border-line accent-brand-500
+                               focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40"
+                    checked={Boolean(form.products[key])}
+                    onChange={(e) => setProduct(key, e.target.checked)}
+                  />
+                  <span className="capitalize">{known?.label ?? key}</span>
+                  {known?.soon && <span className="text-[11px] text-ink-muted">(soon)</span>}
+                </label>
+              );
+            })}
           </div>
         </div>
       </div>
-      <div className="modal-backdrop fade show" />
-    </>
+    </Modal>
   );
 }
 
@@ -491,40 +593,35 @@ function ConfirmDeleteModal({
   onConfirm: () => void;
 }) {
   return (
-    <>
-      <div className="modal fade show d-block" tabIndex={-1} role="dialog" aria-modal="true">
-        <div className="modal-dialog modal-dialog-centered" role="document">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h6 className="modal-title">Delete plan</h6>
-              <button type="button" className="btn-close" aria-label="Close" onClick={onClose} />
-            </div>
-            <div className="modal-body">
-              <p className="mb-0">Delete <strong>{plan.name}</strong>? This cannot be undone.</p>
-              {/* The dialog stays open on failure: the server's reason is the
-                  useful part, and reopening to read it would be busywork. */}
-              {error && <div className="alert alert-danger mt-3 mb-0" role="alert">{error}</div>}
-            </div>
-            <div className="modal-footer">
-              <button type="button" className="btn btn-light" onClick={onClose} disabled={deleting}>Cancel</button>
-              <button type="button" className="btn btn-danger" onClick={onConfirm} disabled={deleting}>
-                {deleting ? 'Deleting…' : 'Delete plan'}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div className="modal-backdrop fade show" />
-    </>
+    <Modal
+      title="Delete plan"
+      busy={deleting}
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose} disabled={deleting}>Cancel</Button>
+          <Button variant="danger" onClick={onConfirm} disabled={deleting}>
+            {deleting ? 'Deleting…' : 'Delete plan'}
+          </Button>
+        </>
+      }
+    >
+      <p className="m-0 text-sm text-ink">
+        Delete <strong className="font-semibold">{plan.name}</strong>? This cannot be undone.
+      </p>
+      {/* The dialog stays open on failure: the server's reason is the useful
+          part, and reopening to read it would be busywork. */}
+      {error && <Alert tone="danger" className="mb-0 mt-3">{error}</Alert>}
+    </Modal>
   );
 }
 
 // ---------------------------------------------------------------------------
 function Feature({ children }: { children: React.ReactNode }) {
   return (
-    <li className="mb-2 d-flex align-items-start gap-2">
-      <i className="ri-checkbox-circle-line text-success" style={{ marginTop: 1 }} />
-      <span className="text-muted">{children}</span>
+    <li className="flex items-start gap-2">
+      <i className="ri-checkbox-circle-line text-ok" aria-hidden="true" style={{ marginTop: 1 }} />
+      <span className="text-ink-muted">{children}</span>
     </li>
   );
 }

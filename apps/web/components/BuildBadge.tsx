@@ -14,6 +14,19 @@
  *
  * Deliberately pointer-events: none, so it can never intercept a click, and
  * aria-hidden so it is not announced to screen readers.
+ *
+ * LEGIBILITY, 8 Sept 2026. It was rgba(130,135,150,.9) on rgba(127,127,140,.14)
+ * — a contrast ratio of 1.1, i.e. very nearly invisible. That is an odd thing
+ * for the one element whose entire job is to be read when you are asking "did
+ * my deploy land?", and for a week it was only readable by querying the DOM.
+ * Now ink-muted on the surface with a hairline: about 4.8, still quiet, still
+ * out of the way, but actually readable. Unobtrusive and unreadable are not
+ * the same requirement.
+ *
+ * If this shows `unknown`, the stamp is not reaching the build — next.config.ts
+ * resolves it by reading .git/HEAD inside the image, and the root .dockerignore
+ * excludes .git. The fix is to pass BUILD_SHA as a build arg (resolveSha
+ * already honours process.env.BUILD_SHA), not to ship .git into the image.
  */
 export function BuildBadge() {
   const sha = process.env.NEXT_PUBLIC_BUILD_SHA || 'unknown';
@@ -34,8 +47,9 @@ export function BuildBadge() {
         lineHeight: '14px',
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
         letterSpacing: '0.02em',
-        color: 'rgba(130, 135, 150, 0.9)',
-        background: 'rgba(127, 127, 140, 0.14)',
+        color: 'rgb(var(--ink-muted))',
+        background: 'rgb(var(--surface))',
+        border: '1px solid rgb(var(--line))',
         padding: '1px 6px',
         borderRadius: 6,
         userSelect: 'none',
