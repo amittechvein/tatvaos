@@ -289,6 +289,37 @@ services:
       # retry, which is recoverable, but still not something to switch on
       # blind.
       Mail__QuotaEnforcement: ${MAIL_QUOTA_ENFORCEMENT:-}
+      # ----------------------------------------------------------------------
+      #  BOUNCE / VERP. Optional by design: with these unset the pipeline is
+      #  DORMANT — Postfix's routing is live, but the API neither signs a VERP
+      #  envelope nor validates one, and that is what makes the deployed-but-off
+      #  state safe. So `:-` is correct here, unlike the domain block below where
+      #  an unset value is always an error and `:?` is right.
+      #
+      #  THE PRICE OF `:-`, and it is not free: Compose CREATES the variable with
+      #  an EMPTY value — it does not leave it unset. .NET then reads "" rather
+      #  than null, so `??` NEVER FIRES. Every reader of these keys must treat
+      #  blank as absent: IsNullOrWhiteSpace, or an equality check, never `??`.
+      #  Two readers were wrong when this block was added, and are fixed in the
+      #  same commit: ReservedDomains.BounceDomain (whose `??` default would have
+      #  silently switched OFF the reserved-domain guard the moment this wiring
+      #  landed) and MailSendApiEndpoints' Bounce:KeyId (an empty keyid looks up
+      #  "Bounce:Keys:" and finds nothing, so signing stays off with the key set).
+      #
+      #  TWO KEY SLOTS, not one. A retired key must keep verifying bounces
+      #  already in flight through the 30-day address-expiry window — a DSN can
+      #  arrive days after a rotation, which is the whole reason the keyid is IN
+      #  the address. One slot makes rotation impossible and the keyid
+      #  decoration. BOUNCE_KEY_ID names the slot that signs today.
+      #
+      #  The intake port is deliberately NOT wired: it is pinned in code and in
+      #  main.cf's transport nexthop as a matched pair, and a setting that can
+      #  break a pair is worse than a constant.
+      # ----------------------------------------------------------------------
+      Bounce__Domain: ${BOUNCE_DOMAIN:-}
+      Bounce__KeyId: ${BOUNCE_KEY_ID:-}
+      Bounce__Keys__k1: ${BOUNCE_KEY_K1:-}
+      Bounce__Keys__k2: ${BOUNCE_KEY_K2:-}
       # ---- Connect: Private (encrypted) meetings ----------------------
       #
       #  THE SECRET LIVES IN infra/docker/.env AND MUST BE PASSED IN HERE.

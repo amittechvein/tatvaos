@@ -292,7 +292,17 @@ public static class MailSendApiEndpoints
         // keyid still in Bounce:Keys, which is what keeps a rotation safe for
         // bounces already in flight.
         var bounceDomain = config["Bounce:Domain"];
-        var bounceKeyId  = config["Bounce:KeyId"] ?? "k1";
+        // IsNullOrWhiteSpace, not `??`, for the reason recorded in
+        // ReservedDomains.BounceDomain: Bounce__KeyId is wired as
+        // ${BOUNCE_KEY_ID:-}, which SETS the variable to an empty string rather
+        // than leaving it unset, so `??` would not fire. An empty keyid then
+        // looks up "Bounce:Keys:" , finds nothing, and signing stays off even
+        // with the secret correctly set under k1 — silently, which is the worst
+        // way for it to be off. Trimmed too: the keyid goes into the address and
+        // must match [A-Za-z0-9]{1,16}, so a padded value would build an address
+        // its own verifier rejects.
+        var configuredKeyId = config["Bounce:KeyId"];
+        var bounceKeyId  = string.IsNullOrWhiteSpace(configuredKeyId) ? "k1" : configuredKeyId.Trim();
         var bounceSecret = config[$"Bounce:Keys:{bounceKeyId}"];
         var bounceOn = !string.IsNullOrEmpty(bounceSecret) && !string.IsNullOrEmpty(bounceDomain);
 
