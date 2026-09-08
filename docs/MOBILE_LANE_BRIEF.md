@@ -132,7 +132,7 @@ attention as desktop, not against the approach.
 
 **A mobile developer has been hired.** The recommendation below was taken.
 
-**Read `docs/WELCOME_MOBILE_DEVELOPER.md`** — this brief remains the decision
+**Read `docs/onboarding/mobile/WELCOME.md`** — this brief remains the decision
 record for *why* and *what*; that document is what exists in the repository
 today, what is blocked and on whom, and the five environment traps that each
 cost a day on 8 September.
