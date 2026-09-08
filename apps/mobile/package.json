@@ -5,8 +5,8 @@
   "main": "index.js",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios"
+    "android": "expo run:android",
+    "ios": "expo run:ios"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
@@ -16,6 +16,7 @@
     "expo-font": "~57.0.3",
     "expo-secure-store": "~57.0.3",
     "expo-status-bar": "~57.0.1",
+    "expo-system-ui": "~57.0.3",
     "react": "19.2.3",
     "react-native": "0.86.3"
   },

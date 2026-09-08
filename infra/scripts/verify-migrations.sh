@@ -72,10 +72,7 @@
 
 set -uo pipefail
 
-# Override with MIGRATIONS_DIR to point the verifier at another folder - the
-# way to test the verifier itself (a copy of the real folder plus one
-# deliberately broken file) without putting a canary in the real one.
-DIR="${MIGRATIONS_DIR:-local/postgres/init}"
+DIR="local/postgres/init"
 PGIMAGE="${PGIMAGE:-postgres:16-alpine}"
 DBNAME="migration_verify"
 

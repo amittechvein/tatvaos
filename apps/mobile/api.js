@@ -29,9 +29,31 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * One line per request, and it is the only reason anyone can diagnose this app
+ * remotely.
+ *
+ * 8 Sept 2026: a sign-in on the emulator did not store a session, and the
+ * device log could not say why — because after the startup line this app
+ * emitted NOTHING. A 401, a DNS failure and a person who simply never pressed
+ * the button all produced an identical, empty log. The only diagnostic
+ * available was to look at the screen, which rules out ever helping someone
+ * with a problem we cannot reproduce.
+ *
+ * WHAT THIS DELIBERATELY NEVER PRINTS: the request body, the response body,
+ * the access token, the refresh token, the password, or the email address.
+ * Method, path, status and duration answer "did it reach the server and what
+ * did the server say", which is the question. Anything more is a credential in
+ * a log file that gets pasted into a chat window.
+ */
+function logLine(method, path, status, ms, note) {
+  console.log(`[api] ${method} ${path} -> ${status} ${ms}ms${note ? ' ' + note : ''}`);
+}
+
 async function request(path, { method = 'POST', body, token } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const started = Date.now();
 
   let res;
   try {
@@ -51,7 +73,11 @@ async function request(path, { method = 'POST', body, token } = {}) {
     });
   } catch (e) {
     // "We gave up waiting" and "there is no network" need different advice,
-    // so they get different sentences.
+    // so they get different sentences. The log keeps the distinction too — a
+    // timeout and a refused connection look identical to the person and mean
+    // completely different things to whoever is fixing it.
+    logLine(method, path, 'FAILED', Date.now() - started,
+            e.name === 'AbortError' ? '(timed out)' : `(${e.name}: ${e.message})`);
     throw new ApiError(
       e.name === 'AbortError'
         ? 'The server is taking too long to answer. Try again.'
@@ -61,6 +87,8 @@ async function request(path, { method = 'POST', body, token } = {}) {
   } finally {
     clearTimeout(timer);
   }
+
+  logLine(method, path, res.status, Date.now() - started);
 
   const text = await res.text();
   let data = null;
@@ -92,8 +120,13 @@ async function request(path, { method = 'POST', body, token } = {}) {
 export async function login(email, password) {
   const data = await request('/api/auth/login', { body: { email, password } });
   if (data?.mfaRequired) {
+    // Logged because this is the branch that looks like success and is not:
+    // 200 OK, no token. Without this line, "login returned 200 but nobody is
+    // signed in" is indistinguishable from a bug in the storage code.
+    console.log('[api] login -> two-step verification required');
     return { kind: 'mfa', challenge: data.challenge, note: data.note };
   }
+  console.log('[api] login -> session issued');
   return { kind: 'session', session: await keep(data) };
 }
 
@@ -117,6 +150,10 @@ async function keep(data) {
     throw new ApiError('The server sent a sign-in we could not read.', 0);
   }
   await SecureStore.setItemAsync(REFRESH_KEY, data.refreshToken);
+  // The keychain write is its own failure mode - it is native, it can throw on
+  // a device with no secure hardware, and until this line the only evidence it
+  // had happened was a file appearing in shared_prefs.
+  console.log('[api] refresh token stored in the keychain');
   return {
     accessToken: data.accessToken,
     expiresAt: data.expiresAt,
@@ -131,8 +168,22 @@ async function keep(data) {
 
 /** On launch: trade the stored refresh token for a live session, or null. */
 export async function restore() {
-  const saved = await SecureStore.getItemAsync(REFRESH_KEY);
-  if (!saved) return null;
+  // The keychain read is INSIDE the try from here on. It used to sit outside
+  // every guard in this file, so a throw here rejected restore() and — with no
+  // .catch in App.js — pinned the app on its splash screen permanently. Both
+  // halves of that are fixed; this half means the caller gets "nobody is
+  // signed in", which is true and recoverable, instead of an exception.
+  let saved;
+  try {
+    saved = await SecureStore.getItemAsync(REFRESH_KEY);
+  } catch (e) {
+    console.log(`[api] keychain read failed, treating as signed out: ${e?.message ?? e}`);
+    return null;
+  }
+  if (!saved) {
+    console.log('[api] no stored session; showing sign-in');
+    return null;
+  }
 
   try {
     // The body is the documented mobile path — the endpoint's own comment says

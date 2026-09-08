@@ -32,6 +32,7 @@
 // ============================================================================
 
 import Link from 'next/link';
+import { useId } from 'react';
 
 // ---------------------------------------------------------------------------
 export function Card({
@@ -44,8 +45,21 @@ export function Card({
   className?: string;
   padded?: boolean;
 }) {
+  //  min-w-0 IS LOAD-BEARING, and it is not obvious.
+  //
+  //  A grid or flex ITEM defaults to min-width:auto, which means "never shrink
+  //  below my content's minimum". Put a Card holding a table inside
+  //  `grid lg:grid-cols-2` and, at phone width, the table's intrinsic width
+  //  pushes the track out: measured on /org/storage at 375px, the grid
+  //  container was correctly 351px while its computed grid-template-columns
+  //  was 569px. The card grew to 569, the page to 601, and the whole console
+  //  scrolled sideways.
+  //
+  //  The table's own overflow-x-auto never got a chance — a scroll container
+  //  only scrolls when it is FORCED to be narrower than its content, and
+  //  nothing was forcing it. min-w-0 is what forces it.
   return (
-    <div className={`rounded-card border border-line bg-surface shadow-card ${className}`.trim()}>
+    <div className={`min-w-0 rounded-card border border-line bg-surface shadow-card ${className}`.trim()}>
       {(title || actions) && (
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4">
           <div className="min-w-0">
@@ -195,12 +209,77 @@ export function Stat({
 // Row and cell styling is applied from the <table> with arbitrary variants
 // rather than on each <Td>, because callers render their own <tr> (and
 // sometimes raw <td>) and those have to look right too.
+//
+//  ON A PHONE A TABLE IS NOT A TABLE.
+//
+//  Measured on /admin at 375px on 8 Sept 2026: the table was 660px wide inside
+//  a 390px container. 270px of every row sat off-screen, reachable only by
+//  scrolling sideways — so "how much storage is this organisation using" meant
+//  dragging each row horizontally and losing which row you were on. That is
+//  what "the UI is not compatible with mobile" meant, and it came from one
+//  word: whitespace-nowrap.
+//
+//  Below 640px each row becomes a stacked block: label on the left, value on
+//  the right, one line per field. The labels come from `head`, so THE CALLERS
+//  DO NOT CHANGE — the same trick that made this file a lever in the first
+//  place. Rules are nth-child based, which is why they also reach the raw <td>
+//  that several pages render instead of <Td>.
+//
+//  Only STRING headings become labels. A heading that is a node — a select-all
+//  checkbox, an empty action column — gets no label rather than a mangled one,
+//  and its cell simply spans the row.
+//
+//  The scroll container stays for the desktop case, where a wide table with a
+//  scrollbar is correct and a stacked one would be absurd.
 export function Table({ head, children }: { head: React.ReactNode[]; children: React.ReactNode }) {
+  const id = useId().replace(/[^a-zA-Z0-9]/g, '');
+  const cls = `tv-t${id}`;
+
+  // CSS content strings need their quotes and backslashes escaped, or one
+  // heading with an apostrophe silently breaks every rule after it.
+  const label = (h: React.ReactNode) =>
+    typeof h === 'string' && h.trim()
+      ? h.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+      : null;
+
+  const cellRules = head.map((h, i) => {
+    const l = label(h);
+    return l
+      ? `.${cls} tbody td:nth-child(${i + 1})::before{content:"${l}";`
+        + 'color:rgb(var(--ink-muted));font-size:11px;font-weight:600;'
+        + 'text-transform:uppercase;letter-spacing:.04em;padding-right:1rem;flex:0 0 auto}'
+      : `.${cls} tbody td:nth-child(${i + 1}){justify-content:flex-start}`;
+  }).join('');
+
+  const css =
+    `@media (max-width:639px){`
+    + `.${cls}{white-space:normal}`
+    // display:none rather than a clipped off-screen thead. Absolutely
+    // positioning a <thead> inside a table is asking the layout engine to do
+    // something it has no good answer for. Nothing is lost to a screen reader:
+    // every cell carries its own label from ::before at this width.
+    + `.${cls} thead{display:none}`
+    + `.${cls} tbody tr{display:block;padding:.75rem 0}`
+    + `.${cls} tbody td{display:flex;align-items:center;justify-content:space-between;`
+    + `gap:.75rem;padding:.25rem 0;text-align:right}`
+    + cellRules
+    + `}`;
+
   return (
     <div className="-mx-5 overflow-x-auto px-5">
+      {/* A STRING CHILD, not dangerouslySetInnerHTML. React 19 supports style
+          tags with their CSS as children, so there is no need to reach for the
+          escape hatch — and `react/no-danger` is an error in this repo's lint,
+          which caught the first version of this in CI. Disabling that rule to
+          keep a habit would have been the wrong trade: the rule is right, the
+          code just did not need the API.
+
+          The heading text is ours, from `head`, and escaped above; it is never
+          user-supplied, which is what makes generating a stylesheet safe. */}
+      <style>{css}</style>
       <table
         className={
-          'w-full border-collapse whitespace-nowrap text-sm text-ink '
+          `${cls} w-full border-collapse whitespace-nowrap text-sm text-ink `
           + '[&_th]:border-b [&_th]:border-line [&_th]:px-4 [&_th]:py-3 '
           // ink-MUTED, not ink-faint. Faint measured 2.78 against white on
           // /org/users — below the 4.5 a column heading needs, and a heading
