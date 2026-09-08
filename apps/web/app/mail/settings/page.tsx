@@ -26,6 +26,22 @@ import {
   CATEGORY_COLOURS, CATEGORY_PALETTE, mailApi,
   type MailCategory, type MailSignature,
 } from '@/lib/mail';
+import { FiltersPanel } from '@/components/mail/FiltersPanel';
+import { BlockedPanel } from '@/components/mail/BlockedPanel';
+
+// The settings screen is now tab-wise: one concern per tab, so the page is a
+// short list of doors rather than a long scroll. Inbox LAYOUT is deliberately
+// NOT here — it lives in the inbox toolbar, where the thing it changes is.
+type SettingsTab = 'signature' | 'folders' | 'categories' | 'filters' | 'blocking';
+// Each tab carries its own icon path (drawn inline, so no dependency on the
+// shared Icon set which has no folder/tag/funnel/ban glyphs).
+const TABS: { id: SettingsTab; label: string; icon: string }[] = [
+  { id: 'signature', label: 'Signature', icon: 'M4 20h16M6 16l10-10 2 2-10 10H6v-2z' },
+  { id: 'folders', label: 'Folders', icon: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z' },
+  { id: 'categories', label: 'Categories', icon: 'M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3.4 12.8A2 2 0 0 1 3 11.4V4.6a1 1 0 0 1 1-1h6.8a2 2 0 0 1 1.4.6l8 8a2 2 0 0 1 0 2.6zM7.5 7.5h.01' },
+  { id: 'filters', label: 'Filters', icon: 'M3 5h18l-7 8v5l-4 2v-7z' },
+  { id: 'blocking', label: 'Blocking', icon: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM5.6 5.6l12.8 12.8' },
+];
 
 /**
  * The details a sample signature fills in for you.
@@ -123,6 +139,10 @@ export default function MailSettingsPage() {
   const [categoryNote, setCategoryNote] = useState<string | null>(null);
   /** A sample waiting on "replace what I've written?". Null when nothing is. */
   const [pending, setPending] = useState<string | null>(null);
+
+  // Which settings tab is showing. Signature first — it is the one people open
+  // settings to change most often.
+  const [tab, setTab] = useState<SettingsTab>('signature');
 
   const identity: Identity = {
     name: user?.displayName ?? '[Your name]',
@@ -357,22 +377,46 @@ export default function MailSettingsPage() {
 
   return (
     <div className="scroll-thin h-full overflow-y-auto p-6">
-      <header className="mb-6 flex flex-wrap items-center gap-3">
+      <div className="mx-auto max-w-3xl">
+      <header className="mb-5 flex flex-wrap items-center gap-3">
         <div className="min-w-0 flex-1">
           <h1 className="text-lg font-semibold text-ink">Mail settings</h1>
-          <p className="text-sm text-ink-muted">Signature and message preferences for this mailbox.</p>
+          <p className="text-sm text-ink-muted">
+            Manage your signature, folders, categories, filters and blocking for this mailbox.
+          </p>
         </div>
         <Link href="/mail/inbox" className="text-sm font-medium text-brand-600 hover:underline">
           Back to inbox
         </Link>
-        <Link href="/mail/filters" className="text-sm font-medium text-brand-600 hover:underline">
-          Filters
-        </Link>
       </header>
+
+      <nav className="mb-6 flex flex-wrap gap-1 border-b border-line">
+        {TABS.map((tb) => (
+          <button
+            key={tb.id}
+            type="button"
+            onClick={() => setTab(tb.id)}
+            aria-current={tab === tb.id ? 'page' : undefined}
+            className={`-mb-px flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition ${
+              tab === tb.id
+                ? 'border-brand-500 text-brand-600'
+                : 'border-transparent text-ink-muted hover:text-ink'
+            }`}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d={tb.icon} />
+            </svg>
+            {tb.label}
+          </button>
+        ))}
+      </nav>
 
       {error && <p className="mb-4 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">{error}</p>}
 
-      <section className="max-w-2xl rounded-card border border-line bg-surface p-5">
+      {/* ---- Signature ---------------------------------------------- */}
+      {tab === 'signature' && (
+      <section className="mt-6 rounded-card border border-line bg-surface p-5">
         <h2 className="mb-1 text-sm font-semibold text-ink">Signature</h2>
         <p className="mb-4 text-xs text-ink-muted">
           Added to the bottom of messages sent from this mailbox. Plain text — it is escaped
@@ -491,9 +535,11 @@ export default function MailSettingsPage() {
           </>
         )}
       </section>
+      )}
 
       {/* ---- Folders ------------------------------------------------- */}
-      <section className="mt-6 max-w-2xl rounded-card border border-line bg-surface p-5">
+      {tab === 'folders' && (
+      <section className="mt-6 rounded-card border border-line bg-surface p-5">
         <h2 className="mb-1 text-sm font-semibold text-ink">Your folders</h2>
         <p className="mb-4 text-xs text-ink-muted">
           Inbox, Sent, Drafts, Scheduled, Junk and Trash are built in and cannot be renamed or
@@ -566,9 +612,11 @@ export default function MailSettingsPage() {
           </button>
         </div>
       </section>
+      )}
 
       {/* ---- Categories ---------------------------------------------- */}
-      <section className="mt-6 max-w-2xl rounded-card border border-line bg-surface p-5">
+      {tab === 'categories' && (
+      <section className="mt-6 rounded-card border border-line bg-surface p-5">
         <h2 className="mb-1 text-sm font-semibold text-ink">Categories</h2>
         <p className="mb-4 text-xs text-ink-muted">
           A name and a colour for sorting your mail your way — Work, School fees, Newsletters.
@@ -674,6 +722,22 @@ export default function MailSettingsPage() {
           </button>
         </div>
       </section>
+      )}
+
+      {/* ---- Filters ------------------------------------------------- */}
+      {tab === 'filters' && (
+        <section className="mt-6 rounded-card border border-line bg-surface p-5">
+          <FiltersPanel />
+        </section>
+      )}
+
+      {/* ---- Blocking ------------------------------------------------ */}
+      {tab === 'blocking' && (
+        <section className="mt-6 rounded-card border border-line bg-surface p-5">
+          <BlockedPanel />
+        </section>
+      )}
+      </div>
     </div>
   );
 }

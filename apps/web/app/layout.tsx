@@ -3,6 +3,7 @@ import { Plus_Jakarta_Sans } from 'next/font/google';
 import { AuthProvider } from '@/lib/auth';
 import { ThemeProvider } from '@/lib/theme';
 import { BuildBadge } from '@/components/BuildBadge';
+import { RecoveryReminder } from '@/components/RecoveryReminder';
 // YZEN's real stylesheet (licensed to Techvein) drives the console look. Order
 // matters: our Tailwind/globals baseline first, then Bootstrap, then YZEN's
 // styles.css last so its component rules win. Icon fonts (Tabler, RemixIcon)
@@ -39,7 +40,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  themeColor: '#03b562',
+  themeColor: '#6C3CE9',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -47,13 +48,21 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html
       lang="en"
       dir="ltr"
-      // YZEN reads these to activate its layout: a dark vertical menu over a
-      // light page and light header — the default from their index.html.
+      // YZEN reads these to activate its layout: a vertical menu over a light
+      // page and light header.
+      //
+      // data-menu-styles WAS "dark", and that single attribute is what painted
+      // the near-black rail — not our --rail token, which is why changing the
+      // token alone would have done nothing. It went light on 5 Sept 2026 with
+      // the violet palette (docs/UI_LANE_BRIEF.md §4.1). That also retired the
+      // white block overrides.css used to force behind the logo: the wordmarks
+      // are dark artwork, invisible on a dark rail, and the block was the
+      // visible seam at the top of the sidebar.
       data-nav-layout="vertical"
       data-vertical-style="overlay"
       data-theme-mode="light"
       data-header-styles="light"
-      data-menu-styles="dark"
+      data-menu-styles="light"
       data-width="fullwidth"
       // Icons-only rail by default; it expands on hover (see Sidebar) and can be
       // pinned open from the header toggle. Client JS switches this to "close"
@@ -91,7 +100,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       */}
       <body className={`h-full ${inter.variable} ${inter.className}`}>
         <ThemeProvider>
-          <AuthProvider>{children}</AuthProvider>
+          <AuthProvider><RecoveryReminder />{children}</AuthProvider>
         </ThemeProvider>
         {/* Outside the providers on purpose: the version must still render
             even if a provider below it throws. */}

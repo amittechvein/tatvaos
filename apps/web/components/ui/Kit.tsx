@@ -1,14 +1,34 @@
 'use client';
 
 // ============================================================================
-//  The primitives every screen is built from — now YZEN Bootstrap markup.
+//  The primitives every screen is built from — Tailwind and the design tokens.
 //
-//  These were MUI wrappers, which broke the moment YZEN's Bootstrap CSS was
-//  loaded globally (two styling systems fighting over the same elements — the
-//  empty stat cards and orange buttons were exactly that). Rewritten to emit
-//  YZEN's own classes (.card.custom-card, .btn, .avatar, .table, .badge), so
-//  their real stylesheet styles them pixel-for-pixel and every page that
-//  imports these follows without change.
+//  HISTORY, because it explains the shape. These were MUI wrappers; they broke
+//  when YZEN's Bootstrap CSS was loaded globally (two styling systems fighting
+//  over the same elements — the empty stat cards and orange buttons were that
+//  fight). They were then rewritten to emit YZEN's OWN classes so their
+//  stylesheet styled them pixel-for-pixel.
+//
+//  7 Sept 2026: rewritten again, onto Tailwind and the tokens in
+//  styles/globals.css. This file is the lever for the whole UI lane —
+//  THIRTY-ONE files import it, so moving it moves them without touching any of
+//  them. That is stage 3 of docs/UI_LANE_BRIEF.md done wholesale rather than
+//  file by file.
+//
+//  THE PUBLIC SHAPE IS UNCHANGED, deliberately: same exports, same props, same
+//  defaults. A caller that renders correctly today renders correctly after
+//  this. Anything that looks different is this file's fault, not the caller's,
+//  which is what makes it revertible in one commit.
+//
+//  WHAT THIS DOES NOT DO. The pages that import these still sit inside YZEN's
+//  grid (`row`, `col-md-*`) and inside its app shell. Those are stage 3's long
+//  tail and stage 4. Components first, layout after — migrating both at once
+//  means a broken page cannot be told from a deliberate one.
+//
+//  NOTE ON BORDERS. Tailwind's preflight is off here, so `border` sets a WIDTH
+//  against a style of `none` and renders nothing. globals.css supplies
+//  `border-style: solid` for that reason. If a border ever vanishes, that rule
+//  is the first place to look — not the token.
 // ============================================================================
 
 import Link from 'next/link';
@@ -25,19 +45,19 @@ export function Card({
   padded?: boolean;
 }) {
   return (
-    <div className={`card custom-card ${className}`.trim()}>
+    <div className={`rounded-card border border-line bg-surface shadow-card ${className}`.trim()}>
       {(title || actions) && (
-        <div className="card-header justify-content-between align-items-center">
-          <div className="card-title">
-            {title}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4">
+          <div className="min-w-0">
+            {title && <span className="text-[15px] font-semibold text-ink">{title}</span>}
             {subtitle && (
-              <span className="d-block fs-12 fw-normal text-muted mt-1">{subtitle}</span>
+              <span className="mt-0.5 block text-xs font-normal text-ink-muted">{subtitle}</span>
             )}
           </div>
-          {actions && <div className="d-flex gap-2 flex-wrap">{actions}</div>}
+          {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
         </div>
       )}
-      {padded ? <div className="card-body">{children}</div> : children}
+      {padded ? <div className="px-5 py-4">{children}</div> : children}
     </div>
   );
 }
@@ -45,11 +65,21 @@ export function Card({
 // ---------------------------------------------------------------------------
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 
+//  One base, four intents. Focus is a visible ring rather than an outline the
+//  browser draws differently per platform — a keyboard user has to be able to
+//  see where they are, and on a violet primary the default outline is nearly
+//  invisible.
+const BTN_BASE =
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg '
+  + 'px-4 py-2 text-sm font-semibold transition-colors '
+  + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 '
+  + 'disabled:pointer-events-none disabled:opacity-50';
+
 const BTN: Record<Variant, string> = {
-  primary: 'btn-primary',
-  secondary: 'btn-outline-light',
-  ghost: 'btn-light',
-  danger: 'btn-danger',
+  primary:   'bg-brand-500 text-white hover:bg-brand-600',
+  secondary: 'border border-line bg-surface text-ink hover:bg-canvas',
+  ghost:     'text-ink-muted hover:bg-canvas hover:text-ink',
+  danger:    'bg-danger text-white hover:brightness-95',
 };
 
 export function Button({
@@ -60,7 +90,7 @@ export function Button({
   href?: string;
   children?: React.ReactNode;
 } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  const cls = `btn ${BTN[variant]} ${className}`.trim();
+  const cls = `${BTN_BASE} ${BTN[variant]} ${className}`.trim();
   if (href) {
     // Only onClick is forwarded to link-buttons; spreading button attributes
     // onto a Next Link is a type mismatch and none of the others apply here.
@@ -77,12 +107,23 @@ export function Button({
 // ---------------------------------------------------------------------------
 type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral';
 
+//  Tinted pills, not solid blocks. A table of twenty rows with twenty
+//  saturated badges reads as an alarm; the tint carries the same meaning and
+//  lets the row's actual content stay the loudest thing on the line.
 const TONE_BADGE: Record<Tone, string> = {
-  ok: 'success', warn: 'warning', danger: 'danger', info: 'info', neutral: 'secondary',
+  ok:      'bg-ok/10 text-ok',
+  warn:    'bg-warn/10 text-warn',
+  danger:  'bg-danger/10 text-danger',
+  info:    'bg-info/10 text-info',
+  neutral: 'border border-line bg-canvas text-ink-muted',
 };
 
 export function Badge({ tone = 'neutral', children }: { tone?: Tone; children: React.ReactNode }) {
-  return <span className={`badge bg-${TONE_BADGE[tone]}-transparent`}>{children}</span>;
+  return (
+    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${TONE_BADGE[tone]}`}>
+      {children}
+    </span>
+  );
 }
 
 /** Maps a status string to a tone in one place, so every screen agrees. */
@@ -96,8 +137,12 @@ export function statusTone(status: string): Tone {
 }
 
 // ---------------------------------------------------------------------------
-const TONE_BG: Record<string, string> = {
-  primary: 'primary', info: 'info', success: 'success', warning: 'warning', error: 'danger',
+const TONE_CHIP: Record<string, string> = {
+  primary: 'bg-brand-500/10 text-brand-700',
+  info:    'bg-info/10 text-info',
+  success: 'bg-ok/10 text-ok',
+  warning: 'bg-warn/10 text-warn',
+  error:   'bg-danger/10 text-danger',
 };
 
 export function Stat({
@@ -112,52 +157,67 @@ export function Stat({
 }) {
   const positive = delta ? (delta.good ?? delta.direction === 'up') : false;
   // Vertical layout: the label owns the full card width on its own row (with a
-  // small tinted icon chip pinned to the right), the value sits large below, and
-  // the caption/delta spans the full width underneath. This is what stops the
-  // labels and captions from being squeezed against the icon and truncating in
-  // the tight 4-up grid — every text line now has the whole card to breathe.
-  const c = TONE_BG[tone] ?? 'primary';
+  // small tinted icon chip pinned to the right), the value sits large below,
+  // and the caption/delta spans the full width underneath. That is what stops
+  // labels and captions being squeezed against the icon and truncating in the
+  // tight 4-up grid — every text line has the whole card to breathe.
+  const chip = TONE_CHIP[tone] ?? TONE_CHIP.primary;
   return (
-    <div className="card custom-card">
-      <div className="card-body">
-        <div className="d-flex align-items-center justify-content-between gap-2 mb-2">
-          <span className="fw-medium fs-13 text-muted">{label}</span>
-          {icon && (
-            <span className={`avatar avatar-sm bg-${c}-transparent text-${c} flex-shrink-0`}>
-              {icon}
-            </span>
-          )}
-        </div>
-        <div className="fs-24 fw-semibold lh-1">{value}</div>
-        {delta ? (
-          <div className="d-flex align-items-center flex-wrap gap-1 fs-12 mt-2">
-            <span className={`fw-semibold ${positive ? 'text-success' : 'text-danger'}`}>
-              {positive ? '↑' : '↓'} {delta.value}
-            </span>
-            {caption && <span className="text-muted">{caption}</span>}
-          </div>
-        ) : caption ? (
-          <div className="fs-12 text-muted mt-2">{caption}</div>
-        ) : null}
+    <div className="rounded-card border border-line bg-surface p-5 shadow-card">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="text-[13px] font-medium text-ink-muted">{label}</span>
+        {icon && (
+          <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${chip}`}>
+            {icon}
+          </span>
+        )}
       </div>
+      <div className="text-2xl font-semibold leading-none text-ink">{value}</div>
+      {delta ? (
+        <div className="mt-2 flex flex-wrap items-center gap-1 text-xs">
+          <span className={`font-semibold ${positive ? 'text-ok' : 'text-danger'}`}>
+            {positive ? '↑' : '↓'} {delta.value}
+          </span>
+          {caption && <span className="text-ink-muted">{caption}</span>}
+        </div>
+      ) : caption ? (
+        <div className="mt-2 text-xs text-ink-muted">{caption}</div>
+      ) : null}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// head takes nodes rather than strings so a table can put a control in its
-// own header — a select-all checkbox belongs at the top of the column it
-// selects, not floating in the toolbar above the table.
+// head takes nodes rather than strings so a table can put a control in its own
+// header — a select-all checkbox belongs at the top of the column it selects,
+// not floating in the toolbar above the table.
+//
+// Row and cell styling is applied from the <table> with arbitrary variants
+// rather than on each <Td>, because callers render their own <tr> (and
+// sometimes raw <td>) and those have to look right too.
 export function Table({ head, children }: { head: React.ReactNode[]; children: React.ReactNode }) {
   return (
-    <div className="table-responsive">
-      <table className="table text-nowrap table-hover">
+    <div className="-mx-5 overflow-x-auto px-5">
+      <table
+        className={
+          'w-full border-collapse whitespace-nowrap text-sm text-ink '
+          + '[&_th]:border-b [&_th]:border-line [&_th]:px-4 [&_th]:py-3 '
+          // ink-MUTED, not ink-faint. Faint measured 2.78 against white on
+          // /org/users — below the 4.5 a column heading needs, and a heading
+          // is functional text: you cannot read the table without it. Faint is
+          // for decoration and disabled states only.
+          + '[&_th]:text-left [&_th]:text-[11px] [&_th]:font-semibold '
+          + '[&_th]:uppercase [&_th]:tracking-wider [&_th]:text-ink-muted '
+          + '[&_td]:px-4 [&_td]:py-3 [&_td]:align-middle '
+          + '[&_tbody_tr]:border-b [&_tbody_tr]:border-line '
+          + '[&_tbody_tr:last-child]:border-0 [&_tbody_tr:hover]:bg-canvas'
+        }
+      >
         <thead>
           <tr>
             {head.map((h, i) => (
-              // Keyed by position: a heading may now be an element, and two
-              // blank headings are not distinguishable by their content.
-              // eslint-disable-next-line react/no-array-index-key
+              // Keyed by position: a heading may be an element, and two blank
+              // headings are not distinguishable by their content.
               <th key={i} scope="col">{h}</th>
             ))}
           </tr>
@@ -192,11 +252,20 @@ export function Meter({ used, total, tone }: {
   tone?: 'ok' | 'warn' | 'danger';
 }) {
   const pct = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0;
-  const computed = pct >= 95 ? 'danger' : pct >= 80 ? 'warning' : 'primary';
-  const colour = tone ? ({ ok: 'primary', warn: 'warning', danger: 'danger' } as const)[tone] : computed;
+  const computed = pct >= 95 ? 'bg-danger' : pct >= 80 ? 'bg-warn' : 'bg-brand-500';
+  const colour = tone
+    ? ({ ok: 'bg-brand-500', warn: 'bg-warn', danger: 'bg-danger' } as const)[tone]
+    : computed;
   return (
-    <div className="progress progress-sm" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
-      <div className={`progress-bar bg-${colour}`} style={{ width: `${pct}%` }} />
+    <div
+      className="h-1.5 w-full overflow-hidden rounded-full bg-line"
+      role="progressbar"
+      aria-valuenow={pct}
+      aria-valuemin={0}
+      aria-valuemax={100}
+    >
+      <div className={`h-full rounded-full transition-[width] duration-200 ${colour}`}
+           style={{ width: `${pct}%` }} />
     </div>
   );
 }
@@ -204,10 +273,10 @@ export function Meter({ used, total, tone }: {
 // ---------------------------------------------------------------------------
 export function Empty({ title, hint, action }: { title: string; hint?: string; action?: React.ReactNode }) {
   return (
-    <div className="text-center py-5 px-3">
-      <div className="fw-semibold fs-15">{title}</div>
+    <div className="px-4 py-12 text-center">
+      <div className="text-[15px] font-semibold text-ink">{title}</div>
       {hint && (
-        <div className="text-muted fs-13 mt-1 mx-auto" style={{ maxWidth: 420 }}>{hint}</div>
+        <div className="mx-auto mt-1 max-w-[420px] text-[13px] text-ink-muted">{hint}</div>
       )}
       {action && <div className="mt-3">{action}</div>}
     </div>

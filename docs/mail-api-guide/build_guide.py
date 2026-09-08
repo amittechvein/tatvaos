@@ -76,7 +76,7 @@ def footer(canvas, doc):
     canvas.saveState()
     canvas.setFont("Helvetica", 7.8)
     canvas.setFillColor(MUTED)
-    canvas.drawString(20 * mm, 12 * mm, "TatvaOS Mail API — Integration Guide v1.0 — 3 September 2026")
+    canvas.drawString(20 * mm, 12 * mm, "TatvaOS Mail API — Integration Guide v1.1 — 4 September 2026")
     canvas.drawRightString(A4[0] - 20 * mm, 12 * mm, f"Page {doc.page}")
     canvas.setStrokeColor(LINE)
     canvas.line(20 * mm, 16 * mm, A4[0] - 20 * mm, 16 * mm)
@@ -318,7 +318,7 @@ s += [p("7. Security checklist", H2)]
 s += [table([
     ["Do", "Don't"],
     ["Keep the key in a server-side secret store or environment variable.", "Embed it in browser code, a mobile app, or a public repository."],
-    ["Use one key per program, named for what it does.", "Share one key across your website, billing, and a partner's system."],
+    ["Use one key per program, named for what it does. Ask your administrator to restrict it to relevant senders.", "Share one key across your website, billing, and a partner's system."],
     ["Ask the administrator to revoke a key the moment you suspect exposure.", "Keep using a key that has been in a chat, a ticket, or a log."],
     ["Validate form input on your server before sending.", "Let a form visitor choose the <font face='Courier'>to</font> or <font face='Courier'>from</font> address."],
     ["Rate-limit your own form to stop abuse.", "Assume TatvaOS will rate-limit for you — it does not yet."],
@@ -335,7 +335,6 @@ s += [p("8. What is not in this version", H2),
           ["Bulk sending", "One request, many recipients, expanded server-side. Until then: five per request, more requests."],
           ["Rate limits", "Per-organisation limits with clear 429 responses. Today there are none; be a good neighbour."],
           ["Attachments", "Not supported. Link to a file instead."],
-          ["Key scopes", "Keys that can only send from certain mailboxes. Today a key can send as any mailbox in the organisation."],
           ["Open / click tracking", "Not planned. TatvaOS does not insert tracking pixels or rewrite links."],
       ], [32 * mm, W - 32 * mm])]
 

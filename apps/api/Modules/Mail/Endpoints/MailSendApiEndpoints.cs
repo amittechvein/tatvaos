@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using MimeKit;
 using TatvaOS.Api.Modules.Admin;
@@ -71,10 +72,14 @@ public static class MailSendApiEndpoints
 
     public sealed record SendRequest(
         string? From, string? To, string? Subject,
-        string? Html, string? Text, string? ReplyTo);
+        string? Html, string? Text, string? ReplyTo,
+        // Default true: one copy of the call is filed in the sender's Sent
+        // folder, addressed to every recipient, charged to quota once. A bulk
+        // or machine-generated job that does not want its output in a
+        // person's mailbox sends false; api_sends is its record regardless.
+        bool? SaveToSent = null);
 
     private static async Task<IResult> SendAsync(
-        SendRequest? req,
         HttpContext http,
         AppDbContext db,
         TenantContext tenant,
@@ -175,6 +180,31 @@ public static class MailSendApiEndpoints
             return Unauthorized("This organisation is not active.");
 
         // ---- 3. The request ------------------------------------------------
+        // The body is read HERE, not bound by the framework. When a body does
+        // not fit SendRequest - most often "to" sent as a JSON array where a
+        // string is expected - framework binding answers with an empty 400 and
+        // no log line, which took three round-trips to diagnose on 4 Sept.
+        // Reading it ourselves lets the refusal name the field. Same JSON
+        // options the framework would have used, so a correct body binds
+        // exactly as before. It also means the body is only parsed for a
+        // caller who has already presented a valid key.
+        if (!http.Request.HasJsonContentType())
+            return Results.BadRequest(new { error = "Send the request body as JSON (Content-Type: application/json)." });
+
+        SendRequest? req;
+        try
+        {
+            req = await http.Request.ReadFromJsonAsync<SendRequest>(ct);
+        }
+        catch (JsonException ex)
+        {
+            return Results.BadRequest(new
+            {
+                error = "The request body is not in the expected shape. " + ex.Message
+                      + " Note: to is a single string; for several recipients, separate them with commas.",
+            });
+        }
+
         var from    = (req?.From ?? "").Trim();
         var toRaw   = (req?.To ?? "").Trim();
         var subject = (req?.Subject ?? "").Trim();
@@ -227,51 +257,119 @@ public static class MailSendApiEndpoints
                       + "Create it under Mailboxes, on a domain you have verified.",
             });
 
-        // ---- 4b. Validate sender is in allowed addresses if restricted -----
-        if (allowedAddresses is not null && allowedAddresses.Length > 0)
+        // ---- 4b. Sender must be one of the key's allowed addresses ---------
+        // An empty (or null) list means the key may not send at all. It does
+        // NOT mean "unrestricted" - that inversion was the September 2026 hole.
+        if (allowedAddresses is null || allowedAddresses.Length == 0)
+            return Results.BadRequest(new
+            {
+                error = "This API key has no allowed sender addresses, so it cannot send. "
+                      + "Add at least one under Platform → API keys → [this key] → Edit, "
+                      + "or create a new key with the addresses it should send from.",
+            });
+
+        var isAllowed = allowedAddresses.Any(addr =>
+            addr.Equals(fromAddress, StringComparison.OrdinalIgnoreCase));
+        if (!isAllowed)
+            return Results.BadRequest(new
+            {
+                error = $"This API key is restricted to: {string.Join(", ", allowedAddresses)}",
+            });
+        // ---- 5. Hand it to the one send path -------------------------------
+        // ---- 5. Send, ONE MESSAGE PER RECIPIENT ----------------------------
+        //  Per-recipient because the bounce key is per-recipient: each message
+        //  leaves with its OWN envelope sender carrying its OWN api_sends row
+        //  id, so a DSN days later names the exact row (see the bounce
+        //  migration). It also means no recipient sees another's address —
+        //  the disclosure the low MaxRecipients was guarding against.
+        //
+        //  The VERP address switches ON only once the bounce subdomain and its
+        //  signing secret are configured; until then EnvelopeSender is null and
+        //  this sends exactly as before. That is deliberate: this endpoint must
+        //  not wait on the Postfix + DNS routing PR to keep working.
+        // Sign with the CURRENT key from the keyset (Bounce:KeyId names it,
+        // Bounce:Keys:<id> holds it). The policy service verifies against ANY
+        // keyid still in Bounce:Keys, which is what keeps a rotation safe for
+        // bounces already in flight.
+        var bounceDomain = config["Bounce:Domain"];
+        // IsNullOrWhiteSpace, not `??`, for the reason recorded in
+        // ReservedDomains.BounceDomain: Bounce__KeyId is wired as
+        // ${BOUNCE_KEY_ID:-}, which SETS the variable to an empty string rather
+        // than leaving it unset, so `??` would not fire. An empty keyid then
+        // looks up "Bounce:Keys:" , finds nothing, and signing stays off even
+        // with the secret correctly set under k1 — silently, which is the worst
+        // way for it to be off. Trimmed too: the keyid goes into the address and
+        // must match [A-Za-z0-9]{1,16}, so a padded value would build an address
+        // its own verifier rejects.
+        var configuredKeyId = config["Bounce:KeyId"];
+        var bounceKeyId  = string.IsNullOrWhiteSpace(configuredKeyId) ? "k1" : configuredKeyId.Trim();
+        var bounceSecret = config[$"Bounce:Keys:{bounceKeyId}"];
+        var bounceOn = !string.IsNullOrEmpty(bounceSecret) && !string.IsNullOrEmpty(bounceDomain);
+
+        // NOTE for v1.5 (bulk): each SubmitAsync opens and closes its own SMTP
+        // connection. Fine at five recipients; at bulk it must pool one
+        // connection across the batch instead of one per message.
+        // One Sent copy per CALL, not per recipient. The first submit that
+        // Postfix accepts files it (addressed to everyone — see
+        // SentCopyRecipients); every later submit passes false. If the first
+        // recipient is refused, the next accepted one files instead, so a
+        // call that reached anybody leaves exactly one entry in Sent.
+        var saveToSent = req?.SaveToSent ?? true;
+        var allRecipients = to.ToList();
+        var filed = false;
+        var sends = new List<(MailboxAddress Recipient, Guid Id, bool Accepted, string? Error)>();
+        foreach (var recipient in to)
         {
-            var isAllowed = allowedAddresses.Any(addr => 
-                addr.Equals(fromAddress, StringComparison.OrdinalIgnoreCase));
-            
-            if (!isAllowed)
-                return Results.BadRequest(new
-                {
-                    error = $"This API key is restricted to: {string.Join(", ", allowedAddresses)}",
-                });
+            var sendId = Guid.NewGuid();
+            MailboxAddress? envelope = bounceOn
+                ? new MailboxAddress(string.Empty, BounceAddress.Build(sendId, bounceKeyId, bounceSecret!, bounceDomain!, DateTimeOffset.UtcNow))
+                : null;
+
+            var result = await MailSender.SubmitAsync(
+                box,
+                new MailSubmission(
+                    To: new[] { recipient },
+                    Cc: Array.Empty<MailboxAddress>(),
+                    Subject: subject,
+                    BodyText: text,
+                    BodyHtml: html,
+                    Attachments: Array.Empty<MailAttachment>(),
+                    EnvelopeSender: envelope,
+                    // Filed once for the whole call (see above), never once
+                    // per recipient — that would put N near-identical copies
+                    // in Sent and charge the quota N times for one API call.
+                    FileSentCopy: saveToSent && !filed,
+                    SentCopyRecipients: allRecipients),
+                db, tenant, config, log, autoSave, audit, ct);
+
+            var ok = result.Outcome is SendOutcome.Sent or SendOutcome.SentButNotFiled;
+            // Only a real filing counts — SentButNotFiled (no Sent folder, or
+            // FileSentCopy was false) must not stop a later recipient trying.
+            if (saveToSent && !filed && result.Outcome == SendOutcome.Sent) filed = true;
+            sends.Add((recipient, sendId, ok, ok ? null : result.Error));
         }
 
-        // ---- 5. Hand it to the one send path -------------------------------
-        var result = await MailSender.SubmitAsync(
-            box,
-            new MailSubmission(
-                To: to,
-                Cc: Array.Empty<MailboxAddress>(),
-                Subject: subject,
-                BodyText: text,
-                BodyHtml: html,
-                Attachments: Array.Empty<MailAttachment>()),
-            db, tenant, config, log, autoSave, audit, ct);
-
-        var accepted = result.Outcome is SendOutcome.Sent or SendOutcome.SentButNotFiled;
-
-        // ---- 6. One row per recipient, whatever happened -------------------
-        foreach (var recipient in to)
+        // ---- 6. One row per recipient, keyed by the id its bounce carries --
+        foreach (var s in sends)
         {
             db.MailApiSends.Add(new MailApiSend
             {
-                Id = Guid.NewGuid(),
+                Id = s.Id,               // the same id encoded in the VERP address
                 TenantId = keyTenantId,
                 ApiKeyId = keyId,
                 FromAddress = fromAddress,
-                ToAddress = recipient.Address,
+                ToAddress = s.Recipient.Address,
                 Subject = subject,
-                Outcome = accepted ? "accepted" : "refused",
-                Error = accepted ? null : result.Error,
+                Outcome = s.Accepted ? "accepted" : "refused",
+                Error = s.Accepted ? null : s.Error,
                 SentAt = DateTimeOffset.UtcNow,
             });
         }
 
-        if (accepted)
+        var acceptedCount = sends.Count(s => s.Accepted);
+        var firstError = sends.FirstOrDefault(s => !s.Accepted).Error;
+
+        if (acceptedCount > 0)
         {
             // Has a writer, so a NULL genuinely means never used.
             var tracked = await db.MailApiKeys.FirstOrDefaultAsync(k => k.Id == keyId, ct);
@@ -280,7 +378,20 @@ public static class MailSendApiEndpoints
 
         await db.SaveChangesAsync(ct);
 
-        if (!accepted)
+        // PER-RECIPIENT RESULTS in the body, because sends are per-recipient.
+        // A caller cannot read api_sends rows, so without this a partial
+        // failure (three accepted, two refused) returns one status and a
+        // blanket retry sends the three accepted ones a second time. Each
+        // result carries the id so a retry is targeted and de-dupable.
+        var results = sends.Select(x => new
+        {
+            to = x.Recipient.Address,
+            id = x.Id,
+            status = x.Accepted ? "accepted" : "refused",
+            error = x.Accepted ? null : x.Error,
+        }).ToArray();
+
+        if (acceptedCount == 0)
         {
             // Postfix's own words, passed through. A generic "send failed"
             // sends the customer hunting through server logs for a policy
@@ -288,9 +399,25 @@ public static class MailSendApiEndpoints
             // refusal, which tells them precisely what to do next.
             return Results.Json(new
             {
-                error = result.Error ?? "The mail server refused the message.",
                 outcome = "refused",
+                error = firstError ?? "The mail server refused the message.",
+                results,
             }, statusCode: StatusCodes.Status502BadGateway);
+        }
+
+        if (acceptedCount < sends.Count)
+        {
+            // Some accepted, some refused. 207 so a caller cannot read it as a
+            // clean success and retry everything; results says which to retry.
+            return Results.Json(new
+            {
+                outcome = "partial",
+                accepted = acceptedCount,
+                total = sends.Count,
+                note = "Some recipients were accepted and some refused. Retry only the refused ids.",
+                sentCopy = filed,
+                results,
+            }, statusCode: StatusCodes.Status207MultiStatus);
         }
 
         // "accepted" and never "sent" or "delivered": Postfix has taken
@@ -298,8 +425,10 @@ public static class MailSendApiEndpoints
         return Results.Json(new
         {
             outcome = "accepted",
-            recipients = to.Count,
+            recipients = acceptedCount,
             note = "Accepted for delivery. This is not confirmation of arrival.",
+            sentCopy = filed,
+            results,
         }, statusCode: StatusCodes.Status202Accepted);
     }
 

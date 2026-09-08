@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using TatvaOS.Api.Modules.Admin;
+using TatvaOS.Api.Modules.Mail;
 using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Tenancy;
 
@@ -156,6 +157,29 @@ public sealed class PostfixPolicyWorker(
             if (!req.TryGetValue("recipient", out var recipient) || recipient.Length == 0)
                 return Dunno;
 
+            // ---- BOUNCE PATH ---------------------------------------------
+            //  Branch on the recipient DOMAIN first — one string compare —
+            //  before the size read, the DB scope, or any crypto, because
+            //  every inbound RCPT on the platform reaches this handler and the
+            //  99.9% that is not a bounce must not pay for the 0.1% that is.
+            //
+            //  Exception-isolated on purpose: a fault in bounce validation
+            //  returns defer for THIS recipient and never falls through to the
+            //  quota answer below. Quota fails open (DUNNO); an unguarded throw
+            //  here would ride that and make real mail flow unmetered. Contained
+            //  on purpose, not by luck.
+            var bounceDomain = config["Bounce:Domain"];
+            if (!string.IsNullOrEmpty(bounceDomain)
+                && recipient.EndsWith("@" + bounceDomain, StringComparison.OrdinalIgnoreCase))
+            {
+                try { return ValidateBounce(recipient); }
+                catch (Exception ex)
+                {
+                    log.LogError(ex, "Bounce validation threw; deferring this bounce only");
+                    return "DEFER_IF_PERMIT 451 4.7.0 Bounce validation temporarily unavailable";
+                }
+            }
+
             // The size the SENDER announced on MAIL FROM, which many clients
             // omit. Zero is fine and expected: the allocator then asks "is this
             // mailbox already at its limit" with no headroom, and the accrual
@@ -279,6 +303,38 @@ public sealed class PostfixPolicyWorker(
             mailbox.TenantId, departmentId, null, "mail", ct);
 
         return (inherited, row.UsedBytes);
+    }
+
+    /// <summary>
+    /// Validate a VERP bounce address at RCPT time and map the verdict to a
+    /// Postfix action: DUNNO (valid — let it through to the intake transport),
+    /// a 5xx REJECT (malformed, forged, stale, or a key this server does not
+    /// hold), or — only from the caller's catch — a 4xx defer on an internal
+    /// fault. The format itself lives in BounceAddress; this method is only the
+    /// verdict → SMTP-action mapping.
+    ///
+    /// NO KEY IS A REJECT, NOT AN ACCEPT (BounceAddress.Verify enforces it, and
+    /// UnknownKey lands here as a 5xx). Once bounces.tatvaos.com is a relay
+    /// domain the config is live whether or not Bounce:Keys is set; if a missing
+    /// key meant "can't check, allow", one absent value would turn the whole
+    /// domain into an accept-everything catch-all that looked healthy while
+    /// doing it. VERP is dormant until Bounce:Keys is set, so there is no
+    /// legitimate traffic to lose while it is unset.
+    /// </summary>
+    private string ValidateBounce(string recipient)
+    {
+        var result = BounceAddress.Verify(
+            recipient, keyId => config[$"Bounce:Keys:{keyId}"], DateTimeOffset.UtcNow);
+
+        return result.Verdict switch
+        {
+            BounceAddress.Verdict.Valid        => Dunno,
+            BounceAddress.Verdict.UnknownKey   => "REJECT 5.7.1 Bounce address not recognised",
+            BounceAddress.Verdict.Expired      => "REJECT 5.7.1 Bounce address expired",
+            BounceAddress.Verdict.BadSignature => "REJECT 5.7.1 Bounce address failed verification",
+            // Malformed, and any verdict added later without a mapping.
+            _                                  => "REJECT 5.7.1 Not a valid bounce address",
+        };
     }
 
     /// <summary>

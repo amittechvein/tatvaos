@@ -6,6 +6,7 @@ import { AdminShell } from '@/components/admin/AdminShell';
 import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
 import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
+import { Input, Select } from '@/components/ui/Form';
 
 // ============================================================================
 //  Shared mailboxes — admissions@, support@, accounts@
@@ -135,7 +136,7 @@ export default function SharedMailboxesPage() {
           <div className="d-flex justify-content-center py-5">
             <span className="d-inline-block animate-spin rounded-circle"
                   style={{ width: 30, height: 30, border: '3px solid rgba(0,0,0,.12)',
-                           borderTopColor: '#03b562' }} />
+                           borderTopColor: '#6C3CE9' }} />
           </div>
         ) : boxes.length === 0 ? (
           <Empty
@@ -253,7 +254,7 @@ function CreateDialog({ domains, onClose, onCreated, onError }: {
     >
       <Field label="Address" required hint="Letters, numbers, dots, hyphens or underscores.">
         <div className="input-group">
-          <input className="form-control" value={localPart} placeholder="admissions"
+          <Input  value={localPart} placeholder="admissions"
                  onChange={(e) => setLocalPart(e.target.value)} />
           <span className="input-group-text">@{domain?.fqdn ?? '…'}</span>
         </div>
@@ -261,9 +262,9 @@ function CreateDialog({ domains, onClose, onCreated, onError }: {
 
       {domains.length > 1 && (
         <Field label="Domain">
-          <select className="form-select" value={domainId} onChange={(e) => setDomainId(e.target.value)}>
+          <Select  value={domainId} onChange={(e) => setDomainId(e.target.value)}>
             {domains.map((d) => <option key={d.id} value={d.id}>{d.fqdn}</option>)}
-          </select>
+          </Select>
         </Field>
       )}
 
@@ -271,13 +272,13 @@ function CreateDialog({ domains, onClose, onCreated, onError }: {
         label="Display name"
         hint="What recipients see in From — “Admissions Office” reads better than “admissions”."
       >
-        <input className="form-control" value={displayName} placeholder="Admissions Office"
+        <Input  value={displayName} placeholder="Admissions Office"
                onChange={(e) => setDisplayName(e.target.value)} />
       </Field>
 
       <Field label="Storage">
         <div className="input-group" style={{ maxWidth: 200 }}>
-          <input type="number" className="form-control" min={1} max={5000} value={quotaGb}
+          <Input type="number"  min={1} max={5000} value={quotaGb}
                  onChange={(e) => setQuotaGb(Math.max(1, Number(e.target.value)))} />
           <span className="input-group-text">GB</span>
         </div>

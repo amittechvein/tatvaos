@@ -6,8 +6,9 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Attachment, Folder, Message } from '@tatvaos/types';
 import { useAuth } from '@/lib/auth';
 import {
-  CATEGORY_COLOURS, mailApi, resolveFolder,
-  type MailBootstrap, type MailCategory, type SearchHit,
+  CATEGORY_COLOURS, getInboxLayout, INBOX_LAYOUT_EVENT, INBOX_LAYOUTS,
+  mailApi, resolveFolder, setInboxLayout,
+  type InboxLayout, type MailBootstrap, type MailCategory, type SearchHit,
 } from '@/lib/mail';
 import DOMPurify from 'dompurify';
 import { MessageList } from '@/components/mail/MessageList';
@@ -36,6 +37,25 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
 
   const [boot, setBoot] = useState<MailBootstrap | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+
+  // The person's inbox layout, chosen in Mail settings and stored on this
+  // device. Read in an effect (localStorage does not exist server-side), and
+  // kept in step with the settings page through its event — switching layout
+  // there redraws an inbox already open in another tab without a reload.
+  const [inboxLayout, setInboxLayoutState] = useState<InboxLayout>('comfortable');
+  // The little layout switcher in the toolbar — a quick way to change the
+  // list's shape without a trip to settings. Same device preference underneath.
+  const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
+  useEffect(() => {
+    setInboxLayoutState(getInboxLayout());
+    const sync = () => setInboxLayoutState(getInboxLayout());
+    window.addEventListener(INBOX_LAYOUT_EVENT, sync);
+    window.addEventListener('storage', sync);
+    return () => {
+      window.removeEventListener(INBOX_LAYOUT_EVENT, sync);
+      window.removeEventListener('storage', sync);
+    };
+  }, []);
   const [total, setTotal] = useState(0);
   const [skip, setSkip] = useState(0);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -603,7 +623,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
           the canvas. The folder name gets title typography — this column is a
           place, not a widget. */}
       <section
-        className={`min-w-0 flex-col overflow-hidden lg:w-[420px] lg:shrink-0 ${
+        className={`min-w-0 flex-col overflow-hidden lg:shrink-0 ${inboxLayout === 'slim' ? 'lg:w-[340px]' : 'lg:w-[420px]'} ${
           open ? (wide ? 'hidden' : 'hidden lg:flex') : 'flex flex-1'
         }`}
       >
@@ -628,6 +648,62 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
               placeholder="Search mail"
               className="w-28 border-0 bg-transparent p-0 text-sm text-ink outline-none placeholder:text-ink-faint sm:w-36"
             />
+          </div>
+          {/* Layout switcher — the same four choices as Mail settings, one
+              tap away. The backdrop button closes the menu on any outside
+              click without a global listener. */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setLayoutMenuOpen((v) => !v)}
+              title="Change layout"
+              aria-haspopup="menu"
+              aria-expanded={layoutMenuOpen}
+              className="flex h-9 w-9 items-center justify-center rounded-full text-ink-muted transition hover:bg-surface hover:text-ink hover:shadow-card"
+            >
+              <Icon name="list-ul" className="h-4.5 w-4.5" />
+            </button>
+            {layoutMenuOpen && (
+              <>
+                <button
+                  type="button"
+                  aria-hidden="true"
+                  tabIndex={-1}
+                  onClick={() => setLayoutMenuOpen(false)}
+                  className="fixed inset-0 z-10 cursor-default"
+                />
+                <div
+                  role="menu"
+                  className="absolute right-0 z-20 mt-1 w-56 overflow-hidden rounded-card border border-line bg-surface py-1 shadow-raised"
+                >
+                  {INBOX_LAYOUTS.map((o) => (
+                    <button
+                      key={o.id}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={inboxLayout === o.id}
+                      onClick={() => {
+                        setInboxLayout(o.id);
+                        setInboxLayoutState(o.id);
+                        setLayoutMenuOpen(false);
+                      }}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-ink transition hover:bg-canvas"
+                    >
+                      <span className="flex h-4 w-4 shrink-0 items-center justify-center text-brand-600">
+                        {inboxLayout === o.id && (
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                               stroke="currentColor" strokeWidth={2.4}
+                               strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M5 13l4 4L19 7" />
+                          </svg>
+                        )}
+                      </span>
+                      {o.name}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
           <button
             type="button"
@@ -762,6 +838,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
             </div>
           ) : (
             <MessageList
+              layout={inboxLayout}
               messages={filtered}
               selectedIds={selectedIds}
               openId={open?.id ?? null}

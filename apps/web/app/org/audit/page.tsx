@@ -6,6 +6,7 @@ import { formatTimestamp } from '@/lib/dates';
 import { AdminShell } from '@/components/admin/AdminShell';
 import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
 import { useAuth } from '@/lib/auth';
+import { Input, Select } from '@/components/ui/Form';
 import {
   fetchAudit, fetchAuditActions, formatState, humaniseAction, isSensitive,
   type AuditEntry, type AuditQuery,
@@ -145,8 +146,8 @@ export default function OrgAuditPage() {
         <div className="row g-2 align-items-end mb-3">
           <div className="col-md-3">
             <label className="form-label fs-12 text-muted mb-1">Action</label>
-            <select
-              className="form-select"
+            <Select
+              
               value={action}
               onChange={(e) => setAction(e.target.value)}
             >
@@ -154,12 +155,12 @@ export default function OrgAuditPage() {
               {actions.map((a) => (
                 <option key={a} value={a}>{humaniseAction(a)}</option>
               ))}
-            </select>
+            </Select>
           </div>
           <div className="col-md-3">
             <label className="form-label fs-12 text-muted mb-1">Who</label>
-            <select
-              className="form-select"
+            <Select
+              
               value={actor}
               onChange={(e) => setActor(e.target.value)}
             >
@@ -167,12 +168,12 @@ export default function OrgAuditPage() {
               {people.map((p) => (
                 <option key={p.id} value={p.id}>{p.displayName}</option>
               ))}
-            </select>
+            </Select>
           </div>
           <div className="col-md-2">
             <label className="form-label fs-12 text-muted mb-1">Product</label>
-            <select
-              className="form-select"
+            <Select
+              
               value={product}
               onChange={(e) => setProduct(e.target.value)}
             >
@@ -182,16 +183,16 @@ export default function OrgAuditPage() {
               <option value="core">Core console</option>
               <option value="mail">Mail</option>
               <option value="drive">Space</option>
-            </select>
+            </Select>
           </div>
           <div className="col-md-2">
             <label className="form-label fs-12 text-muted mb-1">From</label>
-            <input type="date" className="form-control"
+            <Input type="date" 
                    value={from} onChange={(e) => setFrom(e.target.value)} />
           </div>
           <div className="col-md-2">
             <label className="form-label fs-12 text-muted mb-1">To</label>
-            <input type="date" className="form-control"
+            <Input type="date" 
                    value={to} onChange={(e) => setTo(e.target.value)} />
           </div>
           {filtered && (

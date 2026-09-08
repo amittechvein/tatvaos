@@ -100,10 +100,18 @@ public sealed record SetAvatarRequest(string DataUrl);
 
 public sealed record BulkCreateUserRequest(
     Guid DomainId,
+    // The department for rows that do not name their own. Null = none.
     Guid? DepartmentId,
-    IReadOnlyList<BulkUserEntry> Users);
+    IReadOnlyList<BulkUserEntry> Users,
+    // Validate and report only: nothing is written, no password is minted, no
+    // welcome mail goes out. The UI refuses to create a batch the admin has
+    // not seen this report for.
+    bool DryRun = false);
 
-public sealed record BulkUserEntry(string LocalPart, string DisplayName);
+// Department by NAME, as the admin's spreadsheet has it ("Class 5A"). Null
+// falls back to the request's DepartmentId. An unknown or ambiguous name
+// skips the row with a reason — it never silently lands in no department.
+public sealed record BulkUserEntry(string LocalPart, string DisplayName, string? Department = null);
 
 /// <param name="Id">The core.users id — the person, not the mailbox.</param>
 /// <param name="MailboxAddress">
@@ -117,6 +125,7 @@ public sealed record UserResponse(
     string[] Products,
     long QuotaBytes, long UsedBytes,
     bool MfaEnabled, DateTimeOffset? LastLoginAt, DateTimeOffset CreatedAt,
+    bool HasVerifiedRecoveryEmail = false,
     // Whether a profile photo exists. The list carries only the flag, never the
     // bytes — the client fetches the image from /org/users/{id}/avatar for the
     // rows that have one.

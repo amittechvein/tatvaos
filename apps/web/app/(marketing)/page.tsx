@@ -28,9 +28,9 @@ import { homeFor } from '@/components/RequireAuth';
 // ============================================================================
 
 /** The brand ramp, fixed here now that MUI's palette has gone. */
-const BRAND_DARK = '#0a8a4b';
-const BRAND = '#03b562';
-const BRAND_LIGHT = '#35d68c';
+const BRAND_DARK = '#4A29A8';
+const BRAND = '#6C3CE9';
+const BRAND_LIGHT = '#8F6BEC';
 
 const PILLARS = [
   {

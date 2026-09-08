@@ -8,6 +8,7 @@ import { FamilyShell, useFamilyChrome } from '@/components/family/FamilyShell';
 import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
 import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
+import { Input, Select } from '@/components/ui/Form';
 import {
   DuplicateContactError, familyApi, isAutoSaved, sourceLabel,
   type ContactDetail, type ContactGroup, type ContactSummary, type Ownership,
@@ -197,6 +198,13 @@ export default function FamilyViewPage() {
   useEffect(() => {
     if (search.get('create') === '1') {
       setCreating(true);
+      router.replace(`/family/${view}`);
+    }
+    // ?open=<id> is how a sender's name in Mail lands on their card. Same
+    // consume-and-strip rule as ?create, for the same reason.
+    const open = search.get('open');
+    if (open) {
+      setOpenId(open);
       router.replace(`/family/${view}`);
     }
   }, [search, router, view]);
@@ -465,8 +473,8 @@ export default function FamilyViewPage() {
           <div className="position-relative" style={{ minWidth: 280, flex: '1 1 280px' }}>
             <span className="position-absolute d-flex align-items-center"
                   style={{ left: 10, top: 0, bottom: 0, pointerEvents: 'none' }}>🔍</span>
-            <input
-              className="form-control form-control-sm"
+            <Input
+              
               placeholder="Search name, company or address…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -507,15 +515,14 @@ export default function FamilyViewPage() {
 
           {groups.length > 0 && (
             <div style={{ minWidth: 160 }}>
-              <select
-                className="form-select form-select-sm"
+              <Select
                 value={groupId}
                 aria-label="Group"
                 onChange={(e) => chooseGroup(e.target.value)}
               >
                 <option value="">All groups</option>
                 {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-              </select>
+              </Select>
             </div>
           )}
         </div>
@@ -558,7 +565,7 @@ export default function FamilyViewPage() {
             {bulkBusy && (
               <span className="d-inline-block animate-spin rounded-circle"
                     style={{ width: 18, height: 18, border: '2px solid rgba(0,0,0,.12)',
-                             borderTopColor: '#03b562' }} />
+                             borderTopColor: '#6C3CE9' }} />
             )}
           </div>
         )}
@@ -569,7 +576,7 @@ export default function FamilyViewPage() {
           <div className="d-flex justify-content-center py-5">
             <span className="d-inline-block animate-spin rounded-circle"
                   style={{ width: 30, height: 30, border: '3px solid rgba(0,0,0,.12)',
-                           borderTopColor: '#03b562' }} />
+                           borderTopColor: '#6C3CE9' }} />
           </div>
         ) : visible.length === 0 ? (
           <Empty
@@ -621,7 +628,7 @@ export default function FamilyViewPage() {
                       className="d-grid rounded-circle flex-shrink-0 text-white"
                       style={{
                         width: 36, height: 36, placeItems: 'center',
-                        fontSize: 13, fontWeight: 700, background: '#03b562',
+                        fontSize: 13, fontWeight: 700, background: '#6C3CE9',
                       }}
                     >
                       {initials(c.displayName)}
@@ -772,8 +779,8 @@ export default function FamilyViewPage() {
             hint={`It will be created and put on ${
               selectionCount === 1 ? 'this contact' : `these ${selectionCount} contacts`}.`}
           >
-            <input
-              className="form-control"
+            <Input
+              
               autoFocus
               value={newLabel ?? ''}
               onChange={(e) => setNewLabel(e.target.value)}
@@ -872,32 +879,32 @@ function CreateDialog({ groups, onClose, onCreated, onOpenExisting }: {
       )}
 
       <Field label="Name" required hint="How this person appears in every list">
-        <input className="form-control" autoFocus value={displayName}
+        <Input  autoFocus value={displayName}
                onChange={(e) => setDisplayName(e.target.value)} />
       </Field>
 
       <div className="d-flex gap-3">
         <div className="flex-fill">
           <Field label="Company">
-            <input className="form-control" value={companyName}
+            <Input  value={companyName}
                    onChange={(e) => setCompanyName(e.target.value)} />
           </Field>
         </div>
         <div className="flex-fill">
           <Field label="Job title">
-            <input className="form-control" value={jobTitle}
+            <Input  value={jobTitle}
                    onChange={(e) => setJobTitle(e.target.value)} />
           </Field>
         </div>
       </div>
 
       <Field label="Email" hint="Becomes the primary address">
-        <input className="form-control" type="email" value={email}
+        <Input  type="email" value={email}
                onChange={(e) => setEmail(e.target.value)} />
       </Field>
 
       <Field label="Phone">
-        <input className="form-control" value={phone}
+        <Input  value={phone}
                onChange={(e) => setPhone(e.target.value)} />
       </Field>
 
@@ -907,20 +914,20 @@ function CreateDialog({ groups, onClose, onCreated, onOpenExisting }: {
           ? 'Only you can see this contact.'
           : 'Everyone in your organisation can see this contact. This cannot be undone later.'}
       >
-        <select className="form-select" value={ownership}
+        <Select value={ownership}
                 onChange={(e) => setOwnership(e.target.value as Ownership)}>
           <option value="personal">Only me</option>
           <option value="organisational">Everyone in my organisation</option>
-        </select>
+        </Select>
       </Field>
 
       {groups.length > 0 && (
         <Field label="Add to group">
-          <select className="form-select" value={groupToJoin}
+          <Select value={groupToJoin}
                   onChange={(e) => setGroupToJoin(e.target.value)}>
             <option value="">None</option>
             {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-          </select>
+          </Select>
         </Field>
       )}
 
@@ -952,6 +959,8 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [newEmail, setNewEmail] = useState('');
   const [newPhone, setNewPhone] = useState('');
+  const [newAddr, setNewAddr] = useState(EMPTY_ADDRESS);
+  const addrFilled = Object.values(newAddr).some((v) => v.trim().length > 0);
 
   // Editable fields, held separately so Cancel is just "close".
   const [form, setForm] = useState({ displayName: '', jobTitle: '', companyName: '', notes: '' });
@@ -1031,25 +1040,25 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
           <div className="d-flex justify-content-center py-5">
             <span className="d-inline-block animate-spin rounded-circle"
                   style={{ width: 28, height: 28, border: '3px solid rgba(0,0,0,.12)',
-                           borderTopColor: '#03b562' }} />
+                           borderTopColor: '#6C3CE9' }} />
           </div>
         ) : (
           <div className="d-flex flex-column gap-3">
             <div className="d-flex flex-column gap-2">
               <Field label="Name">
-                <input className="form-control" value={form.displayName}
+                <Input  value={form.displayName}
                        onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))} />
               </Field>
               <div className="d-flex gap-3">
                 <div className="flex-fill">
                   <Field label="Company">
-                    <input className="form-control" value={form.companyName}
+                    <Input  value={form.companyName}
                            onChange={(e) => setForm((f) => ({ ...f, companyName: e.target.value }))} />
                   </Field>
                 </div>
                 <div className="flex-fill">
                   <Field label="Job title">
-                    <input className="form-control" value={form.jobTitle}
+                    <Input  value={form.jobTitle}
                            onChange={(e) => setForm((f) => ({ ...f, jobTitle: e.target.value }))} />
                   </Field>
                 </div>
@@ -1125,6 +1134,50 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
                   setNewPhone('');
                 })}
               />
+            </Section>
+            <Section title="Postal addresses">
+              {c.addresses.length === 0 && <Muted>No postal addresses.</Muted>}
+              {c.addresses.map((a) => (
+                <Row key={a.id}>
+                  <span>
+                    {formatAddress(a)}
+                    {a.isPrimary && <span className="badge bg-light text-muted ms-2">primary</span>}
+                  </span>
+                  <Button variant="ghost" disabled={busy}
+                          onClick={() => run(() => familyApi.removeAddress(authedFetch, id, a.id))}>
+                    Remove
+                  </Button>
+                </Row>
+              ))}
+              <div className="d-flex flex-wrap gap-2">
+                <div className="flex-grow-1" style={{ minWidth: 200 }}>
+                  <Input placeholder="Street" value={newAddr.streetLine1}
+                         onChange={(e) => setNewAddr({ ...newAddr, streetLine1: e.target.value })} />
+                </div>
+                <div style={{ width: 140 }}>
+                  <Input placeholder="City" value={newAddr.city}
+                         onChange={(e) => setNewAddr({ ...newAddr, city: e.target.value })} />
+                </div>
+                <div style={{ width: 120 }}>
+                  <Input placeholder="State" value={newAddr.stateProvince}
+                         onChange={(e) => setNewAddr({ ...newAddr, stateProvince: e.target.value })} />
+                </div>
+                <div style={{ width: 100 }}>
+                  <Input placeholder="PIN" value={newAddr.postalCode}
+                         onChange={(e) => setNewAddr({ ...newAddr, postalCode: e.target.value })} />
+                </div>
+                <div style={{ width: 130 }}>
+                  <Input placeholder="Country" value={newAddr.country}
+                         onChange={(e) => setNewAddr({ ...newAddr, country: e.target.value })} />
+                </div>
+                <Button variant="secondary" disabled={busy || !addrFilled}
+                        onClick={() => run(async () => {
+                          await familyApi.addAddress(authedFetch, id, newAddr);
+                          setNewAddr(EMPTY_ADDRESS);
+                        })}>
+                  Add
+                </Button>
+              </div>
             </Section>
 
             {groups.length > 0 && (
@@ -1261,14 +1314,25 @@ const Muted = ({ children }: { children: React.ReactNode }) => (
   <span className="fs-14 text-muted">{children}</span>
 );
 
+const EMPTY_ADDRESS = { streetLine1: '', city: '', stateProvince: '', postalCode: '', country: '' };
+
+function formatAddress(a: {
+  streetLine1?: string | null; streetLine2?: string | null; city?: string | null;
+  stateProvince?: string | null; postalCode?: string | null; country?: string | null;
+}): string {
+  return [a.streetLine1, a.streetLine2, a.city, a.stateProvince, a.postalCode, a.country]
+    .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+    .join(', ');
+}
+
 function AddRow({ label, value, onChange, onAdd, busy }: {
   label: string; value: string; onChange: (v: string) => void;
   onAdd: () => void; busy: boolean;
 }) {
   return (
     <div className="d-flex gap-2">
-      <input
-        className="form-control form-control-sm"
+      <Input
+        
         placeholder={label}
         value={value}
         onChange={(e) => onChange(e.target.value)}

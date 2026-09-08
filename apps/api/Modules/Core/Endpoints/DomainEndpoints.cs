@@ -89,7 +89,7 @@ public static class DomainEndpoints
 
     // ------------------------------------------------------------------
     private static async Task<IResult> AddAsync(
-        AddDomainRequest req, AppDbContext db, TenantContext tenant,
+        AddDomainRequest req, AppDbContext db, TenantContext tenant, IConfiguration config,
         AuditWriter audit, DomainVerifier verifier, DkimKeyService dkimKeys,
         CancellationToken ct)
     {
@@ -97,6 +97,11 @@ public static class DomainEndpoints
 
         if (!IsPlausibleDomain(fqdn))
             return Results.BadRequest(new { error = "That does not look like a domain name." });
+
+        // The bounce subdomain must never become a domain row - see
+        // ReservedDomains for why a row here would silently stop bounce intake.
+        if (ReservedDomains.IsBounceDomain(config, fqdn))
+            return Results.BadRequest(new { error = ReservedDomains.Refusal(config) });
 
         // Platform-wide, not per tenant. Two organisations cannot both claim
         // example.com — whoever proves ownership first holds it, and letting

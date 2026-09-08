@@ -193,8 +193,8 @@ setup_out=$(psql_root "
     -- The whole point: is_active so mail routes to us, but ownership and MX
     -- both NULL, so the tenant has proved nothing.
     INSERT INTO core.domains (tenant_id, fqdn, type, is_active,
-                              ownership_verified_at, mx_verified_at)
-    VALUES ('$GATE_TENANT', 'unverified.local', 'primary', true, NULL, NULL);
+                              ownership_verified_at, mx_verified_at, is_platform)
+    VALUES ('$GATE_TENANT', 'unverified.local', 'primary', true, NULL, NULL, true);
 
     INSERT INTO mail.mailboxes (tenant_id, domain_id, address, local_part, type,
                                 imap_password_hash, quota_bytes)

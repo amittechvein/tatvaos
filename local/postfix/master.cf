@@ -75,6 +75,24 @@ submission inet n       -       n       -       -       smtpd
     -o smtpd_recipient_restrictions=permit_mynetworks,reject_unauth_destination,reject
 
 # ----------------------------------------------------------------------------
+# Bounce intake transport  -  delivers a validated bounce to the API over LMTP
+#
+#  main.cf routes bounces.tatvaos.com here (transport_maps -> bounce-intake:).
+#  Its OWN service, not the shared `lmtp` client, so bounce delivery carries
+#  its own syslog_name (greppable on its own) and can be tuned without touching
+#  how anything else relays over LMTP - the same "own failure mode, leave the
+#  shared one alone" split the bounce policy gate uses in main.cf.
+#
+#  The nexthop is set in main.cf as [api]:10035. The [] disables MX lookup so
+#  Postfix connects straight to the compose host `api`; the API's
+#  BounceIntakeWorker is the LMTP server there. Nothing here is published to
+#  the Docker host - only containers on mailnet reach that socket, which is the
+#  whole trust argument, exactly as for the :10025 quota service.
+# ----------------------------------------------------------------------------
+bounce-intake unix  -       -       n       -       -       lmtp
+    -o syslog_name=postfix/bounce-intake
+
+# ----------------------------------------------------------------------------
 # Standard internal services
 # ----------------------------------------------------------------------------
 pickup    unix  n       -       n       60      1       pickup

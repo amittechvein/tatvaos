@@ -6,6 +6,9 @@ import { Suspense, useEffect, useState } from 'react';
 
 import { useAuth, type MfaChallenge } from '@/lib/auth';
 import { homeFor } from '@/components/RequireAuth';
+import { Button } from '@/components/ui/Kit';
+import { Field, Input, Select, Checkbox } from '@/components/ui/Form';
+import { Alert } from '@/components/ui/Page';
 
 // ============================================================================
 //  Sign-in
@@ -30,10 +33,24 @@ import { homeFor } from '@/components/RequireAuth';
 //  explicit classes rather than relying on a reset that is not there.
 // ============================================================================
 
-/** The brand ramp, fixed here now that MUI's palette has gone. */
-const BRAND_DARK = '#0a8a4b';
-const BRAND = '#03b562';
-const BRAND_LIGHT = '#35d68c';
+/**
+ * The brand ramp, fixed here now that MUI's palette has gone.
+ *
+ * These are LITERALS and that is a known debt, not a choice: the two gradients
+ * below interpolate between three stops, and a CSS custom property cannot be
+ * read into a template string at build time. They must be kept in step with
+ * --brand-700 / --brand-500 / --brand-400 in styles/globals.css by hand.
+ *
+ * On 5 Sept 2026 they were the last green left in the product after the
+ * palette moved to violet — on the login page, which is the first thing every
+ * customer sees. If you are changing the palette again, grep for '#' in
+ * app/login, app/signup and app/(marketing): those three pages carry their own
+ * colours and no token change will reach them. Ending that is stage 3 of
+ * docs/UI_LANE_BRIEF.md.
+ */
+const BRAND_DARK = '#4A29A8';   // --brand-700
+const BRAND = '#6C3CE9';        // --brand-500
+const BRAND_LIGHT = '#8F6BEC';  // --brand-400
 
 const CAPABILITIES = [
   {
@@ -356,7 +373,7 @@ function SignInForm() {
               <h1 className="mb-1" style={{ fontSize: 28, fontWeight: 600 }}>Two-step verification</h1>
               <p className="fs-14 text-muted mb-3">{challenge.note}</p>
 
-              {error && <div className="alert alert-danger mb-3">{error}</div>}
+              {error && <Alert tone="danger">{error}</Alert>}
 
               <form
                 onSubmit={async (e) => {
@@ -372,31 +389,33 @@ function SignInForm() {
                 }}
                 noValidate
               >
-                <div className="mb-3">
-                  <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-mfa">
-                    Code <span className="text-danger">*</span>
-                  </label>
-                  {/* Not restricted to digits, and not maxLength 6: a recovery
-                      code is accepted in the same box, and stripping letters
-                      would make it impossible to type the one thing that helps
-                      when the phone is gone. */}
-                  <input
-                    id="tv-mfa"
-                    className="form-control"
-                    autoFocus
-                    autoComplete="one-time-code"
-                    value={mfaCode}
-                    onChange={(e) => setMfaCode(e.target.value)}
-                  />
-                  <div className="form-text fs-12">
-                    Six digits from your authenticator app, or one of your recovery codes.
-                  </div>
-                </div>
+                {/* Not restricted to digits, and not maxLength 6: a recovery
+                    code is accepted in the same box, and stripping letters
+                    would make it impossible to type the one thing that helps
+                    when the phone is gone. */}
+                <Field
+                  label="Code"
+                  required
+                  htmlFor="tv-mfa"
+                  hint="Six digits from your authenticator app, or one of your recovery codes."
+                >
+                  {({ id, invalid, describedBy }) => (
+                    <Input
+                      id={id}
+                      invalid={invalid}
+                      describedBy={describedBy}
+                      autoFocus
+                      autoComplete="one-time-code"
+                      value={mfaCode}
+                      onChange={(e) => setMfaCode(e.target.value)}
+                    />
+                  )}
+                </Field>
 
-                <button type="submit" className="btn btn-primary btn-lg w-100"
+                <Button type="submit" variant="primary" className="w-full py-2.5"
                         disabled={busy || mfaCode.trim().length === 0}>
                   {busy ? 'Checking…' : 'Verify'}
-                </button>
+                </Button>
               </form>
 
               <p className="fs-12 text-muted mt-4 mb-0" style={{ lineHeight: 1.7 }}>
@@ -430,69 +449,68 @@ function SignInForm() {
             ))}
           </ul>
 
-          {error && <div className="alert alert-danger mb-3">{error}</div>}
+          {error && <Alert tone="danger">{error}</Alert>}
 
           {tab === 'otp' && (
             <form onSubmit={submitOtp} noValidate>
-              <div className="mb-3">
-                <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-phone">
-                  Mobile number <span className="text-danger">*</span>
-                </label>
-                <input
-                  id="tv-phone"
-                  className="form-control"
-                  type="tel"
-                  autoComplete="tel"
-                  required
-                  placeholder="+91 98765 43210"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  disabled={otpSent}
-                />
-              </div>
+              <Field label="Mobile number" required htmlFor="tv-phone">
+                {({ id, invalid, describedBy }) => (
+                  <Input
+                    id={id}
+                    invalid={invalid}
+                    describedBy={describedBy}
+                    type="tel"
+                    autoComplete="tel"
+                    required
+                    placeholder="+91 98765 43210"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    disabled={otpSent}
+                  />
+                )}
+              </Field>
 
               {!otpSent ? (
-                <button type="button" className="btn btn-primary btn-lg w-100"
+                <Button variant="primary" className="w-full py-2.5"
                         disabled={busy || phone.trim().length < 8}
                         onClick={() => void sendOtp()}>
                   {busy ? 'Sending…' : 'Send code'}
-                </button>
+                </Button>
               ) : (
                 <>
-                  <div className="alert alert-info mb-3">
+                  <Alert tone="info">
                     If this number is registered, a 6-digit code is on its way.
                     It works for 5 minutes.
-                  </div>
+                  </Alert>
                   {devCode && (
-                    <div className="alert alert-warning mb-3">
-                      On-screen codes are switched on and the SMS did not go out,
-                      so the code is shown here: <strong>{devCode}</strong>
-                    </div>
+                    <Alert tone="warn" title="On-screen codes are switched on">
+                      The SMS did not go out, so the code is shown here: <strong>{devCode}</strong>
+                    </Alert>
                   )}
-                  <div className="mb-3">
-                    <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-otp">
-                      6-digit code <span className="text-danger">*</span>
-                    </label>
-                    <input
-                      id="tv-otp"
-                      className="form-control"
-                      required
-                      autoFocus
-                      inputMode="numeric"
-                      maxLength={6}
-                      value={otpCode}
-                      onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                    />
-                  </div>
-                  <button type="submit" className="btn btn-primary btn-lg w-100"
+                  <Field label="6-digit code" required htmlFor="tv-otp">
+                    {({ id, invalid, describedBy }) => (
+                      <Input
+                        id={id}
+                        invalid={invalid}
+                        describedBy={describedBy}
+                        required
+                        autoFocus
+                        inputMode="numeric"
+                        maxLength={6}
+                        value={otpCode}
+                        onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      />
+                    )}
+                  </Field>
+                  <Button type="submit" variant="primary" className="w-full py-2.5"
                           disabled={busy || otpCode.length !== 6}>
                     {busy ? 'Signing in…' : 'Sign in'}
-                  </button>
-                  <button type="button" className="btn btn-link btn-sm w-100 mt-2"
+                  </Button>
+                  <Button variant="ghost" className="mt-2 w-full text-sm"
                           disabled={busy || resendIn > 0}
                           onClick={() => void sendOtp()}>
                     {resendIn > 0 ? `Resend in ${resendIn}s` : 'Resend code'}
-                  </button>
+                  </Button>
                 </>
               )}
             </form>
@@ -500,70 +518,68 @@ function SignInForm() {
 
           {tab === 'email' && (
             <form onSubmit={submit} noValidate>
-              <div className="mb-3">
-                <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-email">
-                  Email address <span className="text-danger">*</span>
-                </label>
-                <input
-                  id="tv-email"
-                  className="form-control"
-                  type="email"
-                  autoComplete="username"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
-              </div>
-
-              <div className="mb-2">
-                <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-password">
-                  Password <span className="text-danger">*</span>
-                </label>
-                <div className="input-group">
-                  <input
-                    id="tv-password"
-                    className="form-control"
-                    type={reveal ? 'text' : 'password'}
-                    autoComplete="current-password"
+              <Field label="Email address" required htmlFor="tv-email">
+                {({ id, invalid, describedBy }) => (
+                  <Input
+                    id={id}
+                    invalid={invalid}
+                    describedBy={describedBy}
+                    type="email"
+                    autoComplete="username"
                     required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
                   />
-                  {/* A reveal toggle reduces failed attempts on long
-                      passwords, and this account locks after five. */}
-                  <button
-                    type="button"
-                    className="btn btn-outline-secondary"
-                    onClick={() => setReveal((v) => !v)}
-                    aria-label={reveal ? 'Hide password' : 'Show password'}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-                         stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                      <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z" />
-                      <circle cx="12" cy="12" r="3" />
-                      {!reveal && <path d="M4 20L20 4" />}
-                    </svg>
-                  </button>
-                </div>
-              </div>
+                )}
+              </Field>
 
-              <div className="form-check mt-2">
-                <input
-                  className="form-check-input"
-                  type="checkbox"
-                  id="tv-remember"
-                  checked={remember}
-                  onChange={(e) => setRemember(e.target.checked)}
-                />
-                <label className="form-check-label fs-14" htmlFor="tv-remember">
-                  Remember my email on this device
-                </label>
-              </div>
+              <Field label="Password" required htmlFor="tv-password" className="mb-2">
+                {({ id, invalid, describedBy }) => (
+                  <div className="relative">
+                    <Input
+                      id={id}
+                      invalid={invalid}
+                      describedBy={describedBy}
+                      type={reveal ? 'text' : 'password'}
+                      autoComplete="current-password"
+                      required
+                      className="pr-11"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                    />
+                    {/* A reveal toggle reduces failed attempts on long
+                        passwords, and this account locks after five. Inside
+                        the field rather than glued to its right edge: an
+                        input-group splits the control into two boxes and the
+                        focus ring then only lights half of it. */}
+                    <button
+                      type="button"
+                      className="absolute inset-y-0 right-0 flex items-center px-3 text-ink-faint hover:text-ink"
+                      onClick={() => setReveal((v) => !v)}
+                      aria-label={reveal ? 'Hide password' : 'Show password'}
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                           stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                        <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z" />
+                        <circle cx="12" cy="12" r="3" />
+                        {!reveal && <path d="M4 20L20 4" />}
+                      </svg>
+                    </button>
+                  </div>
+                )}
+              </Field>
 
-              <button type="submit" className="btn btn-primary btn-lg w-100 mt-3"
+              <Checkbox
+                id="tv-remember"
+                label="Remember my email on this device"
+                checked={remember}
+                onChange={(e) => setRemember(e.target.checked)}
+              />
+
+              <Button type="submit" variant="primary" className="mt-3 w-full py-2.5"
                       disabled={busy || !email || !password}>
                 {busy ? 'Signing in…' : 'Sign in'}
-              </button>
+              </Button>
 
               {/* Anonymous recovery. The mobile-code route works today; the
                   emailed link depends on outbound SMTP being unblocked. */}
@@ -577,17 +593,20 @@ function SignInForm() {
 
           {/* Outside the tabs: applies to whichever way you sign in. */}
           <div className="mt-4">
-            <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-startin">Start in</label>
-            <select
-              id="tv-startin"
-              className="form-select form-select-sm"
-              value={startIn}
-              onChange={(e) => setStartIn(e.target.value as 'default' | 'mail')}
-            >
-              <option value="default">Dashboard</option>
-              <option value="mail">Mail inbox</option>
-            </select>
-            <div className="form-text fs-12">Where you land after signing in</div>
+            <Field label="Start in" htmlFor="tv-startin" hint="Where you land after signing in">
+              {({ id, invalid, describedBy }) => (
+                <Select
+                  id={id}
+                  invalid={invalid}
+                  describedBy={describedBy}
+                  value={startIn}
+                  onChange={(e) => setStartIn(e.target.value as 'default' | 'mail')}
+                >
+                  <option value="default">Dashboard</option>
+                  <option value="mail">Mail inbox</option>
+                </Select>
+              )}
+            </Field>
           </div>
 
           <p className="fs-12 text-muted mt-4 mb-0" style={{ lineHeight: 1.7 }}>

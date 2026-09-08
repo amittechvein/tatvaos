@@ -5,6 +5,7 @@ import { useRef, useState } from 'react';
 import { FamilyShell, useFamilyChrome } from '@/components/family/FamilyShell';
 import { Badge, Button, Card, Stat, Table, Td } from '@/components/ui/Kit';
 import { useAuth } from '@/lib/auth';
+import { Input, Select } from '@/components/ui/Form';
 import {
   familyApi, saveBlob,
   type ImportReport, type Ownership,
@@ -214,15 +215,14 @@ function ImportPanel() {
           <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-ownership">
             Who can see them
           </label>
-          <select
+          <Select
             id="tv-ownership"
-            className="form-select form-select-sm"
             value={ownership}
             onChange={(e) => { setOwnership(e.target.value as Ownership); setChecked(null); }}
           >
             <option value="personal">Only me</option>
             <option value="organisational">Everyone in my organisation</option>
-          </select>
+          </Select>
           <div className="form-text fs-12">
             {ownership === 'personal'
               ? 'Only you.'
@@ -234,15 +234,14 @@ function ImportPanel() {
           <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-dupe-mode">
             If an address is already saved
           </label>
-          <select
+          <Select
             id="tv-dupe-mode"
-            className="form-select form-select-sm"
             value={mode}
             onChange={(e) => { setMode(e.target.value as 'skip' | 'update'); setChecked(null); }}
           >
             <option value="skip">Skip that row</option>
             <option value="update">Fill in what is missing</option>
-          </select>
+          </Select>
           <div className="form-text fs-12">
             {mode === 'skip'
               ? 'Leave the existing contact untouched.'
@@ -254,9 +253,9 @@ function ImportPanel() {
           <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-import-label">
             Tag every contact with
           </label>
-          <input
+          <Input
             id="tv-import-label"
-            className="form-control form-control-sm"
+            
             value={label}
             onChange={(e) => setLabel(e.target.value)}
           />
@@ -469,8 +468,7 @@ function ExportPanel() {
           <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-export-scope">
             What to export
           </label>
-          <select id="tv-export-scope" className="form-select form-select-sm"
-                  value={scope} onChange={(e) => setScope(e.target.value)}>
+          <Select id="tv-export-scope" value={scope} onChange={(e) => setScope(e.target.value)}>
             <option value="all">Everything I can see</option>
             <option value="personal">Only my own contacts</option>
             <option value="organisational">Only the shared directory</option>
@@ -478,18 +476,17 @@ function ExportPanel() {
             {labels.map((l) => (
               <option key={l.id} value={`label:${l.id}`}>Label: {l.name}</option>
             ))}
-          </select>
+          </Select>
         </div>
 
         <div style={{ minWidth: 220 }}>
           <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-export-format">
             Format
           </label>
-          <select id="tv-export-format" className="form-select form-select-sm"
-                  value={format} onChange={(e) => setFormat(e.target.value as 'csv' | 'vcf')}>
+          <Select id="tv-export-format" value={format} onChange={(e) => setFormat(e.target.value as 'csv' | 'vcf')}>
             <option value="csv">CSV</option>
             <option value="vcf">vCard</option>
-          </select>
+          </Select>
           <div className="form-text fs-12">
             {format === 'csv'
               ? 'Opens in Excel; imports into Google Contacts.'

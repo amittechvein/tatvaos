@@ -1,4 +1,122 @@
 /* ============================================================================
+   YZEN's muted text is unreadable — one variable, sixty-three failures
+   ----------------------------------------------------------------------------
+   MEASURED, 7 Sept 2026, on the live /org/storage page: 65 elements fell below
+   the 4.5:1 contrast a body text needs. Sixty-three of them were one colour —
+   YZEN's `--text-muted: #8d9eb5` (styles.css :root) — at 2.73:1 on white and
+   2.48:1 on their own grey panel. That is roughly HALF the required contrast,
+   and it is the colour their stylesheet uses for captions, hints, table
+   sub-text and secondary labels across the whole console. It has been that way
+   since the template shipped; nobody measured it.
+
+   Repointing it at our own --ink-muted (#6B6880, 4.82:1 on white) fixes all
+   sixty-three without editing a single page. It is a colour change, not a
+   layout one, so nothing moves.
+
+   Scoped to :root ONLY, deliberately. YZEN re-declares --text-muted inside its
+   dark-theme block with a higher-specificity selector, so dark mode keeps its
+   own value and is untouched by this.
+
+   This is a patch over a purchased stylesheet, and it stops being needed the
+   day YZEN is deleted (stage 4, docs/UI_LANE_BRIEF.md). Until then it is the
+   difference between readable and not for most of the secondary text in the
+   product.
+   ============================================================================ */
+:root { --text-muted: #6B6880; }
+
+/* ============================================================================
+   Bootstrap alerts, wearing our design — a BRIDGE, not a migration
+   ----------------------------------------------------------------------------
+   There are 74 `alert alert-*` blocks still in the app (38 danger, 15 warning,
+   15 info, 11 success) and 24 `btn-close` dismiss buttons. Rewriting every one
+   into <Alert> is stage 3's long tail and will take days; meanwhile they sit
+   next to migrated screens looking like a different product.
+
+   So these rules give Bootstrap's own class names our design: the same tinted
+   panel, hairline border and coloured left bar that components/ui/Page.tsx
+   renders, driven by the same tokens. The markup does not change, so there is
+   nothing to break — this is colour and spacing only, and it reverts by
+   deleting the block.
+
+   BE CLEAR ABOUT WHAT THIS IS. It does not migrate anything. A page using
+   these classes is still Bootstrap markup and still counts as unmigrated on
+   the stage 3 list. What it buys is that the product stops looking like two
+   products while that list is worked through — and when YZEN is finally
+   deleted (stage 4), these rules are already the real styles rather than a
+   hole where the alerts used to be.
+
+   The left bar carries the meaning for anyone who cannot separate the tints,
+   which is the same rule the migrated Alert follows.
+   ============================================================================ */
+.alert {
+  position: relative;
+  overflow: hidden;
+  border-radius: 0.5rem;
+  border: 1px solid;
+  padding: 0.75rem 0.75rem 0.75rem 1.5rem;
+  font-size: 0.875rem;
+  color: rgb(var(--ink));
+}
+.alert::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: 4px;
+}
+
+.alert-danger  { background: rgb(253 73 99 / 0.06);  border-color: rgb(253 73 99 / 0.30); }
+.alert-warning { background: rgb(255 169 9 / 0.07);  border-color: rgb(255 169 9 / 0.32); }
+.alert-info    { background: rgb(15 188 249 / 0.06); border-color: rgb(15 188 249 / 0.30); }
+.alert-success { background: rgb(83 196 5 / 0.07);   border-color: rgb(83 196 5 / 0.32); }
+.alert-light   { background: rgb(var(--canvas));     border-color: rgb(var(--line)); }
+
+.alert-danger::before  { background: #fd4963; }
+.alert-warning::before { background: #ffa909; }
+.alert-info::before    { background: #0fbcf9; }
+.alert-success::before { background: #53c405; }
+.alert-light::before   { background: rgb(var(--line)); }
+
+/* Bootstrap's close button is a background-image X — a fixed dark glyph at 0.5
+   opacity that knows nothing about the panel behind it. A text glyph in
+   `currentColor` is legible and, more usefully, CORRECT EVERYWHERE WITHOUT A
+   SPECIAL CASE: inside an alert it inherits the alert's ink; on the coloured
+   filter pill in family/[view] (`btn-close-white`, on a background that is the
+   group's own colour) it inherits that pill's white; on the grey fallback pill
+   it inherits the dark text. Bootstrap needed a whole second class for that
+   last part, and it was still wrong on the grey variant. Inheriting is not a
+   shortcut here — it is the only rule that holds on all three. */
+.alert .btn-close,
+.btn-close {
+  background: none;
+  opacity: 0.65;
+  width: auto;
+  height: auto;
+  padding: 0.25rem;
+  border-radius: 0.25rem;
+  color: inherit;
+  line-height: 1;
+}
+.btn-close::before { content: "\00d7"; font-size: 1.125rem; }
+.btn-close:hover { opacity: 1; }
+
+/* ----------------------------------------------------------------------------
+   Checkboxes — accent only, deliberately.
+
+   41 `form-check` blocks remain. `accent-color` tints a NATIVE checkbox with
+   the brand and costs one line; restyling `.form-check-input` properly would
+   also hit `.form-switch .form-check-input`, which YZEN draws as a pill from a
+   background image, and a half-restyled switch is worse than an unstyled one.
+   So: colour and focus, nothing structural. The switch keeps YZEN's shape
+   until its page is migrated for real.
+   -------------------------------------------------------------------------- */
+.form-check-input { accent-color: rgb(var(--brand-500)); }
+.form-check-input:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgb(var(--brand-500) / 0.35);
+}
+
+/* ============================================================================
    Grid utility collision fix — Tailwind vs YZEN (Bootstrap) .grid
    ----------------------------------------------------------------------------
    YZEN's styles.css bundles Bootstrap's .grid utility:
@@ -61,14 +179,19 @@
    Brand header — product logo lockup on the sidebar
    ----------------------------------------------------------------------------
    The supplied wordmarks (TatvaOS Core / TatvaOS Mail) are dark artwork on a
-   transparent ground, so they would be invisible on the dark rail. The brand
-   header therefore sits on white — which also lines it up with the white
-   topbar to read as one continuous top strip — and stays white in dark mode so
-   the lockup remains legible. !important because YZEN's dark menu sets the
-   header background with a higher-specificity, attribute-qualified selector.
+   transparent ground. Until 5 Sept 2026 the rail was near-black, so they were
+   invisible on it, and this block forced `background: #fff !important` behind
+   the header to rescue them — which produced a white slab at the top of a dark
+   sidebar, the seam Amit spotted.
+
+   THE RAIL IS NOW LIGHT (data-menu-styles="light" in app/layout.tsx), so the
+   dark artwork reads on it directly and the override is gone. Do not put it
+   back: if the logo ever looks wrong again, the answer is SVG lockups whose
+   colour comes from CSS, not a coloured patch behind PNGs. See
+   docs/UI_LANE_BRIEF.md §4.1.
+
    The collapsed icon rail shows only the square mark; the wordmark is hidden.
    ============================================================================ */
-.app-sidebar .main-sidebar-header { background: #fff !important; }
 .app-sidebar .main-sidebar-header .header-logo {
   display: flex;
   align-items: center;

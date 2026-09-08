@@ -3,6 +3,10 @@
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useState } from 'react';
 
+import { Button } from '@/components/ui/Kit';
+import { Field, Input, Select } from '@/components/ui/Form';
+import { Alert } from '@/components/ui/Page';
+
 // ============================================================================
 //  Converted off MUI. Notes for the next editor.
 //
@@ -22,9 +26,9 @@ import { Suspense, useCallback, useEffect, useState } from 'react';
 const API = process.env.NEXT_PUBLIC_API_URL ?? '/api';
 
 /** The brand ramp, fixed here now that MUI's palette has gone. */
-const BRAND_DARK = '#0a8a4b';
-const BRAND = '#03b562';
-const BRAND_LIGHT = '#35d68c';
+const BRAND_DARK = '#4A29A8';
+const BRAND = '#6C3CE9';
+const BRAND_LIGHT = '#8F6BEC';
 
 /**
  * A 500 from ASP.NET has an empty body, and res.json() on an empty body
@@ -68,23 +72,10 @@ function Spinner({ size = 20, light }: { size?: number; light?: boolean }) {
   );
 }
 
-/**
- * A labelled field. MUI's TextField bundled label, input and helper text; this
- * keeps the same three parts so the call sites read the same way.
+/*  The local Field was deleted on 7 Sept 2026 — components/ui/Form.tsx now
+ *  owns it, and a second copy is how two forms end up disagreeing about where
+ *  the hint sits. The shared one accepts these same plain children.
  */
-function Field({
-  label, hint, required, children,
-}: { label: string; hint?: string; required?: boolean; children: React.ReactNode }) {
-  return (
-    <div className="mb-3">
-      <label className="form-label fs-13 fw-medium mb-1">
-        {label}{required && <span className="text-danger ms-1">*</span>}
-      </label>
-      {children}
-      {hint && <div className="form-text fs-12">{hint}</div>}
-    </div>
-  );
-}
 
 // ============================================================================
 //  Signup: organisation → you → prove email and phone → account.
@@ -241,10 +232,10 @@ function Wizard() {
           <p className="fs-14 text-muted mb-4">
             Until then your email keeps arriving exactly where it does today.
           </p>
-          <button type="button" className="btn btn-primary btn-lg w-100"
+          <Button variant="primary" className="w-full py-2.5"
                   onClick={() => router.push('/login')}>
             Sign in as {done.email}
-          </button>
+          </Button>
         </div>
       </Split>
     );
@@ -281,40 +272,36 @@ function Wizard() {
         </ol>
 
         {error && (
-          <div className="alert alert-danger alert-dismissible d-flex align-items-start mb-4">
-            <div className="flex-fill">{error}</div>
-            <button type="button" className="btn-close" aria-label="Dismiss"
-                    onClick={() => setError(null)} />
-          </div>
+          <Alert tone="danger" onDismiss={() => setError(null)}>{error}</Alert>
         )}
 
         {step === 0 && (
           <Pane title="Your organisation"
                 hint="This is what your people will see, and what appears on invoices.">
             <Field label="Organisation name" required>
-              <input className="form-control" value={orgName} placeholder="ABC School"
+              <Input value={orgName} placeholder="ABC School"
                      onChange={(e) => setOrgName(e.target.value)} />
             </Field>
             <Field
               label="Type"
               hint="Sets up sensible starting categories — teachers and students for a school, doctors and nursing for a clinic."
             >
-              <select className="form-select" value={orgType}
+              <Select value={orgType}
                       onChange={(e) => setOrgType(e.target.value)}>
                 {ORG_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-              </select>
+              </Select>
             </Field>
             <div className="d-flex gap-3 flex-wrap">
               <div className="flex-fill" style={{ minWidth: 160 }}>
                 <Field label="Country">
-                  <input className="form-control" value={country}
+                  <Input value={country}
                          onChange={(e) => setCountry(e.target.value)} />
                 </Field>
               </div>
               {country === 'India' && (
                 <div className="flex-fill" style={{ minWidth: 200 }}>
                   <Field label="GSTIN" hint="Optional — needed for a GST invoice">
-                    <input className="form-control" value={gstin}
+                    <Input value={gstin}
                            onChange={(e) => setGstin(e.target.value.toUpperCase())} />
                   </Field>
                 </div>
@@ -328,22 +315,22 @@ function Wizard() {
           <Pane title="About you"
                 hint="You will be the owner of this organisation, and can add others afterwards.">
             <Field label="Your name" required>
-              <input className="form-control" value={adminName}
+              <Input value={adminName}
                      onChange={(e) => setAdminName(e.target.value)} />
             </Field>
             <Field label="Email address" required
                    hint="A code is sent here now, and invoices later. Use an address you can read today.">
-              <input className="form-control" type="email" value={adminEmail}
+              <Input type="email" value={adminEmail}
                      onChange={(e) => setAdminEmail(e.target.value)} />
             </Field>
             <Field label="Mobile number" required
                    hint="A code is sent here too. Include the country code.">
-              <input className="form-control" value={adminPhone} placeholder="+91 98765 43210"
+              <Input value={adminPhone} placeholder="+91 98765 43210"
                      onChange={(e) => setAdminPhone(e.target.value)} />
             </Field>
             <Field label="Choose a password" required
                    hint="At least 12 characters. A short phrase you will remember beats a short password you will not.">
-              <input className="form-control" type="password" value={password}
+              <Input type="password" value={password}
                      onChange={(e) => setPassword(e.target.value)} />
             </Field>
             <Nav onBack={() => setStep(0)} onNext={start} busy={busy}
@@ -358,29 +345,27 @@ function Wizard() {
         {step === 2 && (
           <Pane title="Two codes"
                 hint={`One emailed to ${adminEmail || 'your address'}, one sent by SMS to ${phoneMasked || 'your mobile'}.`}>
+            {/* Wording no longer says "staging" — that environment was removed.
+                Codes appear here only when the show-OTP-on-screen setting is on
+                AND the real send failed. */}
             {(devCodes.email || devCodes.phone) && (
-              <div className="alert alert-info mb-4">
-                {/* Wording no longer says "staging" — that environment was
-                    removed. Codes appear here only when the show-OTP-on-screen
-                    setting is on AND the real send failed. */}
-                <div className="fw-semibold fs-14 mb-1">Codes shown on screen</div>
+              <Alert tone="info" title="Codes shown on screen">
                 On-screen codes are switched on for this platform, and the real
                 send did not go out — in normal operation they arrive only by
                 email and SMS.
                 {devCodes.email && (
-                  <span className="d-block font-monospace mt-2">Email: {devCodes.email}</span>
+                  <span className="mt-2 block font-mono">Email: {devCodes.email}</span>
                 )}
                 {devCodes.phone && (
-                  <span className="d-block font-monospace">SMS: {devCodes.phone}</span>
+                  <span className="block font-mono">SMS: {devCodes.phone}</span>
                 )}
-              </div>
+              </Alert>
             )}
 
             <div className="d-flex gap-3 flex-wrap mb-1">
               <div className="flex-fill" style={{ minWidth: 180 }}>
                 <Field label="Email code" hint={emailOk ? 'Verified' : undefined}>
-                  <input
-                    className={`form-control ${emailOk ? 'is-valid' : ''}`}
+                  <Input
                     value={emailCode} disabled={emailOk}
                     inputMode="numeric" maxLength={6}
                     onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, ''))}
@@ -389,8 +374,7 @@ function Wizard() {
               </div>
               <div className="flex-fill" style={{ minWidth: 180 }}>
                 <Field label="SMS code" hint={phoneOk ? 'Verified' : undefined}>
-                  <input
-                    className={`form-control ${phoneOk ? 'is-valid' : ''}`}
+                  <Input
                     value={phoneCode} disabled={phoneOk}
                     inputMode="numeric" maxLength={6}
                     onChange={(e) => setPhoneCode(e.target.value.replace(/\D/g, ''))}
@@ -407,21 +391,21 @@ function Wizard() {
             {resumed && (
               <Field label="Choose a password" required
                      hint="At least 12 characters — you are back on a fresh session, so set it here.">
-                <input className="form-control" type="password" value={password}
+                <Input type="password" value={password}
                        onChange={(e) => setPassword(e.target.value)} />
               </Field>
             )}
 
             {codeErrors.map((e) => (
-              <div key={e} className="alert alert-warning py-2 mb-2">{e}</div>
+              <Alert key={e} tone="warn">{e}</Alert>
             ))}
 
             <p className="fs-12 text-muted mt-2 mb-0">
               Nothing arrived?{' '}
-              <button type="button" className="btn btn-link btn-sm p-0 align-baseline"
+              <Button variant="ghost" className="p-0 align-baseline text-sm"
                       onClick={resend} disabled={busy}>
                 Send fresh codes
-              </button>
+              </Button>
               {' '}— they expire after 10 minutes.
             </p>
 
@@ -460,19 +444,19 @@ function Nav({ onBack, onNext, busy, nextDisabled, nextLabel = 'Continue' }: {
   return (
     <div className="d-flex gap-2 mt-4">
       {onBack && (
-        <button type="button" className="btn btn-light" onClick={onBack} disabled={busy}>
+        <Button variant="secondary" onClick={onBack} disabled={busy}>
           Back
-        </button>
+        </Button>
       )}
-      <button
-        type="button"
-        className="btn btn-primary btn-lg ms-auto"
+      <Button
+        variant="primary"
+        className="ms-auto py-2.5"
         style={{ minWidth: 200 }}
         onClick={onNext}
         disabled={busy || nextDisabled}
       >
         {busy ? <Spinner light /> : nextLabel}
-      </button>
+      </Button>
     </div>
   );
 }
