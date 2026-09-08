@@ -45,8 +45,21 @@ export function Card({
   className?: string;
   padded?: boolean;
 }) {
+  //  min-w-0 IS LOAD-BEARING, and it is not obvious.
+  //
+  //  A grid or flex ITEM defaults to min-width:auto, which means "never shrink
+  //  below my content's minimum". Put a Card holding a table inside
+  //  `grid lg:grid-cols-2` and, at phone width, the table's intrinsic width
+  //  pushes the track out: measured on /org/storage at 375px, the grid
+  //  container was correctly 351px while its computed grid-template-columns
+  //  was 569px. The card grew to 569, the page to 601, and the whole console
+  //  scrolled sideways.
+  //
+  //  The table's own overflow-x-auto never got a chance — a scroll container
+  //  only scrolls when it is FORCED to be narrower than its content, and
+  //  nothing was forcing it. min-w-0 is what forces it.
   return (
-    <div className={`rounded-card border border-line bg-surface shadow-card ${className}`.trim()}>
+    <div className={`min-w-0 rounded-card border border-line bg-surface shadow-card ${className}`.trim()}>
       {(title || actions) && (
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4">
           <div className="min-w-0">
