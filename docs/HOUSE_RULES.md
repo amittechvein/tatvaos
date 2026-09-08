@@ -258,5 +258,26 @@ several hours of careful reading by several people had missed them.
 
 ---
 
+## If you could not run a required check, say so — in the PR body
+
+When a check the work is supposed to pass could not be RUN — not failed, could
+not run: the tool is missing, the environment can't reach it, the machine has
+no Docker — say so in the pull request body, and say why. One sentence: what
+you could not run, and what stopped you.
+
+The cost this pays for: without a named place to write "I couldn't", the only
+options are silence and unusual conscientiousness, and silence wins on the
+busy days. A skipped check that is announced is a decision the reviewer can
+weigh; a skipped check that is silent is a hole nobody knows to look in. This
+turns the second into the first.
+
+*(Earned 3 September 2026: `verify-migrations.sh` gated on `docker ps` and so
+could not run at all on a machine without Docker — both its real checks sit
+downstream of that gate. The gap was surfaced by a report, not by the script,
+which is exactly the conscientiousness this rule exists so nobody has to
+rely on.)*
+
+---
+
 *Amendments are welcome and should arrive as a pull request with the incident
 attached. A rule without a cost behind it does not belong here.*
