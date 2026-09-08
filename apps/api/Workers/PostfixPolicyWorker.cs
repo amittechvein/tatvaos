@@ -1,10 +1,9 @@
 using System.Net;
 using System.Net.Sockets;
-using System.Security.Cryptography;
 using System.Text;
-using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using TatvaOS.Api.Modules.Admin;
+using TatvaOS.Api.Modules.Mail;
 using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Tenancy;
 
@@ -306,83 +305,36 @@ public sealed class PostfixPolicyWorker(
         return (inherited, row.UsedBytes);
     }
 
-    // A bounce local part is exactly: 32-hex id . keyid . ts . 16-hex sig.
-    // The shape check is the CHEAP first gate (§ design): a public catch-all
-    // attracts floods, and every RCPT in a flood would otherwise be an HMAC on
-    // the same handler that answers quota for real mail. Anything that is not
-    // this shape is refused before a single hash is computed.
-    private static readonly Regex BounceLocalPart =
-        new(@"^([0-9a-f]{32})\.([A-Za-z0-9]{1,16})\.([0-9]{1,7})\.([0-9a-f]{16})$",
-            RegexOptions.Compiled);
-
     /// <summary>
-    /// Validate a VERP bounce address at RCPT time. Returns a Postfix action:
-    /// DUNNO (valid — let it through to the intake transport), a 5xx REJECT
-    /// (malformed, forged, stale, wrong/absent key), or — only from the caller's
-    /// catch — a 4xx defer on an internal fault.
+    /// Validate a VERP bounce address at RCPT time and map the verdict to a
+    /// Postfix action: DUNNO (valid — let it through to the intake transport),
+    /// a 5xx REJECT (malformed, forged, stale, or a key this server does not
+    /// hold), or — only from the caller's catch — a 4xx defer on an internal
+    /// fault. The format itself lives in BounceAddress; this method is only the
+    /// verdict → SMTP-action mapping.
     ///
-    /// NO SECRET IS A REJECT, NOT AN ACCEPT. Once bounces.tatvaos.com is a
-    /// relay domain the config is live whether or not the Bounce:Keys keyset
-    /// is set. If a missing key meant "can't check, allow", a single absent
-    /// config value would turn the whole domain into an accept-everything
-    /// catch-all that looked healthy while doing it. So an unset keyset, or a
-    /// keyid this server does not hold, rejects every address on the domain —
-    /// loudly
-    /// wrong beats silently wrong. (VERP is dormant until Bounce:Keys is set, so
-    /// there is no legitimate traffic to lose while it is unset.)
+    /// NO KEY IS A REJECT, NOT AN ACCEPT (BounceAddress.Verify enforces it, and
+    /// UnknownKey lands here as a 5xx). Once bounces.tatvaos.com is a relay
+    /// domain the config is live whether or not Bounce:Keys is set; if a missing
+    /// key meant "can't check, allow", one absent value would turn the whole
+    /// domain into an accept-everything catch-all that looked healthy while
+    /// doing it. VERP is dormant until Bounce:Keys is set, so there is no
+    /// legitimate traffic to lose while it is unset.
     /// </summary>
     private string ValidateBounce(string recipient)
     {
-        var at = recipient.LastIndexOf('@');
-        var local = at > 0 ? recipient[..at] : recipient;
+        var result = BounceAddress.Verify(
+            recipient, keyId => config[$"Bounce:Keys:{keyId}"], DateTimeOffset.UtcNow);
 
-        // Cheap shape gate — no crypto yet.
-        var m = BounceLocalPart.Match(local);
-        if (!m.Success)
-            return "REJECT 5.7.1 Not a valid bounce address";
-
-        var idHex = m.Groups[1].Value;
-        var keyId = m.Groups[2].Value;
-        var ts    = m.Groups[3].Value;
-        var sig   = m.Groups[4].Value;
-
-        // KEYSET, not a single secret. The address names WHICH key signed it,
-        // and a RETIRED key must still verify bounces already in flight — a DSN
-        // can arrive days after a rotation, which is the whole reason <keyid>
-        // is in the address. Look the keyid up in Bounce:Keys; an unknown key,
-        // a retired-beyond-window one, or none configured at all rejects the
-        // whole domain. keyid is [A-Za-z0-9]{1,16} from the shape gate, so it
-        // cannot escape the config path. A key stays in Bounce:Keys for at
-        // least the 30-day address expiry after it stops signing (see
-        // BOUNCE-ROUTING.md), so expiry and rotation agree on an address's life.
-        var secret = config[$"Bounce:Keys:{keyId}"];
-        if (string.IsNullOrEmpty(secret))
-            return "REJECT 5.7.1 Bounce address not recognised";
-
-        // Expiry — a captured address must not be replayable for years. The
-        // send-day stamp is in the SIGNED payload, so forging it just fails the
-        // HMAC; checking it first keeps a replay flood off the crypto path.
-        // 30 days is generous against the ~5-day DSN retry reality.
-        if (!long.TryParse(ts, out var tsDays))
-            return "REJECT 5.7.1 Not a valid bounce address";
-        var nowDays = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 86_400;
-        if (nowDays - tsDays > 30 || tsDays - nowDays > 1)
-            return "REJECT 5.7.1 Bounce address expired";
-
-        // Constant-time HMAC check — it is a signature check reachable by
-        // anyone who can talk to port 25. Compare the raw bytes, never the hex.
-        var mac = HMACSHA256.HashData(
-            Encoding.UTF8.GetBytes(secret),
-            Encoding.ASCII.GetBytes($"{idHex}.{keyId}.{ts}"));
-        var expected = mac.AsSpan(0, 8).ToArray();
-        var provided = Convert.FromHexString(sig);
-        if (!CryptographicOperations.FixedTimeEquals(expected, provided))
-            return "REJECT 5.7.1 Bounce address failed verification";
-
-        // Valid — let it continue to `permit` and the intake transport. The
-        // intake (a later slice) does the idempotent bounced_at write; this
-        // gate's only job is to keep everything unsigned out of the queue.
-        return Dunno;
+        return result.Verdict switch
+        {
+            BounceAddress.Verdict.Valid        => Dunno,
+            BounceAddress.Verdict.UnknownKey   => "REJECT 5.7.1 Bounce address not recognised",
+            BounceAddress.Verdict.Expired      => "REJECT 5.7.1 Bounce address expired",
+            BounceAddress.Verdict.BadSignature => "REJECT 5.7.1 Bounce address failed verification",
+            // Malformed, and any verdict added later without a mapping.
+            _                                  => "REJECT 5.7.1 Not a valid bounce address",
+        };
     }
 
     /// <summary>
