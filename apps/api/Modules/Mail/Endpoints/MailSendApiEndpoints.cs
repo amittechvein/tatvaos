@@ -287,9 +287,13 @@ public static class MailSendApiEndpoints
         //  signing secret are configured; until then EnvelopeSender is null and
         //  this sends exactly as before. That is deliberate: this endpoint must
         //  not wait on the Postfix + DNS routing PR to keep working.
-        var bounceSecret = config["Bounce:Secret"];
+        // Sign with the CURRENT key from the keyset (Bounce:KeyId names it,
+        // Bounce:Keys:<id> holds it). The policy service verifies against ANY
+        // keyid still in Bounce:Keys, which is what keeps a rotation safe for
+        // bounces already in flight.
         var bounceDomain = config["Bounce:Domain"];
         var bounceKeyId  = config["Bounce:KeyId"] ?? "k1";
+        var bounceSecret = config[$"Bounce:Keys:{bounceKeyId}"];
         var bounceOn = !string.IsNullOrEmpty(bounceSecret) && !string.IsNullOrEmpty(bounceDomain);
 
         // NOTE for v1.5 (bulk): each SubmitAsync opens and closes its own SMTP
@@ -429,11 +433,18 @@ public static class MailSendApiEndpoints
     private static string BuildBounceAddress(Guid id, string keyId, string secret, string domain)
     {
         var idHex = id.ToString("N"); // 32 hex, no hyphens: a clean local part
+        // Send-day stamp, in the SIGNED payload, so the policy service can
+        // reject an over-age address at RCPT with no DB hit. Days since the
+        // Unix epoch — compact, invariant, leaks nothing past the send date the
+        // row already holds. PostfixPolicyWorker.ValidateBounce parses this
+        // exact format and signs the same "idHex.keyId.ts" string.
+        var ts = (System.DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 86_400)
+            .ToString(System.Globalization.CultureInfo.InvariantCulture);
         using var mac = new System.Security.Cryptography.HMACSHA256(
             System.Text.Encoding.UTF8.GetBytes(secret));
-        var sig = mac.ComputeHash(System.Text.Encoding.ASCII.GetBytes(idHex + "." + keyId));
+        var sig = mac.ComputeHash(System.Text.Encoding.ASCII.GetBytes($"{idHex}.{keyId}.{ts}"));
         var sigHex = Convert.ToHexString(sig, 0, 8).ToLowerInvariant(); // 16 hex chars
-        return $"{idHex}.{keyId}.{sigHex}@{domain}";
+        return $"{idHex}.{keyId}.{ts}.{sigHex}@{domain}";
     }
 
     private static IResult Unauthorized(string message)

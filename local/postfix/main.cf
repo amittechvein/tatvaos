@@ -39,6 +39,31 @@ virtual_alias_maps      = pgsql:/etc/postfix/sql/virtual-aliases.cf
 virtual_transport = lmtp:inet:dovecot:24
 
 # ----------------------------------------------------------------------------
+#  THE BOUNCE SUBDOMAIN  (bounces.tatvaos.com)  — see BOUNCE-ROUTING.md
+# ----------------------------------------------------------------------------
+#  VERP bounce addresses <id>.<keyid>.<ts>.<hmac>@bounces.tatvaos.com come back
+#  here. The subdomain is a RELAY domain, not a virtual-mailbox one, and is
+#  deliberately a CATCH-ALL: relay_recipient_maps is left UNSET, so every
+#  recipient on it is accepted at reject_unlisted_recipient (a VERP scheme has
+#  unbounded unique local parts — there is no map they could be listed in), and
+#  the accept/reject decision falls to the policy service, where the HMAC lives.
+#
+#  transport_maps MUST have an entry in the same breath as relay_domains: the
+#  subdomain's MX points at THIS host, so a recognised relay destination with
+#  no transport match would loop mail back to ourselves. It routes to the
+#  bounce-intake transport, which a later slice defines in master.cf; until
+#  then delivery defers (safe — nothing is accepted while Bounce:Keys is
+#  unset, so nothing ever reaches the transport).
+#
+#  inline: keeps both maps in this one reviewed file — no external map to
+#  mount, postmap, or drift.
+relay_domains  = bounces.tatvaos.com
+transport_maps = inline:{ bounces.tatvaos.com=bounce-intake: }
+# relay_recipient_maps is intentionally NOT set. Setting it to any map would
+# turn reject_unlisted_recipient back on for this domain and refuse every VERP
+# address before the policy service is consulted.
+
+# ----------------------------------------------------------------------------
 # Recipient validation
 # ----------------------------------------------------------------------------
 #  reject_unlisted_recipient is the important one: unknown recipients are
@@ -60,6 +85,13 @@ virtual_transport = lmtp:inet:dovecot:24
 smtpd_recipient_restrictions =
     reject_unauth_destination
     reject_unlisted_recipient
+    # Bounce recipients only (inline map → the bounce_verify class), scoped so
+    # nothing else on the platform touches it, and BEFORE the quota check so a
+    # dead validator defers the bounce rather than reaching the DUNNO quota
+    # line. The api:10025 handler branches on the recipient domain: for a
+    # bounce address it validates the HMAC; for everything else it is the quota
+    # gate exactly as before.
+    check_recipient_access inline:{ bounces.tatvaos.com=bounce_verify }
     check_policy_service inet:api:10025
     permit
 
@@ -121,7 +153,17 @@ smtpd_helo_required = yes
 #  static REJECT. Putting the reject first would refuse internal mail too, and
 #  the failure would look like a broken database lookup.
 # ----------------------------------------------------------------------------
-smtpd_restriction_classes = internal_only
+smtpd_restriction_classes = internal_only, bounce_verify
+
+# The bounce gate carries its OWN failure mode. The global
+# smtpd_policy_service_default_action is DUNNO on purpose (quota must fail
+# open, above), but an unreachable bounce validator must fail CLOSED — defer,
+# retry, lose nothing — never accept an unvalidated address into the queue.
+# default_action is per-invocation (Postfix 3.0+, this box is 3.7), so this
+# one invocation defers while the global quota one keeps DUNNO. Do NOT drop the
+# inline default_action to inherit the global: that reopens the gate on a dead
+# validator while it reports healthy.
+bounce_verify = check_policy_service { inet:api:10025, default_action=defer }
 
 internal_only =
     check_recipient_access pgsql:/etc/postfix/sql/local-recipient-domains.cf
