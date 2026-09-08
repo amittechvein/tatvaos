@@ -2194,7 +2194,20 @@ export default function Stage({ seat, meeting, prefs }: {
   // chip squeezed in afterwards would push the last face onto a row of its
   // own — which is how a fix for overflow becomes a cause of it.
   const gridItems = main.length + (galleryHidden > 0 ? 1 : 0);
-  const gridCols = focused || stageBox.w === 0
+  // ONE CELL IS NOT A GALLERY.
+  //
+  // The grid exists to divide a stage between several tiles without any of
+  // them overflowing, and with one cell it has nothing to divide: the single
+  // track is 1fr and align-content is stretch, so the lone tile was pulled to
+  // the exact shape of the window — a letterbox strip on a wide monitor, a
+  // column on a narrow one — with its aspect ratio dropped to make it fit.
+  // Alone in a meeting is the most common way to see the room (you arrive
+  // first), and it was the one layout nobody had looked at.
+  //
+  // Zero here hands the solo case back to the plain flex stage, which already
+  // centres what it holds and already keeps a tile 16:9. No new CSS: the
+  // correct rules were there, the grid was overriding them.
+  const gridCols = focused || stageBox.w === 0 || gridItems === 1
     ? 0
     : bestColumns(Math.max(1, gridItems), stageBox.w, stageBox.h, 16 / 9);
 
@@ -2625,8 +2638,14 @@ export default function Stage({ seat, meeting, prefs }: {
           {/* Screen tiles are keyed apart from their owner's camera tile so
               React never reuses one <video> element for two different
               tracks. */}
+          {/* `big` below means "this tile has the stage to itself BECAUSE the
+              others are in the side column" — it drops the aspect ratio and
+              fills. Right beside a column; wrong when you are simply the only
+              person here. It read `main.length === 1`, which is true in both
+              cases, so arriving first gave you a full-bleed stretched tile of
+              your own face. `focused` is the condition it always meant. */}
           {main.map((t) => (
-            <Tile key={t.key} p={t.p} big={main.length === 1}
+            <Tile key={t.key} p={t.p} big={focused}
                   local={t.p === room?.localParticipant}
                   showScreen={t.screen}
                   hand={!t.screen && hands[t.p.identity] === true}
