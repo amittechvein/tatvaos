@@ -131,7 +131,7 @@ Read before proposing anything:
 
 > ### ⚠️ The `{SCHEME}` lesson — read it before choosing any hashing
 >
-> `local/postgres/init/20260828-mail-app-passwords.sql`, around line 38:
+> `local/postgres/init/20260827-a-mail-app-passwords.sql`, around line 38:
 >
 > > *Carries its own `{SCHEME}` prefix (`{SSHA512}` from the API). The scheme
 > > travels WITH the hash because the one store that relied on a default scheme

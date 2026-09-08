@@ -130,7 +130,7 @@ one: you'll read the newest code in the repo with a compiler helping you.
 rows are raw `$argon2id$` with base64 padding; Dovecot's parser may still refuse
 them even at the ARGON2ID default. App passwords are immune ({SSHA512},
 self-prefixed) which is why the client path uses them. The primary store is a
-follow-up. See `local/postgres/init/20260828-mail-app-passwords.sql` — its
+follow-up. See `local/postgres/init/20260827-a-mail-app-passwords.sql` — its
 comments are the design record, including why one active password per mailbox.
 
 **`docs/RUNBOOK-2026-08-28.md` step 7 has never been run.** A real mail client,

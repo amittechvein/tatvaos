@@ -168,6 +168,25 @@ for i in "${!plan_to[@]}"; do
   # Already lettered? Leave it.
   [[ "$rest" =~ ^-[a-z]- ]] && continue
 
+  # Letters already in use on this date by files that are NOT being renamed.
+  # New letters continue after the highest of those, so a renamed file can
+  # never land as a second -a- beside an existing -a-: two files sharing a
+  # letter would hand their order back to alphabetical chance, which is the
+  # thing the letter exists to prevent. Files being renamed onto this date
+  # sort after the ones already here, which is where they sort today.
+  offset=0
+  for existing in "$DIR/$d"-[a-z]-*.sql; do
+    [[ -e "$existing" ]] || continue
+    base="$(basename "$existing")"
+    skip=0
+    for k in "${!plan_from[@]}"; do
+      [[ "${plan_from[$k]}" == "$base" ]] && skip=1
+    done
+    [[ $skip -eq 1 ]] && continue
+    v=$(( $(printf '%d' "'${base:9:1}") - 96 ))
+    [[ $v -gt $offset ]] && offset=$v
+  done
+
   # Position among the files landing on this date, in their CURRENT order.
   n=0
   for j in "${!plan_date[@]}"; do
@@ -175,7 +194,7 @@ for i in "${!plan_to[@]}"; do
     n=$((n + 1))
     [[ $j -eq $i ]] && break
   done
-  letter="$(printf "\\$(printf '%03o' $((96 + n)))")"   # 1 -> a, 2 -> b …
+  letter="$(printf "\\$(printf '%03o' $((96 + offset + n)))")"   # 1 -> a, 2 -> b …
   plan_to[$i]="${d}-${letter}${rest}"
 done
 
