@@ -3205,9 +3205,23 @@ export default function Stage({ seat, meeting, prefs }: {
                              type="submit">Send</button>
                    </form>
                  )}>
+            {/* ── THE TWO THINGS IN THIS BOX DO DIFFERENT THINGS. ────────
+                This read "Nothing here is saved", and the sentence after it
+                was about files — so the claim looked like it covered both.
+                It covered one. Chat is posted to the meeting record as it is
+                typed (minutesApi.storeChat, fire-and-forget on every line)
+                and goes out in the minutes email afterwards. Somebody typing
+                into this box was being told the opposite of what happens to
+                their words, at the moment they were typing them.
+
+                Files are the half the old sentence was true of. So the two
+                are separated now rather than covered by one claim, and the
+                kept one is named first — a person deciding what to type
+                needs the surprising fact, not the reassuring one. */}
             <div className="cx-sub" style={{ marginBottom: 10 }}>
-              Nothing here is saved. Files go straight to the people in the
-              meeting — up to 8 MB, and only to whoever is here now.
+              What you type here is kept with the meeting and appears in the
+              minutes afterwards. Files are not kept — they go straight to the
+              people here now, up to 8 MB, and no copy is stored.
             </div>
             {/* ── AN HONEST LINE ABOUT WHAT PRIVATE COVERS. ──────────────
                 A Private meeting encrypts its AUDIO AND VIDEO so the media
@@ -3218,7 +3232,10 @@ export default function Stage({ seat, meeting, prefs }: {
             {isPrivate && (
               <div className="cx-sub" style={{ marginBottom: 10, color: 'var(--cx-bad)' }}>
                 The encryption covers the audio and video of this meeting, not
-                chat or files. You are asked again before any file is sent.
+                chat or files. What you type here is still kept with the meeting
+                and still goes into the minutes, exactly as in any other meeting
+                — Private changes nothing about that. You are asked again before
+                any file is sent.
               </div>
             )}
             {chat.length === 0 && <div className="cx-sub">Nothing yet.</div>}
