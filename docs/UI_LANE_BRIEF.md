@@ -338,6 +338,48 @@ the root `.dockerignore` excludes `.git`. The fix is to pass `BUILD_SHA` as a
 Docker build arg — `resolveSha()` already prefers `process.env.BUILD_SHA` — not
 to ship `.git` into the image. Open with Core.
 
+### The strongest argument for stage 4 we have found
+
+Bootstrap's utility classes are declared with `!important`, and YZEN's
+stylesheet loads **after** Tailwind's. So where the two frameworks use the same
+class name and different values, **Bootstrap wins silently, everywhere, on
+every screen size**.
+
+Measured on production, 9 September 2026:
+
+| class | Tailwind means | Bootstrap means | what actually renders |
+|---|---|---|---|
+| `px-5` | 1.25rem (20px) | 3rem, `!important` | **48px** |
+| `py-4` | 1rem | 1.5rem, `!important` | 24px |
+| `gap-3` | 0.75rem | 1rem, `!important` | 16px |
+| `gap-4` | 1rem | 1.5rem, `!important` | 24px |
+| `gap-5` | 1.25rem | 3rem, `!important` | 48px |
+
+`Card` renders `px-5 py-4`. **Every card in the product has 48px horizontal
+padding instead of 20px** — desktop included, since the day YZEN was added.
+Nobody wrote that; it is two frameworks agreeing on a name and disagreeing on a
+number. It was found because on `/org/audit` at 375px it pushed a 281px stacked
+table to start at x=109, whose right edge then fell outside the viewport, where
+`body{overflow-x:clip}` hid it entirely.
+
+This is the same failure `overrides.css` already documents for `.grid` — and
+that block's warning was right: it said any class not re-declared there "will be
+flattened with no warning". Spacing was never re-declared.
+
+**Three things follow.**
+
+1. **Do not fix this with more overrides.** Re-declaring Bootstrap's spacing
+   scale in `overrides.css` means maintaining a third opinion about what `px-5`
+   means. The list would need every utility we use, forever, and would be wrong
+   the first time someone used one that wasn't on it.
+2. **Deleting `styles/yzen/` fixes all of it at once**, and that is stage 4.
+   Until then, every measurement of a Tailwind spacing utility in this app is
+   suspect — check the computed value rather than reading the class name.
+3. **Where something must be right before then**, use an arbitrary value
+   (`px-[1.25rem]`) so the generated class name cannot collide, or raise
+   specificity above Bootstrap's — a doubled class (`.x.x`) beats `!important`
+   at 0-1-0. `Kit.tsx`'s table wrapper does the latter and says why at the site.
+
 ### Verifying without the developer's machine
 
 `typecheck` needs `node_modules`, and pnpm's store is symlinked in a way a
