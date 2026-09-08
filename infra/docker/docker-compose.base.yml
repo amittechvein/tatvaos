@@ -351,6 +351,9 @@ services:
     build:
       context: ../..
       dockerfile: apps/web/Dockerfile
+      args:
+        # Set by infra/scripts/deploy.sh (and by hand: BUILD_SHA=$(git rev-parse HEAD)).
+        BUILD_SHA: ${BUILD_SHA:-}
     restart: unless-stopped
     depends_on:
       api: { condition: service_started }

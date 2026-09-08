@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Tenancy;
+using TatvaOS.Api.Modules.Core;
 
 namespace TatvaOS.Api.Modules.Admin.Endpoints;
 
@@ -359,6 +360,11 @@ public static class OrganisationEndpoints
         if (!IsPlausibleDomain(fqdn))
             return Results.BadRequest(new { error = "Primary domain is not a valid domain name." });
 
+        // The bounce subdomain must never become a domain row - see
+        // ReservedDomains for why a row here would silently stop bounce intake.
+        if (ReservedDomains.IsBounceDomain(config, fqdn))
+            return Results.BadRequest(new { error = ReservedDomains.Refusal(config) });
+
         if (req.StorageModel is not ("per_user" or "pooled"))
             return Results.BadRequest(new { error = "StorageModel must be 'per_user' or 'pooled'." });
 
@@ -628,7 +634,10 @@ public static class OrganisationEndpoints
 
         var candidate = $"{slug}.{zone}";
         var n = 1;
-        while (await db.Domains.IgnoreQueryFilters().AnyAsync(d => d.Fqdn == candidate, ct))
+        // Taken, or reserved: the bounce subdomain must never be allocated
+        // (see ReservedDomains). "Bounces Pvt Ltd" gets bounces2.<zone>.
+        while (ReservedDomains.IsBounceDomain(config, candidate)
+               || await db.Domains.IgnoreQueryFilters().AnyAsync(d => d.Fqdn == candidate, ct))
         {
             n++;
             candidate = $"{slug}{n}.{zone}";

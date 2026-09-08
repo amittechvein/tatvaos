@@ -269,6 +269,11 @@ $COMPOSE pull 2>&1 | grep -Ei 'error|warn' | sed 's/^/   /' || true
 
 # The exit status of the build, not of `tail`. Piping to tail made the
 # pipeline always succeed, so "images ready" printed whatever happened.
+# The web image stamps every page with the commit it was built from. .git is
+# not in the build context (root .dockerignore), so hand the SHA to the build;
+# without this the badge reads "unknown" and a deploy that silently did not
+# land looks identical to one that did.
+export BUILD_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
 if ! build_out=$($COMPOSE build 2>&1); then
     bad "build failed"
     printf '%s\n' "$build_out" | tail -30 | sed 's/^/      /'
