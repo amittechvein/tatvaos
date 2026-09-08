@@ -32,6 +32,7 @@
 // ============================================================================
 
 import Link from 'next/link';
+import { useId } from 'react';
 
 // ---------------------------------------------------------------------------
 export function Card({
@@ -195,12 +196,70 @@ export function Stat({
 // Row and cell styling is applied from the <table> with arbitrary variants
 // rather than on each <Td>, because callers render their own <tr> (and
 // sometimes raw <td>) and those have to look right too.
+//
+//  ON A PHONE A TABLE IS NOT A TABLE.
+//
+//  Measured on /admin at 375px on 8 Sept 2026: the table was 660px wide inside
+//  a 390px container. 270px of every row sat off-screen, reachable only by
+//  scrolling sideways — so "how much storage is this organisation using" meant
+//  dragging each row horizontally and losing which row you were on. That is
+//  what "the UI is not compatible with mobile" meant, and it came from one
+//  word: whitespace-nowrap.
+//
+//  Below 640px each row becomes a stacked block: label on the left, value on
+//  the right, one line per field. The labels come from `head`, so THE CALLERS
+//  DO NOT CHANGE — the same trick that made this file a lever in the first
+//  place. Rules are nth-child based, which is why they also reach the raw <td>
+//  that several pages render instead of <Td>.
+//
+//  Only STRING headings become labels. A heading that is a node — a select-all
+//  checkbox, an empty action column — gets no label rather than a mangled one,
+//  and its cell simply spans the row.
+//
+//  The scroll container stays for the desktop case, where a wide table with a
+//  scrollbar is correct and a stacked one would be absurd.
 export function Table({ head, children }: { head: React.ReactNode[]; children: React.ReactNode }) {
+  const id = useId().replace(/[^a-zA-Z0-9]/g, '');
+  const cls = `tv-t${id}`;
+
+  // CSS content strings need their quotes and backslashes escaped, or one
+  // heading with an apostrophe silently breaks every rule after it.
+  const label = (h: React.ReactNode) =>
+    typeof h === 'string' && h.trim()
+      ? h.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+      : null;
+
+  const cellRules = head.map((h, i) => {
+    const l = label(h);
+    return l
+      ? `.${cls} tbody td:nth-child(${i + 1})::before{content:"${l}";`
+        + 'color:rgb(var(--ink-muted));font-size:11px;font-weight:600;'
+        + 'text-transform:uppercase;letter-spacing:.04em;padding-right:1rem;flex:0 0 auto}'
+      : `.${cls} tbody td:nth-child(${i + 1}){justify-content:flex-start}`;
+  }).join('');
+
+  const css =
+    `@media (max-width:639px){`
+    + `.${cls}{white-space:normal}`
+    // display:none rather than a clipped off-screen thead. Absolutely
+    // positioning a <thead> inside a table is asking the layout engine to do
+    // something it has no good answer for. Nothing is lost to a screen reader:
+    // every cell carries its own label from ::before at this width.
+    + `.${cls} thead{display:none}`
+    + `.${cls} tbody tr{display:block;padding:.75rem 0}`
+    + `.${cls} tbody td{display:flex;align-items:center;justify-content:space-between;`
+    + `gap:.75rem;padding:.25rem 0;text-align:right}`
+    + cellRules
+    + `}`;
+
   return (
     <div className="-mx-5 overflow-x-auto px-5">
+      {/* The heading text is ours, from `head`, and escaped above — it is never
+          user-supplied, which is what makes a generated stylesheet safe here. */}
+      <style dangerouslySetInnerHTML={{ __html: css }} />
       <table
         className={
-          'w-full border-collapse whitespace-nowrap text-sm text-ink '
+          `${cls} w-full border-collapse whitespace-nowrap text-sm text-ink `
           + '[&_th]:border-b [&_th]:border-line [&_th]:px-4 [&_th]:py-3 '
           // ink-MUTED, not ink-faint. Faint measured 2.78 against white on
           // /org/users — below the 4.5 a column heading needs, and a heading
