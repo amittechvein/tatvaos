@@ -6,8 +6,10 @@ import { join } from 'node:path';
  * The commit this bundle was built from.
  *
  * Read straight out of .git rather than by shelling out to `git` — the Alpine
- * build image in apps/web/Dockerfile has no git binary, and there is no
- * .dockerignore, so the .git directory IS present in the build context. HEAD
+ * build image in apps/web/Dockerfile has no git binary, and the root
+ * .dockerignore now EXCLUDES .git from the build context, so inside the image
+ * this only works when BUILD_SHA is passed in (apps/web/Dockerfile ARG, set by
+ * infra/scripts/deploy.sh). The .git walk remains for local `next build`. HEAD
  * points at a branch ref; the loose ref file holds the SHA, with packed-refs as
  * the fallback for a freshly cloned checkout.
  *

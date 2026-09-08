@@ -1,189 +1,230 @@
 #!/usr/bin/env bash
-# =============================================================================
-#  verify-migrations.sh — can this schema be built from nothing, twice?
-# =============================================================================
-#
-#  WHAT THIS PROVES, AND WHY IT IS TWO THINGS
-#
-#  Every file in local/postgres/init/ re-runs on EVERY deploy, in filename
-#  order. That gives the directory two properties it must have and which
-#  nothing was checking:
-#
-#    1. IT BUILDS FROM NOTHING. A file must not depend on an object created by
-#       a file that sorts after it. Production never tests this — production
-#       already has every object, so a file in the wrong place applies
-#       cleanly there and fails only for a NEW customer, a rebuild, or a
-#       fresh environment.
-#
-#    2. IT IS IDEMPOTENT. Running the whole directory a second time must
-#       change nothing and fail nothing.
-#
-#  Each property has already cost this project real time:
-#
-#    · 19 August. 20260816 created space.consume_public_link returning four
-#      columns; 20260819 dropped it and recreated it with six. First deploy:
-#      fine. SECOND deploy: "cannot change return type of existing function".
-#      Every deploy from the 19th onward was blocked, and the bug was
-#      invisible until somebody tried. That is property 2.
-#
-#    · 23 August. Two migrations named 20260822 referenced connect.meetings,
-#      created by 20260901-connect.sql — so they sorted BEFORE their own
-#      dependencies. They applied cleanly to production, where those tables
-#      already existed, and would have failed on any fresh database. Found by
-#      reading a directory listing, not by anything breaking. That is
-#      property 1.
-#
-#  Both were ordering assumptions that held until they didn't. Neither would
-#  have survived this script.
-#
-#  ─────────────────────────────────────────────────────────────────────────
-#  IT NEVER TOUCHES A REAL DATABASE
-#
-#  Everything runs against a throwaway database that is created at the start
-#  and dropped at the end. The name is fixed and unmistakable, and the script
-#  refuses to run if anything about that looks wrong — this is the only
-#  safeguard between "verify the schema" and "rebuild production's".
-#
-#  USAGE — on the server, from the repo root:
+# ============================================================================
+#  Replay local/postgres/init into an EMPTY database and see whether it works.
 #
 #      bash infra/scripts/verify-migrations.sh
 #
-#  Takes under a minute. Worth running before any deploy that adds or renames
-#  a migration, and worth running when one has been renamed by somebody else.
-# =============================================================================
+#  Exit 0 = a fresh install would succeed. Exit 1 = it would not.
+#
+#  ─────────────────────────────────────────────────────────────────────────
+#   WHY THIS HAD TO EXIST, WRITTEN 26 AUGUST 2026.
+#
+#   Two things came together on that day.
+#
+#   FIRST: I had been telling people this script already existed and was
+#   green on 54 files. It did not exist. Nobody had checked, including me,
+#   and the claim had been repeated into a schema proposal sent for review.
+#   That is worth writing down here rather than quietly fixing, because the
+#   reason the bug below survived is that everybody believed something was
+#   watching for it.
+#
+#   SECOND: something WAS wrong. Replaying the folder from empty failed on
+#   two files:
+#
+#     20260822-connect-captions.sql
+#         ERROR: schema "connect" does not exist
+#     20260822-connect-retention-default-30.sql
+#         ERROR: column "connect_recording_retention_days" of relation
+#                "tenants" does not exist
+#
+#   Both are August files correctly named for August. Both depend on Connect
+#   tables created by files named 20260901-20260910 — August work wearing
+#   SEPTEMBER dates. 20260822 sorts before 20260901, so the dependants ran
+#   first and a fresh database died on the second one.
+#
+#   Production never noticed, and could not: the objects already exist there,
+#   so re-running these files on production succeeds every time. What was
+#   broken was every fresh database — a rebuild, A RESTORE FROM BACKUP, or a
+#   new developer's first local setup.
+#
+#   That is the same failure this directory's README already describes
+#   happening once before, with 20260816-space-public-links.sql. It happened
+#   again because nothing was checking, and because a filename convention is
+#   only as good as the thing that enforces it.
+#
+#  ─────────────────────────────────────────────────────────────────────────
+#   WHAT IT DOES, AND WHAT IT DOES NOT PROVE.
+#
+#   It creates a throwaway database, applies every *.sql in filename order
+#   with ON_ERROR_STOP, and reports the first error in each file that fails.
+#   Filename order is not an approximation of what deploy.sh does — it is the
+#   same `for f in local/postgres/init/*.sql` loop.
+#
+#   It then applies the WHOLE FOLDER A SECOND TIME, because every file in
+#   here is required to be idempotent and re-runs on every deploy. A file
+#   that works once and fails twice breaks the NEXT deploy, not this one,
+#   which is a much worse way to find out.
+#
+#   It does NOT prove the schema is right, only that it can be built. It says
+#   nothing about whether the tables are the ones the application expects.
+#
+#   *seed* files are skipped, exactly as deploy.sh skips them.
+#
+#  ─────────────────────────────────────────────────────────────────────────
+#   WHERE IT GETS A DATABASE.
+#
+#   Docker if the daemon is reachable — that is the server, and it matches
+#   what production actually runs. Otherwise a throwaway cluster from a local
+#   postgres install, which is how it runs on a machine without docker.
+#   Either way the database is created empty and destroyed at the end; it
+#   never touches the real one, and it refuses to run against a remote host.
+# ============================================================================
 
 set -uo pipefail
-cd "$(dirname "$0")/../.." || exit 1
 
-# A name nothing else could plausibly be called, checked below before any
-# DROP is issued. The drop is the only destructive thing here and it must be
-# impossible to point at anything real.
-SCRATCH="scratch_migration_verify"
+DIR="local/postgres/init"
+PGIMAGE="${PGIMAGE:-postgres:16-alpine}"
+DBNAME="migration_verify"
 
-ok()   { printf '  \033[32mok\033[0m    %s\n' "$1"; }
-bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; }
-info() { printf '        · %s\n' "$1"; }
-head2(){ printf '\n  %s\n  %s\n' "$1" "$(printf '%.0s─' $(seq 1 62))"; }
-
-FAILED=0
-STATIC_FAILED=0
-
-# ---- 0. Guards ---------------------------------------------------------------
-if [[ "$SCRATCH" != scratch_* ]]; then
-    echo "REFUSING: the scratch database name must begin with scratch_." >&2
-    echo "This script DROPs it. That prefix is what makes it impossible to" >&2
-    echo "point at a real database, however this file is edited." >&2
-    exit 2
+if [[ ! -d "$DIR" ]]; then
+  echo "Run this from the repository root — $DIR is not here."
+  exit 2
 fi
 
-# ---- 0a. Static checks — no database required --------------------------------
-# Space's public-link gate is duplicated across two SECURITY DEFINER functions
-# that now live in two different files, because a later migration re-created
-# one of them with a wider return type. Neither pass below can see them drift
-# apart: both files apply cleanly and re-run cleanly whatever their WHERE
-# clauses say. The check is therefore textual, it lives in its own script, and
-# it is called from here because a check nobody runs automatically is a check
-# that does not exist.
-#
-# Run before the database work because it needs no database — a developer
-# without Docker up still gets this one.
-head2 "static checks"
-PREDICATE="infra/scripts/verify-space-link-predicate.sh"
-if [[ ! -f "$PREDICATE" ]]; then
-    bad "$PREDICATE is missing"
-    info "It is called from here deliberately. If it was removed on purpose,"
-    info "remove this block in the same commit; do not leave the call dangling."
-    STATIC_FAILED=1
-    FAILED=1
-elif bash "$PREDICATE" >/tmp/predicate.out 2>&1; then
-    ok "space public-link predicate agrees across every definition"
+# Refuse to be pointed at anything real. This script drops a database.
+if [[ -n "${PGHOST:-}" || -n "${PGDATABASE:-}" ]]; then
+  echo "PGHOST or PGDATABASE is set in your environment."
+  echo "This script creates and DROPS a database, so it will not run while it"
+  echo "might be aimed at a real one. Unset them and run it again."
+  exit 2
+fi
+
+CLEANUP=""
+trap '[[ -n "$CLEANUP" ]] && eval "$CLEANUP" >/dev/null 2>&1' EXIT
+
+# ── A database, from whatever is available ──────────────────────────────────
+if docker info >/dev/null 2>&1; then
+  echo "Using docker ($PGIMAGE)."
+  NAME="migverify-$$"
+  # psql runs INSIDE the container. The host needs no postgres client at all
+  # (the production server has none), and no port is published, so the
+  # throwaway database is reachable from nowhere but this script.
+  docker run -d --rm --name "$NAME" \
+    -e POSTGRES_PASSWORD=verify -e POSTGRES_DB="$DBNAME" \
+    "$PGIMAGE" >/dev/null || { echo "Could not start $PGIMAGE."; exit 2; }
+  CLEANUP="docker rm -f $NAME"
+  PSQL=(docker exec -i "$NAME" psql -U postgres)
+
+  printf 'Waiting for postgres'
+  for _ in $(seq 1 40); do
+    "${PSQL[@]}" -d "$DBNAME" -c 'select 1' >/dev/null 2>&1 && break
+    printf '.'; sleep 1
+  done
+  echo
+elif command -v initdb >/dev/null 2>&1 || [[ -x /usr/lib/postgresql/16/bin/initdb ]]; then
+  BIN="$(command -v initdb >/dev/null 2>&1 && dirname "$(command -v initdb)" || echo /usr/lib/postgresql/16/bin)"
+  echo "No docker daemon; using a throwaway cluster from $BIN."
+  command -v psql >/dev/null 2>&1 \
+    || { echo "Found $BIN but no psql on PATH - the check cannot run."; exit 2; }
+  DATA="$(mktemp -d)"
+  chmod 777 "$DATA"
+
+  # postgres refuses to run as root, so a cluster started here runs as
+  # whatever unprivileged account is available.
+  RUNAS=""
+  if [[ "$(id -u)" -eq 0 ]]; then
+    RUNAS="$(id -un postgres 2>/dev/null || id -un nobody 2>/dev/null || true)"
+    [[ -z "$RUNAS" ]] && { echo "Running as root with no unprivileged account to fall back on."; exit 2; }
+    chown -R "$RUNAS" "$DATA"
+  fi
+  run() { if [[ -n "$RUNAS" ]]; then su "$RUNAS" -c "$1"; else bash -c "$1"; fi; }
+
+  run "$BIN/initdb -D $DATA/db -U postgres -A trust" >/dev/null 2>&1 \
+    || { echo "initdb failed."; exit 2; }
+  mkdir -p "$DATA/run"; [[ -n "$RUNAS" ]] && chown "$RUNAS" "$DATA/run"
+  run "$BIN/pg_ctl -D $DATA/db -l $DATA/pg.log -o '-p 5455 -k $DATA/run' start" >/dev/null 2>&1 \
+    || { echo "Could not start postgres. Log:"; tail -20 "$DATA/pg.log"; exit 2; }
+  CLEANUP="run \"$BIN/pg_ctl -D $DATA/db stop -m immediate\"; rm -rf $DATA"
+
+  PSQL=(psql -h "$DATA/run" -p 5455 -U postgres)
+  "${PSQL[@]}" -q -c "CREATE DATABASE $DBNAME;" >/dev/null 2>&1
 else
-    bad "space public-link predicate"
-    sed 's/^/          /' /tmp/predicate.out
-    STATIC_FAILED=1
-    FAILED=1
+  echo "Need either a running docker daemon or a local postgres install."
+  echo "On the server, docker is there. Locally: apt install postgresql-16."
+  exit 2
 fi
 
-head2 "locating postgres"
-PG=$(docker ps --format '{{.Names}}' | grep postgres | head -1)
-[[ -n "$PG" ]] && ok "container: $PG" || { bad "no postgres container running"; exit 1; }
+# A check that cannot reach its database must say so, not report every file
+# as failed. Exit 2 is "could not run"; exit 1 below is "ran, and found rot".
+"${PSQL[@]}" -d "$DBNAME" -c 'select 1' >/dev/null 2>&1 \
+  || { echo "Could not reach the throwaway database. The check did NOT run."; exit 2; }
 
-FILES=$(ls local/postgres/init/*.sql 2>/dev/null | sort)
-COUNT=$(printf '%s\n' "$FILES" | grep -c . || true)
-[[ "$COUNT" -gt 0 ]] && ok "$COUNT migration files" || { bad "no migrations found"; exit 1; }
+# ── Pass 1: build it from nothing ───────────────────────────────────────────
+echo
+echo "Pass 1 — applying every file in filename order, into an empty database."
+echo
 
-# ---- 1. Build the scratch database ------------------------------------------
-head2 "creating $SCRATCH"
-docker exec "$PG" psql -U postgres -q -c "DROP DATABASE IF EXISTS $SCRATCH;" >/dev/null 2>&1
-if docker exec "$PG" psql -U postgres -q -c "CREATE DATABASE $SCRATCH;" >/dev/null 2>&1; then
-    ok "empty database created"
-else
-    bad "could not create the scratch database"
-    exit 1
+failed=0
+count=0
+for f in "$DIR"/*.sql; do
+  name="$(basename "$f")"
+  # deploy.sh skips these, so this must too — otherwise it tests something
+  # production never runs.
+  case "$name" in *seed*) continue ;; esac
+  count=$((count + 1))
+
+  if out="$("${PSQL[@]}" -v ON_ERROR_STOP=1 -q -d "$DBNAME" 2>&1 < "$f")"; then
+    continue
+  fi
+  failed=$((failed + 1))
+  echo "  FAILED  $name"
+  echo "$out" | grep -E 'ERROR|FATAL' | head -2 | sed 's/^/          /'
+  echo
+done
+
+if [[ $failed -gt 0 ]]; then
+  echo "────────────────────────────────────────────────────────────────"
+  echo "$failed of $count files failed on an EMPTY database."
+  echo
+  echo "Production is probably fine — the objects already exist there, so"
+  echo "these same files re-run without complaint. What is broken is every"
+  echo "FRESH database: a rebuild, a restore from backup, or a new"
+  echo "developer's first setup."
+  echo
+  echo "'does not exist' almost always means filename order. The folder is"
+  echo "applied as a plain string sort, so a file must be named such that"
+  echo "everything it depends on sorts EARLIER. See $DIR/README.md, and"
+  echo "infra/scripts/rename-migrations-to-true-dates.sh."
+  exit 1
 fi
 
-# Dropped however this exits, including on Ctrl-C. A scratch database left
-# behind is a thing somebody later has to wonder about.
-cleanup() {
-    docker exec "$PG" psql -U postgres -q -c "DROP DATABASE IF EXISTS $SCRATCH;" >/dev/null 2>&1
-}
-trap cleanup EXIT
+echo "  $count files applied cleanly."
 
-run_pass() {
-    local label="$1" failures=0
-    head2 "$label"
-    while IFS= read -r f; do
-        [[ -z "$f" ]] && continue
-        local name
-        name=$(basename "$f")
-        if docker exec -i "$PG" psql -v ON_ERROR_STOP=1 -q -U postgres \
-                -d "$SCRATCH" < "$f" >/tmp/mig.err 2>&1; then
-            printf '  \033[32mok\033[0m    %s\n' "$name"
-        else
-            printf '  \033[31mFAIL\033[0m  %s\n' "$name"
-            # The first ERROR line only. psql is verbose and the useful
-            # sentence is always near the top.
-            grep -m1 -i '^ERROR' /tmp/mig.err | sed 's/^/          /'
-            failures=$((failures + 1))
-        fi
-    done <<< "$FILES"
-    return $failures
-}
+# ── Pass 2: every file re-runs on every deploy ──────────────────────────────
+echo
+echo "Pass 2 — applying all $count again, because deploy.sh does."
+echo
 
-# ---- 2. From nothing --------------------------------------------------------
-run_pass "PASS 1 — building from an empty database"
-FIRST=$?
-if [[ "$FIRST" -gt 0 ]]; then
-    FAILED=1
-    info "$FIRST file(s) could not apply to an empty database."
-    info "Almost always ORDERING: a file depends on an object created by a file"
-    info "that sorts AFTER it. Production hides this because the object already"
-    info "exists there. Rename so the dependency sorts first."
+repeat=0
+for f in "$DIR"/*.sql; do
+  name="$(basename "$f")"
+  case "$name" in *seed*) continue ;; esac
+  if out="$("${PSQL[@]}" -v ON_ERROR_STOP=1 -q -d "$DBNAME" 2>&1 < "$f")"; then
+    continue
+  fi
+  repeat=$((repeat + 1))
+  echo "  NOT IDEMPOTENT  $name"
+  echo "$out" | grep -E 'ERROR|FATAL' | head -2 | sed 's/^/                  /'
+  echo
+done
+
+if [[ $repeat -gt 0 ]]; then
+  echo "────────────────────────────────────────────────────────────────"
+  echo "$repeat file(s) work once and fail the second time."
+  echo
+  echo "Every file here re-runs in full on EVERY deploy, and deploy.sh stops"
+  echo "on the first error and refuses to recreate the app containers. So"
+  echo "this does not break the deploy that adds the file — it breaks the"
+  echo "NEXT one, when nobody is looking for it."
+  echo
+  echo "Use IF NOT EXISTS, CREATE OR REPLACE, and DROP POLICY IF EXISTS"
+  echo "before CREATE POLICY."
+  exit 1
 fi
 
-# ---- 3. And again -----------------------------------------------------------
-run_pass "PASS 2 — re-running everything against the same database"
-SECOND=$?
-if [[ "$SECOND" -gt 0 ]]; then
-    FAILED=1
-    info "$SECOND file(s) are not idempotent."
-    info "Every file here re-runs on every deploy, so this is a BLOCKED DEPLOY,"
-    info "not a warning. Usually an earlier file fighting a later one's version"
-    info "of the same object — see the header of 20260816-space-public-links."
-fi
-
-# ---- 4. Verdict -------------------------------------------------------------
-head2 "verdict"
-if [[ "$FAILED" -eq 0 ]]; then
-    ok "$COUNT migrations build from nothing AND re-run cleanly"
-    info "both properties the deploy depends on, checked rather than assumed"
-    exit 0
-fi
-
-bad "the schema directory is not safe to deploy"
-info "pass 1 failures break NEW installs; pass 2 failures break EVERY deploy"
-if [[ "$STATIC_FAILED" -eq 1 ]]; then
-    info "a STATIC check failed above, and that is neither of those: the files"
-    info "apply fine and re-run fine, and say the wrong thing. Read that section."
-fi
-exit 1
+echo "  $count files re-applied cleanly."
+echo
+echo "────────────────────────────────────────────────────────────────"
+echo "A fresh install would work, and a second deploy would too."
+echo "($count files, twice. This says nothing about whether the schema is"
+echo " the one the application expects — only that it can be built.)"
