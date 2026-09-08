@@ -19,6 +19,12 @@ RUN corepack enable
 COPY --from=deps /repo/node_modules ./node_modules
 COPY --from=deps /repo/apps/web/node_modules ./apps/web/node_modules
 COPY . .
+# The commit this image is built from. .git is (rightly) excluded from the
+# build context by the root .dockerignore, so next.config.ts cannot read it;
+# the deploy hands the SHA in. Empty means the page badge says "unknown" -
+# a missing stamp must never be the thing that fails a production build.
+ARG BUILD_SHA=
+ENV BUILD_SHA=$BUILD_SHA
 RUN pnpm --filter @tatvaos/web build
 
 FROM node:22-alpine AS runtime
