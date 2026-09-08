@@ -26,8 +26,21 @@ public static class ReservedDomains
     // side of the invariant is live regardless.
     private const string DefaultBounceDomain = "bounces.tatvaos.com";
 
+    //  IsNullOrWhiteSpace, NOT `??`. Bounce__Domain is wired in
+    //  docker-compose.base.yml as ${BOUNCE_DOMAIN:-}, and `:-` does NOT mean
+    //  "leave the variable unset" — Compose CREATES the variable with an EMPTY
+    //  value. .NET's environment provider then hands back "" rather than null,
+    //  so `??` never fires and this returned "". IsBounceDomain would compare
+    //  every fqdn against "" and against EndsWith("."), match neither, and
+    //  refuse nothing — the guard off while looking present, which is the exact
+    //  failure it exists to prevent. A blank is as absent as a null here and
+    //  must be read the same way.
     public static string BounceDomain(IConfiguration config)
-        => (config["Bounce:Domain"] ?? DefaultBounceDomain).Trim().ToLowerInvariant().TrimEnd('.');
+    {
+        var configured = config["Bounce:Domain"];
+        var domain = string.IsNullOrWhiteSpace(configured) ? DefaultBounceDomain : configured;
+        return domain.Trim().ToLowerInvariant().TrimEnd('.');
+    }
 
     /// <summary>True when fqdn IS the bounce domain or sits anywhere under it.</summary>
     public static bool IsBounceDomain(IConfiguration config, string fqdn)
