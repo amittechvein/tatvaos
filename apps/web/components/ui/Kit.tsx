@@ -253,6 +253,11 @@ export function Table({ head, children }: { head: React.ReactNode[]; children: R
 
   const css =
     `@media (max-width:639px){`
+    // The wrapper's -mx-5/px-5 exists to let a wide table bleed to the card's
+    // edges and scroll. Stacked rows never scroll, so those negative margins
+    // only make the element 40px wider than its parent - which is where the
+    // stubborn 7px of page overflow on every table page came from.
+    + `.${cls}-w{margin-left:0;margin-right:0;padding-left:0;padding-right:0;overflow-x:visible}`
     + `.${cls}{white-space:normal}`
     // display:none rather than a clipped off-screen thead. Absolutely
     // positioning a <thead> inside a table is asking the layout engine to do
@@ -261,12 +266,20 @@ export function Table({ head, children }: { head: React.ReactNode[]; children: R
     + `.${cls} thead{display:none}`
     + `.${cls} tbody tr{display:block;padding:.75rem 0}`
     + `.${cls} tbody td{display:flex;align-items:center;justify-content:space-between;`
-    + `gap:.75rem;padding:.25rem 0;text-align:right}`
+    + `gap:.75rem;padding:.25rem 0;text-align:right;min-width:0;`
+    // overflow-wrap:anywhere is NOT belt-and-braces, it is the difference
+    // between stacking working and half-working. `white-space:normal` only
+    // lets text wrap AT SPACES — and the values in these tables are email
+    // addresses, UUIDs, IP addresses and domain names, which contain none.
+    // Measured after the first deploy: /org/audit still rendered a 412px table
+    // on a 375px screen because one unbreakable token per row set the floor,
+    // while /org/mailboxes (short values) had already dropped to 306px.
+    + `overflow-wrap:anywhere;word-break:break-word}`
     + cellRules
     + `}`;
 
   return (
-    <div className="-mx-5 overflow-x-auto px-5">
+    <div className={`${cls}-w -mx-5 overflow-x-auto px-5`}>
       {/* A STRING CHILD, not dangerouslySetInnerHTML. React 19 supports style
           tags with their CSS as children, so there is no need to reach for the
           escape hatch — and `react/no-danger` is an error in this repo's lint,
