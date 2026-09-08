@@ -32,12 +32,31 @@ export default function App() {
 
   // Come back signed in. A workspace app that asks for a password every time
   // it is opened is one people stop opening.
+  //
+  //  THE .catch IS THE POINT, 8 Sept 2026.
+  //
+  //  Without it this app could hang on the splash screen forever. restore()
+  //  guards the NETWORK call, but SecureStore.getItemAsync sits outside that
+  //  guard — a keychain read that throws (no secure hardware, a corrupt entry,
+  //  a device policy change) rejected this promise, setPhase never ran, and the
+  //  person was left watching a spinner with no error, no timeout and no way
+  //  out. It cost an hour on the emulator: the login form could not be typed
+  //  into because the login form was never on the screen.
+  //
+  //  Falling back to 'login' is the right failure: the worst case is being
+  //  asked to sign in again, which is recoverable. A spinner is not.
   useEffect(() => {
     let cancelled = false;
-    restore().then((s) => {
-      if (cancelled) return;
-      if (s) { setSession(s); setPhase('in'); } else { setPhase('login'); }
-    });
+    restore()
+      .then((s) => {
+        if (cancelled) return;
+        if (s) { setSession(s); setPhase('in'); } else { setPhase('login'); }
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        console.log(`[app] restore failed, showing sign-in: ${e?.message ?? e}`);
+        setPhase('login');
+      });
     return () => { cancelled = true; };
   }, []);
 
