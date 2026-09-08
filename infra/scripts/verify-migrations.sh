@@ -96,14 +96,14 @@ trap '[[ -n "$CLEANUP" ]] && eval "$CLEANUP" >/dev/null 2>&1' EXIT
 if docker info >/dev/null 2>&1; then
   echo "Using docker ($PGIMAGE)."
   NAME="migverify-$$"
+  # psql runs INSIDE the container. The host needs no postgres client at all
+  # (the production server has none), and no port is published, so the
+  # throwaway database is reachable from nowhere but this script.
   docker run -d --rm --name "$NAME" \
     -e POSTGRES_PASSWORD=verify -e POSTGRES_DB="$DBNAME" \
-    -p 0:5432 "$PGIMAGE" >/dev/null || { echo "Could not start $PGIMAGE."; exit 2; }
+    "$PGIMAGE" >/dev/null || { echo "Could not start $PGIMAGE."; exit 2; }
   CLEANUP="docker rm -f $NAME"
-
-  PORT="$(docker port "$NAME" 5432/tcp | head -1 | sed 's/.*://')"
-  export PGPASSWORD=verify
-  PSQL=(psql -h 127.0.0.1 -p "$PORT" -U postgres)
+  PSQL=(docker exec -i "$NAME" psql -U postgres)
 
   printf 'Waiting for postgres'
   for _ in $(seq 1 40); do
@@ -113,7 +113,8 @@ if docker info >/dev/null 2>&1; then
   echo
 elif command -v initdb >/dev/null 2>&1 || [[ -x /usr/lib/postgresql/16/bin/initdb ]]; then
   BIN="$(command -v initdb >/dev/null 2>&1 && dirname "$(command -v initdb)" || echo /usr/lib/postgresql/16/bin)"
-  echo "No docker daemon; using a throwaway cluster from $BIN."
+\1  command -v psql >/dev/null 2>&1 \
+    || { echo "Found $BIN but no psql on PATH - the check cannot run."; exit 2; }
   DATA="$(mktemp -d)"
   chmod 777 "$DATA"
 
@@ -142,7 +143,12 @@ else
   exit 2
 fi
 
-# ── Pass 1: build it from nothing ───────────────────────────────────────────
+# A check that cannot reach its database must say so, not report every file
+# as failed. Exit 2 is "could not run"; exit 1 below is "ran, and found rot".
+"${PSQL[@]}" -d "$DBNAME" -c 'select 1' >/dev/null 2>&1 \
+  || { echo "Could not reach the throwaway database. The check did NOT run."; exit 2; }
+
+\1 ───────────────────────────────────────────
 echo
 echo "Pass 1 — applying every file in filename order, into an empty database."
 echo
@@ -156,7 +162,7 @@ for f in "$DIR"/*.sql; do
   case "$name" in *seed*) continue ;; esac
   count=$((count + 1))
 
-  if out="$("${PSQL[@]}" -v ON_ERROR_STOP=1 -q -d "$DBNAME" -f "$f" 2>&1)"; then
+  if out="$("${PSQL[@]}" -v ON_ERROR_STOP=1 -q -d "$DBNAME" 2>&1 < "$f")"; then
     continue
   fi
   failed=$((failed + 1))
@@ -192,7 +198,7 @@ repeat=0
 for f in "$DIR"/*.sql; do
   name="$(basename "$f")"
   case "$name" in *seed*) continue ;; esac
-  if out="$("${PSQL[@]}" -v ON_ERROR_STOP=1 -q -d "$DBNAME" -f "$f" 2>&1)"; then
+  if out="$("${PSQL[@]}" -v ON_ERROR_STOP=1 -q -d "$DBNAME" 2>&1 < "$f")"; then
     continue
   fi
   repeat=$((repeat + 1))
