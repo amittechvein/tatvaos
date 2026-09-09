@@ -247,7 +247,24 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingShare>().ToTable("recording_shares", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingShareGrant>().ToTable("recording_share_grants", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingAccess>().ToTable("recording_access_log", "connect");
-        b.Entity<TatvaOS.Api.Modules.Connect.ConnectTenantSettings>().ToTable("tenant_settings", "connect");
+        // HasKey IS NOT OPTIONAL HERE, and leaving it out took production
+        // down on 9 September. This entity's key is TenantId; EF's convention
+        // only recognises `Id` or `ConnectTenantSettingsId`, so it found no
+        // key at all. A model that fails validation fails for EVERY entity,
+        // not just this one, so the first database call of any kind threw and
+        // nobody could log in.
+        //
+        // Nothing before production caught it. `dotnet build` cannot — model
+        // validation is a runtime step. The deploy's own "the new API starts
+        // and /health answers 200" gate could not either, because /health
+        // does not touch the database. Every other entity here happens to
+        // have an `Id` property, which is why this class of mistake had never
+        // been made before and why nothing was watching for it.
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectTenantSettings>(e =>
+        {
+            e.ToTable("tenant_settings", "connect");
+            e.HasKey(x => x.TenantId);
+        });
 
         // jsonb, not text. Npgsql maps a string property to `text` by default,
         // and `text` does not implicitly cast to `jsonb` on INSERT — the write
