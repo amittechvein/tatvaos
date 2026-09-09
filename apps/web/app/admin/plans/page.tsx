@@ -81,6 +81,12 @@ const PRODUCTS: { key: string; label: string; soon?: boolean }[] = [
   { key: 'drive', label: 'Space' },
   { key: 'connect', label: 'Connect', soon: true },
   { key: 'calendar', label: 'Calendar', soon: true },
+  // Added 9 Sept 2026 with 20260909-hire-people-products.sql, the day both
+  // lanes were staffed. A plan cannot grant a product that has no catalogue
+  // row, so the row and this checkbox have to arrive together — which is the
+  // whole reason this file drifted twice before.
+  { key: 'hire', label: 'Hire', soon: true },
+  { key: 'people', label: 'People', soon: true },
 ];
 
 type StorageModel = 'per_user' | 'pooled';
