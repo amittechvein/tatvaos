@@ -46,6 +46,15 @@
           }
         }
       ]
-    ]
+    ],
+    "extra": {
+      "hosts": {
+        "core": "https://core.tatvaos.com",
+        "mail": "https://mail.tatvaos.com",
+        "connect": "https://connect.tatvaos.com",
+        "space": "https://space.tatvaos.com",
+        "calendar": "https://calendar.tatvaos.com"
+      }
+    }
   }
 }

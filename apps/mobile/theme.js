@@ -1,3 +1,5 @@
+import { hosts } from './lib/hosts';
+
 // One place for colour. Every screen reads from here, so a brand change is
 // one edit rather than a hunt — the same reason the web app uses CSS
 // variables instead of hex literals in components.
@@ -79,12 +81,12 @@ export const surface = {
 const ADMIN_ROLES = ['super_admin', 'org_owner', 'org_admin'];
 
 export const products = [
-  { key: 'mail',     product: 'mail',     name: 'Mail',     icon: 'mail-outline',     tint: '#E1F5EE', ink: '#0F6E56', url: 'https://mail.tatvaos.com' },
-  { key: 'connect',  product: 'connect',  name: 'Connect',  icon: 'videocam-outline', tint: '#E6F1FB', ink: '#185FA5', url: 'https://connect.tatvaos.com' },
-  { key: 'space',    product: 'drive',    name: 'Space',    icon: 'folder-outline',   tint: '#EEEDFE', ink: '#534AB7', url: 'https://space.tatvaos.com' },
-  { key: 'calendar', product: 'calendar', name: 'Calendar', icon: 'calendar-outline', tint: '#FAECE7', ink: '#993C1D', url: 'https://calendar.tatvaos.com' },
-  { key: 'contacts', product: 'family',   name: 'Contacts', icon: 'people-outline',   tint: '#FBEAF0', ink: '#993556', url: 'https://core.tatvaos.com/family' },
-  { key: 'admin',    roles: ADMIN_ROLES,  name: 'Admin',    icon: 'business-outline', tint: '#F1EFE8', ink: '#5F5E5A', url: 'https://core.tatvaos.com/org' },
+  { key: 'mail',     product: 'mail',     name: 'Mail',     icon: 'mail-outline',     tint: '#E1F5EE', ink: '#0F6E56', url: hosts.mail },
+  { key: 'connect',  product: 'connect',  name: 'Connect',  icon: 'videocam-outline', tint: '#E6F1FB', ink: '#185FA5', url: hosts.connect },
+  { key: 'space',    product: 'drive',    name: 'Space',    icon: 'folder-outline',   tint: '#EEEDFE', ink: '#534AB7', url: hosts.space },
+  { key: 'calendar', product: 'calendar', name: 'Calendar', icon: 'calendar-outline', tint: '#FAECE7', ink: '#993C1D', url: hosts.calendar },
+  { key: 'contacts', product: 'family',   name: 'Contacts', icon: 'people-outline',   tint: '#FBEAF0', ink: '#993556', url: `${hosts.core}/family` },
+  { key: 'admin',    roles: ADMIN_ROLES,  name: 'Admin',    icon: 'business-outline', tint: '#F1EFE8', ink: '#5F5E5A', url: `${hosts.core}/org` },
 ];
 
 /**

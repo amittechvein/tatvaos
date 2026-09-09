@@ -7,8 +7,16 @@
 
 import * as SecureStore from 'expo-secure-store';
 
-// Change this in ONE place to point the app at a different server.
-export const API_BASE = 'https://core.tatvaos.com';
+import { hosts, isProduction } from './lib/hosts';
+
+// Set in app.json under expo.extra.hosts. See lib/hosts.js for why it moved
+// out of here, and for the one thing about it that is not yet established.
+export const API_BASE = hosts.core;
+
+//  Logged once, at import. "Which server am I actually talking to" is the
+//  first question of every confusing bug report, and until now the answer
+//  was a literal three files away.
+console.log(`[api] talking to ${API_BASE}${isProduction ? '' : ' (NOT production)'}`);
 
 // Access tokens from this API last about fifteen minutes (proven: a token
 // issued at 17:41 carried expiresAt 17:56). So the REFRESH token is what
