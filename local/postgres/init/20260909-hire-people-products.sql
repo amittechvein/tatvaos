@@ -13,23 +13,25 @@
 --  This is that day.
 --
 --  ---------------------------------------------------------------------------
---  READ THIS BEFORE WONDERING WHY 'people' KEEPS DISAPPEARING.
+--  0028 NO LONGER DELETES 'people'. That line was removed in the same change
+--  as this file's second revision, and the first version of this comment
+--  argued the opposite - wrongly.
 --
---  0028 still deletes 'people' - it loops over
---  ARRAY['people','payroll','sheet','word'] and drops each one that nothing
---  references. Every file in this folder re-runs on every deploy, and 0028
---  sorts BEFORE this file, so each deploy does:
+--  The original reasoning: 0028 deletes 'people' at position 31, this file
+--  re-inserts at 66, so the end state is correct on every deploy and the churn
+--  is a harmless transient. Every part of that is true and the conclusion was
+--  still wrong, because the re-insert takes the INSERT branch, not the
+--  ON CONFLICT UPDATE branch - and the INSERT branch sets is_available = false.
+--  So the day People is flipped available in the console, the next deploy turns
+--  it off again, silently, and nobody connects a deploy to a product vanishing.
 --
---      0028   deletes 'people'  (only while nothing references it)
---      this   inserts it again
+--  What hid it: on a FRESH install nothing inserts 'people' before position 31,
+--  so 0028's DELETE is a no-op and the whole interaction is invisible. It only
+--  exists on an already-deployed database. Core found that asymmetry.
 --
---  The end state after every deploy is therefore correct, and the churn stops
---  permanently the moment any organisation is actually granted People, because
---  0028's reference check then finds a product_access row and skips the delete.
---
---  0028 is deliberately NOT edited. Its delete is guarded, its intent is
---  documented, and rewriting a migration that has already run on production to
---  tidy up a transient no-op is a worse trade than this comment.
+--  The general lesson, which is why this is written down rather than quietly
+--  fixed: "the end state is correct" is not the same as "this is safe". The
+--  path taken to reach the end state decided which columns got written.
 --  ---------------------------------------------------------------------------
 --
 --  is_available stays FALSE for both. Neither product exists yet, and 0028 is
@@ -56,12 +58,25 @@ ON CONFLICT (code) DO UPDATE
 --  is_available is deliberately NOT in that SET list. Once somebody flips a
 --  product live, the next deploy must not quietly switch it back off.
 
+--  The NOTICE REPORTS what is in the table; it does not assert it. The first
+--  version printed "both is_available = false" as fixed text, which would have
+--  gone on saying so after somebody flipped one live - an observation printed
+--  as an assertion, which is the same failure shape as a check that cannot go
+--  red. Core caught it. Read the values out instead.
 DO $$
 DECLARE
-    n int;
+    r record;
+    n int := 0;
 BEGIN
-    SELECT count(*) INTO n FROM core.products WHERE code IN ('hire', 'people');
     RAISE NOTICE '';
-    RAISE NOTICE '  core.products: hire + people present (% of 2), both is_available = false', n;
+    FOR r IN SELECT code, is_available FROM core.products
+              WHERE code IN ('hire', 'people') ORDER BY code
+    LOOP
+        RAISE NOTICE '  core.products: % present, is_available = %', r.code, r.is_available;
+        n := n + 1;
+    END LOOP;
+    IF n < 2 THEN
+        RAISE WARNING '  core.products: expected hire AND people, found % row(s)', n;
+    END IF;
     RAISE NOTICE '';
 END $$;
