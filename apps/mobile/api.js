@@ -58,7 +58,11 @@ function logLine(method, path, status, ms, note) {
   console.log(`[api] ${method} ${path} -> ${status} ${ms}ms${note ? ' ' + note : ''}`);
 }
 
-async function request(path, { method = 'POST', body, token } = {}) {
+/**
+ * Exported so lib/connect.js can use the same door rather than growing a
+ * second one. Behaviour unchanged — this adds a keyword and nothing else.
+ */
+export async function request(path, { method = 'POST', body, token } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   const started = Date.now();
