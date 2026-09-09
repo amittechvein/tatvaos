@@ -220,10 +220,25 @@ first, diagnose after, say so immediately.
    paying customers, so a deploy is a decision, not a consequence of merging.
 
    The workflow resets the server to `origin/main` and runs
-   `./infra/scripts/deploy.sh production` there. **Record
-   `git rev-parse --short origin/main` before you start** — that is your
-   rollback point, and the deploy is the only step that should change what the
-   box is running.
+   `./infra/scripts/deploy.sh production` there.
+
+   **Do not write down a rollback point yourself. `deploy.sh` prints it.** It
+   reads the `BUILD_SHA` baked into the running web container and prints the
+   commit that is *serving traffic*, with the command to return to it:
+
+   ```
+   running   9da2316   <- the commit SERVING TRAFFIC right now
+   rollback  git reset --hard 9da2316   # then re-run this script
+   ```
+
+   This rule used to say "record `git rev-parse --short origin/main` before you
+   start". That is the commit you are deploying **to** — rolling back to it
+   redeploys the thing you are rolling back from. `git rev-parse HEAD` is no
+   better: the deploy resets the checkout before `deploy.sh` runs, and the two
+   drift anyway when a deploy fails partway. **The checkout and the running
+   system are different things, and every "which version is this?" has to name
+   which one it means.** Getting that wrong caused the `x-build` regression,
+   this instruction, and two wrong-branch deploys.
 
    **Run `deploy.sh`; do not hand-roll the compose command.** It builds its
    invocation with `--env-file infra/docker/.env` — not the repo-root `.env`,
@@ -250,6 +265,24 @@ announcement stops the confusion.
 `verify-live.sh` is already in that log — `deploy.sh` calls it and refuses
 success on its failure — so it is not a separate step to run, and a passing
 deploy is not evidence that it was skipped or optional.
+
+**`/srv/tatvaos-production` is for deploying. It is not a workspace.** Use
+`/srv/tatvaos-scratch` — a second clone on the same box — for debugging,
+reproducing, checking out someone else's branch, or anything else. Nothing
+deploys from it, nothing is served from it, and it can sit on any branch
+forever without consequence. Same rule as Amit's laptop, where `tatvaOS` is the
+integration checkout and lanes are worktrees.
+
+`deploy.sh` returns the production checkout to `main` after a successful
+deploy, so leftover branch state cleans itself up at the last provably-safe
+moment. The guard refuses the bad deploy; the scratch clone removes the reason
+someone was there; the checkout-back removes what they left behind. All three,
+because two of them have each been tried alone.
+
+*Incident, 8–9 Sept 2026: four wrong-branch checkouts in two days, two of them
+on production, and a rollback commit recorded from the documented instruction
+that pointed at unreviewed work. The branch guard stopped two bad deploys in
+the same week — it was working. Nobody had anywhere else to go.*
 
 *Cost: a finished feature sat blocked for three days behind a three-line edit
 because one person was the gate. This trades that queue for a discipline —
