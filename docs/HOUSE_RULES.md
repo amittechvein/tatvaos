@@ -103,6 +103,32 @@ below a comment naming that exact failure as the worst this product has; a
 marker count blind to the unmarked copy that already existed. See
 `docs/reviews/` for the catalogue.*
 
+**A byte count is not a checksum, and a checksum is not the content.**
+
+*9 Sept 2026.* Three files were sent to the production box as base64 chunks and
+verified with `wc -c`. Every count matched. The terminal had substituted a
+duplicated fragment of the same length, so the length was right and the bytes
+were wrong. `gunzip` then failed with a CRC error, python ran the truncated
+script anyway, and it edited three files and printed success on all of them.
+What caught it was an `md5sum` of the decoded script — which did not match.
+
+Three checks, three different questions:
+
+- `wc -c` answers *is it the right size*. Passes under substitution.
+- `md5sum` answers *is it the bytes I sent*. Passes if I sent the wrong thing.
+- Reading the result answers *is it what I wanted*, and nothing else does.
+
+The same failure appeared twice more that day, one layer apart each time.
+`deploy.sh` recorded a rollback commit from `git rev-parse`, which answers
+"what is this directory sitting on" and not "what is running". And a green
+deploy verdict meant "every step succeeded", which is not "the containers are
+running the new code".
+
+**So: verify the artefact you care about, from the place it actually lives.**
+A check that measures something adjacent to the thing is not a weak check, it
+is a check-shaped object — it reports success while the thing it stands for is
+false, and it does so most confidently exactly when something has gone wrong.
+
 ## 7. Ask what breaks if it is violated — **and what breaks if it is enforced**
 
 Rule 6's second half. An invariant nobody enforces is a wish; an invariant
