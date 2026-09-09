@@ -143,10 +143,17 @@ and a **foreground service with a persistent notification** (Android kills
 capture without one). iOS: a Broadcast Upload Extension, effectively a second
 app with its own signing and memory limits.
 
-**Before you start, talk to Connect and read `connect_server_capacity`.** We are
-on a 2 vCPU box that already cannot do recording. A screen share is another
-high-bitrate stream per participant. The constraint may be the server, not the
-client — find out before you spend a fortnight.
+**Before you start, ask Connect for the current capacity numbers.** The box is
+**4 vCPU and video recording works on it** — both tests passed on 21 August 2026,
+including one with a camera on and a screen share running. What is tight is the
+two at once: the recorder alone measured `maxCPU 4.254` on those four cores, so a
+screen share *during* a recording sits on the ceiling. That is a real limit and a
+measured one, and it is a reason to test the combination early rather than a
+reason to doubt the spike.
+
+Those numbers are not written down anywhere in this repository — which is why
+this paragraph was wrong for three weeks. Ask Connect, then write down what you
+are told.
 
 ---
 

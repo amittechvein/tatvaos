@@ -155,9 +155,10 @@ Chasing that endpoint is the highest-value thing on this lane.
 **Section 6's "build screen sharing first" is reinforced, not softened.**
 `getDisplayMedia` does not exist on Android Chrome or iOS Safari, so screen
 sharing from a phone is the one capability no browser can provide — which makes
-it the capability that justifies the app. Prove it before building around it,
-and check `connect_server_capacity` first: we are on a 2 vCPU box that already
-cannot record.
+it the capability that justifies the app. Prove it before building around it.
+On capacity: the box is 4 vCPU and recording works, proven 21 August 2026. The
+measured ceiling is a recording and a screen share running *together*, not screen
+sharing on its own. Ask Connect for the numbers; they are not in this repository.
 
 ---
 
