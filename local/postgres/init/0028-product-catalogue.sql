@@ -49,7 +49,26 @@ DECLARE
     c text;
     referenced int;
 BEGIN
-    FOREACH c IN ARRAY ARRAY['people','payroll','sheet','word']
+    -- 'people' REMOVED FROM THIS LIST, 9 Sept 2026, and the reason is worth
+    -- keeping. TatvaOS People was staffed, so 20260909-hire-people-products.sql
+    -- inserts the code again at position 66 - after this file, at 31.
+    --
+    -- Leaving 'people' here looked harmless: each deploy deleted it and the
+    -- later file re-inserted it, so the end state was always correct. It was
+    -- not harmless. The re-insert takes the INSERT branch rather than the
+    -- ON CONFLICT UPDATE branch, and that branch sets is_available = false. So
+    -- the day somebody flips People available in the console, the next deploy
+    -- turns it off again - and nobody connects a deploy to a product quietly
+    -- vanishing from the catalogue. It would have self-healed only if an
+    -- organisation happened to be granted People first, which is luck.
+    --
+    -- The asymmetry that hid it: on a FRESH install nothing inserts 'people'
+    -- before this point, so the DELETE is a no-op and everything looks fine.
+    -- The churn exists only on an already-deployed database. Core found it.
+    --
+    -- payroll, sheet and word stay: nothing inserts them anywhere, so for those
+    -- this loop remains the harmless no-op it was designed to be.
+    FOREACH c IN ARRAY ARRAY['payroll','sheet','word']
     LOOP
         SELECT (SELECT count(*) FROM core.product_access      WHERE product_code = c)
              + (SELECT count(*) FROM core.storage_allocations WHERE product_code = c)
