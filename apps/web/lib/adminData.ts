@@ -58,6 +58,27 @@ export async function fetchPlans(authedFetch: AuthedFetch): Promise<PlanRow[]> {
   return res.json();
 }
 
+/**
+ * The product catalogue — core.products, served by the API.
+ *
+ * The plans screen used to carry its own copy of this list. It drifted twice,
+ * and the second drift made Connect ungrantable from the console entirely.
+ * A screen that must agree with a table should read the table.
+ */
+export interface ProductRow {
+  code: string;
+  name: string;
+  description: string | null;
+  isAvailable: boolean;
+  sortOrder: number;
+}
+
+export async function fetchProducts(authedFetch: AuthedFetch): Promise<ProductRow[]> {
+  const res = await authedFetch('/admin/products');
+  if (!res.ok) throw new Error('Could not load the product catalogue.');
+  return res.json();
+}
+
 // ---------------------------------------------------------------------------
 //  Plan management (super-admin). The request shape below is the API's
 //  UpsertPlanRequest: storage is in BYTES (the form collects GB and multiplies

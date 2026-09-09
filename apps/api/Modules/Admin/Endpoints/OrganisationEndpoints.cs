@@ -43,6 +43,30 @@ public static class OrganisationEndpoints
         plans.MapPost("/", CreatePlanAsync);
         plans.MapPut("/{id:guid}", UpdatePlanAsync);
         plans.MapDelete("/{id:guid}", DeletePlanAsync);
+
+        // The product catalogue, served rather than copied. The plans screen
+        // kept its own list of what a plan may grant and drifted from
+        // core.products twice: once offering people/payroll/sheet/word after
+        // 0028 deleted them, once omitting Connect entirely — which is why
+        // Connect could not be granted from the console by anyone, on any
+        // plan. A list that must match a table, with nothing checking that it
+        // does, drifts again. Read-only on purpose: the catalogue is changed
+        // by a migration, not by an operator.
+        var products = app.MapGroup("/api/admin/products")
+            .RequireAuthorization("SuperAdmin")
+            .WithTags("Platform administration");
+        products.MapGet("/", ProductsAsync);
+    }
+
+    private static async Task<IResult> ProductsAsync(AppDbContext db, CancellationToken ct)
+    {
+        // No tenant filter and no scope switch: core.products is platform-wide
+        // reference data, exactly like core.plans above it.
+        var products = await db.Products.AsNoTracking()
+            .OrderBy(p => p.SortOrder).ThenBy(p => p.Code)
+            .Select(p => new { p.Code, p.Name, p.Description, p.IsAvailable, p.SortOrder })
+            .ToListAsync(ct);
+        return Results.Ok(products);
     }
 
     private static async Task<IResult> PlansAsync(AppDbContext db, CancellationToken ct)
