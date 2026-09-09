@@ -113,7 +113,7 @@ function Splash() {
   return (
     <SafeAreaView style={[s.screen, s.centre]}>
       <View style={s.logo}><Text style={s.logoLetter}>T</Text></View>
-      <ActivityIndicator color={brand.green} style={{ marginTop: 20 }} />
+      <ActivityIndicator color={brand.base} style={{ marginTop: 20 }} />
     </SafeAreaView>
   );
 }
@@ -204,7 +204,7 @@ function Login({ onSignedIn, onChallenge }) {
           accessibilityLabel="Sign in"
         >
           {busy
-            ? <ActivityIndicator color={brand.greenLight} />
+            ? <ActivityIndicator color={brand.onBase} />
             : <Text style={s.primaryText}>Sign in</Text>}
         </Pressable>
 
@@ -274,7 +274,7 @@ function MfaScreen({ challenge, onVerified, onBack }) {
 
         <Pressable style={[s.primary, busy && s.primaryBusy]} onPress={submit} disabled={busy}>
           {busy
-            ? <ActivityIndicator color={brand.greenLight} />
+            ? <ActivityIndicator color={brand.onBase} />
             : <Text style={s.primaryText}>Verify</Text>}
         </Pressable>
       </View>
@@ -409,10 +409,10 @@ const s = StyleSheet.create({
 
   loginBody: { flex: 1, justifyContent: 'center', paddingHorizontal: 28 },
   logo: {
-    width: 52, height: 52, borderRadius: 13, backgroundColor: brand.green,
+    width: 52, height: 52, borderRadius: 13, backgroundColor: brand.base,
     alignItems: 'center', justifyContent: 'center', marginBottom: 24,
   },
-  logoLetter: { color: brand.greenLight, fontSize: 22, fontWeight: '500' },
+  logoLetter: { color: brand.onBase, fontSize: 22, fontWeight: '500' },
 
   h1: { fontSize: 24, fontWeight: '500', color: text.primary, marginBottom: 4 },
   h2: { fontSize: 19, fontWeight: '500', color: text.primary },
@@ -434,11 +434,11 @@ const s = StyleSheet.create({
   error: { fontSize: 13, color: '#A32D2D', marginBottom: 12 },
 
   primary: {
-    height: 48, borderRadius: 8, backgroundColor: brand.green,
+    height: 48, borderRadius: 8, backgroundColor: brand.base,
     alignItems: 'center', justifyContent: 'center', marginTop: 4,
   },
   primaryBusy: { opacity: 0.7 },
-  primaryText: { color: brand.greenLight, fontSize: 16, fontWeight: '500' },
+  primaryText: { color: brand.onBase, fontSize: 16, fontWeight: '500' },
   quiet: { fontSize: 14, color: text.secondary, textAlign: 'center', marginTop: 18 },
 
   dashBody: { paddingHorizontal: 20, paddingBottom: 32 },

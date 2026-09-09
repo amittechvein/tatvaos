@@ -7,7 +7,7 @@
     "userInterfaceStyle": "light",
     "scheme": "tatvaos",
     "splash": {
-      "backgroundColor": "#0F6E56",
+      "backgroundColor": "#6C3CE9",
       "resizeMode": "contain"
     },
     "ios": {
@@ -20,7 +20,7 @@
     "android": {
       "package": "com.techvein.tatvaos",
       "adaptiveIcon": {
-        "backgroundColor": "#0F6E56"
+        "backgroundColor": "#6C3CE9"
       },
       "permissions": [
         "android.permission.CAMERA",

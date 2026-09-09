@@ -1,29 +1,63 @@
 // One place for colour. Every screen reads from here, so a brand change is
 // one edit rather than a hunt — the same reason the web app uses CSS
 // variables instead of hex literals in components.
+//
+// ---------------------------------------------------------------------------
+//  THESE VALUES ARE THE WEB'S, NOT THIS FILE'S OWN.
+//
+//  They come from docs/UI_LANE_BRIEF.md §4.1, "the agreed palette", decided by
+//  Amit on 5 September 2026. That section ends with a paragraph about this
+//  file: it carried #0F6E56, "a third brand colour, a green that matches
+//  neither of the web ones", and had to move or the two-systems problem would
+//  exist across two codebases as well as within one.
+//
+//  So when these need to change, change them THERE first and copy. The web
+//  keeps them as space-separated RGB channels because Tailwind needs to insert
+//  an alpha channel; React Native has no such constraint, so they are hex here
+//  and the CSS variable each one came from is named beside it.
+// ---------------------------------------------------------------------------
 
 export const brand = {
-  green: '#0F6E56',
-  greenLight: '#E1F5EE',
-  greenPale: '#9FE1CB',
+  base:   '#6C3CE9', // --brand-500, the brand colour
+  onBase: '#F5F1FE', // --brand-50, for text and icons sitting ON base
+  soft:   '#B39BF2', // --brand-300
 };
 
 export const text = {
-  primary: '#1a1d29',
-  secondary: '#4a4f63',
-  muted: '#8a8f9f',
+  primary:   '#15141B', // --ink
+  secondary: '#6B6880', // --ink-muted
+  muted:     '#9C99AB', // --ink-faint
 };
 
 export const surface = {
-  page: '#fafaf8',
-  card: '#ffffff',
-  border: '#e7e7e2',
+  // --canvas is WARM cream, deliberately, not a grey near-white. Rule 1 of the
+  // agreed palette: cream is for chrome, white is for content. The contrast
+  // between the two is what gives a card its "sheet of paper" quality, and a
+  // cool grey page loses it.
+  page:   '#FAF6EF', // --canvas
+  card:   '#FFFFFF', // --surface
+  border: '#ECE7DD', // --line
 };
 
 // Product tiles. Colour groups by product, not by position — reordering the
 // dashboard must not reshuffle which product is which colour.
 //
 // ---------------------------------------------------------------------------
+//  MAIL'S GREEN IS NOW ITS OWN PRODUCT HUE, NOT THE BRAND.
+//
+//  Until 9 September 2026 Mail's tile was #0F6E56 / #E1F5EE — the same values
+//  as the brand, because the brand happened to be green. That coupling was
+//  never intended and is now gone: these are literals belonging to Mail, and
+//  the brand is violet above.
+//
+//  Left green on purpose. Six tiles need six distinguishable hues, green is a
+//  legitimate one, and moving Mail to violet would put it a few degrees from
+//  Space's #534AB7 — two of six tiles nearly the same colour is worse than a
+//  green one. **Whoever takes the UI lane owns this set**; if the tiles are
+//  ever restyled as a system, that is the moment to decide whether the
+//  flagship product should carry the brand colour and what Space becomes.
+// ---------------------------------------------------------------------------
+//
 //  `product` IS THE SERVER'S CODE, AND TWO OF THEM ARE NOT THE OBVIOUS WORD.
 //
 //  /api/auth/me returns the product codes this user is entitled to, and they
