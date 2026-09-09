@@ -1,13 +1,22 @@
 -- ============================================================================
 --  TatvaOS Connect — sharing a recording with someone who was not in the room.
 --
---  DRAFT. NOT FOR LANDING. Sent to Core for review on 26 August 2026, as
---  instructed: "Send the schema past me before the migration lands — with its
---  true date on it."
+--  Reviewed by Core as a draft on 26 August 2026 and landed on 8 September
+--  with all four open questions answered. Their answers are recorded beside
+--  the code they decided, not in a thread nobody will find again.
 --
---  Written against Core's authorisation ruling of the same week. Every rule
---  below is his; the shapes are mine, and the four places I could not decide
---  alone are marked  >>> CORE  and listed again at the foot of this file.
+--  Written against Core's authorisation ruling. Every rule below is his; the
+--  shapes are mine.
+--
+--  POSITION ON THIS DATE, checked rather than assumed. This file creates
+--  connect.recording_shares, recording_share_grants, recording_access_log,
+--  connect.tenant_settings and four functions; nothing that sorts before it
+--  mentions any of them. It depends on connect.recordings (20260818-a),
+--  connect.recording_allowed (20260819-d) and core.tenants — all long
+--  earlier. 20260908-domains-reserve-bounce.sql shares this date and has no
+--  relationship to it in either direction, so the letter here is arbitrary
+--  rather than load-bearing, which is worth saying so the next reader does
+--  not go looking for the constraint that put it there.
 -- ============================================================================
 --
 --  ─────────────────────────────────────────────────────────────────────────
@@ -71,12 +80,24 @@
 --        whether a fresh install works.
 --
 --  ─────────────────────────────────────────────────────────────────────────
---  WHAT THAT MEANS FOR THIS FILE'S NAME.
+--  WHERE THAT ENDED UP, AND WHAT THIS FILE IS NAMED.
 --
---  It carries 26 August, which is the day it was written. That is the rule
---  from here on. It also sorts BEFORE 20260901-20260910, so it cannot land
---  until the rename does — but that is now the smaller half of the problem
---  rather than the whole of it.
+--  All of the above is settled. The ten files were renamed to their true
+--  August dates; four more that had drifted the other way (three Connect,
+--  one Mail, all dated September for August work) went in Core's PR #64 on
+--  8 September, with the letter rule fixed — letters now continue from the
+--  highest already on a date instead of restarting, which was a real bug in
+--  my rename script and would have put two files on 20260823-a-.
+--
+--  The folder replays clean from empty, twice, and there is now a Migrations
+--  CI check that fails a pull request whose file sorts before what it needs.
+--  The rename script also refuses to run without --i-checked-the-order,
+--  because "true date" and "correct order" disagree more often than anyone
+--  expects: 20260827-a-mail-app-passwords and its unique-index file were the
+--  second such pair inside three weeks.
+--
+--  This file carries 8 September because that is the day it landed, and it
+--  needs no letter for ordering — see the note at the top.
 --  ─────────────────────────────────────────────────────────────────────────
 --
 --  THE FOUR LEVELS, IN THE ORDER THEY GIVE AWAY MORE.
@@ -107,6 +128,65 @@
 --  asked server-side, against these tables, on every request including each
 --  GET of a range request.
 -- ============================================================================
+
+
+-- ============================================================================
+--  0. The organisation switch that gates level 'public'.
+-- ============================================================================
+--
+--  DECLARED FIRST, and only for a mechanical reason worth writing down: the
+--  definer function in section 4b joins this table, and a LANGUAGE sql body
+--  is parsed and its references resolved at CREATE time. A table declared in
+--  section 6, where this belongs by subject, would make section 4b fail on a
+--  fresh install and pass on a re-run — the worst possible shape of bug. The
+--  discussion of what this switch MEANS is still in section 6.
+--
+--  CORE'S ANSWER (8 September) to the question that stopped this file: it is
+--  not a shared table at all. Amit's ruling named Space's public-links kill
+--  switch as the shape, and that switch is not on core.tenants — it is
+--  space.tenant_settings.allow_public_links, a table Space owns. So Connect's
+--  switch is Connect's to write, here, with no Core patch and nobody's
+--  permission needed. I had been blocked for two weeks on a column that was
+--  never going to exist.
+--
+--  Default FALSE, per the ruling. Space defaults its equivalent to true;
+--  that half is deliberately not copied. A missing row reads as off, so there
+--  is no backfill and an organisation that has never been asked has not
+--  accidentally agreed.
+--
+--  The three Connect flags already on core.tenants — allow_connect_recording,
+--  connect_email_minutes, connect_recording_retention_days — stay where they
+--  are. Moving them is a live-table migration with application code reading
+--  them, and is not this file's business. New module switches go here.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS connect.tenant_settings (
+    tenant_id  uuid PRIMARY KEY REFERENCES core.tenants(id) ON DELETE CASCADE,
+    allow_public_recording_links boolean NOT NULL DEFAULT false,
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE connect.tenant_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE connect.tenant_settings FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS tenant_isolation ON connect.tenant_settings;
+CREATE POLICY tenant_isolation ON connect.tenant_settings
+    USING      (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)
+    WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON connect.tenant_settings TO tatvaos_app;
+
+COMMENT ON TABLE connect.tenant_settings IS
+    'Per-organisation Connect settings that Connect owns. Today: whether a '
+    'recording may be shared by a public link. A missing row means every '
+    'setting is at its default, which for a switch that exposes recordings '
+    'means off.';
+
+COMMENT ON COLUMN connect.tenant_settings.allow_public_recording_links IS
+    'Amit''s ruling, 26 August: level 4 (anyone with the link) is off unless '
+    'an organisation turns it on. Read at share time by the endpoint and '
+    'AGAIN at read time inside connect.resolve_share_token — switching it off '
+    'must kill links that already exist, not merely stop new ones.';
 
 
 -- ============================================================================
@@ -246,18 +326,30 @@ COMMENT ON TABLE connect.recording_share_grants IS
 --  3. Every access beyond a participant writes a row.
 -- ============================================================================
 --
---  >>> CORE, QUESTION 1 OF 4. This is a Connect-local table rather than a
---  platform audit row, and that is a decision I did not think was mine.
+--  CORE'S ANSWER (8 September): this table, Connect-local, as drafted — and
+--  he corrected the premise on the way past, which is worth keeping.
 --
---  AuditWriter wants an actor who is a user. Level 'public' and level
---  'password' readers are not users — they are a link and, sometimes, a
---  password. The honest actor for those rows is "the holder of share X, from
---  address Y", which the platform audit table has no column for.
+--  I had assumed core.audit_logs could not hold a link-holder because it
+--  wants an actor who is a user. It can: actor_user_id is already nullable.
+--  The real obstacles are different and larger. tenant_id is NOT NULL, and
+--  AuditWriter takes BOTH tenant and actor from the ambient TenantContext,
+--  which an anonymous link read simply does not have — so making it fit means
+--  a second entry point on a file every module writes through, to serve one
+--  caller. And the audit log is an administrative record: append-only, kept
+--  for ever, one row per first-GET on a popular link would turn it into a hit
+--  counter.
 --
---  I can go either way and would rather you chose:
---    (a) this table, Connect-local, shaped for the actor we actually have;
---    (b) a nullable actor on the platform audit table, which is your file and
---        every other module's.
+--  So the two tables answer two different questions, deliberately:
+--    • THIS table answers "how widely was this recording opened, and from how
+--      many places" — high volume, Connect's own, prunable.
+--    • core.audit_logs answers "who decided it could be" — the three acts
+--      that have a real, named actor: a share created, a share revoked, and
+--      the organisation switch flipped. Those are written through AuditWriter
+--      with productCode "connect", from the endpoints, not from here.
+--
+--  A customer asking "who exposed this recording" is answered by the audit
+--  log. A customer asking "how far did it get" is answered here. Neither
+--  question drowns the other.
 --
 --  Written on ACCESS, not on grant. Grants also get an ordinary AuditWriter
 --  row — those have a real user behind them and belong in the platform log.
@@ -280,9 +372,19 @@ CREATE TABLE IF NOT EXISTS connect.recording_access_log (
 
     -- Truncated to a /24 (v4) or /48 (v6) before it is written. Enough to say
     -- "this link was opened from twelve different places"; not a location.
-    -- >>> CORE, QUESTION 2 OF 4: truncation is my call to make conservative,
-    -- but if the platform has a house rule for storing addresses I will use
-    -- that instead of inventing a second one.
+    --
+    -- CORE'S ANSWER (8 September): the house rule is about the TYPE, not the
+    -- precision. text, never inet — Npgsql maps a C# string to text and
+    -- PostgreSQL has no implicit text -> inet cast, so an inet column makes
+    -- every write fail at runtime rather than at build. core.audit_logs.
+    -- actor_ip is text for exactly this reason and carries the same comment.
+    --
+    -- On precision there is no rule to inherit and the difference is the
+    -- point: audit stores a full address because an administrative action
+    -- already has a named actor beside it. A public link has no actor at all,
+    -- so the address is the only identifying thing in the row and /24 and /48
+    -- stay. The name stays address_prefix too — it says on its face that this
+    -- is not a full address, which actor_ip would not.
     address_prefix      text,
 
     -- First GET of a range request only. A two-hour video is dozens of GETs
@@ -411,10 +513,75 @@ AS $$
      WHERE s.token = p_token
        AND s.revoked_at IS NULL
        AND (s.expires_at IS NULL OR s.expires_at > now())
+       -- THE SWITCH, ENFORCED AT READ TIME. Core's instruction, and it goes
+       -- HERE rather than in the download route on purpose: the anonymous
+       -- path never touches these tables under RLS, it arrives through this
+       -- definer function and nothing else, so this is the one place that
+       -- cannot be bypassed by a caller that forgets.
+       --
+       -- EXISTS, not a join to a boolean: an organisation with no settings
+       -- row has never turned this on, and must read as off rather than as
+       -- NULL. Flipped off, live 'public' rows stay in place and simply stop
+       -- authorising; flipped back on they resume, and the gap is visible in
+       -- recording_access_log. No sweep, and nothing to undo.
+       --
+       -- Levels 'organisation', 'named' and 'password' are untouched by the
+       -- switch. It gates the level where the link alone is the whole of the
+       -- authorisation.
+       AND (s.level <> 'public'
+            OR EXISTS (SELECT 1
+                         FROM connect.tenant_settings ts
+                        WHERE ts.tenant_id = s.tenant_id
+                          AND ts.allow_public_recording_links))
      LIMIT 1;
 $$;
 
 REVOKE ALL ON FUNCTION connect.resolve_share_token(text) FROM PUBLIC;
+
+-- ─────────────────────────────────────────────────────────────────────────
+--  4c. Writing the access row, for a reader RLS cannot see.
+--
+--  Found while wiring section 6 rather than designed alongside it, and it
+--  would have failed in production on the first public link: an anonymous
+--  link holder has no app.tenant_id, so an ordinary INSERT into
+--  recording_access_log is refused by the very policy that protects it. The
+--  table is FORCE ROW LEVEL SECURITY like every other, and correctly so.
+--
+--  So the insert goes through a definer function, for the same reason the
+--  read does. The tenant is not taken from the caller — it is taken from the
+--  share row, which is the only trustworthy source when there is no session.
+--  A caller cannot log against an organisation it does not hold a share for,
+--  because it does not supply the tenant at all.
+-- ─────────────────────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION connect.log_recording_access(
+    p_share_id          uuid,
+    p_subject_user_id   uuid,
+    p_subject_tenant_id uuid,
+    p_address_prefix    text)
+RETURNS void
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = connect, pg_catalog
+AS $$
+    INSERT INTO connect.recording_access_log
+        (tenant_id, recording_id, share_id, level,
+         subject_user_id, subject_tenant_id, address_prefix)
+    SELECT s.tenant_id, s.recording_id, s.id, s.level,
+           p_subject_user_id, p_subject_tenant_id, p_address_prefix
+      FROM connect.recording_shares s
+     WHERE s.id = p_share_id;
+$$;
+
+REVOKE ALL ON FUNCTION connect.log_recording_access(uuid, uuid, uuid, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION connect.log_recording_access(uuid, uuid, uuid, text) TO tatvaos_app;
+
+COMMENT ON FUNCTION connect.log_recording_access(uuid, uuid, uuid, text) IS
+    'Record one read of a recording by somebody who was not in the room. '
+    'Definer because the reader may be anonymous and have no tenant for RLS '
+    'to scope by. Tenant, recording and level all come from the share row, '
+    'never from the caller — a caller supplies only who it was, if anyone, '
+    'and the truncated address.';
 
 COMMENT ON FUNCTION connect.resolve_share_token(text) IS
     'Turn a share link into the recording it names, for a holder with no '
@@ -435,12 +602,36 @@ COMMENT ON FUNCTION connect.resolve_share_token(text) IS
 --  host has set a hold, otherwise the organisation's retention window from
 --  the day it was made.
 --
---  >>> CORE, QUESTION 3 OF 4: I read the org's retention days out of the same
---  place connect.recording_allowed() reads its flag. I could not verify the
---  column name from my checkout, so it is written here as
---  connect.retention_days(tenant_id) — a function that does not exist yet. If
---  there is already a way to ask that question, name it and I will use it
---  rather than adding a second one.
+--  CORE'S ANSWER (8 September): core.tenants.connect_recording_retention_days
+--  — integer NOT NULL, CHECK (… IN (7, 30, 90, 180, 365)), declared in
+--  20260819-d-connect-retention.sql, default 30 for new organisations since
+--  22 August. The invented connect.retention_days() is gone.
+--
+--  A helper rather than an inline SELECT, on his instruction, and shaped to
+--  match its sibling exactly: connect.recording_allowed(uuid) is SECURITY
+--  DEFINER with SET search_path = core, pg_temp, so this one is too and sits
+--  beside it. Two functions that answer "what has this organisation decided
+--  about recordings" should not be reachable by two different mechanisms.
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION connect.recording_retention_days(p_tenant_id uuid)
+RETURNS integer
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = core, pg_temp
+AS $$
+    SELECT t.connect_recording_retention_days
+      FROM core.tenants t
+     WHERE t.id = p_tenant_id;
+$$;
+
+COMMENT ON FUNCTION connect.recording_retention_days(uuid) IS
+    'How many days this organisation keeps a Connect recording. Reads '
+    'core.tenants past RLS, the same way and for the same reason as '
+    'connect.recording_allowed(uuid) — a definer function so that a caller '
+    'scoped to one tenant can still ask about the recording it is holding.';
+
 -- ============================================================================
 
 CREATE OR REPLACE FUNCTION connect.recording_shares_cap_expiry()
@@ -454,8 +645,13 @@ BEGIN
         RETURN NEW;
     END IF;
 
+    -- A hold beats the window. With no hold, the recording dies at its own
+    -- age plus the organisation's retention — the same arithmetic the sweep
+    -- in ConnectNotesWorker uses, so a link cannot be issued that outlives
+    -- the file it points at.
     SELECT COALESCE(r.keep_until_at,
-                    r.created_at + make_interval(days => connect.retention_days(r.tenant_id)))
+                    r.created_at
+                      + make_interval(days => connect.recording_retention_days(r.tenant_id)))
       INTO v_ceiling
       FROM connect.recordings r
      WHERE r.id = NEW.recording_id;
@@ -479,54 +675,102 @@ CREATE TRIGGER recording_shares_cap_expiry
 
 
 -- ============================================================================
---  6. The organisation switch that gates level 'public'.
+--  6. The organisation switch — what it means, and where it is enforced.
 -- ============================================================================
 --
---  >>> CORE, QUESTION 4 OF 4, AND THE ONE THAT STOPS THIS FILE RUNNING.
+--  The table itself is in section 0, declared early for the mechanical
+--  reason recorded there. This is the part that matters to a reader.
 --
---  Your ruling: level 4 is gated by a per-organisation switch, default OFF,
---  the same shape as Space's public-links kill switch. I agree with the shape
---  and cannot write the statement, because the table
---  connect.recording_allowed() reads is not in my checkout and I am not
---  guessing at a column on a settings table shared with other modules.
+--  TWO ENFORCEMENT POINTS, and they are not equivalent.
 --
---  What it needs to be:
---    • one boolean, default false, on whatever holds the org's Connect
---      settings today;
---    • read at SHARE time and again at READ time. Read time matters more: an
---      administrator switching it off must kill links that already exist, not
---      merely stop new ones. That is a second condition in the download
---      route, not a sweep.
---    • when it flips off, existing 'public' rows are left in place and simply
---      stop authorising. If it is switched back on they work again, and the
---      access log shows the gap.
+--    • SHARE TIME, in the endpoint. Creating a 'public' share against an
+--      organisation with the switch off is refused with a sentence a person
+--      can act on. This is courtesy, not security: it stops somebody
+--      generating a link that would never have worked.
 --
---  Name the table and column and I will write section 6 and the matching
---  clause in the download route in the same pass.
--- ============================================================================
-
--- (intentionally empty pending the answer above)
+--    • READ TIME, inside connect.resolve_share_token (section 4b). This is
+--      the security. An administrator who turns the switch off has to kill
+--      the links that already exist, not merely stop new ones being made —
+--      otherwise the switch means "no NEW exposure", which is not what
+--      anybody reading the label would believe.
+--
+--  It lives inside the definer function rather than in the download route
+--  because the anonymous path never touches these tables under RLS: it
+--  arrives through that function and nothing else. A condition in the route
+--  is a condition the next route can forget. A condition in the function is
+--  one every caller inherits.
+--
+--  Turning it off does not delete anything. Live 'public' rows stay, stop
+--  authorising, and start authorising again if the switch returns — and the
+--  gap between is visible in recording_access_log, which is the record an
+--  administrator will want when they ask what the switch actually did.
 
 
 -- ============================================================================
 --  RLS
 -- ============================================================================
---  >>> Not written here either. Every other Connect table gets its policies
---  from your RLS file rather than from its own migration, and I am not going
---  to be the first module to do it differently. The three tables need the
---  ordinary tenant_id policy; recording_share_grants additionally must NOT be
---  readable by subject_tenant_id, because a reader in another organisation
---  being able to list who else a recording was shared with is a leak in the
---  opposite direction to the one we are guarding.
+--
+--  Written here rather than deferred to Core's RLS file. The draft said I
+--  would not be the first Connect module to keep its own policies; Core then
+--  wrote the policy for connect.tenant_settings inline in the SQL he sent
+--  back, which settles the convention in the other direction. A module's own
+--  tables carry their own policies.
+--
+--  All four are FORCE ROW LEVEL SECURITY. FORCE matters here specifically:
+--  without it the table owner bypasses the policy, and the owner is the role
+--  the migrations run as.
+--
+--  THE ASYMMETRY THAT MATTERS. recording_share_grants is scoped by tenant_id
+--  — the RECORDING's organisation — and deliberately NOT by subject_tenant_id.
+--  A named reader in another organisation can read the recording; they must
+--  not be able to list who else it was shared with. That is a leak in the
+--  opposite direction to the one this file exists to prevent, and it is
+--  prevented by what the policy omits rather than by anything it says. Said
+--  out loud because the omission is invisible.
+--
+--  Cross-organisation reads are not an exception to any of this. They happen
+--  in the definer functions in section 4, which is the whole reason those
+--  functions exist and the reason there are exactly four of them.
 -- ============================================================================
+
+ALTER TABLE connect.recording_shares       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE connect.recording_shares       FORCE  ROW LEVEL SECURITY;
+ALTER TABLE connect.recording_share_grants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE connect.recording_share_grants FORCE  ROW LEVEL SECURITY;
+ALTER TABLE connect.recording_access_log   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE connect.recording_access_log   FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS tenant_isolation ON connect.recording_shares;
+CREATE POLICY tenant_isolation ON connect.recording_shares
+    USING      (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)
+    WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);
+
+DROP POLICY IF EXISTS tenant_isolation ON connect.recording_share_grants;
+CREATE POLICY tenant_isolation ON connect.recording_share_grants
+    USING      (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)
+    WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);
+
+DROP POLICY IF EXISTS tenant_isolation ON connect.recording_access_log;
+CREATE POLICY tenant_isolation ON connect.recording_access_log
+    USING      (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)
+    WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON connect.recording_shares       TO tatvaos_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON connect.recording_share_grants TO tatvaos_app;
+GRANT SELECT, INSERT                 ON connect.recording_access_log   TO tatvaos_app;
+GRANT USAGE, SELECT ON SEQUENCE connect.recording_access_log_id_seq    TO tatvaos_app;
 
 
 DO $$
 BEGIN
-    RAISE NOTICE 'connect recording sharing (DRAFT — not for landing):';
-    RAISE NOTICE '    recording_shares        — one row per grant, four levels';
-    RAISE NOTICE '    recording_share_grants  — named readers, cross-tenant allowed';
-    RAISE NOTICE '    recording_access_log    — one row per read beyond the room';
-    RAISE NOTICE '    share_allows_user()     — the only tenant-crossing read';
-    RAISE NOTICE '    4 questions open for Core; sections 6 and RLS unwritten';
+    RAISE NOTICE 'connect recording sharing:';
+    RAISE NOTICE '    tenant_settings          — allow_public_recording_links, default OFF';
+    RAISE NOTICE '    recording_shares         — one row per grant, four levels';
+    RAISE NOTICE '    recording_share_grants   — named readers, cross-tenant allowed';
+    RAISE NOTICE '    recording_access_log     — one row per read beyond the room';
+    RAISE NOTICE '    share_for_user()         — the only tenant-crossing read for a session';
+    RAISE NOTICE '    resolve_share_token()    — link holders; enforces the org switch';
+    RAISE NOTICE '    log_recording_access()   — writes the row a reader with no tenant cannot';
+    RAISE NOTICE '    recording_retention_days() — the ceiling a share may not outlive';
+    RAISE NOTICE '    RLS on all four; level 4 stays off until an org turns it on';
 END $$;
