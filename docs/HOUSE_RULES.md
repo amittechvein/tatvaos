@@ -6,8 +6,9 @@ restating these. Each carried its own copy until 29 Aug 2026 — and the claim i
 this paragraph was written before that was true, so for two days the file
 asserting rule 8 opened with an instance of it. The copies were removed rather
 than corrected: a corrected copy is still a copy. The welcomes moved into
-`onboarding/<lane>/WELCOME.md` on 9 Sept 2026, when the mobile and Hire/People
-developers were hired; this paragraph now names the folder rather than the
+`onboarding/<lane>/WELCOME.md` on 9 Sept 2026, when the mobile developer started
+— Hire & People has a welcome but no developer, Amit having put that lane on
+hold on 8 Sept pending the Core handover; this paragraph now names the folder rather than the
 files, because a list of filenames here is itself a copy — one that goes stale
 the next time somebody is hired.*
 
@@ -192,25 +193,37 @@ first, diagnose after, say so immediately.
    else's push. To update the remote copy of *your own* branch, use
    `git push --force-with-lease` — never bare `--force`, which overwrites a
    colleague's push without telling you.
-2. In `tatvaOS`: `git pull`, `git merge --no-edit <branch>`. **If the pull
-   brought anything down, build again HERE before pushing** — you rebased against
-   a `main` that has since moved, and nobody has built the combination that is
-   about to ship. Then `git push origin main`. Separate lines; PowerShell 5.1
+2. **Push your branch and open a pull request. Do not merge locally and push
+   `main`.** CI runs on pull requests and on pushes to `main` — so a branch
+   merged locally is examined only *after* it has landed, which is examination
+   with nothing left to stop. The pull request is the only pre-merge check that
+   exists. Wait for green, then `gh pr merge --merge` — not squash; the commit
+   messages are the record.
+
+   **If `main` moved while you waited, rebase again and let CI run on the
+   result.** You built against a `main` that has since changed, and nobody has
+   built the combination that is about to ship. Separate lines; PowerShell 5.1
    has no `&&`.
 3. **Before deploying**, not before pushing: if `main` contains any migration
    you have not already run, run `infra/scripts/verify-migrations.sh`. The
    deploy applies *everyone's* pending migrations, so this is the deployer's
    check, not the author's.
 
-   **While CI is unavailable, the author runs it too, before pushing.**
-   `verify-migrations.sh` lives in CI's isolation job, so when CI is down
-   nothing anywhere tests migration ordering automatically — the person
-   shipping a migration is then the only person who will ever have tested it.
-   Same standing as the two builds, for the same reason.
-4. On the server (host in `docs/setup/00-command-reference.md`): record
-   `git rev-parse --short HEAD` as the rollback point, `git fetch origin`,
-   `git reset --hard origin/main` — which must name a **different** commit than
-   the one you recorded — then `./infra/scripts/deploy.sh production`.
+   *This paragraph carried a "while CI is unavailable, the author runs it too"
+   exception from 29 Aug. CI came back on 3 Sept 2026 and the exception is
+   removed rather than left standing — a conditional with no expiry date reads
+   as current for as long as nobody checks.*
+4. **Deploy with the `Deploy production` workflow, not by hand on the box.**
+   Actions → Deploy production → Run workflow, type `production` in the
+   confirmation box, and approve the environment prompt. It is deliberately
+   manual: production is where mail reaches real inboxes and the data belongs to
+   paying customers, so a deploy is a decision, not a consequence of merging.
+
+   The workflow resets the server to `origin/main` and runs
+   `./infra/scripts/deploy.sh production` there. **Record
+   `git rev-parse --short origin/main` before you start** — that is your
+   rollback point, and the deploy is the only step that should change what the
+   box is running.
 
    **Run `deploy.sh`; do not hand-roll the compose command.** It builds its
    invocation with `--env-file infra/docker/.env` — not the repo-root `.env`,
