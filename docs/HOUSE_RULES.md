@@ -103,6 +103,34 @@ below a comment naming that exact failure as the worst this product has; a
 marker count blind to the unmarked copy that already existed. See
 `docs/reviews/` for the catalogue.*
 
+## 6b. Prove the committed version, and say which commit you proved
+
+A result is about a *version*. Detach it from the version and it decays the
+moment somebody merges, silently, while still reading as authoritative.
+
+So: **run the check against committed code, and put the SHA in the result.**
+"Proved against `8e00bea`" survives contact with a merge. "Proved, green" does
+not — and nothing announces when it stops being true.
+
+Two traps this closes, and both had already happened before the rule existed:
+
+- **Proving uncommitted edits.** Files sitting modified in the integration
+  checkout are not on any branch. A proof of those describes a version that may
+  never ship, and it will read exactly like a proof of one that did.
+- **Quoting a summary instead of the record.** An index line, a description
+  field, a note in someone's memory — these are pointers, and pointers go stale
+  without announcing it. Open the file.
+
+*Cost, 9 September 2026, twice in one day. Mobile ran a Postgres harness against
+two migrations while they sat as uncommitted edits in the integration checkout;
+PR #72 then committed exactly those edits, so the proof happened to describe
+what shipped — it did not have to, and nothing in the result would have said
+otherwise. He caught it himself and re-proved against `8e00bea`. Separately, the
+CTO quoted a one-line memory summary saying Connect ran on a 2 vCPU box that
+could not record, and wrote it into two documents a new developer was about to
+read. The underlying record said 4 vCPU with recording proven on 21 August. The
+record was right; the summary pointing at it was not.*
+
 ## 7. Ask what breaks if it is violated — **and what breaks if it is enforced**
 
 Rule 6's second half. An invariant nobody enforces is a wish; an invariant
