@@ -165,6 +165,15 @@
   .sm\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .sm\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
+/* 768px is Bootstrap's `md` AND Tailwind's `md`, which is why a page moving off
+   `col-md-6` reaches for `md:grid-cols-2` and finds nothing. Added 8 Sept when
+   /org/users needed it — exactly the silent single-column collapse the note
+   above predicts for any count not listed here. */
+@media (min-width: 768px) {
+  .md\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .md\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .md\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
 @media (min-width: 1024px) {
   .lg\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .lg\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }

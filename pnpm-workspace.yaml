@@ -1,3 +1,38 @@
 packages:
   - "apps/*"
   - "packages/*"
+
+  # --------------------------------------------------------------------------
+  #  apps/mobile is EXCLUDED, and this is a decision rather than a workaround.
+  # --------------------------------------------------------------------------
+  #
+  #  It shares nothing with the workspace: zero @tatvaos/* dependencies, and no
+  #  CI workflow builds it. Membership bought us nothing and cost us the Android
+  #  build outright.
+  #
+  #  WHY IT BROKE, because the error does not say so. pnpm names each package in
+  #  its virtual store after every peer it was resolved against, so
+  #  expo-modules-core lands in a directory called
+  #
+  #    expo-modules-core@57.0.15_react-native@0.86.3_@babel+core@7.29.7_
+  #    @types+react@19.2.18_react@19.2.3__react@19.2.3
+  #
+  #  — 108 characters for one folder name. Gradle then generates
+  #  .../android/build/intermediates/cxx/Debug/<hash>/logs/x86_64/prefab_command.bat
+  #  underneath it, and the full path reaches 273 characters against Windows'
+  #  260-character limit. Gradle WRITES the file successfully and Windows then
+  #  refuses to START it, so the failure reads "CreateProcess error=2, The
+  #  system cannot find the file specified" for a file that is sitting right
+  #  there. 8 Sept 2026; it cost two builds of about ten minutes each.
+  #
+  #  Outside the workspace, with node-linker=hoisted in apps/mobile/.npmrc, the
+  #  same file sits at 153 characters — 107 to spare, which is enough headroom
+  #  that the next long dependency name does not put us back here.
+  #
+  #  STILL ONE PACKAGE MANAGER. apps/mobile keeps its own pnpm-lock.yaml and is
+  #  installed with pnpm; it is a separate project, not a second toolchain. Do
+  #  not reintroduce package-lock.json there.
+  #
+  #  Bring it back into the workspace the day it needs to share code with the
+  #  web apps — and expect to solve the path length another way that day.
+  - "!apps/mobile"

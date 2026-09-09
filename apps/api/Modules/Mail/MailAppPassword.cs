@@ -10,7 +10,7 @@ namespace TatvaOS.Api.Modules.Mail;
 /// incident asks, and a deleted row answers with a shrug.
 ///
 /// Mapped explicitly with ToTable("app_passwords", "mail") in AppDbContext.
-/// Schema: 20260828-mail-app-passwords.sql.
+/// Schema: 20260827-a-mail-app-passwords.sql.
 /// </summary>
 public sealed class MailAppPassword
 {

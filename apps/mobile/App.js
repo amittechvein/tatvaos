@@ -4,12 +4,19 @@
 // core.tatvaos.com, stores the refresh token in the device keychain, and
 // brings the person back signed in on the next launch.
 //
+// 8 Sept 2026: the tiles now OPEN. They hand off to the system browser rather
+// than a WebView — see openProduct() for why that is the decision and not a
+// shortcut. The cookie/token mismatch this file used to warn about is real and
+// unchanged; the browser sidesteps it honestly, at the cost of one sign-in.
+//
 // WHAT IS STILL NOT HERE, so nobody mistakes this for the product:
-//   - the web views that open each product. Tapping a tile does nothing yet,
-//     and that is the next real piece of work. It is NOT a small one: the web
-//     apps authenticate by cookie and this app holds a token, so "just open a
-//     WebView" would land the person on a login page inside the app.
-//   - Connect, which is the whole reason the app exists (screen sharing)
+//   - any NATIVE screen behind a tile. Every product is the web app in a
+//     browser today.
+//   - Connect in-app: joining a meeting natively needs LiveKit's React Native
+//     SDK and a WebRTC native module, camera and microphone permissions in
+//     app.json, and a fresh prebuild. Connect in a mobile browser works now.
+//   - single sign-on into that browser. The app holds a token, the web apps
+//     read a cookie. Raised with Core: a one-time handoff URL.
 //   - changing a password in-app (we show the prompt and point at the web)
 //
 // See docs/MOBILE_LANE_BRIEF.md §4 for the v1 scope this grows into.
@@ -17,7 +24,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, TextInput, Pressable, ScrollView, ActivityIndicator,
-  SafeAreaView, StyleSheet, Platform, StatusBar, Keyboard,
+  SafeAreaView, StyleSheet, Platform, StatusBar, Keyboard, Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { brand, text, surface, visibleProducts } from './theme';
@@ -32,12 +39,31 @@ export default function App() {
 
   // Come back signed in. A workspace app that asks for a password every time
   // it is opened is one people stop opening.
+  //
+  //  THE .catch IS THE POINT, 8 Sept 2026.
+  //
+  //  Without it this app could hang on the splash screen forever. restore()
+  //  guards the NETWORK call, but SecureStore.getItemAsync sits outside that
+  //  guard — a keychain read that throws (no secure hardware, a corrupt entry,
+  //  a device policy change) rejected this promise, setPhase never ran, and the
+  //  person was left watching a spinner with no error, no timeout and no way
+  //  out. It cost an hour on the emulator: the login form could not be typed
+  //  into because the login form was never on the screen.
+  //
+  //  Falling back to 'login' is the right failure: the worst case is being
+  //  asked to sign in again, which is recoverable. A spinner is not.
   useEffect(() => {
     let cancelled = false;
-    restore().then((s) => {
-      if (cancelled) return;
-      if (s) { setSession(s); setPhase('in'); } else { setPhase('login'); }
-    });
+    restore()
+      .then((s) => {
+        if (cancelled) return;
+        if (s) { setSession(s); setPhase('in'); } else { setPhase('login'); }
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        console.log(`[app] restore failed, showing sign-in: ${e?.message ?? e}`);
+        setPhase('login');
+      });
     return () => { cancelled = true; };
   }, []);
 
@@ -274,6 +300,43 @@ function initials(name, email) {
   return (email || '?').slice(0, 2).toUpperCase();
 }
 
+/**
+ * Open a product.
+ *
+ * THE SYSTEM BROWSER, NOT A WEBVIEW, AND THAT IS THE WHOLE DECISION.
+ *
+ * The web apps authenticate by cookie; this app holds a token. A WebView would
+ * therefore open on a login page INSIDE our own app — the person is signed in,
+ * looking at a sign-in screen, with no way to tell why. Worse, a WebView we
+ * control looks like our app, so typing a password into it teaches people that
+ * a screen inside an app is a fine place to type a password. It is not, and
+ * that is a habit worth not teaching.
+ *
+ * The system browser is honest: it shows the address bar and the padlock, it
+ * already holds the person's session if they have signed in on this phone, and
+ * a password manager can fill it. The cost is a sign-in the first time, and the
+ * footnote on the dashboard says so rather than letting it surprise anyone.
+ *
+ * The fix that removes even that cost is a one-time sign-in handoff from the
+ * API - the app trades its token for a short-lived URL the browser opens
+ * already authenticated. That is Core's work and is raised separately; it is
+ * not a reason to leave every tile dead in the meantime.
+ */
+async function openProduct(p) {
+  if (!p?.url) return;
+  try {
+    const ok = await Linking.canOpenURL(p.url);
+    if (!ok) { console.log(`[app] no handler for ${p.url}`); return; }
+    console.log(`[app] opening ${p.name} in the browser`);
+    await Linking.openURL(p.url);
+  } catch (e) {
+    // Never throw out of a tap. A dashboard that crashes because a browser is
+    // missing is worse than a tile that does nothing, and this is now the
+    // ONLY path where a tile does nothing - which the log records.
+    console.log(`[app] could not open ${p.name}: ${e?.message ?? e}`);
+  }
+}
+
 function Dashboard({ session, profile, onSignOut }) {
   const user = profile?.user ?? session?.user ?? {};
   // Falls back to the email while /me is in flight or if it failed. Showing
@@ -306,14 +369,31 @@ function Dashboard({ session, profile, onSignOut }) {
 
         <View style={s.grid}>
           {tiles.map((p) => (
-            <Pressable key={p.key} style={s.tile} accessibilityLabel={p.name}>
+            <Pressable
+              key={p.key}
+              style={({ pressed }) => [s.tile, pressed && s.tilePressed]}
+              onPress={() => openProduct(p)}
+              accessibilityRole="link"
+              accessibilityLabel={`${p.name}, opens in your browser`}
+            >
               <View style={[s.tileIcon, { backgroundColor: p.tint }]}>
                 <Ionicons name={p.icon} size={24} color={p.ink} />
               </View>
-              <Text style={s.tileLabel}>{p.name}</Text>
+              <View style={s.tileLabelRow}>
+                <Text style={s.tileLabel}>{p.name}</Text>
+                {/* The arrow is not decoration. This leaves the app, and a
+                    control that silently sends you elsewhere is the same
+                    dishonesty as a tile that looks tappable and is not. */}
+                <Ionicons name="open-outline" size={12} color={text.muted} />
+              </View>
             </Pressable>
           ))}
         </View>
+
+        <Text style={s.dashFoot}>
+          Products open in your browser for now. You may be asked to sign in
+          there the first time.
+        </Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -385,5 +465,12 @@ const s = StyleSheet.create({
     width: '100%', height: 66, borderRadius: 16,
     alignItems: 'center', justifyContent: 'center',
   },
-  tileLabel: { fontSize: 13, color: text.primary, marginTop: 7 },
+  // Pressed state exists because a tap with no feedback reads as a dead
+  // control - which is precisely what these were until tonight.
+  tilePressed: { opacity: 0.55 },
+  tileLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 7 },
+  tileLabel: { fontSize: 13, color: text.primary },
+  dashFoot: {
+    fontSize: 12, color: text.muted, marginTop: 6, paddingHorizontal: 6, lineHeight: 17,
+  },
 });

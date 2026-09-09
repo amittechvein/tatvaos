@@ -1146,8 +1146,18 @@ export function Composer({
           <div className="border-t border-line bg-danger/5 px-4 py-2 text-sm text-danger">{error}</div>
         )}
 
-        {/* Toolbar */}
-        <div className="relative flex items-center gap-0.5 border-t border-line px-3 py-2.5">
+        {/* Toolbar
+            WRAPS, and it has to. Fourteen controls in a nowrap row measure
+            385px; the composer on a 375px phone is 355px wide. Measured 8 Sept
+            2026: the row overflowed by 30px and the button pushed off the edge
+            was DISCARD — the destructive one, half-visible, at the exact spot a
+            thumb reaches for. Wrapping puts it on a second line where it can be
+            seen before it is pressed.
+
+            flex-wrap only; no horizontal scroll. A toolbar you have to scroll
+            hides controls behind a gesture nobody is told about, which is how
+            "the app has no reply button" support tickets happen. */}
+        <div className="relative flex flex-wrap items-center gap-0.5 gap-y-1.5 border-t border-line px-3 py-2.5">
           <button
             type="button"
             onClick={handleSend}
