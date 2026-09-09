@@ -40,6 +40,7 @@ import { Room, RoomEvent, DisconnectReason } from 'livekit-client';
 
 import { restore } from '../api';
 import { listMeetings, createMeeting, joinMeeting } from '../lib/connect';
+import { isRefusal, describeError } from '../lib/refusal';
 import { brand, surface, text as ink } from '../theme';
 
 registerGlobals();
@@ -87,6 +88,17 @@ export default function ConnectShareSpike() {
     setStatus('joining');
     setDetail('');
     try {
+      //  MEASURED ON HARDWARE, 9 Sept. Joining while a room is still up mints a
+      //  SECOND connection with the same identity, and LiveKit disconnects the
+      //  first: room disconnected: DUPLICATE_IDENTITY (2). It also explains an
+      //  unattributed "room disconnected: 2" on the emulator earlier the same
+      //  day, which looked like a server-side mystery and was this.
+      if (room.current) {
+        log('already in a room — leaving it before joining again');
+        await room.current.disconnect().catch(() => {});
+        room.current = null;
+        setPeers(0);
+      }
       const session = await restore();
       if (!session?.accessToken) {
         setStatus('signed out');
@@ -124,6 +136,23 @@ export default function ConnectShareSpike() {
       r.on(RoomEvent.ParticipantDisconnected, (p) => {
         log(`participant left: ${p.identity}`);
         setPeers(r.remoteParticipants.size);
+      });
+      //  MEASURED ON HARDWARE, 9 Sept: on a Samsung, a lock/unlock STOPS the
+      //  capture — the emulator survived exactly the same test. Without this
+      //  listener the app went on saying SHARING with nothing being sent,
+      //  which is worse than stopping: it is the wrong story, told confidently.
+      //  Documented to fire when a screen share ends for any reason, including
+      //  one the app did not ask for.
+      r.on(RoomEvent.LocalTrackUnpublished, (pub) => {
+        log(`local track unpublished: ${pub?.trackSid ?? 'unknown'} — the share has STOPPED`);
+        setStatus('share stopped');
+        setDetail('The screen share ended. Nothing is being sent.');
+      });
+      //  The first hardware run produced an uncaught "Negotiation…" rejection
+      //  that appeared only as a red LogBox. Connection state belongs in the
+      //  app's own log, where whoever is holding the phone can see it.
+      r.on(RoomEvent.ConnectionStateChanged, (state) => {
+        log(`connection state -> ${state}`);
       });
       r.on(RoomEvent.Disconnected, (reason) => {
         log(`room disconnected: ${reasonName(reason)}`);
@@ -163,9 +192,21 @@ export default function ConnectShareSpike() {
       setDetail(`published ${publication.trackSid}`);
       log(`screen published: ${publication.trackSid}`);
     } catch (e) {
+      //  MEASURED ON HARDWARE, 9 Sept: on a Samsung, setScreenShareEnabled
+      //  THROWS on a refusal rather than resolving undefined — and it throws
+      //  the same inverted shape getDisplayMedia does, name="Error" with the
+      //  meaning in the message. Both exits therefore need isRefusal. Without
+      //  it a person who refused was told "could not start", which reads as a
+      //  bug rather than as their own decision.
+      if (isRefusal(e)) {
+        setStatus('refused');
+        setDetail('Screen sharing needs your permission. Nothing was shared.');
+        log(`refused by the person — ${describeError(e)}`);
+        return;
+      }
       setStatus('share failed');
       setDetail(e?.message ?? String(e));
-      log(`share failed: ${e?.name ?? 'unknown'} ${e?.message ?? String(e)}`);
+      log(`share failed — ${describeError(e)}`);
     }
   }
 
@@ -181,7 +222,7 @@ export default function ConnectShareSpike() {
 
   const tone = status === 'sharing' ? '#1B6B45'
     : status === 'in the meeting' ? brand.base
-      : /fail|not sharing|signed out|waiting|unexpected/.test(status) ? '#993556'
+      : /fail|refused|stopped|not sharing|signed out|waiting|unexpected/.test(status) ? '#993556'
         : ink.secondary;
 
   return (
