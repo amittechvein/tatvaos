@@ -174,6 +174,16 @@ step "Environment"
 # the above can be brought back up.
 if cp infra/docker/.env "${OUT}/env.txt" 2>/dev/null; then
     chmod 600 "${OUT}/env.txt"
+
+    # The DIRECTORY, not only this file. env.txt was the only artefact locked
+    # down, and it is the smallest secret here: postgres.sql.gz is every
+    # tenant, user and password hash, vmail.tar.gz is everyone's mail, and both
+    # land 644 — some owned by root, because the docker helper writes them, so
+    # `deploy` cannot chmod them at all. 700 on the directory denies traversal
+    # whatever mode or owner the files inside end up with, and keeps holding
+    # for artefacts added later.
+    chmod 700 "$OUT"  2>/dev/null || true
+    chmod 700 "$DEST" 2>/dev/null || true
     ok "env.txt (secrets — 0600)"
 else
     warn "infra/docker/.env not readable — skipped"
