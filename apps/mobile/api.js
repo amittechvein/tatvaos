@@ -178,8 +178,40 @@ async function keep(data) {
 //  Staying signed in
 // ---------------------------------------------------------------------------
 
-/** On launch: trade the stored refresh token for a live session, or null. */
-export async function restore() {
+/**
+ * On launch: trade the stored refresh token for a live session, or null.
+ *
+ * SINGLE-FLIGHT, and here is the incident. 9 Sept 2026, 19:48:36, within 120ms:
+ *
+ *     POST /api/auth/refresh -> 200        rotates the token, stores the new one
+ *     POST /api/auth/refresh -> 401        the OLD token, just consumed
+ *
+ * and the catch below - correctly reasoning that a server-rejected token is
+ * spent - cleared it. The person was signed out. Two callers had raced: the
+ * refresh token rotates on every use, so the second request is indistinguishable
+ * from a revoked session.
+ *
+ * On a cold launch this fires once and is fine (measured, same day: one
+ * refresh, 200, no 401). The double call came from Fast Refresh re-running the
+ * effect in App.js after a hot patch - the `cancelled` flag there drops the
+ * second STATE UPDATE, but the second REQUEST has already gone. Development
+ * only, then, today. But any future duplicate - a remount, a second screen
+ * calling this, a retry - produces the same permanent logout, so concurrent
+ * callers now share one in-flight request rather than racing their own
+ * rotation. Cost: one variable.
+ */
+let restoring = null;
+
+export function restore() {
+  if (restoring) {
+    console.log('[api] restore already in flight; joining it rather than refreshing twice');
+    return restoring;
+  }
+  restoring = restoreOnce().finally(() => { restoring = null; });
+  return restoring;
+}
+
+async function restoreOnce() {
   // The keychain read is INSIDE the try from here on. It used to sit outside
   // every guard in this file, so a throw here rejected restore() and — with no
   // .catch in App.js — pinned the app on its splash screen permanently. Both
