@@ -695,7 +695,7 @@ printf '\n   %sOutbound mail reaches the real internet.%s\n' "$Y" "$X"
 #  The branch guard refuses a production deploy from a feature branch. That
 #  stops the bad deploy without removing the reason somebody was on a branch
 #  in this directory — for a long time it was the only clone on the box.
-#  /srv/tatvaos-scratch now exists for that work (HOUSE_RULES rule 11), and
+#  ~/tatvaos-scratch now exists for that work (HOUSE_RULES rule 11), and
 #  this returns the deploy directory to a known state at the one moment it is
 #  provably safe to: everything above passed.
 # ---------------------------------------------------------------------------

@@ -293,11 +293,20 @@ success on its failure — so it is not a separate step to run, and a passing
 deploy is not evidence that it was skipped or optional.
 
 **`/srv/tatvaos-production` is for deploying. It is not a workspace.** Use
-`/srv/tatvaos-scratch` — a second clone on the same box — for debugging,
+`~/tatvaos-scratch` — a second clone on the same box — for debugging,
 reproducing, checking out someone else's branch, or anything else. Nothing
 deploys from it, nothing is served from it, and it can sit on any branch
 forever without consequence. Same rule as Amit's laptop, where `tatvaOS` is the
 integration checkout and lanes are worktrees.
+
+It sits in the deploy user's home and not under `/srv` because `/srv` is
+root-owned and `deploy` has no sudo. This rule said `/srv/tatvaos-scratch` for
+about an hour, and the path could not be created by the only account that would
+ever use it — the same wall the backup runbook hit the same morning. Create it
+with `git clone /srv/tatvaos-production ~/tatvaos-scratch`, which needs no
+credentials at all, then point `origin` at the SSH URL production already uses:
+`git remote set-url origin "$(git -C /srv/tatvaos-production remote get-url origin)"`.
+HTTPS will not work — 2FA is on, and password authentication is refused.
 
 `deploy.sh` returns the production checkout to `main` after a successful
 deploy, so leftover branch state cleans itself up at the last provably-safe
