@@ -10,25 +10,26 @@ namespace TatvaOS.Api.Modules.Connect.Endpoints;
 /// Sharing a recording with somebody who was not in the meeting.
 ///
 /// ═════════════════════════════════════════════════════════════════════════
-///  DRAFT — NOT REGISTERED, AND NOT TO BE REGISTERED UNTIL CORE ANSWERS.
+///  REGISTERED 9 September 2026, after two weeks deliberately switched off.
 ///
-///  MapConnectShareEndpoints is not called from anywhere. Nothing in this
-///  file runs. That is deliberate and it is not laziness about wiring:
+///  This file sat unwired on purpose. Its tables were a proposal with four
+///  open questions on it, and the one that mattered was the organisation
+///  switch gating the fourth level: until that had a name, 'public' had no
+///  gate, and an ungated 'public' is the single change in this module that
+///  cannot be taken back. A level-4 link that should not exist cannot be
+///  recalled; a refusal is a support message.
 ///
-///    • The tables are a proposal
-///      (infra/proposals/20260826-connect-recording-shares.sql.draft) with
-///      four open questions on it. Registering routes against tables that do
-///      not exist turns a review comment into a 500.
+///  All four are answered (see the migration, 20260908-b, where each answer
+///  is recorded beside the code it decided). The gate that blocked it turned
+///  out not to need Core at all — the switch was never going to be a column
+///  on a shared table, because Space's equivalent is not one either.
 ///
-///    • The one question that MATTERS is the organisation switch gating the
-///      fourth level. Until that column has a name, 'public' has no gate, and
-///      an ungated 'public' is the single change in this whole module that
-///      cannot be taken back. It is marked >>> GATE below, twice, and both
-///      places must be filled in before this is wired up.
-///
-///  The web half IS shipped and is safe: the Share button renders only when
-///  the recordings response carries a `sharing` capability, which only this
-///  file can produce. No routes, no capability, no button.
+///  WHAT ENFORCES WHAT, because the two are not the same:
+///    • CreateAsync refuses level 4 when the organisation's switch is off.
+///      That is a courtesy — it stops a link being made that would not work.
+///    • connect.resolve_share_token refuses to resolve a 'public' token at
+///      all when the switch is off. That is the security, it is in the
+///      database, and it applies to links that already exist.
 /// ═════════════════════════════════════════════════════════════════════════
 ///
 ///  ── WHAT CORE RULED, AND WHERE EACH RULE LIVES ─────────────────────────
@@ -96,6 +97,85 @@ public static class ConnectShareEndpoints
         g.MapPost("/meetings/{id:guid}/recordings/{recordingId:guid}/shares", CreateAsync);
         g.MapDelete("/meetings/{id:guid}/recordings/{recordingId:guid}/shares/{shareId:guid}", RevokeAsync);
         g.MapPut("/meetings/{id:guid}/recordings/{recordingId:guid}/shares/{shareId:guid}/people", PeopleAsync);
+
+        // The organisation's own switch. Separate group: reading it is
+        // ordinary — the recordings screen needs to know whether to offer
+        // level 4 at all — but CHANGING it is an administrator's act, and a
+        // switch that exposes recordings to the open internet should not be
+        // flippable by whoever happens to be hosting a meeting.
+        var s = app.MapGroup("/api/connect/settings")
+            .WithTags("Connect");
+
+        s.MapGet("", GetSettingsAsync).RequireAuthorization("User");
+        s.MapPut("", PutSettingsAsync).RequireAuthorization("OrgAdmin");
+    }
+
+    public sealed record ConnectSettingsRequest(bool AllowPublicRecordingLinks);
+
+    /// <summary>
+    /// What this organisation has decided. Readable by anybody signed in,
+    /// because the alternative is a Share dialog that offers a level the
+    /// server will refuse — a button that fails is worse than one that is
+    /// not there.
+    /// </summary>
+    private static async Task<IResult> GetSettingsAsync(
+        AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        if (tenant.UserId is null) return Results.Unauthorized();
+
+        // No row means defaults, and the default is off. Not a 404: "this
+        // organisation has never been asked" and "this organisation said no"
+        // are the same answer to the only question being asked here.
+        var allowed = await db.Set<ConnectTenantSettings>().AsNoTracking()
+            .Where(x => x.TenantId == tenant.TenantId)
+            .Select(x => (bool?)x.AllowPublicRecordingLinks)
+            .FirstOrDefaultAsync(ct) ?? false;
+
+        return Results.Ok(new { allowPublicRecordingLinks = allowed });
+    }
+
+    /// <summary>
+    /// Turn public links on or off for the whole organisation.
+    ///
+    /// The third of the three acts Core asked to see in the platform audit
+    /// log — created, revoked, and this. It is the one an administrator will
+    /// be asked about months later ("who turned this on?"), and unlike a read
+    /// it has a real, named actor, so it belongs there rather than in
+    /// Connect's own access log.
+    /// </summary>
+    private static async Task<IResult> PutSettingsAsync(
+        ConnectSettingsRequest req, AppDbContext db, TenantContext tenant,
+        AuditWriter audit, CancellationToken ct)
+    {
+        if (tenant.UserId is null) return Results.Unauthorized();
+        var tid = tenant.TenantId;
+
+        var row = await db.Set<ConnectTenantSettings>()
+            .FirstOrDefaultAsync(x => x.TenantId == tid, ct);
+
+        var before = row?.AllowPublicRecordingLinks ?? false;
+
+        if (row is null)
+        {
+            row = new ConnectTenantSettings { TenantId = tid };
+            db.Add(row);
+        }
+
+        row.AllowPublicRecordingLinks = req.AllowPublicRecordingLinks;
+        row.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+
+        // Written even when nothing changed. "Somebody looked at this switch
+        // and confirmed it" is a fact worth having; a log that records only
+        // changes cannot distinguish a setting nobody has touched from one
+        // that was checked this morning.
+        await audit.WriteAsync("connect.settings.public_links", "connect.tenant",
+            tid.ToString(),
+            before: new { allowPublicRecordingLinks = before },
+            after: new { allowPublicRecordingLinks = row.AllowPublicRecordingLinks },
+            ct: ct, productCode: "connect");
+
+        return Results.Ok(new { allowPublicRecordingLinks = row.AllowPublicRecordingLinks });
     }
 
     // ==================================================================
@@ -225,25 +305,40 @@ public static class ConnectShareEndpoints
         if (recording is null)
             return Results.NotFound(new { error = "That recording is not ready to share." });
 
-        // ── >>> GATE (1 of 2). THE ORGANISATION SWITCH FOR LEVEL 4. ──────
+        // ── THE ORGANISATION SWITCH FOR LEVEL 4, AT SHARE TIME. ──────────
         //
-        //  Core's ruling: 'public' is off for the whole organisation until an
-        //  administrator turns it on, default OFF, same shape as Space's
-        //  public-links kill switch.
+        //  This used to return 503 unconditionally, because the settings
+        //  table it needed did not exist and I would not guess at a column on
+        //  a table other modules share. It turned out not to be a shared
+        //  table at all: Space's equivalent lives on space.tenant_settings,
+        //  so Connect's lives on connect.tenant_settings and was Connect's to
+        //  write all along.
         //
-        //  I could not find the settings table connect.recording_allowed()
-        //  reads and will not guess at a column on a table shared with other
-        //  modules. Until it has a name this REFUSES, which is the correct
-        //  direction to be wrong in: a level-4 link that should not exist
-        //  cannot be recalled, and a refusal is a support message.
+        //  A MISSING ROW IS OFF, which is why this is a nullable read and a
+        //  `?? false` rather than a join that would quietly return nothing
+        //  and be mistaken for an error. An organisation nobody has asked has
+        //  not agreed.
         //
-        //  Replace with the real read. Do not delete.
+        //  This check is a COURTESY, not the security. It stops somebody
+        //  generating a link that would never have worked. The enforcement is
+        //  inside connect.resolve_share_token, where the anonymous read path
+        //  cannot get past it — see section 6 of the migration for why it is
+        //  there and not here.
         if (level == ConnectShareLevels.Public)
-            return Results.Json(new
-            {
-                error = "Public links are not switched on for this organisation. "
-                      + "An administrator can enable them.",
-            }, statusCode: 503);
+        {
+            var allowed = await db.Set<ConnectTenantSettings>().AsNoTracking()
+                .Where(s => s.TenantId == tenant.TenantId)
+                .Select(s => (bool?)s.AllowPublicRecordingLinks)
+                .FirstOrDefaultAsync(ct) ?? false;
+
+            if (!allowed)
+                return Results.Json(new
+                {
+                    error = "Links that anyone can open are switched off for this "
+                          + "organisation. An administrator can turn them on in "
+                          + "the organisation's Connect settings.",
+                }, statusCode: 403);
+        }
 
         // One live share per level. A second at the same level is two links
         // with different expiries and one of them forgotten about.

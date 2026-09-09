@@ -186,3 +186,38 @@ public static class ConnectShareLevels
     /// an inbox has stopped working before anybody thinks about it again.</summary>
     public const int DefaultDays = 7;
 }
+
+/// <summary>
+/// Per-organisation Connect settings that Connect owns.
+///
+/// One row per organisation, and a MISSING row is meaningful: it means every
+/// setting is at its default, which for a switch that exposes recordings to
+/// anyone holding a link means off. Nothing backfills this table, so an
+/// organisation nobody has asked has not accidentally agreed.
+///
+/// WHY IT IS NOT ON core.tenants, where the three older Connect flags live.
+/// Those three — allow_connect_recording, connect_email_minutes,
+/// connect_recording_retention_days — are Core's file, and moving them is a
+/// live-table migration with application code reading them. New module
+/// switches go in the module's own table instead, which is what Space did
+/// with space.tenant_settings.allow_public_links and what Core confirmed on
+/// 8 September. This is the pattern from here on.
+/// </summary>
+public sealed class ConnectTenantSettings
+{
+    public Guid TenantId { get; set; }
+
+    /// <summary>
+    /// Amit's ruling, 26 August: level 4 — anyone holding the link — is off
+    /// for the whole organisation until an administrator turns it on.
+    ///
+    /// Read in TWO places and they are not equivalent. Here, at share time,
+    /// so a person is refused politely instead of generating a link that
+    /// would never work. And inside connect.resolve_share_token, at read
+    /// time, which is the one that matters: turning this off has to kill the
+    /// links that already exist, not merely stop new ones being made.
+    /// </summary>
+    public bool AllowPublicRecordingLinks { get; set; }
+
+    public DateTimeOffset UpdatedAt { get; set; }
+}

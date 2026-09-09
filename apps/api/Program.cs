@@ -469,6 +469,12 @@ app.MapConnectWebhookEndpoints();
 // header of ConnectRecordingEndpoints.cs.
 app.MapConnectRecordingEndpoints();
 app.MapConnectCaptionEndpoints();
+// Sharing a recording outward. Written on 26 August and deliberately NOT
+// registered until 9 September, because the organisation switch gating its
+// fourth level - anyone holding the link - had nowhere to live and an
+// ungated level 4 cannot be recalled. The switch now exists
+// (connect.tenant_settings) and is enforced in the database, not here.
+app.MapConnectShareEndpoints();
 
 // Operational: does the AI actually answer? SuperAdmin only, real round trip.
 app.MapAiStatusEndpoints();

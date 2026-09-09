@@ -238,6 +238,17 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingChat>().ToTable("meeting_chat", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingBlock>().ToTable("meeting_blocks", "connect");
 
+        // Recording sharing. Mapped but given no DbSet property: every caller
+        // is in ConnectShareEndpoints and reaches them through db.Set<T>(),
+        // and a property on this class is a standing invitation for a second
+        // module to start reading Connect's share rows directly. The mapping
+        // is still required — db.Set<T>() on a type the model has never heard
+        // of throws, it does not invent a table.
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingShare>().ToTable("recording_shares", "connect");
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingShareGrant>().ToTable("recording_share_grants", "connect");
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingAccess>().ToTable("recording_access_log", "connect");
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectTenantSettings>().ToTable("tenant_settings", "connect");
+
         // jsonb, not text. Npgsql maps a string property to `text` by default,
         // and `text` does not implicitly cast to `jsonb` on INSERT — the write
         // fails with 42804. Stated once, here, for the SEVEN json columns.
