@@ -9,33 +9,57 @@
 // shortcut. The cookie/token mismatch this file used to warn about is real and
 // unchanged; the browser sidesteps it honestly, at the cost of one sign-in.
 //
+// 9 Sept 2026: Connect is NATIVE. The Connect tile opens screens/Meetings.js
+// (your meetings, start one now) and screens/Meeting.js (the call: mic,
+// camera, speaker, participant tiles, screen share, leave). Everything else
+// still opens the web. Connect is the one product a phone browser cannot do -
+// no mobile browser can share its screen - so it is the one that earned a
+// native screen first. See docs/MOBILE_LANE_BRIEF.md §4.
+//
 // WHAT IS STILL NOT HERE, so nobody mistakes this for the product:
-//   - any NATIVE screen behind a tile. Every product is the web app in a
+//   - native screens for Mail, Space, Calendar. Those are the web app in a
 //     browser today.
-//   - Connect in-app: joining a meeting natively needs LiveKit's React Native
-//     SDK and a WebRTC native module, camera and microphone permissions in
-//     app.json, and a fresh prebuild. Connect in a mobile browser works now.
 //   - single sign-on into that browser. The app holds a token, the web apps
 //     read a cookie. Raised with Core: a one-time handoff URL.
 //   - changing a password in-app (we show the prompt and point at the web)
-//
-// See docs/MOBILE_LANE_BRIEF.md §4 for the v1 scope this grows into.
+//   - scheduling a meeting from the phone. Meetings.js lists and starts;
+//     planning one is still the web.
 
 import { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, TextInput, Pressable, ScrollView, ActivityIndicator,
-  SafeAreaView, StyleSheet, Platform, StatusBar, Keyboard, Linking,
+  StyleSheet, Platform, StatusBar, Keyboard, Linking,
 } from 'react-native';
+// Not React Native's SafeAreaView: that one is a no-op on Android, and with
+// targetSdk 36 the app draws edge-to-edge, so the title sat under the clock
+// and the bottom row under the navigation bar. Seen on a Samsung, 10 Sept.
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { brand, text, surface, visibleProducts } from './theme';
 import { login, verifyMfa, restore, signOut, me } from './api';
+import Meetings from './screens/Meetings';
+import Meeting from './screens/Meeting';
 
 export default function App() {
+  return (
+    <SafeAreaProvider>
+      <Root />
+    </SafeAreaProvider>
+  );
+}
+
+function Root() {
   // restoring → login → (mfa) → in
   const [phase, setPhase] = useState('restoring');
   const [session, setSession] = useState(null);
   const [challenge, setChallenge] = useState(null);
   const [profile, setProfile] = useState(null);
+
+  // Where we are once signed in: home → meetings → meeting. No navigation
+  // library yet; three screens do not justify one, and a plain state machine
+  // is easier to reason about when a call is in progress.
+  const [view, setView] = useState('home');
+  const [activeMeeting, setActiveMeeting] = useState(null);
 
   // Come back signed in. A workspace app that asks for a password every time
   // it is opened is one people stop opening.
@@ -85,11 +109,32 @@ export default function App() {
   const onSignOut = useCallback(async () => {
     const token = session?.accessToken;
     setSession(null); setProfile(null); setPhase('login');
+    setView('home'); setActiveMeeting(null);
     await signOut(token);
   }, [session]);
 
+  const openConnect = useCallback(() => setView('meetings'), []);
+  const joinMeeting = useCallback((m) => { setActiveMeeting(m); setView('meeting'); }, []);
+  const leaveMeeting = useCallback(() => { setActiveMeeting(null); setView('meetings'); }, []);
+  const backHome = useCallback(() => setView('home'), []);
+
   if (phase === 'restoring') return <Splash />;
-  if (phase === 'in') return <Dashboard session={session} profile={profile} onSignOut={onSignOut} />;
+  if (phase === 'in') {
+    if (view === 'meeting' && activeMeeting) {
+      return <Meeting session={session} meeting={activeMeeting} onLeave={leaveMeeting} />;
+    }
+    if (view === 'meetings') {
+      return <Meetings session={session} onJoin={joinMeeting} onBack={backHome} />;
+    }
+    return (
+      <Dashboard
+        session={session}
+        profile={profile}
+        onSignOut={onSignOut}
+        onOpenConnect={openConnect}
+      />
+    );
+  }
   if (phase === 'mfa') {
     return (
       <MfaScreen
@@ -337,7 +382,7 @@ async function openProduct(p) {
   }
 }
 
-function Dashboard({ session, profile, onSignOut }) {
+function Dashboard({ session, profile, onSignOut, onOpenConnect }) {
   const user = profile?.user ?? session?.user ?? {};
   // Falls back to the email while /me is in flight or if it failed. Showing
   // an address the person recognises beats showing a placeholder name.
@@ -368,31 +413,37 @@ function Dashboard({ session, profile, onSignOut }) {
         ) : null}
 
         <View style={s.grid}>
-          {tiles.map((p) => (
-            <Pressable
-              key={p.key}
-              style={({ pressed }) => [s.tile, pressed && s.tilePressed]}
-              onPress={() => openProduct(p)}
-              accessibilityRole="link"
-              accessibilityLabel={`${p.name}, opens in your browser`}
-            >
-              <View style={[s.tileIcon, { backgroundColor: p.tint }]}>
-                <Ionicons name={p.icon} size={24} color={p.ink} />
-              </View>
-              <View style={s.tileLabelRow}>
-                <Text style={s.tileLabel}>{p.name}</Text>
-                {/* The arrow is not decoration. This leaves the app, and a
-                    control that silently sends you elsewhere is the same
-                    dishonesty as a tile that looks tappable and is not. */}
-                <Ionicons name="open-outline" size={12} color={text.muted} />
-              </View>
-            </Pressable>
-          ))}
+          {tiles.map((p) => {
+            // Connect stays in the app. Every other tile leaves it, and the
+            // tile says so - see the arrow below.
+            const native = p.key === 'connect';
+            return (
+              <Pressable
+                key={p.key}
+                style={({ pressed }) => [s.tile, pressed && s.tilePressed]}
+                onPress={() => (native ? onOpenConnect() : openProduct(p))}
+                accessibilityRole={native ? 'button' : 'link'}
+                accessibilityLabel={native ? p.name : `${p.name}, opens in your browser`}
+              >
+                <View style={[s.tileIcon, { backgroundColor: p.tint }]}>
+                  <Ionicons name={p.icon} size={24} color={p.ink} />
+                </View>
+                <View style={s.tileLabelRow}>
+                  <Text style={s.tileLabel}>{p.name}</Text>
+                  {/* The arrow is not decoration. This leaves the app, and a
+                      control that silently sends you elsewhere is the same
+                      dishonesty as a tile that looks tappable and is not. A
+                      native tile gets no arrow for the same reason: it stays. */}
+                  {native ? null : <Ionicons name="open-outline" size={12} color={text.muted} />}
+                </View>
+              </Pressable>
+            );
+          })}
         </View>
 
         <Text style={s.dashFoot}>
-          Products open in your browser for now. You may be asked to sign in
-          there the first time.
+          Connect runs in the app. Other products open in your browser for now;
+          you may be asked to sign in there the first time.
         </Text>
       </ScrollView>
     </SafeAreaView>
