@@ -1450,14 +1450,13 @@ public static class AuthEndpoints
         if (string.IsNullOrEmpty(req.CurrentPassword) || string.IsNullOrEmpty(req.NewPassword))
             return Results.BadRequest(new { error = "Both the current and new password are required." });
 
-        // Twelve, with no composition rules. Length beats character classes:
-        // "Password1!" satisfies every rule most systems impose and is on
-        // every wordlist, while a four-word phrase is stronger and memorable.
-        if (req.NewPassword.Length < 12)
-            return Results.BadRequest(new
-            {
-                error = "Use at least 12 characters. A short phrase you can remember beats a short password you cannot.",
-            });
+        // Length beats composition rules: "Password1!" satisfies every rule
+        // most systems impose and is on every wordlist, while a four-word
+        // phrase is stronger and memorable. The number itself lives in
+        // PasswordPolicy — this site used to carry its own copy of both the
+        // number and the sentence.
+        if (req.NewPassword.Length < MinPasswordLength)
+            return Results.BadRequest(new { error = ShortPasswordMessage });
 
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == tenant.UserId, ct);
         if (user is null) return Results.NotFound();
@@ -1643,9 +1642,12 @@ public static class AuthEndpoints
     private const string RecoveryVerifySentReply =
         "We've sent a link to that address. Open it to confirm your recovery email.";
 
-    private const int MinPasswordLength = 12;
-    private const string ShortPasswordMessage =
-        "Use at least 12 characters. A short phrase you can remember beats a short password you cannot.";
+    // Both of these now come from Shared/Auth/PasswordPolicy.cs, so the CSV
+    // import and every other caller enforce the same number and say the same
+    // sentence. ShortPasswordMessage stops being a const because the message
+    // is built from the number rather than repeating it.
+    private const int MinPasswordLength = PasswordPolicy.MinimumLength;
+    private static readonly string ShortPasswordMessage = PasswordPolicy.TooShort;
 
     // ------------------------------------------------------------------
     private static async Task<IResult> ForgotPasswordAsync(
