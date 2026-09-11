@@ -557,6 +557,9 @@ public static class UserEndpoints
 
         var created = new List<object>();
         var skipped = new List<object>();
+        // Addresses only, for the audit row. `created` holds anonymous objects
+        // that include the temporary password; this list must never.
+        var createdAddresses = new List<string>();
         // (address, name) for each new person who got a mailbox — the welcome
         // emails are sent AFTER the response, in the background, because 200
         // synchronous SMTP sends would turn a fast bulk import into a timeout.
@@ -630,7 +633,23 @@ public static class UserEndpoints
                 Role = dept?.DefaultRole ?? "employee",
                 Status = "pending",
                 PasswordHash = hasher.Hash(password),
+                // The same reason the single-person path above gives: an admin
+                // generated this, it is shown in the results table, and it will
+                // be pasted into a chat or a spreadsheet. It is a handover
+                // credential, not the person's password.
+                //
+                // This line was missing from the bulk path from 7 Sept 2026
+                // until 11 Sept. Everyone imported in that window kept their
+                // temporary password permanently and was never prompted, while
+                // everyone created one-at-a-time was. Two paths that had to
+                // agree, with nothing checking that they did.
+                MustChangePassword = true,
             };
+            // Also missing, and the same shape of divergence: the single path
+            // records the person's own allowance; bulk resolved it and applied
+            // it only to the mailbox. A user row with no quota falls back at
+            // read time, so this was invisible rather than visibly wrong.
+            user.StorageQuotaBytes = quota;
             db.Users.Add(user);
             foreach (var code in products.Distinct())
                 db.ProductAccess.Add(new ProductAccess
@@ -655,14 +674,25 @@ public static class UserEndpoints
                 welcomes.Add((address, displayName));
             }
             created.Add(new { email = address, displayName, department = dept?.Name, temporaryPassword = password });
+            createdAddresses.Add(address);
         }
         // A dry run reports and stops: no save, no audit row, no mail.
         if (req.DryRun)
             return Results.Ok(new { dryRun = true, created, skipped });
 
         await db.SaveChangesAsync(ct);
+        // Addresses, not just counts. The previous row recorded
+        // { count, skipped } and nothing else, so "which accounts came from the
+        // import on the 7th" had no answer anywhere — which is the single
+        // question an audit trail for a bulk create exists to answer. Passwords
+        // are never written here: they are in the response and nowhere else.
         await audit.WriteAsync("user.bulk_created", "user", null,
-            after: new { count = created.Count, skipped = skipped.Count }, ct: ct);
+            after: new
+            {
+                count = created.Count,
+                skipped = skipped.Count,
+                addresses = createdAddresses,
+            }, ct: ct);
         // Fire the welcome emails after the response, on a fresh DI scope (the
         // request's is disposed the moment we return). Best-effort: a school
         // importing 200 students gets its list instantly, and the inboxes fill
