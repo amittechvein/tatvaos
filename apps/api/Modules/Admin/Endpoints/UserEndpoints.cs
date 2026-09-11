@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using TatvaOS.Api.Shared;
 using TatvaOS.Api.Shared.Auth;
 using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Notify;
@@ -537,9 +538,20 @@ public static class UserEndpoints
                 error = $"Creating {req.Users.Count} users would exceed the limit of {max}. " +
                         $"Currently {capacity.UserCount}.",
             });
-        var domain = await db.Domains.FirstOrDefaultAsync(d => d.Id == req.DomainId, ct);
-        if (domain is null || domain.OwnershipVerifiedAt is null)
+        // Every verified domain, once, so a row can carry its own address.
+        var verifiedDomains = await db.Domains
+            .Where(d => d.OwnershipVerifiedAt != null)
+            .ToListAsync(ct);
+        var domainsByFqdn = verifiedDomains
+            .GroupBy(d => d.Fqdn.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        var defaultDomain = req.DomainId is Guid wantDomain
+            ? verifiedDomains.FirstOrDefault(d => d.Id == wantDomain)
+            : null;
+        if (req.DomainId is not null && defaultDomain is null)
             return Results.BadRequest(new { error = "Domain is unknown or not verified." });
+        if (verifiedDomains.Count == 0)
+            return Results.BadRequest(new { error = "This organisation has no verified domain to create addresses on." });
 
         // Every department once, so a row can name its own ("Class 5A") and
         // be matched by name, case-insensitively. Two departments sharing a
@@ -571,6 +583,27 @@ public static class UserEndpoints
         {
             var localPart = (entry.LocalPart ?? string.Empty).Trim().ToLowerInvariant();
             var displayName = (entry.DisplayName ?? string.Empty).Trim();
+            // The row's own domain wins; the request's is only a fallback.
+            var rowDomain = entry.Domain?.Trim();
+            var domain = defaultDomain;
+            if (!string.IsNullOrEmpty(rowDomain))
+            {
+                if (!domainsByFqdn.TryGetValue(rowDomain, out var matchedDomain))
+                {
+                    skipped.Add(new
+                    {
+                        address = $"{localPart}@{rowDomain}", displayName,
+                        reason = $"'{rowDomain}' is not a verified domain of this organisation",
+                    });
+                    continue;
+                }
+                domain = matchedDomain;
+            }
+            if (domain is null)
+            {
+                skipped.Add(new { address = localPart, displayName, reason = "no domain on this row, and none chosen above" });
+                continue;
+            }
             var address = $"{localPart}@{domain.Fqdn}";
             if (!IsValidLocalPart(localPart))
             {
@@ -613,16 +646,69 @@ public static class UserEndpoints
                 skipped.Add(new { address, displayName, reason = "already exists" });
                 continue;
             }
+            // --- password -------------------------------------------------
+            // Blank generates. A supplied one has to clear the same bar the
+            // change-password screen sets, or the person is handed a password
+            // they are not allowed to set again themselves.
+            var suppliedPassword = entry.Password?.Trim();
+            var passwordGenerated = string.IsNullOrEmpty(suppliedPassword);
+            if (!passwordGenerated && suppliedPassword!.Length < PasswordPolicy.MinimumLength)
+            {
+                skipped.Add(new { address, displayName, reason = PasswordPolicy.TooShort });
+                continue;
+            }
+
+            // --- recovery email, stored unverified ------------------------
+            var recoveryEmail = entry.RecoveryEmail?.Trim();
+            if (!string.IsNullOrEmpty(recoveryEmail) && !EmailAddress.LooksValid(recoveryEmail))
+            {
+                skipped.Add(new { address, displayName, reason = $"recovery email '{recoveryEmail}' is not an address" });
+                continue;
+            }
+
+            // --- recovery phone -------------------------------------------
+            string? recoveryPhone = null;
+            var rawPhone = entry.RecoveryPhone?.Trim();
+            if (!string.IsNullOrEmpty(rawPhone))
+            {
+                if (LooksRoundedByASpreadsheet(rawPhone))
+                {
+                    skipped.Add(new
+                    {
+                        address, displayName,
+                        reason = $"'{rawPhone}' is scientific notation — the spreadsheet rounded this number and the digits are gone. Format the column as Text and export again.",
+                    });
+                    continue;
+                }
+                recoveryPhone = PhoneNumber.Normalise(rawPhone);
+                if (recoveryPhone is null)
+                {
+                    skipped.Add(new { address, displayName, reason = $"'{rawPhone}' is not a usable phone number" });
+                    continue;
+                }
+            }
+
+            // A password we generated is ALWAYS forced, whatever the column
+            // says: an admin who can read it must not also be able to leave it
+            // as the person's permanent one. A supplied password is the
+            // admin's to decide, because they already told the person.
+            var mustChange = passwordGenerated || (entry.MustChangePassword ?? true);
+
             var products = dept?.DefaultProducts ?? ["mail"];
             var wantsMailbox = products.Contains("mail");
             if (req.DryRun)
             {
-                created.Add(new { email = address, displayName, department = dept?.Name, mailbox = wantsMailbox });
+                created.Add(new
+                {
+                    email = address, displayName, department = dept?.Name, mailbox = wantsMailbox,
+                    passwordGenerated, mustChangePassword = mustChange,
+                    recoveryEmail, recoveryPhone,
+                });
                 continue;
             }
             var quota = await storage.ResolveQuotaAsync(
                 tenant.TenantId, dept?.Id, null, "mail", ct);
-            var password = PasswordGenerator.Generate();
+            var password = passwordGenerated ? PasswordGenerator.Generate() : suppliedPassword!;
             var user = new User
             {
                 TenantId = tenant.TenantId,
@@ -643,7 +729,13 @@ public static class UserEndpoints
                 // temporary password permanently and was never prompted, while
                 // everyone created one-at-a-time was. Two paths that had to
                 // agree, with nothing checking that they did.
-                MustChangePassword = true,
+                MustChangePassword = mustChange,
+                // The admin's claim, not the person's proof: RecoveryEmailVerifiedAt
+                // stays null, so the account page still shows it unverified and the
+                // person confirms it themselves. A typo that arrived pre-verified
+                // would be a working recovery route into someone else's mailbox.
+                RecoveryEmail = string.IsNullOrEmpty(recoveryEmail) ? null : recoveryEmail,
+                Phone = recoveryPhone,
             };
             // Also missing, and the same shape of divergence: the single path
             // records the person's own allowance; bulk resolved it and applied
@@ -673,7 +765,16 @@ public static class UserEndpoints
                 });
                 welcomes.Add((address, displayName));
             }
-            created.Add(new { email = address, displayName, department = dept?.Name, temporaryPassword = password });
+            created.Add(new
+            {
+                email = address, displayName, department = dept?.Name,
+                // Only shown when WE made it. Echoing back a password the admin
+                // supplied puts it in one more place for no benefit.
+                temporaryPassword = passwordGenerated ? password : null,
+                mustChangePassword = mustChange,
+                recoveryEmail = string.IsNullOrEmpty(recoveryEmail) ? null : recoveryEmail,
+                recoveryPhone,
+            });
             createdAddresses.Add(address);
         }
         // A dry run reports and stops: no save, no audit row, no mail.
@@ -1161,6 +1262,23 @@ public static class UserEndpoints
     }
 
     // ------------------------------------------------------------------
+
+    /// <summary>
+    /// True when a spreadsheet has turned a phone number into scientific
+    /// notation — "9.1834E+11". Excel does this to any long number typed into a
+    /// General-formatted cell, and it ROUNDS: 9.1834E+11 is 918340000000, and
+    /// the digits that were in the original are gone from the file.
+    ///
+    /// This MUST run on the raw cell, before PhoneNumber.Normalise, because
+    /// 918340000000 is twelve digits and normalises perfectly — the regex there
+    /// accepts 8 to 15. Once rounded, nothing downstream can tell the number
+    /// from a real one, which is why the row is refused rather than imported.
+    /// A recovery number is wrong exactly when somebody is locked out and
+    /// needs it, and a plausible wrong number is worse than a missing one.
+    /// </summary>
+    private static bool LooksRoundedByASpreadsheet(string raw) =>
+        System.Text.RegularExpressions.Regex.IsMatch(
+            raw.Replace(" ", string.Empty), @"^[0-9]+(\.[0-9]+)?[Ee][+-]?[0-9]+$");
 
     private static bool IsValidLocalPart(string local) =>
         local.Length is > 0 and <= 64 &&
