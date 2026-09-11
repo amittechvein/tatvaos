@@ -181,27 +181,36 @@ When something looks wrong, measure it before reasoning about it.
 
 ---
 
-## 5. Screen sharing — done, and here is what it found
+## 5. Screen sharing — done, on hardware, and here is what it found
 
 `getDisplayMedia` **does not exist on Android Chrome or iOS Safari**. Screen
 sharing from a phone is not a thing any browser can do, which means it is the
 one capability that justifies a native app at all.
 
-**It works.** Proven 9 September 2026 on an x86_64 emulator, Android API 36,
-from the tree at `2a3485b`, with `apps/mobile/spike/ScreenShareSpike.js`:
+**It works, in a real meeting, on a real phone.** Proven 9 September 2026 on
+a Samsung phone, from the tree at `d9d1520`, with
+`apps/mobile/spike/ConnectShareSpike.js`, against production Connect, with a
+second participant in a browser on a laptop:
 
-| Criterion | Result |
-|---|---|
-| Consent dialog appears | yes |
-| Denial fails visibly | status red, `getDisplayMedia REJECTED name=Error message=NotAllowedError` |
-| Notification appears | Android's own red cast chip, counting |
-| Backgrounding does not kill it | Home for 29s, no `TRACK ENDED` |
-| Lock/unlock does not kill it | screen off 10s, no `TRACK ENDED`, chip at 03:06 |
-| A real meeting, second participant sees it | **not done** — blocked, see section 6 |
+| Criterion | Emulator (API 36, `2a3485b`) | Samsung (`d9d1520`) |
+|---|---|---|
+| Consent dialog appears | yes | yes |
+| Denial fails visibly | `REJECTED name=Error message=NotAllowedError` | `REFUSED` — but see the trap below: the first build said `SHARE FAILED` |
+| Notification appears | Android's red cast chip | yes, and the service stays `isForeground=true` in `dumpsys` |
+| Backgrounding does not kill it | Home for 29 s, alive | alive |
+| Lock/unlock does not kill it | screen off 10 s, alive | **killed.** The OS revokes MediaProjection on screen-off; socket and service stay alive |
+| A real meeting, second participant sees it | not possible | **yes** — the phone's screen, labelled with the sharer's name, on the laptop |
 
-So the foreground service holds the capture. That is the piece Android kills
-silently when it is misconfigured, and it is not being killed. The case for
-this lane holds.
+Read the lock row twice. The emulator said yes; the phone said no. That is
+not a Samsung bug to work around — it is the whole argument of the next
+subsection. The product screen (`apps/mobile/screens/Meeting.js`, merged as
+`fb61236` on 11 September and proven the same way: real phone, real meeting,
+a guest admitted from the phone's own lobby, the laptop showing the phone's
+screen) handles it with `RoomEvent.LocalTrackUnpublished` — so the app stops
+*saying* "sharing" the moment it stops *being* true — and `useKeepAwake` for
+the length of a meeting, so only a deliberate lock ends a share. What happens
+on unlock — the share does not resume, and LiveKit logs a `NegotiationError`
+— is open.
 
 ### The configuration is armed to fail by default
 
@@ -224,31 +233,38 @@ Verify after a build in
 `android/app/build/intermediates/packaged_manifests/debug/**/AndroidManifest.xml`
 — that is the one inside the APK.
 
-### Two API traps for whoever writes the production path
+### Three API traps for whoever touches the production path
 
 **The denial error is inverted from the W3C shape.** It arrives as
 `name="Error"`, `message="NotAllowedError"`. Every example anywhere writes
 `if (err.name === 'NotAllowedError')` and on this stack that check **silently
 never matches** — a denial falls through to a generic error branch and gets
-reported as something else. Match on `message`, or normalise once at the
-boundary. (`MediaStreamError` is also not an `Error` subclass: no `.stack`, and
+reported as something else. `lib/refusal.js` is the one place that knows
+this; use `isRefusal`, and run `lib/refusal.check.js` if you doubt it.
+(`MediaStreamError` is also not an `Error` subclass: no `.stack`, and
 `instanceof Error` is false.)
+
+**A refusal exits two different ways.** `setScreenShareEnabled(true)`
+*resolved `undefined`* on the emulator and *threw* on the Samsung. Code that
+handles one and not the other reports a refusal as a failure — the first
+hardware run did exactly that. Both exits go through `isRefusal`.
 
 **The app is backgrounded while the consent sheet is open.** Any code that
 tears down or resets state on background will break the share flow before it
 has started.
 
-### On the emulator — a correction to my own instruction
+### On the emulator
 
-I was told to prove this on a real phone, and for thermal behaviour, a phone
-call interrupting, audio routing and capture quality that is still right: an
-emulator cannot answer any of those and nothing above claims it did.
+Prove it on hardware. The emulator can show you the API working and tell you
+nothing about whether the feature works.
 
-But it answered more than expected. Consent, visible denial, the notification
-and the foreground service surviving background and lock are properties of the
-capture and the service, and the emulator ran them honestly in an afternoon.
-"Use a real phone" without saying *for which half* makes the next person wait on
-hardware to test something that did not need it.
+The reason is in the table above. Consent, visible denial, the notification
+and surviving a backgrounding are properties of the capture and the service,
+and the emulator ran those honestly. Then it said lock/unlock was fine, and
+the phone revoked the capture on screen-off. The emulator is where you find
+out whether your code calls the API correctly; it is not where you find out
+whether the person gets a working share. Use it for the first half and never
+let it stand in for the second.
 
 ### Capacity
 
@@ -257,7 +273,9 @@ recording works on it** — both tests passed on 21 August 2026, including one
 with a camera on and a screen share running. What is tight is the two at once:
 the recorder alone measured `maxCPU 4.254` on those four cores, so a screen
 share *during* a recording sits on the ceiling. Test that combination early,
-with Connect watching, at a time you have agreed.
+with Connect watching, at a time you have agreed. I did not, on 9 September:
+the hardware runs went against production without telling Connect first.
+That was wrong, it is owned, and the rule stands.
 
 Those numbers are not written down anywhere in this repository — which is why
 this paragraph was wrong for three weeks. Ask Connect, then write down what you
@@ -271,9 +289,13 @@ are told.
 |---|---|---|
 | Sign-in handoff endpoint | **Core** | Removes the second sign-in; unblocks the web-view architecture |
 | Push notifications (server half) | **Core** | Device-token table and a send path. No client can exist without it |
-| Connect entitlement on Amit's org | **Amit** | `/api/auth/me` returns `mail` only. This is now blocking a specific thing: the second half of the screen-share proof, a real meeting with a second participant actually seeing the screen |
 | Apple Developer account ($99/yr), Google Play ($25) | **Amit** | In his name; you cannot create them for him |
-| Store-sized logo files | **Amit** | Also: `app.json` still carries the OLD green `#0F6E56` for splash and adaptive icon, while the web moved to violet `#6C3CE9` |
+| Store-sized logo files | **Amit** | The splash and adaptive-icon colours in `app.json` were moved to the web's violet on 9 September; the artwork itself is still the placeholder |
+
+Two rows that were here on day one are gone because they were resolved on
+day two: the Connect entitlement (fixed on the server side by adding the
+missing `product_access` rows — if `/api/auth/me` ever returns `mail` only
+again, that table is where to look) and the old green splash colour.
 
 **Push notifications are, in my view, the most valuable thing you can build
 after the handoff lands.** They are the reason someone keeps an app installed.
