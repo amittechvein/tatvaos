@@ -9,6 +9,15 @@ Regenerate after any change to the send endpoint:
 Everything in here was verified against production on 3 September 2026:
 the endpoint path, every field, every response body, and the headers Gmail
 received. Keep it that way - nothing described that has not been observed.
+
+v1.2 (9 September 2026) corrects the key-restriction claim in section 2. The
+guide said "One key can send as any mailbox in the organisation." It cannot:
+every active key carries an allowed-sender list (held there by the constraint
+check_active_keys_have_addresses), and a `from` outside that list is refused
+with a 400 naming the allowed addresses. An empty list means the key cannot
+send at all - never "unrestricted". Corrected against the endpoint's
+implementation, not against a fresh production run; the 3 September
+observations above are unchanged.
 """
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_LEFT
@@ -76,7 +85,7 @@ def footer(canvas, doc):
     canvas.saveState()
     canvas.setFont("Helvetica", 7.8)
     canvas.setFillColor(MUTED)
-    canvas.drawString(20 * mm, 12 * mm, "TatvaOS Mail API — Integration Guide v1.1 — 4 September 2026")
+    canvas.drawString(20 * mm, 12 * mm, "TatvaOS Mail API — Integration Guide v1.2 — 9 September 2026")
     canvas.drawRightString(A4[0] - 20 * mm, 12 * mm, f"Page {doc.page}")
     canvas.setStrokeColor(LINE)
     canvas.line(20 * mm, 16 * mm, A4[0] - 20 * mm, 16 * mm)
@@ -119,8 +128,11 @@ s += [p("1. Getting an API key", H2),
       p("Three things to know about it:"),
       p("<b>It is shown once.</b> TatvaOS stores only a hash. If it is lost, the administrator revokes it and "
         "creates another; nobody can read it back."),
-      p("<b>It belongs to the organisation, not to a mailbox.</b> One key can send as any mailbox in the "
-        "organisation. Choose the sender per request with the <font face='Courier'>from</font> field."),
+      p("<b>It belongs to the organisation, but only to the senders chosen for it.</b> When the key is created "
+        "the administrator picks the addresses it may send from, and every active key has at least one — there "
+        "is no key that can send as any mailbox. Choose which of those addresses to send as, per request, with "
+        "the <font face='Courier'>from</font> field; anything outside the list is refused. See "
+        "<b>Key restrictions</b> below."),
       p("<b>It can send and nothing else.</b> A key cannot read mail, list mailboxes, or change settings. "
         "If it leaks, the worst outcome is unwanted mail from your domain — which is why you still keep it secret."),
       p("Keep it server-side", H3),
@@ -137,7 +149,16 @@ s += [p("2. Choosing the sender", H2),
       p("For software, use a <b>shared mailbox</b> (for example <font face='Courier'>website@</font>, "
         "<font face='Courier'>noreply@</font>, <font face='Courier'>billing@</font>). Replies then reach a team "
         "rather than one person's inbox. The administrator creates these under <b>Organisation → Shared mailboxes</b>."),
-      p("If you want replies to go somewhere other than the sender, set <font face='Courier'>replyTo</font>.")]
+      p("If you want replies to go somewhere other than the sender, set <font face='Courier'>replyTo</font>."),
+      p("Key restrictions", H3),
+      p("A key may send only from the addresses the administrator chose for it, and an active key always has at "
+        "least one: there is no unrestricted key. A request whose <font face='Courier'>from</font> is outside that "
+        "list is refused with a <font face='Courier'>400</font>, and the error names the addresses the key is "
+        "allowed to use — so the response tells you how to fix it."),
+      p("Use this to separate keys by purpose: one for alerts, one for billing, one for the contact form. If a key "
+        "leaks, only that sender is exposed, and revoking it stops that one program instead of all of them."),
+      p("If a key has no allowed addresses it cannot send at all — an empty list means “nothing”, never "
+        "“anything”. Ask your administrator to add the addresses the key should send from.")]
 
 # ---------------------------------------------------------------- request
 s += [p("3. The request", H2),
@@ -186,7 +207,8 @@ s += [table([
      "<font face='Courier' size='7.5'>{\"outcome\":\"accepted\",<br/>\"recipients\":1,<br/>\"note\":\"Accepted for delivery. This is not confirmation of arrival.\"}</font>"],
     [f"<font color='{WARN.hexval()}'><b>400 Bad Request</b></font>",
      "Something in the request. The message says exactly which field — a missing subject, a sender that is not "
-     "one of your mailboxes, more than five recipients, an address that does not parse.",
+     "one of your mailboxes, a <font face='Courier'>from</font> outside this key's allowed senders, more than "
+     "five recipients, an address that does not parse.",
      "<font face='Courier' size='7.5'>{\"error\":\"website@x.com is not a mailbox on this organisation. Create it under Mailboxes, on a domain you have verified.\"}</font>"],
     [f"<font color='{WARN.hexval()}'><b>401 Unauthorized</b></font>",
      "The key is missing, malformed, unknown, or revoked. All of these get the same answer on purpose — the "
@@ -318,7 +340,7 @@ s += [p("7. Security checklist", H2)]
 s += [table([
     ["Do", "Don't"],
     ["Keep the key in a server-side secret store or environment variable.", "Embed it in browser code, a mobile app, or a public repository."],
-    ["Use one key per program, named for what it does. Ask your administrator to restrict it to relevant senders.", "Share one key across your website, billing, and a partner's system."],
+    ["Use one key per program, named for what it does, and give it only the sender addresses that program needs.", "Share one key across your website, billing, and a partner's system."],
     ["Ask the administrator to revoke a key the moment you suspect exposure.", "Keep using a key that has been in a chat, a ticket, or a log."],
     ["Validate form input on your server before sending.", "Let a form visitor choose the <font face='Courier'>to</font> or <font face='Courier'>from</font> address."],
     ["Rate-limit your own form to stop abuse.", "Assume TatvaOS will rate-limit for you — it does not yet."],
@@ -339,8 +361,11 @@ s += [p("8. What is not in this version", H2),
       ], [32 * mm, W - 32 * mm])]
 
 s += [Spacer(1, 10),
-      p("Version 1.0 — 3 September 2026. Every request, field and response in this guide was exercised against "
-        "production on the day it was written; the sample headers in section 6 are from a message Gmail received.", SMALL),
+      p("Version 1.2 — 9 September 2026. Every request, field and response was exercised against production on "
+        "3 September 2026, when this guide was first written, and the sample headers in section 6 are from a "
+        "message Gmail received that day. The key-restriction behaviour in sections 2 and 4 was corrected on "
+        "9 September against the endpoint's implementation: earlier versions said one key could send as any "
+        "mailbox in the organisation, which was never true of a key with an allowed-sender list.", SMALL),
       p("Questions: your organisation's TatvaOS administrator, who can see the send log for every key.", SMALL)]
 
 doc.build(s, onFirstPage=footer, onLaterPages=footer)
