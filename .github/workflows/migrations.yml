@@ -1,0 +1,55 @@
+# ============================================================================
+#  Migrations — every init file builds from nothing, then re-applies cleanly
+# ============================================================================
+#  Runs infra/scripts/verify-migrations.sh: Pass 1 applies every non-seed
+#  file in local/postgres/init/ into an empty PostgreSQL; Pass 2 applies all
+#  of them AGAIN, because deploy.sh does exactly that on every deploy. A file
+#  that works once and fails the second time breaks the NEXT deploy - which
+#  may be another lane's - so it is caught here, before it lands.
+#
+#  WHAT A GREEN RUN MEANS, and does not (CTO, 8 Sept 2026): the schema CAN
+#  BE BUILT, twice. It says nothing about whether it is the schema the
+#  application expects. That is the Tenant-isolation job's territory, and the
+#  API's. Do not let this light start meaning more than it does.
+#
+#  Triggers: unconditionally on main; on pull requests only when the
+#  migrations, the verifier, or this file changed - path-filtered so the
+#  other lanes do not pay two minutes for it on every PR. (A workflow-level
+#  paths filter is the only path filter GitHub offers, which is why this is
+#  its own workflow rather than a job in ci.yml.)
+#
+#  Needs Docker on the runner, which ubuntu-latest has. The script starts its
+#  own throwaway postgres container and removes it on exit; nothing is
+#  published on a port. The 8 Sept review is the reason both of those are
+#  true.
+# ============================================================================
+
+name: Migrations
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - 'local/postgres/init/**'
+      - 'infra/scripts/verify-migrations.sh'
+      - '.github/workflows/migrations.yml'
+
+concurrency:
+  group: migrations-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Build twice
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # Exit 0: built and rebuilt. Exit 1: a file failed - the output names
+      # it. Exit 2: the check could NOT run (no database reachable) - which
+      # fails the job too, on purpose: a check that cannot run must not pass.
+      - name: verify-migrations.sh
+        run: bash infra/scripts/verify-migrations.sh
