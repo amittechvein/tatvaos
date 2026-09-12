@@ -208,3 +208,36 @@ test('invite: no joinUrl, no button', async () => {
   await waitFor(() => expect(r.getByText('Only you so far')).toBeTruthy());
   expect(r.queryByLabelText('Invite')).toBeNull();
 });
+
+test('share: default passes no capture or publish options', async () => {
+  const { steer } = require('./mocks');
+  steer.lastShareArgs = null;
+  const { r } = await inCall();
+  fireEvent.press(r.getByLabelText('Share'));
+  await waitFor(() => expect(r.getByLabelText('Stop share')).toBeTruthy());
+  expect(steer.lastShareArgs).toEqual({ capture: undefined, publish: undefined });
+});
+
+test('share: hold Share to arm the 720p/15 cap; the next share carries it', async () => {
+  const { steer } = require('./mocks');
+  steer.lastShareArgs = null;
+  const { r } = await inCall();
+  fireEvent(r.getByLabelText('Share'), 'longPress');
+  await waitFor(() => expect(r.getByText('Next share: capped (720p, 15 fps).')).toBeTruthy());
+  fireEvent.press(r.getByLabelText('Share ↓'));
+  await waitFor(() => expect(r.getByLabelText('Stop share')).toBeTruthy());
+  expect(steer.lastShareArgs.capture).toEqual({ resolution: { width: 1280, height: 720, frameRate: 15 } });
+  expect(steer.lastShareArgs.publish.screenShareEncoding).toEqual({ maxBitrate: 1500000, maxFramerate: 15 });
+});
+
+test('share: the negotiated numbers are read from the sender, not assumed', async () => {
+  const logs = [];
+  const spy = jest.spyOn(console, 'log').mockImplementation((line) => logs.push(String(line)));
+  try {
+    const { r } = await inCall();
+    fireEvent.press(r.getByLabelText('Share'));
+    await waitFor(() => expect(r.getByLabelText('Stop share')).toBeTruthy());
+    await waitFor(() => expect(logs.some((l) => l.includes('share stats (first): 1080x2400 @ 28fps'))).toBe(true), { timeout: 5000 });
+    expect(logs.some((l) => l.includes('share capture settings: 1080x2400 @ 30fps'))).toBe(true);
+  } finally { spy.mockRestore(); }
+}, 10000);
