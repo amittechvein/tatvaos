@@ -129,6 +129,42 @@ A check that measures something adjacent to the thing is not a weak check, it
 is a check-shaped object — it reports success while the thing it stands for is
 false, and it does so most confidently exactly when something has gone wrong.
 
+## 6b. A result is about a version. Say which one.
+
+Rule 6 asks whether a check *can* fail. This asks whether its result still
+describes anything. **Run the check against committed code, and put the SHA in
+the result.** "Proved against `8e00bea`" survives contact with a merge.
+"Proved, green" does not — and nothing announces the moment it stops being true.
+
+Two ways this goes wrong, both of which have happened:
+
+- **Proving uncommitted edits.** Files modified in a working directory are on no
+  branch. A proof of those describes a version that may never ship, and reads
+  exactly like a proof of one that did.
+- **Quoting a summary instead of the record.** An index line, a description
+  field, a table of contents, an earlier report of your own — all copies, and
+  copies go stale without announcing it. Open the file.
+
+*Cost, 9 September 2026, twice in one day. Mobile ran a Postgres harness against
+two migrations while they sat as uncommitted edits in the integration checkout;
+a later PR happened to commit exactly those edits, so the proof happened to
+describe what shipped — it did not have to, and nothing in the result would have
+said otherwise. He caught it himself and re-proved against a named SHA.
+Separately, the CTO quoted a one-line summary of his own notes saying Connect ran
+on a 2 vCPU box that could not record, and wrote it into two documents a new
+developer was about to read. The record underneath said 4 vCPU with recording
+proven on 21 August. The record was right; the pointer to it was stale. A
+different session made the identical error from the same summary the same day —
+which makes it a defect in how we read our own notes, not two mistakes.*
+
+**And a corollary, earned 12 September: a proposal can be invalidated by your
+own later work.** Connect proposed raising a timeout to 120 seconds because the
+failure it guarded against was irreversible, then shipped the feature that made
+it reversible, and carried the proposal forward for four days without revisiting
+the premise. Their words: *"I proposed 120 before I'd built the thing that made
+120 unnecessary."* Nothing external changed and no signal fired. When you ship
+something, ask what it makes unnecessary.
+
 ## 7. Ask what breaks if it is violated — **and what breaks if it is enforced**
 
 Rule 6's second half. An invariant nobody enforces is a wish; an invariant
