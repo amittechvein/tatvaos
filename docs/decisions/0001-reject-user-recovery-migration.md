@@ -96,9 +96,10 @@ instance.
 The file is **rejected and moved out of the repository.** It now sits outside
 the tree as `20260904-user-recovery.sql.rejected`. Nothing is lost.
 
-If the work is rebuilt — owner is **Core**, since `core.users` is Core's table:
+There is **nothing to rebuild** for recovery email — see the correction above;
+it is already on `main`. What remains is only the phone question, owner
+**Core**, since `core.users` is Core's table:
 
-- **Split it.** `recovery_email` is additive and uncontroversial; ship it alone.
 - **`phone` mandatory is a product decision and goes to Amit first.** It was
   never brought to him. Every existing user without a phone number either gets
   asked for one or loses their recovery path.
@@ -113,13 +114,50 @@ If the work is rebuilt — owner is **Core**, since `core.users` is Core's table
 
 ---
 
+## Correction, 13 September 2026 — same day, after Core's handover
+
+**The paragraph below that said "recovery email is now unstarted" was wrong,
+and it was wrong for the second time in one document about the same file.**
+
+`local/postgres/init/20260904-user-recovery-email.sql` is **tracked, on `main`,
+and shipped.** It implements recovery email properly and better: five columns
+rather than one, `recovery_email_verified_at` so an unverified address can never
+be used for recovery, a SHA-256 `recovery_email_token_hash`, an attempts
+counter, and a *partial* index. Its header records why it is non-unique on
+purpose.
+
+So the rejected file was not half a feature. **Both halves were bad:**
+
+- the `recovery_email` half was a **worse duplicate of work already in the
+  tree** — a bare nullable `text` column with no verification and no token, and
+  on any database that had already run the tracked migration it was a near
+  no-op, because its own `IF NOT EXISTS` guard saw the column and skipped;
+- the `phone` half was the only part with live effect, and its effect was the
+  damage described above.
+
+That makes the rejection a **rule 10** case as well as a rule 6 one: two copies
+of one fact, and the copy that drifted was the untracked one. Had anyone
+compared the two filenames — `20260904-user-recovery.sql` and
+`20260904-user-recovery-email.sql`, same date, adjacent in a directory listing —
+the duplication was visible without reading either.
+
+**How I got it wrong:** I searched `local/postgres/init/` for the file I was
+rejecting, read it, and ruled. I never listed the directory for anything else
+matching. The claim "recovery email is unstarted" was not checked at all — it
+was inferred from the file I had just deleted, which is the same move as
+inferring the state of `main` from a working tree.
+
+Found by Core, in a handover, hours after this record was merged.
+
+---
+
 ## Consequences
 
 **Easier:** `local/postgres/init/` contains only tracked files again, so
 `git status` in the integration checkout is meaningful rather than noisy.
 
-**Harder:** recovery email is now unstarted rather than half-present. That is
-the honest state, and it was the real state throughout.
+**Nothing lost.** Recovery email was already shipped, properly, in
+`20260904-user-recovery-email.sql`. The rejected file added nothing to it.
 
 **Accepted:** the `Migrations / Build twice` gate cannot catch faults that need
 existing rows to appear. We are keeping the gate — it catches non-idempotent
