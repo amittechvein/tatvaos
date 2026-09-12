@@ -165,6 +165,45 @@ the premise. Their words: *"I proposed 120 before I'd built the thing that made
 120 unnecessary."* Nothing external changed and no signal fired. When you ship
 something, ask what it makes unnecessary.
 
+## 6c. Certainty is when the check gets skipped — which is when it is most needed
+
+Rule 6 is about checks that cannot fail. Rule 6b is about results that have
+stopped describing anything. This one is about **the check you did not run**,
+and it is different in kind: the other two are caught by reading the check, and
+this one leaves nothing to read.
+
+The pattern: a careful person, at the end of a careful week, on the one thing
+they feel surest about, skips the step they took every other time. Not
+carelessness — confidence, which is the only state in which a careful person
+skips a step. So the rule is not "be careful". It is: **the feeling of
+certainty is itself the signal to check.** When you notice you are about to
+write, delete, or assert something *without* looking because you already know,
+that is the moment to look.
+
+*Cost, 12 September 2026. Connect, after closing their lane, disclosed they had
+overwritten `docs/CONNECT_DECISIONS.md` — Amit's 19 August rulings, written up
+by Core — by writing to disk without staging first, having decided it was a new
+file without checking. Restored from the commit's parent; nothing lost. Their
+own tell, afterwards: the commit output had printed no `create mode` line, which
+a genuinely new file would have had. The evidence was in output they had already
+read. Their words, which are the rule: "certainty is when the check gets
+skipped, which is when it is most needed."*
+
+**Mail's question, 13 September, is the cheapest form of the check:** when
+anyone — a session, a colleague, a document, yourself — tells you something is
+verified, ask *what did you actually run, and what would have made it fail?* If
+the answer is a description rather than a command and an observed result, it
+was not verified. It was believed.
+
+*Cost, 13 September 2026, same day. A fault description for an untracked
+migration — "it breaks every deploy" — was repeated for four weeks by Mail and
+the CTO both. It was wrong: the file passed a fresh build twice and failed only
+against a database with rows. Nobody re-read the file because everybody knew
+what was in it. `docs/decisions/0001-reject-user-recovery-migration.md`. And
+the CTO, in the same hour, verified rule 6b on the working tree of a `wip/`
+branch and reported it as on `main` — certain of the branch, so the branch was
+the thing not checked.*
+
 ## 7. Ask what breaks if it is violated — **and what breaks if it is enforced**
 
 Rule 6's second half. An invariant nobody enforces is a wish; an invariant

@@ -15,18 +15,39 @@ optional.
 
 | You are taking | Read this first | Then the plan behind it |
 |---|---|---|
+| Core | [`core/WELCOME.md`](core/WELCOME.md) | — |
+| Mail | [`mail/WELCOME.md`](mail/WELCOME.md) | [`../RUNBOOK-2026-08-28.md`](../RUNBOOK-2026-08-28.md) |
+| Connect | [`connect/WELCOME.md`](connect/WELCOME.md) | [`../CONNECT_DECISIONS.md`](../CONNECT_DECISIONS.md) |
 | Mobile | [`mobile/WELCOME.md`](mobile/WELCOME.md) | [`../MOBILE_LANE_BRIEF.md`](../MOBILE_LANE_BRIEF.md) |
 | Hire & People | [`hire-people/WELCOME.md`](hire-people/WELCOME.md) | [`../TATVAOS_HR_ROADMAP.md`](../TATVAOS_HR_ROADMAP.md) |
-| Core | [`core/WELCOME.md`](core/WELCOME.md) | — |
-| Platform | [`platform/WELCOME.md`](platform/WELCOME.md) | [`../PLATFORM_LANE_HANDOVER.md`](../PLATFORM_LANE_HANDOVER.md) |
+
+**Not on that list, and not lanes you can take:**
+
+- **Platform** closed 31 August 2026. No developer was ever onboarded and
+  `lane/platform` had zero commits; the work went to Core.
+  [`platform/WELCOME.md`](platform/WELCOME.md) is kept because it is honest
+  history, and [`../PLATFORM_LANE_HANDOVER.md`](../PLATFORM_LANE_HANDOVER.md) is
+  still the technical reference — but nobody is taking it.
+- **Space** closed 3 September 2026, also to Core. See
+  [`../SPACE_FAULT_MATRIX.md`](../SPACE_FAULT_MATRIX.md).
+
+**This table was wrong until 13 September 2026, and the way it was wrong is
+worth knowing on your first day.** It offered Platform, which had closed a
+fortnight earlier, and it omitted Mail and Connect — two of the five live lanes —
+because the CTO created the folder and filled in the lanes he happened to be
+thinking about. Two developers were pointed at this page while it was in that
+state. A map that lists four destinations reads as complete; there is no way to
+tell from inside it that two are missing. That is the same failure mode as a
+check that cannot go red, and it is the reason the last section of this page
+exists.
 
 ---
 
 ## Day one — read in this order
 
-1. **`mobile/` or `hire-people/WELCOME.md`** — your lane. What exists today,
-   what is blocked and on whom, and the traps that have already cost someone a
-   day. Twenty minutes.
+1. **Your lane's `WELCOME.md`** — the left-hand column above. What exists
+   today, what is blocked and on whom, and the traps that have already cost
+   someone a day. Twenty minutes.
 
 2. **[`../HOUSE_RULES.md`](../HOUSE_RULES.md) — required, everyone.** The
    canonical rules; anything anywhere that contradicts it is out of date. Every
