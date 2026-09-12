@@ -46,9 +46,30 @@ over a wall and nobody waits.
 - **Connect** — video meetings, recordings, captions, AI minutes. The most
   complex lane by volume; also the one with the most proven-in-production
   verification scripts.
-- **Space** — storage, sharing, public links. Keeps the best written record of
-  known-unknowns on the team; his fault matrix is worth reading as a style guide.
-- **Platform** — joining now, alongside you.
+- **Mobile** — `apps/mobile`, the Expo app. Started 9 Sept and in three days
+  got a screen share working on real hardware, retracted a green result because
+  the code proved was not the code that shipped, and earned house rule 6b.
+- **Hire & People** — recruitment and HR, `hire.` and `people.`. Hired 9 Sept.
+  Roughly three quarters of their Phase 0 is *your* schema already.
+
+**Two lanes on this list closed, and their work is now yours:**
+
+- **Platform** — closed 31 Aug. No developer was ever onboarded;
+  `lane/platform` had zero commits. `platform.tatvaos.com` and everything
+  planned for it came to Core. `docs/PLATFORM_LANE_HANDOVER.md` is still the
+  technical reference.
+- **Space** — closed 3 Sept, handed to Core. Storage, sharing, public links.
+  `docs/SPACE_LANE_HANDOVER.md` §10 (Space's own mistakes) is the part to read
+  first, and the fault matrix is worth reading as a style guide regardless.
+
+**⚠️ Those two closures cost you something that is not obvious, and it has
+already been paid once.** The lane split gave the token and API-key design a
+*required second reader* — "pair with Platform" was a check, not politeness. You
+now own both sides, so that check is gone. On 3 Sept the send API shipped under a
+scope cut with no design round, and its key lookup was wrong on production
+(`EnterPlatformScope` does not bypass row-level security). Mail reviewing it
+after the fact is the substitute that actually ran. "Be careful" does not
+replace a second reader; a named one does — see §5.
 
 **Amit** is the founder. Product decisions, customer promises, anything that
 changes what we tell a client, are his. He is not a developer — write to him
@@ -141,13 +162,27 @@ not proven. See rule 7.
 **Four worktrees show `prunable`.** Their branches merged; the folders are
 stale. Worth a sweep once you've confirmed nobody's mid-flight.
 
-**Coming at you from Platform:** personal access tokens, then organisation API
-keys. Both touch `Shared/Auth` — yours. Platform owns how a developer finds and
-understands them; you own the token format, the hashing (read `PasswordHasher.cs`
+**Personal access tokens and organisation API keys — and read this before you
+start, because the instruction that used to be here named a reviewer who does
+not exist.**
+
+This work was Platform's, so the original text said "coming at you from
+Platform… **pair on it**." Platform closed on 31 August. You own both sides now,
+which means the pairing that sentence assumed cannot happen by default — and the
+one time it did not happen, the send API shipped with a key lookup that was
+wrong on production.
+
+So the requirement stands and the counterparty changes: **do not design a
+credential format alone.** Take it to the CTO before the migration lands, or to
+Mail, who has the most recent scar tissue on credential storage. Name whoever
+reviewed it in the pull request, so that the absence of a reviewer is visible
+rather than assumed.
+
+What is yours either way: the token format, the hashing (read `PasswordHasher.cs`
 and the `{SCHEME}` lesson in the app-passwords migration before choosing
-anything), and how middleware accepts a key beside a JWT. **Pair on it.**
-Per-organisation keys must respect `core.tenants` liveness the way every
-credential store here does — a suspended org's keys die with it.
+anything), and how middleware accepts a key beside a JWT. Per-organisation keys
+must respect `core.tenants` liveness the way every credential store here does —
+a suspended organisation's keys die with it.
 
 ---
 
