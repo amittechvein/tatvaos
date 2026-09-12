@@ -16,9 +16,9 @@ and I sat up together, which is exactly why you were hired.
 
 ## 1. What exists, precisely
 
-`apps/mobile` — Expo SDK 57, React Native 0.86, **777 lines of JavaScript**
-(`App.js` 476, `api.js` 229, `theme.js` 68, `index.js` 4). It is small, and it
-is real: it signs in against **production**, not a mock.
+`apps/mobile` — Expo SDK 57, React Native 0.86, a handful of JavaScript files
+(`App.js`, `api.js`, `theme.js`, `index.js`; sizes go stale, `wc -l` does not).
+It is small, and it is real: it signs in against **production**, not a mock.
 
 Working and proven on an emulator against `core.tatvaos.com`:
 
@@ -66,10 +66,10 @@ highest-value item on this lane and none of it is yours to build. Chase it.
 
 ---
 
-## 3. Getting it to build — six things that will cost you a day each
+## 3. Getting it to build — the things that will cost you a day each
 
-Five were hit and solved on 8 September, the sixth on 9 September. None is
-guessable.
+Each was hit and solved on 8, 9 or 11 September. None is guessable; each
+carries the date and the symptom so you can tell whether it is still true.
 
 **1. `apps/mobile` is NOT in the pnpm workspace.** `pnpm-workspace.yaml`
 excludes it. Inside that folder you must run:
@@ -156,6 +156,55 @@ the build question with nothing plugged in.
 If the emulator ignores your keyboard, set `hw.keyboard=yes` in
 `~/.android/avd/<name>.avd/config.ini`. `adb shell input text` works meanwhile —
 **never** use it for a password, it lands in your shell history.
+
+**7. A successful Gradle build can install the OLD APK.** 11 September:
+`BUILD SUCCESSFUL in 3m 50s`, `325 actionable tasks: 5 executed, 320
+up-to-date`, then `adb install -r … Success` — and the phone was running the
+previous day's build, because the earlier `gradlew` had been skipped and the
+APK on disk was stale. Every line in that sequence is green. Before trusting
+an install, look at the file:
+
+```
+Get-Item android\app\build\outputs\apk\debug\app-debug.apk | Select-Object LastWriteTime
+```
+
+If it is not minutes old, nothing was built. A related tell: a new native
+library should mean many executed tasks; "5 executed" after adding one is a
+build to distrust. The one true test that a library is in the APK is
+`Get-ChildItem android -Recurse -Include PackageList.java,autolinking.json |
+Select-String <library name>`.
+
+**8. pnpm 9.15 on Windows with the hoisted layout has a re-link bug.** When
+`pnpm install --ignore-workspace` must replace a package that is already in
+`node_modules`, it renames the folder to `<name>_tmp_<pid>` and then fails:
+
+```
+ERR_PNPM_ENOENT  ENOENT: no such file or directory, scandir '…\node_modules\metro-source-map_tmp_19288\node_modules'
+```
+
+It is deterministic, not a race — retrying gives the same package. On 11
+September five packages tripped in one install (`metro-source-map`, `metro`,
+`@livekit/react-native-webrtc`, `@expo/cli`, `react-native`). The workaround:
+delete the package pnpm tripped on and the `*_tmp_*` leftovers, run the
+install again, repeat until it finishes. As a loop:
+
+```
+for ($i = 0; $i -lt 20; $i++) {
+  $out = pnpm install --ignore-workspace 2>&1 | Out-String
+  if ($out -match "node_modules\\(.+?)_tmp_\d+") {
+    $pkg = $Matches[1]
+    Get-ChildItem node_modules -Directory -Filter "*_tmp_*" | Remove-Item -Recurse -Force
+    Remove-Item "node_modules\$pkg" -Recurse -Force -ErrorAction SilentlyContinue
+  } else { Write-Host $out; break }
+}
+```
+
+Two rules that follow from it. **Never regenerate `apps/mobile/pnpm-lock.yaml`
+with a different pnpm** — a lockfile written by pnpm 10 elsewhere re-linked a
+dozen packages and made the bug unavoidable; let the pnpm on this machine
+extend the lockfile. And after the loop deletes `react-native` or
+`@livekit/react-native-webrtc`, the next Gradle build recompiles their native
+code; that is expected and slow, not a sign something else broke.
 
 ---
 
@@ -323,7 +372,7 @@ A launcher that opens web pages is a home-screen bookmark with extra steps.
 
 1. Build it. Emulator, real sign-in, see the `[api]` lines. If any of section 3
    bites you anyway, tell me — the instructions are wrong and I want to fix them.
-2. Read `App.js` end to end. It is 476 lines and it is the whole app.
+2. Read `App.js` end to end. It is the whole app.
 3. Spike screen sharing on Android. Not polished — proven. **Done 9 September;
    section 5 is the result.** The half that needs a real meeting is still open.
 4. Tell me what you'd change about the architecture. You will know more about
