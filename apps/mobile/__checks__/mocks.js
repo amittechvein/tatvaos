@@ -21,9 +21,18 @@ class MockLocalParticipant {
   getTrackPublication() { return undefined; }
   async setMicrophoneEnabled(on) { if (mockSteer.mic === 'refuse') { const e = new Error('NotAllowedError'); throw e; } return on; }
   async setCameraEnabled(on) { return on; }
-  async setScreenShareEnabled(on) {
+  async setScreenShareEnabled(on, capture, publish) {
     if (!on) return undefined;
-    if (mockSteer.share === 'started') return { trackSid: 'TR_share', source: 'screen_share' };
+    mockSteer.lastShareArgs = { capture, publish };
+    if (mockSteer.share === 'started') {
+      return {
+        trackSid: 'TR_share', source: 'screen_share',
+        track: {
+          mediaStreamTrack: { getSettings: () => ({ width: 1080, height: 2400, frameRate: 30 }) },
+          getSenderStats: async () => [{ rid: 'f', frameWidth: 1080, frameHeight: 2400, framesPerSecond: 28, bytesSent: 100000, qualityLimitationReason: 'none' }],
+        },
+      };
+    }
     // MEASURED, emulator, 9 Sept 2026: refusal resolved undefined.
     if (mockSteer.share === 'undefined') return undefined;
     // MEASURED, Samsung, 9 Sept 2026: refusal THREW with name='Error' and
@@ -69,6 +78,7 @@ jest.mock('livekit-client', () => ({
   DisconnectReason: { UNKNOWN_REASON: 0, CLIENT_INITIATED: 1, DUPLICATE_IDENTITY: 2, 0: 'UNKNOWN_REASON', 1: 'CLIENT_INITIATED', 2: 'DUPLICATE_IDENTITY' },
   Track: { Source: { Camera: 'camera', Microphone: 'microphone', ScreenShare: 'screen_share' }, Kind: { Audio: 'audio', Video: 'video' } },
   ConnectionState: { Connected: 'connected' },
+  ScreenSharePresets: { h720fps15: { encoding: { maxBitrate: 1500000, maxFramerate: 15 } } },
   LocalParticipant: MockLocalParticipant,
   Participant: class {},
   ParticipantEvent: {},

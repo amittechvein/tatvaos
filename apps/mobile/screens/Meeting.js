@@ -56,7 +56,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context'; // see App.js
 import { Ionicons } from '@expo/vector-icons';
 import { useKeepAwake } from 'expo-keep-awake';
-import { Room, RoomEvent, DisconnectReason, Track } from 'livekit-client';
+import { Room, RoomEvent, DisconnectReason, Track, ScreenSharePresets } from 'livekit-client';
 import {
   AudioSession, VideoView, useRoom, useParticipant, registerGlobals,
 } from '@livekit/react-native';
@@ -80,6 +80,18 @@ function reasonName(reason) {
 const REFUSED = 'Screen sharing needs your permission. Nothing was shared.';
 const WAIT_POLL_MS = 2000; // docs/CONNECT_API.md: "client polls every 2 s"
 const LOBBY_POLL_MS = 3000; // host side has no push either (Open Question §4)
+const SHARE_STATS_MS = 10000; // how often a running share reports what it is actually sending
+
+// The capped share, for the capacity test with Connect (11 Sept 2026). A phone
+// share is portrait at native resolution — more pixels than a laptop's 1080p,
+// and an aspect ratio the recording compositor has to letterbox — so it is the
+// heaviest input egress can be given. This is the lever on our side. Hold the
+// Share button to arm it for the next share.
+const CAPPED = {
+  label: '720p, 15 fps',
+  capture: { resolution: { width: 1280, height: 720, frameRate: 15 } },
+  publish: { screenShareEncoding: ScreenSharePresets.h720fps15.encoding },
+};
 
 /**
  * Ask Android for the runtime permissions a call needs, BEFORE the first
@@ -184,6 +196,7 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
   // did was 'multiple'.
   const [shareMode, setShareMode] = useState(meeting?.shareMode === 'single' ? 'single' : 'multiple');
   const [speaker, setSpeaker] = useState(true);
+  const [capped, setCapped] = useState(false); // next share uses CAPPED
   const [role, setRole] = useState(null); // host | cohost | participant, once admitted
   const [lobby, setLobby] = useState([]); // people waiting, host/cohost only
   const leaving = useRef(false);
@@ -196,10 +209,44 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
   const focusRef = useRef(null);
   focusRef.current = focusKey;
   const waitTimer = useRef(null);
+  const statsTimer = useRef(null);
+  const lastStats = useRef(null);
   const gone = useRef(false); // set on unmount; every async path checks it
 
   function stopWaiting() {
     if (waitTimer.current) { clearTimeout(waitTimer.current); waitTimer.current = null; }
+  }
+
+  function stopShareStats() {
+    if (statsTimer.current) { clearInterval(statsTimer.current); statsTimer.current = null; }
+    lastStats.current = null;
+  }
+
+  // What the share is ACTUALLY sending — negotiated, not requested. LiveKit
+  // and the encoder may not give what was asked for, and the capacity test
+  // needs the real numbers next to Connect's `docker stats`. One line per
+  // layer: size, frame rate, bitrate since the last line, and why the encoder
+  // is holding back if it is (cpu, bandwidth, none).
+  async function reportShareStats(track, why) {
+    try {
+      const layers = await track.getSenderStats();
+      const now = Date.now();
+      const prev = lastStats.current;
+      const parts = (layers || []).map((l) => {
+        const key = l.rid || l.id || 'layer';
+        let kbps = '';
+        if (prev && prev.by[key] != null && l.bytesSent != null) {
+          const secs = (now - prev.at) / 1000;
+          if (secs > 0) kbps = ` ${Math.round(((l.bytesSent - prev.by[key]) * 8) / 1000 / secs)} kbps`;
+        }
+        return `${l.frameWidth}x${l.frameHeight} @ ${l.framesPerSecond ?? '?'}fps${kbps}` +
+          (l.qualityLimitationReason && l.qualityLimitationReason !== 'none' ? ` (limited by ${l.qualityLimitationReason})` : '');
+      });
+      lastStats.current = { at: now, by: Object.fromEntries((layers || []).map((l) => [l.rid || l.id || 'layer', l.bytesSent])) };
+      log(`share stats (${why}): ${parts.join(' | ') || 'no sender stats yet'}`);
+    } catch (e) {
+      log(`share stats failed: ${describeError(e)}`);
+    }
   }
 
   // The part after we hold a LiveKit token. Shared by the direct join, the
@@ -313,6 +360,7 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
         // library is not quietly rejoining behind the screen's back — the
         // ghost the laptop saw on 16 Sept.
         stopWaiting();
+        stopShareStats();
         setStatus('dropped');
         setShare(false);
         setMic(false);
@@ -326,6 +374,7 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
         // Trap 3. This fires whether the person pressed Stop or the OS took the
         // capture away; either way "sharing" is no longer true.
         log('screen share track unpublished — the share has stopped');
+        stopShareStats();
         setShare(false);
         setNotice('Screen sharing stopped.');
       }
@@ -371,6 +420,7 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
     return () => {
       gone.current = true;
       stopWaiting();
+      stopShareStats();
       // A live capture outlives a React tree, and the foreground service keeps
       // it alive. Leaving on unmount is not tidiness; it is what stops a share
       // running after the screen that started it has gone.
@@ -506,16 +556,27 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
     }
   }
 
+  function toggleCapped() {
+    if (share) { setNotice('Stop the share first; the cap applies to the next one.'); return; }
+    const next = !capped;
+    setCapped(next);
+    setNotice(next ? `Next share: capped (${CAPPED.label}).` : 'Next share: default quality.');
+    log(`next share: ${next ? `capped ${CAPPED.label}` : 'default'}`);
+  }
+
   async function toggleShare() {
     setNotice('');
     if (share) {
+      stopShareStats();
       try { await room.localParticipant.setScreenShareEnabled(false); } catch (e) { log(`stop share: ${describeError(e)}`); }
       setShare(false);
       return;
     }
     try {
-      log('requesting screen capture; the system consent sheet is next');
-      const pub = await room.localParticipant.setScreenShareEnabled(true);
+      log(`requesting screen capture (${capped ? `capped ${CAPPED.label}` : 'default'}); the system consent sheet is next`);
+      const pub = capped
+        ? await room.localParticipant.setScreenShareEnabled(true, CAPPED.capture, CAPPED.publish)
+        : await room.localParticipant.setScreenShareEnabled(true);
       if (!pub) {
         // Trap 2, exit one: resolved with nothing. The emulator does this.
         log('setScreenShareEnabled resolved with no publication — refused, or nothing to publish');
@@ -524,6 +585,20 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
       }
       log(`sharing screen: ${pub.trackSid}`);
       setShare(true);
+      // Requested vs captured vs sent. getSettings is what the capture gave us;
+      // the sender stats (below, every SHARE_STATS_MS) are what leaves the phone.
+      try {
+        const st = pub.track?.mediaStreamTrack?.getSettings?.();
+        if (st) log(`share capture settings: ${st.width}x${st.height} @ ${st.frameRate ?? '?'}fps`);
+      } catch (e) { log(`share capture settings unavailable: ${describeError(e)}`); }
+      if (pub.track?.getSenderStats) {
+        stopShareStats();
+        setTimeout(() => { if (!gone.current) reportShareStats(pub.track, 'first'); }, 2000);
+        statsTimer.current = setInterval(() => {
+          if (gone.current) { stopShareStats(); return; }
+          reportShareStats(pub.track, 'periodic');
+        }, SHARE_STATS_MS);
+      }
     } catch (e) {
       // Trap 2, exit two: threw. The Samsung does this, with the inverted shape.
       if (isRefusal(e)) {
@@ -674,7 +749,7 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
         <View style={s.controls}>
         <Control icon={mic ? 'mic' : 'mic-off'} label={mic ? 'Mute' : 'Unmute'} on={mic} onPress={toggleMic} disabled={!inCall} />
         <Control icon={cam ? 'videocam' : 'videocam-off'} label={cam ? 'Cam off' : 'Camera'} on={cam} onPress={toggleCam} onLongPress={cam ? flipCam : undefined} disabled={!inCall} />
-        <Control icon="phone-portrait-outline" label={share ? 'Stop share' : 'Share'} on={share} onPress={toggleShare} disabled={!inCall || !!otherPresenter} />
+        <Control icon="phone-portrait-outline" label={share ? 'Stop share' : (capped ? 'Share ↓' : 'Share')} on={share} onPress={toggleShare} onLongPress={toggleCapped} disabled={!inCall || !!otherPresenter} />
         <Control icon={speaker ? 'volume-high' : 'ear-outline'} label={speaker ? 'Speaker' : 'Earpiece'} on={speaker} onPress={toggleSpeaker} disabled={!inCall} />
         <Control icon="call" label="Leave" danger onPress={leave} />
         </View>
