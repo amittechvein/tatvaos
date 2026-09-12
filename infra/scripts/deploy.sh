@@ -213,6 +213,52 @@ if [ "$BRANCH" = "HEAD" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+#  WHAT IS RUNNING NOW — the rollback point.
+#
+#  THE CHECKOUT AND THE RUNNING SYSTEM ARE DIFFERENT THINGS, and every question
+#  of the form "which version is this?" has to name which one it is asking
+#  about. Getting that wrong has cost three separate incidents: the x-build
+#  regression, a written rollback instruction that read the wrong source, and
+#  two wrong-branch deploys.
+#
+#  `git rev-parse HEAD` answers "what is this directory sitting on". That is
+#  NOT the running commit:
+#
+#    - By the time this script runs, the operator has already done
+#      `git reset --hard origin/main` — this script never fetches or resets.
+#      So git holds the commit we are deploying TO. Recorded as a rollback
+#      point that is worse than useless: rolling back to it redeploys the
+#      thing you are rolling back from. HOUSE_RULES rule 11 said exactly that
+#      until 9 Sept 2026.
+#
+#    - The two drift on their own. A deploy that fails after the reset leaves
+#      the checkout ahead of the containers, silently, and git goes on
+#      answering confidently.
+#
+#  apps/web/Dockerfile bakes BUILD_SHA into the image, so the RUNNING CONTAINER
+#  carries the commit it was actually built from. That is the only source that
+#  survives someone debugging in this directory.
+# ---------------------------------------------------------------------------
+_web_cid=$($COMPOSE ps -q web 2>/dev/null | head -1)
+RUNNING_SHA=""
+[ -n "$_web_cid" ] && RUNNING_SHA=$(docker inspect \
+    --format '{{range .Config.Env}}{{println .}}{{end}}' "$_web_cid" 2>/dev/null \
+    | sed -n 's/^BUILD_SHA=//p' | head -1)
+
+if [ -n "$RUNNING_SHA" ]; then
+    printf '   %srunning%s  %s   <- the commit SERVING TRAFFIC right now\n' \
+        "$D" "$X" "$(printf '%s' "$RUNNING_SHA" | cut -c1-7)"
+    printf '   %srollback%s git reset --hard %s   # then re-run this script\n' \
+        "$D" "$X" "$(printf '%s' "$RUNNING_SHA" | cut -c1-7)"
+else
+    printf '   %s[warn]%s no BUILD_SHA on the running web container.\n' "$Y" "$X"
+    note "No rollback point can be printed. Either nothing is running yet (a"
+    note "first deploy — fine), or the running image predates the build stamp."
+    note "Do NOT substitute 'git rev-parse HEAD': it answers a different"
+    note "question and will hand you the commit you are about to deploy."
+fi
+
+# ---------------------------------------------------------------------------
 #  Dirty-checkout guard.
 #
 #  A modified file here means production is running something that exists on
@@ -584,6 +630,36 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+step "Confirming the running build"
+# ---------------------------------------------------------------------------
+#  A green verdict has meant "every step succeeded". That is not the same as
+#  "the containers are running the new code". `up -d` without --force-recreate
+#  leaves containers in place when they were created by a different
+#  invocation: every step passes and the box keeps serving the previous build.
+#  We have shipped that exact non-event.
+#
+#  So the deploy asks the running system whether it landed, and a disagreement
+#  is a FAILURE rather than a note — rule 6, a check with a failure mode.
+# ---------------------------------------------------------------------------
+_web_after=$($COMPOSE ps -q web 2>/dev/null | head -1)
+LIVE_SHA=""
+[ -n "$_web_after" ] && LIVE_SHA=$(docker inspect \
+    --format '{{range .Config.Env}}{{println .}}{{end}}' "$_web_after" 2>/dev/null \
+    | sed -n 's/^BUILD_SHA=//p' | head -1)
+
+if [ -z "$LIVE_SHA" ]; then
+    bad "cannot read BUILD_SHA from the running web container — this deploy cannot be proven to have landed"
+elif [ "$LIVE_SHA" != "$BUILD_SHA" ]; then
+    bad "the running web container is NOT the build this deploy just made"
+    note "built:   $(printf '%s' "$BUILD_SHA" | cut -c1-7)"
+    note "running: $(printf '%s' "$LIVE_SHA"  | cut -c1-7)"
+    note "The containers were not replaced. Recreate them explicitly:"
+    note "  docker compose ... up -d --force-recreate api web"
+else
+    ok "running build matches what was just built ($(printf '%s' "$LIVE_SHA" | cut -c1-7))"
+fi
+
+# ---------------------------------------------------------------------------
 step "Verdict"
 # ---------------------------------------------------------------------------
 #  THE VERDICT READS THE COUNTER. Nothing below this block runs if anything
@@ -612,4 +688,23 @@ printf '   App        https://%s\n' "$DOMAIN"
 printf '   API        https://%s/api\n' "$DOMAIN"
 printf '   Health     https://%s/health\n' "$DOMAIN"
 printf '\n   %sOutbound mail reaches the real internet.%s\n' "$Y" "$X"
+
+# ---------------------------------------------------------------------------
+#  Leave the checkout on main.
+#
+#  The branch guard refuses a production deploy from a feature branch. That
+#  stops the bad deploy without removing the reason somebody was on a branch
+#  in this directory — for a long time it was the only clone on the box.
+#  ~/tatvaos-scratch now exists for that work (HOUSE_RULES rule 11), and
+#  this returns the deploy directory to a known state at the one moment it is
+#  provably safe to: everything above passed.
+# ---------------------------------------------------------------------------
+if [ "$BRANCH" != "main" ]; then
+    if git checkout main >/dev/null 2>&1; then
+        printf '   %scheckout%s returned to main (was %s)\n' "$D" "$X" "$BRANCH"
+    else
+        printf '   %s[warn]%s could not return the checkout to main — still on %s\n' \
+            "$Y" "$X" "$BRANCH"
+    fi
+fi
 printf '\n'

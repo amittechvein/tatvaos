@@ -127,12 +127,20 @@ Now you're in Window B. Go to the product folder:
 
     cd /srv/tatvaos-production
 
-**Write down where we are now, so we can come back if this goes wrong:**
+**You do not need to write down an undo point. The deploy prints it for you.**
 
-    git rev-parse --short HEAD
+Further down, `deploy.sh` prints two lines near the top of its output:
 
-It prints a short code like `73dac96`. **Copy it somewhere.** That is your
-undo button. It takes two seconds and has saved us before.
+    running   9da2316   <- the commit SERVING TRAFFIC right now
+    rollback  git reset --hard 9da2316   # then re-run this script
+
+That is your undo button, and it is read from the running system rather than
+from this folder. **Copy those lines when they appear.**
+
+This page used to tell you to run `git rev-parse --short HEAD` here instead.
+That prints what this *folder* is sitting on, which is a different fact from
+what is *running* — and the commands just below are about to change the folder.
+If a previous deploy half-finished, the two disagree without telling you.
 
 Fetch the new code:
 
