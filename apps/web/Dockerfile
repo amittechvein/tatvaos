@@ -39,4 +39,28 @@ COPY --from=build --chown=nextjs:nodejs /repo/apps/web/public ./apps/web/public
 USER nextjs
 EXPOSE 3000
 ENV PORT=3000 HOSTNAME=0.0.0.0
+
+# ---------------------------------------------------------------------------
+#  THE BUILD STAMP, IN THE RUNTIME STAGE TOO.
+#
+#  The ARG/ENV pair above sits in the `build` stage, which is where Next needs
+#  the value. Environment does not cross a FROM boundary, so until 13 Sept 2026
+#  this runtime image never carried BUILD_SHA at all: the commit was inlined
+#  into the page and the server bundle, but absent from `docker inspect`.
+#
+#  infra/scripts/deploy.sh reads the container environment twice - the
+#  rollback printer at the top, and the "Confirming the running build" check
+#  before the verdict. So the printer never printed, and the check went red on
+#  its FIRST EVER RUN (deploy of 6f0ded8, 12 Sept 2026, run 34716535090) over a
+#  deploy that had in fact landed: containers recreated thirty seconds after
+#  the pre-deploy backup, production serving 6f0ded8, the new migration in the
+#  database. The red was read as "containers not replaced" and written into a
+#  review. The cause was this stage boundary, not a stale container.
+#
+#  Declared again here so the value the deploy passed is the value the running
+#  container answers with. Empty stays empty: a missing stamp is still never a
+#  build failure.
+# ---------------------------------------------------------------------------
+ARG BUILD_SHA=
+ENV BUILD_SHA=$BUILD_SHA
 CMD ["node", "apps/web/server.js"]
