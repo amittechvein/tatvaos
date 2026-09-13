@@ -136,7 +136,10 @@ export function parseCsv(text: string, domains: DomainOpt[]): Row[] {
   if (lines.length === 0) return [];
 
   const known = new Set(domains.map((d) => d.fqdn.toLowerCase()));
-  const first = splitCsvLine(lines[0]);
+  // lines is non-empty here (guarded above), but the index type is
+  // string | undefined under the strict tsconfig - and the Docker build on
+  // the box failed on exactly this line (12 Sept 2026, WEB_EXIT=1).
+  const first = splitCsvLine(lines[0] ?? '');
   const map = mapColumns(first);
   const body = map ? lines.slice(1) : lines;
   const at = (cells: string[], ci: number): string => {
