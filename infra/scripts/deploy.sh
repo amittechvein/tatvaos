@@ -473,7 +473,13 @@ fi
 
 # ---------------------------------------------------------------------------
 step "Starting services"
-$COMPOSE up -d --remove-orphans 2>&1 | tail -12 | sed 's/^/   /'
+# The WHOLE output, not its last dozen lines. Compose prints one line per state
+# change per service - Recreate, Recreated, Starting, Started, or Running for
+# a container it left alone - and those lines are the record of whether the
+# containers were replaced. A `tail -12` here hid exactly them on 12 Sept 2026,
+# and "were the containers recreated?" had to be answered from docker inspect
+# the next day instead of from this log.
+$COMPOSE up -d --remove-orphans 2>&1 | sed 's/^/   /'
 
 # ---------------------------------------------------------------------------
 step "Reloading the reverse proxy"
@@ -648,7 +654,17 @@ LIVE_SHA=""
     | sed -n 's/^BUILD_SHA=//p' | head -1)
 
 if [ -z "$LIVE_SHA" ]; then
-    bad "cannot read BUILD_SHA from the running web container — this deploy cannot be proven to have landed"
+    bad "the build stamp could not be read from the running web container — this deploy cannot be proven to have landed"
+    note "This does NOT mean the containers were not replaced. It means the"
+    note "running container's environment has no BUILD_SHA to compare - which"
+    note "is what an image built before the stamp reached the runtime stage of"
+    note "apps/web/Dockerfile looks like. On 12 Sept 2026 this branch fired on"
+    note "the check's first ever run, over a deploy that HAD landed, and the"
+    note "wording led straight to the wrong conclusion. Before concluding"
+    note "anything, look at when the containers were created:"
+    note "  docker ps --format 'table {{.Names}}\t{{.CreatedAt}}\t{{.Status}}'"
+    note "and at the stamp inlined in the served page:"
+    note "  curl -s https://<site>/ | grep -o 'x-build[^>]*'"
 elif [ "$LIVE_SHA" != "$BUILD_SHA" ]; then
     bad "the running web container is NOT the build this deploy just made"
     note "built:   $(printf '%s' "$BUILD_SHA" | cut -c1-7)"
