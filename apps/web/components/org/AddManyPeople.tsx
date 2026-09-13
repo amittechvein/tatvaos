@@ -157,7 +157,13 @@ export function parseCsv(text: string, domains: DomainOpt[]): Row[] {
     const rawPhone = at(cells, 5) || null;
     const mustChange = truthy(at(cells, 6) || null);
 
-    const [localPart, domain] = email.includes('@') ? email.split('@') : ['', ''];
+    // indexOf + slice rather than destructuring split('@'): the tuple form
+    // types both halves as string | undefined and failed the build on the
+    // box (12 Sept 2026). This also keeps a second '@' inside the domain
+    // half, where the verified-domains check below will refuse it.
+    const atIdx = email.indexOf('@');
+    const localPart = atIdx >= 0 ? email.slice(0, atIdx) : '';
+    const domain = atIdx >= 0 ? email.slice(atIdx + 1) : '';
     const row: Row = {
       line: i + (map ? 2 : 1),
       name, localPart, domain, department: dept,
