@@ -76,3 +76,8 @@ npm-debug.log*
 .env.local*
 *.env.backup
 *.staging-backup
+
+# Archives and session dumps that were committed by accident on 12 Sept 2026
+# (Claude outputs/mobile.tgz, tatvaos-bundle.bundle). Nothing in the build reads them.
+Claude outputs/
+*.bundle
