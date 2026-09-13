@@ -76,11 +76,10 @@ exists, the code's fallback stays. **What you can do without a voice:** make the
 swallowed autoplay refusal visible (a log line, a UI hint) so the failure is at
 least not silent.
 
-**`keep_until_at` is implemented and the document says it is pending.**
-Per-recording retention exemption is built and honoured by both the sweep and
-the share-expiry trigger. The retention section of the decisions record still
-lists it as open. Fix the document — rule 8 inverted is how someone builds a
-thing twice.
+**`keep_until_at` is implemented, and the decisions record now says so**
+(corrected 13 Sept 2026; it listed the exemption as "not decided" for five
+days after it shipped). Per-recording retention exemption is built and honoured
+by both the sweep and the share-expiry trigger.
 
 **Captions wiring.** The server half was proven 23 Aug (`connect.caption_lines`,
 `POST /api/connect/meetings/{id}/captions`, worker fallback). The client hook
