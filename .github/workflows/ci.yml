@@ -11,12 +11,19 @@
 #  main — post-hoc, like the 27th. Open a PR and CI runs before the merge;
 #  that is now the only pre-merge examination there is.
 #
-#  The trigger is exactly [main] — NOT the old [main, 'feat/**', 'fix/**'].
+#  The PUSH trigger is exactly [main] — NOT the old [main, 'feat/**', 'fix/**'].
 #  That glob list silently skipped whatever it didn't name ('feature/…'
 #  missed 'feat/**' by four characters, same night, same author, one branch
 #  built and one didn't). A list that names SOME branches promises more than
 #  it delivers; main-only promises little and delivers exactly that. If this
 #  filter ever changes again, this header changes in the same commit.
+#
+#  The PULL REQUEST trigger has NO branch filter, since 13 Sept 2026. It used
+#  to be `branches: [main]` too, which filters on the BASE branch - so a PR
+#  stacked on another PR's branch (#89 on #88) never ran CI at all, and a
+#  green tick on the top of a stack meant nothing had been examined. With one
+#  developer across five lanes, stacks are the normal shape of work. Every PR
+#  runs, whatever it targets; the minutes cost is the price of the promise.
 # ============================================================================
 
 name: CI
@@ -25,7 +32,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -97,8 +103,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ------------------------------------------------------------------
+      #  The runner image ships a third-party Chrome apt source whose index
+      #  intermittently fails the hash check, and a bare `apt-get update`
+      #  fails the whole job on it (#84's 2/4 red, 12 Sept 2026). We install
+      #  nothing from that source, so it is removed before the update rather
+      #  than retried around. If the update still fails, the failure is ours.
+      # ------------------------------------------------------------------
       - name: Install client
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list /etc/apt/sources.list.d/google-chrome*.sources
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
 
       - name: Apply schema
         env: { PGPASSWORD: devpass }
@@ -134,8 +150,12 @@ jobs:
         working-directory: local
         run: docker compose up -d --build
 
+      # Same Chrome-source removal as the isolation job, for the same flake.
       - name: Install swaks
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq swaks
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list /etc/apt/sources.list.d/google-chrome*.sources
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq swaks
 
       - name: Wait for readiness
         run: sleep 25
