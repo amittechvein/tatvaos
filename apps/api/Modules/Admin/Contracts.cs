@@ -99,7 +99,11 @@ public sealed record UpdateUserRequest(
 public sealed record SetAvatarRequest(string DataUrl);
 
 public sealed record BulkCreateUserRequest(
-    Guid DomainId,
+    // The fallback domain, for a file of bare usernames. NULL is normal: a CSV
+    // exported from another system carries whole addresses, and each row picks
+    // its own domain below. Making the admin ALSO choose one is how a file
+    // covering two domains lands entirely on one of them.
+    Guid? DomainId,
     // The department for rows that do not name their own. Null = none.
     Guid? DepartmentId,
     IReadOnlyList<BulkUserEntry> Users,
@@ -111,7 +115,25 @@ public sealed record BulkCreateUserRequest(
 // Department by NAME, as the admin's spreadsheet has it ("Class 5A"). Null
 // falls back to the request's DepartmentId. An unknown or ambiguous name
 // skips the row with a reason — it never silently lands in no department.
-public sealed record BulkUserEntry(string LocalPart, string DisplayName, string? Department = null);
+public sealed record BulkUserEntry(
+    string LocalPart,
+    string DisplayName,
+    string? Department = null,
+    // The part after the @, when the row carried a whole address. Must be a
+    // VERIFIED domain of this organisation; anything else skips the row.
+    string? Domain = null,
+    // Blank means generate one. A supplied password must satisfy the same
+    // PasswordPolicy the change-password screen enforces, or the person cannot
+    // later set the password they were given.
+    string? Password = null,
+    // Stored UNVERIFIED. An imported address is the admin's claim, not the
+    // person's proof, and a typo that arrives pre-verified is a working
+    // account-recovery route into someone else's mailbox.
+    string? RecoveryEmail = null,
+    string? RecoveryPhone = null,
+    // Honoured only when a password was supplied. A password WE generated is a
+    // handover credential and is always forced, whatever the column says.
+    bool? MustChangePassword = null);
 
 /// <param name="Id">The core.users id — the person, not the mailbox.</param>
 /// <param name="MailboxAddress">
