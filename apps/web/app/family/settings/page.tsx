@@ -87,15 +87,15 @@ export default function FamilySettingsPage() {
   return (
     <FamilyShell title="Contact settings" breadcrumb="Settings">
       {error && (
-        <div className="alert alert-danger d-flex align-items-start mb-4">
-          <div className="flex-fill">{error}</div>
+        <div className="alert alert-danger !flex !items-start !mb-[1.5rem]">
+          <div className="!flex-auto">{error}</div>
           <button type="button" className="btn-close" aria-label="Dismiss"
                   onClick={() => setError(null)} />
         </div>
       )}
       {note && (
-        <div className="alert alert-success d-flex align-items-start mb-4">
-          <div className="flex-fill">{note}</div>
+        <div className="alert alert-success !flex !items-start !mb-[1.5rem]">
+          <div className="!flex-auto">{note}</div>
           <button type="button" className="btn-close" aria-label="Dismiss"
                   onClick={() => setNote(null)} />
         </div>
@@ -111,16 +111,16 @@ export default function FamilySettingsPage() {
         }
       >
         {!settings ? (
-          <div className="d-flex justify-content-center py-4">
-            <span className="d-inline-block animate-spin rounded-circle"
+          <div className="!flex !justify-center !py-[1.5rem]">
+            <span className="!inline-block animate-spin !rounded-[50%]"
                   style={{ width: 28, height: 28, border: '3px solid rgba(0,0,0,.12)',
                            borderTopColor: '#6C3CE9' }} />
           </div>
         ) : (
-          <div className="d-flex flex-column gap-3">
+          <div className="!flex !flex-col !gap-[1rem]">
             {SWITCHES.map((s, i) => (
               <div key={s.key}>
-                {i > 0 && <hr className="mt-0 mb-3" />}
+                {i > 0 && <hr className="mt-0 !mb-[1rem]" />}
                 <div className="form-check form-switch">
                   <input
                     className="form-check-input"
@@ -134,22 +134,22 @@ export default function FamilySettingsPage() {
                 </div>
                 {/* Indented to line up under the label rather than the switch,
                     so the hint reads as belonging to the setting above it. */}
-                <p className="fs-14 text-muted mb-0" style={{ marginLeft: 44 }}>{s.hint}</p>
+                <p className="!text-[0.875rem] !text-ink-muted mb-0" style={{ marginLeft: 44 }}>{s.hint}</p>
               </div>
             ))}
           </div>
         )}
       </Card>
 
-      <Card title="What this does not do" className="mt-4">
-        <p className="fs-14 text-muted mb-0">
+      <Card title="What this does not do" className="!mt-[1.5rem]">
+        <p className="!text-[0.875rem] !text-ink-muted mb-0">
           Automatically saved contacts are personal to you. A message arriving in your mailbox
           says something about who <em>you</em> correspond with; it says nothing about who the
           organisation knows, so nothing here is ever shared with colleagues. To share a
           contact, open it and choose “Share with organisation” — that is a deliberate act,
           and it cannot be undone from this screen.
         </p>
-        <p className="fs-14 text-muted mt-3 mb-0">
+        <p className="!text-[0.875rem] !text-ink-muted !mt-[1rem] mb-0">
           Deleting an automatically saved contact also stops it coming back. The next message
           from that address will not recreate it.
         </p>

@@ -128,7 +128,7 @@ export default function PeoplePage() {
       title="People"
       subtitle={`${people.length} in this organisation`}
       actions={
-        <div className="d-flex gap-2">
+        <div className="!flex gap-2">
           <Button variant="ghost" onClick={() => setAdding(true)} disabled={usable.length === 0}>
             Add many
           </Button>
@@ -147,31 +147,31 @@ export default function PeoplePage() {
         />
       )}
       {error && (
-        <div className="alert alert-danger d-flex align-items-start mb-3">
-          <div className="flex-fill">{error}</div>
+        <div className="alert alert-danger !flex !items-start !mb-[1rem]">
+          <div className="!flex-auto">{error}</div>
           <button type="button" className="btn-close" aria-label="Dismiss"
                   onClick={() => setError(null)} />
         </div>
       )}
       {notice && (
-        <div className="alert alert-success d-flex align-items-start mb-3">
-          <div className="flex-fill">{notice}</div>
+        <div className="alert alert-success !flex !items-start !mb-[1rem]">
+          <div className="!flex-auto">{notice}</div>
           <button type="button" className="btn-close" aria-label="Dismiss"
                   onClick={() => setNotice(null)} />
         </div>
       )}
 
       {usable.length === 0 && !loading && (
-        <div className="alert alert-warning mb-3">
+        <div className="alert alert-warning !mb-[1rem]">
           No verified domain yet, so mailboxes cannot be created. Add and verify one
           under <strong>Domains</strong> first — people created on an unverified
           domain would have addresses that receive nothing.
         </div>
       )}
 
-      <div className="d-flex gap-2 mb-3 flex-wrap align-items-end">
+      <div className="!flex gap-2 !mb-[1rem] flex-wrap !items-end">
         <div style={{ minWidth: 240 }}>
-          <label className="form-label fs-12 text-muted mb-1" htmlFor="tv-dept-filter">
+          <label className="form-label !text-[0.75rem] !text-ink-muted mb-1" htmlFor="tv-dept-filter">
             Department
           </label>
           <select id="tv-dept-filter" className="form-select form-select-sm" value={filterDept}
@@ -193,8 +193,8 @@ export default function PeoplePage() {
 
       <Card padded={false}>
         {loading ? (
-          <div className="d-flex justify-content-center py-5">
-            <span className="d-inline-block animate-spin rounded-circle"
+          <div className="!flex !justify-center !py-[3rem]">
+            <span className="!inline-block animate-spin !rounded-[50%]"
                   style={{ width: 30, height: 30, border: '3px solid rgba(0,0,0,.12)',
                            borderTopColor: '#6C3CE9' }} />
           </div>
@@ -214,56 +214,56 @@ export default function PeoplePage() {
                     onClick={() => setEditing(p)}
                     title="Edit this person">
                   <Td>
-                    <div className="d-flex align-items-center gap-2">
+                    <div className="!flex !items-center gap-2">
                       <UserPhoto userId={p.id} hasAvatar={p.hasAvatar}
                                  name={p.displayName} email={p.email} size={36} />
                       <div style={{ minWidth: 0 }}>
-                        <div className="fs-14 fw-semibold">{p.displayName}</div>
-                        <div className="fs-12 text-muted">{p.email}</div>
+                        <div className="!text-[0.875rem] !font-semibold">{p.displayName}</div>
+                        <div className="!text-[0.75rem] !text-ink-muted">{p.email}</div>
                       </div>
                     </div>
                   </Td>
                   <Td>
                     {dept ? (
-                      <div className="d-flex align-items-center gap-2">
-                        <span className="rounded-circle flex-shrink-0"
+                      <div className="!flex !items-center gap-2">
+                        <span className="!rounded-[50%] flex-shrink-0"
                               style={{ width: 8, height: 8, background: dept.colour }} />
-                        <span className="fs-14">{dept.name}</span>
+                        <span className="!text-[0.875rem]">{dept.name}</span>
                       </div>
                     ) : (
-                      <span className="fs-12 text-muted">Unassigned</span>
+                      <span className="!text-[0.75rem] !text-ink-muted">Unassigned</span>
                     )}
                   </Td>
                   <Td>
-                    <span className="fs-14 text-capitalize">{p.role.replace(/_/g, ' ')}</span>
+                    <span className="!text-[0.875rem] !capitalize">{p.role.replace(/_/g, ' ')}</span>
                   </Td>
                   <Td>
                     {p.mailboxAddress ? (
                       <>
-                        <span className="fs-12">
-                          {fmt(p.usedBytes)} <span className="text-muted">/ {fmt(p.quotaBytes)}</span>
+                        <span className="!text-[0.75rem]">
+                          {fmt(p.usedBytes)} <span className="!text-ink-muted">/ {fmt(p.quotaBytes)}</span>
                         </span>
                         <div style={{ width: 110, marginTop: 4 }}>
                           <Meter used={p.usedBytes} total={p.quotaBytes} />
                         </div>
                       </>
                     ) : (
-                      <span className="fs-12 text-muted">No mailbox</span>
+                      <span className="!text-[0.75rem] !text-ink-muted">No mailbox</span>
                     )}
                   </Td>
                   <Td>
                     {p.mfaEnabled
                       ? <Badge tone="ok">On</Badge>
-                      : <span className="fs-12 text-muted">Off</span>}
+                      : <span className="!text-[0.75rem] !text-ink-muted">Off</span>}
                   </Td>
                   <Td><Badge tone={statusTone(p.status)}>{p.status}</Badge></Td>
                   <Td>
-                    <span className="fs-13">
+                    <span className="!text-[0.8125rem]">
                       {p.lastLoginAt ? formatDateTime(p.lastLoginAt) : 'Never'}
                     </span>
                   </Td>
                   <Td>
-                    <span className="fs-13">
+                    <span className="!text-[0.8125rem]">
                       {p.hasVerifiedRecoveryEmail ? 'Verified' : '\u2014'}
                     </span>
                   </Td>
@@ -274,7 +274,7 @@ export default function PeoplePage() {
         )}
       </Card>
 
-      <p className="fs-12 text-muted d-block mt-3 mb-0">
+      <p className="!text-[0.75rem] !text-ink-muted !block !mt-[1rem] mb-0">
         You can create people and reset their passwords. You cannot read their mail —
         administrative power over an account never implies access to its contents.
       </p>
@@ -391,16 +391,16 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
         }
       >
         {photoWarning && (
-          <p className="fs-14 text-warning mb-3">
+          <p className="!text-[0.875rem] !text-warn !mb-[1rem]">
             {photoWarning} You can add it from their profile.
           </p>
         )}
-        <div className="alert alert-warning mb-3">
+        <div className="alert alert-warning !mb-[1rem]">
           This password is shown once and cannot be retrieved later. Copy it now —
           if it is lost, reset it rather than asking us for it.
         </div>
-        <div className="d-flex gap-2 align-items-center">
-          <div className="flex-fill font-monospace bg-light rounded"
+        <div className="!flex gap-2 !items-center">
+          <div className="!flex-auto !font-mono bg-light rounded"
                style={{ padding: 12, fontSize: 15 }}>
             {created.password}
           </div>
@@ -420,7 +420,7 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
             </svg>
           </button>
         </div>
-        <p className="fs-12 text-muted mt-3 mb-0">
+        <p className="!text-[0.75rem] !text-ink-muted !mt-[1rem] mb-0">
           They will be asked to change it when they first sign in.
         </p>
       </Modal>
@@ -443,7 +443,7 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
         </>
       }
     >
-      <div className="mb-3">
+      <div className="!mb-[1rem]">
         <PhotoPicker preview={photo} name={displayName} onPick={setPhoto}
                      onRemove={() => setPhoto(null)} disabled={busy} />
       </div>
@@ -453,8 +453,8 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
                onChange={(e) => setDisplayName(e.target.value)} />
       </Field>
 
-      <div className="d-flex gap-2 align-items-start">
-        <div className="flex-fill">
+      <div className="!flex gap-2 !items-start">
+        <div className="!flex-auto">
           <Field label="Email address" required>
             {/* input-group replaces MUI's endAdornment: the @ becomes part of
                 the control rather than text floating beside it. */}
@@ -508,8 +508,8 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
       {/* Storage. The inherited value is shown BEFORE the override, so the
           common case needs no decision at all — and the number is visible
           rather than something the admin has to go and look up. */}
-      <div className="rounded p-3 mb-2" style={{ background: 'rgba(3,181,98,0.05)' }}>
-        <div className="fs-14 fw-semibold mb-2">Storage</div>
+      <div className="rounded !p-[1rem] mb-2" style={{ background: 'rgba(3,181,98,0.05)' }}>
+        <div className="!text-[0.875rem] !font-semibold mb-2">Storage</div>
 
         <div className="form-check form-switch">
           <input
@@ -520,7 +520,7 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
             checked={!override}
             onChange={(e) => setOverride(!e.target.checked)}
           />
-          <label className="form-check-label fs-14" htmlFor="tv-inherit-quota">
+          <label className="form-check-label !text-[0.875rem]" htmlFor="tv-inherit-quota">
             Use <strong>{fmt(inherited)}</strong>
             {dept ? ` from ${dept.name}` : ' from the organisation default'}
           </label>
@@ -548,7 +548,7 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
       </div>
 
       {dept && !dept.canSendExternal && (
-        <div className="alert alert-info mt-3 mb-0">
+        <div className="alert alert-info !mt-[1rem] mb-0">
           {dept.name} is internal-only, so this person will be able to email colleagues
           but not the outside world.
         </div>
@@ -702,7 +702,7 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
           </Button>
         }
       >
-        <div className="alert alert-warning mb-3">
+        <div className="alert alert-warning !mb-[1rem]">
           {tempPassword.mailbox
             ? 'Shown once — copy it now and pass it to them directly. This is '
               + 'the password their mail apps (Outlook, phones) sign in with. '
@@ -712,8 +712,8 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
               + 'must change it at first sign-in, and every session they had '
               + 'is already signed out.'}
         </div>
-        <div className="d-flex gap-2 align-items-center">
-          <div className="flex-fill font-monospace bg-light rounded"
+        <div className="!flex gap-2 !items-center">
+          <div className="!flex-auto !font-mono bg-light rounded"
                style={{ padding: 12, fontSize: 15 }}>
             {tempPassword.password}
           </div>
@@ -739,7 +739,7 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
   // who they are, what they can do, what they are using, and — separated
   // below a visible line — the actions that end things.
   const sectionTitle = (t: string) => (
-    <div className="fs-13 fw-semibold text-uppercase text-muted mb-2" style={{ letterSpacing: '0.04em' }}>{t}</div>
+    <div className="!text-[0.8125rem] !font-semibold !uppercase !text-ink-muted mb-2" style={{ letterSpacing: '0.04em' }}>{t}</div>
   );
 
   return (
@@ -767,7 +767,7 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
       <div className="col-md-6">
       {/* ---- Profile -------------------------------------------------- */}
       {sectionTitle('Profile')}
-      <div className="mb-3">
+      <div className="!mb-[1rem]">
         <PhotoPicker
           preview={photo !== undefined ? photo : storedPhoto}
           name={person.displayName}
@@ -802,20 +802,20 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
       {/* The facts an admin opens this dialog to check, previously not
           shown anywhere: can they sign in, is a second factor protecting
           the account, and when were they last here. */}
-      <div className="d-flex flex-wrap gap-4 mb-3">
+      <div className="!flex flex-wrap !gap-[1.5rem] !mb-[1rem]">
         <div>
-          <div className="fs-12 text-muted">Status</div>
+          <div className="!text-[0.75rem] !text-ink-muted">Status</div>
           <Badge tone={statusTone(person.status)}>{person.status}</Badge>
         </div>
         <div>
-          <div className="fs-12 text-muted">Two-step verification</div>
+          <div className="!text-[0.75rem] !text-ink-muted">Two-step verification</div>
           {person.mfaEnabled
             ? <Badge tone="ok">On</Badge>
-            : <span className="fs-13">Off — their choice to enable</span>}
+            : <span className="!text-[0.8125rem]">Off — their choice to enable</span>}
         </div>
         <div>
-          <div className="fs-12 text-muted">Last sign-in</div>
-          <span className="fs-13">
+          <div className="!text-[0.75rem] !text-ink-muted">Last sign-in</div>
+          <span className="!text-[0.8125rem]">
             {person.lastLoginAt
               ? formatDateTime(person.lastLoginAt)
               : 'Never'}
@@ -848,15 +848,15 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
         </Button>
       )}
 
-      <hr className="my-4" />
+      <hr className="!my-[1.5rem]" />
 
       {/* ---- Mail & storage ------------------------------------------- */}
       {sectionTitle('Mail & storage')}
       <div className="mb-2">
-        <div className="fs-12 text-muted">Mailbox</div>
+        <div className="!text-[0.75rem] !text-ink-muted">Mailbox</div>
         {person.mailboxAddress
-          ? <span className="fs-13 font-monospace">{person.mailboxAddress}</span>
-          : <span className="fs-13 text-muted">None — this person has no email</span>}
+          ? <span className="!text-[0.8125rem] !font-mono">{person.mailboxAddress}</span>
+          : <span className="!text-[0.8125rem] !text-ink-muted">None — this person has no email</span>}
       </div>
 
       {/* The other reset. "Reset password" above changes how they SIGN IN;
@@ -876,7 +876,7 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
           email — their files were counted somewhere else entirely. */}
       <div className="mb-2" style={{ maxWidth: 320 }}>
         <Meter used={person.usedBytes} total={person.quotaBytes} />
-        <div className="fs-12 text-muted mt-1">
+        <div className="!text-[0.75rem] !text-ink-muted mt-1">
           Using {fmt(person.usedBytes)} of {fmt(person.quotaBytes)} across all products
         </div>
       </div>
@@ -908,21 +908,21 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
           server refuses it anyway. */}
       {!editingSelf && !targetLocked && (
         <>
-          <hr className="my-4" />
+          <hr className="!my-[1.5rem]" />
           {sectionTitle('Leaving and removal')}
           {person.status === 'suspended' && (
-            <p className="fs-12 text-muted mb-3">
+            <p className="!text-[0.75rem] !text-ink-muted !mb-[1rem]">
               Suspended — cannot sign in, mailbox rejecting mail, data retained.
             </p>
           )}
           {person.status === 'deleted' && (
-            <p className="fs-12 text-muted mb-3">
+            <p className="!text-[0.75rem] !text-ink-muted !mb-[1rem]">
               This account is closed. Create the person again if they return.
             </p>
           )}
 
           {person.status !== 'deleted' && (
-          <div className="d-flex gap-2 flex-wrap">
+          <div className="!flex gap-2 flex-wrap">
             {person.status === 'suspended' ? (
               <Button variant="ghost" disabled={busy}
                       onClick={() => void act('/reactivate', 'POST',
@@ -966,9 +966,9 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
               mail from ANYONE to their address, colleagues or customers,
               is delivered to the successor from the moment this runs. */}
           {offboarding && person.status !== 'deleted' && (
-            <div className="border rounded p-3 mt-3">
-              <div className="fs-14 fw-semibold mb-1">Offboard {person.displayName}</div>
-              <p className="fs-12 text-muted mb-2">
+            <div className="border rounded !p-[1rem] !mt-[1rem]">
+              <div className="!text-[0.875rem] !font-semibold mb-1">Offboard {person.displayName}</div>
+              <p className="!text-[0.75rem] !text-ink-muted mb-2">
                 Closes sign-in and all access, and deactivates their mailbox.
                 Their stored mail is retained. Choose what happens to mail
                 still sent to {person.mailboxAddress ?? 'their address'}:
@@ -983,7 +983,7 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
                   </option>
                 ))}
               </Select>
-              <div className="d-flex gap-2">
+              <div className="!flex gap-2">
                 <Button variant="primary" disabled={busy} onClick={() => void offboard()}>
                   {busy ? 'Working…' : `Offboard ${person.displayName}`}
                 </Button>

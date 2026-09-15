@@ -69,12 +69,12 @@ export default function AdminOrganisations() {
         </Link>
       }
     >
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+      <div className="!mb-[1.5rem] flex flex-wrap items-center gap-2">
         {STATUSES.map((s) => (
           <button
             key={s}
             onClick={() => setStatus(s)}
-            className={`rounded-card border px-3 py-1.5 text-[13px] capitalize transition
+            className={`rounded-card border !px-[1rem] py-1.5 text-[13px] capitalize transition
               ${status === s
                 ? 'border-brand-500 bg-brand-50 font-medium text-brand-700'
                 : 'border-line text-ink-muted hover:border-ink-faint'}`}
@@ -92,7 +92,7 @@ export default function AdminOrganisations() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search name, domain or admin"
-          className="ml-auto w-full max-w-xs rounded-card border border-line bg-surface px-3 py-2 text-[13px] outline-none placeholder:text-ink-faint focus:border-brand-400"
+          className="ml-auto w-full max-w-xs rounded-card border border-line bg-surface !px-[1rem] py-2 text-[13px] outline-none placeholder:text-ink-faint focus:border-brand-400"
         />
       </div>
 
@@ -176,7 +176,7 @@ export default function AdminOrganisations() {
         )}
       </Card>
 
-      <p className="mt-3 text-[12px] text-ink-muted">
+      <p className="!mt-[1rem] text-[12px] text-ink-muted">
         Listing organisations reads each one under its own tenant context rather than
         with row-level security disabled. There is deliberately no &ldquo;see
         everything&rdquo; mode — a bug in one would be unbounded.
@@ -272,7 +272,7 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
   return (
     <Modal
       title={`Manage — ${org.name}`}
-      subtitle={<>{org.planName ?? 'No plan'} · <span className="text-capitalize">{org.status}</span></>}
+      subtitle={<>{org.planName ?? 'No plan'} · <span className="!capitalize">{org.status}</span></>}
       onClose={onClose}
       busy={busy}
       footer={
@@ -288,7 +288,7 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
       {error && <div className="alert alert-danger" role="alert">{error}</div>}
 
       {/* ---- Details: name, type, owner ---------------------------- */}
-      <h6 className="fw-semibold mb-3">Details</h6>
+      <h6 className="!font-semibold !mb-[1rem]">Details</h6>
 
       <Field label="Organisation name">
         <Input  value={name} onChange={(e) => setName(e.target.value)} />
@@ -329,7 +329,7 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
         </div>
       </div>
 
-      <p className="fs-12 text-muted">
+      <p className="!text-[0.75rem] !text-ink-muted">
         The owner contact is who this organisation is billed to and called
         about — editing it here does not change any user&apos;s sign-in.
       </p>
@@ -341,11 +341,11 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
         </Button>
       </div>
 
-      <hr className="my-4" />
+      <hr className="!my-[1.5rem]" />
 
       {/* ---- Lifecycle: the "still trial" fix ----------------------- */}
-      <h6 className="fw-semibold mb-2">Status</h6>
-      <div className="d-flex flex-wrap gap-2 mb-2">
+      <h6 className="!font-semibold mb-2">Status</h6>
+      <div className="!flex flex-wrap gap-2 mb-2">
         {(onTrial || suspended) && (
           <Button variant="primary" disabled={busy}
                   onClick={() => post('/activate', 'POST', onChanged)}>
@@ -359,16 +359,16 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
           </Button>
         )}
       </div>
-      <p className="fs-12 text-muted">
+      <p className="!text-[0.75rem] !text-ink-muted">
         {onTrial && 'Activating ends the trial and marks the organisation a paying customer. It keeps signing in and receiving mail throughout.'}
         {active && 'Suspending stops sign-in and mail delivery immediately. Nothing is deleted — data is retained for the grace period.'}
         {suspended && 'Reactivating restores sign-in and delivery.'}
       </p>
 
-      <hr className="my-4" />
+      <hr className="!my-[1.5rem]" />
 
       {/* ---- Plan --------------------------------------------------- */}
-      <h6 className="fw-semibold mb-3">Plan</h6>
+      <h6 className="!font-semibold !mb-[1rem]">Plan</h6>
 
       <Field label="Plan">
         <Select value={planId} onChange={(e) => setPlanId(e.target.value)}>

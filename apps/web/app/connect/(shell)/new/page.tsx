@@ -154,9 +154,9 @@ export default function NewMeetingPage() {
 
   return (
     <>
-      <div className="page-header-breadcrumb d-flex align-items-center justify-content-between flex-wrap gap-2 my-3">
+      <div className="page-header-breadcrumb !flex !items-center !justify-between flex-wrap gap-2 !my-[1rem]">
         <div>
-          <h1 className="page-title fw-semibold fs-20 mb-1">Schedule a meeting</h1>
+          <h1 className="page-title !font-semibold !text-[1.25rem] mb-1">Schedule a meeting</h1>
           <ol className="breadcrumb mb-0">
             <li className="breadcrumb-item"><a href="/connect">Connect</a></li>
             <li className="breadcrumb-item active" aria-current="page">New</li>
@@ -296,7 +296,7 @@ export default function NewMeetingPage() {
                        autoComplete="off" spellCheck={false} />
               </Field>
 
-              <div className="d-flex gap-2">
+              <div className="!flex gap-2">
                 <button className="btn btn-primary" type="submit" disabled={saving}>
                   {saving ? 'Creating…' : 'Create meeting'}
                 </button>

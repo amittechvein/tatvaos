@@ -312,10 +312,10 @@ export function AddManyPeople({
         </>
       }
     >
-      {error && <div className="alert alert-danger mb-3">{error}</div>}
+      {error && <div className="alert alert-danger !mb-[1rem]">{error}</div>}
 
       {step === 'choose' && (
-        <div className="d-grid gap-3">
+        <div className="![display:grid] !gap-[1rem]">
           <Field label="1. Download the template" hint="Seven columns. Password may be left blank — we generate a strong one and show it once.">
             <Button onClick={templateCsv}>Download CSV template</Button>
           </Field>
@@ -408,7 +408,7 @@ export function AddManyPeople({
             <strong>These passwords are shown once.</strong> They are hashed on the server and
             cannot be shown again. Download or copy them now.
           </div>
-          <div className="d-flex gap-2 mb-3">
+          <div className="!flex gap-2 !mb-[1rem]">
             <Button onClick={passwordsCsv}>Download CSV</Button>
             <Button onClick={() => navigator.clipboard?.writeText(
               (result.created).map((c) => `${c.email}\t${c.temporaryPassword ?? ''}`).join('\n'),

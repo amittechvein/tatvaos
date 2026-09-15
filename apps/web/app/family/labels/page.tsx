@@ -105,21 +105,21 @@ function Labels() {
   return (
     <>
       {error && (
-        <div className="alert alert-danger d-flex align-items-start mb-4">
-          <div className="flex-fill">{error}</div>
+        <div className="alert alert-danger !flex !items-start !mb-[1.5rem]">
+          <div className="!flex-auto">{error}</div>
           <button type="button" className="btn-close" aria-label="Dismiss"
                   onClick={() => setError(null)} />
         </div>
       )}
       {note && (
-        <div className="alert alert-success d-flex align-items-start mb-4">
-          <div className="flex-fill">{note}</div>
+        <div className="alert alert-success !flex !items-start !mb-[1.5rem]">
+          <div className="!flex-auto">{note}</div>
           <button type="button" className="btn-close" aria-label="Dismiss"
                   onClick={() => setNote(null)} />
         </div>
       )}
 
-      <p className="fs-14 text-muted mb-3">
+      <p className="!text-[0.875rem] !text-ink-muted !mb-[1rem]">
         Labels group contacts without moving them. A contact can carry any number, and
         deleting a label never deletes the people in it.
       </p>
@@ -129,8 +129,8 @@ function Labels() {
         actions={<Button variant="primary" onClick={() => setEditing('new')}>New label</Button>}
       >
         {loading ? (
-          <div className="d-flex justify-content-center py-5">
-            <span className="d-inline-block animate-spin rounded-circle"
+          <div className="!flex !justify-center !py-[3rem]">
+            <span className="!inline-block animate-spin !rounded-[50%]"
                   style={{ width: 30, height: 30, border: '3px solid rgba(0,0,0,.12)',
                            borderTopColor: '#6C3CE9' }} />
           </div>
@@ -147,19 +147,19 @@ function Labels() {
                 <Td>
                   <span
                     aria-hidden
-                    className="d-inline-block rounded-circle"
+                    className="!inline-block !rounded-[50%]"
                     style={{ width: 12, height: 12, background: l.colour ?? '#98a2b8' }}
                   />
                 </Td>
                 <Td>
-                  <span className="fs-14 fw-semibold">{l.name}</span>
+                  <span className="!text-[0.875rem] !font-semibold">{l.name}</span>
                 </Td>
                 <Td>
-                  <span className="fs-14 text-muted">{l.description ?? '—'}</span>
+                  <span className="!text-[0.875rem] !text-ink-muted">{l.description ?? '—'}</span>
                 </Td>
                 <Td>
                   {l.count === 0 ? (
-                    <span className="fs-14 text-muted">Empty</span>
+                    <span className="!text-[0.875rem] !text-ink-muted">Empty</span>
                   ) : (
                     <Button variant="ghost" href={`/family/contacts?groupId=${l.id}`}>
                       {l.count === 1 ? '1 contact' : `${l.count} contacts`}
@@ -167,7 +167,7 @@ function Labels() {
                   )}
                 </Td>
                 <Td>
-                  <div className="d-flex gap-2 justify-content-end">
+                  <div className="!flex gap-2 !justify-end">
                     <Button variant="ghost" onClick={() => setEditing(l)}>Rename</Button>
                     <Button variant="ghost" onClick={() => setDeleting(l)}>Delete</Button>
                   </div>
@@ -202,13 +202,13 @@ function Labels() {
             </>
           }
         >
-          <p className="fs-14 mb-0">
+          <p className="!text-[0.875rem] mb-0">
             {deleting.count > 0
               ? `“${deleting.name}” comes off ${deleting.count === 1
                   ? 'one contact' : `${deleting.count} contacts`}. The contacts themselves stay exactly where they are.`
               : 'This label is empty, so nothing else changes.'}
           </p>
-          <p className="fs-14 text-muted mt-3 mb-0">
+          <p className="!text-[0.875rem] !text-ink-muted !mt-[1rem] mb-0">
             There is no undo for the label itself — you would have to create it again and
             re-add the contacts.
           </p>
@@ -276,7 +276,7 @@ function LabelDialog({ label, onClose, onSaved }: {
         </>
       }
     >
-      {error && <div className="alert alert-danger mb-3">{error}</div>}
+      {error && <div className="alert alert-danger !mb-[1rem]">{error}</div>}
 
       <Field
         label="Name"
@@ -305,11 +305,11 @@ function LabelDialog({ label, onClose, onSaved }: {
       </Field>
 
       <div>
-        <div className="fs-12 text-muted mb-2">Colour — this is the dot in the sidebar</div>
+        <div className="!text-[0.75rem] !text-ink-muted mb-2">Colour — this is the dot in the sidebar</div>
         {/* Real buttons rather than divs with role="button": type="button" keeps
             them out of the form's submit path, and Space/Enter activation comes
             from the browser instead of a hand-written key handler. */}
-        <div className="d-flex gap-2 flex-wrap">
+        <div className="!flex gap-2 flex-wrap">
           {COLOURS.map((c) => (
             <button
               key={c}
@@ -317,7 +317,7 @@ function LabelDialog({ label, onClose, onSaved }: {
               aria-label={`Use ${c}`}
               aria-pressed={colour === c}
               onClick={() => setColour(c)}
-              className="rounded-circle border-0 p-0"
+              className="!rounded-[50%] border-0 p-0"
               style={{
                 width: 28,
                 height: 28,

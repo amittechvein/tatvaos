@@ -17,13 +17,13 @@ export function ComingSoon({
       <div className="card custom-card">
         <div className="card-body text-center py-6">
           <span
-            className="avatar avatar-xl bg-primary-transparent mb-3"
+            className="avatar avatar-xl !bg-brand-500/10 !text-brand-500 !mb-[1rem]"
             style={{ display: 'inline-flex' }}
           >
-            <i className="ri-tools-line fs-24" />
+            <i className="ri-tools-line !text-[1.5rem]" />
           </span>
-          <h5 className="fw-semibold mb-1">{title} is coming soon</h5>
-          <p className="text-muted fs-13 mb-0 mx-auto" style={{ maxWidth: 460 }}>{blurb}</p>
+          <h5 className="!font-semibold mb-1">{title} is coming soon</h5>
+          <p className="!text-ink-muted !text-[0.8125rem] mb-0 mx-auto" style={{ maxWidth: 460 }}>{blurb}</p>
         </div>
       </div>
     </AdminShell>
