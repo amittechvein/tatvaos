@@ -205,35 +205,35 @@ export default function DomainsPage() {
       actions={<Button variant="primary" onClick={() => setAdding(true)}>Add domain</Button>}
     >
       {error && (
-        <div className="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
+        <div className="alert alert-danger !flex !items-center !justify-between" role="alert">
           <span>{error}</span>
           <button type="button" className="btn-close" aria-label="Dismiss" onClick={() => setError(null)} />
         </div>
       )}
 
       {loading ? (
-        <div className="grid place-items-center py-5">
+        <div className="grid place-items-center !py-[3rem]">
           <span className="block h-8 w-8 animate-spin rounded-full border-2 border-line border-t-brand-600" />
         </div>
       ) : (
-        <div className="grid gap-3">
+        <div className="grid !gap-[1rem]">
           {domains.map((d) => (
             <div className="card custom-card mb-0" key={d.id}>
-              <div className="card-body d-flex align-items-center gap-3 flex-wrap">
-                <div className="min-w-0 flex-fill">
-                  <div className="d-flex align-items-center gap-2 flex-wrap">
-                    <h6 className="fw-semibold mb-0" style={{ wordBreak: 'break-all' }}>{d.fqdn}</h6>
+              <div className="card-body !flex !items-center !gap-[1rem] flex-wrap">
+                <div className="min-w-0 !flex-auto">
+                  <div className="!flex !items-center gap-2 flex-wrap">
+                    <h6 className="!font-semibold mb-0" style={{ wordBreak: 'break-all' }}>{d.fqdn}</h6>
 
                     {d.isPlatform ? (
-                      <span className="badge bg-primary-transparent">TatvaOS address</span>
+                      <span className="badge !bg-brand-500/10 !text-brand-500">TatvaOS address</span>
                     ) : d.ownershipVerified ? (
-                      <span className="badge bg-success-transparent">Verified</span>
+                      <span className="badge !bg-ok/10 !text-ok">Verified</span>
                     ) : (
-                      <span className="badge bg-warning-transparent">Not verified</span>
+                      <span className="badge !bg-warn/10 !text-warn">Not verified</span>
                     )}
                   </div>
 
-                  <p className="fs-13 text-muted mb-0 mt-1">
+                  <p className="!text-[0.8125rem] !text-ink-muted mb-0 mt-1">
                     {d.isPlatform
                       ? 'Issued by us and working immediately. Cannot be removed — it is how you sign in if your own domain’s DNS ever breaks.'
                       : d.ownershipVerified
@@ -257,7 +257,7 @@ export default function DomainsPage() {
         </div>
       )}
 
-      <div className="alert alert-info mt-4" role="note">
+      <div className="alert alert-info !mt-[1.5rem]" role="note">
         Adding a domain changes nothing about your existing mail. It keeps arriving
         wherever it does today until <strong>you</strong> move the MX record — and
         that step is reversible.
@@ -279,7 +279,7 @@ export default function DomainsPage() {
             </>
           }
         >
-          <p className="fs-13 text-muted">
+          <p className="!text-[0.8125rem] !text-ink-muted">
             The domain your organisation&apos;s email addresses use. You will be asked
             to publish a record proving you control it.
           </p>
@@ -325,7 +325,7 @@ export default function DomainsPage() {
               DNS wants one self-contained block per record: what it is,
               whether it passes, and exactly what to paste where.
              ------------------------------------------------------------ */}
-          <div className="grid gap-3">
+          <div className="grid !gap-[1rem]">
             {records.map((r, i) => {
               const check = checkFor(checks, r, i);
               const state: 'passed' | 'required' | 'optional' =
@@ -335,7 +335,7 @@ export default function DomainsPage() {
               return (
                 <div
                   key={`${r.type}-${r.host}-${i}`}
-                  className="rounded-card border border-line bg-surface p-3"
+                  className="rounded-card border border-line bg-surface !p-[1rem]"
                   style={{ borderInlineStartWidth: 4, borderInlineStartColor: edge }}
                 >
                   {/* Header: status + name + badges */}
@@ -357,18 +357,18 @@ export default function DomainsPage() {
                       {check?.label ?? r.purpose.split('.')[0]}
                     </span>
 
-                    <span className="badge bg-light text-muted font-monospace">{r.type}</span>
+                    <span className="badge bg-light !text-ink-muted !font-mono">{r.type}</span>
                     {check?.passed
-                      ? <span className="badge bg-success-transparent">verified</span>
+                      ? <span className="badge !bg-ok/10 !text-ok">verified</span>
                       : r.required
-                        ? <span className="badge bg-danger-transparent">required</span>
-                        : <span className="badge bg-light text-muted">optional</span>}
+                        ? <span className="badge !bg-danger/10 !text-danger">required</span>
+                        : <span className="badge bg-light !text-ink-muted">optional</span>}
                   </div>
 
                   {/* The server's own words when a check ran; the record's
                       purpose otherwise. "NXDOMAIN looking up TXT" tells a
                       DNS admin far more than a friendlier rewrite would. */}
-                  <p className="mb-3 text-[13px] text-ink-muted">
+                  <p className="!mb-[1rem] text-[13px] text-ink-muted">
                     {check && !check.passed ? check.detail : r.purpose}
                   </p>
 
@@ -393,7 +393,7 @@ export default function DomainsPage() {
             })}
           </div>
 
-          <p className="mt-4 mb-0 text-xs leading-relaxed text-ink-faint">
+          <p className="!mt-[1.5rem] mb-0 text-xs leading-relaxed text-ink-faint">
             DNS changes usually appear within minutes but can take up to an hour.
             If a check fails right after you add a record, wait and try again before
             changing anything.

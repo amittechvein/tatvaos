@@ -60,7 +60,7 @@ const ORG_TYPES = [
 function Spinner({ size = 20, light }: { size?: number; light?: boolean }) {
   return (
     <span
-      className="d-inline-block animate-spin rounded-circle align-middle"
+      className="!inline-block animate-spin !rounded-[50%] align-middle"
       style={{
         width: size, height: size,
         border: `2px solid ${light ? 'rgba(255,255,255,.35)' : 'rgba(0,0,0,.12)'}`,
@@ -211,9 +211,9 @@ function Wizard() {
   if (done) {
     return (
       <Split>
-        <div className="w-100 text-center" style={{ maxWidth: 460 }}>
+        <div className="!w-full text-center" style={{ maxWidth: 460 }}>
           <div
-            className="d-grid rounded-circle mx-auto mb-4"
+            className="![display:grid] !rounded-[50%] mx-auto !mb-[1.5rem]"
             style={{
               width: 64, height: 64, placeItems: 'center',
               color: BRAND_DARK, background: 'rgba(3,181,98,0.12)',
@@ -225,11 +225,11 @@ function Wizard() {
             </svg>
           </div>
           <h1 className="mb-2" style={{ fontSize: 30, fontWeight: 600 }}>Account created</h1>
-          <p className="text-muted mb-2">
+          <p className="!text-ink-muted mb-2">
             Sign in and add your organisation&apos;s domain under <strong>Domains</strong> —
             you will get clear instructions and a choice of ways to verify it.
           </p>
-          <p className="fs-14 text-muted mb-4">
+          <p className="!text-[0.875rem] !text-ink-muted !mb-[1.5rem]">
             Until then your email keeps arriving exactly where it does today.
           </p>
           <Button variant="primary" className="w-full py-2.5"
@@ -244,16 +244,16 @@ function Wizard() {
   // ---------------------------------------------------------------- wizard
   return (
     <Split>
-      <div className="w-100" style={{ maxWidth: 560 }}>
+      <div className="!w-full" style={{ maxWidth: 560 }}>
         {/* Stepper. Three fixed steps, so a flex row of numbered dots says the
             same thing MUI's Stepper did with none of the weight. */}
-        <ol className="list-unstyled d-flex align-items-start justify-content-between mb-5">
+        <ol className="!list-none !pl-0 !flex !items-start !justify-between !mb-[3rem]">
           {STEPS.map((s, i) => {
             const state = i < step ? 'done' : i === step ? 'current' : 'todo';
             return (
-              <li key={s} className="text-center flex-fill">
+              <li key={s} className="text-center !flex-auto">
                 <span
-                  className="d-grid rounded-circle mx-auto mb-1"
+                  className="![display:grid] !rounded-[50%] mx-auto mb-1"
                   style={{
                     width: 30, height: 30, placeItems: 'center',
                     fontSize: 13, fontWeight: 600,
@@ -263,7 +263,7 @@ function Wizard() {
                 >
                   {state === 'done' ? '✓' : i + 1}
                 </span>
-                <span className={`fs-12 ${state === 'current' ? 'fw-semibold' : 'text-muted'}`}>
+                <span className={`!text-[0.75rem] ${state === 'current' ? '!font-semibold' : '!text-ink-muted'}`}>
                   {s}
                 </span>
               </li>
@@ -291,15 +291,15 @@ function Wizard() {
                 {ORG_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
               </Select>
             </Field>
-            <div className="d-flex gap-3 flex-wrap">
-              <div className="flex-fill" style={{ minWidth: 160 }}>
+            <div className="!flex !gap-[1rem] flex-wrap">
+              <div className="!flex-auto" style={{ minWidth: 160 }}>
                 <Field label="Country">
                   <Input value={country}
                          onChange={(e) => setCountry(e.target.value)} />
                 </Field>
               </div>
               {country === 'India' && (
-                <div className="flex-fill" style={{ minWidth: 200 }}>
+                <div className="!flex-auto" style={{ minWidth: 200 }}>
                   <Field label="GSTIN" hint="Optional — needed for a GST invoice">
                     <Input value={gstin}
                            onChange={(e) => setGstin(e.target.value.toUpperCase())} />
@@ -362,8 +362,8 @@ function Wizard() {
               </Alert>
             )}
 
-            <div className="d-flex gap-3 flex-wrap mb-1">
-              <div className="flex-fill" style={{ minWidth: 180 }}>
+            <div className="!flex !gap-[1rem] flex-wrap mb-1">
+              <div className="!flex-auto" style={{ minWidth: 180 }}>
                 <Field label="Email code" hint={emailOk ? 'Verified' : undefined}>
                   <Input
                     value={emailCode} disabled={emailOk}
@@ -372,7 +372,7 @@ function Wizard() {
                   />
                 </Field>
               </div>
-              <div className="flex-fill" style={{ minWidth: 180 }}>
+              <div className="!flex-auto" style={{ minWidth: 180 }}>
                 <Field label="SMS code" hint={phoneOk ? 'Verified' : undefined}>
                   <Input
                     value={phoneCode} disabled={phoneOk}
@@ -400,7 +400,7 @@ function Wizard() {
               <Alert key={e} tone="warn">{e}</Alert>
             ))}
 
-            <p className="fs-12 text-muted mt-2 mb-0">
+            <p className="!text-[0.75rem] !text-ink-muted mt-2 mb-0">
               Nothing arrived?{' '}
               <Button variant="ghost" className="p-0 align-baseline text-sm"
                       onClick={resend} disabled={busy}>
@@ -417,9 +417,9 @@ function Wizard() {
           </Pane>
         )}
 
-        <p className="fs-12 text-muted text-center mt-5 mb-0">
+        <p className="!text-[0.75rem] !text-ink-muted text-center !mt-[3rem] mb-0">
           Already have an account?{' '}
-          <a href="/login" className="text-decoration-none" style={{ color: BRAND }}>Sign in</a>
+          <a href="/login" className="!no-underline" style={{ color: BRAND }}>Sign in</a>
         </p>
       </div>
     </Split>
@@ -431,7 +431,7 @@ function Pane({ title, hint, children }: { title: string; hint: string; children
   return (
     <div>
       <h1 className="mb-1" style={{ fontSize: 28, fontWeight: 600 }}>{title}</h1>
-      <p className="fs-14 text-muted mb-4">{hint}</p>
+      <p className="!text-[0.875rem] !text-ink-muted !mb-[1.5rem]">{hint}</p>
       {children}
     </div>
   );
@@ -442,7 +442,7 @@ function Nav({ onBack, onNext, busy, nextDisabled, nextLabel = 'Continue' }: {
   nextDisabled?: boolean; nextLabel?: string;
 }) {
   return (
-    <div className="d-flex gap-2 mt-4">
+    <div className="!flex gap-2 !mt-[1.5rem]">
       {onBack && (
         <Button variant="secondary" onClick={onBack} disabled={busy}>
           Back
@@ -464,23 +464,23 @@ function Nav({ onBack, onNext, busy, nextDisabled, nextLabel = 'Continue' }: {
 /** Branded panel, same language as sign-in so the two feel like one product. */
 function Split({ children }: { children: React.ReactNode }) {
   return (
-    <div className="d-flex bg-white" style={{ minHeight: '100vh' }}>
+    <div className="!flex bg-white" style={{ minHeight: '100vh' }}>
       <div
-        className="d-none d-lg-flex flex-column position-relative text-white p-5"
+        className="!hidden min-[992px]:!flex !flex-col !relative text-white !p-[3rem]"
         style={{
           width: '42%', overflow: 'hidden',
           background: `linear-gradient(135deg, ${BRAND_DARK} 0%, ${BRAND} 55%, ${BRAND_LIGHT} 100%)`,
         }}
       >
-        <div aria-hidden className="position-absolute rounded-circle"
+        <div aria-hidden className="!absolute !rounded-[50%]"
              style={{ width: 420, height: 420, top: -150, right: -130, background: 'rgba(255,255,255,0.07)' }} />
-        <div aria-hidden className="position-absolute rounded-circle"
+        <div aria-hidden className="!absolute !rounded-[50%]"
              style={{ width: 300, height: 300, bottom: -100, left: -70, background: 'rgba(255,255,255,0.05)' }} />
 
-        <div className="position-relative d-flex flex-column h-100">
-          <div className="d-flex align-items-center gap-3">
+        <div className="!relative !flex !flex-col !h-full">
+          <div className="!flex !items-center !gap-[1rem]">
             <span
-              className="d-grid"
+              className="![display:grid]"
               style={{
                 width: 44, height: 44, borderRadius: 12, placeItems: 'center',
                 fontWeight: 700, fontSize: 20,
@@ -500,19 +500,19 @@ function Split({ children }: { children: React.ReactNode }) {
             Two minutes to an account.<br />Your mail stays put.
           </p>
 
-          <p className="mt-3 mb-0" style={{ fontSize: 15, opacity: 0.82, lineHeight: 1.65, maxWidth: 380 }}>
+          <p className="!mt-[1rem] mb-0" style={{ fontSize: 15, opacity: 0.82, lineHeight: 1.65, maxWidth: 380 }}>
             Prove your email and mobile are real and you are in. Your domain is
             added later, from your console — with your existing email untouched
             until you decide to move it.
           </p>
 
-          <div className="mt-auto d-flex flex-column gap-3" style={{ paddingTop: 40 }}>
+          <div className="mt-auto !flex !flex-col !gap-[1rem]" style={{ paddingTop: 40 }}>
             {[
               ['One identity', 'One sign-in across Mail, Drive and Payroll as they arrive.'],
               ['Isolated by the database', 'Row-level security, not code that remembers to filter.'],
               ['Hosted in India', 'DPDP residency, with a full audit trail.'],
             ].map(([t, d]) => (
-              <div key={t} className="d-flex gap-2">
+              <div key={t} className="!flex gap-2">
                 <span style={{ marginTop: 3, opacity: 0.8 }}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                        strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
@@ -520,8 +520,8 @@ function Split({ children }: { children: React.ReactNode }) {
                   </svg>
                 </span>
                 <span>
-                  <span className="d-block" style={{ fontWeight: 600, fontSize: 14 }}>{t}</span>
-                  <span className="d-block" style={{ fontSize: 13, opacity: 0.75, lineHeight: 1.55 }}>{d}</span>
+                  <span className="!block" style={{ fontWeight: 600, fontSize: 14 }}>{t}</span>
+                  <span className="!block" style={{ fontSize: 13, opacity: 0.75, lineHeight: 1.55 }}>{d}</span>
                 </span>
               </div>
             ))}
@@ -529,7 +529,7 @@ function Split({ children }: { children: React.ReactNode }) {
         </div>
       </div>
 
-      <div className="flex-fill d-grid p-4 p-sm-5" style={{ placeItems: 'center' }}>
+      <div className="!flex-auto ![display:grid] !p-[1.5rem] min-[576px]:!p-[3rem]" style={{ placeItems: 'center' }}>
         {children}
       </div>
     </div>

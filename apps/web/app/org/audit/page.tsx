@@ -143,9 +143,9 @@ export default function OrgAuditPage() {
     >
       <Card>
         {/* Filters */}
-        <div className="row g-2 align-items-end mb-3">
+        <div className="row g-2 !items-end !mb-[1rem]">
           <div className="col-md-3">
-            <label className="form-label fs-12 text-muted mb-1">Action</label>
+            <label className="form-label !text-[0.75rem] !text-ink-muted mb-1">Action</label>
             <Select
               
               value={action}
@@ -158,7 +158,7 @@ export default function OrgAuditPage() {
             </Select>
           </div>
           <div className="col-md-3">
-            <label className="form-label fs-12 text-muted mb-1">Who</label>
+            <label className="form-label !text-[0.75rem] !text-ink-muted mb-1">Who</label>
             <Select
               
               value={actor}
@@ -171,7 +171,7 @@ export default function OrgAuditPage() {
             </Select>
           </div>
           <div className="col-md-2">
-            <label className="form-label fs-12 text-muted mb-1">Product</label>
+            <label className="form-label !text-[0.75rem] !text-ink-muted mb-1">Product</label>
             <Select
               
               value={product}
@@ -186,12 +186,12 @@ export default function OrgAuditPage() {
             </Select>
           </div>
           <div className="col-md-2">
-            <label className="form-label fs-12 text-muted mb-1">From</label>
+            <label className="form-label !text-[0.75rem] !text-ink-muted mb-1">From</label>
             <Input type="date" 
                    value={from} onChange={(e) => setFrom(e.target.value)} />
           </div>
           <div className="col-md-2">
-            <label className="form-label fs-12 text-muted mb-1">To</label>
+            <label className="form-label !text-[0.75rem] !text-ink-muted mb-1">To</label>
             <Input type="date" 
                    value={to} onChange={(e) => setTo(e.target.value)} />
           </div>
@@ -205,7 +205,7 @@ export default function OrgAuditPage() {
         {error && <div className="alert alert-danger">{error}</div>}
 
         {loading ? (
-          <div className="grid place-items-center py-5">
+          <div className="grid place-items-center !py-[3rem]">
             <span className="block h-8 w-8 animate-spin rounded-full border-2 border-line border-t-brand-600" />
           </div>
         ) : entries.length === 0 ? (
@@ -224,10 +224,10 @@ export default function OrgAuditPage() {
                 <Fragment key={e.id}>
                   <tr>
                     <Td>
-                      <div className="fs-13">{when(e.occurredAt)}</div>
+                      <div className="!text-[0.8125rem]">{when(e.occurredAt)}</div>
                     </Td>
                     <Td>
-                      <div className="fw-semibold">
+                      <div className="!font-semibold">
                         {humaniseAction(e.action)}
                         {/* Credential and access changes are what somebody is
                             looking for after an incident; routine entries are
@@ -236,7 +236,7 @@ export default function OrgAuditPage() {
                           <span className="ms-2"><Badge tone="warn">Sensitive</Badge></span>
                         )}
                       </div>
-                      <div className="fs-12 text-muted">
+                      <div className="!text-[0.75rem] !text-ink-muted">
                         {e.action}
                         {e.productCode && e.productCode !== 'core' && ` · ${e.productCode}`}
                       </div>
@@ -245,16 +245,16 @@ export default function OrgAuditPage() {
                       {e.actorName ?? e.actorEmail ?? (
                         // A deleted actor, or the platform itself. Saying so is
                         // more honest than printing a bare id nobody can resolve.
-                        <span className="text-muted">Not recorded</span>
+                        <span className="!text-ink-muted">Not recorded</span>
                       )}
-                      {e.actorIp && <div className="fs-12 text-muted">{e.actorIp}</div>}
+                      {e.actorIp && <div className="!text-[0.75rem] !text-ink-muted">{e.actorIp}</div>}
                     </Td>
                     <Td>
                       {e.targetType
-                        ? <span className="fs-13">{e.targetType}</span>
-                        : <span className="text-muted">—</span>}
+                        ? <span className="!text-[0.8125rem]">{e.targetType}</span>
+                        : <span className="!text-ink-muted">—</span>}
                       {e.targetId && (
-                        <div className="fs-12 text-muted text-truncate" style={{ maxWidth: 220 }}>
+                        <div className="!text-[0.75rem] !text-ink-muted !truncate" style={{ maxWidth: 220 }}>
                           {e.targetId}
                         </div>
                       )}
@@ -277,14 +277,14 @@ export default function OrgAuditPage() {
                       <td colSpan={5} className="bg-light">
                         <div className="row g-3 p-2">
                           <div className="col-md-6">
-                            <div className="fs-12 fw-semibold text-muted mb-1">BEFORE</div>
-                            <pre className="fs-12 mb-0" style={{ whiteSpace: 'pre-wrap' }}>
+                            <div className="!text-[0.75rem] !font-semibold !text-ink-muted mb-1">BEFORE</div>
+                            <pre className="!text-[0.75rem] mb-0" style={{ whiteSpace: 'pre-wrap' }}>
                               {formatState(e.beforeState) ?? '—'}
                             </pre>
                           </div>
                           <div className="col-md-6">
-                            <div className="fs-12 fw-semibold text-muted mb-1">AFTER</div>
-                            <pre className="fs-12 mb-0" style={{ whiteSpace: 'pre-wrap' }}>
+                            <div className="!text-[0.75rem] !font-semibold !text-ink-muted mb-1">AFTER</div>
+                            <pre className="!text-[0.75rem] mb-0" style={{ whiteSpace: 'pre-wrap' }}>
                               {formatState(e.afterState) ?? '—'}
                             </pre>
                           </div>
@@ -296,13 +296,13 @@ export default function OrgAuditPage() {
               ))}
             </Table>
 
-            <div className="d-flex justify-content-center mt-3">
+            <div className="!flex !justify-center !mt-[1rem]">
               {hasMore ? (
                 <Button variant="secondary" onClick={loadMore} disabled={loadingMore}>
                   {loadingMore ? 'Loading…' : 'Load more'}
                 </Button>
               ) : (
-                <span className="fs-12 text-muted">
+                <span className="!text-[0.75rem] !text-ink-muted">
                   {entries.length} entr{entries.length === 1 ? 'y' : 'ies'} — that is everything.
                 </span>
               )}

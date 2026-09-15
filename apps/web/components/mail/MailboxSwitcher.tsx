@@ -110,12 +110,12 @@ export function MailboxSwitcher() {
   const soleMailbox = mailboxes.length < 2;
 
   return (
-    <div className="position-relative" style={{ marginBottom: 10 }}>
+    <div className="!relative" style={{ marginBottom: 10 }}>
       <button
         type="button"
         onClick={() => { if (!soleMailbox) setOpen((v) => !v); }}
         disabled={soleMailbox}
-        className="d-flex align-items-center gap-2 w-100 rounded"
+        className="!flex !items-center gap-2 !w-full rounded"
         style={{
           // TOKENS, not white-alpha. This carried rgba(255,255,255,0.08) with
           // color:'inherit', which reads as a subtle chip on a near-black rail
@@ -131,7 +131,7 @@ export function MailboxSwitcher() {
         title={current.address}
       >
         <Icon name={isShared ? 'reply-all' : 'envelope'} className="h-4 w-4 shrink-0" />
-        <span className="flex-fill text-truncate" style={{ fontSize: 12 }}>
+        <span className="!flex-auto !truncate" style={{ fontSize: 12 }}>
           {current.isOwn ? 'My mailbox' : current.localPart}
         </span>
         {!soleMailbox && <Icon name="chevron-down" className="h-3 w-3 shrink-0" />}
@@ -140,14 +140,14 @@ export function MailboxSwitcher() {
       {open && !soleMailbox && (
         <>
           {/* Click-away, below the menu and above the page. */}
-          <div className="position-fixed" style={{ inset: 0, zIndex: 1390 }}
+          <div className="!fixed" style={{ inset: 0, zIndex: 1390 }}
                onClick={close} aria-hidden="true" />
           {/* bg-surface / text-ink, NOT the '#fff'/'#1f2937' literals this
               carried: those were mixed for a light page, and in dark mode
               this menu was the one glaring white rectangle on the screen.
               Tokens follow the theme; hex values follow nothing. */}
           <div
-            className="position-absolute overflow-hidden rounded border border-line bg-surface text-ink shadow"
+            className="!absolute overflow-hidden rounded border border-line bg-surface text-ink shadow"
             style={{ zIndex: 1400, left: 0, right: 0, top: '100%', marginTop: 4 }}
           >
             {mailboxes.map((m) => (
@@ -155,13 +155,13 @@ export function MailboxSwitcher() {
                 key={m.id}
                 type="button"
                 onClick={() => { select(m.id); close(); }}
-                className="d-block w-100 text-start border-0 bg-transparent"
+                className="!block !w-full text-start border-0 bg-transparent"
                 style={{ padding: '8px 12px', fontSize: 12 }}
               >
-                <span className="d-block fw-semibold text-truncate">
+                <span className="!block !font-semibold !truncate">
                   {m.isOwn ? 'My mailbox' : m.localPart}
                 </span>
-                <span className="d-block text-truncate" style={{ fontSize: 11, opacity: 0.65 }}>
+                <span className="!block !truncate" style={{ fontSize: 11, opacity: 0.65 }}>
                   {m.address}
                   {/* Say what they may do here, because 'read' and 'send_as'
                       are different jobs and the toolbar will differ. */}

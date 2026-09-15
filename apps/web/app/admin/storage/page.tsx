@@ -41,17 +41,17 @@ export default function AdminStoragePage() {
         <div className="col-xl-4 col-md-6">
           <Stat tone="primary" label="Committed" value={formatBytes(totals.committed)}
                 caption="bought across all orgs"
-                icon={<i className="ri-database-2-line fs-18" />} />
+                icon={<i className="ri-database-2-line !text-[1.125rem]" />} />
         </div>
         <div className="col-xl-4 col-md-6">
           <Stat tone="info" label="Used" value={formatBytes(totals.used)}
                 caption={`${totals.pct}% of committed`}
-                icon={<i className="ri-hard-drive-2-line fs-18" />} />
+                icon={<i className="ri-hard-drive-2-line !text-[1.125rem]" />} />
         </div>
         <div className="col-xl-4 col-md-6">
           <Stat tone="success" label="Organisations" value={String(totals.count)}
                 caption="with a storage pool"
-                icon={<i className="ri-building-line fs-18" />} />
+                icon={<i className="ri-building-line !text-[1.125rem]" />} />
         </div>
       </div>
 
@@ -69,18 +69,18 @@ export default function AdminStoragePage() {
               return (
                 <tr key={o.id}>
                   <Td>
-                    <div className="fw-semibold">{o.name}</div>
-                    {hasDomain && <div className="fs-12 text-muted">{o.primaryDomain}</div>}
+                    <div className="!font-semibold">{o.name}</div>
+                    {hasDomain && <div className="!text-[0.75rem] !text-ink-muted">{o.primaryDomain}</div>}
                   </Td>
-                  <Td><span className="text-muted">{o.planName ?? '—'}</span></Td>
+                  <Td><span className="!text-ink-muted">{o.planName ?? '—'}</span></Td>
                   <Td>
                     <span>{formatBytes(o.storageUsedBytes)}</span>
-                    <span className="text-muted"> / {formatBytes(cap)}</span>
+                    <span className="!text-ink-muted"> / {formatBytes(cap)}</span>
                   </Td>
                   <Td>
                     <div style={{ width: 120 }}>
                       <Meter used={o.storageUsedBytes} total={cap} />
-                      <span className="fs-11 text-muted">{pct}%</span>
+                      <span className="!text-[0.6875rem] !text-ink-muted">{pct}%</span>
                     </div>
                   </Td>
                   <Td className="text-end">

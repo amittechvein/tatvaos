@@ -384,7 +384,7 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
 
   if (loading) {
     return (
-      <div className="p-5 text-center text-muted">
+      <div className="!p-[3rem] text-center !text-ink-muted">
         <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />
         Loading…
       </div>
@@ -431,7 +431,7 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
             </div>
           </div>
         </div>
-        <div className="d-flex gap-2 flex-wrap">
+        <div className="!flex gap-2 flex-wrap">
           {!over && <Button variant="primary" href={`/connect/room/${meeting.code}`}>Join</Button>}
           {isHost && !over && !editing && (
             <Button onClick={() => openEditor(meeting)}>Edit</Button>
@@ -498,7 +498,7 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
       )}
 
       {editing && form && (
-        <Card title="Edit this meeting" className="mb-3">
+        <Card title="Edit this meeting" className="!mb-[1rem]">
           <div className="row g-3">
             <div className="col-12">
               <label className="form-label" htmlFor="ed-title">Title</label>
@@ -610,7 +610,7 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
             </div>
 
             <div className="col-12">
-              <div className="alert alert-light border mb-0 fs-12">
+              <div className="alert alert-light border mb-0 !text-[0.75rem]">
                 <strong>Meeting type: {meeting.mode === 'private' ? 'Private' : 'Recorded'}</strong>
                 {' — this cannot be changed. '}
                 {meeting.mode === 'private'
@@ -622,7 +622,7 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
             </div>
           </div>
 
-          <div className="d-flex gap-2 mt-3">
+          <div className="!flex gap-2 !mt-[1rem]">
             <Button variant="primary" disabled={busy !== null}
                     onClick={() => void saveEdit(meeting)}>
               {busy === 'save' ? 'Saving…' : 'Save changes'}
@@ -637,16 +637,16 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
       <div className="row">
         <div className="col-xl-8">
           {lobby.length > 0 && (
-            <Card title="Waiting to be let in" className="mb-3">
+            <Card title="Waiting to be let in" className="!mb-[1rem]">
               {lobby.map((w) => (
                 <div key={w.requestId}
-                     className="d-flex align-items-center justify-content-between flex-wrap gap-2 py-2 border-bottom">
+                     className="!flex !items-center !justify-between flex-wrap gap-2 py-2 border-bottom">
                   <div>
-                    <span className="fw-semibold">{w.displayName}</span>
+                    <span className="!font-semibold">{w.displayName}</span>
                     {w.isGuest && <span className="ms-2"><Badge tone="warn">Guest</Badge></span>}
-                    <div className="text-muted fs-12">Since {timeLabel(w.requestedAt)}</div>
+                    <div className="!text-ink-muted !text-[0.75rem]">Since {timeLabel(w.requestedAt)}</div>
                   </div>
-                  <div className="d-flex gap-2">
+                  <div className="!flex gap-2">
                     <Button variant="primary" disabled={busy !== null}
                             onClick={() => void run(w.requestId,
                               () => connectApi.admit(authedFetch, meeting.id, w.requestId))}>
@@ -709,14 +709,14 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
                     <Td>
                       {a.connected
                         ? <Badge tone="ok">Yes</Badge>
-                        : <span className="text-muted">No</span>}
+                        : <span className="!text-ink-muted">No</span>}
                     </Td>
-                    <Td className="text-muted">
+                    <Td className="!text-ink-muted">
                       {a.firstJoinedAt ? timeLabel(a.firstJoinedAt) : '—'}
                     </Td>
                     <Td className="text-end">
                       {isHost && a.connected && a.who.role !== 'host' && (
-                        <div className="d-flex gap-1 justify-content-end">
+                        <div className="!flex gap-1 !justify-end">
                           <Button disabled={busy !== null}
                                   onClick={() => void run(a.who.identity,
                                     () => connectApi.mute(authedFetch, meeting.id, a.who.identity),
@@ -772,7 +772,7 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
                 pasted into a chat app, and it gets READ ALOUD. So it is set
                 large and spaced rather than squeezed into a form field where
                 an l and a 1 look the same. */}
-            <label className="form-label mt-3">Code</label>
+            <label className="form-label !mt-[1rem]">Code</label>
             <div className="cx-bigcode">
               <span>{prettyCode(meeting.code)}</span>
               <button className="btn btn-light btn-sm" type="button"
@@ -793,8 +793,8 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
           </Card>
 
           {isHost && !over && (
-            <Card title="Organiser" className="mt-3">
-              <div className="form-check form-switch mb-3">
+            <Card title="Organiser" className="!mt-[1rem]">
+              <div className="form-check form-switch !mb-[1rem]">
                 <input className="form-check-input" type="checkbox" id="locked"
                        checked={meeting.locked} disabled={busy !== null}
                        onChange={(e) => void run('lock',
@@ -828,13 +828,13 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
               is exactly when somebody notices a name that should not be on
               this list. */}
           {isHost && blocks.length > 0 && (
-            <Card title="Removed from this meeting" className="mt-3">
+            <Card title="Removed from this meeting" className="!mt-[1rem]">
               {blocks.map((b) => (
                 <div key={b.id}
-                     className="d-flex align-items-center justify-content-between gap-2 py-2 border-bottom">
+                     className="!flex !items-center !justify-between gap-2 py-2 border-bottom">
                   <div style={{ minWidth: 0 }}>
-                    <div className="fw-semibold text-truncate">{b.displayName}</div>
-                    <div className="fs-12 text-muted">
+                    <div className="!font-semibold !truncate">{b.displayName}</div>
+                    <div className="!text-[0.75rem] !text-ink-muted">
                       {timeLabel(b.createdAt)}
                       {!b.enforced && ' · joined as a guest'}
                     </div>

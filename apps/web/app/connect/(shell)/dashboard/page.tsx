@@ -150,14 +150,14 @@ export default function DashboardPage() {
 
   return (
     <>
-      <div className="page-header-breadcrumb d-flex align-items-center justify-content-between flex-wrap gap-2 my-3">
+      <div className="page-header-breadcrumb !flex !items-center !justify-between flex-wrap gap-2 !my-[1rem]">
         <div>
-          <h1 className="page-title fw-semibold fs-20 mb-1">Connect</h1>
+          <h1 className="page-title !font-semibold !text-[1.25rem] mb-1">Connect</h1>
           <ol className="breadcrumb mb-0">
             <li className="breadcrumb-item active" aria-current="page">Dashboard</li>
           </ol>
         </div>
-        <div className="d-flex gap-2 flex-wrap">
+        <div className="!flex gap-2 flex-wrap">
           <Button variant="primary" href="/connect/new">
             <i className="ri-calendar-line me-1" />
             Schedule
@@ -167,7 +167,7 @@ export default function DashboardPage() {
       </div>
 
       {error && (
-        <div className="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
+        <div className="alert alert-danger !flex !items-center !justify-between" role="alert">
           <span>{error}</span>
           <button type="button" className="btn btn-sm btn-light" onClick={() => void load()}>
             Try again
@@ -176,7 +176,7 @@ export default function DashboardPage() {
       )}
 
       {loading ? (
-        <Card><div className="text-center text-muted py-4">
+        <Card><div className="text-center !text-ink-muted !py-[1.5rem]">
           <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />
           Loading…
         </div></Card>
@@ -260,7 +260,7 @@ export default function DashboardPage() {
                       ? ` · busiest was ${busiest.count} on ${busiest.label}`
                       : ''}`}>
                 {past.length === 0 ? (
-                  <p className="text-muted fs-13 mb-0">
+                  <p className="!text-ink-muted !text-[0.8125rem] mb-0">
                     Nothing has finished yet, so there is nothing to count.
                   </p>
                 ) : (
@@ -287,7 +287,7 @@ export default function DashboardPage() {
                     {/* The same numbers as text. A chart that only exists as
                         shapes is unreadable to a screen reader and unusable in
                         a printout. */}
-                    <table className="visually-hidden">
+                    <table className="!sr-only">
                       <caption>Meetings a day for the last {DAYS} days</caption>
                       <tbody>
                         {days.map((d) => (
@@ -304,7 +304,7 @@ export default function DashboardPage() {
               <Card title="Coming up"
                     subtitle={soon.length === 0 ? undefined : 'The next few, soonest first'}>
                 {soon.length === 0 ? (
-                  <p className="text-muted fs-13 mb-0">
+                  <p className="!text-ink-muted !text-[0.8125rem] mb-0">
                     Nothing scheduled. <Link href="/connect/new">Schedule a meeting</Link>.
                   </p>
                 ) : (

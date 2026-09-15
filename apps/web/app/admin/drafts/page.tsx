@@ -86,7 +86,7 @@ export default function DraftsPage() {
         <div className="alert alert-danger" role="alert">{error}</div>
       )}
 
-      <div className="mb-4 grid gap-4 sm:grid-cols-3">
+      <div className="!mb-[1.5rem] grid !gap-[1.5rem] sm:grid-cols-3">
         <Stat label="Open" caption="Started, not finished" value={String(funnel.open)} />
         <Stat label="Stuck on verification" caption="Tried and failed — call these"
               value={String(funnel.stalledAtVerification)} />
@@ -96,7 +96,7 @@ export default function DraftsPage() {
 
       <Card padded={false}>
         {loading ? (
-          <div className="grid place-items-center py-5">
+          <div className="grid place-items-center !py-[3rem]">
             <span className="block h-7 w-7 animate-spin rounded-full border-2 border-line border-t-brand-600" />
           </div>
         ) : drafts.length === 0 ? (
@@ -109,8 +109,8 @@ export default function DraftsPage() {
             {drafts.map((d) => (
               <tr key={d.id}>
                 <Td>
-                  <div className="fw-semibold">{d.orgName}</div>
-                  <div className="fs-12 text-muted text-capitalize">
+                  <div className="!font-semibold">{d.orgName}</div>
+                  <div className="!text-[0.75rem] !text-ink-muted !capitalize">
                     {d.orgType} · {d.country}
                   </div>
                 </Td>
@@ -120,12 +120,12 @@ export default function DraftsPage() {
                   {/* Both clickable. This screen exists to be acted on, and
                       making someone copy a number out of a table is friction
                       that turns a call into a maybe. */}
-                  <a href={`mailto:${d.adminEmail}`} className="d-block fs-12 text-primary">
+                  <a href={`mailto:${d.adminEmail}`} className="!block !text-[0.75rem] !text-brand-500">
                     {d.adminEmail}
                   </a>
                   {d.adminPhone && (
                     <a href={`tel:${d.adminPhone.replace(/\s/g, '')}`}
-                       className="d-block fs-12 fw-semibold text-primary">
+                       className="!block !text-[0.75rem] !font-semibold !text-brand-500">
                       {d.adminPhone}
                     </a>
                   )}
@@ -134,9 +134,9 @@ export default function DraftsPage() {
                 <Td>
                   {d.fqdn
                     ? <div style={{ wordBreak: 'break-all' }}>{d.fqdn}</div>
-                    : <div className="fs-12 text-muted">not reached</div>}
+                    : <div className="!text-[0.75rem] !text-ink-muted">not reached</div>}
                   {d.verificationMethod && (
-                    <div className="fs-12 text-muted text-uppercase">
+                    <div className="!text-[0.75rem] !text-ink-muted !uppercase">
                       via {d.verificationMethod}
                     </div>
                   )}
@@ -144,11 +144,11 @@ export default function DraftsPage() {
 
                 <Td>
                   <span className={`badge ${d.stalledAtVerification
-                    ? 'bg-warning-transparent' : 'bg-light text-muted'}`}>
+                    ? '!bg-warn/10 !text-warn' : 'bg-light !text-ink-muted'}`}>
                     {STEP_LABEL[d.reachedStep] ?? d.reachedStep}
                   </span>
                   {d.attempts > 0 && (
-                    <div className="fs-12 text-muted mt-1">
+                    <div className="!text-[0.75rem] !text-ink-muted mt-1">
                       {d.attempts} attempt{d.attempts === 1 ? '' : 's'}
                     </div>
                   )}
@@ -158,13 +158,13 @@ export default function DraftsPage() {
                   {/* The verifier's own words, unedited. This is what you read
                       aloud on the phone — a friendlier summary would remove the
                       only part that identifies the mistake. */}
-                  <div className="fs-12 text-muted" style={{ maxWidth: 320, lineHeight: 1.5 }}>
+                  <div className="!text-[0.75rem] !text-ink-muted" style={{ maxWidth: 320, lineHeight: 1.5 }}>
                     {d.lastAttemptError ?? '—'}
                   </div>
                 </Td>
 
                 <Td>
-                  <a href={d.resumeUrl} target="_blank" rel="noopener" className="text-primary">
+                  <a href={d.resumeUrl} target="_blank" rel="noopener" className="!text-brand-500">
                     Open their signup
                   </a>
                 </Td>
@@ -174,7 +174,7 @@ export default function DraftsPage() {
         )}
       </Card>
 
-      <div className="alert alert-info mt-4" role="note">
+      <div className="alert alert-info !mt-[1.5rem]" role="note">
         <strong>This queue is the point.</strong> Requiring domain verification
         before sign-in loses customers who cannot reach whoever manages their DNS.
         These are those customers, with a phone number. Working the list is what

@@ -106,26 +106,26 @@ export default function SharedMailboxesPage() {
       }
     >
       {error && (
-        <div className="alert alert-danger d-flex align-items-start mb-3">
-          <div className="flex-fill">{error}</div>
+        <div className="alert alert-danger !flex !items-start !mb-[1rem]">
+          <div className="!flex-auto">{error}</div>
           <button type="button" className="btn-close" aria-label="Dismiss" onClick={() => setError(null)} />
         </div>
       )}
       {notice && (
-        <div className="alert alert-success d-flex align-items-start mb-3">
-          <div className="flex-fill">{notice}</div>
+        <div className="alert alert-success !flex !items-start !mb-[1rem]">
+          <div className="!flex-auto">{notice}</div>
           <button type="button" className="btn-close" aria-label="Dismiss" onClick={() => setNotice(null)} />
         </div>
       )}
 
       {usable.length === 0 && !loading && (
-        <div className="alert alert-warning mb-3">
+        <div className="alert alert-warning !mb-[1rem]">
           No verified domain yet, so a shared mailbox would receive nothing.
           Verify one under <strong>Domains</strong> first.
         </div>
       )}
 
-      <p className="fs-12 text-muted mb-3">
+      <p className="!text-[0.75rem] !text-ink-muted !mb-[1rem]">
         A shared mailbox has no password and nobody signs into it. Mail sent from
         one goes out as the mailbox — so a reply reaches whoever is on shift, not
         the person who happened to answer last time.
@@ -133,8 +133,8 @@ export default function SharedMailboxesPage() {
 
       <Card padded={false}>
         {loading ? (
-          <div className="d-flex justify-content-center py-5">
-            <span className="d-inline-block animate-spin rounded-circle"
+          <div className="!flex !justify-center !py-[3rem]">
+            <span className="!inline-block animate-spin !rounded-[50%]"
                   style={{ width: 30, height: 30, border: '3px solid rgba(0,0,0,.12)',
                            borderTopColor: '#6C3CE9' }} />
           </div>
@@ -147,8 +147,8 @@ export default function SharedMailboxesPage() {
           <Table head={['Mailbox', 'Name', 'Access', 'Storage', 'Status', '']}>
             {boxes.map((b) => (
               <tr key={b.id}>
-                <Td><span className="fw-semibold">{b.address}</span></Td>
-                <Td>{b.displayName ?? <span className="text-muted">—</span>}</Td>
+                <Td><span className="!font-semibold">{b.address}</span></Td>
+                <Td>{b.displayName ?? <span className="!text-ink-muted">—</span>}</Td>
                 <Td>
                   {b.grantCount === 0 ? (
                     // The failure worth naming: mail arriving where nobody can read it.
@@ -164,7 +164,7 @@ export default function SharedMailboxesPage() {
                   </Badge>
                 </Td>
                 <Td>
-                  <div className="d-flex gap-2 justify-content-end">
+                  <div className="!flex gap-2 !justify-end">
                     <Button variant="ghost" onClick={() => setManaging(b)}>Access</Button>
                     {b.isActive && (
                       <Button variant="ghost" onClick={() => void deactivate(b)}>
@@ -284,7 +284,7 @@ function CreateDialog({ domains, onClose, onCreated, onError }: {
         </div>
       </Field>
 
-      <div className="alert alert-info mb-0 fs-12">
+      <div className="alert alert-info mb-0 !text-[0.75rem]">
         Nobody can open it until you grant access — that is the next step, on the
         <strong> Access</strong> button in the list.
       </div>
@@ -416,25 +416,25 @@ function AccessDialog({ box, people, onClose, onChanged, onError }: {
         onChange={(ids) => setPicked((p) => ({ ...p, full: ids }))}
       />
 
-      <hr className="my-4" />
+      <hr className="!my-[1.5rem]" />
 
-      <div className="fs-14 fw-semibold mb-2">Who has access now</div>
+      <div className="!text-[0.875rem] !font-semibold mb-2">Who has access now</div>
       {grants === null ? (
-        <p className="fs-12 text-muted mb-0">Loading…</p>
+        <p className="!text-[0.75rem] !text-ink-muted mb-0">Loading…</p>
       ) : byPerson.length === 0 ? (
-        <p className="fs-12 text-muted mb-0">
+        <p className="!text-[0.75rem] !text-ink-muted mb-0">
           Nobody yet. Mail sent here arrives where no one can read it.
         </p>
       ) : (
         <div style={{ maxHeight: 220, overflowY: 'auto' }}>
           {byPerson.map((p) => (
-            <div key={p.userId} className="d-flex align-items-center gap-2 py-2 border-bottom">
-              <span className="flex-fill min-w-0">
-                <span className="d-block fw-semibold text-truncate">{p.displayName}</span>
-                <span className="d-block fs-12 text-muted text-truncate">{p.email}</span>
+            <div key={p.userId} className="!flex !items-center gap-2 py-2 border-bottom">
+              <span className="!flex-auto min-w-0">
+                <span className="!block !font-semibold !truncate">{p.displayName}</span>
+                <span className="!block !text-[0.75rem] !text-ink-muted !truncate">{p.email}</span>
               </span>
               {p.levels.map((lvl) => (
-                <span key={lvl} className="d-inline-flex align-items-center gap-1">
+                <span key={lvl} className="!inline-flex !items-center gap-1">
                   <Badge tone="neutral">{LEVEL_LABEL[lvl]}</Badge>
                   {/* Each level removable on its own: taking away someone's
                       ability to answer should not also stop them reading. */}
@@ -489,13 +489,13 @@ function PickerBox({ label, hint, people, picked, onChange }: {
     : [];
 
   return (
-    <div className="mb-3">
-      <label className="form-label fs-13 fw-semibold mb-1">{label}</label>
-      <div className="position-relative">
-        <div className="form-control d-flex flex-wrap align-items-center gap-1"
+    <div className="!mb-[1rem]">
+      <label className="form-label !text-[0.8125rem] !font-semibold mb-1">{label}</label>
+      <div className="!relative">
+        <div className="form-control !flex flex-wrap !items-center gap-1"
              style={{ minHeight: 72, alignContent: 'flex-start', paddingTop: 8 }}>
           {chosen.map((p) => (
-            <span key={p.id} className="d-inline-flex align-items-center gap-1 rounded-pill bg-light px-2 py-1"
+            <span key={p.id} className="!inline-flex !items-center gap-1 !rounded-[50rem] bg-light px-2 py-1"
                   style={{ fontSize: 12 }}>
               {p.displayName}
               <button type="button" aria-label={`Remove ${p.displayName}`}
@@ -507,28 +507,28 @@ function PickerBox({ label, hint, people, picked, onChange }: {
             value={term}
             onChange={(e) => setTerm(e.target.value)}
             placeholder={chosen.length === 0 ? 'Type a name or address' : ''}
-            className="border-0 flex-fill"
+            className="border-0 !flex-auto"
             style={{ outline: 'none', minWidth: 140, fontSize: 13 }}
           />
         </div>
 
         {hits.length > 0 && (
-          <div className="position-absolute w-100 bg-white border rounded shadow-sm"
+          <div className="!absolute !w-full bg-white border rounded shadow-sm"
                style={{ zIndex: 1400, top: '100%', marginTop: 2, overflow: 'hidden' }}>
             {hits.map((p) => (
               <button key={p.id} type="button"
                       // mousedown: click fires after blur, by which time the
                       // list has gone.
                       onMouseDown={(e) => { e.preventDefault(); onChange([...picked, p.id]); setTerm(''); }}
-                      className="d-block w-100 text-start border-0 bg-transparent px-3 py-2">
-                <span className="d-block fw-semibold" style={{ fontSize: 13 }}>{p.displayName}</span>
-                <span className="d-block text-muted" style={{ fontSize: 11 }}>{p.email}</span>
+                      className="!block !w-full text-start border-0 bg-transparent !px-[1rem] py-2">
+                <span className="!block !font-semibold" style={{ fontSize: 13 }}>{p.displayName}</span>
+                <span className="!block !text-ink-muted" style={{ fontSize: 11 }}>{p.email}</span>
               </button>
             ))}
           </div>
         )}
       </div>
-      <div className="fs-12 text-muted mt-1">{hint}</div>
+      <div className="!text-[0.75rem] !text-ink-muted mt-1">{hint}</div>
     </div>
   );
 }

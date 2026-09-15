@@ -408,21 +408,21 @@ export default function FamilyViewPage() {
   return (
     <FamilyShell title={spec.title} breadcrumb={spec.title}>
       {error && (
-        <div className="alert alert-danger d-flex align-items-start mb-4">
-          <div className="flex-fill">{error}</div>
+        <div className="alert alert-danger !flex !items-start !mb-[1.5rem]">
+          <div className="!flex-auto">{error}</div>
           <button type="button" className="btn-close" aria-label="Dismiss"
                   onClick={() => setError(null)} />
         </div>
       )}
       {note && (
-        <div className="alert alert-success d-flex align-items-start mb-4">
-          <div className="flex-fill">{note}</div>
+        <div className="alert alert-success !flex !items-start !mb-[1.5rem]">
+          <div className="!flex-auto">{note}</div>
           <button type="button" className="btn-close" aria-label="Dismiss"
                   onClick={() => setNote(null)} />
         </div>
       )}
 
-      <p className="fs-14 text-muted mb-3">{spec.blurb}</p>
+      <p className="!text-[0.875rem] !text-ink-muted !mb-[1rem]">{spec.blurb}</p>
 
       {/*
         A filtered list has to say so where you are looking.
@@ -434,10 +434,10 @@ export default function FamilyViewPage() {
         click that undoes it.
       */}
       {activeGroup && (
-        <div className="d-flex align-items-center gap-2 mb-3 flex-wrap">
-          <span className="fs-14 text-muted">Showing only</span>
+        <div className="!flex !items-center gap-2 !mb-[1rem] flex-wrap">
+          <span className="!text-[0.875rem] !text-ink-muted">Showing only</span>
           <span
-            className="badge rounded-pill d-inline-flex align-items-center gap-2"
+            className="badge !rounded-[50rem] !inline-flex !items-center gap-2"
             style={activeGroup.colour
               ? { background: activeGroup.colour, color: '#fff' }
               : { background: '#e9ecef', color: '#495057' }}
@@ -453,7 +453,7 @@ export default function FamilyViewPage() {
             />
           </span>
           {!loading && (
-            <span className="fs-14 text-muted">
+            <span className="!text-[0.875rem] !text-ink-muted">
               — {total === 1 ? '1 contact' : `${total} contacts`}
             </span>
           )}
@@ -469,9 +469,9 @@ export default function FamilyViewPage() {
           </>
         )}
       >
-        <div className="d-flex flex-wrap gap-2 align-items-center p-3">
-          <div className="position-relative" style={{ minWidth: 280, flex: '1 1 280px' }}>
-            <span className="position-absolute d-flex align-items-center"
+        <div className="!flex flex-wrap gap-2 !items-center !p-[1rem]">
+          <div className="!relative" style={{ minWidth: 280, flex: '1 1 280px' }}>
+            <span className="!absolute !flex !items-center"
                   style={{ left: 10, top: 0, bottom: 0, pointerEvents: 'none' }}>🔍</span>
             <Input
               
@@ -483,7 +483,7 @@ export default function FamilyViewPage() {
             {query && (
               <button
                 type="button"
-                className="btn btn-sm border-0 position-absolute p-0"
+                className="btn btn-sm border-0 !absolute p-0"
                 style={{ right: 8, top: '50%', transform: 'translateY(-50%)', lineHeight: 1 }}
                 onClick={() => setQuery('')}
                 aria-label="Clear search"
@@ -496,13 +496,13 @@ export default function FamilyViewPage() {
           {/* Filter pills are buttons: they change the list on click, so they
               have to be reachable by keyboard. MUI's clickable Chip was doing
               that quietly. */}
-          <div className="d-flex gap-1 flex-wrap">
+          <div className="!flex gap-1 flex-wrap">
             {!isBin && FILTERS.map(([key, label]) => (
               <button
                 key={key}
                 type="button"
                 aria-pressed={filter === key}
-                className={`badge rounded-pill border ${filter === key
+                className={`badge !rounded-[50rem] border ${filter === key
                   ? 'bg-primary text-white border-0'
                   : 'bg-transparent text-body-secondary'}`}
                 style={{ cursor: 'pointer', fontWeight: 500 }}
@@ -533,10 +533,10 @@ export default function FamilyViewPage() {
         */}
         {!isBin && selectionCount > 0 && (
           <div
-            className="d-flex align-items-center gap-2 flex-wrap px-3 py-2 border-top"
+            className="!flex !items-center gap-2 flex-wrap !px-[1rem] py-2 border-top"
             style={{ background: 'rgba(0,0,0,0.03)' }}
           >
-            <span className="fs-14 fw-semibold">
+            <span className="!text-[0.875rem] !font-semibold">
               {allMatching
                 ? `All ${total} selected`
                 : `${plural(selected.size, 'contact')} selected`}
@@ -563,7 +563,7 @@ export default function FamilyViewPage() {
 
             <Button variant="ghost" disabled={bulkBusy} onClick={clearSelection}>Clear</Button>
             {bulkBusy && (
-              <span className="d-inline-block animate-spin rounded-circle"
+              <span className="!inline-block animate-spin !rounded-[50%]"
                     style={{ width: 18, height: 18, border: '2px solid rgba(0,0,0,.12)',
                              borderTopColor: '#6C3CE9' }} />
             )}
@@ -573,8 +573,8 @@ export default function FamilyViewPage() {
         <hr className="m-0" />
 
         {loading ? (
-          <div className="d-flex justify-content-center py-5">
-            <span className="d-inline-block animate-spin rounded-circle"
+          <div className="!flex !justify-center !py-[3rem]">
+            <span className="!inline-block animate-spin !rounded-[50%]"
                   style={{ width: 30, height: 30, border: '3px solid rgba(0,0,0,.12)',
                            borderTopColor: '#6C3CE9' }} />
           </div>
@@ -622,10 +622,10 @@ export default function FamilyViewPage() {
                   </Td>
                 )}
                 <Td>
-                  <div className="d-flex align-items-center gap-2" style={{ minWidth: 0 }}>
+                  <div className="!flex !items-center gap-2" style={{ minWidth: 0 }}>
                     <span
                       aria-hidden
-                      className="d-grid rounded-circle flex-shrink-0 text-white"
+                      className="![display:grid] !rounded-[50%] flex-shrink-0 text-white"
                       style={{
                         width: 36, height: 36, placeItems: 'center',
                         fontSize: 13, fontWeight: 700, background: '#6C3CE9',
@@ -634,23 +634,23 @@ export default function FamilyViewPage() {
                       {initials(c.displayName)}
                     </span>
                     <div style={{ minWidth: 0 }}>
-                      <div className="fs-14 fw-semibold">
+                      <div className="!text-[0.875rem] !font-semibold">
                         {c.isFavourite && <span aria-label="Starred" title="Starred">★ </span>}
                         {c.displayName}
                       </div>
-                      {c.jobTitle && <div className="fs-12 text-muted">{c.jobTitle}</div>}
+                      {c.jobTitle && <div className="!text-[0.75rem] !text-ink-muted">{c.jobTitle}</div>}
                     </div>
                   </div>
                 </Td>
                 <Td>{c.companyName ?? '—'}</Td>
                 <Td>
-                  <div className="d-flex align-items-center gap-2">
+                  <div className="!flex !items-center gap-2">
                     <span>{c.primaryEmail ?? '—'}</span>
                     {isAutoSaved(c.source) && (
                       // title= replaces MUI's Tooltip — no library, and it is
                       // reachable on keyboard focus.
                       <span
-                        className="badge rounded-pill border text-body-secondary bg-transparent fw-normal"
+                        className="badge !rounded-[50rem] border text-body-secondary bg-transparent !font-normal"
                         title={sourceLabel(c.source)}
                       >
                         auto
@@ -688,11 +688,11 @@ export default function FamilyViewPage() {
         )}
 
         {!debounced && pages > 1 && (
-          <div className="d-flex justify-content-between align-items-center p-3">
-            <span className="fs-14 text-muted">
+          <div className="!flex !justify-between !items-center !p-[1rem]">
+            <span className="!text-[0.875rem] !text-ink-muted">
               {total} contacts · page {page} of {pages}
             </span>
-            <div className="d-flex gap-2">
+            <div className="!flex gap-2">
               <Button variant="ghost" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Previous</Button>
               <Button variant="ghost" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>Next</Button>
             </div>
@@ -726,7 +726,7 @@ export default function FamilyViewPage() {
       {menu !== null && (
         <AnchoredMenu anchor={menu.anchor} onClose={() => setMenu(null)}>
           {groups.length === 0 && (
-            <li className="dropdown-item text-muted" aria-disabled>No labels yet</li>
+            <li className="dropdown-item !text-ink-muted" aria-disabled>No labels yet</li>
           )}
           {groups.map((g) => (
             <li key={g.id}>
@@ -867,11 +867,11 @@ function CreateDialog({ groups, onClose, onCreated, onOpenExisting }: {
         </>
       }
     >
-      {error && <div className="alert alert-danger mb-3">{error}</div>}
+      {error && <div className="alert alert-danger !mb-[1rem]">{error}</div>}
 
       {duplicate && (
-        <div className="alert alert-warning d-flex align-items-center gap-2 mb-3">
-          <div className="flex-fill">{duplicate.message}</div>
+        <div className="alert alert-warning !flex !items-center gap-2 !mb-[1rem]">
+          <div className="!flex-auto">{duplicate.message}</div>
           <Button variant="ghost" onClick={() => onOpenExisting(duplicate.contactId)}>
             Open it
           </Button>
@@ -883,14 +883,14 @@ function CreateDialog({ groups, onClose, onCreated, onOpenExisting }: {
                onChange={(e) => setDisplayName(e.target.value)} />
       </Field>
 
-      <div className="d-flex gap-3">
-        <div className="flex-fill">
+      <div className="!flex !gap-[1rem]">
+        <div className="!flex-auto">
           <Field label="Company">
             <Input  value={companyName}
                    onChange={(e) => setCompanyName(e.target.value)} />
           </Field>
         </div>
-        <div className="flex-fill">
+        <div className="!flex-auto">
           <Field label="Job title">
             <Input  value={jobTitle}
                    onChange={(e) => setJobTitle(e.target.value)} />
@@ -1017,46 +1017,46 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
         busy={busy}
         onClose={onClose}
         footer={
-          <div className="d-flex justify-content-between w-100">
+          <div className="!flex !justify-between !w-full">
             <Button variant="ghost" disabled={busy} onClick={() => setConfirmDelete(true)}>Delete</Button>
             <Button variant="secondary" onClick={onClose} disabled={busy}>Close</Button>
           </div>
         }
       >
-        <div className="d-flex align-items-center gap-2 mb-3">
+        <div className="!flex !items-center gap-2 !mb-[1rem]">
           {c && (c.ownershipType === 'organisational'
             ? <Badge tone="info">Shared</Badge>
             : <Badge tone="neutral">Mine</Badge>)}
           {c && isAutoSaved(c.source) && (
-            <span className="badge rounded-pill border text-body-secondary bg-transparent fw-normal">
+            <span className="badge !rounded-[50rem] border text-body-secondary bg-transparent !font-normal">
               {sourceLabel(c.source)}
             </span>
           )}
         </div>
 
-        {error && <div className="alert alert-danger mb-3">{error}</div>}
+        {error && <div className="alert alert-danger !mb-[1rem]">{error}</div>}
 
         {!c ? (
-          <div className="d-flex justify-content-center py-5">
-            <span className="d-inline-block animate-spin rounded-circle"
+          <div className="!flex !justify-center !py-[3rem]">
+            <span className="!inline-block animate-spin !rounded-[50%]"
                   style={{ width: 28, height: 28, border: '3px solid rgba(0,0,0,.12)',
                            borderTopColor: '#6C3CE9' }} />
           </div>
         ) : (
-          <div className="d-flex flex-column gap-3">
-            <div className="d-flex flex-column gap-2">
+          <div className="!flex !flex-col !gap-[1rem]">
+            <div className="!flex !flex-col gap-2">
               <Field label="Name">
                 <Input  value={form.displayName}
                        onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))} />
               </Field>
-              <div className="d-flex gap-3">
-                <div className="flex-fill">
+              <div className="!flex !gap-[1rem]">
+                <div className="!flex-auto">
                   <Field label="Company">
                     <Input  value={form.companyName}
                            onChange={(e) => setForm((f) => ({ ...f, companyName: e.target.value }))} />
                   </Field>
                 </div>
-                <div className="flex-fill">
+                <div className="!flex-auto">
                   <Field label="Job title">
                     <Input  value={form.jobTitle}
                            onChange={(e) => setForm((f) => ({ ...f, jobTitle: e.target.value }))} />
@@ -1067,7 +1067,7 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
                 <textarea className="form-control" rows={2} value={form.notes}
                           onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
               </Field>
-              <div className="d-flex gap-2">
+              <div className="!flex gap-2">
                 <Button
                   variant="primary" disabled={busy || !dirty}
                   onClick={() => run(() => familyApi.patch(authedFetch, id, {
@@ -1096,7 +1096,7 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
                 <Row key={e.id}>
                   <span>
                     {e.email}
-                    {e.isPrimary && <span className="badge bg-light text-muted ms-2">primary</span>}
+                    {e.isPrimary && <span className="badge bg-light !text-ink-muted ms-2">primary</span>}
                   </span>
                   <Button variant="ghost" disabled={busy}
                           onClick={() => run(() => familyApi.removeEmail(authedFetch, id, e.id))}>
@@ -1119,7 +1119,7 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
                 <Row key={p.id}>
                   <span>
                     {p.phone}
-                    {p.isPrimary && <span className="badge bg-light text-muted ms-2">primary</span>}
+                    {p.isPrimary && <span className="badge bg-light !text-ink-muted ms-2">primary</span>}
                   </span>
                   <Button variant="ghost" disabled={busy}
                           onClick={() => run(() => familyApi.removePhone(authedFetch, id, p.id))}>
@@ -1141,7 +1141,7 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
                 <Row key={a.id}>
                   <span>
                     {formatAddress(a)}
-                    {a.isPrimary && <span className="badge bg-light text-muted ms-2">primary</span>}
+                    {a.isPrimary && <span className="badge bg-light !text-ink-muted ms-2">primary</span>}
                   </span>
                   <Button variant="ghost" disabled={busy}
                           onClick={() => run(() => familyApi.removeAddress(authedFetch, id, a.id))}>
@@ -1149,8 +1149,8 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
                   </Button>
                 </Row>
               ))}
-              <div className="d-flex flex-wrap gap-2">
-                <div className="flex-grow-1" style={{ minWidth: 200 }}>
+              <div className="!flex flex-wrap gap-2">
+                <div className="!grow" style={{ minWidth: 200 }}>
                   <Input placeholder="Street" value={newAddr.streetLine1}
                          onChange={(e) => setNewAddr({ ...newAddr, streetLine1: e.target.value })} />
                 </div>
@@ -1185,7 +1185,7 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
                 {/* Real buttons: these toggle membership on click, so they were
                     interactive Chips. A span with onClick is not reachable by
                     keyboard, and MUI's Chip was quietly handling that. */}
-                <div className="d-flex flex-wrap gap-2">
+                <div className="!flex flex-wrap gap-2">
                   {groups.map((g) => {
                     const member = inGroups.has(g.id);
                     return (
@@ -1194,7 +1194,7 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
                         type="button"
                         disabled={busy}
                         aria-pressed={member}
-                        className={`badge rounded-pill border ${member
+                        className={`badge !rounded-[50rem] border ${member
                           ? 'bg-primary text-white border-0'
                           : 'bg-transparent text-body-secondary'}`}
                         style={{ cursor: 'pointer', fontWeight: 500 }}
@@ -1212,15 +1212,15 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
 
             <hr className="my-0" />
 
-            <p className="fs-14 text-muted mb-0">
+            <p className="!text-[0.875rem] !text-ink-muted mb-0">
               {c.interactionCount === 0
                 ? 'No exchanges recorded.'
                 : `${c.interactionCount} exchange${c.interactionCount === 1 ? '' : 's'}, most recently ${ago(c.lastContactedAt).toLowerCase()}.`}
             </p>
 
             {c.ownershipType === 'personal' && (
-              <div className="alert alert-info d-flex align-items-center gap-2 mb-0">
-                <div className="flex-fill">Only you can see this contact.</div>
+              <div className="alert alert-info !flex !items-center gap-2 mb-0">
+                <div className="!flex-auto">Only you can see this contact.</div>
                 <Button variant="ghost" onClick={() => setConfirmShare(true)}>Share</Button>
               </div>
             )}
@@ -1249,10 +1249,10 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
             </>
           }
         >
-          <p className="fs-14 mb-0">
+          <p className="!text-[0.875rem] mb-0">
             Everyone in your organisation will be able to see, edit and use this contact.
           </p>
-          <p className="fs-14 fw-semibold mt-3 mb-0">
+          <p className="!text-[0.875rem] !font-semibold !mt-[1rem] mb-0">
             This cannot be undone. Making it personal again would mean choosing who owns it,
             and there is no right answer to that — you would have to create a fresh copy.
           </p>
@@ -1280,9 +1280,9 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
             </>
           }
         >
-          <p className="fs-14 mb-0">It disappears from every list and search.</p>
+          <p className="!text-[0.875rem] mb-0">It disappears from every list and search.</p>
           {c && isAutoSaved(c.source) && (
-            <p className="fs-14 mt-3 mb-0">
+            <p className="!text-[0.875rem] !mt-[1rem] mb-0">
               Because this one was saved automatically, deleting it also stops it coming back —
               the next message from that address will not recreate it.
             </p>
@@ -1299,19 +1299,19 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
 
 const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <div>
-    <div className="fs-14 fw-semibold mb-2">{title}</div>
-    <div className="d-flex flex-column gap-2">{children}</div>
+    <div className="!text-[0.875rem] !font-semibold mb-2">{title}</div>
+    <div className="!flex !flex-col gap-2">{children}</div>
   </div>
 );
 
 const Row = ({ children }: { children: React.ReactNode }) => (
-  <div className="d-flex align-items-center justify-content-between gap-2">
+  <div className="!flex !items-center !justify-between gap-2">
     {children}
   </div>
 );
 
 const Muted = ({ children }: { children: React.ReactNode }) => (
-  <span className="fs-14 text-muted">{children}</span>
+  <span className="!text-[0.875rem] !text-ink-muted">{children}</span>
 );
 
 const EMPTY_ADDRESS = { streetLine1: '', city: '', stateProvince: '', postalCode: '', country: '' };
@@ -1330,7 +1330,7 @@ function AddRow({ label, value, onChange, onAdd, busy }: {
   onAdd: () => void; busy: boolean;
 }) {
   return (
-    <div className="d-flex gap-2">
+    <div className="!flex gap-2">
       <Input
         
         placeholder={label}
@@ -1384,10 +1384,10 @@ function AnchoredMenu({ anchor, onClose, children }: {
     <>
       {/* A transparent full-screen catcher, so any outside click closes the
           menu without every ancestor needing its own handler. */}
-      <div className="position-fixed top-0 start-0 w-100 h-100"
+      <div className="!fixed top-0 start-0 !w-full !h-full"
            style={{ zIndex: 1390 }} onClick={onClose} aria-hidden />
       <ul
-        className="list-unstyled bg-white rounded shadow border m-0 py-1"
+        className="!list-none !pl-0 bg-white rounded shadow border m-0 py-1"
         style={{
           position: 'fixed', top: box.top, left: box.left,
           minWidth: 200, maxHeight: 320, overflowY: 'auto', zIndex: 1400,

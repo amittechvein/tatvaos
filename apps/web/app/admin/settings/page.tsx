@@ -135,7 +135,7 @@ export default function SettingsPage() {
       }
     >
       {notice && (
-        <div className={`alert alert-${notice.kind} d-flex justify-content-between align-items-center`} role="alert">
+        <div className={`alert alert-${notice.kind} !flex !justify-between !items-center`} role="alert">
           <span>{notice.text}</span>
           <button type="button" className="btn-close" aria-label="Close" onClick={() => setNotice(null)} />
         </div>
@@ -150,8 +150,8 @@ export default function SettingsPage() {
       )}
 
       {loading ? (
-        <div className="card custom-card"><div className="card-body text-center py-5">
-          <div className="spinner-border text-primary" role="status"><span className="visually-hidden">Loading…</span></div>
+        <div className="card custom-card"><div className="card-body text-center !py-[3rem]">
+          <div className="spinner-border !text-brand-500" role="status"><span className="!sr-only">Loading…</span></div>
         </div></div>
       ) : (
         SECTIONS.map((section) => {
@@ -163,16 +163,16 @@ export default function SettingsPage() {
               <div className="card-header">
                 <div className="card-title">
                   {section.title}
-                  <span className="d-block fs-12 fw-normal text-muted mt-1">{section.blurb}</span>
+                  <span className="!block !text-[0.75rem] !font-normal !text-ink-muted mt-1">{section.blurb}</span>
                 </div>
               </div>
               <div className="card-body">
                 <div className="row">
                   {fields.map((s) => (
-                    <div className="col-md-6 mb-3" key={s.key}>
-                      <label className="form-label d-flex align-items-center gap-2">
+                    <div className="col-md-6 !mb-[1rem]" key={s.key}>
+                      <label className="form-label !flex !items-center gap-2">
                         {s.label}
-                        {s.isSecret && s.hasValue && <span className="badge bg-success-transparent">set</span>}
+                        {s.isSecret && s.hasValue && <span className="badge !bg-ok/10 !text-ok">set</span>}
                       </label>
 
                       {s.key === 'sms.provider' ? (
@@ -205,9 +205,9 @@ export default function SettingsPage() {
                 </div>
 
                 {section.id === 'sms' && (
-                  <div className="mt-2 pt-3 border-top">
-                    <div className="fw-semibold mb-2">Send a test SMS</div>
-                    <div className="d-flex gap-2 flex-wrap align-items-start">
+                  <div className="mt-2 !pt-[1rem] border-top">
+                    <div className="!font-semibold mb-2">Send a test SMS</div>
+                    <div className="!flex gap-2 flex-wrap !items-start">
                       <Input  style={{ maxWidth: 240 }}
                              placeholder="+91 98765 43210" value={testPhone}
                              onChange={(e) => setTestPhone(e.target.value)} />
@@ -217,7 +217,7 @@ export default function SettingsPage() {
                       </button>
                     </div>
                     {dirty && (
-                      <div className="text-warning fs-12 mt-2">
+                      <div className="!text-warn !text-[0.75rem] mt-2">
                         You have unsaved changes — the test uses the saved values. Save first.
                       </div>
                     )}

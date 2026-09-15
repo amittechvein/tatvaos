@@ -126,9 +126,9 @@ export default function History({ mode }: { mode: HistoryMode }) {
 
   return (
     <>
-      <div className="page-header-breadcrumb d-flex align-items-center justify-content-between flex-wrap gap-2 my-3">
+      <div className="page-header-breadcrumb !flex !items-center !justify-between flex-wrap gap-2 !my-[1rem]">
         <div>
-          <h1 className="page-title fw-semibold fs-20 mb-1">{copy.title}</h1>
+          <h1 className="page-title !font-semibold !text-[1.25rem] mb-1">{copy.title}</h1>
           <ol className="breadcrumb mb-0">
             <li className="breadcrumb-item"><Link href="/connect">Connect</Link></li>
             <li className="breadcrumb-item active" aria-current="page">{copy.title}</li>
@@ -141,7 +141,7 @@ export default function History({ mode }: { mode: HistoryMode }) {
       </div>
 
       {error && (
-        <div className="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
+        <div className="alert alert-danger !flex !items-center !justify-between" role="alert">
           <span>{error}</span>
           <button type="button" className="btn btn-sm btn-light" onClick={() => setError(null)}>
             Dismiss
@@ -151,7 +151,7 @@ export default function History({ mode }: { mode: HistoryMode }) {
 
       <Card subtitle={copy.blurb} padded={false} title={copy.title}>
         {loading ? (
-          <div className="p-4 text-center text-muted">
+          <div className="!p-[1.5rem] text-center !text-ink-muted">
             <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />
             Loading…
           </div>
@@ -224,7 +224,7 @@ function Row({
             </div>
           </div>
         </Td>
-        <Td className="text-muted">{whenLabel(m)}</Td>
+        <Td className="!text-ink-muted">{whenLabel(m)}</Td>
         <Td><span className="cx-code">{prettyCode(m.code)}</span></Td>
         <Td><Badge tone={m.status === 'cancelled' ? 'danger' : 'neutral'}>{m.status}</Badge></Td>
         <Td className="text-end">
@@ -251,14 +251,14 @@ function Row({
               reads as a broken cell rather than a panel. */}
           <td colSpan={5} className="cx-drawer">
             {rowBusy ? (
-              <span className="text-muted fs-13">
+              <span className="!text-ink-muted !text-[0.8125rem]">
                 <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />
                 Loading…
               </span>
             ) : rowError ? (
-              <span className="text-danger fs-13">{rowError}</span>
+              <span className="text-danger !text-[0.8125rem]">{rowError}</span>
             ) : !items || items.length === 0 ? (
-              <span className="text-muted fs-13">Nothing was recorded in this meeting.</span>
+              <span className="!text-ink-muted !text-[0.8125rem]">Nothing was recorded in this meeting.</span>
             ) : (
               <div className="cx-recs">
                 {items.map((it) => (

@@ -76,14 +76,14 @@ export default function Landing() {
     <div className="bg-white">
       {/* ---------------------------------------------------------------- */}
       <header
-        className="position-sticky top-0 border-bottom"
+        className="!sticky top-0 border-bottom"
         style={{ background: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(8px)', zIndex: 20 }}
       >
         <div className="container py-2">
-          <div className="d-flex align-items-center gap-3">
+          <div className="!flex !items-center !gap-[1rem]">
             <Brand />
-            <div className="ms-auto d-flex gap-2 align-items-center">
-              <Link href="/login" className="btn btn-link text-body text-decoration-none">Sign in</Link>
+            <div className="ms-auto !flex gap-2 !items-center">
+              <Link href="/login" className="btn btn-link text-body !no-underline">Sign in</Link>
               <Link href="/signup" className="btn btn-primary">Get started</Link>
             </div>
           </div>
@@ -92,20 +92,20 @@ export default function Landing() {
 
       {/* ---------------------------------------------------------------- */}
       <section
-        className="position-relative text-white"
+        className="!relative text-white"
         style={{
           overflow: 'hidden',
           background: `linear-gradient(135deg, ${BRAND_DARK} 0%, ${BRAND} 55%, ${BRAND_LIGHT} 100%)`,
         }}
       >
-        <div aria-hidden className="position-absolute rounded-circle"
+        <div aria-hidden className="!absolute !rounded-[50%]"
              style={{ width: 620, height: 620, top: -260, right: -180, background: 'rgba(255,255,255,0.07)' }} />
-        <div aria-hidden className="position-absolute rounded-circle"
+        <div aria-hidden className="!absolute !rounded-[50%]"
              style={{ width: 380, height: 380, bottom: -180, left: -120, background: 'rgba(255,255,255,0.05)' }} />
 
-        <div className="container position-relative py-5" style={{ paddingTop: 80, paddingBottom: 80 }}>
+        <div className="container !relative !py-[3rem]" style={{ paddingTop: 80, paddingBottom: 80 }}>
           <span
-            className="badge rounded-pill mb-4"
+            className="badge !rounded-[50rem] !mb-[1.5rem]"
             style={{
               color: '#fff', background: 'rgba(255,255,255,0.16)',
               border: '1px solid rgba(255,255,255,0.24)', fontWeight: 500,
@@ -126,12 +126,12 @@ export default function Landing() {
             into it rather than sitting beside it.
           </p>
 
-          <div className="d-flex gap-3 flex-wrap" style={{ marginTop: 40 }}>
-            <Link href="/signup" className="btn btn-lg px-4"
+          <div className="!flex !gap-[1rem] flex-wrap" style={{ marginTop: 40 }}>
+            <Link href="/signup" className="btn btn-lg !px-[1.5rem]"
                   style={{ background: '#fff', color: BRAND, fontWeight: 600 }}>
               Start free
             </Link>
-            <Link href="/login" className="btn btn-lg px-4"
+            <Link href="/login" className="btn btn-lg !px-[1.5rem]"
                   style={{ color: '#fff', border: '1px solid rgba(255,255,255,0.4)' }}>
               Sign in
             </Link>
@@ -151,7 +151,7 @@ export default function Landing() {
         <h2 style={{ maxWidth: 620, letterSpacing: '-0.02em', fontWeight: 600 }}>
           Not an email product with an admin screen
         </h2>
-        <p className="text-muted mt-3" style={{ maxWidth: 640 }}>
+        <p className="!text-ink-muted !mt-[1rem]" style={{ maxWidth: 640 }}>
           Core is the layer your organisation runs on. Mail is the first product
           on it — Drive, People, Payroll, Sheet and Word follow, and every one of
           them uses the same people, the same storage and the same bill.
@@ -160,10 +160,10 @@ export default function Landing() {
         <div className="row g-4" style={{ marginTop: 24 }}>
           {PILLARS.map((p) => (
             <div key={p.title} className="col-12 col-md-6">
-              <div className="card custom-card h-100">
+              <div className="card custom-card !h-full">
                 <div className="card-body" style={{ padding: 28 }}>
                   <span
-                    className="d-grid mb-3"
+                    className="![display:grid] !mb-[1rem]"
                     style={{
                       width: 44, height: 44, borderRadius: 10, placeItems: 'center',
                       color: BRAND, background: 'rgba(3,181,98,0.12)',
@@ -176,7 +176,7 @@ export default function Landing() {
                     </svg>
                   </span>
                   <h3 className="mb-2" style={{ fontSize: 19, fontWeight: 600 }}>{p.title}</h3>
-                  <p className="text-muted mb-0" style={{ fontSize: 14, lineHeight: 1.7 }}>
+                  <p className="!text-ink-muted mb-0" style={{ fontSize: 14, lineHeight: 1.7 }}>
                     {p.body}
                   </p>
                 </div>
@@ -192,7 +192,7 @@ export default function Landing() {
           <h2 style={{ letterSpacing: '-0.02em', fontWeight: 600 }}>
             Four steps, and your mail stays put
           </h2>
-          <p className="text-muted mt-3" style={{ maxWidth: 620 }}>
+          <p className="!text-ink-muted !mt-[1rem]" style={{ maxWidth: 620 }}>
             The order matters. You get value before you take any risk.
           </p>
 
@@ -200,7 +200,7 @@ export default function Landing() {
             {STEPS.map((s) => (
               <div key={s.n} className="col-12 col-sm-6 col-lg-3">
                 <span
-                  className="d-grid rounded-circle mb-3 text-white"
+                  className="![display:grid] !rounded-[50%] !mb-[1rem] text-white"
                   style={{
                     width: 36, height: 36, placeItems: 'center', fontWeight: 600,
                     background: `linear-gradient(72deg, ${BRAND}, ${BRAND_LIGHT})`,
@@ -208,8 +208,8 @@ export default function Landing() {
                 >
                   {s.n}
                 </span>
-                <div className="fw-semibold mb-1">{s.title}</div>
-                <p className="text-muted mb-0" style={{ fontSize: 14, lineHeight: 1.65 }}>
+                <div className="!font-semibold mb-1">{s.title}</div>
+                <p className="!text-ink-muted mb-0" style={{ fontSize: 14, lineHeight: 1.65 }}>
                   {s.body}
                 </p>
               </div>
@@ -230,7 +230,7 @@ export default function Landing() {
               Prove you own your domain and you are in. Move your mail across
               whenever you are ready.
             </p>
-            <Link href="/signup" className="btn btn-lg px-5"
+            <Link href="/signup" className="btn btn-lg !px-[3rem]"
                   style={{ marginTop: 32, background: '#fff', color: BRAND, fontWeight: 600 }}>
               Get started
             </Link>
@@ -240,10 +240,10 @@ export default function Landing() {
 
       {/* ---------------------------------------------------------------- */}
       <hr className="m-0" />
-      <div className="container py-4">
-        <div className="d-flex gap-3 flex-wrap align-items-center">
+      <div className="container !py-[1.5rem]">
+        <div className="!flex !gap-[1rem] flex-wrap !items-center">
           <Brand />
-          <span className="fs-12 text-muted ms-sm-auto">
+          <span className="!text-[0.75rem] !text-ink-muted min-[576px]:!ms-auto">
             © {new Date().getFullYear()} Techvein. Hosted in India.
           </span>
         </div>
@@ -254,9 +254,9 @@ export default function Landing() {
 
 function Brand() {
   return (
-    <Link href="/" className="d-flex align-items-center gap-2 text-decoration-none text-body">
+    <Link href="/" className="!flex !items-center gap-2 !no-underline text-body">
       <span
-        className="d-grid text-white"
+        className="![display:grid] text-white"
         style={{
           width: 32, height: 32, borderRadius: 8, placeItems: 'center',
           fontWeight: 700, fontSize: 15,

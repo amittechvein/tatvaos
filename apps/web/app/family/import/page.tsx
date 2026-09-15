@@ -48,8 +48,8 @@ function today(): string {
  */
 function Bar() {
   return (
-    <div className="progress mt-3" style={{ height: 4 }} role="status" aria-label="Working">
-      <div className="progress-bar progress-bar-striped progress-bar-animated w-100" />
+    <div className="progress !mt-[1rem]" style={{ height: 4 }} role="status" aria-label="Working">
+      <div className="progress-bar progress-bar-striped progress-bar-animated !w-full" />
     </div>
   );
 }
@@ -57,7 +57,7 @@ function Bar() {
 /** A small outlined pill — MUI's Chip variant="outlined". */
 function Pill({ children }: { children: React.ReactNode }) {
   return (
-    <span className="badge rounded-pill border text-body-secondary bg-transparent fw-normal">
+    <span className="badge !rounded-[50rem] border text-body-secondary bg-transparent !font-normal">
       {children}
     </span>
   );
@@ -158,14 +158,14 @@ function ImportPanel() {
       actions={<Button variant="ghost" href="/family/contacts">Back to contacts</Button>}
     >
       {error && (
-        <div className="alert alert-danger d-flex align-items-start mb-3">
-          <div className="flex-fill">{error}</div>
+        <div className="alert alert-danger !flex !items-start !mb-[1rem]">
+          <div className="!flex-auto">{error}</div>
           <button type="button" className="btn-close" aria-label="Dismiss"
                   onClick={() => setError(null)} />
         </div>
       )}
 
-      <p className="fs-14 text-muted mb-3">
+      <p className="!text-[0.875rem] !text-ink-muted !mb-[1rem]">
         CSV or vCard, up to 10 MB and 5,000 contacts in one go. Nothing is written until
         you have seen what the file contains — checking it first is one click and changes
         nothing.
@@ -178,7 +178,7 @@ function ImportPanel() {
           const dropped = e.dataTransfer.files.item(0);
           if (dropped) chooseFile(dropped);
         }}
-        className="rounded text-center mb-3"
+        className="rounded text-center !mb-[1rem]"
         style={{ border: '1px dashed #dee2e6', padding: 24 }}
       >
         <input
@@ -190,18 +190,18 @@ function ImportPanel() {
         />
 
         {file ? (
-          <div className="d-flex flex-column gap-2 align-items-center">
-            <span className="fs-14 fw-semibold">{file.name}</span>
-            <span className="fs-12 text-muted">{(file.size / 1024).toFixed(0)} KB</span>
-            <div className="d-flex gap-2 mt-1">
+          <div className="!flex !flex-col gap-2 !items-center">
+            <span className="!text-[0.875rem] !font-semibold">{file.name}</span>
+            <span className="!text-[0.75rem] !text-ink-muted">{(file.size / 1024).toFixed(0)} KB</span>
+            <div className="!flex gap-2 mt-1">
               <Button variant="ghost" onClick={() => picker.current?.click()}>Choose another</Button>
               <Button variant="ghost" onClick={() => chooseFile(null)}>Remove</Button>
             </div>
           </div>
         ) : (
-          <div className="d-flex flex-column gap-2 align-items-center">
-            <span className="fs-14">Drop a file here, or choose one.</span>
-            <span className="fs-12 text-muted">
+          <div className="!flex !flex-col gap-2 !items-center">
+            <span className="!text-[0.875rem]">Drop a file here, or choose one.</span>
+            <span className="!text-[0.75rem] !text-ink-muted">
               In Google Contacts: Export → Google CSV. In Outlook: File → Open &amp; Export →
               Import/Export → Export to a file → Comma Separated Values.
             </span>
@@ -210,9 +210,9 @@ function ImportPanel() {
         )}
       </div>
 
-      <div className="d-flex flex-wrap gap-3 mb-3">
+      <div className="!flex flex-wrap !gap-[1rem] !mb-[1rem]">
         <div style={{ minWidth: 220 }}>
-          <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-ownership">
+          <label className="form-label !text-[0.8125rem] !font-medium mb-1" htmlFor="tv-ownership">
             Who can see them
           </label>
           <Select
@@ -223,7 +223,7 @@ function ImportPanel() {
             <option value="personal">Only me</option>
             <option value="organisational">Everyone in my organisation</option>
           </Select>
-          <div className="form-text fs-12">
+          <div className="form-text !text-[0.75rem]">
             {ownership === 'personal'
               ? 'Only you.'
               : 'Everyone in your organisation. This cannot be undone per contact.'}
@@ -231,7 +231,7 @@ function ImportPanel() {
         </div>
 
         <div style={{ minWidth: 260 }}>
-          <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-dupe-mode">
+          <label className="form-label !text-[0.8125rem] !font-medium mb-1" htmlFor="tv-dupe-mode">
             If an address is already saved
           </label>
           <Select
@@ -242,7 +242,7 @@ function ImportPanel() {
             <option value="skip">Skip that row</option>
             <option value="update">Fill in what is missing</option>
           </Select>
-          <div className="form-text fs-12">
+          <div className="form-text !text-[0.75rem]">
             {mode === 'skip'
               ? 'Leave the existing contact untouched.'
               : 'Fill in its blanks and add numbers it does not have. Nothing is overwritten.'}
@@ -250,7 +250,7 @@ function ImportPanel() {
         </div>
 
         <div style={{ minWidth: 260 }}>
-          <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-import-label">
+          <label className="form-label !text-[0.8125rem] !font-medium mb-1" htmlFor="tv-import-label">
             Tag every contact with
           </label>
           <Input
@@ -259,7 +259,7 @@ function ImportPanel() {
             value={label}
             onChange={(e) => setLabel(e.target.value)}
           />
-          <div className="form-text fs-12">
+          <div className="form-text !text-[0.75rem]">
             Leave it set. It is how you undo this import in one go.
           </div>
         </div>
@@ -274,14 +274,14 @@ function ImportPanel() {
           checked={createLabels}
           onChange={(e) => setCreateLabels(e.target.checked)}
         />
-        <label className="form-check-label fs-14" htmlFor="tv-create-labels">
+        <label className="form-check-label !text-[0.875rem]" htmlFor="tv-create-labels">
           Also create the labels the file names, such as Google groups
         </label>
       </div>
 
-      <hr className="my-3" />
+      <hr className="!my-[1rem]" />
 
-      <div className="d-flex gap-2 align-items-center flex-wrap">
+      <div className="!flex gap-2 !items-center flex-wrap">
         <Button variant="secondary" disabled={!file || busy !== null} onClick={check}>
           {busy === 'check' ? 'Checking…' : 'Check the file'}
         </Button>
@@ -293,7 +293,7 @@ function ImportPanel() {
               : 'Import'}
         </Button>
         {pending === null && file && !done && (
-          <span className="fs-12 text-muted">
+          <span className="!text-[0.75rem] !text-ink-muted">
             Check the file first — the import button turns on once you have seen the report.
           </span>
         )}
@@ -316,11 +316,11 @@ function Report({ report, live, label }: {
   label: string;
 }) {
   return (
-    <div className="mt-4">
-      <hr className="mb-3" />
+    <div className="!mt-[1.5rem]">
+      <hr className="!mb-[1rem]" />
 
-      <div className="d-flex align-items-center gap-2 mb-3 flex-wrap">
-        <span className="fs-14 fw-semibold">
+      <div className="!flex !items-center gap-2 !mb-[1rem] flex-wrap">
+        <span className="!text-[0.875rem] !font-semibold">
           {live ? 'Imported' : 'This is what would happen'}
         </span>
         <Badge tone={live ? 'ok' : 'info'}>{live ? 'Done' : 'Nothing written yet'}</Badge>
@@ -329,7 +329,7 @@ function Report({ report, live, label }: {
 
       {/* row/col rather than an auto-fit grid: YZEN's .grid collides with
           Tailwind's, and an arbitrary minmax() template would flatten. */}
-      <div className="row g-3 mb-3">
+      <div className="row g-3 !mb-[1rem]">
         <div className="col-6 col-md-3">
           <Stat label="Rows in the file" value={String(report.rowsRead)} tone="info" />
         </div>
@@ -350,7 +350,7 @@ function Report({ report, live, label }: {
       ))}
 
       {live && report.created + report.updated > 0 && (
-        <div className="alert alert-success mb-3">
+        <div className="alert alert-success !mb-[1rem]">
           {label
             ? <>Everything from this file carries the label <strong>{label}</strong>. If it went
                wrong, open that label from the sidebar and delete what is in it.</>
@@ -360,12 +360,12 @@ function Report({ report, live, label }: {
       )}
 
       {!live && report.sample.length > 0 && (
-        <div className="mb-3">
-          <div className="fs-14 fw-semibold mb-2">The first few that would be added</div>
-          <div className="d-flex flex-wrap gap-1">
+        <div className="!mb-[1rem]">
+          <div className="!text-[0.875rem] !font-semibold mb-2">The first few that would be added</div>
+          <div className="!flex flex-wrap gap-1">
             {report.sample.map((s) => <Pill key={s}>{s}</Pill>)}
             {report.created > report.sample.length && (
-              <span className="badge rounded-pill bg-light text-muted fw-normal">
+              <span className="badge !rounded-[50rem] bg-light !text-ink-muted !font-normal">
                 and {report.created - report.sample.length} more
               </span>
             )}
@@ -375,10 +375,10 @@ function Report({ report, live, label }: {
 
       {report.problems.length > 0 && (
         <div>
-          <div className="fs-14 fw-semibold mb-2">
+          <div className="!text-[0.875rem] !font-semibold mb-2">
             {plural(report.skipped, 'row')} not imported
           </div>
-          <p className="fs-14 text-muted mb-3">
+          <p className="!text-[0.875rem] !text-ink-muted !mb-[1rem]">
             Every one of these is listed with a reason. Nothing was dropped quietly.
           </p>
 
@@ -394,7 +394,7 @@ function Report({ report, live, label }: {
           </Table>
 
           {report.problemsTruncated && (
-            <span className="fs-12 text-muted">
+            <span className="!text-[0.75rem] !text-ink-muted">
               Only the first 500 are listed. The counts above are complete.
             </span>
           )}
@@ -444,28 +444,28 @@ function ExportPanel() {
       subtitle="Everything you can see, in a file Google and Apple will read"
     >
       {error && (
-        <div className="alert alert-danger d-flex align-items-start mb-3">
-          <div className="flex-fill">{error}</div>
+        <div className="alert alert-danger !flex !items-start !mb-[1rem]">
+          <div className="!flex-auto">{error}</div>
           <button type="button" className="btn-close" aria-label="Dismiss"
                   onClick={() => setError(null)} />
         </div>
       )}
       {note && (
-        <div className="alert alert-success d-flex align-items-start mb-3">
-          <div className="flex-fill">{note}</div>
+        <div className="alert alert-success !flex !items-start !mb-[1rem]">
+          <div className="!flex-auto">{note}</div>
           <button type="button" className="btn-close" aria-label="Dismiss"
                   onClick={() => setNote(null)} />
         </div>
       )}
 
-      <p className="fs-14 text-muted mb-3">
+      <p className="!text-[0.875rem] !text-ink-muted !mb-[1rem]">
         No cap and no gate. An address book you cannot get out of is one you should not
         put anything important into.
       </p>
 
-      <div className="d-flex flex-wrap gap-3 align-items-start">
+      <div className="!flex flex-wrap !gap-[1rem] !items-start">
         <div style={{ minWidth: 260 }}>
-          <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-export-scope">
+          <label className="form-label !text-[0.8125rem] !font-medium mb-1" htmlFor="tv-export-scope">
             What to export
           </label>
           <Select id="tv-export-scope" value={scope} onChange={(e) => setScope(e.target.value)}>
@@ -480,14 +480,14 @@ function ExportPanel() {
         </div>
 
         <div style={{ minWidth: 220 }}>
-          <label className="form-label fs-13 fw-medium mb-1" htmlFor="tv-export-format">
+          <label className="form-label !text-[0.8125rem] !font-medium mb-1" htmlFor="tv-export-format">
             Format
           </label>
           <Select id="tv-export-format" value={format} onChange={(e) => setFormat(e.target.value as 'csv' | 'vcf')}>
             <option value="csv">CSV</option>
             <option value="vcf">vCard</option>
           </Select>
-          <div className="form-text fs-12">
+          <div className="form-text !text-[0.75rem]">
             {format === 'csv'
               ? 'Opens in Excel; imports into Google Contacts.'
               : 'One card per person; imports into iPhone and Android.'}
@@ -503,7 +503,7 @@ function ExportPanel() {
 
       {busy && <Bar />}
 
-      <p className="fs-12 text-muted mt-3 mb-0">
+      <p className="!text-[0.75rem] !text-ink-muted !mt-[1rem] mb-0">
         Photos and birthdays are not in the file yet — neither is stored.
         Deleted contacts are never exported.
       </p>

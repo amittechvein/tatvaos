@@ -216,12 +216,12 @@ function SignInForm() {
   return (
     // minHeight AND height: the panel is a fixed-height column that manages
     // its own overflow, so the page itself should not scroll on a laptop.
-    <div className="d-flex bg-white login-shell" style={{ minHeight: '100vh' }}>
+    <div className="!flex bg-white login-shell" style={{ minHeight: '100vh' }}>
       {/* ---------------------------------------------------------------- */}
       {/*  Left: what this is                                              */}
       {/* ---------------------------------------------------------------- */}
       <div
-        className="d-none d-lg-flex flex-column position-relative text-white"
+        className="!hidden min-[992px]:!flex !flex-col !relative text-white"
         style={{
           width: '54%',
           // Tighter padding and a scroll container, because the panel has to
@@ -237,15 +237,15 @@ function SignInForm() {
       >
         {/* Two soft discs, to stop a flat gradient reading as a placeholder.
             Cheaper than an illustration. */}
-        <div aria-hidden className="position-absolute rounded-circle"
+        <div aria-hidden className="!absolute !rounded-[50%]"
              style={{ width: 480, height: 480, top: -160, right: -140, background: 'rgba(255,255,255,0.07)' }} />
-        <div aria-hidden className="position-absolute rounded-circle"
+        <div aria-hidden className="!absolute !rounded-[50%]"
              style={{ width: 320, height: 320, bottom: -110, left: -80, background: 'rgba(255,255,255,0.05)' }} />
 
-        <div className="position-relative d-flex flex-column h-100">
-          <div className="d-flex align-items-center gap-3">
+        <div className="!relative !flex !flex-col !h-full">
+          <div className="!flex !items-center !gap-[1rem]">
             <span
-              className="d-grid"
+              className="![display:grid]"
               style={{
                 width: 44, height: 44, borderRadius: 12, placeItems: 'center',
                 fontWeight: 700, fontSize: 20,
@@ -256,11 +256,11 @@ function SignInForm() {
               T
             </span>
             <span>
-              <span className="d-block" style={{ fontWeight: 700, fontSize: 22, lineHeight: 1.15,
+              <span className="!block" style={{ fontWeight: 700, fontSize: 22, lineHeight: 1.15,
                                                  letterSpacing: '0.01em' }}>
                 TatvaOS <span style={{ opacity: 0.7, fontWeight: 400 }}>Core</span>
               </span>
-              <span className="d-block" style={{ fontSize: 12.5, opacity: 0.72, letterSpacing: '0.04em' }}>
+              <span className="!block" style={{ fontSize: 12.5, opacity: 0.72, letterSpacing: '0.04em' }}>
                 by Techvein
               </span>
             </span>
@@ -277,11 +277,11 @@ function SignInForm() {
             and billing in one place. Products plug into it.
           </p>
 
-          <div className="d-flex flex-column gap-3" style={{ marginTop: 28, maxWidth: 520 }}>
+          <div className="!flex !flex-col !gap-[1rem]" style={{ marginTop: 28, maxWidth: 520 }}>
             {CAPABILITIES.map((c) => (
-              <div key={c.title} className="d-flex gap-3">
+              <div key={c.title} className="!flex !gap-[1rem]">
                 <span
-                  className="d-grid flex-shrink-0"
+                  className="![display:grid] flex-shrink-0"
                   style={{
                     width: 38, height: 38, borderRadius: 10, placeItems: 'center',
                     background: 'rgba(255,255,255,0.14)',
@@ -293,8 +293,8 @@ function SignInForm() {
                   </svg>
                 </span>
                 <span>
-                  <span className="d-block" style={{ fontWeight: 600, fontSize: 15 }}>{c.title}</span>
-                  <span className="d-block" style={{ fontSize: 13.5, opacity: 0.76,
+                  <span className="!block" style={{ fontWeight: 600, fontSize: 15 }}>{c.title}</span>
+                  <span className="!block" style={{ fontSize: 13.5, opacity: 0.76,
                                                      lineHeight: 1.6, marginTop: 2 }}>
                     {c.body}
                   </span>
@@ -311,11 +311,11 @@ function SignInForm() {
                                          textTransform: 'uppercase', opacity: 0.62 }}>
               Products
             </p>
-            <div className="d-flex flex-wrap gap-2">
+            <div className="!flex flex-wrap gap-2">
               {ROADMAP.map((p) => (
                 <span
                   key={p.label}
-                  className="badge rounded-pill"
+                  className="badge !rounded-[50rem]"
                   style={{
                     fontWeight: 500,
                     color: '#fff',
@@ -335,13 +335,13 @@ function SignInForm() {
       {/* ---------------------------------------------------------------- */}
       {/*  Right: the form                                                 */}
       {/* ---------------------------------------------------------------- */}
-      <div className="flex-fill d-grid p-4 p-sm-5" style={{ placeItems: 'center' }}>
-        <div className="w-100" style={{ maxWidth: 400 }}>
+      <div className="!flex-auto ![display:grid] !p-[1.5rem] min-[576px]:!p-[3rem]" style={{ placeItems: 'center' }}>
+        <div className="!w-full" style={{ maxWidth: 400 }}>
           {/* Brand repeats on small screens, where the left panel is hidden
               and the page would otherwise be an unlabelled password prompt. */}
-          <div className="d-flex d-lg-none align-items-center gap-2 mb-5">
+          <div className="!flex min-[992px]:!hidden !items-center gap-2 !mb-[3rem]">
             <span
-              className="d-grid text-white"
+              className="![display:grid] text-white"
               style={{
                 width: 40, height: 40, borderRadius: 10, placeItems: 'center',
                 fontWeight: 700, fontSize: 18,
@@ -351,7 +351,7 @@ function SignInForm() {
               T
             </span>
             <span style={{ fontSize: 22, fontWeight: 700 }}>
-              TatvaOS <span className="text-muted" style={{ fontWeight: 400 }}>Core</span>
+              TatvaOS <span className="!text-ink-muted" style={{ fontWeight: 400 }}>Core</span>
             </span>
           </div>
 
@@ -371,7 +371,7 @@ function SignInForm() {
           {challenge ? (
             <>
               <h1 className="mb-1" style={{ fontSize: 28, fontWeight: 600 }}>Two-step verification</h1>
-              <p className="fs-14 text-muted mb-3">{challenge.note}</p>
+              <p className="!text-[0.875rem] !text-ink-muted !mb-[1rem]">{challenge.note}</p>
 
               {error && <Alert tone="danger">{error}</Alert>}
 
@@ -418,7 +418,7 @@ function SignInForm() {
                 </Button>
               </form>
 
-              <p className="fs-12 text-muted mt-4 mb-0" style={{ lineHeight: 1.7 }}>
+              <p className="!text-[0.75rem] !text-ink-muted !mt-[1.5rem] mb-0" style={{ lineHeight: 1.7 }}>
                 Lost your phone and your recovery codes? Your organisation&apos;s administrator
                 can reset two-step verification for you. Techvein staff cannot.
               </p>
@@ -426,13 +426,13 @@ function SignInForm() {
           ) : (
           <>
           <h1 className="mb-1" style={{ fontSize: 28, fontWeight: 600 }}>Welcome back</h1>
-          <p className="fs-14 text-muted mb-3">Sign in to administer your organisation.</p>
+          <p className="!text-[0.875rem] !text-ink-muted !mb-[1rem]">Sign in to administer your organisation.</p>
 
           {/* Three ways in, the way every Indian bank lays them out — the
               audience already knows this screen by heart. QR needs the mobile
               app to scan with; until that ships it is visibly coming rather
               than quietly missing. */}
-          <ul className="nav nav-tabs mb-4" role="tablist">
+          <ul className="nav nav-tabs !mb-[1.5rem]" role="tablist">
             {TABS.map((t) => (
               <li key={t.id} className="nav-item" role="presentation">
                 <button
@@ -440,7 +440,7 @@ function SignInForm() {
                   role="tab"
                   aria-selected={tab === t.id}
                   disabled={t.disabled}
-                  className={`nav-link fs-14 fw-semibold ${tab === t.id ? 'active' : ''} ${t.disabled ? 'disabled' : ''}`}
+                  className={`nav-link !text-[0.875rem] !font-semibold ${tab === t.id ? 'active' : ''} ${t.disabled ? 'disabled' : ''}`}
                   onClick={() => { setTab(t.id); setError(null); }}
                 >
                   {t.label}
@@ -554,7 +554,7 @@ function SignInForm() {
                         focus ring then only lights half of it. */}
                     <button
                       type="button"
-                      className="absolute inset-y-0 right-0 flex items-center px-3 text-ink-faint hover:text-ink"
+                      className="absolute inset-y-0 right-0 flex items-center !px-[1rem] text-ink-faint hover:text-ink"
                       onClick={() => setReveal((v) => !v)}
                       aria-label={reveal ? 'Hide password' : 'Show password'}
                     >
@@ -576,15 +576,15 @@ function SignInForm() {
                 onChange={(e) => setRemember(e.target.checked)}
               />
 
-              <Button type="submit" variant="primary" className="mt-3 w-full py-2.5"
+              <Button type="submit" variant="primary" className="!mt-[1rem] w-full py-2.5"
                       disabled={busy || !email || !password}>
                 {busy ? 'Signing in…' : 'Sign in'}
               </Button>
 
               {/* Anonymous recovery. The mobile-code route works today; the
                   emailed link depends on outbound SMTP being unblocked. */}
-              <p className="text-center fs-14 mt-4 mb-0">
-                <Link href="/forgot-password" className="text-decoration-none" style={{ color: BRAND }}>
+              <p className="text-center !text-[0.875rem] !mt-[1.5rem] mb-0">
+                <Link href="/forgot-password" className="!no-underline" style={{ color: BRAND }}>
                   Forgot password?
                 </Link>
               </p>
@@ -592,7 +592,7 @@ function SignInForm() {
           )}
 
           {/* Outside the tabs: applies to whichever way you sign in. */}
-          <div className="mt-4">
+          <div className="!mt-[1.5rem]">
             <Field label="Start in" htmlFor="tv-startin" hint="Where you land after signing in">
               {({ id, invalid, describedBy }) => (
                 <Select
@@ -609,7 +609,7 @@ function SignInForm() {
             </Field>
           </div>
 
-          <p className="fs-12 text-muted mt-4 mb-0" style={{ lineHeight: 1.7 }}>
+          <p className="!text-[0.75rem] !text-ink-muted !mt-[1.5rem] mb-0" style={{ lineHeight: 1.7 }}>
             Forgotten your password? Your organisation&apos;s administrator can reset
             it. Techvein staff cannot read your mail — administrative access never
             implies access to contents.

@@ -72,7 +72,7 @@ export default function ApiKeysPage() {
       title="Mail API keys"
       subtitle="Let your own software send mail through TatvaOS"
       actions={
-        <div className="d-flex gap-2">
+        <div className="!flex gap-2">
           <a className="btn btn-secondary" href="/docs/TatvaOS-Mail-API-Integration-Guide.pdf" download>
             Integration guide (PDF)
           </a>
@@ -83,14 +83,14 @@ export default function ApiKeysPage() {
       }
     >
       {error && (
-        <div className="alert alert-danger d-flex align-items-start mb-3">
-          <div className="flex-fill">{error}</div>
+        <div className="alert alert-danger !flex !items-start !mb-[1rem]">
+          <div className="!flex-auto">{error}</div>
           <button type="button" className="btn-close" aria-label="Dismiss" onClick={() => setError(null)} />
         </div>
       )}
       {notice && (
-        <div className="alert alert-success d-flex align-items-start mb-3">
-          <div className="flex-fill">{notice}</div>
+        <div className="alert alert-success !flex !items-start !mb-[1rem]">
+          <div className="!flex-auto">{notice}</div>
           <button type="button" className="btn-close" aria-label="Dismiss" onClick={() => setNotice(null)} />
         </div>
       )}
@@ -103,17 +103,17 @@ export default function ApiKeysPage() {
         />
       )}
 
-      <p className="fs-12 text-muted mb-3">
+      <p className="!text-[0.75rem] !text-ink-muted !mb-[1rem]">
         A key lets a website form, a billing job or any other program of yours send
         mail as one of your mailboxes — the same path as webmail, with the same
         DKIM signature and the same verified-domain rule. It is not a login: a key
         can send and nothing else.
       </p>
 
-      <Card padded={false} className="mb-3">
+      <Card padded={false} className="!mb-[1rem]">
         {keys === null ? (
-          <div className="d-flex justify-content-center py-5">
-            <span className="d-inline-block animate-spin rounded-circle"
+          <div className="!flex !justify-center !py-[3rem]">
+            <span className="!inline-block animate-spin !rounded-[50%]"
                   style={{ width: 30, height: 30, border: '3px solid rgba(0,0,0,.12)',
                            borderTopColor: '#6C3CE9' }} />
           </div>
@@ -127,8 +127,8 @@ export default function ApiKeysPage() {
           <Table head={['What it is for', 'Key', 'Created', 'Last used', 'Restrictions', '']}>
             {keys.map((k) => (
               <tr key={k.id}>
-                <Td><span className="fw-semibold">{k.label}</span></Td>
-                <Td><code className="fs-12">{k.keyPrefix}…</code></Td>
+                <Td><span className="!font-semibold">{k.label}</span></Td>
+                <Td><code className="!text-[0.75rem]">{k.keyPrefix}…</code></Td>
                 <Td>{when(k.createdAt)}</Td>
                 <Td>
                   {k.lastUsedAt
@@ -143,7 +143,7 @@ export default function ApiKeysPage() {
                   )}
                 </Td>
                 <Td>
-                  <div className="d-flex gap-2 justify-content-end">
+                  <div className="!flex gap-2 !justify-end">
                     <Button variant="ghost" onClick={() => setEditingKey(k)}>
                       Edit addresses
                     </Button>
@@ -204,7 +204,7 @@ export default function ApiKeysPage() {
             Anything still using <strong>{revoking.label}</strong> (<code>{revoking.keyPrefix}…</code>)
             will get <code>401</code> from the next request onwards.
           </p>
-          <p className="fs-12 text-muted mb-0">
+          <p className="!text-[0.75rem] !text-ink-muted mb-0">
             Mail already accepted for delivery is not recalled. This cannot be
             undone — create a new key instead.
           </p>
@@ -234,11 +234,11 @@ function FreshKeyCard({ fresh, endpoint, onDismiss }: {
   };
 
   return (
-    <Card className="mb-3 border-success">
-      <div className="d-flex align-items-start justify-content-between gap-3 mb-2">
+    <Card className="!mb-[1rem] !border-ok">
+      <div className="!flex !items-start !justify-between !gap-[1rem] mb-2">
         <div>
-          <div className="fw-semibold">Your new key for &quot;{fresh.label}&quot;</div>
-          <div className="fs-12 text-danger fw-semibold">
+          <div className="!font-semibold">Your new key for &quot;{fresh.label}&quot;</div>
+          <div className="!text-[0.75rem] text-danger !font-semibold">
             This is the only time it will be shown. Copy it now — once you leave this
             page it cannot be recovered, only replaced.
           </div>
@@ -246,7 +246,7 @@ function FreshKeyCard({ fresh, endpoint, onDismiss }: {
         <button type="button" className="btn-close" aria-label="Dismiss" onClick={onDismiss} />
       </div>
 
-      <div className="input-group mb-3">
+      <div className="input-group !mb-[1rem]">
         <Input  readOnly value={fresh.key}
                onFocus={(e) => e.currentTarget.select()} />
         <Button variant="primary" onClick={() => void copy('key', fresh.key)}>
@@ -255,16 +255,16 @@ function FreshKeyCard({ fresh, endpoint, onDismiss }: {
       </div>
 
       {fresh.allowed_sender_addresses && fresh.allowed_sender_addresses.length > 0 && (
-        <div className="alert alert-info mb-2 fs-12">
+        <div className="alert alert-info mb-2 !text-[0.75rem]">
           <strong>Allowed to send from:</strong> {fresh.allowed_sender_addresses.join(', ')}
         </div>
       )}
 
-      <div className="fs-12 text-muted mb-1">
+      <div className="!text-[0.75rem] !text-ink-muted mb-1">
         A complete first send, with this key already filled in. Replace the two
         addresses and run it — <strong>202</strong> means it worked.
       </div>
-      <pre className="bg-light rounded p-3 fs-12 mb-2" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+      <pre className="bg-light rounded !p-[1rem] !text-[0.75rem] mb-2" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
         {example}
       </pre>
       <Button variant="secondary" onClick={() => void copy('example', example)}>
@@ -277,34 +277,34 @@ function FreshKeyCard({ fresh, endpoint, onDismiss }: {
 function HowToUse({ endpoint }: { endpoint: string }) {
   return (
     <Card title="How to send mail with a key" subtitle="Three steps. The whole API is one request.">
-      <p className="fs-13 text-muted mb-3">
+      <p className="!text-[0.8125rem] !text-ink-muted !mb-[1rem]">
         Handing this to a developer? The{' '}
         <a href="/docs/TatvaOS-Mail-API-Integration-Guide.pdf" download>integration guide (PDF)</a>{' '}
         has everything on this page plus working examples in curl, Node.js, Python and PHP.
       </p>
-      <ol className="ps-3 mb-4">
-        <li className="mb-3">
-          <div className="fw-semibold">Choose the sender</div>
-          <div className="fs-13 text-muted">
+      <ol className="!ps-[1rem] !mb-[1.5rem]">
+        <li className="!mb-[1rem]">
+          <div className="!font-semibold">Choose the sender</div>
+          <div className="!text-[0.8125rem] !text-ink-muted">
             The <code>from</code> address must be in your key&apos;s allowed addresses. Create a key
             and select which mailboxes it can send from. Set one up under{' '}
             <Link href="/org/mailboxes">Shared mailboxes</Link>; verify the domain under{' '}
             <Link href="/org/domains">Domains</Link>.
           </div>
         </li>
-        <li className="mb-3">
-          <div className="fw-semibold">Create a key</div>
-          <div className="fs-13 text-muted">
+        <li className="!mb-[1rem]">
+          <div className="!font-semibold">Create a key</div>
+          <div className="!text-[0.8125rem] !text-ink-muted">
             One per program. Name it for what it does and select the email addresses it can send from.
             The key is shown once.
           </div>
         </li>
         <li className="mb-0">
-          <div className="fw-semibold">Send</div>
-          <div className="fs-13 text-muted mb-2">
+          <div className="!font-semibold">Send</div>
+          <div className="!text-[0.8125rem] !text-ink-muted mb-2">
             One <code>POST</code>, JSON body, the key in the <code>Authorization</code> header.
           </div>
-          <pre className="bg-light rounded p-3 fs-12 mb-0" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+          <pre className="bg-light rounded !p-[1rem] !text-[0.75rem] mb-0" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
             {`POST ${endpoint}
 Authorization: Bearer tvos_…
 Content-Type: application/json
@@ -322,8 +322,8 @@ Content-Type: application/json
 
       <div className="row g-4">
         <div className="col-md-6">
-          <div className="fw-semibold mb-2">Fields</div>
-          <table className="table table-sm fs-13 mb-0">
+          <div className="!font-semibold mb-2">Fields</div>
+          <table className="table table-sm !text-[0.8125rem] mb-0">
             <tbody>
               <tr><td><code>from</code></td><td>Required. Must be in your key&apos;s allowed addresses.</td></tr>
               <tr><td><code>to</code></td><td>Required. Up to {MAX_RECIPIENTS} addresses, separated by commas.</td></tr>
@@ -335,8 +335,8 @@ Content-Type: application/json
           </table>
         </div>
         <div className="col-md-6">
-          <div className="fw-semibold mb-2">What comes back</div>
-          <table className="table table-sm fs-13 mb-0">
+          <div className="!font-semibold mb-2">What comes back</div>
+          <table className="table table-sm !text-[0.8125rem] mb-0">
             <tbody>
               <tr>
                 <td><Badge tone="ok">202</Badge></td>
@@ -359,7 +359,7 @@ Content-Type: application/json
         </div>
       </div>
 
-      <div className="alert alert-info fs-12 mt-4 mb-0">
+      <div className="alert alert-info !text-[0.75rem] !mt-[1.5rem] mb-0">
         <strong>First messages from a new address often land in spam.</strong> That is the
         receiver&apos;s reputation system, not a fault here — every message is DKIM-signed and
         passes SPF and DMARC. Reputation builds with real mail people open and reply to.
@@ -479,16 +479,16 @@ function CreateDialog({ onClose, onCreated, onError }: {
         hint="Select at least one email address this key can send from. The key will only work with these addresses."
       >
         {loadingMailboxes ? (
-          <div className="text-muted fs-13">Loading mailboxes...</div>
+          <div className="!text-ink-muted !text-[0.8125rem]">Loading mailboxes...</div>
         ) : mailboxes.length === 0 ? (
-          <div className="alert alert-warning mb-0 fs-12">
+          <div className="alert alert-warning mb-0 !text-[0.75rem]">
             No active mailboxes found. Create mailboxes under{' '}
             <Link href="/org/mailboxes">Shared mailboxes</Link> first.
           </div>
         ) : (
           <div style={{ maxHeight: 250, overflowY: 'auto', border: '1px solid #ddd', borderRadius: 4 }}>
             {mailboxes.map((addr) => (
-              <label key={addr} className="d-block p-2 border-bottom" style={{ cursor: 'pointer', marginBottom: 0 }}>
+              <label key={addr} className="!block p-2 border-bottom" style={{ cursor: 'pointer', marginBottom: 0 }}>
                 <input
                   type="checkbox"
                   checked={selectedAddresses.includes(addr)}
@@ -501,14 +501,14 @@ function CreateDialog({ onClose, onCreated, onError }: {
                   }}
                   className="me-2"
                 />
-                <code className="fs-13">{addr}</code>
+                <code className="!text-[0.8125rem]">{addr}</code>
               </label>
             ))}
           </div>
         )}
       </Field>
 
-      <div className="alert alert-info mb-0 fs-12">
+      <div className="alert alert-info mb-0 !text-[0.75rem]">
         The key is shown <strong>once</strong>, on the next screen. Have somewhere ready to paste it.
       </div>
     </Modal>
@@ -588,18 +588,18 @@ function EditDialog({ keyRow, onClose, onUpdated, onError }: {
         </>
       }
     >
-      <p className="fs-13 text-muted mb-3">
+      <p className="!text-[0.8125rem] !text-ink-muted !mb-[1rem]">
         Select which email addresses this key can send from.
       </p>
 
       {loadingMailboxes ? (
-        <div className="text-muted fs-13">Loading mailboxes...</div>
+        <div className="!text-ink-muted !text-[0.8125rem]">Loading mailboxes...</div>
       ) : mailboxes.length === 0 ? (
-        <div className="alert alert-warning mb-0 fs-12">No active mailboxes found.</div>
+        <div className="alert alert-warning mb-0 !text-[0.75rem]">No active mailboxes found.</div>
       ) : (
         <div style={{ maxHeight: 250, overflowY: 'auto', border: '1px solid #ddd', borderRadius: 4 }}>
           {mailboxes.map((addr) => (
-            <label key={addr} className="d-block p-2 border-bottom" style={{ cursor: 'pointer', marginBottom: 0 }}>
+            <label key={addr} className="!block p-2 border-bottom" style={{ cursor: 'pointer', marginBottom: 0 }}>
               <input
                 type="checkbox"
                 checked={selectedAddresses.includes(addr)}
@@ -612,7 +612,7 @@ function EditDialog({ keyRow, onClose, onUpdated, onError }: {
                 }}
                 className="me-2"
               />
-              <code className="fs-13">{addr}</code>
+              <code className="!text-[0.8125rem]">{addr}</code>
             </label>
           ))}
         </div>

@@ -102,14 +102,14 @@ export default function ConnectHome() {
 
   return (
     <>
-      <div className="page-header-breadcrumb d-flex align-items-center justify-content-between flex-wrap gap-2 my-3">
+      <div className="page-header-breadcrumb !flex !items-center !justify-between flex-wrap gap-2 !my-[1rem]">
         <div>
-          <h1 className="page-title fw-semibold fs-20 mb-1">Meetings</h1>
+          <h1 className="page-title !font-semibold !text-[1.25rem] mb-1">Meetings</h1>
           <ol className="breadcrumb mb-0">
             <li className="breadcrumb-item active" aria-current="page">Connect</li>
           </ol>
         </div>
-        <div className="d-flex gap-2 flex-wrap">
+        <div className="!flex gap-2 flex-wrap">
           <Button variant="primary" onClick={() => void startNow()} disabled={starting}>
             <i className="ri-vidicon-line me-1" />
             {starting ? 'Starting…' : 'Start now'}
@@ -122,7 +122,7 @@ export default function ConnectHome() {
       </div>
 
       {error && (
-        <div className="alert alert-danger d-flex align-items-center justify-content-between" role="alert">
+        <div className="alert alert-danger !flex !items-center !justify-between" role="alert">
           <span>{error}</span>
           <button type="button" className="btn btn-sm btn-light" onClick={() => void load()}>Try again</button>
         </div>
@@ -131,7 +131,7 @@ export default function ConnectHome() {
       <div className="row">
         <div className="col-xl-8">
           {live.length > 0 && (
-            <Card title="Happening now" className="cx-live mb-3">
+            <Card title="Happening now" className="cx-live !mb-[1rem]">
               {live.map((m) => (
                 <div key={m.id} className="cx-liverow">
                   <div className="cx-who">
@@ -158,7 +158,7 @@ export default function ConnectHome() {
           )}
 
           <Card padded={false}>
-            <div className="card-header justify-content-between align-items-center">
+            <div className="card-header !justify-between !items-center">
               <ul className="nav nav-pills gap-1" role="tablist">
                 {TABS.map((t) => (
                   <li className="nav-item" key={t.key} role="presentation">
@@ -177,7 +177,7 @@ export default function ConnectHome() {
             </div>
 
             {loading ? (
-              <div className="p-4 text-center text-muted">
+              <div className="!p-[1.5rem] text-center !text-ink-muted">
                 <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />
                 Loading…
               </div>
@@ -203,12 +203,12 @@ export default function ConnectHome() {
                             {m.title}
                           </Link>
                           {m.hasPassword && (
-                            <i className="ri-lock-line ms-1 text-muted" title="Password required" />
+                            <i className="ri-lock-line ms-1 !text-ink-muted" title="Password required" />
                           )}
                         </div>
                       </div>
                     </Td>
-                    <Td className="text-muted">{whenLabel(m)}</Td>
+                    <Td className="!text-ink-muted">{whenLabel(m)}</Td>
                     <Td><span className="cx-code">{prettyCode(m.code)}</span></Td>
                     <Td><Badge tone={tone(m.status)}>{m.status}</Badge></Td>
                     <Td className="text-end">
@@ -240,7 +240,7 @@ export default function ConnectHome() {
                   Join
                 </button>
               </div>
-              <div className="text-muted fs-12 mt-2">
+              <div className="!text-ink-muted !text-[0.75rem] mt-2">
                 A full link works too — everything after the last slash is the code.
               </div>
             </form>

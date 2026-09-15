@@ -188,24 +188,24 @@ export function ShareDialog({
           list" must not be left thinking that list is everyone who can see
           this. Not a warning — nothing is wrong — so it is stated plainly
           rather than in a coloured box. */}
-      <p className="fs-13 text-muted mb-3">
+      <p className="!text-[0.8125rem] !text-ink-muted !mb-[1rem]">
         Everybody who was in the meeting can already open this recording, and
         so can the host. Sharing only ever adds people to that — it never takes
         anybody away.
       </p>
 
-      {error && <div className="alert alert-danger py-2 fs-13">{error}</div>}
+      {error && <div className="alert alert-danger py-2 !text-[0.8125rem]">{error}</div>}
 
       {/* ── WHAT ALREADY EXISTS ────────────────────────────────────────── */}
       {shares === null ? (
-        <p className="fs-13 text-muted">Loading…</p>
+        <p className="!text-[0.8125rem] !text-ink-muted">Loading…</p>
       ) : shares.length === 0 ? (
         <Empty
           title="Not shared with anybody outside the meeting"
           hint="The people who were in it can already watch. Add a way in below if somebody else needs to."
         />
       ) : (
-        <div className="mb-4">
+        <div className="!mb-[1.5rem]">
           {shares.map((s) => (
             <ExistingShare key={s.id} share={s} busy={busy}
                            copied={copied === s.id}
@@ -218,13 +218,13 @@ export function ShareDialog({
       {/* ── ADDING ONE ─────────────────────────────────────────────────── */}
       {adding === null ? (
         <>
-          <h3 className="fs-14 fw-semibold mb-2">Give somebody else a way in</h3>
+          <h3 className="!text-[0.875rem] !font-semibold mb-2">Give somebody else a way in</h3>
           {offered.filter((l) => !taken.has(l)).length === 0 ? (
-            <p className="fs-13 text-muted">
+            <p className="!text-[0.8125rem] !text-ink-muted">
               Every way of sharing this recording is already set up above.
             </p>
           ) : (
-            <div className="d-grid gap-2">
+            <div className="![display:grid] gap-2">
               {offered.filter((l) => !taken.has(l)).map((l) => (
                 <button key={l} type="button" className="cx-choice text-start"
                         onClick={() => setAdding(l)}>
@@ -237,7 +237,7 @@ export function ShareDialog({
         </>
       ) : (
         <>
-          <h3 className="fs-14 fw-semibold mb-2">{TITLE[adding]}</h3>
+          <h3 className="!text-[0.875rem] !font-semibold mb-2">{TITLE[adding]}</h3>
 
           {/* THE SENTENCE THAT MATTERS, AT THE MOMENT OF THE DECISION.
               Not in a tooltip, not after the link is made. The 'public'
@@ -245,7 +245,7 @@ export function ShareDialog({
               link" sounds like a small circle and is not one. */}
           <Exposure level={adding} />
 
-          <div className="d-grid gap-3 mt-3">
+          <div className="![display:grid] !gap-[1rem] !mt-[1rem]">
             {adding === 'named' && (
               <Field
                 label="Who"
@@ -319,7 +319,7 @@ export function ShareDialog({
             )}
           </div>
 
-          <div className="d-flex gap-2 mt-3">
+          <div className="!flex gap-2 !mt-[1rem]">
             <Button variant="primary" disabled={busy || !valid}
                     onClick={() => void create()}>
               {busy ? 'Working…' : 'Share'}
@@ -342,10 +342,10 @@ export function ShareDialog({
 function Exposure({ level }: { level: ShareLevel }) {
   const loud = level === 'public' || level === 'password';
   if (!loud) {
-    return <p className="fs-13 text-muted mb-0">{SHARE_EXPOSURE[level]}.</p>;
+    return <p className="!text-[0.8125rem] !text-ink-muted mb-0">{SHARE_EXPOSURE[level]}.</p>;
   }
   return (
-    <div className={`alert py-2 fs-13 mb-0 ${level === 'public' ? 'alert-danger' : 'alert-warning'}`}>
+    <div className={`alert py-2 !text-[0.8125rem] mb-0 ${level === 'public' ? 'alert-danger' : 'alert-warning'}`}>
       <b>{SHARE_EXPOSURE[level]}.</b>
       {level === 'public' && (
         <>
@@ -378,15 +378,15 @@ function ExistingShare({ share, busy, copied, onCopy, onRevoke }: {
 
   return (
     <div className="cx-shared">
-      <div className="d-flex align-items-start gap-2">
-        <div className="flex-grow-1">
-          <div className="d-flex align-items-center gap-2 flex-wrap">
-            <b className="fs-14">{TITLE[share.level]}</b>
+      <div className="!flex !items-start gap-2">
+        <div className="!grow">
+          <div className="!flex !items-center gap-2 flex-wrap">
+            <b className="!text-[0.875rem]">{TITLE[share.level]}</b>
             {share.level === 'public' && <Badge tone="danger">Public</Badge>}
             {share.hasPassword && <Badge tone="neutral">Password</Badge>}
           </div>
 
-          <div className="fs-12 text-muted mt-1">
+          <div className="!text-[0.75rem] !text-ink-muted mt-1">
             {SHARE_EXPOSURE[share.level]}.
             {share.expiresAt !== null && <> Stops working {timeLabel(share.expiresAt)}.</>}
           </div>
@@ -395,7 +395,7 @@ function ExistingShare({ share, busy, copied, onCopy, onRevoke }: {
               colleagues. Sharing outside your own organisation should never be
               something you have to work out from a list of addresses. */}
           {share.level === 'named' && share.people.length > 0 && (
-            <div className="fs-12 mt-1">
+            <div className="!text-[0.75rem] mt-1">
               {share.people.map((p) => p.name).join(', ')}
               {outside.length > 0 && (
                 <div className="text-warning-emphasis mt-1">
@@ -410,7 +410,7 @@ function ExistingShare({ share, busy, copied, onCopy, onRevoke }: {
           {/* Opened, by people who were not in the meeting. Participants are
               not counted — they are the baseline, and counting them would
               make every share look used. */}
-          <div className="fs-12 text-muted mt-1">
+          <div className="!text-[0.75rem] !text-ink-muted mt-1">
             {share.opens === 0
               ? 'Not opened yet by anybody outside the meeting.'
               : share.opens === 1
@@ -425,7 +425,7 @@ function ExistingShare({ share, busy, copied, onCopy, onRevoke }: {
           )}
         </div>
 
-        <div className="d-flex flex-column gap-2">
+        <div className="!flex !flex-col gap-2">
           {share.url !== null && (
             <Button variant="ghost" className="btn-sm" onClick={onCopy} disabled={busy}>
               {copied ? 'Copied' : 'Copy link'}
