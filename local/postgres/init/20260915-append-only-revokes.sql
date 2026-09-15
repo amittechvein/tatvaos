@@ -1,0 +1,76 @@
+-- ============================================================================
+--  Append-only tables: make the grants say what the comments say.
+--
+--  Every schema's first migration grants tatvaos_app SELECT, INSERT, UPDATE
+--  and DELETE on ALL TABLES in that schema, and the whole init/ directory
+--  re-runs on every deploy, so those blanket grants are re-applied every
+--  time. A table described as an audit trail, an event log, or "revoked,
+--  never deleted" therefore keeps UPDATE and DELETE for the app unless a
+--  LATER file takes them away again, on every run. Two tables already do
+--  this (family.contact_audit_logs in 0019, mail.api_sends in
+--  20260905-mail-bounce-intake). This file does it for five more.
+--
+--  WHAT THE APP WRITES, TABLE BY TABLE. Grep of apps/api and every init file
+--  on 15 Sept 2026, covering EF change tracking, raw SQL, SECURITY DEFINER
+--  functions and workers:
+--
+--    core.audit_logs
+--      INSERT  Modules/Admin/AuditWriter.cs - the only writer.
+--              Modules/Admin/Endpoints/AuditEndpoints.cs reads only.
+--      loses   UPDATE, DELETE.
+--
+--    connect.meeting_events
+--      INSERT  Modules/Connect/Endpoints/ConnectWebhookEndpoints.cs. A
+--              replayed webhook is refused by the webhook_id unique index
+--              and caught as 23505; it is not an upsert.
+--      loses   UPDATE, DELETE.
+--
+--    connect.recording_access_log
+--      INSERT  Modules/Connect/Endpoints/ConnectShareEndpoints.cs, and
+--              connect.log_recording_access() (20260908-b), a SECURITY
+--              DEFINER function that writes as its owner.
+--      UPDATE  only through the foreign key share_id ON DELETE SET NULL,
+--              which Postgres performs as the table owner, not tatvaos_app.
+--      loses   UPDATE, DELETE.
+--
+--    mail.api_keys
+--      INSERT  Modules/Mail/Endpoints/MailApiKeyEndpoints.cs (create).
+--      UPDATE  the same file (edit allowed senders; revoke sets revoked_at),
+--              and Modules/Mail/Endpoints/MailSendApiEndpoints.cs
+--              (last_used_at on every send).
+--      loses   DELETE only. Revocation IS an update, so UPDATE stays.
+--
+--    mail.app_passwords
+--      INSERT  Modules/Mail/Endpoints/MailAppPasswordEndpoints.cs (generate).
+--      UPDATE  the same file: revoke on replace, and revoke-all. The one
+--              UPDATE in 20260827-b runs as postgres at deploy time.
+--      loses   DELETE only, for the same reason.
+--
+--  THE FIRST DRAFT OF THIS HEADER SAID "no app code updates or deletes any of
+--  these". That was wrong for the two tables whose design is revoke-not-
+--  delete, and it sat in the rule 7 paragraph - the "what breaks if enforced"
+--  check had missed the most obvious case. The CTO caught it on 13 Sept by
+--  asking how a revoke is recorded. Enforced as first drafted, this file
+--  would have broken API key and app password revocation on production.
+--
+--  Rule 7, the cascades. Every foreign key on these tables runs its
+--  referential action as the table owner. Proven on a scratch database on
+--  15 Sept with this exact grant shape: tatvaos_app deleting a parent row
+--  succeeded through ON DELETE CASCADE and ON DELETE SET NULL children on
+--  which it holds neither UPDATE nor DELETE.
+--
+--  Rule 6, how this goes red. tests/isolation/test-isolation.sh, run by CI,
+--  asserts both directions: the refused statements are refused, and the
+--  inserts and the two revoke UPDATEs still succeed. Against main before this
+--  file, every one of the "refused" statements succeeded.
+--
+--  Sorts after every grant it narrows. REVOKE of a privilege already absent is
+--  a no-op, so this re-runs unchanged on every deploy, straight after the
+--  blanket grants re-apply.
+-- ============================================================================
+
+REVOKE UPDATE, DELETE ON core.audit_logs              FROM tatvaos_app;
+REVOKE UPDATE, DELETE ON connect.meeting_events       FROM tatvaos_app;
+REVOKE UPDATE, DELETE ON connect.recording_access_log FROM tatvaos_app;
+REVOKE DELETE         ON mail.api_keys                FROM tatvaos_app;
+REVOKE DELETE         ON mail.app_passwords           FROM tatvaos_app;

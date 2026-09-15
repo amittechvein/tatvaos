@@ -223,6 +223,51 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+hdr "Append-only tables refuse rewrites from the app"
+
+# Every schema re-grants the app UPDATE and DELETE on all its tables on every
+# deploy; later files take them back for the tables that are records. Which
+# writes each table really has is catalogued in
+# local/postgres/init/20260915-append-only-revokes.sql. Checked by privilege,
+# not by rows: WHERE false touches nothing, so the only way one of these can
+# fail is a permission error.
+for stmt in \
+    "DELETE FROM core.audit_logs WHERE false" \
+    "UPDATE core.audit_logs SET tenant_id = tenant_id WHERE false" \
+    "DELETE FROM connect.meeting_events WHERE false" \
+    "UPDATE connect.meeting_events SET kind = kind WHERE false" \
+    "DELETE FROM connect.recording_access_log WHERE false" \
+    "UPDATE connect.recording_access_log SET level = level WHERE false" \
+    "DELETE FROM mail.api_keys WHERE false" \
+    "DELETE FROM mail.app_passwords WHERE false" \
+    "DELETE FROM mail.api_sends WHERE false" \
+    "DELETE FROM family.contact_audit_logs WHERE false"
+do
+    if run_as tatvaos_app "$stmt" >/dev/null 2>&1; then
+        fail "app can still run: $stmt"
+    else
+        pass "app refused: $stmt"
+    fi
+done
+
+# Rule 7, the other half. The writes the app really makes must still work: an
+# audit trail nobody can append to is an outage, and a key that cannot be
+# revoked is worse than one that can be deleted.
+for stmt in \
+    "INSERT INTO core.audit_logs (tenant_id) SELECT tenant_id FROM core.audit_logs WHERE false" \
+    "INSERT INTO connect.meeting_events (meeting_id, kind, occurred_at) SELECT meeting_id, kind, occurred_at FROM connect.meeting_events WHERE false" \
+    "INSERT INTO connect.recording_access_log (tenant_id, recording_id, level) SELECT tenant_id, recording_id, level FROM connect.recording_access_log WHERE false" \
+    "UPDATE mail.api_keys SET revoked_at = revoked_at WHERE false" \
+    "UPDATE mail.app_passwords SET revoked_at = revoked_at WHERE false"
+do
+    if run_as tatvaos_app "$stmt" >/dev/null 2>&1; then
+        pass "app can still run: $stmt"
+    else
+        fail "app REFUSED a write it needs: $stmt"
+    fi
+done
+
+# ---------------------------------------------------------------------------
 printf '\n%s%s%s\n' "$CYAN" "----------------------------------------" "$RST"
 printf '  passed: %s%d%s   failed: %s%d%s\n' \
     "$GREEN" "$PASSED" "$RST" \
