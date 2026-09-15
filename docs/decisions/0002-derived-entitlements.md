@@ -1,7 +1,7 @@
 # 0002 — Entitlement is derived from the plan, not copied into rows
 
-**Status:** proposed
-**Date:** 2026-09-13, revised 2026-09-15
+**Status:** proposed — ready for review
+**Date:** 2026-09-13; revised 2026-09-15 before review, and again with Amit's answers
 
 ## Context
 
@@ -20,26 +20,39 @@ plan through `core.subscriptions`. It named "create and update" and "delete
 and suspend" as the product-access sites; the real ones are create, bulk
 create, offboard and delete. And it assumed the switch would change nothing a
 person sees. Measured on production, it would have changed every active
-person's products. All three are corrected below, and the measurement is the
-section "What the switch would change".
+person's products.
+
+**Revised again 15 Sept, with Amit's four answers.** Every organisation gets
+a subscription; Connect and Calendar are available; the plans stay as they
+are; a cancelled subscription grants nothing from the plan. Measured again
+under those answers, nobody loses a product. One new question follows from
+them, about what existing people see on the day of the switch; it is in the
+Decision section.
 
 Every place that consumes entitlement today, from a grep of `apps/api` on
 15 Sept:
 
 | Site | Today |
 |---|---|
-| `Modules/Auth/Endpoints/AuthEndpoints.cs`, `MeAsync` | returns `products` for the signed-in person from `product_access`; the web dashboard and the mobile tiles read this |
+| `Modules/Auth/Endpoints/AuthEndpoints.cs`, `MeAsync` | returns `products` for the signed-in person from `product_access`; the mobile dashboard tiles read this |
 | `Modules/Admin/Endpoints/UserEndpoints.cs`, `ListAsync` | reads `product_access` per user for the user list |
 | `UserEndpoints.cs`, `CreateAsync` and `BulkCreateAsync` | **write** `product_access` rows from a `products` array; `products.Contains("mail")` decides whether a mailbox is created |
 | `UserEndpoints.cs`, `OffboardAsync` and `DeleteAsync` | set `revoked_at` on the person's rows |
 | `Modules/Core/Endpoints/SignupEndpoints.cs`, the org-owner insert | writes one `mail` row for the new owner — the copy the 13 Sept list says to delete |
 
-`UpdateAsync` and `SuspendAsync` do not touch product access.
+`UpdateAsync` and `SuspendAsync` do not touch product access. The web app's
+launcher does not read entitlement at all: it shows a fixed list of live
+products from `apps/web/lib/nav.tsx` to everyone. The mobile app filters its
+own fixed tile list by the `products` that `MeAsync` returns
+(`apps/mobile/theme.js`). Neither has a tile for Hire or People.
 
 **Tenant to plan.** `core.subscriptions (tenant_id, plan_id, status,
-started_at, cancelled_at)`. A tenant may hold several rows; the console takes
-the latest by `started_at`, whatever its status
-(`Modules/Admin/Endpoints/OrganisationEndpoints.cs`).
+started_at, cancelled_at)`, status one of `trial`, `active`, `past_due`,
+`cancelled`. A tenant may hold several rows; the console takes the latest by
+`started_at` (`Modules/Admin/Endpoints/OrganisationEndpoints.cs`). The one
+place a subscription changes behaviour today is the seat limit in
+`Modules/Admin/StorageAllocator.cs`, which reads the plan behind a
+subscription whose status is `active` or `trial`.
 
 There is no per-request gate: no endpoint refuses a call because the caller
 lacks a product. Entitlement only decides what is shown and whether a mailbox
@@ -47,29 +60,52 @@ exists. That keeps this change small.
 
 ## What the switch would change — measured on production, 15 Sept
 
-Read-only, counts only, no identities. 13 active people: 11 in organisations
-with a subscription, 2 in organisations with none. Two of the four
-organisations have no subscription row.
+Read-only, counts only, no identities. 13 active people across four
+organisations. Two organisations have no subscription: one suspended with one
+active person, and one school on trial with one active person. Of the two
+with a subscription, one is `active` and one is `trial`.
 
 - Live `product_access` rows: `mail` 15, `connect` 6.
-- `core.products`: `mail`, `family`, `drive` available; `calendar`,
-  `connect`, `hire`, `people` marked not available.
 - Every plan's `included_products` on production is
   `{mail, family, drive, connect, calendar, hire, people}`. Enterprise adds
-  `payroll`, `sheet`, `word`, which are not rows in `core.products` at all.
-
-Deriving from the latest subscription's plan, compared with what each person
-holds today:
+  `payroll`, `sheet`, `word`, which are not rows in `core.products`. No
+  organisation is on Enterprise.
 
 | Derived from | People whose products change | Gained (person-product pairs) | Lost |
 |---|---|---|---|
-| plan only | 13 of 13 | calendar 11, connect 5, drive 11, family 11, hire 11, people 11 | mail 2 |
-| plan, available products only | 13 of 13 | drive 11, family 11 | connect 6, mail 2 |
+| plan only, before Amit's answers | 13 of 13 | calendar 11, connect 5, drive 11, family 11, hire 11, people 11 | mail 2 |
+| plan, available products only, before the answers | 13 of 13 | drive 11, family 11 | connect 6, mail 2 |
+| **Amit's answers applied** | 13 of 13 | calendar 13, drive 13, family 13, hire 13, people 13, connect 7 | **none** |
 
-So the switch as first designed would have shown Hire, People, Calendar,
-Drive and Family to people who do not have them. Filtering on availability
-would have taken Connect away from the six people using it. And the two
-people in organisations without a subscription would have lost Mail.
+The last row assumes the two organisations without a subscription are on
+Starter and that a `trial` subscription grants products (see "Which
+subscription grants products").
+
+## Amit's answers, 15 Sept
+
+1. **Every organisation needs a subscription; the two without one get
+   Starter.** They are added through the console's change-plan action,
+   which already exists, writes `organisation.plan_changed` to the audit
+   log, and creates a `trial` subscription for an organisation that is not
+   active. Today that changes only the seat limit: Starter allows ten
+   people, and each of the two has one. Amit does it in the console, signed
+   in, before the backfill runs.
+2. **Connect and Calendar are available.** A separate migration,
+   `20260915-b-catalogue-connect-calendar-available.sql`, flips both flags.
+   Nothing reads the flag today, so it changes nothing a person sees.
+3. **Every plan includes `mail`, `family`, `drive`, `connect`,
+   `calendar`, `hire`, `people`** — already true on production. Whether
+   Enterprise sells `payroll`, `sheet` and `word` is undecided; no
+   organisation is on Enterprise and nothing in the repository records a
+   request, and the function below leaves them out regardless, because they
+   are not products in the catalogue. Hire and People are included on
+   purpose, to be shown as coming soon. **Today no tile exists for either on
+   the web or on mobile**, so including them shows nothing until a
+   coming-soon tile is added. That tile is a separate UI change, not part of
+   this record.
+4. **A cancelled subscription grants nothing from the plan.** A user-level
+   or organisation-level grant still stands after cancellation. Past-due is
+   treated as active until the finance rules exist.
 
 ## Options
 
@@ -80,16 +116,40 @@ people in organisations without a subscription would have lost Mail.
 2. **Derive at read time from plan + overrides; `product_access` becomes
    history.** Pros: one implementation of the fact, no sweeper, the override
    table's own contract ("expiry is evaluated in the read query") already
-   assumes this. Cons: the read and write sites change, and without a
-   backfill the switch changes what every person sees.
+   assumes this. Cons: the read and write sites change, and the switch
+   changes what people see unless a backfill freezes it.
 3. **Derive, and also materialise a view for reporting.** Pros: reporting
    convenience. Cons: a view is still a copy if anyone writes to it; deferred
    until somebody asks for a report.
 
 ## Decision
 
-Option 2, with a backfill that makes the day of the switch change nothing
-anyone can see.
+Option 2.
+
+**Which subscription grants products — one definition.** The latest row by
+`started_at`, and then its status: `trial`, `active` and `past_due` grant the
+plan; `cancelled` grants nothing. It is the latest row's status, not the
+latest row that happens to be active, so a newer cancellation beats an older
+active row. This is one SQL function, used by the entitlement function and
+by the seat limit in `StorageAllocator.cs`, which today counts only `active`
+and `trial` — rule 10, so past-due cannot mean "has products" in one place
+and "has no seats" in another:
+
+```sql
+CREATE OR REPLACE FUNCTION core.granting_plan_id(p_tenant uuid) RETURNS uuid
+LANGUAGE sql STABLE AS $$
+    SELECT CASE WHEN s.status IN ('trial', 'active', 'past_due') THEN s.plan_id END
+      FROM core.subscriptions s
+     WHERE s.tenant_id = p_tenant
+     ORDER BY s.started_at DESC
+     LIMIT 1
+$$;
+```
+
+**`trial` is an assumption to confirm with Amit.** His answer said
+`status = 'active'`. One organisation on production is on a `trial`
+subscription with three active people; excluding `trial` would take every
+product from them on the day of the switch.
 
 **The derived query**, as a `STABLE` SQL function
 `core.effective_products(p_tenant uuid, p_user uuid) RETURNS SETOF text`,
@@ -107,12 +167,8 @@ WITH live AS (
 ),
 plan AS (
     SELECT unnest(p.included_products) AS product_code
-      FROM (SELECT plan_id
-              FROM core.subscriptions
-             WHERE tenant_id = p_tenant
-             ORDER BY started_at DESC
-             LIMIT 1) s
-      JOIN core.plans p ON p.id = s.plan_id
+      FROM core.plans p
+     WHERE p.id = core.granting_plan_id(p_tenant)
 ),
 granted AS (
     SELECT product_code FROM plan
@@ -131,18 +187,16 @@ SELECT g.product_code
                       AND r.product_code = g.product_code);
 ```
 
-**Why existence, not availability.** On production `is_available` says
-Connect is not available while six people use it. Availability is a
-catalogue flag — what the console offers for new grants — not a reason to
-take a product away from someone who holds it. The `EXISTS` keeps codes that
-are not products at all (`payroll`, `sheet`, `word`) out. Whether `connect`
-and `calendar` should read "available" is a data correction for Amit,
-separate from this record.
+A cancelled subscription makes `plan` empty, and `granted` still carries any
+live `grant` rows, which is Amit's rule 4.
 
-**Which subscription.** The latest by `started_at`, whatever its status —
-what the console does today. Whether a cancelled or past-due subscription
-still grants products is a product decision for Amit; this function is the
-one place that changes when he makes it.
+**Why existence, not availability.** Availability is a catalogue flag — what
+the console offers for new grants and whether a product has shipped — not a
+reason to hide a product someone's plan includes. The `EXISTS` keeps codes
+that are not products at all (`payroll`, `sheet`, `word`) out. Hire and
+People stay derivable while unavailable, which is what lets a coming-soon
+tile read them. `MeAsync` returns each product with its availability, so a
+client shows an unavailable product as coming soon instead of opening it.
 
 **How "org revoke is final" is expressed:** the first `NOT EXISTS` removes a
 product whenever an organisation-level revoke is live, and it runs against
@@ -156,42 +210,47 @@ withdrawn before a new one is written for the same product; the admin write
 path does that in the same transaction. Revoke beats grant only across
 scopes, and only downward.
 
-**Day one changes nothing: the backfill.** Before any read site switches, one
-idempotent data migration writes, for every active person:
+**Day one — one open question for Amit.** Under his answers nobody loses a
+product, and all 13 active people gain the products their plan includes but
+they do not hold today. There are two ways to switch:
 
-- a user-level `revoke` for each product the function would give them that
-  they do not hold today, and
-- a user-level `grant` for each product they hold today that the function
-  would not give them,
+- *(A) Freeze today.* The backfill writes a user-level `revoke` for every
+  gain: 72 rows for 13 people. Day one changes nothing anyone sees. Existing
+  people keep today's products until an admin grants more; anyone added
+  afterwards gets the full plan, so two people in one organisation can
+  differ only because of when they joined.
+- *(B) Give everyone their plan.* The backfill writes a user-level `grant`
+  only for products held today that the function would not give — none,
+  measured. Day one, the 13 people's product lists grow. The web launcher
+  already shows every live product to everyone, so the web does not change;
+  the mobile dashboard shows new tiles (Space, Contacts and Calendar for
+  everyone, and Connect for seven more people), and the admin user list
+  shows the fuller lists. Hire and People appear nowhere until a tile
+  exists.
 
-with `reason = '0002 backfill: access as it was when entitlement became
-derived'` and `granted_by` set to a fixed system-actor id named in the
-migration. Inserts use `ON CONFLICT ... DO NOTHING` against the live-row
-unique index, and a second run inserts nothing, because after the first run
-the function already agrees with today. Every backfilled row is an ordinary
-override: visible, attributable, and withdrawable one at a time.
+**Recommended: (B).** It is what Amit's answer 3 says the plans are, it
+leaves no rows whose only purpose is to record the past, and its visible
+change is small and deliberate. The backfill exists in both cases as the
+guard against losses; what it writes and how it is proved differ, below.
 
-People in the two organisations without a subscription keep Mail through
-their backfilled grants, but anyone added there after the switch gets
-nothing. Those two organisations need a subscription, and which plan is
-Amit's decision.
+Every backfilled row carries `reason = '0002 backfill: access as it was when
+entitlement became derived'` and `granted_by` set to a fixed system-actor id
+named in the migration. Inserts use `ON CONFLICT ... DO NOTHING` against the
+live-row unique index, and a second run inserts nothing, because after the
+first run the function already agrees with what the backfill preserved.
 
-**Plan arrays become the promise.** After the switch a new person gets their
-organisation's plan. Every plan on production includes Hire and People today,
-and the Hire & People lane is on hold. Amit decides what each plan includes
-before the switch; the backfill protects only the people who exist on the
-day.
-
-**The read and write sites.** `MeAsync` returns the function's result. The
-admin user list calls it once per page (a lateral join, not per user).
-`CreateAsync` and `BulkCreateAsync` stop writing `product_access`; when the
-operator ticks a product the plan does not include they write a `grant`
-override, and when they untick one it does include they write a `revoke`,
-both with `granted_by` and `reason`. `OffboardAsync` and `DeleteAsync` write
-user-level revokes instead of setting `revoked_at`, so the record of what was
-taken away survives. The signup copy in `SignupEndpoints.cs` is deleted:
-every plan on production includes `mail`, so the owner derives it.
-`product_access` stops being written; it is not dropped (rule 2, additive).
+**The read and write sites.** `MeAsync` returns the function's result, with
+availability. The admin user list calls it once per page (a lateral join,
+not per user). `CreateAsync` and `BulkCreateAsync` stop writing
+`product_access`; when the operator ticks a product the plan does not include
+they write a `grant` override, and when they untick one it does include they
+write a `revoke`, both with `granted_by` and `reason`. `OffboardAsync` and
+`DeleteAsync` write user-level revokes instead of setting `revoked_at`, so the
+record of what was taken away survives. The signup copy in
+`SignupEndpoints.cs` is deleted: every plan includes `mail`, so the owner
+derives it. `StorageAllocator.cs` reads its seat limit through
+`core.granting_plan_id`. `product_access` stops being written; it is not
+dropped (rule 2, additive).
 
 **The shadowed-grant warning.** When the create path is about to write a
 user-level `grant` and a live org-level `revoke` exists for the same product,
@@ -203,42 +262,74 @@ hold is withdrawn."* The user list shows the same product with a "held"
 marker, so the state is visible on every screen that shows the grant, not
 only at the moment of granting.
 
+**Order of work.**
+
+1. Amit adds Starter to the two organisations without a subscription, in the
+   console.
+2. The catalogue migration (Connect and Calendar available) merges and
+   deploys.
+3. `core.granting_plan_id` and `core.effective_products` land as an additive
+   migration; `StorageAllocator.cs` reads the seat limit through the first.
+4. The backfill (A or B) and the switch of the read and write sites land
+   together; the migrations run before the new API starts, as `deploy.sh`
+   already orders them. The proof below runs first against a restored copy
+   of production.
+
 ## What proves it
 
-**The function.** A psql check under `tests/isolation/`, run by CI, against a
-scratch tenant arranged to have: a subscription to a plan `{mail, drive}`; an
-org-level `revoke` on `drive`; a user-level `grant` on `connect` for one
-person; a user-level `revoke` on `mail` for another.
+**The function.** A psql check under `tests/isolation/`, run by CI, against
+scratch tenants arranged as follows.
 
-| Person | Expected `effective_products` |
+| Arrangement | Expected `effective_products` |
 |---|---|
-| owner (no user rows) | `{mail}` — drive removed by the org revoke |
-| the person with the connect grant | `{mail, connect}` |
-| the person with the mail revoke | `{}` |
-| anyone, after a user-level `grant` on `drive` | still no `drive` — the org revoke is final |
-| anyone, after `withdrawn_at` is set on the org revoke | `drive` returns |
-| anyone, with a grant whose `expires_at` is in the past | the grant does not count |
+| `active` subscription to a plan `{mail, drive}`; org-level `revoke` on `drive`; owner has no user rows | `{mail}` — drive removed by the org revoke |
+| the same tenant, a person with a user-level `grant` on `connect` | `{mail, connect}` |
+| the same tenant, a person with a user-level `revoke` on `mail` | `{}` |
+| the same tenant, after a user-level `grant` on `drive` | still no `drive` — the org revoke is final |
+| the same tenant, after `withdrawn_at` is set on the org revoke | `drive` returns |
+| a grant whose `expires_at` is in the past | the grant does not count |
+| latest subscription `past_due` | the plan's products |
+| latest subscription `trial` | the plan's products |
+| latest subscription `cancelled`, a person with a user-level `grant` on `connect` | `{connect}` only |
+| an older `active` row and a newer `cancelled` row | grants only — the newer row wins |
+| no subscription at all | grants only |
 
 Red first: run the check against a function with the first `NOT EXISTS`
-deleted, and watch the fourth row fail.
+deleted, and watch the fourth row fail; and against a `granting_plan_id`
+that picks the latest *active* row, and watch the tenth row fail.
 
-**The switch is a no-op.** The measurement query behind the table above, run
-after the backfill on a restored copy of production and then on production,
-must answer "people whose products change: 0". Before the backfill it
-answers 13, so the check has already been seen red.
+**The switch.** The measurement query behind "What the switch would change",
+run after the backfill on a restored copy of production and then on
+production:
+
+- under (A), "people whose products change" must answer 0;
+- under (B), "people who lose any product" must answer 0, and the gains must
+  equal the last row of that table.
+
+Both have been seen red: before the two organisations have a subscription,
+"people who lose any product" answers 2.
 
 ## Consequences
 
 Easier: one place answers "what does this person have"; a plan change takes
-effect on the next request; the shadowed-grant case cannot be silent.
-Harder: every plan edit immediately changes what every new person in every
-organisation on that plan gets; the admin screens must express "on hold"
-states they never had to; `product_access` history stops growing, so a
-report that reads it needs the function instead. Accepted: two extra
-`NOT EXISTS` per read, on tables with a covering partial index.
+effect on the next request; the shadowed-grant case cannot be silent; seats
+and products agree on what a past-due subscription means.
+
+Harder, and customer-facing: **a cancelled subscription now removes the
+plan's products**, which it does not do today — today nothing touches
+`product_access` when a subscription is cancelled. That is Amit's rule, and
+because it changes what a customer experiences on cancellation, its wording
+to customers is Amit's and the CTO's. Every plan edit immediately changes
+what every person on that plan gets under (B), and what every new person
+gets under (A). The admin screens must express "on hold" states they never
+had to. `product_access` history stops growing, so a report that reads it
+needs the function instead.
+
+Accepted: two extra `NOT EXISTS` per read, on tables with a covering partial
+index.
 
 ## Revisit when
 
 A product needs a per-request gate (an endpoint that must refuse a call
-rather than hide a tile). Then the function moves behind a cached
-per-request claim, and this record is superseded.
+rather than hide a tile), or finance defines what past-due should cost a
+customer. Then this record is superseded.
