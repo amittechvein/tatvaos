@@ -2998,7 +2998,10 @@ export default function Stage({ seat, meeting, prefs }: {
                     That is how Chrome turns speech into text. Nobody in the
                     meeting is asked first, and the room shows a &ldquo;Minutes
                     on&rdquo; badge while it runs. Chrome and Edge only; guests
-                    cannot take part yet.
+                    cannot take part yet. Each browser hears only its own
+                    microphone, so the minutes cover only the people on Chrome
+                    or Edge who are signed in &mdash; a partial record, by
+                    construction.
                   </span>
                 </div>
 

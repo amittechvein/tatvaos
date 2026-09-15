@@ -51,10 +51,12 @@ a shrug.
 will destroy, and require a second confirmation. Shortening retention is a bulk
 delete wearing a dropdown.
 
-**Not decided, and needed before this ships:** whether a specific recording can
-be exempted ("keep this one"). Recommend yes, a per-recording `keep_until_at`
-that the sweep honours, because the first support ticket will be a board
-meeting that got swept.
+**Decided and built — "keep this one" exists.** A per-recording
+`connect.recordings.keep_until_at`, honoured by the retention sweep and by the
+share-expiry trigger. *This paragraph said "not decided, and needed before this
+ships" until 13 September 2026, five days after the column had shipped and
+been proven; the Connect welcome flagged it and the correction is house rule 8
+inverted — a document behind the code is how a thing gets built twice.*
 
 ---
 
