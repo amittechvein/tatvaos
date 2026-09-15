@@ -1,7 +1,7 @@
 # 0003 — Mobile sign-in handoff: token to browser session, code in the fragment
 
-**Status:** proposed
-**Date:** 2026-09-13, revised 2026-09-15
+**Status:** accepted
+**Date:** 2026-09-13, revised 2026-09-15, accepted by the CTO 2026-09-15
 
 ## Context
 
@@ -54,7 +54,9 @@ and the app's memory.
 **Land.** `apps/web/app/handoff/page.tsx` is a static page. Its script, on
 load: read `location.hash`, immediately `history.replaceState` to `/handoff`
 so the fragment is gone from history, then `POST /api/auth/handoff/redeem`
-with `{ code }`, credentials included.
+with `{ code }`, credentials included. If the redeem answers 401, the page
+shows one sentence — "This link has expired. Go back to the app and open it
+again." — and stops: no retry loop, no spinner, no form left waiting.
 
 **Redeem.** One statement, single-use by construction:
 `UPDATE core.auth_handoff_codes SET redeemed_at = now() WHERE code_hash = $1
@@ -83,6 +85,14 @@ signed in as somebody else is replaced, not merged.
 - The landing page's URL after load has no fragment (read `location.href`
   in a browser test), and Caddy, with `log` temporarily enabled on a
   scratch box, shows `/handoff` with no code.
+- A cold phone still redeems inside the window. The sixty seconds run from
+  mint to redeem, and a slow landing page or a slow script spends them. A CI
+  browser test loads the landing page under a throttled slow network profile
+  with CPU slowdown and confirms the redeem lands inside the window; with the
+  window forced shorter than the load, it confirms the expiry sentence
+  appears and nothing hangs. If the test cannot pass at sixty seconds, the
+  window becomes ninety, and whether that extra exposure is acceptable is
+  Amit's decision (CTO, 15 Sept).
 - Red first: remove `AND redeemed_at IS NULL` and watch the second redeem
   succeed.
 
