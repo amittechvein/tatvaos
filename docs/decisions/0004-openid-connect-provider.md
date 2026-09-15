@@ -1,7 +1,7 @@
 # 0004 — TatvaOS as an OpenID Connect provider
 
-**Status:** proposed
-**Date:** 2026-09-15
+**Status:** accepted
+**Date:** 2026-09-15, accepted by the CTO 2026-09-15
 
 ## Context
 
@@ -130,7 +130,7 @@ looked up through a SECURITY DEFINER resolver — the mail API key pattern,
 for the same reason: the token endpoint does not know the tenant until it
 has found the client.
 
-**Tenancy — the one question this record puts to the CTO.** OpenIddict looks
+**Tenancy — decided by the CTO on 15 Sept: option (b).** OpenIddict looks
 up applications and tokens by id before any tenant is known, and our tables
 are FORCE ROW LEVEL SECURITY. Two ways through:
 
@@ -145,9 +145,19 @@ are FORCE ROW LEVEL SECURITY. Two ways through:
 
 (a) is less code, and it is the first place where the database would no
 longer back up the application on tenancy. (b) keeps "every table under RLS"
-true at the price of writing two store methods on the protocol path.
-**Recommended: (b)**, because it is the pattern this codebase already
-trusts for API keys and refresh tokens.
+true at the price of writing store methods on the protocol path.
+**Decided: (b)**, because it is the pattern this codebase already trusts for
+API keys and refresh tokens: custom OpenIddict stores, and a cross-tenant
+test in CI.
+
+**Only the lookups that must run before a tenant is known go through a
+definer**: the client by id at authorize and at the token endpoint, and the
+token by hash at userinfo, introspection and revocation. Each resolver takes
+the key the caller already holds and returns that one row. A SECURITY
+DEFINER function runs as its owner and does not see row-level security, so
+routing every read through one would switch RLS off for those reads — the
+opposite of the reason (b) was chosen. Every read after the tenant is known
+is ordinary RLS.
 
 **Consent.** The screen names the application, says "Added by
 <organisation> administrators", shows the host it will return to, and lists
@@ -225,16 +235,20 @@ real relying party over HTTP:
 8. A suspended person's refresh token: refused.
 9. After the run, the API and Caddy logs contain none of the secret, code,
    verifier or token values the script used.
+10. With `app.tenant_id` set to tenant B, the app role reads no tenant A row
+    from any provider table — RLS still holds everywhere the resolvers are
+    not used.
 
 Red first: run step 3 against a build whose userinfo skips the
 application-liveness check, and watch userinfo answer 200. Run step 9 once
 with a deliberate debug log line printing the code, and watch the search
 find it.
 
-Before any customer is told TatvaOS "works with any OpenID Connect
-application", it also passes the OpenID Foundation's conformance tests for a
-basic provider. That sentence is a promise to customers, so its wording is
-Amit's and the CTO's.
+The sentence "works with any OpenID Connect application" is not written
+anywhere a customer can read it until the first customer test has passed and
+the OpenID Foundation's conformance tests for a basic provider have run. It
+promises customers that TatvaOS sign-in becomes a dependency of their own
+software, so its wording is Amit's and the CTO's (CTO, 15 Sept).
 
 ## Consequences — and whether the surface is worth it
 
