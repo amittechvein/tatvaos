@@ -24,6 +24,18 @@ namespace TatvaOS.Api.Modules.Connect.Endpoints;
 ///  out not to need Core at all — the switch was never going to be a column
 ///  on a shared table, because Space's equivalent is not one either.
 ///
+///  THE FEATURE IS STILL OFF, AND THERE IS A GATE ON THE SWITCH.
+///
+///  Recordings.tsx renders the Share button only when the recordings list
+///  carries a `sharing` capability, and no API code emits that field. Adding
+///  it is one line and it is the on-switch for the whole feature.
+///
+///  DO NOT ADD IT until the permission matrix in docs/CONNECT_DECISIONS.md
+///  has been run and the results shown — nine cases, one of which is known to
+///  fail today (a suspended organisation is not checked). Public links to
+///  recordings are the most exposed surface this product would have. The
+///  matrix is the condition, not a suggestion.
+///
 ///  WHAT ENFORCES WHAT, because the two are not the same:
 ///    • CreateAsync refuses level 4 when the organisation's switch is off.
 ///      That is a courtesy — it stops a link being made that would not work.
