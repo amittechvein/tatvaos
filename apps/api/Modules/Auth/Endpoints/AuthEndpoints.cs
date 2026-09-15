@@ -1156,22 +1156,184 @@ public static class AuthEndpoints
     }
 
     // ------------------------------------------------------------------
+    //  CHANGING HOW SOMEONE GETS BACK INTO AN ACCOUNT NEEDS THEIR PASSWORD.
+    //
+    //  Open from 4 to 15 September 2026, and named in the CTO's review of
+    //  9 September: these endpoints asked for nothing but a live session. Anyone
+    //  with a few minutes at an unlocked, signed-in laptop could add their own
+    //  recovery email, confirm it from their own inbox, reset the password and
+    //  keep the account — and the owner was never told. Change-password, a few
+    //  hundred lines below, already did all three things this gate now does.
+    //
+    //  So every action that STARTS or REMOVES a change to recovery details asks
+    //  for the current password, every change that TAKES EFFECT mails the owner
+    //  (RecoveryChangedEmail) and writes user.recovery_changed to the audit log.
+    //
+    //  Two deliberate exceptions, for the CTO's review:
+    //    - Resending to the recovery email or number ALREADY pending does not ask
+    //      again. It cannot point recovery anywhere new, and asking would make
+    //      "Resend" a password prompt for no security gain.
+    //    - Verifying the phone code does not ask again. It can only complete a
+    //      change that already needed the password, and asking would mean the
+    //      browser holding the typed password for the minutes the SMS takes.
+    //
+    //  403, not 401: the web client treats 401 as an expired session and spends
+    //  a refresh-token rotation on every mistyped password.
+    // ------------------------------------------------------------------
+    private static async Task<IResult?> RequireCurrentPasswordAsync(
+        User user, string? currentPassword, IPasswordHasher hasher, AppDbContext db, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(currentPassword))
+            return Results.Json(new
+            {
+                error = "Enter your current password to change how your account can be recovered.",
+                needsPassword = true,
+            }, statusCode: 403);
+        return await CheckCurrentPasswordAsync(user, currentPassword, hasher, db, ct) switch
+        {
+            CurrentPasswordCheck.Locked => LockedReply(user),
+            CurrentPasswordCheck.Wrong => Results.Json(
+                new { error = "Your current password is not right.", needsPassword = true }, statusCode: 403),
+            _ => null,
+        };
+    }
+
+    private enum CurrentPasswordCheck { Right, Wrong, Locked }
+
+    // ------------------------------------------------------------------
+    //  THE ONE PLACE A SIGNED-IN USER'S CURRENT PASSWORD IS CHECKED.
+    //
+    //  It counts wrong guesses against the SAME counter and lock as sign-in.
+    //  Before 15 September 2026 change-password verified with no counter at
+    //  all, so a live session — the unlocked laptop again — could guess the
+    //  password without limit, and sign-in's five-try lock protected nothing.
+    //  A lock here also blocks sign-in for its fifteen minutes. That is the
+    //  trade sign-in already makes for anyone who knows the address, and it
+    //  errs toward the owner: a lock is an inconvenience, a guessed password
+    //  is the account.
+    // ------------------------------------------------------------------
+    private static async Task<CurrentPasswordCheck> CheckCurrentPasswordAsync(
+        User user, string currentPassword, IPasswordHasher hasher, AppDbContext db, CancellationToken ct)
+    {
+        if (user.LockedUntil is DateTimeOffset until && until > DateTimeOffset.UtcNow)
+            return CurrentPasswordCheck.Locked;
+
+        if (user.PasswordHash is not null && hasher.Verify(currentPassword, user.PasswordHash))
+        {
+            if (user.FailedLoginCount > 0)
+            {
+                user.FailedLoginCount = 0;
+                await db.SaveChangesAsync(ct);
+            }
+            return CurrentPasswordCheck.Right;
+        }
+
+        user.FailedLoginCount++;
+        if (user.FailedLoginCount >= MaxFailedAttempts)
+        {
+            user.LockedUntil = DateTimeOffset.UtcNow.Add(LockoutDuration);
+            user.FailedLoginCount = 0;
+        }
+        await db.SaveChangesAsync(ct);
+        return user.LockedUntil is DateTimeOffset lockedNow && lockedNow > DateTimeOffset.UtcNow
+            ? CurrentPasswordCheck.Locked
+            : CurrentPasswordCheck.Wrong;
+    }
+
+    private static IResult LockedReply(User user)
+    {
+        var minutes = Math.Max(1, (int)((user.LockedUntil ?? DateTimeOffset.UtcNow) - DateTimeOffset.UtcNow).TotalMinutes);
+        return Results.Json(new
+        {
+            error = $"Too many wrong passwords. Try again in {minutes} minute(s).",
+        }, statusCode: 429);
+    }
+
+    /// <summary>r•••@gmail.com — enough for the owner to recognise, not enough to reuse.</summary>
+    private static string MaskEmail(string? email)
+    {
+        if (string.IsNullOrWhiteSpace(email)) return "";
+        var at = email.IndexOf('@');
+        return at <= 0 ? "•••" : email[0] + "•••" + email[at..];
+    }
+
+    /// <summary>+91•••••3210.</summary>
+    private static string MaskPhone(string? phone)
+    {
+        if (string.IsNullOrWhiteSpace(phone)) return "";
+        return phone.Length <= 4 ? "•••" : phone[..3] + "•••••" + phone[^4..];
+    }
+
+    /// <summary>
+    /// Mails the account's own address and, when there is one, the previous
+    /// verified recovery address. Best effort and off the request path, exactly
+    /// like the sign-in alert; SystemMailer logs its own failures.
+    /// </summary>
+    private static void NotifyRecoveryChanged(
+        IServiceScopeFactory scopeFactory, IConfiguration config,
+        string displayName, string primaryEmail, string? previousVerifiedRecoveryEmail, string what)
+    {
+        var baseUrl = (config["Jwt:Issuer"] ?? "https://core.tatvaos.com").TrimEnd('/');
+        var when = DateTimeOffset.UtcNow;
+        var recipients = new List<string> { primaryEmail };
+        if (!string.IsNullOrWhiteSpace(previousVerifiedRecoveryEmail)
+            && !string.Equals(previousVerifiedRecoveryEmail, primaryEmail, StringComparison.OrdinalIgnoreCase))
+            recipients.Add(previousVerifiedRecoveryEmail);
+
+        _ = Task.Run(async () =>
+        {
+            foreach (var to in recipients)
+            {
+                try
+                {
+                    using var scope = scopeFactory.CreateScope();
+                    var mailer = scope.ServiceProvider.GetRequiredService<SystemMailer>();
+                    await mailer.SendHtmlAsync(
+                        to, RecoveryChangedEmail.Subject(),
+                        RecoveryChangedEmail.Html(displayName, baseUrl, what, when),
+                        from: "no_reply@tatvaos.com");
+                }
+                catch
+                {
+                    // Best effort by design; one bad address must not stop the other.
+                }
+            }
+        });
+    }
+
+    // ------------------------------------------------------------------
     /// <summary>
     /// POST /api/auth/recovery-email — set (or change) the current user's
     /// recovery email. Stored UNVERIFIED; a link is emailed to the address and
     /// it counts for nothing until that link is opened.
     /// </summary>
     private static async Task<IResult> RemoveRecoveryEmailAsync(
-        AppDbContext db, TenantContext tenant, CancellationToken ct)
+        // Nullable: a DELETE from a tab opened before this change has no body,
+        // and must get the "enter your password" reply, not a framework 400.
+        [Microsoft.AspNetCore.Mvc.FromBody] ConfirmPasswordRequest? req,
+        AppDbContext db, TenantContext tenant, IPasswordHasher hasher, AuditWriter audit,
+        IServiceScopeFactory scopeFactory, IConfiguration config, CancellationToken ct)
     {
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == tenant.UserId, ct);
         if (user is null) return Results.NotFound();
+        var refused = await RequireCurrentPasswordAsync(user, req?.CurrentPassword, hasher, db, ct);
+        if (refused is not null) return refused;
+        if (user.RecoveryEmail is null) return Results.Ok(new { removed = true });
+
+        var previous = user.RecoveryEmail;
+        var previousVerified = user.RecoveryEmailVerifiedAt is not null ? user.RecoveryEmail : null;
         user.RecoveryEmail = null;
         user.RecoveryEmailVerifiedAt = null;
         user.RecoveryEmailTokenHash = null;
         user.RecoveryEmailTokenSentAt = null;
         user.RecoveryEmailTokenAttempts = 0;
         await db.SaveChangesAsync(ct);
+
+        await audit.WriteAsync("user.recovery_changed", "user", user.Id.ToString(),
+            before: new { kind = "recovery_email", value = MaskEmail(previous) },
+            after: new { kind = "recovery_email", value = (string?)null }, ct: ct);
+        NotifyRecoveryChanged(scopeFactory, config, user.DisplayName, user.Email, previousVerified,
+            $"the recovery email {MaskEmail(previous)} was removed from your account.");
         return Results.Ok(new { removed = true });
     }
 
@@ -1191,7 +1353,7 @@ public static class AuthEndpoints
     private static async Task<IResult> RequestPhoneChangeAsync(
         SetPhoneRequest req, AppDbContext db, TenantContext tenant,
         Shared.Notify.ISmsSender sms, Shared.Settings.SettingsReader settings,
-        CancellationToken ct)
+        IPasswordHasher hasher, CancellationToken ct)
     {
         var phone = Shared.PhoneNumber.Normalise(req.Phone);
         if (phone is null)
@@ -1201,6 +1363,13 @@ public static class AuthEndpoints
             });
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == tenant.UserId, ct);
         if (user is null) return Results.NotFound();
+        // Resending the code to the number already pending needs no password: that
+        // request already passed the gate, and it cannot point recovery anywhere new.
+        if (phone != user.PendingPhone)
+        {
+            var refused = await RequireCurrentPasswordAsync(user, req.CurrentPassword, hasher, db, ct);
+            if (refused is not null) return refused;
+        }
         if (phone == user.Phone)
             return Results.BadRequest(new { error = "That is already your recovery number." });
         // OTP sign-in and the phone reset both require exactly one live account
@@ -1238,7 +1407,8 @@ public static class AuthEndpoints
     }
 
     private static async Task<IResult> VerifyPhoneChangeAsync(
-        VerifyPhoneRequest req, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        VerifyPhoneRequest req, AppDbContext db, TenantContext tenant, AuditWriter audit,
+        IServiceScopeFactory scopeFactory, IConfiguration config, CancellationToken ct)
     {
         var code = req.Code?.Trim();
         if (string.IsNullOrEmpty(code) || code.Length != 6 || !code.All(char.IsDigit))
@@ -1283,20 +1453,38 @@ public static class AuthEndpoints
             await db.SaveChangesAsync(ct);
             return Results.BadRequest(new { error = "That number is already linked to another account." });
         }
+        var previousPhone = user.Phone;
         user.Phone = pending;
         // A login code minted for the old number must not survive the change.
         user.LoginOtpHash = null;
         user.LoginOtpSentAt = null;
         user.LoginOtpAttempts = 0;
         await db.SaveChangesAsync(ct);
+
+        await audit.WriteAsync("user.recovery_changed", "user", user.Id.ToString(),
+            before: new { kind = "recovery_phone", value = MaskPhone(previousPhone) },
+            after: new { kind = "recovery_phone", value = MaskPhone(user.Phone) }, ct: ct);
+        NotifyRecoveryChanged(scopeFactory, config, user.DisplayName, user.Email,
+            user.RecoveryEmailVerifiedAt is not null ? user.RecoveryEmail : null,
+            previousPhone is null
+                ? $"the recovery number {MaskPhone(user.Phone)} was added to your account."
+                : $"your recovery number was changed from {MaskPhone(previousPhone)} to {MaskPhone(user.Phone)}.");
         return Results.Ok(new { verified = true, phone = user.Phone });
     }
 
     private static async Task<IResult> RemovePhoneAsync(
-        AppDbContext db, TenantContext tenant, CancellationToken ct)
+        // Nullable: a DELETE from a tab opened before this change has no body,
+        // and must get the "enter your password" reply, not a framework 400.
+        [Microsoft.AspNetCore.Mvc.FromBody] ConfirmPasswordRequest? req,
+        AppDbContext db, TenantContext tenant, IPasswordHasher hasher, AuditWriter audit,
+        IServiceScopeFactory scopeFactory, IConfiguration config, CancellationToken ct)
     {
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == tenant.UserId, ct);
         if (user is null) return Results.NotFound();
+        var refused = await RequireCurrentPasswordAsync(user, req?.CurrentPassword, hasher, db, ct);
+        if (refused is not null) return refused;
+
+        var previousPhone = user.Phone;
         user.Phone = null;
         user.PendingPhone = null;
         user.PendingPhoneOtpHash = null;
@@ -1306,12 +1494,23 @@ public static class AuthEndpoints
         user.LoginOtpSentAt = null;
         user.LoginOtpAttempts = 0;
         await db.SaveChangesAsync(ct);
+
+        if (previousPhone is not null)
+        {
+            await audit.WriteAsync("user.recovery_changed", "user", user.Id.ToString(),
+                before: new { kind = "recovery_phone", value = MaskPhone(previousPhone) },
+                after: new { kind = "recovery_phone", value = (string?)null }, ct: ct);
+            NotifyRecoveryChanged(scopeFactory, config, user.DisplayName, user.Email,
+                user.RecoveryEmailVerifiedAt is not null ? user.RecoveryEmail : null,
+                $"the recovery number {MaskPhone(previousPhone)} was removed from your account.");
+        }
         return Results.Ok(new { removed = true });
     }
 
     private static async Task<IResult> SetRecoveryEmailAsync(
         SetRecoveryEmailRequest req, AppDbContext db, TenantContext tenant,
-        SystemMailer mailer, IConfiguration config, CancellationToken ct)
+        SystemMailer mailer, IConfiguration config, IPasswordHasher hasher, AuditWriter audit,
+        IServiceScopeFactory scopeFactory, CancellationToken ct)
     {
         var email = req.Email?.Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(email) || !System.Net.Mail.MailAddress.TryCreate(email, out _))
@@ -1319,6 +1518,16 @@ public static class AuthEndpoints
 
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == tenant.UserId, ct);
         if (user is null) return Results.NotFound();
+
+        // Resending the link to the address already waiting for confirmation needs
+        // no password: it cannot point recovery anywhere new.
+        var resendingPending = user.RecoveryEmailVerifiedAt is null
+            && string.Equals(user.RecoveryEmail, email, StringComparison.OrdinalIgnoreCase);
+        if (!resendingPending)
+        {
+            var refused = await RequireCurrentPasswordAsync(user, req.CurrentPassword, hasher, db, ct);
+            if (refused is not null) return refused;
+        }
 
         if (string.Equals(email, user.Email, StringComparison.OrdinalIgnoreCase))
             return Results.BadRequest(new { error = "Your recovery email must differ from your sign-in email." });
@@ -1333,6 +1542,8 @@ public static class AuthEndpoints
             && string.Equals(user.RecoveryEmail, email, StringComparison.OrdinalIgnoreCase))
             return Results.Ok(new { sent = true, message = RecoveryVerifySentReply });
 
+        var previous = user.RecoveryEmail;
+        var previousVerified = user.RecoveryEmailVerifiedAt is not null ? user.RecoveryEmail : null;
         var token = TokenIssuer.GenerateRefreshToken();
         user.RecoveryEmail = email;
         user.RecoveryEmailVerifiedAt = null;          // a changed address must be re-proven
@@ -1349,6 +1560,15 @@ public static class AuthEndpoints
             RecoveryVerifyEmail.Html(user.DisplayName, baseUrl, verifyUrl, (int)RecoveryVerifyLifetime.TotalMinutes),
             from: "no_reply@tatvaos.com", ct);
 
+        if (!resendingPending)
+        {
+            await audit.WriteAsync("user.recovery_changed", "user", user.Id.ToString(),
+                before: new { kind = "recovery_email", value = MaskEmail(previous) },
+                after: new { kind = "recovery_email", value = MaskEmail(email), verified = false }, ct: ct);
+            NotifyRecoveryChanged(scopeFactory, config, user.DisplayName, user.Email, previousVerified,
+                $"a recovery email, {MaskEmail(email)}, was added to your account. It starts working only "
+                + "after someone opens the confirmation link sent to it.");
+        }
         return Results.Ok(new { sent = true, message = RecoveryVerifySentReply });
     }
 
@@ -1461,8 +1681,12 @@ public static class AuthEndpoints
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == tenant.UserId, ct);
         if (user is null) return Results.NotFound();
 
-        if (user.PasswordHash is null || !hasher.Verify(req.CurrentPassword, user.PasswordHash))
-            return Results.Json(new { error = "Current password is incorrect." }, statusCode: 401);
+        switch (await CheckCurrentPasswordAsync(user, req.CurrentPassword, hasher, db, ct))
+        {
+            case CurrentPasswordCheck.Locked: return LockedReply(user);
+            case CurrentPasswordCheck.Wrong:
+                return Results.Json(new { error = "Current password is incorrect." }, statusCode: 401);
+        }
 
         if (req.NewPassword == req.CurrentPassword)
             return Results.BadRequest(new { error = "The new password must be different." });
@@ -1971,8 +2195,10 @@ public sealed record LoginRequest(string? Email, string? Password);
 public sealed record OtpRequest(string? Phone);
 public sealed record OtpVerifyRequest(string? Phone, string? Code);
 public sealed record RefreshRequest(string? RefreshToken);
-public sealed record SetRecoveryEmailRequest(string? Email);
-public sealed record SetPhoneRequest(string? Phone);
+public sealed record SetRecoveryEmailRequest(string? Email, string? CurrentPassword = null);
+public sealed record SetPhoneRequest(string? Phone, string? CurrentPassword = null);
+/// <summary>The body of a DELETE that removes a way back into the account.</summary>
+public sealed record ConfirmPasswordRequest(string? CurrentPassword);
 public sealed record VerifyPhoneRequest(string? Code);
 public sealed record VerifyRecoveryEmailRequest(string? Token);
 public sealed record ForgotPasswordRecoveryRequest(string? RecoveryEmail);
