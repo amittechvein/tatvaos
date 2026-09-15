@@ -1,7 +1,7 @@
 # 0002 — Entitlement is derived from the plan, not copied into rows
 
-**Status:** proposed — ready for review
-**Date:** 2026-09-13; revised 2026-09-15 before review, and again with Amit's answers
+**Status:** proposed — ready for review, every product question answered
+**Date:** 2026-09-13; revised 2026-09-15 before review, with Amit's answers, and with his answers to the two questions they raised
 
 ## Context
 
@@ -25,9 +25,10 @@ person's products.
 **Revised again 15 Sept, with Amit's four answers.** Every organisation gets
 a subscription; Connect and Calendar are available; the plans stay as they
 are; a cancelled subscription grants nothing from the plan. Measured again
-under those answers, nobody loses a product. One new question follows from
-them, about what existing people see on the day of the switch; it is in the
-Decision section.
+under those answers, nobody loses a product. Two questions followed from
+them — whether a trial subscription grants products, and what existing
+people get on the day of the switch — and Amit answered both the same day:
+trial grants, and everyone gets their organisation's plan.
 
 Every place that consumes entitlement today, from a grep of `apps/api` on
 15 Sept:
@@ -77,19 +78,22 @@ with a subscription, one is `active` and one is `trial`.
 | plan, available products only, before the answers | 13 of 13 | drive 11, family 11 | connect 6, mail 2 |
 | **Amit's answers applied** | 13 of 13 | calendar 13, drive 13, family 13, hire 13, people 13, connect 7 | **none** |
 
-The last row assumes the two organisations without a subscription are on
-Starter and that a `trial` subscription grants products (see "Which
-subscription grants products").
+The last row was first computed assuming the two organisations without a
+subscription were on Starter and that a `trial` subscription grants
+products. Both are now true — Starter was added on 15 Sept and Amit confirmed
+trial — and the same query run on the real data afterwards gives the same
+row.
 
 ## Amit's answers, 15 Sept
 
 1. **Every organisation needs a subscription; the two without one get
-   Starter.** They are added through the console's change-plan action,
-   which already exists, writes `organisation.plan_changed` to the audit
-   log, and creates a `trial` subscription for an organisation that is not
-   active. Today that changes only the seat limit: Starter allows ten
-   people, and each of the two has one. Amit does it in the console, signed
-   in, before the backfill runs.
+   Starter.** Done on 15 Sept through the console's change-plan action. It
+   wrote `platform:organisation.plan_changed` to the audit log for each, with
+   the acting admin recorded, and created a `trial` Starter subscription
+   with ten seats, because neither organisation is active. It changed only
+   the seat limit: each has one person, and both storage pools were checked
+   unchanged afterwards. No organisation on production is now without a
+   subscription.
 2. **Connect and Calendar are available.** A separate migration,
    `20260915-b-catalogue-connect-calendar-available.sql`, flips both flags.
    Nothing reads the flag today, so it changes nothing a person sees.
@@ -146,10 +150,10 @@ LANGUAGE sql STABLE AS $$
 $$;
 ```
 
-**`trial` is an assumption to confirm with Amit.** His answer said
-`status = 'active'`. One organisation on production is on a `trial`
-subscription with three active people; excluding `trial` would take every
-product from them on the day of the switch.
+**`trial` grants — confirmed by Amit, 15 Sept:** "A trial subscription is
+still active, not cancelled." One organisation on production is on a `trial`
+subscription with three active people, and they keep their products through
+the switch.
 
 **The derived query**, as a `STABLE` SQL function
 `core.effective_products(p_tenant uuid, p_user uuid) RETURNS SETOF text`,
@@ -210,9 +214,10 @@ withdrawn before a new one is written for the same product; the admin write
 path does that in the same transaction. Revoke beats grant only across
 scopes, and only downward.
 
-**Day one — one open question for Amit.** Under his answers nobody loses a
-product, and all 13 active people gain the products their plan includes but
-they do not hold today. There are two ways to switch:
+**Day one — decided by Amit, 15 Sept: everyone gets their plan (B).** Under
+his answers nobody loses a product, and all 13 active people gain the
+products their plan includes but they do not hold today. The two ways that
+were weighed:
 
 - *(A) Freeze today.* The backfill writes a user-level `revoke` for every
   gain: 72 rows for 13 people. Day one changes nothing anyone sees. Existing
@@ -228,10 +233,13 @@ they do not hold today. There are two ways to switch:
   shows the fuller lists. Hire and People appear nowhere until a tile
   exists.
 
-**Recommended: (B).** It is what Amit's answer 3 says the plans are, it
-leaves no rows whose only purpose is to record the past, and its visible
-change is small and deliberate. The backfill exists in both cases as the
-guard against losses; what it writes and how it is proved differ, below.
+**Chosen: (B).** In Amit's words it is simpler than freezing and avoids two
+people in one organisation differing only by when they joined. It leaves no
+rows whose only purpose is to record the past, and its visible change is
+small: nothing on the web, and new mobile tiles only for products that
+already have a tile. The backfill stays as the guard against losses: it
+writes a user-level `grant` for any product a person holds on the day that
+the function would not give them, and it is measured to write none.
 
 Every backfilled row carries `reason = '0002 backfill: access as it was when
 entitlement became derived'` and `granted_by` set to a fixed system-actor id
@@ -264,13 +272,13 @@ only at the moment of granting.
 
 **Order of work.**
 
-1. Amit adds Starter to the two organisations without a subscription, in the
-   console.
+1. Starter for the two organisations without a subscription — done 15 Sept,
+   through the console, audited.
 2. The catalogue migration (Connect and Calendar available) merges and
    deploys.
 3. `core.granting_plan_id` and `core.effective_products` land as an additive
    migration; `StorageAllocator.cs` reads the seat limit through the first.
-4. The backfill (A or B) and the switch of the read and write sites land
+4. The backfill and the switch of the read and write sites land
    together; the migrations run before the new API starts, as `deploy.sh`
    already orders them. The proof below runs first against a restored copy
    of production.
@@ -302,12 +310,12 @@ that picks the latest *active* row, and watch the tenth row fail.
 run after the backfill on a restored copy of production and then on
 production:
 
-- under (A), "people whose products change" must answer 0;
-- under (B), "people who lose any product" must answer 0, and the gains must
-  equal the last row of that table.
+- "people who lose any product" must answer 0, and the gains must equal the
+  last row of that table.
 
-Both have been seen red: before the two organisations have a subscription,
-"people who lose any product" answers 2.
+It has been seen red and then green on production: "people who lose any
+product" answered 2 before the two organisations had a subscription, and 0
+after Starter was added on 15 Sept.
 
 ## Consequences
 
@@ -320,8 +328,7 @@ plan's products**, which it does not do today — today nothing touches
 `product_access` when a subscription is cancelled. That is Amit's rule, and
 because it changes what a customer experiences on cancellation, its wording
 to customers is Amit's and the CTO's. Every plan edit immediately changes
-what every person on that plan gets under (B), and what every new person
-gets under (A). The admin screens must express "on hold" states they never
+what every person on that plan gets. The admin screens must express "on hold" states they never
 had to. `product_access` history stops growing, so a report that reads it
 needs the function instead.
 
