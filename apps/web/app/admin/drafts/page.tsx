@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { AdminShell } from '@/components/admin/AdminShell';
-import { Badge, Card, Empty, Stat, Table, Td } from '@/components/ui/Kit';
+import { Badge, Card, Empty, Spinner, Stat, Table, Td } from '@/components/ui/Kit';
 import { Alert } from '@/components/ui/Page';
 import { useAuth } from '@/lib/auth';
 
@@ -97,9 +97,7 @@ export default function DraftsPage() {
 
       <Card padded={false}>
         {loading ? (
-          <div className="grid place-items-center py-12">
-            <span className="block h-7 w-7 animate-spin rounded-full border-2 border-line border-t-brand-600" />
-          </div>
+          <Spinner />
         ) : drafts.length === 0 ? (
           <Empty
             title="Nobody is mid-signup"

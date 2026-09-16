@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { notFound, useParams, useRouter, useSearchParams } from 'next/navigation';
 
 import { FamilyShell, useFamilyChrome } from '@/components/family/FamilyShell';
-import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
+import { Badge, Button, Card, Empty, Spinner, Table, Td } from '@/components/ui/Kit';
 import { Alert } from '@/components/ui/Page';
 import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
@@ -554,9 +554,7 @@ export default function FamilyViewPage() {
 
             <Button variant="ghost" disabled={bulkBusy} onClick={clearSelection}>Clear</Button>
             {bulkBusy && (
-              <span className="inline-block animate-spin rounded-full"
-                    style={{ width: 18, height: 18, border: '2px solid rgba(0,0,0,.12)',
-                             borderTopColor: '#6C3CE9' }} />
+              <Spinner inline label="Working" className="text-[18px] text-brand-600" />
             )}
           </div>
         )}
@@ -564,11 +562,7 @@ export default function FamilyViewPage() {
         <hr className="m-0" />
 
         {loading ? (
-          <div className="flex justify-center py-12">
-            <span className="inline-block animate-spin rounded-full"
-                  style={{ width: 30, height: 30, border: '3px solid rgba(0,0,0,.12)',
-                           borderTopColor: '#6C3CE9' }} />
-          </div>
+          <Spinner />
         ) : visible.length === 0 ? (
           <Empty
             title={debounced ? `Nothing matches “${debounced}”` : spec.emptyTitle}
@@ -1027,11 +1021,7 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
         {error && <Alert tone="danger">{error}</Alert>}
 
         {!c ? (
-          <div className="flex justify-center py-12">
-            <span className="inline-block animate-spin rounded-full"
-                  style={{ width: 28, height: 28, border: '3px solid rgba(0,0,0,.12)',
-                           borderTopColor: '#6C3CE9' }} />
-          </div>
+          <Spinner />
         ) : (
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
@@ -1378,7 +1368,7 @@ function AnchoredMenu({ anchor, onClose, children }: {
       <div className="fixed top-0 start-0 w-full h-full"
            style={{ zIndex: 1390 }} onClick={onClose} aria-hidden />
       <ul
-        className="list-none pl-0 bg-white rounded shadow border m-0 py-1"
+        className="list-none pl-0 bg-surface rounded shadow border m-0 py-1"
         style={{
           position: 'fixed', top: box.top, left: box.left,
           minWidth: 200, maxHeight: 320, overflowY: 'auto', zIndex: 1400,

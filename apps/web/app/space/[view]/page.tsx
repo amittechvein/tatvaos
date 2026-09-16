@@ -9,6 +9,7 @@ import {
 } from '@/lib/space';
 import { Icon } from '@/components/ui/Icon';
 import { useUploads } from '@/components/space/UploadTray';
+import { Spinner } from '@/components/ui/Kit';
 
 /**
  * The Space client: personal and organisational browsing, shared-with-me,
@@ -323,9 +324,7 @@ export default function SpacePage({ params }: { params: Promise<{ view: string }
         {/* Listing */}
         <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
           {loading ? (
-            <div className="flex h-full items-center justify-center">
-              <span className="block h-8 w-8 animate-spin rounded-full border-2 border-line border-t-brand-600" />
-            </div>
+            <Spinner className="h-full" />
           ) : empty ? (
             <div className="flex h-full flex-col items-center justify-center px-6 text-center text-ink-faint">
               <Icon name="inbox" className="mb-3 h-10 w-10" />

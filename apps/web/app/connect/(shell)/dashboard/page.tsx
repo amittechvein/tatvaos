@@ -174,7 +174,7 @@ export default function DashboardPage() {
 
       {loading ? (
         <Card><div className="text-center text-ink-muted py-6">
-          <Spinner inline />
+          <Spinner inline className="mr-2" />
           Loading…
         </div></Card>
       ) : (

@@ -3,6 +3,7 @@
 import { use, useEffect, useState } from 'react';
 import { fetchLinkInfo, formatSize } from '@/lib/space';
 import { formatDate } from '@/lib/dates';
+import { Spinner } from '@/components/ui/Kit';
 
 // ============================================================================
 //  The public link landing page — space.tatvaos.com/l/{token}
@@ -49,7 +50,7 @@ export default function PublicLinkPage({ params }: { params: Promise<{ token: st
         <img src="/brand/space-logo.png" alt="TatvaOS Space" className="mx-auto mb-4 h-12 w-12" />
 
         {info === 'loading' ? (
-          <span className="mx-auto block h-8 w-8 animate-spin rounded-full border-2 border-line border-t-brand-600" />
+          <Spinner />
         ) : info === null ? (
           <>
             <h1 className="mb-2 text-lg font-semibold text-ink">This link no longer works</h1>

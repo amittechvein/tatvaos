@@ -87,122 +87,10 @@ const SKIN = `
 }
 
 /* ── The page's own heading ────────────────────────────────────────────── */
-.cxs .page-header-breadcrumb{margin:26px 0 20px}
 .cxs .page-title{
   font-size:27px;font-weight:660;letter-spacing:-.022em;line-height:1.14;
   color:var(--cxs-ink);margin-bottom:5px;
 }
-.cxs .breadcrumb{font-size:12.5px}
-.cxs .breadcrumb-item,.cxs .breadcrumb-item.active{
-  color:var(--cxs-ink-3);letter-spacing:.005em;
-}
-
-/* ── Cards ────────────────────────────────────────────────────────────── */
-.cxs .card.custom-card{
-  background:var(--cxs-surface);
-  border:1px solid var(--cxs-line);
-  border-radius:var(--cxs-radius);
-  box-shadow:var(--cxs-shadow);
-  margin-bottom:18px;
-  overflow:hidden;
-}
-.cxs .card.custom-card .card-header{
-  padding:17px 20px 14px;
-  background:transparent;
-  border-bottom:1px solid var(--cxs-soft);
-}
-.cxs .card.custom-card .card-title{
-  font-size:15px;font-weight:640;letter-spacing:-.012em;color:var(--cxs-ink);
-}
-.cxs .card.custom-card .card-title .text-muted{
-  color:var(--cxs-ink-3);letter-spacing:0;font-weight:400;
-}
-.cxs .card.custom-card .card-body{padding:18px 20px}
-
-/* ── Buttons ──────────────────────────────────────────────────────────── */
-.cxs .btn{
-  border-radius:10px;border:1px solid transparent;
-  padding:9px 15px;font-size:13.5px;font-weight:600;letter-spacing:-.004em;
-  line-height:1.25;
-  transition:transform .12s ease, box-shadow .18s ease, background .18s ease,
-             border-color .18s ease;
-}
-.cxs .btn:active{transform:translateY(1px)}
-.cxs .btn i{vertical-align:-.09em}
-
-/* The gradient runs light-to-dark downward and carries a 1px inner highlight
-   along its top edge. That highlight is the whole trick: it is what a raised
-   physical control does to light, and its absence is why a flat fill reads as
-   a coloured rectangle. */
-.cxs .btn-primary{
-  background:linear-gradient(180deg,#13c877 0%,#04a75c 100%);
-  border-color:#048a4e;color:#fff;
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.30),
-             0 8px 18px -9px rgba(3,166,92,.85);
-}
-.cxs .btn-primary:hover{
-  background:linear-gradient(180deg,#18d382 0%,#06b365 100%);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.34),
-             0 11px 22px -9px rgba(3,166,92,.95);
-}
-.cxs .btn-primary:disabled{
-  background:#a9d9c2;border-color:#a9d9c2;box-shadow:none;opacity:1;color:#f4fffa;
-}
-.cxs .btn-outline-light,.cxs .btn-light{
-  background:var(--cxs-surface);border-color:var(--cxs-line);color:var(--cxs-ink);
-  box-shadow:0 1px 2px rgba(16,24,40,.05);
-}
-.cxs .btn-outline-light:hover,.cxs .btn-light:hover{
-  background:var(--cxs-hover);border-color:#d9dfea;color:var(--cxs-ink);
-}
-.dark .cxs .btn-outline-light:hover,.dark .cxs .btn-light:hover{border-color:#41434c}
-.cxs .btn-danger{
-  background:linear-gradient(180deg,#f45b66 0%,#dc3543 100%);
-  border-color:#c62b39;color:#fff;
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.26),
-             0 8px 18px -9px rgba(220,53,67,.8);
-}
-.cxs .btn-sm{padding:6px 11px;font-size:12.5px;border-radius:8px}
-
-/* ── Tabs, as a segmented control ─────────────────────────────────────── */
-/* The old look was a green pill on a white card, which is a lot of colour
-   spent on "which of three lists am I looking at". A track with a raised
-   thumb says the same thing and keeps the green for the one button on the
-   page that actually starts something. */
-.cxs .nav-pills{
-  display:inline-flex;background:var(--cxs-soft);border-radius:12px;padding:4px;
-}
-.cxs .nav-pills .nav-link{
-  border:0;border-radius:9px;padding:7px 15px;
-  font-size:13px;font-weight:600;letter-spacing:-.004em;
-  color:var(--cxs-ink-2);background:transparent;
-  transition:background .16s ease, color .16s ease, box-shadow .16s ease;
-}
-.cxs .nav-pills .nav-link:hover{color:var(--cxs-ink)}
-.cxs .nav-pills .nav-link.active{
-  background:var(--cxs-surface);color:var(--cxs-ink);
-  box-shadow:0 1px 2px rgba(16,24,40,.07), 0 3px 10px -3px rgba(16,24,40,.18);
-}
-
-/* ── Tables that do not look like tables ──────────────────────────────── */
-.cxs .table{margin:0;border-color:transparent}
-.cxs .table>thead>tr>th{
-  border:0;background:transparent;padding:12px 20px 10px;
-  font-size:10.5px;font-weight:650;letter-spacing:.085em;text-transform:uppercase;
-  color:var(--cxs-ink-3);
-}
-.cxs .table>tbody>tr>td{
-  border:0;border-top:1px solid var(--cxs-soft);
-  padding:13px 20px;vertical-align:middle;
-  font-size:13.5px;color:var(--cxs-ink-2);
-}
-.cxs .table>tbody>tr:hover>td{background:var(--cxs-hover)}
-.cxs .table>tbody>tr>td a{color:var(--cxs-ink);text-decoration:none}
-.cxs .table>tbody>tr>td a:hover{color:var(--cxs-brand-deep)}
-/* The name column is the one anybody scans. Give it room before the columns
-   that are only ever glanced at. */
-.cxs .table>thead>tr>th:first-child,
-.cxs .table>tbody>tr>td:first-child{min-width:200px}
 
 /* ── The meeting itself, given a face ─────────────────────────────────── */
 .cxs .cx-who{display:flex;align-items:center;gap:12px;min-width:0}
@@ -243,29 +131,13 @@ const SKIN = `
   padding:3px 8px;border-radius:7px;white-space:nowrap;
   max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom;
 }
-/* A code is six groups of letters and takes real width. On a narrow window it
-   gives way before the columns that carry meaning; the full code is on the
-   meeting's own page and in the Copy button, so nothing is lost. */
-@media (max-width:1500px){
-  .cxs .table .cx-code{max-width:150px}
-}
-
-/* ── Status ───────────────────────────────────────────────────────────── */
-/* A dot in front does the reading at a glance; the word is for confirming. */
-.cxs .badge{
-  display:inline-flex;align-items:center;gap:6px;
-  padding:4px 10px 4px 8px;border-radius:999px;
-  font-size:11px;font-weight:640;letter-spacing:.012em;text-transform:capitalize;
-}
-.cxs .badge::before{
-  content:'';width:6px;height:6px;border-radius:50%;
-  background:currentColor;opacity:.95;flex:0 0 auto;
-}
-
 /* ── Happening now ────────────────────────────────────────────────────── */
 /* A live meeting is the only thing on this page with a deadline attached, so
-   it gets the one tinted surface and the one moving element. */
-.cxs .cx-live.card.custom-card{
+   it gets the one tinted surface and the one moving element. These address
+   Kit Card's own markup — its header is the first child, its title the first
+   span in it — because the skin re-dresses Kit's markup rather than changing
+   it (see the note at the top). */
+.cxs .cx-live{
   border-color:rgba(3,181,98,.30);
   background:
     linear-gradient(135deg, rgba(3,181,98,.085) 0%, rgba(3,181,98,.02) 44%,
@@ -273,15 +145,9 @@ const SKIN = `
     var(--cxs-surface);
   box-shadow:var(--cxs-lift);
 }
-.cxs .cx-live .card-header{border-bottom-color:rgba(3,181,98,.20)}
-
-/* The live dot is a pseudo-element on the heading rather than a span in the
-   markup, because Card takes its title as a STRING — and widening that prop
-   to accept nodes would change a component four other modules render. The
-   ring is an animated box-shadow for the same reason a pseudo-element cannot
-   have a pseudo-element of its own. */
-.cxs .cx-live .card-title{display:flex;align-items:center;gap:9px}
-.cxs .cx-live .card-title::before{
+.cxs .cx-live>div:first-child{border-bottom-color:rgba(3,181,98,.20)}
+.cxs .cx-live>div:first-child span:first-child{display:inline-flex;align-items:center;gap:9px}
+.cxs .cx-live>div:first-child span:first-child::before{
   content:'';flex:0 0 auto;width:9px;height:9px;border-radius:50%;
   background:var(--cxs-brand);
   animation:cxs-pulse 2s ease-out infinite;
@@ -293,7 +159,7 @@ const SKIN = `
 }
 /* Somebody who has asked for less movement should not be given a heartbeat. */
 @media (prefers-reduced-motion:reduce){
-  .cxs .cx-live .card-title::before{animation:none;box-shadow:0 0 0 4px rgba(3,181,98,.22)}
+  .cxs .cx-live>div:first-child span:first-child::before{animation:none;box-shadow:0 0 0 4px rgba(3,181,98,.22)}
 }
 
 .cxs .cx-liverow{
@@ -303,26 +169,8 @@ const SKIN = `
 .cxs .cx-liverow + .cx-liverow{
   border-top:1px solid rgba(3,181,98,.16);margin-top:10px;padding-top:14px;
 }
-/* Joining is the only thing anybody came to this card to do. */
-.cxs .cx-liverow .btn{padding:10px 20px;font-size:14px}
 
-/* ── Forms ────────────────────────────────────────────────────────────── */
-.cxs .form-control,.cxs .form-select{
-  border-radius:10px;border:1px solid var(--cxs-line);
-  background-color:var(--cxs-surface);color:var(--cxs-ink);
-  font-size:13.5px;
-  box-shadow:0 1px 2px rgba(16,24,40,.04);
-  transition:border-color .15s ease, box-shadow .15s ease;
-}
-.cxs .form-control{padding:10px 13px}
-/* background-COLOR only, never the shorthand: Bootstrap draws the chevron with
-   a background-image, and the right padding below is the space it needs. Set
-   the shorthand here and every select loses its arrow. */
-.cxs .form-select{padding:10px 38px 10px 13px}
-.cxs .form-control::placeholder{color:var(--cxs-ink-3)}
-.cxs .form-control:focus,.cxs .form-select:focus{
-  border-color:#4ed49d;box-shadow:0 0 0 4px rgba(3,181,98,.15);
-}
+/* ── Forms — the pieces the skin's own Field and Choice components render ── */
 .cxs .form-label{
   font-size:13px;font-weight:620;letter-spacing:-.006em;
   color:var(--cxs-ink);margin-bottom:6px;
@@ -333,35 +181,6 @@ const SKIN = `
 .cxs .form-text{
   font-size:12px;line-height:1.55;color:var(--cxs-ink-3);
   margin-top:6px;max-width:68ch;
-}
-.cxs .form-check-input{
-  width:17px;height:17px;margin-top:.18em;border-radius:5px;
-  border:1px solid #cdd4e0;box-shadow:0 1px 2px rgba(16,24,40,.05);
-}
-.cxs .form-check-input:checked{background-color:var(--cxs-brand);border-color:#059c56}
-.cxs .form-check-input:focus{box-shadow:0 0 0 4px rgba(3,181,98,.15);border-color:#4ed49d}
-.cxs .form-check-label{font-size:13.5px;font-weight:560;color:var(--cxs-ink)}
-/* Each field its own band, so a long form reads as a sequence of decisions
-   rather than one wall. The last one drops the rule so the card does not end
-   on a line. */
-.cxs form .card-body>.mb-3,
-.cxs form .card-body>.row,
-.cxs form .card-body>.form-check{
-  padding-bottom:16px;margin-bottom:16px;
-  border-bottom:1px solid var(--cxs-soft);
-}
-/* Starts and Ends are one decision on two controls, so the pair keeps the
-   band's spacing and the columns inside it stop adding their own. */
-.cxs form .card-body>.row>[class*="col-"]{margin-bottom:0}
-.cxs form .card-body>.d-flex{padding-top:2px}
-.cxs .text-muted{color:var(--cxs-ink-3)}
-
-/* The join field and its button are one control, so they are drawn as one. */
-.cxs .input-group>.form-control{
-  border-top-right-radius:0;border-bottom-right-radius:0;border-right:0;
-}
-.cxs .input-group>.btn{
-  border-top-left-radius:0;border-bottom-left-radius:0;padding-inline:18px;
 }
 
 /* ── A choice you can see without opening it ──────────────────────────── */
@@ -490,9 +309,6 @@ const SKIN = `
 .cxs .cx-field{
   padding-bottom:17px;margin-bottom:17px;border-bottom:1px solid var(--cxs-soft);
 }
-/* The last field keeps its rule on purpose — it is what separates the
-   decisions from the button that acts on them. */
-.cxs .cx-field>.row>[class*="col-"]{margin-bottom:0}
 
 /* ── What you are about to create ─────────────────────────────────────── */
 /* The form is a list of settings; this is the thing those settings make. It
@@ -545,7 +361,6 @@ const SKIN = `
   font-size:14px;font-weight:600;letter-spacing:.045em;line-height:1.55;
   color:var(--cxs-ink);word-break:break-word;
 }
-.cxs .cx-bigcode .btn{flex:0 0 auto}
 
 /* ── People ───────────────────────────────────────────────────────────── */
 .cxs .cx-tag{
@@ -575,7 +390,6 @@ const SKIN = `
 .cxs .cx-opendoor p{
   margin:5px 0 0;font-size:12.5px;line-height:1.6;color:#8f6b2c;max-width:74ch;
 }
-.cxs .cx-opendoor .btn{flex:0 0 auto}
 .dark .cxs .cx-opendoor{
   border-color:rgba(240,180,60,.42);
   background:linear-gradient(135deg,rgba(240,180,60,.13),rgba(240,180,60,.05));
@@ -743,15 +557,7 @@ const SKIN = `
 }
 .cxs .cx-next:last-child{border-bottom:0;padding-bottom:0}
 .cxs .cx-next>div{flex:1 1 auto;min-width:0}
-.cxs .cx-next .btn{flex:0 0 auto}
 
-/* ── Everything else that shows up on these three pages ───────────────── */
-.cxs .alert{border-radius:12px;padding:12px 16px;font-size:13.5px;border:1px solid}
-.cxs .alert-danger{background:#fff1f2;border-color:#fecdd3;color:#a01133}
-.dark .cxs .alert-danger{background:rgba(220,53,67,.12);border-color:rgba(220,53,67,.4);color:#ffb3bb}
-.cxs .progress{border-radius:999px;background:var(--cxs-soft)}
-.cxs .progress-bar{border-radius:999px}
-.cxs .table-responsive{border:0}
 .cxs hr{border-color:var(--cxs-soft);opacity:1}
 `;
 

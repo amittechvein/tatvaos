@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { formatBytes } from '@tatvaos/core';
 
 import { AdminShell } from '@/components/admin/AdminShell';
-import { Badge, Button, Card, Empty, Meter, Stat, Table, Td } from '@/components/ui/Kit';
+import { Badge, Button, Card, Empty, Meter, Spinner, Stat, Table, Td } from '@/components/ui/Kit';
 import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 import { Checkbox, Input } from '@/components/ui/Form';
@@ -54,9 +54,7 @@ export default function OrgStoragePage() {
   if (loading) {
     return (
       <AdminShell scope="organisation" title="Storage">
-        <div className="grid place-items-center py-12">
-          <span className="block h-8 w-8 animate-spin rounded-full border-2 border-line border-t-brand-600" />
-        </div>
+        <Spinner />
       </AdminShell>
     );
   }

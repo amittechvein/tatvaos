@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { FamilyShell, useFamilyChrome } from '@/components/family/FamilyShell';
-import { Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
+import { Button, Card, Empty, Spinner, Table, Td } from '@/components/ui/Kit';
 import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 import { familyApi, type LabelSummary } from '@/lib/family';
@@ -118,11 +118,7 @@ function Labels() {
         actions={<Button variant="primary" onClick={() => setEditing('new')}>New label</Button>}
       >
         {loading ? (
-          <div className="flex justify-center py-12">
-            <span className="inline-block animate-spin rounded-full"
-                  style={{ width: 30, height: 30, border: '3px solid rgba(0,0,0,.12)',
-                           borderTopColor: '#6C3CE9' }} />
-          </div>
+          <Spinner />
         ) : rows.length === 0 ? (
           <Empty
             title="No labels yet"

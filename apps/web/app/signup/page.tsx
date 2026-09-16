@@ -3,7 +3,7 @@
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useState } from 'react';
 
-import { Button } from '@/components/ui/Kit';
+import { Button, Spinner } from '@/components/ui/Kit';
 import { Field, Input, Select } from '@/components/ui/Form';
 import { Alert } from '@/components/ui/Page';
 
@@ -55,22 +55,6 @@ const ORG_TYPES = [
   { value: 'government', label: 'Government' },
   { value: 'other', label: 'Other' },
 ];
-
-/** Replaces MUI's CircularProgress. */
-function Spinner({ size = 20, light }: { size?: number; light?: boolean }) {
-  return (
-    <span
-      className="inline-block animate-spin rounded-full align-middle"
-      style={{
-        width: size, height: size,
-        border: `2px solid ${light ? 'rgba(255,255,255,.35)' : 'rgba(0,0,0,.12)'}`,
-        borderTopColor: light ? '#fff' : BRAND,
-      }}
-      role="status"
-      aria-label="Working"
-    />
-  );
-}
 
 /*  The local Field was deleted on 7 Sept 2026 — components/ui/Form.tsx now
  *  owns it, and a second copy is how two forms end up disagreeing about where
@@ -419,7 +403,7 @@ function Wizard() {
 
         <p className="text-[0.75rem] text-ink-muted text-center mt-12 mb-0">
           Already have an account?{' '}
-          <a href="/login" className="no-underline" style={{ color: BRAND }}>Sign in</a>
+          <a href="/login" className="inline-flex min-h-[2.75rem] items-center px-3 no-underline" style={{ color: BRAND }}>Sign in</a>
         </p>
       </div>
     </Split>
@@ -455,7 +439,7 @@ function Nav({ onBack, onNext, busy, nextDisabled, nextLabel = 'Continue' }: {
         onClick={onNext}
         disabled={busy || nextDisabled}
       >
-        {busy ? <Spinner light /> : nextLabel}
+        {busy ? <Spinner inline label="Working" /> : nextLabel}
       </Button>
     </div>
   );
@@ -464,7 +448,7 @@ function Nav({ onBack, onNext, busy, nextDisabled, nextLabel = 'Continue' }: {
 /** Branded panel, same language as sign-in so the two feel like one product. */
 function Split({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex bg-white" style={{ minHeight: '100vh' }}>
+    <div className="flex bg-surface" style={{ minHeight: '100vh' }}>
       <div
         className="hidden min-[992px]:flex flex-col relative text-white p-12"
         style={{

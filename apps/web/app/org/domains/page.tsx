@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { AdminShell } from '@/components/admin/AdminShell';
-import { Badge, Button } from '@/components/ui/Kit';
+import { Badge, Button, Spinner } from '@/components/ui/Kit';
 import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 import { Input } from '@/components/ui/Form';
@@ -220,9 +220,7 @@ export default function DomainsPage() {
       )}
 
       {loading ? (
-        <div className="grid place-items-center py-12">
-          <span className="block h-8 w-8 animate-spin rounded-full border-2 border-line border-t-brand-600" />
-        </div>
+        <Spinner />
       ) : (
         <div className="grid gap-4">
           {domains.map((d) => (

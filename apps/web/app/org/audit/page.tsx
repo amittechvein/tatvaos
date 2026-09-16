@@ -4,7 +4,7 @@ import { Fragment, useCallback, useEffect, useState } from 'react';
 import { formatTimestamp } from '@/lib/dates';
 
 import { AdminShell } from '@/components/admin/AdminShell';
-import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
+import { Badge, Button, Card, Empty, Spinner, Table, Td } from '@/components/ui/Kit';
 import { useAuth } from '@/lib/auth';
 import { Input, Select } from '@/components/ui/Form';
 import { Alert } from '@/components/ui/Page';
@@ -211,9 +211,7 @@ export default function OrgAuditPage() {
         {error && <Alert tone="danger">{error}</Alert>}
 
         {loading ? (
-          <div className="grid place-items-center py-12">
-            <span className="block h-8 w-8 animate-spin rounded-full border-2 border-line border-t-brand-600" />
-          </div>
+          <Spinner />
         ) : entries.length === 0 ? (
           <Empty
             title={filtered ? 'Nothing matches those filters' : 'No activity recorded yet'}

@@ -122,7 +122,7 @@ export function Player({ meetingId, recording, onClose }: {
 
       {src === null ? (
         <div className="p-6 text-center text-ink-muted text-[0.8125rem]">
-          <Spinner inline />
+          <Spinner inline className="mr-2" />
           Opening…
         </div>
       ) : (

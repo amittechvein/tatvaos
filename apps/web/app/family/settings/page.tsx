@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { FamilyShell } from '@/components/family/FamilyShell';
-import { Button, Card } from '@/components/ui/Kit';
+import { Button, Card, Spinner } from '@/components/ui/Kit';
 import { Switch } from '@/components/ui/Form';
 import { Alert } from '@/components/ui/Page';
 import { useAuth } from '@/lib/auth';
@@ -101,9 +101,7 @@ export default function FamilySettingsPage() {
         }
       >
         {!settings ? (
-          <div className="flex justify-center py-6">
-            <span className="inline-block h-7 w-7 animate-spin rounded-full border-[3px] border-line border-t-brand-600" />
-          </div>
+          <Spinner />
         ) : (
           <div className="flex flex-col gap-4">
             {SWITCHES.map((s, i) => (
