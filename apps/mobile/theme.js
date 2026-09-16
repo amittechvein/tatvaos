@@ -80,13 +80,37 @@ export const surface = {
 // ---------------------------------------------------------------------------
 const ADMIN_ROLES = ['super_admin', 'org_owner', 'org_admin'];
 
+// ---------------------------------------------------------------------------
+//  `path` IS FOR THE SIGN-IN HANDOFF, AND IT IS NOT A SECOND COPY OF `url`.
+//
+//  docs/decisions/0003-mobile-signin-handoff.md. The app asks the API to trade
+//  its token for a short-lived URL that opens the browser ALREADY SIGNED IN,
+//  and what it sends is this path — never a host. The mint refuses anything
+//  whose first segment is not on its allowlist, which is what stops a handoff
+//  becoming an open redirect.
+//
+//  The two differ on purpose:
+//
+//    url   where the browser goes when there is no handoff — each product on
+//          its own host, which is what the address bar should say.
+//    path  what the handoff asks for. It lands on the CORE host, and Caddy
+//          sends it home from there: conf.d/core/product-doors.caddy redirects
+//          /mail, /space, /family and /calendar to their own domains keeping
+//          the path, and the session cookie is on .tatvaos.com so it survives
+//          the hop. So both routes end up in the same place.
+//
+//  Admin's path is /org, the CUSTOMER's console — not /admin, which is the
+//  platform console and is deliberately not on this dashboard (brief §4).
+//
+//  Connect has none: it never opens a browser, it opens screens/Meetings.js.
+// ---------------------------------------------------------------------------
 export const products = [
-  { key: 'mail',     product: 'mail',     name: 'Mail',     icon: 'mail-outline',     tint: '#E1F5EE', ink: '#0F6E56', url: hosts.mail },
+  { key: 'mail',     product: 'mail',     name: 'Mail',     icon: 'mail-outline',     tint: '#E1F5EE', ink: '#0F6E56', url: hosts.mail,              path: '/mail' },
   { key: 'connect',  product: 'connect',  name: 'Connect',  icon: 'videocam-outline', tint: '#E6F1FB', ink: '#185FA5', url: hosts.connect },
-  { key: 'space',    product: 'drive',    name: 'Space',    icon: 'folder-outline',   tint: '#EEEDFE', ink: '#534AB7', url: hosts.space },
-  { key: 'calendar', product: 'calendar', name: 'Calendar', icon: 'calendar-outline', tint: '#FAECE7', ink: '#993C1D', url: hosts.calendar },
-  { key: 'contacts', product: 'family',   name: 'Contacts', icon: 'people-outline',   tint: '#FBEAF0', ink: '#993556', url: `${hosts.core}/family` },
-  { key: 'admin',    roles: ADMIN_ROLES,  name: 'Admin',    icon: 'business-outline', tint: '#F1EFE8', ink: '#5F5E5A', url: `${hosts.core}/org` },
+  { key: 'space',    product: 'drive',    name: 'Space',    icon: 'folder-outline',   tint: '#EEEDFE', ink: '#534AB7', url: hosts.space,             path: '/space' },
+  { key: 'calendar', product: 'calendar', name: 'Calendar', icon: 'calendar-outline', tint: '#FAECE7', ink: '#993C1D', url: hosts.calendar,          path: '/calendar' },
+  { key: 'contacts', product: 'family',   name: 'Contacts', icon: 'people-outline',   tint: '#FBEAF0', ink: '#993556', url: `${hosts.core}/family`,  path: '/family' },
+  { key: 'admin',    roles: ADMIN_ROLES,  name: 'Admin',    icon: 'business-outline', tint: '#F1EFE8', ink: '#5F5E5A', url: `${hosts.core}/org`,     path: '/org' },
 ];
 
 /**

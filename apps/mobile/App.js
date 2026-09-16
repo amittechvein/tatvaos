@@ -40,6 +40,7 @@ import { login, verifyMfa, restore, signOut, me } from './api';
 import Meetings from './screens/Meetings';
 import Meeting from './screens/Meeting';
 import NextMeetingCard from './components/NextMeetingCard';
+import { handoffUrl } from './lib/handoff';
 
 export default function App() {
   return (
@@ -371,18 +372,30 @@ function initials(name, email) {
  * a password manager can fill it. The cost is a sign-in the first time, and the
  * footnote on the dashboard says so rather than letting it surprise anyone.
  *
- * The fix that removes even that cost is a one-time sign-in handoff from the
- * API - the app trades its token for a short-lived URL the browser opens
- * already authenticated. That is Core's work and is raised separately; it is
- * not a reason to leave every tile dead in the meantime.
+ * THE COST IS NOW USUALLY GONE — 16 Sept 2026. The sign-in handoff exists
+ * (decision 0003): the app trades its token for a short-lived URL that opens
+ * the browser ALREADY signed in, and lib/handoff.js asks for one per tile.
+ * The reasoning above is unchanged and still the reason this is not a WebView:
+ * the browser stays the browser, with its address bar and its padlock. What
+ * changed is that the person no longer has to sign in again inside it.
+ *
+ * When there is no handoff to be had — the endpoint not deployed yet, a path
+ * the server refuses, no network — this falls back to the plain URL, which is
+ * exactly what it did before. One extra sign-in is a cost; a dead tile is a
+ * bug, and the fallback is what keeps the second from happening.
  */
-async function openProduct(p) {
+async function openProduct(p, token) {
   if (!p?.url) return;
+
+  // Never log `target`: after a successful mint it carries a code that IS a
+  // sign-in for the next sixty seconds. The name is enough to follow the flow.
+  const target = (await handoffUrl(token, p.path)) ?? p.url;
+
   try {
-    const ok = await Linking.canOpenURL(p.url);
-    if (!ok) { console.log(`[app] no handler for ${p.url}`); return; }
+    const ok = await Linking.canOpenURL(target);
+    if (!ok) { console.log(`[app] no handler for ${p.name}'s address`); return; }
     console.log(`[app] opening ${p.name} in the browser`);
-    await Linking.openURL(p.url);
+    await Linking.openURL(target);
   } catch (e) {
     // Never throw out of a tap. A dashboard that crashes because a browser is
     // missing is worse than a tile that does nothing, and this is now the
@@ -404,6 +417,22 @@ function Dashboard({ session, profile, onSignOut, onOpenConnect, onJoinMeeting }
   // shows everything while /me is still in flight, so the card appears then and
   // disappears if the answer says this person has no Connect — see theme.js.
   const hasConnect = tiles.some((p) => p.key === 'connect');
+
+  // Which tile is mid-open, if any. Asking for a handoff puts a network call
+  // between the tap and the browser, and an unmarked control that does nothing
+  // for a moment is one people press twice. The spinner is the difference
+  // between "working" and "broken" — see lib/handoff.js for the deadline that
+  // bounds how long this can last.
+  const [opening, setOpening] = useState(null);
+
+  const openTile = useCallback(async (p) => {
+    setOpening(p.key);
+    try {
+      await openProduct(p, session?.accessToken);
+    } finally {
+      setOpening(null);
+    }
+  }, [session]);
 
   return (
     <SafeAreaView style={s.screen}>
@@ -447,12 +476,16 @@ function Dashboard({ session, profile, onSignOut, onOpenConnect, onJoinMeeting }
               <Pressable
                 key={p.key}
                 style={({ pressed }) => [s.tile, pressed && s.tilePressed]}
-                onPress={() => (native ? onOpenConnect() : openProduct(p))}
+                onPress={() => (native ? onOpenConnect() : openTile(p))}
+                disabled={opening === p.key}
                 accessibilityRole={native ? 'button' : 'link'}
                 accessibilityLabel={native ? p.name : `${p.name}, opens in your browser`}
+                accessibilityState={{ busy: opening === p.key }}
               >
                 <View style={[s.tileIcon, { backgroundColor: p.tint }]}>
-                  <Ionicons name={p.icon} size={24} color={p.ink} />
+                  {opening === p.key
+                    ? <ActivityIndicator color={p.ink} />
+                    : <Ionicons name={p.icon} size={24} color={p.ink} />}
                 </View>
                 <View style={s.tileLabelRow}>
                   <Text style={s.tileLabel}>{p.name}</Text>
