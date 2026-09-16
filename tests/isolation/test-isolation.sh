@@ -177,6 +177,62 @@ run_as postgres "
     DELETE FROM connect.meetings
      WHERE title IN ('iso-techvein','iso-school','forged-by-isolation-test');" >/dev/null 2>&1
 
+hdr "Sign-in handoff codes are isolated, and the redeem reaches no further than one row"
+
+# Decision 0003. This table is unusual and so is its test: the REDEEM is
+# deliberately allowed to cross the tenant boundary, because the browser
+# presenting a code has no session and the tenant is unknown until the row is
+# read. That makes "how far can it reach" the question worth asking, not "can
+# it reach at all". The fixture uses a real user per tenant, since the row
+# references both.
+run_as postgres "
+    INSERT INTO core.auth_handoff_codes (tenant_id, user_id, code_hash, path, expires_at)
+    SELECT '$TECHVEIN', u.id, 'iso-handoff-techvein', '/mail/inbox', now() + interval '10 minutes'
+      FROM core.users u WHERE u.tenant_id = '$TECHVEIN' LIMIT 1;
+    INSERT INTO core.auth_handoff_codes (tenant_id, user_id, code_hash, path, expires_at)
+    SELECT '$SCHOOL', u.id, 'iso-handoff-school', '/mail/inbox', now() + interval '10 minutes'
+      FROM core.users u WHERE u.tenant_id = '$SCHOOL' LIMIT 1;" >/dev/null 2>&1
+
+own=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM core.auth_handoff_codes WHERE code_hash = 'iso-handoff-techvein'")
+[ "${own:-0}" -ge 1 ] && pass "Techvein sees its own handoff code" \
+                      || fail "Techvein sees nothing - RLS too strict, or the migration did not run"
+
+leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM core.auth_handoff_codes WHERE tenant_id = '$SCHOOL'")
+[ "${leak:-1}" -eq 0 ] && pass "Techvein cannot see ABC School's handoff codes" \
+                       || fail "LEAK: $leak ABC School handoff code(s) visible to Techvein"
+
+n=$(no_context "SELECT count(*) FROM core.auth_handoff_codes")
+[ "${n:-1}" -eq 0 ] && pass "no tenant context returns zero handoff codes" \
+                    || fail "DANGEROUS: ${n} handoff code(s) visible with no tenant set"
+
+forge_out=$(run_as tatvaos_app \
+    "SET app.tenant_id = '$TECHVEIN';
+     INSERT INTO core.auth_handoff_codes (tenant_id, user_id, code_hash, path, expires_at)
+     SELECT '$SCHOOL', u.id, 'iso-handoff-forged', '/mail/inbox', now() + interval '10 minutes'
+       FROM core.users u WHERE u.tenant_id = '$TECHVEIN' LIMIT 1;" 2>&1)
+forge_rc=$?
+if [ "$forge_rc" -ne 0 ] && printf '%s' "$forge_out" | grep -qi 'row-level security\|violates'; then
+    pass "cross-tenant handoff code INSERT blocked by WITH CHECK"
+else
+    fail "LEAK: Techvein minted a handoff code tagged as ABC School - WITH CHECK is missing"
+fi
+
+# The deliberate hole, bounded. With NO tenant set, the SECURITY DEFINER
+# function returns the ONE row whose hash was presented — and nothing else.
+# A function that returned more, or that answered for a hash nobody holds,
+# would turn a 256-bit guess into an oracle.
+redeemed=$(scalar_as tatvaos_app "SET app.tenant_id = ''; SELECT count(*) FROM core.redeem_handoff_code('iso-handoff-school')")
+[ "${redeemed:-x}" = "1" ] && pass "redeem resolves its own row with no tenant context - the point of the function" \
+                           || fail "the handoff redeem did not work without a tenant (got '${redeemed}')"
+
+stranger=$(scalar_as tatvaos_app "SET app.tenant_id = ''; SELECT count(*) FROM core.redeem_handoff_code('iso-handoff-not-a-real-hash')")
+[ "${stranger:-x}" = "0" ] && pass "redeem answers nothing for a hash nobody holds" \
+                           || fail "DANGEROUS: the redeem returned a row for an unknown hash"
+
+run_as postgres "
+    DELETE FROM core.auth_handoff_codes
+     WHERE code_hash IN ('iso-handoff-techvein','iso-handoff-school','iso-handoff-forged');" >/dev/null 2>&1
+
 hdr "Writes cannot be forged into another tenant"
 
 forge_out=$(run_as tatvaos_app \

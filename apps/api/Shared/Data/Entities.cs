@@ -374,6 +374,40 @@ public class RefreshToken
 }
 
 /// <summary>
+/// A one-time code that trades the mobile app's bearer token for a browser
+/// session — docs/decisions/0003-mobile-signin-handoff.md.
+///
+/// Written under a known tenant (the app is signed in when it mints one) and
+/// read back with no tenant at all, because the browser presenting the code has
+/// no session yet. That read goes through core.redeem_handoff_code, the
+/// SECURITY DEFINER function that also spends the code in the same statement —
+/// which is why nothing in the application decides whether a code is still
+/// unused. See 20260916-auth-handoff-codes.sql.
+///
+/// Only the HASH is here. The code itself exists in the mint response and the
+/// app's memory, and reaches the browser in a URL fragment.
+/// </summary>
+public class AuthHandoffCode
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid UserId { get; set; }
+
+    [MaxLength(64)] public required string CodeHash { get; set; }
+
+    /// <summary>
+    /// Where the browser lands, checked against the allowlist at mint. The
+    /// redirect the redeem answers with comes from this column and never from
+    /// the URL, so editing the fragment cannot aim the handoff somewhere else.
+    /// </summary>
+    [MaxLength(200)] public required string Path { get; set; }
+
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset ExpiresAt { get; set; }
+    public DateTimeOffset? RedeemedAt { get; set; }
+}
+
+/// <summary>
 /// Defaults applied to new users ACROSS products — which products they get,
 /// their storage, their role. Creating fifty identical accounts one at a time
 /// is what makes an admin abandon a platform.

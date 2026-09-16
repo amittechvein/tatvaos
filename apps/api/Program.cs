@@ -361,6 +361,32 @@ builder.Services.AddRateLimiter(o =>
             });
     });
 
+    // The handoff redeem (decision 0003) is anonymous and internet-reachable —
+    // the browser presenting the code has no session yet, which is the entire
+    // point of it. Five a minute per IP, from the decision: a person opening a
+    // product from the phone redeems once, and the only caller who wants more
+    // is someone spraying guesses at a 256-bit code.
+    //
+    // Per-IP and not per-code, unlike connect-wait: a code is single-use, so a
+    // code-keyed bucket would cap a credential that already cannot be used
+    // twice, and leave the spraying it is meant to stop unbounded. Same
+    // X-Forwarded-For rule as the policies above — Caddy appends the real peer
+    // LAST, and anything earlier is client-supplied.
+    o.AddPolicy("auth-handoff-redeem", httpContext =>
+    {
+        var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();
+        var client = string.IsNullOrEmpty(xff)
+            ? httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"
+            : xff.Split(',')[^1].Trim();
+        return RateLimitPartition.GetFixedWindowLimiter($"handoff:{client}",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            });
+    });
+
     o.AddPolicy("space-public-links", httpContext =>
     {
         var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();
