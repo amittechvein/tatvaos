@@ -181,6 +181,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<StorageAllocation>().ToTable("storage_allocations", "core");
         b.Entity<AuditLog>().ToTable("audit_logs", "core");
         b.Entity<RefreshToken>().ToTable("refresh_tokens", "core");
+        b.Entity<AuthHandoffCode>().ToTable("auth_handoff_codes", "core");
         b.Entity<MfaRecoveryCode>().ToTable("mfa_recovery_codes", "core");
         b.Entity<UserAvatar>().ToTable("user_avatars", "core");
         b.Entity<UserAvatar>().HasKey(a => a.UserId);
@@ -390,6 +391,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<StorageAllocation>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<AuditLog>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<RefreshToken>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<AuthHandoffCode>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<UserAvatar>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Mailbox>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Alias>().HasQueryFilter(e => e.TenantId == tenant.TenantId);

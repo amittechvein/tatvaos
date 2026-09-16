@@ -919,9 +919,27 @@ public static class AuthEndpoints
     /// Each is a real route under apps/web/app/. NOT a filter of dangerous
     /// values but an allowlist of permitted ones: a rule that lists what is
     /// forbidden is wrong the moment somebody adds a route.
+    ///
+    /// `org` ADDED BY CTO RULING, 16 Sept 2026, and it is the one the phone
+    /// actually uses. /org is the CUSTOMER's organisation console — the app's
+    /// "Admin" tile opens it, and it is where the web app has landed admins for
+    /// as long as it has existed. /admin beside it is a different thing: the
+    /// PLATFORM console, Techvein's own, super-admin only ("Platform admin" in
+    /// apps/web/lib/nav.tsx). Decision 0003 listed only the second, so the
+    /// allowlist authorised the console the mobile brief deliberately keeps off
+    /// a phone (§4, "six icons, not seven") and refused the one the app has.
+    ///
+    /// Both stay listed: /admin is a real console and its own authorisation
+    /// still gates it, so allowing a handoff there grants nothing extra.
+    ///
+    /// Paths land on the core host and Caddy sends them home from there —
+    /// conf.d/core/product-doors.caddy redirects /mail, /space, /family and
+    /// /calendar to their own domains with the path kept, and the cookie is on
+    /// .tatvaos.com, so the session survives the hop. /org has no such door and
+    /// stays on core, which is where it belongs.
     /// </summary>
     private static readonly string[] HandoffProducts =
-        ["mail", "space", "calendar", "family", "admin"];
+        ["mail", "space", "calendar", "family", "org", "admin"];
 
     /// <summary>
     /// Sixty seconds — long enough for a phone to open a browser and load a
