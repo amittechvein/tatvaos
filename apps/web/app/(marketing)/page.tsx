@@ -76,15 +76,15 @@ export default function Landing() {
     <div className="bg-white">
       {/* ---------------------------------------------------------------- */}
       <header
-        className="!sticky top-0 border-bottom"
+        className="!sticky top-0 border-b border-line"
         style={{ background: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(8px)', zIndex: 20 }}
       >
         <div className="container py-2">
           <div className="!flex !items-center !gap-[1rem]">
             <Brand />
             <div className="ms-auto !flex gap-2 !items-center">
-              <Link href="/login" className="btn btn-link text-body !no-underline">Sign in</Link>
-              <Link href="/signup" className="btn btn-primary">Get started</Link>
+              <Link href="/login" className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-semibold no-underline transition-colors text-ink hover:bg-canvas">Sign in</Link>
+              <Link href="/signup" className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-semibold no-underline transition-colors bg-brand-500 text-white hover:bg-brand-600">Get started</Link>
             </div>
           </div>
         </div>
@@ -105,7 +105,7 @@ export default function Landing() {
 
         <div className="container !relative !py-[3rem]" style={{ paddingTop: 80, paddingBottom: 80 }}>
           <span
-            className="badge !rounded-[50rem] !mb-[1.5rem]"
+            className="inline-flex items-center !rounded-[50rem] px-3 py-1 text-xs !mb-[1.5rem]"
             style={{
               color: '#fff', background: 'rgba(255,255,255,0.16)',
               border: '1px solid rgba(255,255,255,0.24)', fontWeight: 500,
@@ -127,11 +127,11 @@ export default function Landing() {
           </p>
 
           <div className="!flex !gap-[1rem] flex-wrap" style={{ marginTop: 40 }}>
-            <Link href="/signup" className="btn btn-lg !px-[1.5rem]"
+            <Link href="/signup" className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg py-2.5 text-base font-semibold no-underline transition-colors !px-[1.5rem]"
                   style={{ background: '#fff', color: BRAND, fontWeight: 600 }}>
               Start free
             </Link>
-            <Link href="/login" className="btn btn-lg !px-[1.5rem]"
+            <Link href="/login" className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg py-2.5 text-base font-semibold no-underline transition-colors !px-[1.5rem]"
                   style={{ color: '#fff', border: '1px solid rgba(255,255,255,0.4)' }}>
               Sign in
             </Link>
@@ -157,17 +157,16 @@ export default function Landing() {
           them uses the same people, the same storage and the same bill.
         </p>
 
-        <div className="row g-4" style={{ marginTop: 24 }}>
+        <div className="grid !gap-[1.5rem] md:grid-cols-2" style={{ marginTop: 24 }}>
           {PILLARS.map((p) => (
-            <div key={p.title} className="col-12 col-md-6">
-              <div className="card custom-card !h-full">
-                <div className="card-body" style={{ padding: 28 }}>
+            <div key={p.title}>
+              <div className="rounded-card border border-line bg-surface shadow-card !h-full">
+                <div style={{ padding: 28 }}>
+                  {/* Was tinted with an rgba of the OLD green brand, on a page
+                      whose every other colour is the violet one. */}
                   <span
-                    className="![display:grid] !mb-[1rem]"
-                    style={{
-                      width: 44, height: 44, borderRadius: 10, placeItems: 'center',
-                      color: BRAND, background: 'rgba(3,181,98,0.12)',
-                    }}
+                    className="![display:grid] !mb-[1rem] bg-brand-500/10 text-brand-500"
+                    style={{ width: 44, height: 44, borderRadius: 10, placeItems: 'center' }}
                   >
                     <svg width="21" height="21" viewBox="0 0 24 24" fill="none"
                          stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
@@ -187,7 +186,7 @@ export default function Landing() {
       </div>
 
       {/* ---------------------------------------------------------------- */}
-      <section className="bg-light" style={{ paddingTop: 80, paddingBottom: 80 }}>
+      <section className="bg-canvas" style={{ paddingTop: 80, paddingBottom: 80 }}>
         <div className="container">
           <h2 style={{ letterSpacing: '-0.02em', fontWeight: 600 }}>
             Four steps, and your mail stays put
@@ -196,9 +195,9 @@ export default function Landing() {
             The order matters. You get value before you take any risk.
           </p>
 
-          <div className="row g-4" style={{ marginTop: 24 }}>
+          <div className="grid !gap-[1.5rem] sm:grid-cols-2 lg:grid-cols-4" style={{ marginTop: 24 }}>
             {STEPS.map((s) => (
-              <div key={s.n} className="col-12 col-sm-6 col-lg-3">
+              <div key={s.n}>
                 <span
                   className="![display:grid] !rounded-[50%] !mb-[1rem] text-white"
                   style={{
@@ -221,16 +220,16 @@ export default function Landing() {
       {/* ---------------------------------------------------------------- */}
       <div className="container" style={{ paddingTop: 80, paddingBottom: 80 }}>
         <div
-          className="card custom-card text-white border-0"
+          className="rounded-card text-white"
           style={{ background: `linear-gradient(120deg, ${BRAND}, ${BRAND_LIGHT})` }}
         >
-          <div className="card-body text-center" style={{ padding: 56 }}>
+          <div className="text-center" style={{ padding: 56 }}>
             <h2 style={{ letterSpacing: '-0.02em', fontWeight: 600 }}>Set up in minutes</h2>
             <p className="mx-auto mb-0" style={{ marginTop: 12, opacity: 0.88, maxWidth: 520 }}>
               Prove you own your domain and you are in. Move your mail across
               whenever you are ready.
             </p>
-            <Link href="/signup" className="btn btn-lg !px-[3rem]"
+            <Link href="/signup" className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg py-2.5 text-base font-semibold no-underline transition-colors !px-[3rem]"
                   style={{ marginTop: 32, background: '#fff', color: BRAND, fontWeight: 600 }}>
               Get started
             </Link>
@@ -254,7 +253,7 @@ export default function Landing() {
 
 function Brand() {
   return (
-    <Link href="/" className="!flex !items-center gap-2 !no-underline text-body">
+    <Link href="/" className="!flex !items-center gap-2 !no-underline text-ink">
       <span
         className="![display:grid] text-white"
         style={{
