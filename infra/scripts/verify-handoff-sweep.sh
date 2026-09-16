@@ -8,7 +8,7 @@
 #  Exit 0 = the sweep is right. Exit 1 = it is not. Exit 2 = could not run.
 #
 #  ─────────────────────────────────────────────────────────────────────────
-#   WHAT IT PROVES, 17 SEPTEMBER 2026.
+#   WHAT IT PROVES, 16 SEPTEMBER 2026.
 #
 #   core.auth_handoff_codes had no deletion at all: a hashed, single-use,
 #   sixty-second credential per phone-to-browser sign-in, kept for ever. The

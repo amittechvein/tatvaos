@@ -156,7 +156,7 @@ public sealed class SpaceBlobSweepWorker(
     /// nothing else — each has its own try, so neither can stop the other.
     ///
     /// The window and the DELETE are in core.sweep_handoff_codes()
-    /// (20260917-auth-handoff-sweep.sql), not here: the number lives in one
+    /// (20260916-c-auth-handoff-sweep.sql), not here: the number lives in one
     /// place, and a caller cannot pass a smaller one. The redeem never depends
     /// on this running — an unswept expired code can only ever fail it — so a
     /// failure here is logged and nothing else.
