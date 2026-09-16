@@ -62,7 +62,42 @@ function logLine(method, path, status, ms, note) {
  * Exported so lib/connect.js can use the same door rather than growing a
  * second one. Behaviour unchanged — this adds a keyword and nothing else.
  */
-export async function request(path, { method = 'POST', body, token } = {}) {
+// ---------------------------------------------------------------------------
+//  Staying signed in WHILE THE APP IS OPEN
+// ---------------------------------------------------------------------------
+//
+//  16 Sept 2026, on a real phone: the app was opened at 16:29 and at 16:57
+//  every request answered 401. Access tokens last fifteen minutes, and until
+//  this block nothing renewed one — restore() ran once, at launch, and
+//  `expiresAt` was stored and never read. So any screen used more than
+//  fifteen minutes after opening the app failed, and the only cure was to
+//  close it and open it again. It stayed hidden because every earlier test
+//  opened the app and used it straight away.
+//
+//  The renewal lives in request() below, because that is the one door every
+//  authenticated call already goes through. App.js listens here so its
+//  session state follows: a renewed token replaces the stale one, and a
+//  session the SERVER has ended sends the person to sign-in instead of
+//  leaving every screen quietly broken.
+const sessionListeners = new Set();
+
+/** Called with the new session after a renewal, or null when the server ended it. */
+export function onSessionChange(fn) {
+  sessionListeners.add(fn);
+  return () => { sessionListeners.delete(fn); };
+}
+
+function announceSession(session) {
+  for (const fn of sessionListeners) {
+    try { fn(session); } catch { /* a listener's bug must not break the request */ }
+  }
+}
+
+// Set by restoreOnce when the server REJECTED the refresh token and it was
+// deleted. A renewal that failed for want of signal must not sign anybody out.
+let lastRestoreEndedSession = false;
+
+export async function request(path, { method = 'POST', body, token, retried = false } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   const started = Date.now();
@@ -107,6 +142,31 @@ export async function request(path, { method = 'POST', body, token } = {}) {
   try { data = text ? JSON.parse(text) : null; } catch { data = null; }
 
   if (!res.ok) {
+    // ── RENEW ONCE, THEN RETRY ONCE. ─────────────────────────────────────
+    //
+    // A 401 on a call that carried an access token most often means the
+    // token has simply expired. Trade the stored refresh token for a new
+    // session and send the SAME request again, once.
+    //
+    // Never for /api/auth/* — a wrong password is a 401 too, and "renewing"
+    // in answer to one would sign in whoever was stored in the keychain.
+    // Never twice — `retried` is the loop guard. Safe to repeat a POST: a 401
+    // is decided before the handler runs, so the first attempt did nothing.
+    // restore() is single-flight, so five screens hitting 401 together cause
+    // one refresh, not five racing rotations (see its comment).
+    if (res.status === 401 && token && !retried && !path.startsWith('/api/auth/')) {
+      console.log(`[api] ${method} ${path} -> 401 with an access token; renewing the session once`);
+      lastRestoreEndedSession = false;
+      const renewed = await restore();
+      if (renewed?.accessToken) {
+        announceSession(renewed);
+        return request(path, { method, body, token: renewed.accessToken, retried: true });
+      }
+      // Only a server refusal ends the session in the app. No signal leaves
+      // the person where they are, and this call fails with its own 401.
+      if (lastRestoreEndedSession) announceSession(null);
+    }
+
     // The server's own wording is the right wording. It is written for the
     // person, it names the lockout minutes, and it is deliberately vague about
     // whether an account exists — rewriting it here would leak that. Only fall
@@ -240,7 +300,10 @@ async function restoreOnce() {
     //
     // A NETWORK failure is not that, and must not sign the person out. Someone
     // opening the app in a lift should not be logged out by a dead signal.
-    if (e.status >= 400) await SecureStore.deleteItemAsync(REFRESH_KEY);
+    if (e.status >= 400) {
+      await SecureStore.deleteItemAsync(REFRESH_KEY);
+      lastRestoreEndedSession = true;
+    }
     return null;
   }
 }

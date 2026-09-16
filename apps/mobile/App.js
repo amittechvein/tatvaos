@@ -36,7 +36,7 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { brand, text, surface, visibleProducts } from './theme';
-import { login, verifyMfa, restore, signOut, me } from './api';
+import { login, verifyMfa, restore, signOut, me, onSessionChange } from './api';
 import Meetings from './screens/Meetings';
 import Meeting from './screens/Meeting';
 import ScheduleMeeting from './screens/ScheduleMeeting';
@@ -93,6 +93,18 @@ function Root() {
       });
     return () => { cancelled = true; };
   }, []);
+
+  // Follow renewals. api.js renews an expired access token the first time a
+  // request meets one (see onSessionChange there): the new session replaces
+  // the stale token every screen was handed, and a session the SERVER has
+  // ended goes back to sign-in instead of leaving each screen quietly failing
+  // with 401 — which is what happened on 16 Sept, half an hour after opening.
+  useEffect(() => onSessionChange((next) => {
+    if (next) { setSession(next); return; }
+    console.log('[app] the server ended this session; showing sign-in');
+    setSession(null); setProfile(null); setPhase('login');
+    setView('home'); setActiveMeeting(null);
+  }), []);
 
   // Name, organisation and entitlements. Deliberately NOT awaited before the
   // dashboard renders — the sign-in is already valid, and holding the screen
