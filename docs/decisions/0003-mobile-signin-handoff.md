@@ -41,15 +41,37 @@ Option 2.
 
 **Mint.** `POST /api/auth/handoff` with the app's bearer token. Body:
 `{ "path": "/mail/inbox" }` (the product path to land on; its first segment
-must be one of `mail`, `space`, `calendar`, `family`, `admin` — each a real
-route under `apps/web/app/`, checked 15 Sept — and anything else is refused,
-so the handoff cannot become an open redirect). Response:
+must be one of `mail`, `space`, `calendar`, `family`, `org`, `admin` — each a
+real route under `apps/web/app/`, checked 15 Sept — and anything else is
+refused, so the handoff cannot become an open redirect). Response:
 `{ "url": "https://core.tatvaos.com/handoff#c=<code>&p=/mail/inbox", "expiresAt": "..." }`.
 The code is 32 random bytes, base64url. Stored: `sha256(code)`, `user_id`,
 `tenant_id`, `path`, `created_at`, `expires_at = now() + 60s`,
 `redeemed_at NULL`, in a new additive table `core.auth_handoff_codes` with
 RLS like every other table. The plaintext code exists only in the response
 and the app's memory.
+
+**Amended 16 Sept 2026, CTO ruling, during implementation.** `org` was added
+to that list. The original named `admin` only, and the two are different
+consoles: `/org` is the CUSTOMER's organisation console — what the app's
+"Admin" tile opens, and where the web app has landed admins for as long as it
+has existed — while `/admin` is the PLATFORM console, Techvein's own,
+super-admin only ("Platform admin" in `apps/web/lib/nav.tsx`). As written, the
+allowlist authorised a handoff into the console `MOBILE_LANE_BRIEF.md` §4
+deliberately keeps off a phone, and refused the one tile the app actually has.
+Both are listed now: `/admin` is a real console whose own authorisation still
+gates it, so allowing a handoff there grants nobody anything they did not have.
+
+*(The ruling reached this conclusion reasoning that `/admin` was "the old
+path". It is not — it is live, and it is the platform console. The conclusion
+stands on the difference between the two consoles, which is why that is what
+the code comment says.)*
+
+**Landing across hosts, confirmed 16 Sept.** A path lands on the core host and
+Caddy sends it home: `infra/docker/conf.d/core/product-doors.caddy` redirects
+`/mail`, `/space`, `/family` and `/calendar` to their own domains with the path
+kept, and the auth cookie is on `.tatvaos.com`, so the session survives the hop.
+`/org` has no such door and stays on core, which is where it belongs.
 
 **Land.** `apps/web/app/handoff/page.tsx` is a static page. Its script, on
 load: read `location.hash`, immediately `history.replaceState` to `/handoff`
