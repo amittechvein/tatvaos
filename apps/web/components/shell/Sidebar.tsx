@@ -114,12 +114,22 @@ export function Sidebar({ sections, brand, scope, footer, header, rail, onPeek, 
           + (rail.mobileOpen ? 'translate-x-0 ' : '-translate-x-full ')
           + 'lg:translate-x-0'
         }
-        style={{ width: RAIL_WIDTH }}
         data-wide={wide || undefined}
       >
-        {/* Desktop width is set by data-wide through the style tag below, so the
-            phone width above never has to know about it. */}
-        <style>{`@media (min-width:1024px){#sidebar{width:${RAIL_WIDTH_ICONS}}#sidebar[data-wide]{width:${RAIL_WIDTH}}}`}</style>
+        {/* EVERY width lives in this one style tag, phone included — never in a
+            style={{ width }} on the aside.
+
+            It used to be split: the phone width inline, the desktop widths
+            here. An inline style attribute beats any stylesheet rule that is not
+            !important, so the desktop rule never applied. On every signed-in
+            page on a desktop the rail sat at the full 15rem with its labels
+            hidden, covering the left of the page, which only allowed for the
+            5rem icon strip. Found 16 Sept 2026 in a local run of e23ccd5 before
+            it was deployed; tsc, eslint and next build were all green on it,
+            because none of them draws a page. Measured, not read: 240px with
+            the attribute, 80px without — with the width transition switched
+            off, since reading mid-transition returns the old width. */}
+        <style>{`#sidebar{width:${RAIL_WIDTH}}@media (min-width:1024px){#sidebar{width:${RAIL_WIDTH_ICONS}}#sidebar[data-wide]{width:${RAIL_WIDTH}}}`}</style>
 
         {/* Brand — the product logo lockup. The mark is a self-contained badge;
             the wordmark is dark artwork and needs a light ground, which the
