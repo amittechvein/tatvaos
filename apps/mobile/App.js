@@ -39,6 +39,7 @@ import { brand, text, surface, visibleProducts } from './theme';
 import { login, verifyMfa, restore, signOut, me } from './api';
 import Meetings from './screens/Meetings';
 import Meeting from './screens/Meeting';
+import ScheduleMeeting from './screens/ScheduleMeeting';
 import NextMeetingCard from './components/NextMeetingCard';
 import { handoffUrl } from './lib/handoff';
 
@@ -126,14 +127,36 @@ function Root() {
   const joinFromHome = useCallback((m) => { setMeetingFrom('home'); setActiveMeeting(m); setView('meeting'); }, []);
   const leaveMeeting = useCallback(() => { setActiveMeeting(null); setView(meetingFrom); }, [meetingFrom]);
   const backHome = useCallback(() => setView('home'), []);
+  const openSchedule = useCallback(() => setView('schedule'), []);
+
+  // Back to the list rather than into the meeting: it is for later, and the
+  // list is where it now appears. Meetings remounts, so it reloads itself and
+  // the new row is there without anything having to push it.
+  const scheduled = useCallback(() => setView('meetings'), []);
 
   if (phase === 'restoring') return <Splash />;
   if (phase === 'in') {
     if (view === 'meeting' && activeMeeting) {
       return <Meeting session={session} meeting={activeMeeting} onLeave={leaveMeeting} />;
     }
+    if (view === 'schedule') {
+      return (
+        <ScheduleMeeting
+          session={session}
+          onCreated={scheduled}
+          onBack={() => setView('meetings')}
+        />
+      );
+    }
     if (view === 'meetings') {
-      return <Meetings session={session} onJoin={joinMeeting} onBack={backHome} />;
+      return (
+        <Meetings
+          session={session}
+          onJoin={joinMeeting}
+          onBack={backHome}
+          onSchedule={openSchedule}
+        />
+      );
     }
     return (
       <Dashboard

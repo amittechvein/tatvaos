@@ -32,12 +32,28 @@ export async function listMeetings(token, range = 'upcoming') {
  * waitingRoom is left at the default deliberately. 'everyone' would park the
  * host in the lobby too, and a join that returns { status: 'waiting' } instead
  * of a token looks exactly like a broken join.
+ *
+ * `extra` carries the scheduling fields when there are any — kind 'scheduled',
+ * scheduledStart, scheduledEnd, timezone (screens/ScheduleMeeting.js). Omitted
+ * entirely for a meeting started now, so that path sends exactly the body it
+ * always sent rather than a new one with nulls in it.
+ *
+ * An EMPTY title is dropped rather than sent as ''. The server names an
+ * untitled meeting after its creator ("Priya's meeting"), which only happens if
+ * the field is absent or blank — and that naming is better than anything this
+ * screen could invent. Sending a blank string would reach the same place, but
+ * relying on that is relying on a detail nobody promised.
  */
-export async function createMeeting(token, title = 'Meeting') {
+export async function createMeeting(token, title = 'Meeting', extra = null) {
+  const trimmed = (title ?? '').trim();
   return request('/api/connect/meetings', {
     method: 'POST',
     token,
-    body: { title, kind: 'instant' },
+    body: {
+      ...(trimmed ? { title: trimmed } : {}),
+      kind: 'instant',
+      ...(extra ?? {}),
+    },
   });
 }
 

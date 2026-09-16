@@ -22,7 +22,7 @@ import { brand, surface, text } from '../theme';
 
 const log = (line) => console.log(`[meetings] ${line}`);
 
-export default function Meetings({ session, onJoin, onBack }) {
+export default function Meetings({ session, onJoin, onBack, onSchedule }) {
   const [meetings, setMeetings] = useState(null); // null = still loading
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -98,6 +98,20 @@ export default function Meetings({ session, onJoin, onBack }) {
           )}
       </Pressable>
 
+      {/* Secondary on purpose: starting a meeting now is what people open
+          Connect on a phone to do. Planning one is the rarer errand, and until
+          16 Sept it was not possible here at all — the empty state below used
+          to send people to a browser to do it. */}
+      <Pressable
+        style={s.secondary}
+        onPress={onSchedule}
+        disabled={busy}
+        accessibilityLabel="Schedule a meeting for later"
+      >
+        <Ionicons name="calendar-outline" size={18} color={brand.base} />
+        <Text style={s.secondaryText}>Schedule for later</Text>
+      </Pressable>
+
       {error ? <Text style={s.error}>{error}</Text> : null}
 
       <Text style={s.section}>UPCOMING</Text>
@@ -111,7 +125,7 @@ export default function Meetings({ session, onJoin, onBack }) {
         {meetings === null ? (
           <ActivityIndicator color={brand.base} style={{ marginTop: 24 }} />
         ) : meetings.length === 0 ? (
-          <Text style={s.empty}>Nothing scheduled. Start one above, or open Connect on the web to plan one.</Text>
+          <Text style={s.empty}>Nothing scheduled. Start one now, or schedule one for later — both are above.</Text>
         ) : meetings.map((m) => (
           <Pressable
             key={m.id}
@@ -142,6 +156,12 @@ const s = StyleSheet.create({
   },
   primaryBusy: { opacity: 0.7 },
   primaryText: { color: brand.onBase, fontSize: 16, fontWeight: '500' },
+  secondary: {
+    height: 44, borderRadius: 8, borderWidth: 1, borderColor: surface.border,
+    backgroundColor: surface.card, marginTop: 10,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+  },
+  secondaryText: { color: brand.base, fontSize: 15, fontWeight: '600' },
   error: { color: '#993556', marginTop: 12, fontSize: 14 },
   section: {
     fontSize: 11, fontWeight: '700', letterSpacing: 1, color: text.muted,
