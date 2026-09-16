@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { Badge, Button, Empty } from '@/components/ui/Kit';
+import { Alert } from '@/components/ui/Page';
 import { Modal } from '@/components/ui/Modal';
 import { Field } from '../../ConnectSkin';
 import {
@@ -194,7 +195,7 @@ export function ShareDialog({
         anybody away.
       </p>
 
-      {error && <div className="alert alert-danger py-2 !text-[0.8125rem]">{error}</div>}
+      {error && <Alert tone="danger" className="py-2 !text-[0.8125rem]">{error}</Alert>}
 
       {/* ── WHAT ALREADY EXISTS ────────────────────────────────────────── */}
       {shares === null ? (
@@ -345,7 +346,7 @@ function Exposure({ level }: { level: ShareLevel }) {
     return <p className="!text-[0.8125rem] !text-ink-muted mb-0">{SHARE_EXPOSURE[level]}.</p>;
   }
   return (
-    <div className={`alert py-2 !text-[0.8125rem] mb-0 ${level === 'public' ? 'alert-danger' : 'alert-warning'}`}>
+    <Alert tone={level === 'public' ? 'danger' : 'warn'} className="py-2 !text-[0.8125rem] mb-0">
       <b>{SHARE_EXPOSURE[level]}.</b>
       {level === 'public' && (
         <>
@@ -362,7 +363,7 @@ function Exposure({ level }: { level: ShareLevel }) {
           email is one forwarded email away from being no password at all.
         </>
       )}
-    </div>
+    </Alert>
   );
 }
 
@@ -427,11 +428,11 @@ function ExistingShare({ share, busy, copied, onCopy, onRevoke }: {
 
         <div className="!flex !flex-col gap-2">
           {share.url !== null && (
-            <Button variant="ghost" className="btn-sm" onClick={onCopy} disabled={busy}>
+            <Button variant="ghost" size="sm" onClick={onCopy} disabled={busy}>
               {copied ? 'Copied' : 'Copy link'}
             </Button>
           )}
-          <Button variant="ghost" className="btn-sm text-danger"
+          <Button variant="ghost" size="sm" className="text-danger"
                   disabled={busy} onClick={onRevoke}>
             Stop sharing
           </Button>

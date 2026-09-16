@@ -3,7 +3,8 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
-import { Button, Card } from '@/components/ui/Kit';
+import { Button, Card, Spinner } from '@/components/ui/Kit';
+import { Alert, PageHeader } from '@/components/ui/Page';
 import { connectApi, prettyCode, whenLabel, type Meeting } from '@/lib/connect';
 import { faceOf, toneOf } from '../ConnectSkin';
 
@@ -150,34 +151,30 @@ export default function DashboardPage() {
 
   return (
     <>
-      <div className="page-header-breadcrumb !flex !items-center !justify-between flex-wrap gap-2 !my-[1rem]">
-        <div>
-          <h1 className="page-title !font-semibold !text-[1.25rem] mb-1">Connect</h1>
-          <ol className="breadcrumb mb-0">
-            <li className="breadcrumb-item active" aria-current="page">Dashboard</li>
-          </ol>
-        </div>
-        <div className="!flex gap-2 flex-wrap">
-          <Button variant="primary" href="/connect/new">
-            <i className="ri-calendar-line me-1" />
-            Schedule
-          </Button>
-          <Button href="/connect">Meetings</Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Connect"
+        breadcrumb={[{ label: 'Dashboard' }]}
+        className="!my-[1rem]"
+        actions={
+          <>
+            <Button variant="primary" href="/connect/new">
+              <i className="ri-calendar-line me-1" />
+              Schedule
+            </Button>
+            <Button href="/connect">Meetings</Button>
+          </>
+        }
+      />
 
       {error && (
-        <div className="alert alert-danger !flex !items-center !justify-between" role="alert">
-          <span>{error}</span>
-          <button type="button" className="btn btn-sm btn-light" onClick={() => void load()}>
-            Try again
-          </button>
-        </div>
+        <Alert tone="danger" action={<Button size="sm" onClick={() => void load()}>Try again</Button>}>
+          {error}
+        </Alert>
       )}
 
       {loading ? (
         <Card><div className="text-center !text-ink-muted !py-[1.5rem]">
-          <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />
+          <Spinner inline />
           Loading…
         </div></Card>
       ) : (
@@ -249,8 +246,8 @@ export default function DashboardPage() {
             </div>
           )}
 
-          <div className="row">
-            <div className="col-xl-7">
+          <div className="grid !gap-[1.5rem] xl:grid-cols-12">
+            <div className="xl:col-span-7">
               {/* ── 4. USE OVER TIME. ─────────────────────────────────────
                   One series, so no legend — the card title names it. The
                   busiest day is labelled and the others are not: a number on
@@ -300,7 +297,7 @@ export default function DashboardPage() {
               </Card>
             </div>
 
-            <div className="col-xl-5">
+            <div className="xl:col-span-5">
               <Card title="Coming up"
                     subtitle={soon.length === 0 ? undefined : 'The next few, soonest first'}>
                 {soon.length === 0 ? (

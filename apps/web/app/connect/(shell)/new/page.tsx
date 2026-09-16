@@ -4,6 +4,8 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { Button, Card } from '@/components/ui/Kit';
+import { Input } from '@/components/ui/Form';
+import { Alert, PageHeader } from '@/components/ui/Page';
 import {
   connectApi, PRIVATE_BLURB, RECORDED_BLURB,
   type ChatPolicy, type MeetingMode, type SharePolicy, type WaitingRoom,
@@ -154,39 +156,35 @@ export default function NewMeetingPage() {
 
   return (
     <>
-      <div className="page-header-breadcrumb !flex !items-center !justify-between flex-wrap gap-2 !my-[1rem]">
-        <div>
-          <h1 className="page-title !font-semibold !text-[1.25rem] mb-1">Schedule a meeting</h1>
-          <ol className="breadcrumb mb-0">
-            <li className="breadcrumb-item"><a href="/connect">Connect</a></li>
-            <li className="breadcrumb-item active" aria-current="page">New</li>
-          </ol>
-        </div>
-      </div>
+      <PageHeader
+        title="Schedule a meeting"
+        breadcrumb={[{ label: 'Connect', href: '/connect' }, { label: 'New' }]}
+        className="!my-[1rem]"
+      />
 
-      <div className="row">
-        <div className="col-xl-7">
+      <div className="grid !gap-[1.5rem] xl:grid-cols-12">
+        <div className="xl:col-span-7">
           <form onSubmit={submit}>
             <Card>
-              {error && <div className="alert alert-danger" role="alert">{error}</div>}
+              {error && <Alert tone="danger">{error}</Alert>}
 
               <Field label="Name" htmlFor="title"
                      hint="What people see in their calendar and at the top of the meeting.">
-                <input id="title" className="form-control" value={title} maxLength={200}
+                <Input id="title" value={title} maxLength={200}
                        onChange={(e) => setTitle(e.target.value)}
                        placeholder="Weekly review" autoComplete="off" />
               </Field>
 
               <Field label="When" hint="Your own time zone. Everyone else sees it in theirs.">
-                <div className="row">
-                  <div className="col-md-6">
+                <div className="grid !gap-[1rem] md:grid-cols-2">
+                  <div>
                     <label className="cx-sublab" htmlFor="starts">Starts</label>
-                    <input id="starts" type="datetime-local" className="form-control"
+                    <Input id="starts" type="datetime-local"
                            value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
                   </div>
-                  <div className="col-md-6">
+                  <div>
                     <label className="cx-sublab" htmlFor="ends">Ends</label>
-                    <input id="ends" type="datetime-local" className="form-control"
+                    <Input id="ends" type="datetime-local"
                            value={endsAt} onChange={(e) => setEndsAt(e.target.value)} />
                   </div>
                 </div>
@@ -206,7 +204,7 @@ export default function NewMeetingPage() {
                           title="Private"
                           note="Audio and video are encrypted. It cannot be recorded." />
                 </div>
-                <div className="form-text">This cannot be changed once the meeting is created.</div>
+                <div className="mt-1 text-xs text-ink-muted">This cannot be changed once the meeting is created.</div>
               </Field>
 
               <Field label="Waiting room"
@@ -291,15 +289,15 @@ export default function NewMeetingPage() {
                      why={'The waiting room already covers a stray link, and a password '
                        + 'nobody can remember becomes a support call five minutes before '
                        + 'the meeting.'}>
-                <input id="password" className="form-control" value={password} type="text"
+                <Input id="password" value={password} type="text"
                        onChange={(e) => setPassword(e.target.value)}
                        autoComplete="off" spellCheck={false} />
               </Field>
 
               <div className="!flex gap-2">
-                <button className="btn btn-primary" type="submit" disabled={saving}>
+                <Button variant="primary" type="submit" disabled={saving}>
                   {saving ? 'Creating…' : 'Create meeting'}
-                </button>
+                </Button>
                 <Button href="/connect">Cancel</Button>
               </div>
             </Card>
@@ -307,7 +305,7 @@ export default function NewMeetingPage() {
         </div>
 
         {/* The form is a list of settings. This is the thing they make. */}
-        <div className="col-xl-5">
+        <div className="xl:col-span-5">
           <Card title="What you are creating" className="cx-sum">
             <div className={`cx-sum-title${title.trim().length > 0 ? '' : ' is-empty'}`}>
               {title.trim().length > 0 ? title.trim() : 'Untitled meeting'}

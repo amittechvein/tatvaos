@@ -3,7 +3,9 @@
 import { use, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
-import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
+import { Badge, Button, Card, Empty, Spinner, Table, Td } from '@/components/ui/Kit';
+import { Checkbox, Input, Select, Switch } from '@/components/ui/Form';
+import { Alert } from '@/components/ui/Page';
 import {
   connectApi, prettyCode, timeLabel, whenLabel,
   type ChatPolicy, type LobbyEntry, type Meeting, type MeetingBlock, type Participant,
@@ -385,7 +387,7 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
   if (loading) {
     return (
       <div className="!p-[3rem] text-center !text-ink-muted">
-        <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />
+        <Spinner inline />
         Loading…
       </div>
     );
@@ -463,8 +465,8 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
         </div>
       </div>
 
-      {error && <div className="alert alert-danger" role="alert">{error}</div>}
-      {notice && <div className="alert alert-success" role="alert">{notice}</div>}
+      {error && <Alert tone="danger">{error}</Alert>}
+      {notice && <Alert tone="ok">{notice}</Alert>}
 
       {/* THE DOOR IS OPEN, AND NOTHING SAID SO.
           Waiting room off plus guests allowed means anybody holding the link
@@ -499,118 +501,103 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
 
       {editing && form && (
         <Card title="Edit this meeting" className="!mb-[1rem]">
-          <div className="row g-3">
-            <div className="col-12">
-              <label className="form-label" htmlFor="ed-title">Title</label>
-              <input id="ed-title" className="form-control" value={form.title} maxLength={200}
+          <div className="grid !gap-[1rem] md:grid-cols-2">
+            <div className="md:col-span-2">
+              <label className="mb-1 block text-[13px] font-medium text-ink" htmlFor="ed-title">Title</label>
+              <Input id="ed-title" value={form.title} maxLength={200}
                      onChange={(e) => setForm({ ...form, title: e.target.value })} />
             </div>
 
-            <div className="col-md-6">
-              <label className="form-label" htmlFor="ed-start">Starts</label>
-              <input id="ed-start" type="datetime-local" className="form-control" value={form.start}
+            <div>
+              <label className="mb-1 block text-[13px] font-medium text-ink" htmlFor="ed-start">Starts</label>
+              <Input id="ed-start" type="datetime-local" value={form.start}
                      onChange={(e) => setForm({ ...form, start: e.target.value })} />
             </div>
-            <div className="col-md-6">
-              <label className="form-label" htmlFor="ed-end">Ends</label>
-              <input id="ed-end" type="datetime-local" className="form-control" value={form.end}
+            <div>
+              <label className="mb-1 block text-[13px] font-medium text-ink" htmlFor="ed-end">Ends</label>
+              <Input id="ed-end" type="datetime-local" value={form.end}
                      onChange={(e) => setForm({ ...form, end: e.target.value })} />
-              <div className="form-text">
+              <div className="mt-1 text-xs text-ink-muted">
                 Times are in this computer&apos;s time zone. Leave both empty for a
                 meeting with no fixed time.
               </div>
             </div>
 
-            <div className="col-md-6">
-              <label className="form-label" htmlFor="ed-waiting">Waiting room</label>
-              <select id="ed-waiting" className="form-select" value={form.waitingRoom}
+            <div>
+              <label className="mb-1 block text-[13px] font-medium text-ink" htmlFor="ed-waiting">Waiting room</label>
+              <Select id="ed-waiting" value={form.waitingRoom}
                       onChange={(e) => setForm({ ...form, waitingRoom: e.target.value as WaitingRoom })}>
                 <option value="off">Off — anyone with the link joins straight in</option>
                 <option value="guests">Guests wait to be let in</option>
                 <option value="everyone">Everyone waits to be let in</option>
-              </select>
-              <div className="form-text">
+              </Select>
+              <div className="mt-1 text-xs text-ink-muted">
                 Opening the door also lets in anybody already waiting.
               </div>
             </div>
 
-            <div className="col-md-6">
-              <label className="form-label" htmlFor="ed-share">Who can share their screen</label>
-              <select id="ed-share" className="form-select" value={form.sharePolicy}
+            <div>
+              <label className="mb-1 block text-[13px] font-medium text-ink" htmlFor="ed-share">Who can share their screen</label>
+              <Select id="ed-share" value={form.sharePolicy}
                       onChange={(e) => setForm({ ...form, sharePolicy: e.target.value as SharePolicy })}>
                 <option value="everyone">Everyone</option>
                 <option value="cohost">Only the host and co-hosts</option>
                 <option value="host">Only the host</option>
-              </select>
-              <div className="form-text">Applies to people already in the meeting, immediately.</div>
+              </Select>
+              <div className="mt-1 text-xs text-ink-muted">Applies to people already in the meeting, immediately.</div>
             </div>
 
-            <div className="col-md-6">
-              <label className="form-label" htmlFor="ed-chat">Who can send chat messages</label>
-              <select id="ed-chat" className="form-select" value={form.chatPolicy}
+            <div>
+              <label className="mb-1 block text-[13px] font-medium text-ink" htmlFor="ed-chat">Who can send chat messages</label>
+              <Select id="ed-chat" value={form.chatPolicy}
                       onChange={(e) => setForm({ ...form, chatPolicy: e.target.value as ChatPolicy })}>
                 <option value="everyone">Everyone</option>
                 <option value="cohost">Only the host and co-hosts</option>
                 <option value="off">Nobody — chat is closed</option>
-              </select>
-              <div className="form-text">
+              </Select>
+              <div className="mt-1 text-xs text-ink-muted">
                 Everyone can still read what was sent, whichever you choose.
               </div>
             </div>
 
-            <div className="col-md-6">
-              <label className="form-label" htmlFor="ed-password">Password</label>
-              <input id="ed-password" type="password" className="form-control"
+            <div>
+              <label className="mb-1 block text-[13px] font-medium text-ink" htmlFor="ed-password">Password</label>
+              <Input id="ed-password" type="password"
                      value={form.password} disabled={form.clearPassword}
                      placeholder={meeting.hasPassword ? 'Unchanged' : 'None'}
                      autoComplete="new-password"
                      onChange={(e) => setForm({ ...form, password: e.target.value })} />
-              <div className="form-text">
+              <div className="mt-1 text-xs text-ink-muted">
                 {meeting.hasPassword
                   ? 'Leave this empty to keep the current password.'
                   : 'Type one to start requiring a password. 4 characters or more.'}
               </div>
               {meeting.hasPassword && (
-                <div className="form-check mt-2">
-                  <input className="form-check-input" type="checkbox" id="ed-clearpw"
-                         checked={form.clearPassword}
-                         onChange={(e) => setForm({
-                           ...form, clearPassword: e.target.checked, password: '',
-                         })} />
-                  <label className="form-check-label" htmlFor="ed-clearpw">
-                    Remove the password
-                  </label>
-                </div>
+                <Checkbox id="ed-clearpw" className="mt-2 mb-0" label="Remove the password"
+                          checked={form.clearPassword}
+                          onChange={(e) => setForm({
+                            ...form, clearPassword: e.target.checked, password: '',
+                          })} />
               )}
             </div>
 
-            <div className="col-md-6">
-              <div className="form-check form-switch">
-                <input className="form-check-input" type="checkbox" id="ed-guests"
-                       checked={form.allowGuests}
-                       onChange={(e) => setForm({ ...form, allowGuests: e.target.checked })} />
-                <label className="form-check-label" htmlFor="ed-guests">
-                  Let people without an account join
-                </label>
-              </div>
+            <div>
+              <Switch id="ed-guests" className="mb-0" label="Let people without an account join"
+                      checked={form.allowGuests}
+                      onChange={(e) => setForm({ ...form, allowGuests: e.target.checked })} />
 
               {/* Auto-record is absent, not disabled, on a Private meeting:
                   its media cannot be read by this server at all, so the
                   control would be a promise the product cannot keep. */}
               {meeting.mode !== 'private' && (
-                <div className="form-check form-switch mt-2">
-                  <input className="form-check-input" type="checkbox" id="ed-autorec"
-                         checked={form.autoRecord}
-                         onChange={(e) => setForm({ ...form, autoRecord: e.target.checked })} />
-                  <label className="form-check-label" htmlFor="ed-autorec">
-                    Start recording automatically
-                  </label>
-                </div>
+                <Switch id="ed-autorec" className="mt-2 mb-0" label="Start recording automatically"
+                        checked={form.autoRecord}
+                        onChange={(e) => setForm({ ...form, autoRecord: e.target.checked })} />
               )}
             </div>
 
-            <div className="col-12">
-              <div className="alert alert-light border mb-0 !text-[0.75rem]">
+            <div className="md:col-span-2">
+              <div className="rounded-lg border border-line bg-canvas p-3 mb-0 !text-[0.75rem] text-ink">
                 <strong>Meeting type: {meeting.mode === 'private' ? 'Private' : 'Recorded'}</strong>
                 {' — this cannot be changed. '}
                 {meeting.mode === 'private'
@@ -634,13 +621,13 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
         </Card>
       )}
 
-      <div className="row">
-        <div className="col-xl-8">
+      <div className="grid !gap-[1.5rem] xl:grid-cols-12">
+        <div className="xl:col-span-8">
           {lobby.length > 0 && (
             <Card title="Waiting to be let in" className="!mb-[1rem]">
               {lobby.map((w) => (
                 <div key={w.requestId}
-                     className="!flex !items-center !justify-between flex-wrap gap-2 py-2 border-bottom">
+                     className="!flex !items-center !justify-between flex-wrap gap-2 border-b border-line py-2">
                   <div>
                     <span className="!font-semibold">{w.displayName}</span>
                     {w.isGuest && <span className="ms-2"><Badge tone="warn">Guest</Badge></span>}
@@ -755,30 +742,30 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
                         .map((a) => a.who.displayName)} />
         </div>
 
-        <div className="col-xl-4">
+        <div className="xl:col-span-4">
           <Card title="Invite">
-            <label className="form-label" htmlFor="joinurl">Link</label>
-            <div className="input-group">
-              <input id="joinurl" className="form-control" readOnly value={meeting.joinUrl}
+            <label className="mb-1 block text-[13px] font-medium text-ink" htmlFor="joinurl">Link</label>
+            <div className="flex items-stretch">
+              <Input id="joinurl" className="rounded-r-none" readOnly value={meeting.joinUrl}
                      onFocus={(e) => e.currentTarget.select()} />
-              <button className="btn btn-primary" type="button"
+              <Button variant="primary" type="button" className="rounded-l-none"
                       onClick={() => void copy(meeting.joinUrl, 'link')}>
                 {copied === 'link' ? 'Copied' : 'Copy'}
-              </button>
+              </Button>
             </div>
-            <div className="form-text">Anyone holding this can use it — see the waiting room below.</div>
+            <div className="mt-1 text-xs text-ink-muted">Anyone holding this can use it — see the waiting room below.</div>
 
             {/* The code exists for the person whose link did not survive being
                 pasted into a chat app, and it gets READ ALOUD. So it is set
                 large and spaced rather than squeezed into a form field where
                 an l and a 1 look the same. */}
-            <label className="form-label !mt-[1rem]">Code</label>
+            <label className="!mt-[1rem] mb-1 block text-[13px] font-medium text-ink">Code</label>
             <div className="cx-bigcode">
               <span>{prettyCode(meeting.code)}</span>
-              <button className="btn btn-light btn-sm" type="button"
+              <Button size="sm" type="button"
                       onClick={() => void copy(meeting.code, 'code')}>
                 {copied === 'code' ? 'Copied' : 'Copy'}
-              </button>
+              </Button>
             </div>
 
             <ul className="cx-sum-list">
@@ -794,19 +781,12 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
 
           {isHost && !over && (
             <Card title="Organiser" className="!mt-[1rem]">
-              <div className="form-check form-switch !mb-[1rem]">
-                <input className="form-check-input" type="checkbox" id="locked"
-                       checked={meeting.locked} disabled={busy !== null}
-                       onChange={(e) => void run('lock',
-                         () => connectApi.update(authedFetch, meeting.id, { locked: e.target.checked })
-                           .then(() => undefined))} />
-                <label className="form-check-label" htmlFor="locked">
-                  Lock the meeting
-                </label>
-                <div className="form-text">
-                  Nobody new can join, with a link or a code. People already in stay in.
-                </div>
-              </div>
+              <Switch id="locked" className="!mb-[1rem]" label="Lock the meeting"
+                      hint="Nobody new can join, with a link or a code. People already in stay in."
+                      checked={meeting.locked} disabled={busy !== null}
+                      onChange={(e) => void run('lock',
+                        () => connectApi.update(authedFetch, meeting.id, { locked: e.target.checked })
+                          .then(() => undefined))} />
 
               <Button variant="danger" disabled={busy !== null}
                       onClick={() => void run('cancel',
@@ -831,7 +811,7 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
             <Card title="Removed from this meeting" className="!mt-[1rem]">
               {blocks.map((b) => (
                 <div key={b.id}
-                     className="!flex !items-center !justify-between gap-2 py-2 border-bottom">
+                     className="!flex !items-center !justify-between gap-2 border-b border-line py-2">
                   <div style={{ minWidth: 0 }}>
                     <div className="!font-semibold !truncate">{b.displayName}</div>
                     <div className="!text-[0.75rem] !text-ink-muted">
@@ -848,7 +828,7 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
                 </div>
               ))}
               {blocks.some((b) => !b.enforced) && (
-                <div className="form-text mt-2">
+                <div className="mt-2 text-xs text-ink-muted">
                   A guest was never actually kept out: guests are recognised only
                   for as long as they stay connected, so anyone removed as a guest
                   can return through the link. The waiting room is what stops them.

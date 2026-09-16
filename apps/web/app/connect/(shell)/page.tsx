@@ -4,7 +4,9 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
-import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
+import { Badge, Button, Card, Empty, Spinner, Table, Td } from '@/components/ui/Kit';
+import { Input } from '@/components/ui/Form';
+import { Alert, PageHeader } from '@/components/ui/Page';
 import {
   connectApi, prettyCode, whenLabel,
   type Meeting, type MeetingStatus,
@@ -102,34 +104,35 @@ export default function ConnectHome() {
 
   return (
     <>
-      <div className="page-header-breadcrumb !flex !items-center !justify-between flex-wrap gap-2 !my-[1rem]">
-        <div>
-          <h1 className="page-title !font-semibold !text-[1.25rem] mb-1">Meetings</h1>
-          <ol className="breadcrumb mb-0">
-            <li className="breadcrumb-item active" aria-current="page">Connect</li>
-          </ol>
-        </div>
-        <div className="!flex gap-2 flex-wrap">
-          <Button variant="primary" onClick={() => void startNow()} disabled={starting}>
-            <i className="ri-vidicon-line me-1" />
-            {starting ? 'Starting…' : 'Start now'}
-          </Button>
-          <Button href="/connect/new">
-            <i className="ri-calendar-line me-1" />
-            Schedule
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Meetings"
+        breadcrumb={[{ label: 'Connect' }]}
+        className="!my-[1rem]"
+        actions={
+          <>
+            <Button variant="primary" onClick={() => void startNow()} disabled={starting}>
+              <i className="ri-vidicon-line me-1" />
+              {starting ? 'Starting…' : 'Start now'}
+            </Button>
+            <Button href="/connect/new">
+              <i className="ri-calendar-line me-1" />
+              Schedule
+            </Button>
+          </>
+        }
+      />
 
       {error && (
-        <div className="alert alert-danger !flex !items-center !justify-between" role="alert">
-          <span>{error}</span>
-          <button type="button" className="btn btn-sm btn-light" onClick={() => void load()}>Try again</button>
-        </div>
+        <Alert tone="danger" action={<Button size="sm" onClick={() => void load()}>Try again</Button>}>
+          {error}
+        </Alert>
       )}
 
-      <div className="row">
-        <div className="col-xl-8">
+      {/* Two thirds and a third on a wide screen, stacked below it. Twelfths
+          are the counts overrides.css re-declares; an arbitrary template
+          would be flattened by YZEN's own .grid. */}
+      <div className="grid !gap-[1.5rem] xl:grid-cols-12">
+        <div className="xl:col-span-8">
           {live.length > 0 && (
             <Card title="Happening now" className="cx-live !mb-[1rem]">
               {live.map((m) => (
@@ -158,27 +161,28 @@ export default function ConnectHome() {
           )}
 
           <Card padded={false}>
-            <div className="card-header !justify-between !items-center">
-              <ul className="nav nav-pills gap-1" role="tablist">
-                {TABS.map((t) => (
-                  <li className="nav-item" key={t.key} role="presentation">
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={range === t.key}
-                      className={`nav-link${range === t.key ? ' active' : ''}`}
-                      onClick={() => setRange(t.key)}
-                    >
-                      {t.label}
-                    </button>
-                  </li>
-                ))}
-              </ul>
+            {/* Pill tabs as BUTTONS, not Tabs from the kit: those are links to
+                URLs, and this range is page state, not a route. */}
+            <div className="flex flex-wrap items-center gap-1 border-b border-line px-5 py-3" role="tablist">
+              {TABS.map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={range === t.key}
+                  className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${range === t.key
+                    ? 'bg-brand-500 text-white'
+                    : 'text-ink-muted hover:bg-canvas hover:text-ink'}`}
+                  onClick={() => setRange(t.key)}
+                >
+                  {t.label}
+                </button>
+              ))}
             </div>
 
             {loading ? (
               <div className="!p-[1.5rem] text-center !text-ink-muted">
-                <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />
+                <Spinner inline />
                 Loading…
               </div>
             ) : rest.length === 0 && live.length === 0 ? (
@@ -223,12 +227,12 @@ export default function ConnectHome() {
           </Card>
         </div>
 
-        <div className="col-xl-4">
+        <div className="xl:col-span-4">
           <Card title="Join a meeting" subtitle="Paste a code or a link somebody sent you">
             <form onSubmit={goToCode}>
-              <div className="input-group">
-                <input
-                  className="form-control"
+              <div className="flex items-stretch">
+                <Input
+                  className="rounded-r-none"
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
                   placeholder="Meeting code"
@@ -236,9 +240,10 @@ export default function ConnectHome() {
                   spellCheck={false}
                   autoComplete="off"
                 />
-                <button className="btn btn-primary" type="submit" disabled={code.trim().length === 0}>
+                <Button variant="primary" type="submit" className="rounded-l-none"
+                        disabled={code.trim().length === 0}>
                   Join
-                </button>
+                </Button>
               </div>
               <div className="!text-ink-muted !text-[0.75rem] mt-2">
                 A full link works too — everything after the last slash is the code.

@@ -96,15 +96,21 @@ const BTN: Record<Variant, string> = {
   danger:    'bg-danger text-white hover:brightness-95',
 };
 
+//  The small size keeps Bootstrap's btn-sm numbers exactly, because the rows
+//  and toolbars that used btn-sm were laid out around that height. The `!`
+//  is what lets it beat BTN_BASE's px-4 py-2 in the same class list.
+const BTN_SM = '!px-[0.8rem] !py-[0.25rem] !text-[0.8rem]';
+
 export function Button({
-  variant = 'secondary', className = '', href, children, ...rest
+  variant = 'secondary', size, className = '', href, children, ...rest
 }: {
   variant?: Variant;
+  size?: 'sm';
   className?: string;
   href?: string;
   children?: React.ReactNode;
 } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  const cls = `${BTN_BASE} ${BTN[variant]} ${className}`.trim();
+  const cls = `${BTN_BASE} ${BTN[variant]} ${size === 'sm' ? BTN_SM : ''} ${className}`.replace(/\s+/g, ' ').trim();
   if (href) {
     // Only onClick is forwarded to link-buttons; spreading button attributes
     // onto a Next Link is a type mismatch and none of the others apply here.
@@ -378,6 +384,23 @@ export function Meter({ used, total, tone }: {
            style={{ width: `${pct}%` }} />
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+/**
+ * The one spinner. Inline beside a word ("Loading…"), or centred in a panel.
+ *
+ * Before this existed there were nine hand-rolled copies, three of them with
+ * the brand colour written in as a hex, plus Bootstrap's spinner-border in
+ * the rest. Inline is sized to the text it sits next to; block is the 32px
+ * disc a loading card shows.
+ */
+export function Spinner({ inline = false, label = 'Loading' }: { inline?: boolean; label?: string }) {
+  const cls = inline
+    ? 'mr-2 inline-block h-[1em] w-[1em] animate-spin rounded-full border-2 border-current border-r-transparent align-[-0.125em]'
+    : 'block h-8 w-8 animate-spin rounded-full border-2 border-line border-t-brand-600';
+  const disc = <span role="status" aria-label={label} className={cls} />;
+  return inline ? disc : <div className="grid place-items-center !py-[3rem]">{disc}</div>;
 }
 
 // ---------------------------------------------------------------------------
