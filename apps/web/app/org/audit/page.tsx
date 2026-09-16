@@ -7,6 +7,7 @@ import { AdminShell } from '@/components/admin/AdminShell';
 import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
 import { useAuth } from '@/lib/auth';
 import { Input, Select } from '@/components/ui/Form';
+import { Alert } from '@/components/ui/Page';
 import {
   fetchAudit, fetchAuditActions, formatState, humaniseAction, isSensitive,
   type AuditEntry, type AuditQuery,
@@ -143,9 +144,14 @@ export default function OrgAuditPage() {
     >
       <Card>
         {/* Filters */}
-        <div className="row g-2 !items-end !mb-[1rem]">
-          <div className="col-md-3">
-            <label className="form-label !text-[0.75rem] !text-ink-muted mb-1">Action</label>
+        {/* Twelfths, like the Bootstrap row this replaces: 3+3+2+2+2 fills the
+            width on a wide screen and "Clear" drops to its own line, which is
+            where it was before too. One column on a phone. `grid-cols-12` is
+            re-declared in overrides.css because YZEN's own `.grid` would
+            otherwise flatten it to a single column with no warning. */}
+        <div className="grid !gap-[0.5rem] !items-end !mb-[1rem] md:grid-cols-12">
+          <div className="md:col-span-3">
+            <label className="mb-1 block !text-[0.75rem] !font-medium !text-ink-muted">Action</label>
             <Select
               
               value={action}
@@ -157,8 +163,8 @@ export default function OrgAuditPage() {
               ))}
             </Select>
           </div>
-          <div className="col-md-3">
-            <label className="form-label !text-[0.75rem] !text-ink-muted mb-1">Who</label>
+          <div className="md:col-span-3">
+            <label className="mb-1 block !text-[0.75rem] !font-medium !text-ink-muted">Who</label>
             <Select
               
               value={actor}
@@ -170,8 +176,8 @@ export default function OrgAuditPage() {
               ))}
             </Select>
           </div>
-          <div className="col-md-2">
-            <label className="form-label !text-[0.75rem] !text-ink-muted mb-1">Product</label>
+          <div className="md:col-span-2">
+            <label className="mb-1 block !text-[0.75rem] !font-medium !text-ink-muted">Product</label>
             <Select
               
               value={product}
@@ -185,24 +191,24 @@ export default function OrgAuditPage() {
               <option value="drive">Space</option>
             </Select>
           </div>
-          <div className="col-md-2">
-            <label className="form-label !text-[0.75rem] !text-ink-muted mb-1">From</label>
+          <div className="md:col-span-2">
+            <label className="mb-1 block !text-[0.75rem] !font-medium !text-ink-muted">From</label>
             <Input type="date" 
                    value={from} onChange={(e) => setFrom(e.target.value)} />
           </div>
-          <div className="col-md-2">
-            <label className="form-label !text-[0.75rem] !text-ink-muted mb-1">To</label>
+          <div className="md:col-span-2">
+            <label className="mb-1 block !text-[0.75rem] !font-medium !text-ink-muted">To</label>
             <Input type="date" 
                    value={to} onChange={(e) => setTo(e.target.value)} />
           </div>
           {filtered && (
-            <div className="col-auto">
+            <div className="md:col-span-2">
               <Button variant="secondary" onClick={clearFilters}>Clear</Button>
             </div>
           )}
         </div>
 
-        {error && <div className="alert alert-danger">{error}</div>}
+        {error && <Alert tone="danger">{error}</Alert>}
 
         {loading ? (
           <div className="grid place-items-center !py-[3rem]">
@@ -261,28 +267,28 @@ export default function OrgAuditPage() {
                     </Td>
                     <Td>
                       {e.hasDetail && (
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-light"
+                        <Button
+                          variant="secondary"
+                          className="!px-[0.8rem] !py-[0.25rem] !text-[0.8rem]"
                           onClick={() => setExpanded(expanded === e.id ? null : e.id)}
                         >
                           {expanded === e.id ? 'Hide' : 'Detail'}
-                        </button>
+                        </Button>
                       )}
                     </Td>
                   </tr>
 
                   {expanded === e.id && (
                     <tr>
-                      <td colSpan={5} className="bg-light">
-                        <div className="row g-3 p-2">
-                          <div className="col-md-6">
+                      <td colSpan={5} className="bg-canvas">
+                        <div className="grid !gap-[1rem] p-2 md:grid-cols-2">
+                          <div>
                             <div className="!text-[0.75rem] !font-semibold !text-ink-muted mb-1">BEFORE</div>
                             <pre className="!text-[0.75rem] mb-0" style={{ whiteSpace: 'pre-wrap' }}>
                               {formatState(e.beforeState) ?? '—'}
                             </pre>
                           </div>
-                          <div className="col-md-6">
+                          <div>
                             <div className="!text-[0.75rem] !font-semibold !text-ink-muted mb-1">AFTER</div>
                             <pre className="!text-[0.75rem] mb-0" style={{ whiteSpace: 'pre-wrap' }}>
                               {formatState(e.afterState) ?? '—'}

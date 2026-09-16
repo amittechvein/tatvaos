@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { AdminShell } from '@/components/admin/AdminShell';
 import { Badge, Button, Card } from '@/components/ui/Kit';
 import { Modal } from '@/components/ui/Modal';
+import { Alert } from '@/components/ui/Page';
 import { useAuth } from '@/lib/auth';
 
 // ============================================================================
@@ -77,10 +78,9 @@ export default function OrgAiPage() {
       subtitle="Whether this organisation's content may be processed by an AI provider"
     >
       {error && (
-        <div className="alert alert-danger !flex !justify-between !items-center">
-          <span>{error}</span>
-          <Button variant="ghost" onClick={load}>Try again</Button>
-        </div>
+        <Alert tone="danger" action={<Button variant="ghost" onClick={load}>Try again</Button>}>
+          {error}
+        </Alert>
       )}
 
       <Card

@@ -160,6 +160,12 @@
 .grid-cols-7 { grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .grid-rows-6 { grid-template-rows: repeat(6, minmax(0, 1fr)); }
 
+/* Twelve columns: what a page moving off Bootstrap's `row`/`col-md-*` grid
+   reaches for, because those columns are twelfths (col-md-3 is a quarter).
+   Added 16 Sept when /org/audit's filter row moved. `col-span-*` needs no
+   entry here — Bootstrap has no such class, so nothing collides with it. */
+.grid-cols-12 { grid-template-columns: repeat(12, minmax(0, 1fr)); }
+
 @media (min-width: 640px) {
   .sm\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .sm\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -173,6 +179,7 @@
   .md\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .md\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .md\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .md\:grid-cols-12 { grid-template-columns: repeat(12, minmax(0, 1fr)); }
 }
 @media (min-width: 1024px) {
   .lg\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }

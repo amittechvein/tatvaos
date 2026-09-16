@@ -20,6 +20,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { AdminShell } from '@/components/admin/AdminShell';
 import { Button, Card, Meter, Stat } from '@/components/ui/Kit';
+import { Alert } from '@/components/ui/Page';
 import { useAuth } from '@/lib/auth';
 
 const GB = 1024 ** 3;
@@ -194,7 +195,7 @@ export default function CoreOverview() {
                 </div>
               ))}
               {(data?.unassignedUsers ?? 0) > 0 && (
-                <div className="!flex !items-center gap-2 pt-2 border-top">
+                <div className="!flex !items-center gap-2 border-t border-line pt-2">
                   <span className="shrink-0 !rounded-[50%]" style={{ width: 10, height: 10, background: 'rgb(var(--ink-faint))' }} />
                   <span className="!flex-auto !text-[0.8125rem] !text-ink-muted">No department</span>
                   <span className="!font-semibold !text-[0.8125rem]">{data?.unassignedUsers}</span>
@@ -206,12 +207,12 @@ export default function CoreOverview() {
       </div>
 
       {verified.length > 0 && mailReady.length === 0 && (
-        <div className="alert alert-info !mt-[1.5rem]" role="note">
+        <Alert tone="info" className="!mt-[1.5rem]">
           Your domain is verified, but mail is still delivered wherever it was
           before. Add the MX records under <Link href="/org/domains">Domains</Link> when
           you are ready to move it — nothing you do here interrupts your current
           email until those change.
-        </div>
+        </Alert>
       )}
     </AdminShell>
   );
