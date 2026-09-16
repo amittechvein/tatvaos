@@ -206,6 +206,31 @@ extend the lockfile. And after the loop deletes `react-native` or
 `@livekit/react-native-webrtc`, the next Gradle build recompiles their native
 code; that is expected and slow, not a sign something else broke.
 
+**9. Metro keeps serving the OLD JavaScript after you change branches — and
+the app looks fine.** 16 September 2026. Trap 7's sibling, one layer up: there
+the APK was stale, here the bundle is. `CI=1 expo start` prints *"Metro is
+running in CI mode, reloads are disabled"*, which also means it does not watch.
+A Metro started on one branch went on serving that branch's bundle after a
+`git checkout` — the app launched, signed in, the dashboard drew, a tile opened
+the browser. Every one of those was true and none of it exercised the code
+under test.
+
+**The tell was a line that was NOT there.** `api.js` logs every request, so the
+new code had to produce `POST /api/auth/handoff -> 404`. The log had no such
+line and no `[handoff]` line either — the mint was never attempted, because the
+running bundle had never heard of it. A screenshot would have looked perfect.
+
+So: **before believing a device run, assert something that can only be true of
+the new bundle** — a log line the new code emits, not the absence of a crash.
+And restart Metro with `--clear` after changing branches; the pnpm-level
+caching is not the only cache in this stack.
+
+*Also, while you are here: Docker, an emulator and Metro together exhaust this
+laptop's commit limit — `adb` itself stops answering and everything times out
+with no error naming memory. Check `(Get-CimInstance
+Win32_OperatingSystem).FreeVirtualMemory` before blaming your change. The
+durable fix is Windows' page file set to system-managed, which is Amit's to do.*
+
 ---
 
 ## 4. Two bugs I fixed that tell you what this codebase's failures look like
