@@ -11,6 +11,7 @@ import {
   type ChatPolicy, type LobbyEntry, type Meeting, type MeetingBlock, type Participant,
   type SharePolicy, type UpdateMeeting, type WaitingRoom,
 } from '@/lib/connect';
+import { meetingInvitation } from '@/lib/meetingInvitation';
 import Recordings from './Recordings';
 import { SumRow, faceOf, toneOf } from '../../ConnectSkin';
 
@@ -749,11 +750,11 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
               <Input id="joinurl" className="rounded-r-none" readOnly value={meeting.joinUrl}
                      onFocus={(e) => e.currentTarget.select()} />
               <Button variant="primary" type="button" className="rounded-l-none"
-                      onClick={() => void copy(meeting.joinUrl, 'link')}>
-                {copied === 'link' ? 'Copied' : 'Copy'}
+                      onClick={() => void copy(meetingInvitation(meeting), 'link')}>
+                {copied === 'link' ? 'Copied' : 'Copy invitation'}
               </Button>
             </div>
-            <div className="mt-1 text-xs text-ink-muted">Anyone holding this can use it — see the waiting room below.</div>
+            <div className="mt-1 text-xs text-ink-muted">Copies an invitation with the name, date and time. Anyone holding the link can use it — see the waiting room below.</div>
 
             {/* The code exists for the person whose link did not survive being
                 pasted into a chat app, and it gets READ ALOUD. So it is set
