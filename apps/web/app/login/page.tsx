@@ -315,7 +315,7 @@ function SignInForm() {
               {ROADMAP.map((p) => (
                 <span
                   key={p.label}
-                  className="badge !rounded-[50rem]"
+                  className="inline-flex items-center !rounded-[50rem] px-2.5 py-0.5 text-xs"
                   style={{
                     fontWeight: 500,
                     color: '#fff',
@@ -432,22 +432,30 @@ function SignInForm() {
               audience already knows this screen by heart. QR needs the mobile
               app to scan with; until that ships it is visibly coming rather
               than quietly missing. */}
-          <ul className="nav nav-tabs !mb-[1.5rem]" role="tablist">
-            {TABS.map((t) => (
-              <li key={t.id} className="nav-item" role="presentation">
+          {/* The same underline tabs as the kit's Tabs, as BUTTONS: the kit's
+              are links to routes, and which way in is page state, not a URL.
+              aria-selected carries the state, so it is not colour alone. */}
+          <div className="!mb-[1.5rem] border-b border-line" role="tablist">
+            <div className="-mb-px flex gap-1 overflow-x-auto">
+              {TABS.map((t) => (
                 <button
+                  key={t.id}
                   type="button"
                   role="tab"
                   aria-selected={tab === t.id}
                   disabled={t.disabled}
-                  className={`nav-link !text-[0.875rem] !font-semibold ${tab === t.id ? 'active' : ''} ${t.disabled ? 'disabled' : ''}`}
+                  className={`whitespace-nowrap border-b-2 px-3.5 py-2.5 !text-[0.875rem] !font-semibold transition-colors ${
+                    tab === t.id
+                      ? 'border-brand-500 text-brand-700'
+                      : 'border-transparent text-ink-muted hover:border-line hover:text-ink'
+                  } disabled:cursor-not-allowed disabled:opacity-50`}
                   onClick={() => { setTab(t.id); setError(null); }}
                 >
                   {t.label}
                 </button>
-              </li>
-            ))}
-          </ul>
+              ))}
+            </div>
+          </div>
 
           {error && <Alert tone="danger">{error}</Alert>}
 
