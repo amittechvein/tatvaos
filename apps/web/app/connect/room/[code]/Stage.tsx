@@ -12,7 +12,7 @@ import { useAuth } from '@/lib/auth';
 import {
   connectApi, minutesApi, recordingApi, screenCaptureSupported,
   type LobbyEntry, type Meeting, type Recording, type RecordingMode, type Seat,
-  type ChatPolicy, type SharePolicy, type WaitingRoom,
+  type ChatPolicy, type ShareMode, type SharePolicy, type WaitingRoom,
 } from '@/lib/connect';
 import { meetingInvitation } from '@/lib/meetingInvitation';
 import { captionsSupported, useCaptions } from '@/lib/useCaptions';
@@ -390,6 +390,10 @@ export default function Stage({ seat, meeting, prefs }: {
   const [roles, setRoles] = useState<Record<string, string>>({});
   const [sharePolicy, setSharePolicy] = useState<SharePolicy>(
     meeting?.sharePolicy ?? 'everyone');
+  // How many at once — see ShareMode in lib/connect. An older server sends
+  // nothing, and what it did was 'multiple'.
+  const [shareMode, setShareMode] = useState<ShareMode>(
+    meeting?.shareMode ?? 'multiple');
 
   // Two sources because there are two kinds of joiner. A signed-in person has
   // the whole meeting row; a guest has only the seat the door handed them, and
@@ -926,6 +930,16 @@ export default function Stage({ seat, meeting, prefs }: {
             }
             return;
           }
+          // Same trust level as sharePolicy above: it only changes which
+          // label is shown. The grant that actually refuses a second share
+          // is set server-side by ConnectShareEnforcement.
+          if ('shareMode' in parsed) {
+            const next = String((parsed as { shareMode?: unknown }).shareMode ?? '');
+            if (next === 'multiple' || next === 'single') {
+              setShareMode(next);
+            }
+            return;
+          }
 
           // ── SOMEBODY'S ROLE CHANGED. ──────────────────────────────────
           //
@@ -1282,6 +1296,30 @@ export default function Stage({ seat, meeting, prefs }: {
     } catch (e) {
       setSharePolicy(previous);
       setError(e instanceof Error ? e.message : 'Could not change who may share.');
+    }
+  }
+
+  /**
+   * One screen at a time, or several — and tell the room, the same way
+   * changeSharePolicy does. The server re-permissions everyone already here
+   * (ConnectShareEnforcement); the broadcast only keeps each person's label
+   * honest without waiting for them to reload.
+   */
+  async function changeShareMode(next: ShareMode) {
+    if (!meeting) return;
+    const previous = shareMode;
+    setShareMode(next);
+    try {
+      await connectApi.update(authedFetch, meeting.id, { shareMode: next });
+      const r = roomRef.current;
+      if (r) {
+        void r.localParticipant.publishData(
+          new TextEncoder().encode(JSON.stringify({ shareMode: next })),
+          { reliable: true });
+      }
+    } catch (e) {
+      setShareMode(previous);
+      setError(e instanceof Error ? e.message : 'Could not change how many can share at once.');
     }
   }
 
@@ -2292,7 +2330,15 @@ export default function Stage({ seat, meeting, prefs }: {
   // Requiring both means the button goes quiet the moment EITHER says no,
   // which is the safe direction for a label: the alternative is a control that
   // stays lit until the press fails.
-  const mayShare = policyAllowsShare && tokenAllowsShare;
+  // ONE AT A TIME. While somebody else is presenting, the button closes and
+  // its label says who — "Ravi is sharing" rather than a control that would
+  // be refused. The server enforces it (ConnectShareEnforcement narrows
+  // everyone else's grant, and tokenAllowsShare will follow); this line is
+  // what makes the answer visible before the press instead of after it.
+  const otherPresenter = shareMode === 'single' && !sharing
+    ? screenSharers.find((p) => p !== room?.localParticipant)
+    : undefined;
+  const mayShare = policyAllowsShare && tokenAllowsShare && !otherPresenter;
 
   // Who may TYPE. Note the difference from mayShare above: a guest with no
   // meeting row is treated as a PARTICIPANT here, not waved through. Sharing
@@ -2358,6 +2404,8 @@ export default function Stage({ seat, meeting, prefs }: {
               disabled={!mayShare && !sharing}
               title={!screenCaptureSupported()
                 ? 'This browser cannot share a screen — join from a computer'
+                : otherPresenter
+                  ? `${otherPresenter.name || 'Someone'} is sharing — one screen at a time in this meeting`
                 : mayShare || sharing
                   ? 'Share your screen'
                   // Say which limit, when we know it. "Only the host" and
@@ -2981,6 +3029,16 @@ export default function Stage({ seat, meeting, prefs }: {
                 </select>
                 <div className="cx-sub" style={{ marginTop: 4 }}>
                   Applies to everyone already here, immediately.
+                </div>
+
+                <label className="cx-label" htmlFor="cx-share-mode" style={{ marginTop: 12 }}>Screens at once</label>
+                <select id="cx-share-mode" className="cx-field" value={shareMode}
+                        onChange={(e) => void changeShareMode(e.target.value as ShareMode)}>
+                  <option value="multiple">Several people can share at once</option>
+                  <option value="single">One person at a time</option>
+                </select>
+                <div className="cx-sub" style={{ marginTop: 4 }}>
+                  One at a time stops anyone else starting while somebody presents. It does not cut off a share already running.
                 </div>
 
                 {/* THE SENTENCE LIVES HERE NOW. Participants are no longer

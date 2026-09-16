@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ═══════════════════════════════════════════════════════════════════════
+     THE SHARE-MODE TESTS.
+
+     Single-sharer mode (docs/CONNECT_PHASE_NEXT.md §4) decides, for every
+     person in a room, whether they may start a screen share right now. Get
+     that wrong in one direction and a "one at a time" meeting has two
+     presenters talking over each other; get it wrong in the other and the
+     person who is supposed to be presenting is refused.
+
+     The decision is two pure functions on ConnectShare — SourcesInSingleMode
+     and NewcomerMustStop — and this project runs them. The part that talks
+     to LiveKit (ConnectShareEnforcement) is NOT tested here: it needs a
+     running SFU, and saying so is better than a mock that proves the mock.
+
+     Same three choices as tests/connect-order and tests/connect-wire:
+     ConnectEntities.cs is LINKED, not copied; no test framework, so
+     `dotnet run` and read the last line; not in any solution file, and never
+     published.
+
+     Nothing in CI runs it yet, for the same reason the others are hand-run:
+     a CI workflow change goes to the CTO. See tests/connect-order's csproj.
+    ═══════════════════════════════════════════════════════════════════════
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TatvaOS.Tests.Share</RootNamespace>
+    <AssemblyName>connect-share-test</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The production file itself. Not a copy. -->
+    <Compile Include="../../apps/api/Modules/Connect/ConnectEntities.cs"
+             Link="ConnectEntities.cs" />
+  </ItemGroup>
+
+</Project>

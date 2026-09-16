@@ -87,7 +87,7 @@ public static class ConnectEndpoints
         DateTimeOffset? ScheduledStart, DateTimeOffset? ScheduledEnd,
         string? Timezone, string? Password, string? WaitingRoom, bool? AllowGuests,
         bool? AutoRecord, string? SharePolicy, string? ChatPolicy, bool? MinutesLive,
-        string? Mode);
+        string? Mode, string? ShareMode = null);
 
     // ── NO Mode FIELD HERE, AND IT MUST STAY THAT WAY. ───────────────────
     // The mode is chosen once and cannot change: a host who could flip
@@ -100,7 +100,7 @@ public static class ConnectEndpoints
         string? Title, DateTimeOffset? ScheduledStart, DateTimeOffset? ScheduledEnd,
         string? Timezone, string? Password, string? WaitingRoom,
         bool? AllowGuests, bool? Locked, bool? AutoRecord, string? SharePolicy,
-        string? ChatPolicy, bool? MinutesLive);
+        string? ChatPolicy, bool? MinutesLive, string? ShareMode = null);
 
     public sealed record JoinRequest(string? Password);
     public sealed record MuteRequest(string? Kind);
@@ -128,6 +128,7 @@ public static class ConnectEndpoints
         m.Locked,
         m.AutoRecord,
         m.SharePolicy,
+        m.ShareMode,
         m.ChatPolicy,
         m.MinutesLive,
         m.Mode,
@@ -385,6 +386,12 @@ public static class ConnectEndpoints
         if (!ConnectChat.IsValidPolicy(chat))
             return Results.BadRequest(new { error = "Chat is open to everyone, to the host and co-hosts, or to nobody." });
 
+        // How many may share at once. Not to be confused with the MODE below —
+        // share_mode can change at any time; the meeting mode never can.
+        var shareMode = (req.ShareMode ?? ConnectShare.ModeMultiple).Trim().ToLowerInvariant();
+        if (!ConnectShare.IsValidMode(shareMode))
+            return Results.BadRequest(new { error = "Screen sharing is either one person at a time or several at once." });
+
         // ── THE MODE. The only place it is ever set. ─────────────────────
         var mode = (req.Mode ?? ConnectModes.Recorded).Trim().ToLowerInvariant();
         if (!ConnectModes.IsValid(mode))
@@ -428,6 +435,7 @@ public static class ConnectEndpoints
             // "on for the org by Monday's meeting" is a normal sequence.
             AutoRecord = autoRecord,
             SharePolicy = share,
+            ShareMode = shareMode,
             ChatPolicy = chat,
             MinutesLive = req.MinutesLive ?? false,
             Mode = mode,
@@ -463,7 +471,8 @@ public static class ConnectEndpoints
 
     private static async Task<IResult> UpdateMeetingAsync(
         Guid id, UpdateMeetingRequest req, AppDbContext db, TenantContext tenant,
-        IPasswordHasher hasher, LiveKitRoomClient rooms, AuditWriter audit, CancellationToken ct)
+        IPasswordHasher hasher, LiveKitRoomClient rooms, AuditWriter audit,
+        ILogger<LiveKitRoomClient> log, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
         var meeting = await FindAsync(db, id, ct);
@@ -533,6 +542,21 @@ public static class ConnectEndpoints
             meeting.SharePolicy = share;
         }
 
+        // How many at once. Unlike the meeting mode this may change mid-meeting:
+        // turning single on while two people share leaves both sharing until one
+        // stops — ConnectShareEnforcement narrows the grants so nobody ELSE can
+        // start, but it does not cut off a presenter mid-sentence because a
+        // setting changed underneath them.
+        var shareModeChanged = false;
+        if (req.ShareMode is { } smode)
+        {
+            var mode = smode.Trim().ToLowerInvariant();
+            if (!ConnectShare.IsValidMode(mode))
+                return Results.BadRequest(new { error = "Screen sharing is either one person at a time or several at once." });
+            shareModeChanged = mode != meeting.ShareMode;
+            meeting.ShareMode = mode;
+        }
+
         // No equivalent of shareChanged below: a share policy change has to be
         // pushed into LiveKit, because the permission lives in a token that
         // has already been minted. Chat has no token to rewrite — every client
@@ -568,28 +592,24 @@ public static class ConnectEndpoints
         // LiveKit hiccup here costs one participant the live update, and they
         // pick up the policy on their next token. Roles come from OUR rows,
         // never from what LiveKit believes.
-        if (shareChanged)
+        if (shareChanged || shareModeChanged)
         {
-            var present = await rooms.TryListParticipantsAsync(id, ct);
-            if (present is { Count: > 0 })
-            {
-                var roles = await db.ConnectParticipants.AsNoTracking()
-                    .Where(p => p.MeetingId == id)
-                    .Select(p => new { p.Identity, p.Role })
-                    .ToListAsync(ct);
-                var roleOf = roles.ToDictionary(r => r.Identity, r => r.Role);
+            // One implementation for every path that re-permissions the room.
+            // This block used to compute grants from the policy alone, which is
+            // right in multiple mode and wrong the moment a single-sharer meeting
+            // has a presenter: editing the policy would have handed everyone back
+            // the ability to start a second share. See ConnectShareEnforcement.
+            await ConnectShareEnforcement.ApplyAsync(db, rooms, meeting,
+                justPublishedBy: null, log, ct);
 
-                foreach (var person in present)
-                {
-                    if (person.Identity is not { Length: > 0 } who) continue;
-                    var sources = ConnectShare.SourcesFor(
-                        meeting.SharePolicy, roleOf.GetValueOrDefault(who));
-                    await rooms.SetPublishSourcesAsync(id, who, sources, ct);
-                }
-            }
-            await audit.WriteAsync("connect.meeting.share_policy", "connect.meeting",
-                meeting.Id.ToString(), after: new { meeting.SharePolicy },
-                ct: ct, productCode: "connect");
+            if (shareChanged)
+                await audit.WriteAsync("connect.meeting.share_policy", "connect.meeting",
+                    meeting.Id.ToString(), after: new { meeting.SharePolicy },
+                    ct: ct, productCode: "connect");
+            if (shareModeChanged)
+                await audit.WriteAsync("connect.meeting.share_mode", "connect.meeting",
+                    meeting.Id.ToString(), after: new { meeting.ShareMode },
+                    ct: ct, productCode: "connect");
         }
 
         // ── OPENING THE DOOR REACHES THE PEOPLE ALREADY AT IT. ─────────────
@@ -947,7 +967,7 @@ public static class ConnectEndpoints
 
     private static async Task<IResult> SetRoleAsync(
         Guid id, string identity, RoleRequest req, AppDbContext db, TenantContext tenant,
-        LiveKitRoomClient rooms, AuditWriter audit, CancellationToken ct)
+        LiveKitRoomClient rooms, AuditWriter audit, ILogger<LiveKitRoomClient> log, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
         var meeting = await FindAsync(db, id, ct);
@@ -982,8 +1002,17 @@ public static class ConnectEndpoints
         // one grant a role change moves NOW is publishing: under a 'cohost'
         // share policy, promotion should let them share this minute, not on
         // their next token. Best effort — the row is already the truth.
-        await rooms.SetPublishSourcesAsync(id, identity,
-            ConnectShare.SourcesFor(meeting.SharePolicy, role), ct);
+        //
+        // In a single-sharer meeting the policy alone is not the answer: while
+        // somebody is presenting, a newly promoted co-host must still not be
+        // able to start a second share. So that case goes through the one
+        // implementation that knows the mode; multiple mode keeps the cheaper
+        // single-person update, which is all it has ever needed.
+        if (meeting.ShareMode == ConnectShare.ModeSingle)
+            await ConnectShareEnforcement.ApplyAsync(db, rooms, meeting, justPublishedBy: null, log, ct);
+        else
+            await rooms.SetPublishSourcesAsync(id, identity,
+                ConnectShare.SourcesFor(meeting.SharePolicy, role), ct);
 
         return Results.NoContent();
     }

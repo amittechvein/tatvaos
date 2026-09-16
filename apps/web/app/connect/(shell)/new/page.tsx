@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/Form';
 import { Alert, PageHeader } from '@/components/ui/Page';
 import {
   connectApi, PRIVATE_BLURB, RECORDED_BLURB,
-  type ChatPolicy, type MeetingMode, type SharePolicy, type WaitingRoom,
+  type ChatPolicy, type MeetingMode, type ShareMode, type SharePolicy, type WaitingRoom,
 } from '@/lib/connect';
 import { Choice, Field, SumRow } from '../ConnectSkin';
 
@@ -105,6 +105,7 @@ export default function NewMeetingPage() {
   const [autoRecord, setAutoRecord] = useState(false);
   const [mode, setMode] = useState<MeetingMode>('recorded');
   const [sharePolicy, setSharePolicy] = useState<SharePolicy>('everyone');
+  const [shareMode, setShareMode] = useState<ShareMode>('multiple');
   const [chatPolicy, setChatPolicy] = useState<ChatPolicy>('everyone');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -144,6 +145,7 @@ export default function NewMeetingPage() {
         // checkbox cannot produce a 400 the person did not ask for.
         autoRecord: mode === 'private' ? false : autoRecord,
         sharePolicy,
+        shareMode,
         chatPolicy,
         mode,
       });
@@ -268,6 +270,19 @@ export default function NewMeetingPage() {
                 </div>
               </Field>
 
+              {/* A different question from the one above: that is WHO may
+                  share, this is HOW MANY AT ONCE. One at a time is what a class
+                  or a review wants — nobody talks over the slides. */}
+              <Field label="Screens at once"
+                     hint="Changeable during the meeting, from the People panel.">
+                <div className="cx-choices cx-choices--2 cx-choices--tight">
+                  <Choice name="share-mode" value="multiple" current={shareMode} onPick={setShareMode}
+                          title="Several at once" />
+                  <Choice name="share-mode" value="single" current={shareMode} onPick={setShareMode}
+                          title="One at a time" />
+                </div>
+              </Field>
+
               {mode === 'recorded' && (
                 <Field label="Recording"
                        why={'Audio only, started when the first person joins. It still needs '
@@ -322,6 +337,7 @@ export default function NewMeetingPage() {
               <SumRow k="Waiting room" v={WAITING_LABEL[waitingRoom]}
                       warn={waitingRoom === 'off'} />
               <SumRow k="Screen sharing" v={SHARE_LABEL[sharePolicy]} />
+              <SumRow k="Screens at once" v={shareMode === 'single' ? 'One at a time' : 'Several at once'} />
               <SumRow k="Chat" v={CHAT_LABEL[chatPolicy]}
                       warn={chatPolicy === 'off'} />
               {mode === 'recorded' && (
