@@ -71,12 +71,12 @@ public static class ConnectWebhookEndpoints
     private static async Task<IResult> ReceiveAsync(
         HttpContext http, AppDbContext db, TenantContext tenant,
         LiveKitTokenService tokens, LiveKitEgressClient egress,
-        ConnectRecordingOptions recOptions,
+        ConnectRecordingOptions recOptions, LiveKitRoomClient rooms,
         ILogger<LiveKitTokenService> log, CancellationToken ct)
     {
         try
         {
-            return await HandleAsync(http, db, tenant, tokens, egress, recOptions, log, ct);
+            return await HandleAsync(http, db, tenant, tokens, egress, recOptions, rooms, log, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -91,7 +91,7 @@ public static class ConnectWebhookEndpoints
     private static async Task<IResult> HandleAsync(
         HttpContext http, AppDbContext db, TenantContext tenant,
         LiveKitTokenService tokens, LiveKitEgressClient egress,
-        ConnectRecordingOptions recOptions,
+        ConnectRecordingOptions recOptions, LiveKitRoomClient rooms,
         ILogger<LiveKitTokenService> log, CancellationToken ct)
     {
         if (!tokens.IsConfigured) return Results.StatusCode(503);
@@ -116,6 +116,22 @@ public static class ConnectWebhookEndpoints
         var eventName = ConnectWire.Text(root, "event");
         if (string.IsNullOrEmpty(eventName)) return Results.Ok();
 
+        // ── SCREEN SHARES ONLY, AND BEFORE THE IGNORE LIST. ────────────────
+        //
+        // track_published and track_unpublished are on EventKind's deliberate
+        // ignore list, and they stay there: they are the events whose healthy
+        // 200s once made this log look fine for a day while everything that
+        // mattered was failing. Single-sharer mode needs to see a screen share
+        // start and stop (docs/CONNECT_PHASE_NEXT.md §4), so exactly that is
+        // lifted out here — filtered to SCREEN_SHARE, never recorded as a
+        // meeting event, and camera and microphone churn still dropped.
+        //
+        // If you are reading LiveKit's webhook log to decide whether delivery
+        // works, a 200 for track_published still proves nothing about the
+        // events that matter.
+        if (eventName is "track_published" or "track_unpublished")
+            return await HandleScreenShareAsync(eventName, root, db, tenant, rooms, log, ct);
+
         // Every wire-format decision lives in ConnectWire. See its header for
         // why: the same knowledge used to live in two files and only one of
         // them was right.
@@ -133,13 +149,8 @@ public static class ConnectWebhookEndpoints
         // narrowest possible read: one column, keyed by primary key, granted
         // only to the app role. AS "Value" is EF's required alias for scalar
         // SqlQuery — same as every other scalar SqlQuery in this codebase.
-        var tenantIds = await db.Database
-            .SqlQuery<Guid>($"""
-                SELECT tenant_id AS "Value" FROM connect.webhook_meeting_tenant({meetingId})
-                """)
-            .ToListAsync(ct);
-        if (tenantIds.Count == 0) return Results.Ok();
-        tenant.EnterAnonymousScope(tenantIds[0], "system");
+        var meetingTenant = await EnterMeetingTenantAsync(db, tenant, meetingId, ct);
+        if (meetingTenant is not Guid meetingTenantId) return Results.Ok();
 
         // AND PUSH IT INTO THE DATABASE SESSION. EnterAnonymousScope changes a
         // C# object; app.tenant_id is what RLS actually reads, and the
@@ -308,7 +319,7 @@ public static class ConnectWebhookEndpoints
             saved = true;
             if (reconcileStorage)
                 await db.Database.ExecuteSqlInterpolatedAsync(
-                    $"SELECT connect.reconcile_recording_storage({tenantIds[0]})", ct);
+                    $"SELECT connect.reconcile_recording_storage({meetingTenantId})", ct);
         }
         catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: "23505" })
         {
@@ -354,7 +365,7 @@ public static class ConnectWebhookEndpoints
         if (saved && kind == "room_started"
             && meeting is { AutoRecord: true, MediaIsReadable: true })
         {
-            await TryAutoRecordAsync(db, egress, recOptions, meeting, tenantIds[0], log, ct);
+            await TryAutoRecordAsync(db, egress, recOptions, meeting, meetingTenantId, log, ct);
         }
         else if (saved && kind == "room_started" && meeting is { AutoRecord: true })
         {
@@ -364,6 +375,74 @@ public static class ConnectWebhookEndpoints
                 + "check how the row was written.", meeting.Id);
         }
 
+        return Results.Ok();
+    }
+
+    /// <summary>
+    /// Enter the tenant a meeting belongs to, from a webhook that carries no
+    /// session. Returns the tenant, or null for a meeting that does not exist.
+    ///
+    /// No tenant is set yet, so this CANNOT be an ordinary query — forced RLS
+    /// would return zero rows for a meeting that exists, and the handler would
+    /// acknowledge the event while doing nothing (it did exactly that once;
+    /// see the header). The definer function is the narrowest possible read:
+    /// one column, keyed by primary key, granted only to the app role.
+    ///
+    /// ONE copy, shared by the room events and the screen-share events. The
+    /// caller still owes db.SyncTenantAsync — see the comment where each path
+    /// calls it for why that line is load-bearing.
+    /// </summary>
+    private static async Task<Guid?> EnterMeetingTenantAsync(
+        AppDbContext db, TenantContext tenant, Guid meetingId, CancellationToken ct)
+    {
+        // AS "Value" is EF's required alias for scalar SqlQuery — same as every
+        // other scalar SqlQuery in this codebase.
+        var tenantIds = await db.Database
+            .SqlQuery<Guid>($"""
+                SELECT tenant_id AS "Value" FROM connect.webhook_meeting_tenant({meetingId})
+                """)
+            .ToListAsync(ct);
+        if (tenantIds.Count == 0) return null;
+        tenant.EnterAnonymousScope(tenantIds[0], "system");
+        return tenantIds[0];
+    }
+
+    /// <summary>
+    /// A screen share started or stopped. In a single-sharer meeting, bring
+    /// every grant in the room into line; in any other meeting, do nothing.
+    ///
+    /// Always 200. Like the rest of this handler, a failure here is either a
+    /// bug (which a retry repeats) or LiveKit not answering (which
+    /// ConnectShareEnforcement already logs by meeting) — neither is helped by
+    /// making LiveKit retry. And nothing is written to connect.meeting_events:
+    /// a presenter toggling their slides is not attendance.
+    /// </summary>
+    private static async Task<IResult> HandleScreenShareAsync(
+        string eventName, JsonElement root, AppDbContext db, TenantContext tenant,
+        LiveKitRoomClient rooms, ILogger log, CancellationToken ct)
+    {
+        // Source, not type — see ConnectWire.TrackText.
+        var source = ConnectWire.TrackText(root, "source");
+        if (!string.Equals(source, "SCREEN_SHARE", StringComparison.OrdinalIgnoreCase))
+            return Results.Ok();
+
+        if (!ConnectWire.TryMeetingId(root, out var meetingId)) return Results.Ok();
+        if (await EnterMeetingTenantAsync(db, tenant, meetingId, ct) is null) return Results.Ok();
+        // The same load-bearing line as the room-event path: scope on the C#
+        // object means nothing to RLS until it is pushed into the session.
+        await db.SyncTenantAsync(ct);
+
+        var meeting = await db.ConnectMeetings.AsNoTracking()
+            .FirstOrDefaultAsync(m => m.Id == meetingId, ct);
+
+        // Multiple mode needs nothing: every grant already follows the policy.
+        if (meeting is null || meeting.ShareMode != ConnectShare.ModeSingle)
+            return Results.Ok();
+
+        var who = ConnectWire.ParticipantText(root, "identity");
+        await ConnectShareEnforcement.ApplyAsync(db, rooms, meeting,
+            justPublishedBy: eventName == "track_published" && !string.IsNullOrEmpty(who) ? who : null,
+            log, ct);
         return Results.Ok();
     }
 

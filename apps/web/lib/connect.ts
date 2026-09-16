@@ -32,6 +32,11 @@ export type MeetingRole = 'host' | 'cohost' | 'participant';
 /** Who may share a screen. Enforced server-side in the LiveKit token; the UI
  *  reads it only to decide what to show. */
 export type SharePolicy = 'host' | 'cohost' | 'everyone';
+/** How many may share AT ONCE — a different question from SharePolicy, which is
+ *  WHO. 'single' is enforced server-side through LiveKit grants driven by the
+ *  track webhooks (ConnectShareEnforcement); the UI reads it only to say
+ *  "Ravi is sharing" instead of offering a button that will be refused. */
+export type ShareMode = 'multiple' | 'single';
 
 /**
  * Who may SEND chat. Everyone always READS.
@@ -90,6 +95,8 @@ export interface Meeting {
    *  recording flag and the storage gate at the moment the room starts. */
   autoRecord: boolean;
   sharePolicy: SharePolicy;
+  /** Absent on an older server; treat that as 'multiple', which is what it did. */
+  shareMode?: ShareMode;
   chatPolicy: ChatPolicy;
   /** Capture live captions from participants' browsers, so the meeting gets
    *  attributed minutes. Off by default. This REPLACED paid transcription:
@@ -201,6 +208,7 @@ export interface CreateMeeting {
   allowGuests?: boolean;
   autoRecord?: boolean;
   sharePolicy?: SharePolicy;
+  shareMode?: ShareMode;
   chatPolicy?: ChatPolicy;
   minutesLive?: boolean;
   /** Chosen once. There is deliberately no way to change it afterwards —

@@ -218,6 +218,18 @@ public static class ConnectWire
         TryObject(root, out var p, "participant") ? Text(p, name) : null;
 
     /// <summary>
+    /// A field of the track a track_published / track_unpublished event is
+    /// about. `source` is "SCREEN_SHARE" for a screen share: protojson renders
+    /// TrackSource by NAME, the same rule LkTrack.Source documents.
+    ///
+    /// Read `source`, never `type`. A screen share is a VIDEO track exactly as
+    /// a camera is, and a handler keyed on type would treat every camera
+    /// turning on as somebody starting to present.
+    /// </summary>
+    public static string? TrackText(JsonElement root, string name) =>
+        TryObject(root, out var t, "track") ? Text(t, name) : null;
+
+    /// <summary>
     /// LiveKit's egress status to ours.
     ///
     /// EGRESS_COMPLETE without a file is 'failed', not 'ready'. A complete

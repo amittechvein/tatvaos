@@ -55,6 +55,14 @@ public sealed class ConnectMeeting
     /// the DATABASE — never from a client claim. See ConnectShare.</summary>
     public string SharePolicy { get; set; } = "everyone";
 
+    /// <summary>How many may share AT ONCE: multiple | single. Beside
+    /// SharePolicy and a different question — that one is WHO. Default
+    /// multiple, today's deliberate behaviour (feature 71). Enforced live
+    /// through LiveKit grants by ConnectShareEnforcement on the track webhooks,
+    /// because a token already minted cannot be changed by a column. See
+    /// 20260916-b-connect-share-mode.sql.</summary>
+    public string ShareMode { get; set; } = ConnectShare.ModeMultiple;
+
     /// <summary>Who may SEND chat: everyone | cohost | off. Everyone always
     /// reads. Enforced in the CLIENT, not in the token — chat shares the data
     /// channel with hands, reactions and files, and canPublishData cannot tell
@@ -237,6 +245,36 @@ public static class ConnectShare
     /// </summary>
     public static string[]? SourcesFor(string policy, string? role) =>
         MayShare(policy, role) ? null : ["camera", "microphone"];
+
+    // ── HOW MANY AT ONCE — docs/CONNECT_PHASE_NEXT.md §4 ──────────────────
+
+    public const string ModeMultiple = "multiple";
+    public const string ModeSingle = "single";
+
+    public static bool IsValidMode(string? mode) => mode is ModeMultiple or ModeSingle;
+
+    /// <summary>
+    /// A person's grant in a SINGLE-sharer meeting.
+    ///
+    ///   nobody sharing            → the policy decides, as in multiple mode
+    ///   this person is the sharer → the policy decides (they may keep sharing)
+    ///   somebody else is sharing  → camera and microphone only
+    ///
+    /// The mode never WIDENS what the policy allows: a participant the policy
+    /// forbids from sharing is still forbidden when the room is free.
+    /// </summary>
+    public static string[]? SourcesInSingleMode(
+        string policy, string? role, bool isTheSharer, bool someoneIsSharing) =>
+        !someoneIsSharing || isTheSharer ? SourcesFor(policy, role) : ["camera", "microphone"];
+
+    /// <summary>
+    /// First one wins: a newcomer must stop when anybody OTHER than them is
+    /// already sharing. Ordinal comparison — identities are opaque strings
+    /// ("user:…", "guest:…"), and a culture-aware compare has no business
+    /// deciding whether two of them are the same person.
+    /// </summary>
+    public static bool NewcomerMustStop(string newcomer, IEnumerable<string> sharingNow) =>
+        sharingNow.Any(who => !string.Equals(who, newcomer, StringComparison.Ordinal));
 }
 
 /// <summary>

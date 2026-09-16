@@ -9,7 +9,7 @@ import { Alert } from '@/components/ui/Page';
 import {
   connectApi, prettyCode, timeLabel, whenLabel,
   type ChatPolicy, type LobbyEntry, type Meeting, type MeetingBlock, type Participant,
-  type SharePolicy, type UpdateMeeting, type WaitingRoom,
+  type ShareMode, type SharePolicy, type UpdateMeeting, type WaitingRoom,
 } from '@/lib/connect';
 import { meetingInvitation } from '@/lib/meetingInvitation';
 import Recordings from './Recordings';
@@ -230,7 +230,7 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
   const [form, setForm] = useState<{
     title: string; start: string; end: string;
     waitingRoom: WaitingRoom; allowGuests: boolean;
-    sharePolicy: SharePolicy; chatPolicy: ChatPolicy; autoRecord: boolean;
+    sharePolicy: SharePolicy; shareMode: ShareMode; chatPolicy: ChatPolicy; autoRecord: boolean;
     password: string; clearPassword: boolean;
   } | null>(null);
 
@@ -242,6 +242,8 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
       waitingRoom: m.waitingRoom,
       allowGuests: m.allowGuests,
       sharePolicy: m.sharePolicy,
+      // An older server does not send it; what it did was 'multiple'.
+      shareMode: m.shareMode ?? 'multiple',
       chatPolicy: m.chatPolicy,
       autoRecord: m.autoRecord,
       // NEVER seeded with the real password — the server keeps a hash and
@@ -278,6 +280,7 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
       waitingRoom: form.waitingRoom,
       allowGuests: form.allowGuests,
       sharePolicy: form.sharePolicy,
+      shareMode: form.shareMode,
       chatPolicy: form.chatPolicy,
     };
 
@@ -546,6 +549,21 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
                 <option value="host">Only the host</option>
               </Select>
               <div className="mt-1 text-xs text-ink-muted">Applies to people already in the meeting, immediately.</div>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-[13px] font-medium text-ink" htmlFor="ed-share-mode">Screens at once</label>
+              <Select id="ed-share-mode" value={form.shareMode}
+                      onChange={(e) => setForm({ ...form, shareMode: e.target.value as ShareMode })}>
+                <option value="multiple">Several people can share at once</option>
+                <option value="single">One person at a time</option>
+              </Select>
+              {/* Says what actually happens, including the case that surprises
+                  people: switching to one-at-a-time does not cut off anyone
+                  already presenting. */}
+              <div className="mt-1 text-xs text-ink-muted">
+                One at a time stops anyone else starting while somebody is presenting. It does not cut off a share already running.
+              </div>
             </div>
 
             <div>
