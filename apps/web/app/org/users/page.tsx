@@ -4,14 +4,15 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formatDateTime } from '@/lib/dates';
 
 import { AdminShell } from '@/components/admin/AdminShell';
-import { Badge, Button, Card, Empty, Meter, Table, Td, statusTone } from '@/components/ui/Kit';
+import { Badge, Button, Card, Empty, IconButton, Meter, Table, Td, statusTone } from '@/components/ui/Kit';
 import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 import { UserPhoto } from '@/components/ui/UserPhoto';
 import { PhotoPicker } from '@/components/ui/PhotoPicker';
 import { AddManyPeople } from '@/components/org/AddManyPeople';
 import { avatarObjectUrl, bustAvatar } from '@/lib/avatars';
-import { Input, Select } from '@/components/ui/Form';
+import { Input, InputSuffix, Select, Switch } from '@/components/ui/Form';
+import { Alert } from '@/components/ui/Page';
 
 const GB = 1024 ** 3;
 
@@ -146,35 +147,23 @@ export default function PeoplePage() {
           onDone={async (msg) => { setAdding(false); setNotice(msg); await load(); }}
         />
       )}
-      {error && (
-        <div className="alert alert-danger !flex !items-start !mb-[1rem]">
-          <div className="!flex-auto">{error}</div>
-          <button type="button" className="btn-close" aria-label="Dismiss"
-                  onClick={() => setError(null)} />
-        </div>
-      )}
-      {notice && (
-        <div className="alert alert-success !flex !items-start !mb-[1rem]">
-          <div className="!flex-auto">{notice}</div>
-          <button type="button" className="btn-close" aria-label="Dismiss"
-                  onClick={() => setNotice(null)} />
-        </div>
-      )}
+      {error && <Alert tone="danger" onDismiss={() => setError(null)}>{error}</Alert>}
+      {notice && <Alert tone="ok" onDismiss={() => setNotice(null)}>{notice}</Alert>}
 
       {usable.length === 0 && !loading && (
-        <div className="alert alert-warning !mb-[1rem]">
+        <Alert tone="warn">
           No verified domain yet, so mailboxes cannot be created. Add and verify one
           under <strong>Domains</strong> first — people created on an unverified
           domain would have addresses that receive nothing.
-        </div>
+        </Alert>
       )}
 
       <div className="!flex gap-2 !mb-[1rem] flex-wrap !items-end">
         <div style={{ minWidth: 240 }}>
-          <label className="form-label !text-[0.75rem] !text-ink-muted mb-1" htmlFor="tv-dept-filter">
+          <label className="mb-1 block !text-[0.75rem] !font-medium !text-ink-muted" htmlFor="tv-dept-filter">
             Department
           </label>
-          <select id="tv-dept-filter" className="form-select form-select-sm" value={filterDept}
+          <Select id="tv-dept-filter" value={filterDept}
                   onChange={(e) => setFilterDept(e.target.value)}>
             <option value="all">All departments</option>
             {flat.map(({ d, depth }) => (
@@ -182,7 +171,7 @@ export default function PeoplePage() {
                 {' '.repeat(depth * 3)}{depth > 0 ? '└ ' : ''}{d.name}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
 
         <div className="ms-auto" style={{ minWidth: 260 }}>
@@ -194,9 +183,9 @@ export default function PeoplePage() {
       <Card padded={false}>
         {loading ? (
           <div className="!flex !justify-center !py-[3rem]">
-            <span className="!inline-block animate-spin !rounded-[50%]"
-                  style={{ width: 30, height: 30, border: '3px solid rgba(0,0,0,.12)',
-                           borderTopColor: '#6C3CE9' }} />
+            {/* Tokens, not literals: this spinner carried the brand violet as
+                a hex, which is the copy that gets missed when it changes. */}
+            <span className="inline-block h-[30px] w-[30px] animate-spin !rounded-[50%] border-[3px] border-line border-t-brand-600" />
           </div>
         ) : filtered.length === 0 ? (
           <Empty
@@ -395,22 +384,17 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
             {photoWarning} You can add it from their profile.
           </p>
         )}
-        <div className="alert alert-warning !mb-[1rem]">
+        <Alert tone="warn">
           This password is shown once and cannot be retrieved later. Copy it now —
           if it is lost, reset it rather than asking us for it.
-        </div>
+        </Alert>
         <div className="!flex gap-2 !items-center">
-          <div className="!flex-auto !font-mono bg-light rounded"
+          <div className="!flex-auto !font-mono rounded bg-canvas"
                style={{ padding: 12, fontSize: 15 }}>
             {created.password}
           </div>
-          {/* title= replaces MUI's Tooltip: no library needed for one hint,
-              and the native tooltip is keyboard-reachable for free. */}
-          <button
-            type="button"
-            className="btn btn-light btn-icon"
-            title="Copy"
-            aria-label="Copy password"
+          <IconButton
+            label="Copy password"
             onClick={() => void navigator.clipboard.writeText(created.password)}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -418,7 +402,7 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
               <rect x="9" y="9" width="12" height="12" rx="2" />
               <path d="M5 15V5a2 2 0 012-2h10" />
             </svg>
-          </button>
+          </IconButton>
         </div>
         <p className="!text-[0.75rem] !text-ink-muted !mt-[1rem] mb-0">
           They will be asked to change it when they first sign in.
@@ -456,18 +440,15 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
       <div className="!flex gap-2 !items-start">
         <div className="!flex-auto">
           <Field label="Email address" required>
-            {/* input-group replaces MUI's endAdornment: the @ becomes part of
-                the control rather than text floating beside it. */}
-            <div className="input-group">
-              <Input
-                
-                value={localPart}
-                autoCapitalize="none"
-                spellCheck={false}
-                onChange={(e) => setLocalPart(e.target.value.replace(/[^a-zA-Z0-9._-]/g, ''))}
-              />
-              <span className="input-group-text">@</span>
-            </div>
+            {/* The @ is part of the control rather than text floating beside
+                it, so the address reads as one thing. */}
+            <InputSuffix
+              suffix="@"
+              value={localPart}
+              autoCapitalize="none"
+              spellCheck={false}
+              onChange={(e) => setLocalPart(e.target.value.replace(/[^a-zA-Z0-9._-]/g, ''))}
+            />
           </Field>
         </div>
         <div style={{ minWidth: 200 }}>
@@ -508,50 +489,47 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
       {/* Storage. The inherited value is shown BEFORE the override, so the
           common case needs no decision at all — and the number is visible
           rather than something the admin has to go and look up. */}
-      <div className="rounded !p-[1rem] mb-2" style={{ background: 'rgba(3,181,98,0.05)' }}>
+      {/* The tint was a hard-coded rgba of the OLD green brand — the kind of
+          literal that survives a palette change and quietly contradicts it. */}
+      <div className="rounded border border-line bg-canvas !p-[1rem] mb-2">
         <div className="!text-[0.875rem] !font-semibold mb-2">Storage</div>
 
-        <div className="form-check form-switch">
-          <input
-            className="form-check-input"
-            type="checkbox"
-            role="switch"
-            id="tv-inherit-quota"
-            checked={!override}
-            onChange={(e) => setOverride(!e.target.checked)}
-          />
-          <label className="form-check-label !text-[0.875rem]" htmlFor="tv-inherit-quota">
-            Use <strong>{fmt(inherited)}</strong>
-            {dept ? ` from ${dept.name}` : ' from the organisation default'}
-          </label>
-        </div>
+        <Switch
+          id="tv-inherit-quota"
+          checked={!override}
+          onChange={(e) => setOverride(!e.target.checked)}
+          className="mb-0"
+          label={
+            <>
+              Use <strong>{fmt(inherited)}</strong>
+              {dept ? ` from ${dept.name}` : ' from the organisation default'}
+            </>
+          }
+        />
 
         {/* Plain conditional rendering replaces MUI's Collapse. The animation
             carried no meaning, and one fewer dependency is worth more. */}
         {override && (
           <div style={{ width: 240, marginTop: 12 }}>
             <Field label="Storage for this person" hint="Applies to this person only">
-              <div className="input-group">
-                <Input
-                  type="number"
-                  
-                  min={1}
-                  max={5000}
-                  value={quotaGb}
-                  onChange={(e) => setQuotaGb(Math.max(1, Number(e.target.value)))}
-                />
-                <span className="input-group-text">GB</span>
-              </div>
+              <InputSuffix
+                suffix="GB"
+                type="number"
+                min={1}
+                max={5000}
+                value={quotaGb}
+                onChange={(e) => setQuotaGb(Math.max(1, Number(e.target.value)))}
+              />
             </Field>
           </div>
         )}
       </div>
 
       {dept && !dept.canSendExternal && (
-        <div className="alert alert-info !mt-[1rem] mb-0">
+        <Alert tone="info" className="!mt-[1rem] mb-0">
           {dept.name} is internal-only, so this person will be able to email colleagues
           but not the outside world.
-        </div>
+        </Alert>
       )}
     </Modal>
   );
@@ -702,7 +680,7 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
           </Button>
         }
       >
-        <div className="alert alert-warning !mb-[1rem]">
+        <Alert tone="warn">
           {tempPassword.mailbox
             ? 'Shown once — copy it now and pass it to them directly. This is '
               + 'the password their mail apps (Outlook, phones) sign in with. '
@@ -711,17 +689,14 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
             : 'Shown once — copy it now and pass it to them directly. They '
               + 'must change it at first sign-in, and every session they had '
               + 'is already signed out.'}
-        </div>
+        </Alert>
         <div className="!flex gap-2 !items-center">
-          <div className="!flex-auto !font-mono bg-light rounded"
+          <div className="!flex-auto !font-mono rounded bg-canvas"
                style={{ padding: 12, fontSize: 15 }}>
             {tempPassword.password}
           </div>
-          <button
-            type="button"
-            className="btn btn-light btn-icon"
-            title="Copy"
-            aria-label="Copy password"
+          <IconButton
+            label="Copy password"
             onClick={() => void navigator.clipboard.writeText(tempPassword.password)}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -729,7 +704,7 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
               <rect x="9" y="9" width="12" height="12" rx="2" />
               <path d="M5 15V5a2 2 0 012-2h10" />
             </svg>
-          </button>
+          </IconButton>
         </div>
       </Modal>
     );
@@ -763,8 +738,8 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
           so everything is visible at once — a section hidden behind a
           scrollbar may as well not exist, and this dialog will keep
           growing as products are added. */}
-      <div className="row g-4">
-      <div className="col-md-6">
+      <div className="grid !gap-[1.5rem] md:grid-cols-2">
+      <div>
       {/* ---- Profile -------------------------------------------------- */}
       {sectionTitle('Profile')}
       <div className="!mb-[1rem]">
@@ -796,7 +771,7 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
       </Field>
 
       </div>
-      <div className="col-md-6">
+      <div>
       {/* ---- Access --------------------------------------------------- */}
       {sectionTitle('Access')}
       {/* The facts an admin opens this dialog to check, previously not
@@ -887,17 +862,15 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
               below what they already use. Shared mailboxes and organisation
               files are not counted against a person."
       >
-        <div className="input-group" style={{ maxWidth: 200 }}>
-          <Input
-            type="number"
-            
-            min={1}
-            max={5000}
-            value={quotaGb}
-            onChange={(e) => setQuotaGb(Math.max(1, Number(e.target.value)))}
-          />
-          <span className="input-group-text">GB</span>
-        </div>
+        <InputSuffix
+          suffix="GB"
+          type="number"
+          min={1}
+          max={5000}
+          value={quotaGb}
+          style={{ maxWidth: 200 }}
+          onChange={(e) => setQuotaGb(Math.max(1, Number(e.target.value)))}
+        />
       </Field>
       </div>
       </div>
