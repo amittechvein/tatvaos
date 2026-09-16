@@ -222,13 +222,11 @@ public static class ConnectEndpoints
         };
 
         var total = await all.CountAsync(ct);
-        // ScheduledStart before CreatedAt in the Past ordering: a meeting that
-        // was never joined has no EndedAt, and sorting it by when it was
-        // CREATED puts a meeting booked for next Tuesday and made in January
-        // half a year away from the day it was supposed to happen.
-        var rows = which == "past"
-            ? await all.OrderByDescending(m => m.EndedAt ?? m.ScheduledStart ?? m.CreatedAt).Skip(skip).Take(take).ToListAsync(ct)
-            : await all.OrderBy(m => m.ScheduledStart ?? m.CreatedAt).Skip(skip).Take(take).ToListAsync(ct);
+        // The order is in ConnectMeetingOrder, in its own file, because a rule
+        // nothing can execute is a rule that drifts from its own comment. Read
+        // it there; it is the same expression this used to hold inline.
+        var rows = await ConnectMeetingOrder.Sort(all, which)
+            .Skip(skip).Take(take).ToListAsync(ct);
 
         var roles = await RolesForAsync(db, uid, rows.Select(r => r.Id).ToList(), ct);
         return Results.Ok(new
