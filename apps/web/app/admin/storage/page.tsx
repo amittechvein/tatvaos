@@ -40,21 +40,21 @@ export default function AdminStoragePage() {
       {/* Three stats: one column on a phone, two from tablet, three on a wide
           screen — the counts overrides.css re-declares, never an arbitrary
           template, which YZEN's own .grid would flatten. */}
-      <div className="!mb-[1.5rem] grid !gap-[1.5rem] md:grid-cols-2 xl:grid-cols-3">
+      <div className="mb-6 grid gap-6 md:grid-cols-2 xl:grid-cols-3">
         <div>
           <Stat tone="primary" label="Committed" value={formatBytes(totals.committed)}
                 caption="bought across all orgs"
-                icon={<i className="ri-database-2-line !text-[1.125rem]" />} />
+                icon={<i className="ri-database-2-line text-[1.125rem]" />} />
         </div>
         <div>
           <Stat tone="info" label="Used" value={formatBytes(totals.used)}
                 caption={`${totals.pct}% of committed`}
-                icon={<i className="ri-hard-drive-2-line !text-[1.125rem]" />} />
+                icon={<i className="ri-hard-drive-2-line text-[1.125rem]" />} />
         </div>
         <div>
           <Stat tone="success" label="Organisations" value={String(totals.count)}
                 caption="with a storage pool"
-                icon={<i className="ri-building-line !text-[1.125rem]" />} />
+                icon={<i className="ri-building-line text-[1.125rem]" />} />
         </div>
       </div>
 
@@ -72,23 +72,23 @@ export default function AdminStoragePage() {
               return (
                 <tr key={o.id}>
                   <Td>
-                    <div className="!font-semibold">{o.name}</div>
-                    {hasDomain && <div className="!text-[0.75rem] !text-ink-muted">{o.primaryDomain}</div>}
+                    <div className="font-semibold">{o.name}</div>
+                    {hasDomain && <div className="text-[0.75rem] text-ink-muted">{o.primaryDomain}</div>}
                   </Td>
-                  <Td><span className="!text-ink-muted">{o.planName ?? '—'}</span></Td>
+                  <Td><span className="text-ink-muted">{o.planName ?? '—'}</span></Td>
                   <Td>
                     <span>{formatBytes(o.storageUsedBytes)}</span>
-                    <span className="!text-ink-muted"> / {formatBytes(cap)}</span>
+                    <span className="text-ink-muted"> / {formatBytes(cap)}</span>
                   </Td>
                   <Td>
                     <div style={{ width: 120 }}>
                       <Meter used={o.storageUsedBytes} total={cap} />
-                      <span className="!text-[0.6875rem] !text-ink-muted">{pct}%</span>
+                      <span className="text-[0.6875rem] text-ink-muted">{pct}%</span>
                     </div>
                   </Td>
                   <Td className="text-end">
                     <Link href="/admin/organisations"
-                          className="inline-flex items-center rounded-lg border border-line bg-surface !px-[0.8rem] !py-[0.25rem] !text-[0.8rem] font-semibold text-ink no-underline hover:bg-canvas">
+                          className="inline-flex items-center rounded-lg border border-line bg-surface px-[0.8rem] py-1 text-[0.8rem] font-semibold text-ink no-underline hover:bg-canvas">
                       Open
                     </Link>
                   </Td>

@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
-import { Button, Card } from '@/components/ui/Kit';
+import { Badge, Button, Card } from '@/components/ui/Kit';
 import { useAuth } from '@/lib/auth';
 import { Input } from '@/components/ui/Form';
+import { Alert } from '@/components/ui/Page';
 import {
   fetchRecoveryStatus, removePhone, removeRecoveryEmail, requestPhoneChange,
   setRecoveryEmail, verifyPhoneChange, type RecoveryStatus,
@@ -24,8 +25,8 @@ import {
 //  Removing either asks twice, inline. No browser confirm(): it is modal,
 //  unstyled, and nothing else on this page uses it.
 //
-//  Bootstrap utilities throughout, like the rest of the account page. No
-//  colour literals — badges and text-* carry the theme.
+//  Tailwind and components/ui throughout, like the rest of the account page.
+//  No colour literals — badges and text-* carry the theme.
 // ---------------------------------------------------------------------------
 
 type EmailMode = 'view' | 'edit';
@@ -38,9 +39,9 @@ function Row({ label, children, last = false }: {
   label: string; children: ReactNode; last?: boolean;
 }) {
   return (
-    <div className={`d-flex flex-column flex-md-row gap-2 py-3${last ? '' : ' border-bottom'}`}>
-      <div className="fw-medium flex-shrink-0" style={{ width: 170 }}>{label}</div>
-      <div className="flex-grow-1">{children}</div>
+    <div className={`flex flex-col gap-2 py-3 md:flex-row${last ? '' : ' border-b border-line'}`}>
+      <div className="shrink-0 font-medium" style={{ width: 170 }}>{label}</div>
+      <div className="min-w-0 grow">{children}</div>
     </div>
   );
 }
@@ -183,8 +184,8 @@ export function RecoveryCard() {
     return (
       <Card title={title} subtitle={subtitle}>
         {error
-          ? <div className="alert alert-danger mb-0">{error}</div>
-          : <p className="fs-14 text-muted mb-0">Loading&hellip;</p>}
+          ? <Alert tone="danger" className="mb-0">{error}</Alert>
+          : <p className="mb-0 text-sm text-ink-muted">Loading&hellip;</p>}
       </Card>
     );
   }
@@ -194,20 +195,20 @@ export function RecoveryCard() {
 
   return (
     <Card title={title} subtitle={subtitle}>
-      <p className="fs-14 text-muted mb-2">
+      <p className="mb-2 text-sm text-ink-muted">
         A reset link goes to your recovery email, or a code to your recovery number.
         Keep at least one of them current.
       </p>
-      {error && <div className="alert alert-danger py-2">{error}</div>}
-      {notice && !error && <div className="alert alert-info py-2">{notice}</div>}
+      {error && <Alert tone="danger" className="py-2">{error}</Alert>}
+      {notice && !error && <Alert tone="info" className="py-2">{notice}</Alert>}
 
       <Row label="Recovery email">
         {emailMode === 'edit' ? (
-          <form onSubmit={submitEmail} className="d-flex flex-column flex-sm-row gap-2">
+          <form onSubmit={submitEmail} className="flex flex-col gap-2 sm:flex-row">
             <Input  type="email" autoComplete="email"
                    placeholder="you@example.com" value={email}
                    onChange={(e) => setEmail(e.target.value)} disabled={busy} />
-            <div className="d-flex gap-2">
+            <div className="flex gap-2">
               <Button variant="primary" type="submit" disabled={busy}>Send link</Button>
               <Button variant="ghost" type="button" disabled={busy}
                       onClick={() => { setEmailMode('view'); setEmail(''); setError(null); }}>
@@ -221,20 +222,22 @@ export function RecoveryCard() {
               {status.recoveryEmail ? (
                 <>
                   <span>{status.recoveryEmail}</span>
-                  {emailVerified
-                    ? <span className="badge bg-success ms-2">Verified</span>
-                    : <span className="badge bg-warning text-dark ms-2">Not verified</span>}
+                  <span className="ml-2">
+                    {emailVerified
+                      ? <Badge tone="ok">Verified</Badge>
+                      : <Badge tone="warn">Not verified</Badge>}
+                  </span>
                 </>
-              ) : <span className="text-muted">Not set</span>}
+              ) : <span className="text-ink-muted">Not set</span>}
             </div>
             {status.recoveryEmail && !emailVerified && (
-              <p className="fs-14 text-muted mb-2">
+              <p className="mb-2 text-sm text-ink-muted">
                 We sent a link to this address
                 {status.recoveryEmailSentAt ? ` on ${new Date(status.recoveryEmailSentAt).toLocaleString()}` : ''}.
                 Open it to finish &mdash; check the spam folder if it is not in the inbox.
               </p>
             )}
-            <div className="d-flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button variant="ghost" type="button" disabled={busy}
                       onClick={() => { setEmailMode('edit'); setEmail(status.recoveryEmail ?? ''); setRemoving(null); }}>
                 {status.recoveryEmail ? 'Change' : 'Add'}
@@ -259,11 +262,11 @@ export function RecoveryCard() {
 
       <Row label="Recovery number" last>
         {phoneMode === 'edit' && (
-          <form onSubmit={submitPhone} className="d-flex flex-column flex-sm-row gap-2">
+          <form onSubmit={submitPhone} className="flex flex-col gap-2 sm:flex-row">
             <Input  type="tel" autoComplete="tel"
                    placeholder="+91 98765 43210" value={phone}
                    onChange={(e) => setPhone(e.target.value)} disabled={busy} />
-            <div className="d-flex gap-2">
+            <div className="flex gap-2">
               <Button variant="primary" type="submit" disabled={busy}>Send code</Button>
               <Button variant="ghost" type="button" disabled={busy} onClick={cancelPhone}>Cancel</Button>
             </div>
@@ -271,15 +274,15 @@ export function RecoveryCard() {
         )}
         {phoneMode === 'code' && (
           <form onSubmit={submitCode}>
-            <p className="fs-14 text-muted mb-2">
+            <p className="mb-2 text-sm text-ink-muted">
               Enter the 6-digit code sent to {phone.trim() || status.pendingPhone}. It is valid for 5 minutes.
               {devCode && <> (Testing mode &mdash; code: <strong>{devCode}</strong>)</>}
             </p>
-            <div className="d-flex flex-column flex-sm-row gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
               <Input  inputMode="numeric" pattern="[0-9]*" maxLength={6}
                      placeholder="123456" value={code} style={{ maxWidth: 160 }}
                      onChange={(e) => setCode(e.target.value)} disabled={busy} />
-              <div className="d-flex gap-2">
+              <div className="flex gap-2">
                 <Button variant="primary" type="submit" disabled={busy}>Verify</Button>
                 <Button variant="ghost" type="button" disabled={busy} onClick={resendCode}>Resend</Button>
                 <Button variant="ghost" type="button" disabled={busy} onClick={cancelPhone}>Cancel</Button>
@@ -291,10 +294,10 @@ export function RecoveryCard() {
           <>
             <div className="mb-2">
               {status.phone
-                ? <><span>{status.phone}</span><span className="badge bg-success ms-2">Verified</span></>
-                : <span className="text-muted">Not set</span>}
+                ? <><span>{status.phone}</span><span className="ml-2"><Badge tone="ok">Verified</Badge></span></>
+                : <span className="text-ink-muted">Not set</span>}
             </div>
-            <div className="d-flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button variant="ghost" type="button" disabled={busy}
                       onClick={() => { setPhoneMode('edit'); setPhone(''); setRemoving(null); }}>
                 {status.phone ? 'Change' : 'Add'}
@@ -311,7 +314,7 @@ export function RecoveryCard() {
               ))}
             </div>
             {status.phone && (
-              <p className="fs-14 text-muted mb-0 mt-2">
+              <p className="mb-0 mt-2 text-sm text-ink-muted">
                 Also used for the sign-in-by-code option on the login screen.
               </p>
             )}
@@ -320,7 +323,7 @@ export function RecoveryCard() {
       </Row>
 
       {waysIn === 1 && (
-        <p className="fs-14 text-muted mb-0 mt-3">
+        <p className="mb-0 mt-3 text-sm text-ink-muted">
           You have one way back in. Adding the other means a lost phone or a closed
           mailbox does not lock you out.
         </p>

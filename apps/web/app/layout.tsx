@@ -4,15 +4,13 @@ import { AuthProvider } from '@/lib/auth';
 import { ThemeProvider } from '@/lib/theme';
 import { BuildBadge } from '@/components/BuildBadge';
 import { RecoveryReminder } from '@/components/RecoveryReminder';
-// YZEN's real stylesheet (licensed to Techvein) drives the console look. Order
-// matters: our Tailwind/globals baseline first, then Bootstrap, then YZEN's
-// styles.css last so its component rules win. Icon fonts (Tabler, RemixIcon)
-// are free/open-source and loaded from their own CDNs in <head> below.
+// ONE stylesheet. Until 16 Sept 2026 three more loaded after it — Bootstrap,
+// YZEN's licensed theme, and an overrides file patching the collisions
+// between them and Tailwind. Every card in the product rendered 48px of
+// padding instead of 20px for a month because two frameworks agreed on the
+// name px-5 and disagreed on the number. Stage 4 of docs/UI_LANE_BRIEF.md
+// deleted them; the icon fonts (Tabler, RemixIcon) are free and stay.
 import '../styles/globals.css';
-import '../styles/yzen/bootstrap.min.css';
-import '../styles/yzen/styles.css';
-// Loaded LAST: corrects the Tailwind/YZEN .grid collision (see overrides.css).
-import '../styles/overrides.css';
 
 // ---------------------------------------------------------------------------
 //  Plus Jakarta Sans — the typeface the console's visual language is tuned
@@ -48,31 +46,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html
       lang="en"
       dir="ltr"
-      // YZEN reads these to activate its layout: a vertical menu over a light
-      // page and light header.
-      //
-      // data-menu-styles WAS "dark", and that single attribute is what painted
-      // the near-black rail — not our --rail token, which is why changing the
-      // token alone would have done nothing. It went light on 5 Sept 2026 with
-      // the violet palette (docs/UI_LANE_BRIEF.md §4.1). That also retired the
-      // white block overrides.css used to force behind the logo: the wordmarks
-      // are dark artwork, invisible on a dark rail, and the block was the
-      // visible seam at the top of the sidebar.
-      data-nav-layout="vertical"
-      data-vertical-style="overlay"
-      data-theme-mode="light"
-      data-header-styles="light"
-      data-menu-styles="light"
-      data-width="fullwidth"
-      // Icons-only rail by default; it expands on hover (see Sidebar) and can be
-      // pinned open from the header toggle. Client JS switches this to "close"
-      // (off-canvas) on mobile widths.
-      data-toggled="icon-overlay-close"
+      // The eight data-* attributes YZEN read to lay out its shell lived here
+      // until 16 Sept 2026. The rail's state is React state in AppShell now,
+      // and dark mode is the one .dark class ThemeProvider toggles.
       suppressHydrationWarning
     >
       <head>
-        {/* Free icon fonts YZEN's markup uses (ti = Tabler, ri = RemixIcon).
-            Loaded from their own open-source CDNs, not from the theme. */}
+        {/* Free icon fonts (ti = Tabler, ri = RemixIcon), loaded from their own
+            open-source CDNs. 51 distinct icons across the app use them. */}
         <link rel="stylesheet"
           href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.11.0/dist/tabler-icons.min.css" />
         <link rel="stylesheet"
@@ -94,9 +75,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       */}
       {/*
         MuiRegistry used to sit between ThemeProvider and AuthProvider, reading
-        the chosen accent to build a MUI theme. MUI is gone — the console is
-        Bootstrap and YZEN throughout — so the registry, its emotion cache and
-        the six packages behind it have all been removed.
+        the chosen accent to build a MUI theme. MUI went first, then the
+        Bootstrap/YZEN theme that replaced it; the console is Tailwind and
+        components/ui throughout.
       */}
       <body className={`h-full ${inter.variable} ${inter.className}`}>
         <ThemeProvider>

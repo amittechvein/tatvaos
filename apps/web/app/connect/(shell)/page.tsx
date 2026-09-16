@@ -107,7 +107,7 @@ export default function ConnectHome() {
       <PageHeader
         title="Meetings"
         breadcrumb={[{ label: 'Connect' }]}
-        className="!my-[1rem]"
+        className="my-4"
         actions={
           <>
             <Button variant="primary" onClick={() => void startNow()} disabled={starting}>
@@ -131,10 +131,10 @@ export default function ConnectHome() {
       {/* Two thirds and a third on a wide screen, stacked below it. Twelfths
           are the counts overrides.css re-declares; an arbitrary template
           would be flattened by YZEN's own .grid. */}
-      <div className="grid !gap-[1.5rem] xl:grid-cols-12">
+      <div className="grid gap-6 xl:grid-cols-12">
         <div className="xl:col-span-8">
           {live.length > 0 && (
-            <Card title="Happening now" className="cx-live !mb-[1rem]">
+            <Card title="Happening now" className="cx-live mb-4">
               {live.map((m) => (
                 <div key={m.id} className="cx-liverow">
                   <div className="cx-who">
@@ -181,7 +181,7 @@ export default function ConnectHome() {
             </div>
 
             {loading ? (
-              <div className="!p-[1.5rem] text-center !text-ink-muted">
+              <div className="p-6 text-center text-ink-muted">
                 <Spinner inline />
                 Loading…
               </div>
@@ -207,12 +207,12 @@ export default function ConnectHome() {
                             {m.title}
                           </Link>
                           {m.hasPassword && (
-                            <i className="ri-lock-line ms-1 !text-ink-muted" title="Password required" />
+                            <i className="ri-lock-line ms-1 text-ink-muted" title="Password required" />
                           )}
                         </div>
                       </div>
                     </Td>
-                    <Td className="!text-ink-muted">{whenLabel(m)}</Td>
+                    <Td className="text-ink-muted">{whenLabel(m)}</Td>
                     <Td><span className="cx-code">{prettyCode(m.code)}</span></Td>
                     <Td><Badge tone={tone(m.status)}>{m.status}</Badge></Td>
                     <Td className="text-end">
@@ -245,7 +245,7 @@ export default function ConnectHome() {
                   Join
                 </Button>
               </div>
-              <div className="!text-ink-muted !text-[0.75rem] mt-2">
+              <div className="text-ink-muted text-[0.75rem] mt-2">
                 A full link works too — everything after the last slash is the code.
               </div>
             </form>

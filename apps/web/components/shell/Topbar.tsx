@@ -4,112 +4,93 @@ import { useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { AccountMenu } from './AccountMenu';
 import { AppLauncher } from './AppLauncher';
+import { RAIL_WIDTH, RAIL_WIDTH_ICONS, TOPBAR_HEIGHT } from './Sidebar';
 import { useTheme as useAppearance } from '@/lib/theme';
 import { useSelfPhoto } from '@/components/ui/UserPhoto';
 
 // ============================================================================
-//  Header — YZEN's .app-header markup
-// ============================================================================
-//
-//  Their solid white header with the search on the left and an icon cluster on
-//  the right. The overlays it opens (app launcher, account menu) are still our
-//  React/MUI components — only the bar itself is YZEN's. The old appearance
-//  panel is gone with the accent switcher; dark/light is the one appearance
-//  control, and it lives right here.
+//  Header — a white bar with the rail toggle and search on the left and an
+//  icon cluster on the right. Ours since 16 Sept 2026; it was YZEN's
+//  .app-header markup before that. The overlays it opens (app launcher,
+//  account menu) were always our components.
 // ============================================================================
 
-export function Topbar({ scope }: { scope: 'platform' | 'organisation' | 'mail' | 'family' | 'space' | 'calendar' | 'connect' }) {
+/** The one class every icon button in the header shares. */
+export const HEADER_LINK =
+  'grid h-10 w-10 place-items-center rounded-lg text-ink-muted transition-colors '
+  + 'hover:bg-canvas hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40';
+
+export function Topbar({ scope, pinned, onToggle }: {
+  scope: 'platform' | 'organisation' | 'mail' | 'family' | 'space' | 'calendar' | 'connect';
+  /** Desktop only: whether the rail is pinned at full width. Sets this bar's left edge. */
+  pinned: boolean;
+  onToggle: () => void;
+}) {
   const { user } = useAuth();
   const { mode, setMode } = useAppearance();
   const [anchor, setAnchor] = useState<null | HTMLElement>(null);
   const selfPhoto = useSelfPhoto();
 
-  // The rail resting state is viewport-aware. On desktop it sits collapsed to
-  // icons ("icon-overlay-close", expanding on hover); the toggle PINS it fully
-  // open ("close") and back. On mobile it is off-canvas ("close"); the toggle
-  // slides it in ("open") and back. The Sidebar keeps the resting default in
-  // sync with the breakpoint.
-  function toggleSidebar() {
-    const el = document.documentElement;
-    const desktop = window.matchMedia('(min-width: 992px)').matches;
-    if (desktop) {
-      el.dataset.toggled = el.dataset.toggled === 'close' ? 'icon-overlay-close' : 'close';
-      delete el.dataset.iconOverlay;
-    } else {
-      el.dataset.toggled = el.dataset.toggled === 'open' ? 'close' : 'open';
-    }
-  }
-
   const initial = (user?.displayName ?? '?').charAt(0).toUpperCase();
 
   return (
     <>
-      <header className="app-header sticky" id="header">
-        <div className="main-header-container container-fluid">
-          <div className="header-content-left">
-            <div className="header-element mx-lg-0 mx-2">
-              <a aria-label="Toggle sidebar" className="sidemenu-toggle header-link"
-                 href="javascript:void(0);" onClick={toggleSidebar}>
-                <i className="ri-menu-2-line fs-20" />
-              </a>
-            </div>
+      <header
+        id="header"
+        className="fixed inset-x-0 top-0 z-[1030] flex items-center gap-2 border-b border-line bg-surface px-3 lg:px-4"
+        style={{ height: TOPBAR_HEIGHT }}
+      >
+        {/* The bar starts where the rail ends on desktop; the rail's own width
+            is the one fact, read from Sidebar. */}
+        <style>{`@media (min-width:1024px){#header{left:${pinned ? RAIL_WIDTH : RAIL_WIDTH_ICONS}}}`}</style>
 
-            <div className="header-element header-search d-md-block d-none my-auto">
-              <input type="text" className="header-search-bar form-control"
-                     placeholder="Search" spellCheck={false} autoComplete="off" />
-              <a href="javascript:void(0);" className="header-search-icon border-0">
-                <i className="ri-search-line" />
-              </a>
-            </div>
+        <button type="button" aria-label="Toggle sidebar" className={HEADER_LINK} onClick={onToggle}>
+          <i className="ri-menu-2-line text-[20px]" />
+        </button>
 
-            {scope === 'platform' && (
-              <div className="header-element d-none d-lg-block ms-2 my-auto">
-                <span className="badge bg-warning-transparent">Platform admin</span>
-              </div>
-            )}
-          </div>
-
-          <div className="header-content-right">
-            {/* App launcher — its own trigger + popover */}
-            <div className="header-element d-flex align-items-center">
-              <AppLauncher />
-            </div>
-
-            {/* Dark / light */}
-            <div className="header-element">
-              <a href="javascript:void(0);" className="header-link"
-                 aria-label="Toggle theme"
-                 onClick={() => setMode(mode === 'dark' ? 'light' : 'dark')}>
-                <i className={`${mode === 'dark' ? 'ri-sun-line' : 'ri-moon-line'} header-link-icon`} />
-              </a>
-            </div>
-
-            {/* Profile */}
-            <div className="header-element">
-              <a href="javascript:void(0);" className="header-link d-flex align-items-center"
-                 onClick={(e) => setAnchor(anchor ? null : e.currentTarget)} aria-label="Account">
-                {selfPhoto ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={selfPhoto} alt="" width={34} height={34}
-                       style={{ width: 34, height: 34, borderRadius: '50%', objectFit: 'cover' }} />
-                ) : (
-                  <span
-                    style={{
-                      width: 34, height: 34, borderRadius: '50%', display: 'grid',
-                      placeItems: 'center', fontWeight: 700, fontSize: 14, color: '#fff',
-                      background: 'var(--primary-color)',
-                    }}
-                  >
-                    {initial}
-                  </span>
-                )}
-              </a>
-            </div>
-          </div>
+        <div className="relative hidden md:block">
+          <input
+            type="text"
+            placeholder="Search"
+            spellCheck={false}
+            autoComplete="off"
+            className="h-9 w-56 rounded-lg border border-line bg-canvas pl-3 pr-9 text-sm text-ink placeholder:text-ink-faint focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/25"
+          />
+          <i className="ri-search-line pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-ink-muted" />
         </div>
+
+        {scope === 'platform' && (
+          <span className="ml-2 hidden rounded-full bg-warn/10 px-2.5 py-0.5 text-xs font-semibold text-warn lg:inline-flex">
+            Platform admin
+          </span>
+        )}
+
+        <div className="flex-1" />
+
+        {/* App launcher — its own trigger + popover */}
+        <AppLauncher />
+
+        {/* Dark / light */}
+        <button type="button" aria-label="Toggle theme" className={HEADER_LINK}
+                onClick={() => setMode(mode === 'dark' ? 'light' : 'dark')}>
+          <i className={`${mode === 'dark' ? 'ri-sun-line' : 'ri-moon-line'} text-[20px]`} />
+        </button>
+
+        {/* Profile */}
+        <button type="button" aria-label="Account" className={HEADER_LINK}
+                onClick={(e) => setAnchor(anchor ? null : e.currentTarget)}>
+          {selfPhoto ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={selfPhoto} alt="" width={34} height={34}
+                 className="h-[34px] w-[34px] rounded-full object-cover" />
+          ) : (
+            <span className="grid h-[34px] w-[34px] place-items-center rounded-full bg-brand-500 text-sm font-bold text-white">
+              {initial}
+            </span>
+          )}
+        </button>
       </header>
 
-      {/* Overlays — still our components, triggered from the YZEN header */}
       <AccountMenu anchorEl={anchor} onClose={() => setAnchor(null)} />
     </>
   );

@@ -19,17 +19,20 @@ const withAlpha = (v: string) => `rgb(var(${v}) / <alpha-value>)`;
 
 export default {
   // ---------------------------------------------------------------------------
-  //  Preflight OFF.
+  //  Preflight ON, since 16 Sept 2026.
   //
-  //  Two CSS resets in one page fight each other. MUI's CssBaseline already
-  //  normalises the document, and Tailwind's preflight is more aggressive —
-  //  it zeroes every border width, which is exactly how MUI's outlined inputs
-  //  lost their outline and its buttons lost their fill.
+  //  It was off for a year because two resets in one page fight: first MUI's
+  //  CssBaseline, then Bootstrap's reboot, each owned the document baseline.
+  //  Both are gone. Without preflight there is NO reset at all — no
+  //  box-sizing, no zeroed margins on headings and lists, no border-style —
+  //  and globals.css was carrying hand-written fragments of it. Turning it on
+  //  replaces those fragments with the real thing.
   //
-  //  Tailwind's utilities still work; only the reset is gone, and MUI is
-  //  doing that job.
+  //  What it changes on screen: headings and paragraphs lose the browser's
+  //  default margins (pages set their own), lists lose their bullets unless
+  //  asked for, images become block. That is the intended baseline.
   // ---------------------------------------------------------------------------
-  corePlugins: { preflight: false },
+  corePlugins: { preflight: true },
 
   darkMode: 'class',
   content: [

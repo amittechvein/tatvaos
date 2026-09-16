@@ -76,7 +76,7 @@ export default function CoreOverview() {
   if (loading) {
     return (
       <AdminShell scope="organisation" title="TatvaOS Core">
-        <div className="grid place-items-center !py-[3rem]">
+        <div className="grid place-items-center py-12">
           <span className="block h-8 w-8 animate-spin rounded-full border-2 border-line border-t-brand-600" />
         </div>
       </AdminShell>
@@ -113,8 +113,8 @@ export default function CoreOverview() {
     >
       {remaining.length > 0 && (
         <Card className="mb-6">
-          <h6 className="mb-1 !font-semibold">Finish setting up</h6>
-          <p className="!mb-[1rem] !text-[0.8125rem] !text-ink-muted">
+          <h6 className="mb-1 font-semibold">Finish setting up</h6>
+          <p className="mb-4 text-[0.8125rem] text-ink-muted">
             {remaining.length} step{remaining.length === 1 ? '' : 's'} left before
             your organisation is fully live.
           </p>
@@ -138,7 +138,7 @@ export default function CoreOverview() {
                   </span>
                 </>
               );
-              const cls = 'flex items-center !gap-[1rem] rounded-lg p-2.5 text-sm no-underline';
+              const cls = 'flex items-center gap-4 rounded-lg p-2.5 text-sm no-underline';
               // A finished step is not a link: there is nothing left to do there,
               // and making it clickable invites a pointless trip.
               return st.done
@@ -154,7 +154,7 @@ export default function CoreOverview() {
         </Card>
       )}
 
-      <div className="!mb-[1.5rem] grid grid-cols-2 !gap-[1.5rem] lg:grid-cols-4">
+      <div className="mb-6 grid grid-cols-2 gap-6 lg:grid-cols-4">
         <Stat label="People" value={String(s?.userCount ?? 0)}
               caption={s?.maxUsers == null ? 'Unlimited' : `of ${s.maxUsers} allowed`} />
         <Stat label="Departments" value={String(flat.length)} />
@@ -164,13 +164,13 @@ export default function CoreOverview() {
               caption={`of ${fmt(s?.totalBytes ?? 0)}`} />
       </div>
 
-      <div className="grid !gap-[1.5rem] lg:grid-cols-2">
+      <div className="grid gap-6 lg:grid-cols-2">
         <Card title="Storage"
               subtitle={s?.storageModel === 'pooled'
                 ? 'Pooled — one allocation shared across every mailbox'
                 : 'Per user — each mailbox has its own fixed allowance'}>
           <Meter used={s?.usedBytes ?? 0} total={s?.totalBytes ?? 1} />
-          <p className="!mt-[1rem] !text-[0.75rem] !text-ink-muted">
+          <p className="mt-4 text-[0.75rem] text-ink-muted">
             {fmt(s?.availableBytes ?? 0)} still available.
             {s?.storageModel === 'pooled' &&
               ' When a pool fills, every mailbox stops receiving at once — not just the heaviest one.'}
@@ -180,25 +180,25 @@ export default function CoreOverview() {
         <Card title="People by department"
               actions={<Button variant="ghost" href="/org/departments">Manage</Button>}>
           {flat.length === 0 ? (
-            <p className="!text-[0.8125rem] !text-ink-muted mb-0">
+            <p className="text-[0.8125rem] text-ink-muted mb-0">
               No departments yet. They carry storage and permissions down to
               everyone inside, so creating them first saves setting the same
               thing on every person.
             </p>
           ) : (
-            <div className="grid !gap-[1rem]">
+            <div className="grid gap-4">
               {flat.map((d) => (
-                <div key={d.id} className="!flex !items-center gap-2">
-                  <span className="shrink-0 !rounded-[50%]" style={{ width: 10, height: 10, background: d.colour }} />
-                  <span className="!flex-auto !text-[0.8125rem]">{d.name}</span>
-                  <span className="!font-semibold !text-[0.8125rem]">{d.userCount}</span>
+                <div key={d.id} className="flex items-center gap-2">
+                  <span className="shrink-0 rounded-full" style={{ width: 10, height: 10, background: d.colour }} />
+                  <span className="flex-auto text-[0.8125rem]">{d.name}</span>
+                  <span className="font-semibold text-[0.8125rem]">{d.userCount}</span>
                 </div>
               ))}
               {(data?.unassignedUsers ?? 0) > 0 && (
-                <div className="!flex !items-center gap-2 border-t border-line pt-2">
-                  <span className="shrink-0 !rounded-[50%]" style={{ width: 10, height: 10, background: 'rgb(var(--ink-faint))' }} />
-                  <span className="!flex-auto !text-[0.8125rem] !text-ink-muted">No department</span>
-                  <span className="!font-semibold !text-[0.8125rem]">{data?.unassignedUsers}</span>
+                <div className="flex items-center gap-2 border-t border-line pt-2">
+                  <span className="shrink-0 rounded-full" style={{ width: 10, height: 10, background: 'rgb(var(--ink-faint))' }} />
+                  <span className="flex-auto text-[0.8125rem] text-ink-muted">No department</span>
+                  <span className="font-semibold text-[0.8125rem]">{data?.unassignedUsers}</span>
                 </div>
               )}
             </div>
@@ -207,7 +207,7 @@ export default function CoreOverview() {
       </div>
 
       {verified.length > 0 && mailReady.length === 0 && (
-        <Alert tone="info" className="!mt-[1.5rem]">
+        <Alert tone="info" className="mt-6">
           Your domain is verified, but mail is still delivered wherever it was
           before. Add the MX records under <Link href="/org/domains">Domains</Link> when
           you are ready to move it — nothing you do here interrupts your current

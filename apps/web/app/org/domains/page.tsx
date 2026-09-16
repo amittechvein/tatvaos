@@ -220,16 +220,16 @@ export default function DomainsPage() {
       )}
 
       {loading ? (
-        <div className="grid place-items-center !py-[3rem]">
+        <div className="grid place-items-center py-12">
           <span className="block h-8 w-8 animate-spin rounded-full border-2 border-line border-t-brand-600" />
         </div>
       ) : (
-        <div className="grid !gap-[1rem]">
+        <div className="grid gap-4">
           {domains.map((d) => (
-            <div className="rounded-card border border-line bg-surface !p-[1rem] !flex !items-center !gap-[1rem] flex-wrap" key={d.id}>
-                <div className="min-w-0 !flex-auto">
-                  <div className="!flex !items-center gap-2 flex-wrap">
-                    <h6 className="!font-semibold mb-0" style={{ wordBreak: 'break-all' }}>{d.fqdn}</h6>
+            <div className="rounded-card border border-line bg-surface p-4 flex items-center gap-4 flex-wrap" key={d.id}>
+                <div className="min-w-0 flex-auto">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h6 className="font-semibold mb-0" style={{ wordBreak: 'break-all' }}>{d.fqdn}</h6>
 
                     {d.isPlatform ? (
                       <BrandPill>TatvaOS address</BrandPill>
@@ -240,7 +240,7 @@ export default function DomainsPage() {
                     )}
                   </div>
 
-                  <p className="!text-[0.8125rem] !text-ink-muted mb-0 mt-1">
+                  <p className="text-[0.8125rem] text-ink-muted mb-0 mt-1">
                     {d.isPlatform
                       ? 'Issued by us and working immediately. Cannot be removed — it is how you sign in if your own domain’s DNS ever breaks.'
                       : d.ownershipVerified
@@ -258,12 +258,12 @@ export default function DomainsPage() {
           ))}
 
           {domains.length === 0 && (
-            <div className="rounded-card border border-line bg-surface !p-[1rem]">No domains yet.</div>
+            <div className="rounded-card border border-line bg-surface p-4">No domains yet.</div>
           )}
         </div>
       )}
 
-      <Alert tone="info" className="!mt-[1.5rem]">
+      <Alert tone="info" className="mt-6">
         Adding a domain changes nothing about your existing mail. It keeps arriving
         wherever it does today until <strong>you</strong> move the MX record — and
         that step is reversible.
@@ -285,7 +285,7 @@ export default function DomainsPage() {
             </>
           }
         >
-          <p className="!text-[0.8125rem] !text-ink-muted">
+          <p className="text-[0.8125rem] text-ink-muted">
             The domain your organisation&apos;s email addresses use. You will be asked
             to publish a record proving you control it.
           </p>
@@ -329,7 +329,7 @@ export default function DomainsPage() {
               DNS wants one self-contained block per record: what it is,
               whether it passes, and exactly what to paste where.
              ------------------------------------------------------------ */}
-          <div className="grid !gap-[1rem]">
+          <div className="grid gap-4">
             {records.map((r, i) => {
               const check = checkFor(checks, r, i);
               const state: 'passed' | 'required' | 'optional' =
@@ -339,7 +339,7 @@ export default function DomainsPage() {
               return (
                 <div
                   key={`${r.type}-${r.host}-${i}`}
-                  className="rounded-card border border-line bg-surface !p-[1rem]"
+                  className="rounded-card border border-line bg-surface p-4"
                   style={{ borderInlineStartWidth: 4, borderInlineStartColor: edge }}
                 >
                   {/* Header: status + name + badges */}
@@ -361,7 +361,7 @@ export default function DomainsPage() {
                       {check?.label ?? r.purpose.split('.')[0]}
                     </span>
 
-                    <span className="inline-flex items-center rounded-full border border-line bg-canvas px-2.5 py-0.5 !font-mono text-xs font-semibold text-ink-muted">
+                    <span className="inline-flex items-center rounded-full border border-line bg-canvas px-2.5 py-0.5 font-mono text-xs font-semibold text-ink-muted">
                       {r.type}
                     </span>
                     {check?.passed
@@ -374,7 +374,7 @@ export default function DomainsPage() {
                   {/* The server's own words when a check ran; the record's
                       purpose otherwise. "NXDOMAIN looking up TXT" tells a
                       DNS admin far more than a friendlier rewrite would. */}
-                  <p className="!mb-[1rem] text-[13px] text-ink-muted">
+                  <p className="mb-4 text-[13px] text-ink-muted">
                     {check && !check.passed ? check.detail : r.purpose}
                   </p>
 
@@ -399,7 +399,7 @@ export default function DomainsPage() {
             })}
           </div>
 
-          <p className="!mt-[1.5rem] mb-0 text-xs leading-relaxed text-ink-faint">
+          <p className="mt-6 mb-0 text-xs leading-relaxed text-ink-faint">
             DNS changes usually appear within minutes but can take up to an hour.
             If a check fails right after you add a record, wait and try again before
             changing anything.

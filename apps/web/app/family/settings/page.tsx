@@ -101,14 +101,14 @@ export default function FamilySettingsPage() {
         }
       >
         {!settings ? (
-          <div className="!flex !justify-center !py-[1.5rem]">
-            <span className="inline-block h-7 w-7 animate-spin !rounded-[50%] border-[3px] border-line border-t-brand-600" />
+          <div className="flex justify-center py-6">
+            <span className="inline-block h-7 w-7 animate-spin rounded-full border-[3px] border-line border-t-brand-600" />
           </div>
         ) : (
-          <div className="!flex !flex-col !gap-[1rem]">
+          <div className="flex flex-col gap-4">
             {SWITCHES.map((s, i) => (
               <div key={s.key}>
-                {i > 0 && <hr className="mt-0 !mb-[1rem]" />}
+                {i > 0 && <hr className="mt-0 mb-4" />}
                 <Switch
                   id={s.id}
                   className="mb-0"
@@ -118,22 +118,22 @@ export default function FamilySettingsPage() {
                 />
                 {/* Indented to line up under the label rather than the switch,
                     so the hint reads as belonging to the setting above it. */}
-                <p className="!text-[0.875rem] !text-ink-muted mb-0" style={{ marginLeft: 44 }}>{s.hint}</p>
+                <p className="text-[0.875rem] text-ink-muted mb-0" style={{ marginLeft: 44 }}>{s.hint}</p>
               </div>
             ))}
           </div>
         )}
       </Card>
 
-      <Card title="What this does not do" className="!mt-[1.5rem]">
-        <p className="!text-[0.875rem] !text-ink-muted mb-0">
+      <Card title="What this does not do" className="mt-6">
+        <p className="text-[0.875rem] text-ink-muted mb-0">
           Automatically saved contacts are personal to you. A message arriving in your mailbox
           says something about who <em>you</em> correspond with; it says nothing about who the
           organisation knows, so nothing here is ever shared with colleagues. To share a
           contact, open it and choose “Share with organisation” — that is a deliberate act,
           and it cannot be undone from this screen.
         </p>
-        <p className="!text-[0.875rem] !text-ink-muted !mt-[1rem] mb-0">
+        <p className="text-[0.875rem] text-ink-muted mt-4 mb-0">
           Deleting an automatically saved contact also stops it coming back. The next message
           from that address will not recreate it.
         </p>

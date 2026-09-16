@@ -8,13 +8,12 @@
 
    Colours live as CSS custom properties, and tailwind.config points at them.
    A Tailwind class like bg-brand-600 compiles to rgb(var(--brand-600)), so
-   these variables are the single source the Tailwind surfaces (the Mail
-   client) draw from. They are STATIC now: the runtime accent switcher is
-   gone, the product has one brand colour — violet #6C3CE9 — and the values
-   below are the same colour styles/yzen/styles.css ships as --primary-rgb.
-   BOTH must change together or half the product stays on the old colour;
-   YZEN reads its own variable 791 times and is not affected by these.
-   Only light/dark switches at runtime (the .dark class).
+   these variables are the ONE source every surface draws from. They are
+   STATIC: the runtime accent switcher is gone, the product has one brand
+   colour — violet #6C3CE9. (Until 16 Sept 2026 YZEN's stylesheet carried a
+   second copy as --primary-rgb, read 791 times, and the two had to change
+   together. There is one copy now.) Only light/dark switches at runtime
+   (the .dark class).
 
    Values are space-separated RGB channels, NOT hex. Tailwind needs to insert
    an alpha channel for things like bg-brand-600/50, and it can only do that
@@ -38,10 +37,9 @@
     --brand-900:  42  25  97;
 
     /* The sidebar rail — LIGHT since 5 Sept. It used to be near-black, which
-       is why overrides.css had to force a white block behind the logo: the
-       wordmark is dark artwork and vanished on a dark rail. Cream rail, no
-       block, no seam. The dark variant is selected by data-menu-styles in
-       app/layout.tsx, not here — changing these alone would not have done it. */
+       is why a white block had to be forced behind the logo: the wordmark is
+       dark artwork and vanished on a dark rail. Cream rail, no block, no seam.
+       Since 16 Sept these tokens are the only thing that colours the rail. */
     --rail:         250 246 239;  /* same as the canvas */
     --rail-soft:    245 241 254;  /* brand-50: the active-item tint */
     --rail-text:    107 104 128;
@@ -50,8 +48,7 @@
     /* The page behind the cards, and the topbar. WARM, not grey — the warmth
        is what stops it reading as every other admin dashboard, and the
        contrast against white cards is what gives a reading pane its
-       sheet-of-paper quality. Must stay equal to YZEN's --body-bg-rgb so a
-       Tailwind page and a YZEN page sit on the identical canvas. */
+       sheet-of-paper quality. */
     --canvas:  250 246 239;
     --surface: 255 255 255;
 
@@ -93,58 +90,21 @@
   }
 
   /* ------------------------------------------------------------------------
-     Button & form baseline for the Tailwind-built surfaces (the Mail client).
+     The baseline is Tailwind's preflight, ON since 16 Sept 2026.
 
-     Tailwind's preflight is DISABLED in this project (tailwind.config
-     corePlugins.preflight = false), because MUI's CssBaseline owns the reset
-     for the Core/Admin console. But the Mail client is pure Tailwind — so its
-     native <button>/<input> elements had no reset and fell back to the
-     browser's default chrome: the grey boxes and 1px borders that showed on
-     every toolbar icon and made the composer look broken.
-
-     This restores just the button/form baseline that preflight would have.
-     It is an element-level selector (specificity 0-0-1), so BOTH Tailwind
-     utility classes (bg-brand-600, border-line, …) AND MUI's own component
-     styles (.MuiButtonBase-root, 0-1-0) override it cleanly — the reset only
-     wins where a button was otherwise unstyled, which is exactly the bug.
+     For a year this file carried hand-written pieces of it — a button reset,
+     `font: inherit` on inputs, and the border reset — because preflight was
+     off for MUI, then for Bootstrap, and each of those resets fought it. Both
+     are gone, and preflight does all of that properly. Two things preflight
+     does NOT set and pages here rely on, so they stay:
+       - the default border COLOUR, which preflight leaves at currentColor;
+         `border border-line` names it explicitly but a bare `border` should
+         still draw a hairline in the token colour;
+       - cursor:pointer on buttons, which preflight dropped in v3 and which
+         the product's own buttons had from Bootstrap.
      ------------------------------------------------------------------------ */
-  button {
-    background-color: transparent;
-    border: 0 solid transparent;
-    padding: 0;
-    font: inherit;
-    color: inherit;
-    cursor: pointer;
-    text-align: inherit;
-  }
-  button:disabled { cursor: default; }
-  input, textarea, select { font: inherit; }
-
-  /* ------------------------------------------------------------------------
-     The border half of the missing preflight — BOTH properties, together.
-
-     Tailwind's `border` utility sets border-WIDTH only; preflight normally
-     supplies `border-style: solid` for every element. With preflight off,
-     `border border-line` on a <div> or a <table> sets a width against a style
-     of `none` and renders nothing.
-
-     BOTH LINES ARE REQUIRED AND THIS IS THE TRAP: CSS's initial border-width
-     is `medium` (about 3px), not zero — it is invisible only because the
-     initial style is `none`. Setting the style alone therefore does not
-     "reveal borders where we asked for them", it draws a 3px box around
-     EVERY ELEMENT ON THE PAGE. Tried exactly that on 7 Sept 2026 and the
-     login screen came back as a wireframe.
-
-     Zeroing the width is safe for YZEN: real components set their border
-     width explicitly, and nothing sane depends on the initial `medium`. The
-     old worry — that preflight strips outlines — was about MUI, which has
-     since been removed from this project entirely.
-     ------------------------------------------------------------------------ */
-  *, ::before, ::after {
-    border-width: 0;
-    border-style: solid;
-    border-color: rgb(var(--line));
-  }
+  *, ::before, ::after { border-color: rgb(var(--line)); }
+  button:not(:disabled), [role="button"]:not(:disabled) { cursor: pointer; }
 }
 
 @layer utilities {

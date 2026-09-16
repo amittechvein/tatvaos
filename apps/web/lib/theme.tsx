@@ -4,11 +4,11 @@
 //  Theme
 // ============================================================================
 //
-//  One job now: light/dark. The product's colour is YZEN's green, fixed at
-//  build time — the old runtime accent switcher (and the browser-stored accent
-//  that came with it) is gone by decision: one licensed template, one brand
-//  colour, no per-browser drift. The green ramp lives statically in
-//  styles/globals.css; nothing recolours at runtime except the mode.
+//  One job now: light/dark. The product's colour is the violet in
+//  styles/globals.css, fixed at build time — the old runtime accent switcher
+//  (and the browser-stored accent that came with it) is gone by decision:
+//  one brand colour, no per-browser drift. Nothing recolours at runtime
+//  except the mode.
 //
 //  Mode is still per browser: it is a device preference (a dark room, a bright
 //  office), not an identity setting, so localStorage is the right home.
@@ -51,23 +51,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const root = document.documentElement;
 
-    // Both styling systems read the mode, each in its own dialect: Tailwind
-    // (the Mail client) matches on the .dark class, YZEN's stylesheet matches
-    // on data-theme-mode / data-header-styles. Setting them together is what
-    // keeps one toggle honest across both.
+    // One class, one dialect. Until 16 Sept 2026 three data-* attributes were
+    // set beside it for YZEN's stylesheet, and they had to agree with static
+    // copies in app/layout.tsx — this line won because it ran after hydration,
+    // which is how a served page once said one thing and the browser another.
+    // The tokens in globals.css switch on .dark; the rail follows them.
     root.classList.toggle('dark', mode === 'dark');
-    root.dataset.themeMode = mode;
-    root.dataset.headerStyles = mode;
-    // The rail FOLLOWS THE MODE since 5 Sept 2026: light rail in light mode,
-    // dark in dark. It used to be pinned to 'dark' in both, which is what put
-    // a near-black rail under a light page and forced overrides.css to paint a
-    // white block behind the logo so the dark wordmark stayed visible.
-    //
-    // This line and the static attribute in app/layout.tsx must agree. They
-    // are two separate places and this one wins, because it runs after
-    // hydration — changing only the layout looked correct in the served HTML
-    // and reverted in the browser. See docs/UI_LANE_BRIEF.md §4.1.
-    root.dataset.menuStyles = mode;
 
     try {
       localStorage.setItem(KEY, JSON.stringify({ mode }));

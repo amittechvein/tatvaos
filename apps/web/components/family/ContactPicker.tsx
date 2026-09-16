@@ -138,7 +138,7 @@ export function ContactPicker({ value, onPick, children }: {
         // z-index 1400 clears the composer, which sits at 1200. Tailwind's
         // scale stops at 50 and would put this behind the shell chrome.
         <ul
-          className="!list-none !pl-0 bg-white rounded shadow m-0 py-1 border"
+          className="list-none pl-0 bg-white rounded shadow m-0 py-1 border"
           style={{
             position: 'fixed',
             top: box.top,
@@ -166,13 +166,13 @@ export function ContactPicker({ value, onPick, children }: {
                 background: i === active ? 'rgba(0,0,0,0.05)' : 'transparent',
               }}
             >
-              <div className="!text-[0.875rem] !font-semibold">
+              <div className="text-[0.875rem] font-semibold">
                 {s.displayName}
                 {s.isColleague && (
-                  <span className="!text-[0.75rem] !font-normal !text-ink-muted ms-2">colleague</span>
+                  <span className="text-[0.75rem] font-normal text-ink-muted ms-2">colleague</span>
                 )}
               </div>
-              <div className="!text-[0.75rem] !text-ink-muted">{s.email}</div>
+              <div className="text-[0.75rem] text-ink-muted">{s.email}</div>
             </li>
           ))}
         </ul>

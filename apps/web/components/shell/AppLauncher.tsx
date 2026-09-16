@@ -20,6 +20,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { RAIL_PRODUCTS } from '@/lib/nav';
 import { AnchoredPopover } from '@/components/ui/AnchoredPopover';
+import { HEADER_LINK } from './Topbar';
 
 /** A product's colour at partial opacity, for the tile gradient and its glow. */
 function fade(hex: string, alpha: number): string {
@@ -40,9 +41,9 @@ export function AppLauncher() {
 
   return (
     <>
-      <a
-        href="javascript:void(0);"
-        className="header-link"
+      <button
+        type="button"
+        className={HEADER_LINK}
         aria-label="TatvaOS apps"
         title="TatvaOS apps"
         onClick={(e) => setAnchor(anchor ? null : e.currentTarget)}
@@ -52,7 +53,7 @@ export function AppLauncher() {
           {[5, 12, 19].flatMap((y) =>
             [5, 12, 19].map((x) => <circle key={`${x}-${y}`} cx={x} cy={y} r="1.9" />))}
         </svg>
-      </a>
+      </button>
 
       <AnchoredPopover anchor={anchor} onClose={() => setAnchor(null)} width={316}>
         <div className="grid grid-cols-3 gap-1">

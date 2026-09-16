@@ -154,7 +154,7 @@ export default function DashboardPage() {
       <PageHeader
         title="Connect"
         breadcrumb={[{ label: 'Dashboard' }]}
-        className="!my-[1rem]"
+        className="my-4"
         actions={
           <>
             <Button variant="primary" href="/connect/new">
@@ -173,7 +173,7 @@ export default function DashboardPage() {
       )}
 
       {loading ? (
-        <Card><div className="text-center !text-ink-muted !py-[1.5rem]">
+        <Card><div className="text-center text-ink-muted py-6">
           <Spinner inline />
           Loading…
         </div></Card>
@@ -246,7 +246,7 @@ export default function DashboardPage() {
             </div>
           )}
 
-          <div className="grid !gap-[1.5rem] xl:grid-cols-12">
+          <div className="grid gap-6 xl:grid-cols-12">
             <div className="xl:col-span-7">
               {/* ── 4. USE OVER TIME. ─────────────────────────────────────
                   One series, so no legend — the card title names it. The
@@ -257,7 +257,7 @@ export default function DashboardPage() {
                       ? ` · busiest was ${busiest.count} on ${busiest.label}`
                       : ''}`}>
                 {past.length === 0 ? (
-                  <p className="!text-ink-muted !text-[0.8125rem] mb-0">
+                  <p className="text-ink-muted text-[0.8125rem] mb-0">
                     Nothing has finished yet, so there is nothing to count.
                   </p>
                 ) : (
@@ -284,7 +284,7 @@ export default function DashboardPage() {
                     {/* The same numbers as text. A chart that only exists as
                         shapes is unreadable to a screen reader and unusable in
                         a printout. */}
-                    <table className="!sr-only">
+                    <table className="sr-only">
                       <caption>Meetings a day for the last {DAYS} days</caption>
                       <tbody>
                         {days.map((d) => (
@@ -301,7 +301,7 @@ export default function DashboardPage() {
               <Card title="Coming up"
                     subtitle={soon.length === 0 ? undefined : 'The next few, soonest first'}>
                 {soon.length === 0 ? (
-                  <p className="!text-ink-muted !text-[0.8125rem] mb-0">
+                  <p className="text-ink-muted text-[0.8125rem] mb-0">
                     Nothing scheduled. <Link href="/connect/new">Schedule a meeting</Link>.
                   </p>
                 ) : (

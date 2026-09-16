@@ -151,7 +151,7 @@ export default function SettingsPage() {
 
       {loading ? (
         <Card>
-          <div className="grid place-items-center !py-[3rem]">
+          <div className="grid place-items-center py-12">
             <span role="status" aria-label="Loading"
                   className="block h-8 w-8 animate-spin rounded-full border-2 border-line border-t-brand-600" />
           </div>
@@ -163,12 +163,12 @@ export default function SettingsPage() {
 
           return (
             <Card key={section.id} title={section.title} subtitle={section.blurb}
-                  className="!mb-[1.5rem]">
+                  className="mb-6">
               <div>
-                <div className="grid !gap-[1rem] md:grid-cols-2">
+                <div className="grid gap-4 md:grid-cols-2">
                   {fields.map((s) => (
-                    <div className="!mb-[1rem]" key={s.key}>
-                      <label className="mb-1 !flex !items-center gap-2 text-[13px] font-medium text-ink">
+                    <div className="mb-4" key={s.key}>
+                      <label className="mb-1 flex items-center gap-2 text-[13px] font-medium text-ink">
                         {s.label}
                         {s.isSecret && s.hasValue && <Badge tone="ok">set</Badge>}
                       </label>
@@ -203,9 +203,9 @@ export default function SettingsPage() {
                 </div>
 
                 {section.id === 'sms' && (
-                  <div className="mt-2 border-t border-line !pt-[1rem]">
-                    <div className="!font-semibold mb-2">Send a test SMS</div>
-                    <div className="!flex gap-2 flex-wrap !items-start">
+                  <div className="mt-2 border-t border-line pt-4">
+                    <div className="font-semibold mb-2">Send a test SMS</div>
+                    <div className="flex gap-2 flex-wrap items-start">
                       <Input  style={{ maxWidth: 240 }}
                              placeholder="+91 98765 43210" value={testPhone}
                              onChange={(e) => setTestPhone(e.target.value)} />
@@ -215,7 +215,7 @@ export default function SettingsPage() {
                       </Button>
                     </div>
                     {dirty && (
-                      <div className="!text-warn !text-[0.75rem] mt-2">
+                      <div className="text-warn text-[0.75rem] mt-2">
                         You have unsaved changes — the test uses the saved values. Save first.
                       </div>
                     )}
