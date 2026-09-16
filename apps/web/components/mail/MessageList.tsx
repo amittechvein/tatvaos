@@ -147,7 +147,9 @@ export function MessageList({
                 className={`h-4 w-4 shrink-0 cursor-pointer accent-brand-600 transition ${
                   checked || selecting
                     ? 'opacity-100'
-                    : 'opacity-0 focus-visible:opacity-100 group-hover:opacity-100'
+                    // `!` on the reveal: Bootstrap's .opacity-0 is !important and
+                    // beat the plain hover class, so this never appeared on hover.
+                    : 'opacity-0 focus-visible:!opacity-100 group-hover:!opacity-100'
                 }`}
               />
 
@@ -158,7 +160,7 @@ export function MessageList({
                 className={`shrink-0 transition ${
                   m.isFlagged
                     ? 'text-warn'
-                    : 'text-ink-faint/40 opacity-0 hover:text-warn focus-visible:opacity-100 group-hover:opacity-100'
+                    : 'text-ink-faint/40 opacity-0 hover:text-warn focus-visible:!opacity-100 group-hover:!opacity-100'
                 }`}
               >
                 <Icon name="star" filled={m.isFlagged} className="h-4.5 w-4.5" />

@@ -277,8 +277,16 @@ function Row({ node, depth, onAddChild, onEdit, onDelete }: {
 
         {/* Hidden until the row is hovered, so a deep tree reads as a tree and
             not as three icons per line. Focus reveals them too — keyboard users
-            never hover, and buttons they cannot see are buttons they cannot use. */}
-        <div className="!flex gap-1 flex-shrink-0 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+            never hover, and buttons they cannot see are buttons they cannot use.
+
+            THE REVEAL CARRIES `!`, AND IT MUST. Bootstrap declares
+            `.opacity-0{opacity:0!important}`, so a plain group-hover:opacity-100
+            never won: from the day this was written until 15 Sept 2026 the
+            buttons stayed invisible even on hover, and Amit found the only
+            way in was the browser's "Edit" tooltip over an invisible button.
+            A touch screen has no hover at all, so there they are always shown —
+            otherwise a phone could never edit or delete a department. */}
+        <div className="!flex gap-1 flex-shrink-0 opacity-0 transition group-hover:!opacity-100 focus-within:!opacity-100 [@media(hover:none)]:!opacity-100">
           <button type="button" className="btn btn-icon btn-sm btn-light"
                   title="Add sub-department" aria-label={`Add a sub-department in ${node.name}`}
                   onClick={() => onAddChild(node)}>
