@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { formatBytes } from '@tatvaos/core';
 import {
-  fetchPlans, createPlan, updatePlan, deletePlan,
-  type PlanRow, type UpsertPlanBody,
+  fetchPlans, fetchProducts, createPlan, updatePlan, deletePlan,
+  type PlanRow, type ProductRow, type UpsertPlanBody,
 } from '@/lib/adminData';
 import { useAuth } from '@/lib/auth';
 import { AdminShell } from '@/components/admin/AdminShell';
@@ -45,49 +45,36 @@ import { Modal } from '@/components/ui/Modal';
 const GB = 1024 ** 3;
 
 // ---------------------------------------------------------------------------
-//  THE PRODUCTS A PLAN CAN GRANT. This list must match core.products, and for
-//  months it did not.
+//  THE PRODUCTS A PLAN CAN GRANT — read from core.products, not kept here.
 //
-//  It offered People, Payroll, Sheet and Word — all four DELETED from
-//  core.products by 0028-product-catalogue.sql — while omitting Connect,
-//  Calendar and Family, which are the products that actually exist. The
-//  consequence, found on 9 Sept 2026 when Amit tried to give his own
-//  organisation Connect and could not: there was no checkbox for it. Granting
-//  Connect was impossible from the admin console, on any plan, for anyone.
+//  This list used to live in this file, and drifted from the table twice: it
+//  offered People, Payroll, Sheet and Word after 0028-product-catalogue.sql
+//  deleted them, and it had no checkbox for Connect, Calendar or Family —
+//  which is why granting Connect from the console was impossible for anyone,
+//  on any plan, and why Amit could not turn it on for his own organisation on
+//  9 Sept 2026. A list that must match a table, with nothing checking that it
+//  does, drifts a third time. So it is served: GET /api/admin/products.
 //
-//  Codes, not labels, and two do not match their names — the same trap
-//  apps/mobile/theme.js documents:
-//      Space    -> code 'drive'   (renamed; the code stayed because
-//                                  allocations, audit rows and storage all
-//                                  point at it)
-//      Contacts -> code 'family'
-//  Get one wrong and the product silently vanishes from every plan that had
-//  it, which reads as an entitlement bug rather than a typo.
+//  Codes, not labels, and two products do not match their names — Space is
+//  code 'drive', Contacts is code 'family'. Both codes stayed because
+//  allocations, audit rows and product_access point at them, and renaming a
+//  key to fix a string breaks three tables to correct one.
 //
-//  Verified against local/postgres/init: 0000-core-schema.sql seeds mail,
-//  drive, calendar, connect; 0022-family-departure.sql adds family;
-//  0025-space-schema.sql renames drive to Space; 0028 removes the four
-//  placeholders. `soon` marks a product that exists in the catalogue but is
-//  not shipped yet (is_available = false).
-//
-//  Unknown codes are still preserved on save — see formFromPlan, which unions
-//  this list with whatever the plan already grants. That is what stops a stale
-//  list here silently stripping entitlements, and it is why the damage above
-//  was invisible rather than loud.
+//  A code a plan grants that the catalogue does not contain is rendered as
+//  unknown rather than as an ordinary product (see PlanFormModal), and is
+//  still preserved on save unless the operator unticks it. That is what stops
+//  this screen ever silently stripping an entitlement — the property that made
+//  the drift above invisible instead of loud, and worth keeping for the next
+//  odd state rather than only this one.
 // ---------------------------------------------------------------------------
-const PRODUCTS: { key: string; label: string; soon?: boolean }[] = [
-  { key: 'mail', label: 'Mail' },
-  { key: 'family', label: 'Contacts' },
-  { key: 'drive', label: 'Space' },
-  { key: 'connect', label: 'Connect', soon: true },
-  { key: 'calendar', label: 'Calendar', soon: true },
-  // Added 9 Sept 2026 with 20260909-hire-people-products.sql, the day both
-  // lanes were staffed. A plan cannot grant a product that has no catalogue
-  // row, so the row and this checkbox have to arrive together — which is the
-  // whole reason this file drifted twice before.
-  { key: 'hire', label: 'Hire', soon: true },
-  { key: 'people', label: 'People', soon: true },
-];
+
+/**
+ * "TatvaOS Mail" -> "Mail". The catalogue stores the full product name; the
+ * console is already inside TatvaOS and repeating it in every checkbox is noise.
+ */
+function productLabel(p: ProductRow): string {
+  return p.name.replace(/^TatvaOS\s+/, '');
+}
 
 type StorageModel = 'per_user' | 'pooled';
 type PricingModel = 'per_user' | 'flat' | 'custom';
@@ -110,7 +97,7 @@ interface PlanForm {
   products: Record<string, boolean>;
 }
 
-function blankForm(): PlanForm {
+function blankForm(catalogue: ProductRow[]): PlanForm {
   return {
     name: '',
     maxUsers: '',
@@ -120,11 +107,17 @@ function blankForm(): PlanForm {
     maxDomains: '',
     pricingModel: 'per_user',
     price: '',
-    products: Object.fromEntries(PRODUCTS.map((p) => [p.key, p.key === 'mail'] as const)),
+    products: catalogue.length
+      ? Object.fromEntries(catalogue.map((p) => [p.code, p.code === 'mail'] as const))
+      // The catalogue failed to load. Mail is the one product every plan has
+      // carried since the first schema, so a plan is still creatable and the
+      // rest can be ticked once the list is back — better than blocking the
+      // operator behind a failed request.
+      : { mail: true },
   };
 }
 
-function formFromPlan(p: PlanRow): PlanForm {
+function formFromPlan(p: PlanRow, catalogue: ProductRow[]): PlanForm {
   const pricingModel: PricingModel =
     p.pricePerUserMonthly != null ? 'per_user' : p.priceMonthly != null ? 'flat' : 'custom';
   return {
@@ -144,7 +137,7 @@ function formFromPlan(p: PlanRow): PlanForm {
     // so an unrecognised product still shows up as a ticked box rather than
     // vanishing from the form — and therefore from the plan.
     products: Object.fromEntries(
-      [...new Set([...PRODUCTS.map((x) => x.key), ...p.includedProducts])]
+      [...new Set([...catalogue.map((x) => x.code), ...p.includedProducts])]
         .map((k) => [k, p.includedProducts.includes(k)] as const),
     ),
   };
@@ -191,6 +184,7 @@ function toBody(f: PlanForm): UpsertPlanBody {
 export default function AdminPlansPage() {
   const { authedFetch } = useAuth();
   const [plans, setPlans] = useState<PlanRow[]>([]);
+  const [catalogue, setCatalogue] = useState<ProductRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState<{ kind: 'success' | 'danger'; text: string } | null>(null);
 
@@ -204,9 +198,11 @@ export default function AdminPlansPage() {
 
   const reload = useCallback(() => {
     setLoading(true);
-    fetchPlans(authedFetch)
-      .then(setPlans)
-      .catch(() => setPlans([]))
+    // Both together: a plan form cannot be rendered honestly without the
+    // catalogue, and rendering it from a stale copy is the bug this replaces.
+    Promise.all([fetchPlans(authedFetch), fetchProducts(authedFetch)])
+      .then(([p, c]) => { setPlans(p); setCatalogue(c); })
+      .catch(() => { setPlans([]); setCatalogue([]); })
       .finally(() => setLoading(false));
   }, [authedFetch]);
 
@@ -216,8 +212,8 @@ export default function AdminPlansPage() {
   // owns the "not while busy" rule too, so a dialog cannot be dismissed mid-save
   // and leave the operator unsure whether the write went through.
 
-  function openAdd() { setFormErrors([]); setForm(blankForm()); }
-  function openEdit(p: PlanRow) { setFormErrors([]); setForm(formFromPlan(p)); }
+  function openAdd() { setFormErrors([]); setForm(blankForm(catalogue)); }
+  function openEdit(p: PlanRow) { setFormErrors([]); setForm(formFromPlan(p, catalogue)); }
 
   async function saveForm() {
     if (!form) return;
@@ -311,7 +307,8 @@ export default function AdminPlansPage() {
 
       {form && (
         <PlanFormModal
-          form={form} setForm={setForm} errors={formErrors} saving={saving}
+          form={form} setForm={setForm} catalogue={catalogue}
+          errors={formErrors} saving={saving}
           onClose={() => setForm(null)} onSave={saveForm}
         />
       )}
@@ -460,10 +457,11 @@ function FieldLabel({ children, htmlFor }: { children: React.ReactNode; htmlFor?
 //  Add / Edit
 // ---------------------------------------------------------------------------
 function PlanFormModal({
-  form, setForm, errors, saving, onClose, onSave,
+  form, setForm, catalogue, errors, saving, onClose, onSave,
 }: {
   form: PlanForm;
   setForm: (f: PlanForm) => void;
+  catalogue: ProductRow[];
   errors: string[];
   saving: boolean;
   onClose: () => void;
@@ -472,6 +470,10 @@ function PlanFormModal({
   const set = <K extends keyof PlanForm>(key: K, value: PlanForm[K]) => setForm({ ...form, [key]: value });
   const setProduct = (key: string, on: boolean) => setForm({ ...form, products: { ...form.products, [key]: on } });
   const editing = Boolean(form.id);
+  // Codes this plan grants that the catalogue has never heard of. Enterprise
+  // still carries payroll, sheet and word from the 0000 seed; 0028 removed the
+  // products but nothing corrected the plans. Shown, not offered.
+  const unknown = Object.keys(form.products).filter((k) => !catalogue.some((x) => x.code === k));
 
   return (
     <Modal
@@ -591,7 +593,7 @@ function PlanFormModal({
           <FieldLabel>Included products</FieldLabel>
           <div className="flex flex-wrap gap-x-5 gap-y-2">
             {Object.keys(form.products).map((key) => {
-              const known = PRODUCTS.find((x) => x.key === key);
+              const known = catalogue.find((x) => x.code === key);
               return (
                 <label key={key} htmlFor={`prod-${key}`}
                        className="flex cursor-pointer items-center gap-2 text-sm text-ink">
@@ -603,12 +605,32 @@ function PlanFormModal({
                     checked={Boolean(form.products[key])}
                     onChange={(e) => setProduct(key, e.target.checked)}
                   />
-                  <span className="capitalize">{known?.label ?? key}</span>
-                  {known?.soon && <span className="text-[11px] text-ink-muted">(soon)</span>}
+                  {known ? (
+                    <>
+                      <span>{productLabel(known)}</span>
+                      {!known.isAvailable && (
+                        <span className="text-[11px] text-ink-muted">(soon)</span>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-mono text-xs">{key}</span>
+                      <span className="text-[11px] text-warn">not a product</span>
+                    </>
+                  )}
                 </label>
               );
             })}
           </div>
+          {unknown.length > 0 && (
+            <p className="mt-2 text-xs text-ink-muted">
+              {unknown.length === 1
+                ? 'One code on this plan is not in the product catalogue.'
+                : `${unknown.length} codes on this plan are not in the product catalogue.`}{' '}
+              They stay on the plan until you untick one and save, so nothing is
+              stripped from a customer by accident.
+            </p>
+          )}
         </div>
       </div>
     </Modal>
