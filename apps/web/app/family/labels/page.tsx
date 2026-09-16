@@ -8,6 +8,7 @@ import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 import { familyApi, type LabelSummary } from '@/lib/family';
 import { Input } from '@/components/ui/Form';
+import { Alert } from '@/components/ui/Page';
 
 // ============================================================================
 //  Manage labels.
@@ -104,20 +105,8 @@ function Labels() {
 
   return (
     <>
-      {error && (
-        <div className="alert alert-danger !flex !items-start !mb-[1.5rem]">
-          <div className="!flex-auto">{error}</div>
-          <button type="button" className="btn-close" aria-label="Dismiss"
-                  onClick={() => setError(null)} />
-        </div>
-      )}
-      {note && (
-        <div className="alert alert-success !flex !items-start !mb-[1.5rem]">
-          <div className="!flex-auto">{note}</div>
-          <button type="button" className="btn-close" aria-label="Dismiss"
-                  onClick={() => setNote(null)} />
-        </div>
-      )}
+      {error && <Alert tone="danger" onDismiss={() => setError(null)}>{error}</Alert>}
+      {note && <Alert tone="ok" onDismiss={() => setNote(null)}>{note}</Alert>}
 
       <p className="!text-[0.875rem] !text-ink-muted !mb-[1rem]">
         Labels group contacts without moving them. A contact can carry any number, and
@@ -276,7 +265,7 @@ function LabelDialog({ label, onClose, onSaved }: {
         </>
       }
     >
-      {error && <div className="alert alert-danger !mb-[1rem]">{error}</div>}
+      {error && <Alert tone="danger">{error}</Alert>}
 
       <Field
         label="Name"

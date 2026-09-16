@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { FamilyShell } from '@/components/family/FamilyShell';
 import { Button, Card } from '@/components/ui/Kit';
+import { Switch } from '@/components/ui/Form';
+import { Alert } from '@/components/ui/Page';
 import { useAuth } from '@/lib/auth';
 import { familyApi, type FamilySettings } from '@/lib/family';
 
@@ -86,20 +88,8 @@ export default function FamilySettingsPage() {
 
   return (
     <FamilyShell title="Contact settings" breadcrumb="Settings">
-      {error && (
-        <div className="alert alert-danger !flex !items-start !mb-[1.5rem]">
-          <div className="!flex-auto">{error}</div>
-          <button type="button" className="btn-close" aria-label="Dismiss"
-                  onClick={() => setError(null)} />
-        </div>
-      )}
-      {note && (
-        <div className="alert alert-success !flex !items-start !mb-[1.5rem]">
-          <div className="!flex-auto">{note}</div>
-          <button type="button" className="btn-close" aria-label="Dismiss"
-                  onClick={() => setNote(null)} />
-        </div>
-      )}
+      {error && <Alert tone="danger" onDismiss={() => setError(null)}>{error}</Alert>}
+      {note && <Alert tone="ok" onDismiss={() => setNote(null)}>{note}</Alert>}
 
       <Card
         title="Saving contacts automatically"
@@ -112,26 +102,20 @@ export default function FamilySettingsPage() {
       >
         {!settings ? (
           <div className="!flex !justify-center !py-[1.5rem]">
-            <span className="!inline-block animate-spin !rounded-[50%]"
-                  style={{ width: 28, height: 28, border: '3px solid rgba(0,0,0,.12)',
-                           borderTopColor: '#6C3CE9' }} />
+            <span className="inline-block h-7 w-7 animate-spin !rounded-[50%] border-[3px] border-line border-t-brand-600" />
           </div>
         ) : (
           <div className="!flex !flex-col !gap-[1rem]">
             {SWITCHES.map((s, i) => (
               <div key={s.key}>
                 {i > 0 && <hr className="mt-0 !mb-[1rem]" />}
-                <div className="form-check form-switch">
-                  <input
-                    className="form-check-input"
-                    type="checkbox"
-                    role="switch"
-                    id={s.id}
-                    checked={Boolean(settings[s.key])}
-                    onChange={(e) => toggle(s.key)(e.target.checked)}
-                  />
-                  <label className="form-check-label" htmlFor={s.id}>{s.label}</label>
-                </div>
+                <Switch
+                  id={s.id}
+                  className="mb-0"
+                  checked={Boolean(settings[s.key])}
+                  onChange={(e) => toggle(s.key)(e.target.checked)}
+                  label={s.label}
+                />
                 {/* Indented to line up under the label rather than the switch,
                     so the hint reads as belonging to the setting above it. */}
                 <p className="!text-[0.875rem] !text-ink-muted mb-0" style={{ marginLeft: 44 }}>{s.hint}</p>
