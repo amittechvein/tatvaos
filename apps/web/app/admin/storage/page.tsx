@@ -37,18 +37,21 @@ export default function AdminStoragePage() {
 
   return (
     <AdminShell scope="platform" title="Storage" subtitle="Committed against used, across every organisation">
-      <div className="row">
-        <div className="col-xl-4 col-md-6">
+      {/* Three stats: one column on a phone, two from tablet, three on a wide
+          screen — the counts overrides.css re-declares, never an arbitrary
+          template, which YZEN's own .grid would flatten. */}
+      <div className="!mb-[1.5rem] grid !gap-[1.5rem] md:grid-cols-2 xl:grid-cols-3">
+        <div>
           <Stat tone="primary" label="Committed" value={formatBytes(totals.committed)}
                 caption="bought across all orgs"
                 icon={<i className="ri-database-2-line !text-[1.125rem]" />} />
         </div>
-        <div className="col-xl-4 col-md-6">
+        <div>
           <Stat tone="info" label="Used" value={formatBytes(totals.used)}
                 caption={`${totals.pct}% of committed`}
                 icon={<i className="ri-hard-drive-2-line !text-[1.125rem]" />} />
         </div>
-        <div className="col-xl-4 col-md-6">
+        <div>
           <Stat tone="success" label="Organisations" value={String(totals.count)}
                 caption="with a storage pool"
                 icon={<i className="ri-building-line !text-[1.125rem]" />} />
@@ -84,7 +87,10 @@ export default function AdminStoragePage() {
                     </div>
                   </Td>
                   <Td className="text-end">
-                    <Link href="/admin/organisations" className="btn btn-sm btn-light">Open</Link>
+                    <Link href="/admin/organisations"
+                          className="inline-flex items-center rounded-lg border border-line bg-surface !px-[0.8rem] !py-[0.25rem] !text-[0.8rem] font-semibold text-ink no-underline hover:bg-canvas">
+                      Open
+                    </Link>
                   </Td>
                 </tr>
               );

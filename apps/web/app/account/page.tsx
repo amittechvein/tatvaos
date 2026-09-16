@@ -17,11 +17,12 @@
 //  ---------------------------------------------------------------------------
 //  CONVERTED OFF MUI. Two notes for whoever edits the layout next.
 //
-//  Columns use Bootstrap's row/col, not Tailwind's grid. YZEN ships its own
-//  12-column `.grid` that collides with Tailwind's, and overrides.css can only
-//  re-declare the enumerated utilities — an arbitrary value like
-//  grid-cols-[180px_1fr] silently flattens to one column. Flex and row/col are
-//  the reliable choices here.
+//  Columns are flex or an ENUMERATED grid-cols-*, never an arbitrary template.
+//  YZEN ships its own 12-column `.grid` that collides with Tailwind's, and
+//  overrides.css can only re-declare the counts listed in it — an arbitrary
+//  value like grid-cols-[180px_1fr] silently flattens to one column. This page
+//  used Bootstrap's row/col for that reason until 16 Sept 2026; the layouts
+//  below are the same shapes in flex and grid-cols-2.
 //
 //  Tailwind's preflight is off (YZEN's Bootstrap reboot owns the reset), so a
 //  bare element keeps its browser defaults. Every list and input below carries
@@ -36,7 +37,8 @@ import { avatarObjectUrl, bustAvatar } from '@/lib/avatars';
 import { RequireAuth } from '@/components/RequireAuth';
 import { AppLauncher } from '@/components/shell/AppLauncher';
 import { AccountMenu } from '@/components/shell/AccountMenu';
-import { Button, Card } from '@/components/ui/Kit';
+import { Badge, Button, Card } from '@/components/ui/Kit';
+import { Alert } from '@/components/ui/Page';
 import { RecoveryCard } from '@/components/account/RecoveryCard';
 import { useAuth } from '@/lib/auth';
 import { fetchMyStorage, formatBytes, meterColour, type MyStorage } from '@/lib/myStorage';
@@ -257,7 +259,7 @@ function AccountHub() {
 
       {/* ---- Top bar --------------------------------------------------- */}
       <div
-        className="!flex !items-center gap-2 !px-[1rem] md:!px-[1.5rem] bg-white border-bottom !sticky top-0"
+        className="!flex !items-center gap-2 !px-[1rem] md:!px-[1.5rem] bg-white border-b border-line !sticky top-0"
         style={{ paddingTop: 10, paddingBottom: 10, zIndex: 10 }}
       >
         <span style={{ fontSize: 20, fontWeight: 500 }}>
@@ -267,7 +269,7 @@ function AccountHub() {
         <AppLauncher />
         <button
           type="button"
-          className="btn btn-icon btn-sm border-0 bg-transparent p-1"
+          className="inline-grid shrink-0 place-items-center rounded-full p-1 hover:bg-canvas"
           onClick={(e) => setMenuAnchor(e.currentTarget)}
           aria-label="Account menu"
         >
@@ -360,8 +362,8 @@ function AccountHub() {
                   </h1>
                   <p className="!text-ink-muted mt-1 mb-0">{user?.email}</p>
                   {me?.organisation && (
-                    <span className="badge bg-light !text-ink-muted !mt-[1rem]">
-                      Managed by {me.organisation.name}
+                    <span className="!mt-[1rem] inline-block">
+                      <Badge tone="neutral">Managed by {me.organisation.name}</Badge>
                     </span>
                   )}
                 </div>
@@ -394,8 +396,8 @@ function AccountHub() {
                   />
                 </div>
 
-                <div className="row g-3">
-                  <div className="col-sm-6">
+                <div className="grid !gap-[1rem] sm:grid-cols-2">
+                  <div>
                     <Card title="Security check"
                           subtitle={`Signed in on ${sessions.length || '…'} device${sessions.length === 1 ? '' : 's'}`}>
                       <p className="!text-[0.875rem] !text-ink-muted !mb-[1rem]">
@@ -405,7 +407,7 @@ function AccountHub() {
                       <Button variant="ghost" onClick={() => setSection('devices')}>Review devices</Button>
                     </Card>
                   </div>
-                  <div className="col-sm-6">
+                  <div>
                     <Card title="Password"
                           subtitle={user?.mfaEnabled ? 'Two-step verification is on' : 'Two-step verification is off'}>
                       <p className="!text-[0.875rem] !text-ink-muted !mb-[1rem]">
@@ -438,11 +440,11 @@ function AccountHub() {
                     <InfoRow label="Products"
                              value={me?.products?.length ? me.products.join(', ') : '—'}
                              capitalize last />
-                    <div className="alert alert-info !mt-[1.5rem] mb-0">
+                    <Alert tone="info" className="!mt-[1.5rem] mb-0">
                       Name, email and role are managed by your organisation&apos;s
                       administrator — ask them for a change. Everything on the
                       Security page you control yourself.
-                    </div>
+                    </Alert>
                   </>
                 )}
               </Card>
@@ -503,11 +505,11 @@ function AccountHub() {
                     ))}
                   </div>
                 )}
-                <div className="alert alert-info !mt-[1.5rem] mb-0">
+                <Alert tone="info" className="!mt-[1.5rem] mb-0">
                   Signing out everywhere also ends this one. Changing your password
                   does the same thing — which is what you want if the reason for
                   changing it is that somebody else knows it.
-                </div>
+                </Alert>
               </Card>
             )}
 
@@ -566,11 +568,14 @@ function InfoRow({ label, value, capitalize, last }: {
   label: string; value: string; capitalize?: boolean; last?: boolean;
 }) {
   return (
+    // A third/two-thirds split on anything wider than a phone, stacked below
+    // it. Flex rather than a grid template: an arbitrary template would be
+    // flattened by YZEN's .grid (see the note at the top of this file).
     <div
-      className={`row g-1 ${last ? '' : 'border-bottom'}`}
-      style={{ paddingTop: 14, paddingBottom: 14, marginLeft: 0, marginRight: 0 }}
+      className={`flex flex-col gap-1 sm:flex-row ${last ? '' : 'border-b border-line'}`}
+      style={{ paddingTop: 14, paddingBottom: 14 }}
     >
-      <div className="col-12 col-sm-4 px-0">
+      <div className="sm:w-1/3">
         <span
           className="!text-[0.75rem] !text-ink-muted !uppercase !block"
           style={{ letterSpacing: '0.4px', paddingTop: 2 }}
@@ -578,7 +583,7 @@ function InfoRow({ label, value, capitalize, last }: {
           {label}
         </span>
       </div>
-      <div className="col-12 col-sm-8 px-0">
+      <div className="min-w-0 sm:w-2/3">
         <span className="!text-[0.875rem]" style={{ textTransform: capitalize ? 'capitalize' : 'none' }}>
           {value}
         </span>
@@ -660,13 +665,13 @@ function MfaCard() {
     return (
       <Card title="Save your recovery codes"
             subtitle="Each one works once. They are the only way in if you lose your phone.">
-        <div className="alert alert-warning">
+        <Alert tone="warn">
           These are shown <strong>once</strong> and cannot be retrieved later.
           Print them, or put them in a password manager — not in the same place
           as your phone.
-        </div>
+        </Alert>
 
-        <ul className="!list-none !pl-0 !font-mono bg-light rounded !p-[1rem] !mb-[1rem]"
+        <ul className="!list-none !pl-0 !font-mono rounded bg-canvas !p-[1rem] !mb-[1rem]"
             style={{ columnCount: 2, columnGap: 24 }}>
           {codes.map((c) => <li key={c} className="py-1">{c}</li>)}
         </ul>
@@ -690,7 +695,7 @@ function MfaCard() {
     return (
       <Card title="Set up two-step verification"
             subtitle="Add TatvaOS to your authenticator app, then enter the code it shows">
-        {error && <div className="alert alert-danger">{error}</div>}
+        {error && <Alert tone="danger">{error}</Alert>}
 
         <ol className="!ps-[1rem] !text-[0.875rem] !mb-[1rem]">
           <li className="mb-2">
@@ -703,7 +708,7 @@ function MfaCard() {
               // eslint-disable-next-line @next/next/no-img-element
               <img src={qr} alt="QR code for your authenticator app"
                    width={200} height={200}
-                   className="!block my-2 border rounded bg-white p-2" />
+                   className="!block my-2 rounded border border-line bg-white p-2" />
             ) : (
               <div className="my-2 !text-[0.8125rem] !text-ink-muted">
                 The QR could not be drawn — use the key below instead.
@@ -712,7 +717,7 @@ function MfaCard() {
           </li>
           <li className="mb-2">
             No camera? Enter this key by hand instead:
-            <div className="!font-mono bg-light rounded !p-[1rem] my-2"
+            <div className="!font-mono rounded bg-canvas !p-[1rem] my-2"
                  style={{ fontSize: 15, letterSpacing: '0.05em', wordBreak: 'break-all' }}>
               {groupSecret(setup.secret)}
             </div>
@@ -725,7 +730,7 @@ function MfaCard() {
         </ol>
 
         <div className="!mb-[1rem]" style={{ maxWidth: 220 }}>
-          <label className="form-label !text-[0.8125rem] !font-medium mb-1" htmlFor="tv-mfa-confirm">
+          <label className="mb-1 block !text-[0.8125rem] !font-medium text-ink" htmlFor="tv-mfa-confirm">
             Code from your app
           </label>
           <Input
@@ -761,7 +766,7 @@ function MfaCard() {
     return (
       <Card title="Two-step verification"
             subtitle="On — a code from your app is required alongside your password">
-        {error && <div className="alert alert-danger">{error}</div>}
+        {error && <Alert tone="danger">{error}</Alert>}
 
         <p className="!text-[0.875rem] !text-ink-muted">
           {status.recoveryCodesRemaining === 0
@@ -770,7 +775,7 @@ function MfaCard() {
         </p>
 
         <div className="!mb-[1rem]" style={{ maxWidth: 320 }}>
-          <label className="form-label !text-[0.8125rem] !font-medium mb-1" htmlFor="tv-mfa-pw">
+          <label className="mb-1 block !text-[0.8125rem] !font-medium text-ink" htmlFor="tv-mfa-pw">
             Your password
           </label>
           <Input
@@ -784,7 +789,7 @@ function MfaCard() {
           {/* Asked for because a live session is not enough to weaken the
               factor — a borrowed unlocked laptop is exactly what it defends
               against. */}
-          <div className="form-text !text-[0.75rem]">Required to change these settings.</div>
+          <div className="mt-1 !text-[0.75rem] text-ink-muted">Required to change these settings.</div>
         </div>
 
         <div className="!flex gap-2 flex-wrap">
@@ -813,7 +818,7 @@ function MfaCard() {
   return (
     <Card title="Two-step verification"
           subtitle="Off — your password alone signs you in">
-      {error && <div className="alert alert-danger">{error}</div>}
+      {error && <Alert tone="danger">{error}</Alert>}
 
       <p className="!text-[0.875rem] !text-ink-muted">
         Ask for a code from your phone as well as your password. It means a
@@ -822,10 +827,10 @@ function MfaCard() {
       </p>
 
       {status?.enrolmentPending && (
-        <div className="alert alert-info py-2">
+        <Alert tone="info" className="py-2">
           You started setting this up and did not finish. Starting again
           replaces the earlier key.
-        </div>
+        </Alert>
       )}
 
       <Button variant="primary" disabled={busy}
