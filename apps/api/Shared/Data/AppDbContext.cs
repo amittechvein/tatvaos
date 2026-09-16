@@ -50,6 +50,14 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
 
     /// <summary>
+    /// Sign-in handoff codes (decision 0003). Minted inside a tenant, so the
+    /// normal scoping applies here; the REDEEM does not use this DbSet at all —
+    /// it goes through core.redeem_handoff_code, which spends the code and
+    /// returns its tenant in one statement.
+    /// </summary>
+    public DbSet<AuthHandoffCode> AuthHandoffCodes => Set<AuthHandoffCode>();
+
+    /// <summary>
     /// Two-step recovery codes. NO query filter, deliberately — they are
     /// checked before the tenant is known, exactly like the refresh-token
     /// lookup. See the entity comment.

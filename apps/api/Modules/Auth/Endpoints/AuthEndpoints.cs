@@ -284,6 +284,16 @@ public static class AuthEndpoints
         g.MapPost("/refresh", RefreshAsync).AllowAnonymous();
         g.MapPost("/logout", LogoutAsync).RequireAuthorization("User");
         g.MapGet("/me", MeAsync).RequireAuthorization("User");
+
+        // ---- sign-in handoff: a token becomes a browser session -----------
+        // Decision 0003. Mint requires the app's bearer token; redeem is
+        // anonymous BY DEFINITION — the browser presenting the code is the one
+        // that has no session yet. Its rate limit is the only thing between a
+        // 256-bit code and someone guessing at it.
+        g.MapPost("/handoff", MintHandoffAsync).RequireAuthorization("User");
+        g.MapPost("/handoff/redeem", RedeemHandoffAsync)
+            .AllowAnonymous()
+            .RequireRateLimiting("auth-handoff-redeem");
         g.MapPost("/change-password", ChangePasswordAsync).RequireAuthorization("User");
         g.MapGet("/sessions", SessionsAsync).RequireAuthorization("User");
         g.MapGet("/recovery-status", RecoveryStatusAsync).RequireAuthorization("User");
@@ -873,6 +883,199 @@ public static class AuthEndpoints
             refreshed.MustChangePassword, Describe(refreshed),
             Slot: slot,
             Accounts: BuildRoster(http, slot)));
+    }
+
+    // =====================================================================
+    //  SIGN-IN HANDOFF — the app's token becomes a browser session
+    // =====================================================================
+    //
+    //  docs/decisions/0003-mobile-signin-handoff.md, accepted 15 Sept 2026.
+    //
+    //  The mobile app holds a bearer token; every web product reads a cookie.
+    //  So a web view inside the app lands on a login page while its owner is
+    //  signed in. Mint trades the token for a sixty-second single-use code;
+    //  redeem trades that code for exactly the cookies LoginAsync sets.
+    //
+    //  THREE THINGS HERE ARE LOAD-BEARING:
+    //
+    //    1. The code travels in the URL FRAGMENT, never the query string, so
+    //       it cannot reach a server log or a proxy. Caddy has no `log`
+    //       directive today and Next logs no requests — this protects the day
+    //       somebody turns logging on, and browser history, which we do not
+    //       control either way.
+    //    2. Single use is the DATABASE's job, not this file's. Two tabs
+    //       redeeming at once both pass any check written in C#; only the one
+    //       UPDATE in core.redeem_handoff_code can be right.
+    //    3. The redirect comes from the ROW, not from the URL. The `p` in the
+    //       fragment is decoration for the landing page; if this returned it
+    //       instead, anyone could edit the fragment and have us hand them a
+    //       session pointed anywhere — the open redirect the allowlist exists
+    //       to prevent.
+    // =====================================================================
+
+    /// <summary>
+    /// The products a handoff may open. First path segment, exact match.
+    ///
+    /// Each is a real route under apps/web/app/. NOT a filter of dangerous
+    /// values but an allowlist of permitted ones: a rule that lists what is
+    /// forbidden is wrong the moment somebody adds a route.
+    /// </summary>
+    private static readonly string[] HandoffProducts =
+        ["mail", "space", "calendar", "family", "admin"];
+
+    /// <summary>
+    /// Sixty seconds — long enough for a phone to open a browser and load a
+    /// page, short enough that a code copied off a screen is already dead. The
+    /// clock runs from MINT, so a slow landing page spends this budget.
+    /// </summary>
+    private static readonly TimeSpan HandoffLifetime = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// One sentence for expired, spent, tampered-with and never-existed alike.
+    /// Telling them apart would let a prober with a random code learn whether
+    /// it was ever real.
+    /// </summary>
+    private const string HandoffFailure =
+        "This link has expired. Go back to the app and open it again.";
+
+    // ------------------------------------------------------------------
+    private static async Task<IResult> MintHandoffAsync(
+        HandoffRequest req, AppDbContext db, TenantContext tenant,
+        IConfiguration config, CancellationToken ct)
+    {
+        if (tenant.UserId is not Guid uid) return Results.Unauthorized();
+
+        var path = req.Path?.Trim() ?? "";
+        if (!IsHandoffPath(path))
+            return Results.BadRequest(new
+            {
+                error = "That is not a product this app can open.",
+            });
+
+        // The same generator and the same hash as a refresh token: 256 bits
+        // from a cryptographic RNG, stored as SHA-256. There is nothing to
+        // guess, so nothing here needs a slow hash.
+        var code = TokenIssuer.GenerateRefreshToken();
+
+        var row = new AuthHandoffCode
+        {
+            TenantId = tenant.TenantId,
+            UserId = uid,
+            CodeHash = TokenIssuer.HashRefreshToken(code),
+            Path = path,
+            ExpiresAt = DateTimeOffset.UtcNow.Add(HandoffLifetime),
+        };
+
+        db.AuthHandoffCodes.Add(row);
+        await db.SaveChangesAsync(ct);
+
+        // Same base as every other link this file builds (password reset,
+        // recovery, the new-device alert) rather than a second setting that
+        // can disagree with them.
+        var baseUrl = (config["Jwt:Issuer"] ?? "https://core.tatvaos.com").TrimEnd('/');
+
+        return Results.Ok(new
+        {
+            url = $"{baseUrl}/handoff#c={code}&p={Uri.EscapeDataString(path)}",
+            expiresAt = row.ExpiresAt,
+        });
+    }
+
+    /// <summary>
+    /// Is this a path we are willing to send someone to, signed in?
+    ///
+    /// Everything here is about one failure: a handoff that lands somewhere it
+    /// was not meant to. `//host` is a scheme-relative URL and not a path at
+    /// all; a backslash is a path separator to some browsers; `..` climbs.
+    /// Control characters are how a value that looks like one path becomes
+    /// another after something in between normalises it.
+    /// </summary>
+    private static bool IsHandoffPath(string path)
+    {
+        if (path.Length is 0 or > 200) return false;
+        if (path[0] != '/' || path.StartsWith("//", StringComparison.Ordinal)) return false;
+        if (path.Contains('\\') || path.Contains("..", StringComparison.Ordinal)) return false;
+        if (path.Any(char.IsControl)) return false;
+
+        var first = path.TrimStart('/').Split('/', '?', '#')[0];
+        return HandoffProducts.Contains(first, StringComparer.Ordinal);
+    }
+
+    // ------------------------------------------------------------------
+    private static async Task<IResult> RedeemHandoffAsync(
+        HandoffRedeemRequest req, AppDbContext db, TenantContext tenant,
+        HttpContext http, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req.Code))
+            return Results.Json(new { error = HandoffFailure }, statusCode: 401);
+
+        // Spends the code and tells us whose it was, in one statement. Nothing
+        // between those two facts can interleave — see the SQL.
+        var claimed = await ClaimHandoffAsync(db, TokenIssuer.HashRefreshToken(req.Code), ct);
+        if (claimed is null)
+            return Results.Json(new { error = HandoffFailure }, statusCode: 401);
+
+        tenant.Set(claimed.TenantId, claimed.UserId, "employee");
+        await db.SyncTenantAsync(ct);
+
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == claimed.UserId, ct);
+        var org = user is null ? null
+            : await db.Tenants.FirstOrDefaultAsync(t => t.Id == user.TenantId, ct);
+
+        // The check that makes suspension mean something on this path too. A
+        // code minted a minute ago by an account suspended since must not open
+        // anything — and the answer is the same sentence as an expired code,
+        // because the person holding it has no business learning which.
+        if (user is null || user.Status is not "active"
+            || org is null || org.Status is not ("active" or "trial"))
+            return Results.Json(new { error = HandoffFailure }, statusCode: 401);
+
+        // A NEW family, not a continuation of the app's. The browser and the
+        // phone are separate sessions from here: signing the browser out, or a
+        // reuse detection there, must not end the app's session as well.
+        var (refresh, _) = await IssueRefreshAsync(db, user, Guid.NewGuid(), http, ct);
+        await db.SaveChangesAsync(ct);
+
+        // Exactly what CompleteSignInAsync does, for the same reason: take a
+        // slot rather than evicting whoever is already signed in here.
+        var slot = PickSlot(http, user.Email);
+        SetRefreshCookie(http, slot, refresh);
+        SetLabel(http, slot, user, org.Name);
+
+        // No token in this body. The page is a browser and now holds the
+        // cookie; handing script a bearer token as well would put one where
+        // the whole design says it should not be.
+        return Results.Ok(new { redirect = claimed.Path });
+    }
+
+    private sealed record ClaimedHandoff(Guid TenantId, Guid UserId, string Path);
+
+    /// <summary>
+    /// Redeem through the SECURITY DEFINER function — the same shape, and for
+    /// the same reason, as <see cref="ResolveTokenAsync"/>: the row is
+    /// RLS-forced and the tenant is not known until it has been read. Raw ADO
+    /// because EF's SqlQuery maps scalars only.
+    /// </summary>
+    private static async Task<ClaimedHandoff?> ClaimHandoffAsync(
+        AppDbContext db, string hash, CancellationToken ct)
+    {
+        var conn = db.Database.GetDbConnection();
+        if (conn.State != System.Data.ConnectionState.Open)
+            await conn.OpenAsync(ct);
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText =
+            "SELECT tenant_id, user_id, path FROM core.redeem_handoff_code(@hash)";
+
+        var p = cmd.CreateParameter();
+        p.ParameterName = "@hash";
+        p.Value = hash;
+        cmd.Parameters.Add(p);
+
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct)) return null;
+
+        return new ClaimedHandoff(reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2));
     }
 
     // ------------------------------------------------------------------
@@ -2195,6 +2398,12 @@ public sealed record LoginRequest(string? Email, string? Password);
 public sealed record OtpRequest(string? Phone);
 public sealed record OtpVerifyRequest(string? Phone, string? Code);
 public sealed record RefreshRequest(string? RefreshToken);
+
+/// <summary>The product path the app wants to open, e.g. "/mail/inbox".</summary>
+public sealed record HandoffRequest(string? Path);
+
+/// <summary>The code the landing page read out of its own URL fragment.</summary>
+public sealed record HandoffRedeemRequest(string? Code);
 public sealed record SetRecoveryEmailRequest(string? Email, string? CurrentPassword = null);
 public sealed record SetPhoneRequest(string? Phone, string? CurrentPassword = null);
 /// <summary>The body of a DELETE that removes a way back into the account.</summary>
