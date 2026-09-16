@@ -4,10 +4,11 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 
 import { AdminShell } from '@/components/admin/AdminShell';
-import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
+import { Badge, Button, Card, Empty, IconButton, Table, Td } from '@/components/ui/Kit';
 import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 import { Input } from '@/components/ui/Form';
+import { Alert } from '@/components/ui/Page';
 
 interface KeyRow {
   id: string;
@@ -73,7 +74,10 @@ export default function ApiKeysPage() {
       subtitle="Let your own software send mail through TatvaOS"
       actions={
         <div className="!flex gap-2">
-          <a className="btn btn-secondary" href="/docs/TatvaOS-Mail-API-Integration-Guide.pdf" download>
+          {/* A real download link, not a Button with href: Button renders a
+              Next <Link>, which routes instead of downloading the file. */}
+          <a href="/docs/TatvaOS-Mail-API-Integration-Guide.pdf" download
+             className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink no-underline transition-colors hover:bg-canvas">
             Integration guide (PDF)
           </a>
           <Button variant="primary" onClick={() => setCreating(true)}>
@@ -82,18 +86,8 @@ export default function ApiKeysPage() {
         </div>
       }
     >
-      {error && (
-        <div className="alert alert-danger !flex !items-start !mb-[1rem]">
-          <div className="!flex-auto">{error}</div>
-          <button type="button" className="btn-close" aria-label="Dismiss" onClick={() => setError(null)} />
-        </div>
-      )}
-      {notice && (
-        <div className="alert alert-success !flex !items-start !mb-[1rem]">
-          <div className="!flex-auto">{notice}</div>
-          <button type="button" className="btn-close" aria-label="Dismiss" onClick={() => setNotice(null)} />
-        </div>
-      )}
+      {error && <Alert tone="danger" onDismiss={() => setError(null)}>{error}</Alert>}
+      {notice && <Alert tone="ok" onDismiss={() => setNotice(null)}>{notice}</Alert>}
 
       {fresh && (
         <FreshKeyCard
@@ -243,28 +237,33 @@ function FreshKeyCard({ fresh, endpoint, onDismiss }: {
             page it cannot be recovered, only replaced.
           </div>
         </div>
-        <button type="button" className="btn-close" aria-label="Dismiss" onClick={onDismiss} />
+        <IconButton label="Dismiss" className="!h-8 !w-8 border-0 bg-transparent" onClick={onDismiss}>
+          ✕
+        </IconButton>
       </div>
 
-      <div className="input-group !mb-[1rem]">
-        <Input  readOnly value={fresh.key}
+      {/* The field and its Copy button are one control, so the button cannot
+          wrap away from the key it copies. */}
+      <div className="!flex items-stretch !mb-[1rem]">
+        <Input readOnly value={fresh.key} className="rounded-r-none"
                onFocus={(e) => e.currentTarget.select()} />
-        <Button variant="primary" onClick={() => void copy('key', fresh.key)}>
+        <Button variant="primary" className="rounded-l-none"
+                onClick={() => void copy('key', fresh.key)}>
           {copied === 'key' ? 'Copied' : 'Copy key'}
         </Button>
       </div>
 
       {fresh.allowed_sender_addresses && fresh.allowed_sender_addresses.length > 0 && (
-        <div className="alert alert-info mb-2 !text-[0.75rem]">
+        <Alert tone="info" className="mb-2 !text-[0.75rem]">
           <strong>Allowed to send from:</strong> {fresh.allowed_sender_addresses.join(', ')}
-        </div>
+        </Alert>
       )}
 
       <div className="!text-[0.75rem] !text-ink-muted mb-1">
         A complete first send, with this key already filled in. Replace the two
         addresses and run it — <strong>202</strong> means it worked.
       </div>
-      <pre className="bg-light rounded !p-[1rem] !text-[0.75rem] mb-2" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+      <pre className="bg-canvas rounded !p-[1rem] !text-[0.75rem] mb-2" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
         {example}
       </pre>
       <Button variant="secondary" onClick={() => void copy('example', example)}>
@@ -304,7 +303,7 @@ function HowToUse({ endpoint }: { endpoint: string }) {
           <div className="!text-[0.8125rem] !text-ink-muted mb-2">
             One <code>POST</code>, JSON body, the key in the <code>Authorization</code> header.
           </div>
-          <pre className="bg-light rounded !p-[1rem] !text-[0.75rem] mb-0" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+          <pre className="bg-canvas rounded !p-[1rem] !text-[0.75rem] mb-0" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
             {`POST ${endpoint}
 Authorization: Bearer tvos_…
 Content-Type: application/json
@@ -320,10 +319,10 @@ Content-Type: application/json
         </li>
       </ol>
 
-      <div className="row g-4">
-        <div className="col-md-6">
+      <div className="grid !gap-[1.5rem] md:grid-cols-2">
+        <div>
           <div className="!font-semibold mb-2">Fields</div>
-          <table className="table table-sm !text-[0.8125rem] mb-0">
+          <table className="w-full border-collapse !text-[0.8125rem] mb-0 [&_td]:border-b [&_td]:border-line [&_td]:py-1.5 [&_td]:pr-3 [&_td]:align-top">
             <tbody>
               <tr><td><code>from</code></td><td>Required. Must be in your key&apos;s allowed addresses.</td></tr>
               <tr><td><code>to</code></td><td>Required. Up to {MAX_RECIPIENTS} addresses, separated by commas.</td></tr>
@@ -334,9 +333,9 @@ Content-Type: application/json
             </tbody>
           </table>
         </div>
-        <div className="col-md-6">
+        <div>
           <div className="!font-semibold mb-2">What comes back</div>
-          <table className="table table-sm !text-[0.8125rem] mb-0">
+          <table className="w-full border-collapse !text-[0.8125rem] mb-0 [&_td]:border-b [&_td]:border-line [&_td]:py-1.5 [&_td]:pr-3 [&_td]:align-top">
             <tbody>
               <tr>
                 <td><Badge tone="ok">202</Badge></td>
@@ -359,11 +358,11 @@ Content-Type: application/json
         </div>
       </div>
 
-      <div className="alert alert-info !text-[0.75rem] !mt-[1.5rem] mb-0">
+      <Alert tone="info" className="!text-[0.75rem] !mt-[1.5rem] mb-0">
         <strong>First messages from a new address often land in spam.</strong> That is the
         receiver&apos;s reputation system, not a fault here — every message is DKIM-signed and
         passes SPF and DMARC. Reputation builds with real mail people open and reply to.
-      </div>
+      </Alert>
     </Card>
   );
 }
@@ -481,14 +480,14 @@ function CreateDialog({ onClose, onCreated, onError }: {
         {loadingMailboxes ? (
           <div className="!text-ink-muted !text-[0.8125rem]">Loading mailboxes...</div>
         ) : mailboxes.length === 0 ? (
-          <div className="alert alert-warning mb-0 !text-[0.75rem]">
+          <Alert tone="warn" className="mb-0 !text-[0.75rem]">
             No active mailboxes found. Create mailboxes under{' '}
             <Link href="/org/mailboxes">Shared mailboxes</Link> first.
-          </div>
+          </Alert>
         ) : (
-          <div style={{ maxHeight: 250, overflowY: 'auto', border: '1px solid #ddd', borderRadius: 4 }}>
+          <div className="rounded-lg border border-line" style={{ maxHeight: 250, overflowY: 'auto' }}>
             {mailboxes.map((addr) => (
-              <label key={addr} className="!block p-2 border-bottom" style={{ cursor: 'pointer', marginBottom: 0 }}>
+              <label key={addr} className="!block border-b border-line p-2 last:border-0" style={{ cursor: 'pointer', marginBottom: 0 }}>
                 <input
                   type="checkbox"
                   checked={selectedAddresses.includes(addr)}
@@ -508,9 +507,9 @@ function CreateDialog({ onClose, onCreated, onError }: {
         )}
       </Field>
 
-      <div className="alert alert-info mb-0 !text-[0.75rem]">
+      <Alert tone="info" className="mb-0 !text-[0.75rem]">
         The key is shown <strong>once</strong>, on the next screen. Have somewhere ready to paste it.
-      </div>
+      </Alert>
     </Modal>
   );
 }
@@ -595,11 +594,11 @@ function EditDialog({ keyRow, onClose, onUpdated, onError }: {
       {loadingMailboxes ? (
         <div className="!text-ink-muted !text-[0.8125rem]">Loading mailboxes...</div>
       ) : mailboxes.length === 0 ? (
-        <div className="alert alert-warning mb-0 !text-[0.75rem]">No active mailboxes found.</div>
+        <Alert tone="warn" className="mb-0 !text-[0.75rem]">No active mailboxes found.</Alert>
       ) : (
-        <div style={{ maxHeight: 250, overflowY: 'auto', border: '1px solid #ddd', borderRadius: 4 }}>
+        <div className="rounded-lg border border-line" style={{ maxHeight: 250, overflowY: 'auto' }}>
           {mailboxes.map((addr) => (
-            <label key={addr} className="!block p-2 border-bottom" style={{ cursor: 'pointer', marginBottom: 0 }}>
+            <label key={addr} className="!block border-b border-line p-2 last:border-0" style={{ cursor: 'pointer', marginBottom: 0 }}>
               <input
                 type="checkbox"
                 checked={selectedAddresses.includes(addr)}

@@ -381,6 +381,47 @@ export function Meter({ used, total, tone }: {
 }
 
 // ---------------------------------------------------------------------------
+/**
+ * A square button whose whole content is an icon — add, edit, delete, expand.
+ *
+ * It takes `label` rather than an optional aria-label, because an icon button
+ * without one is a button a screen reader announces as "button" and nothing
+ * else. The label is also the tooltip, so the two can never drift apart.
+ *
+ * 2.1rem square matches the icon buttons this replaces, so rows built around
+ * them keep their height.
+ */
+export function IconButton({
+  label, tone = 'default', className = '', children, ...rest
+}: {
+  label: string;
+  tone?: 'default' | 'danger';
+  className?: string;
+  children: React.ReactNode;
+} & Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'aria-label' | 'title'>) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      className={
+        'inline-grid h-[2.1rem] w-[2.1rem] shrink-0 place-items-center rounded-lg border '
+        + 'border-line bg-surface transition-colors focus-visible:outline-none '
+        + 'focus-visible:ring-2 focus-visible:ring-brand-500/40 '
+        + 'disabled:pointer-events-none disabled:opacity-50 '
+        + (tone === 'danger'
+          ? 'text-danger hover:bg-danger/10 '
+          : 'text-ink-muted hover:bg-canvas hover:text-ink ')
+        + className
+      }
+      {...rest}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
 export function Empty({ title, hint, action }: { title: string; hint?: string; action?: React.ReactNode }) {
   return (
     <div className="px-4 py-12 text-center">
