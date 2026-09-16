@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/lib/auth';
-import { Button } from '@/components/ui/Kit';
+import { Button, Spinner } from '@/components/ui/Kit';
+import { Alert } from '@/components/ui/Page';
 import { Modal } from '@/components/ui/Modal';
 import { recordingApi, type Recording } from '@/lib/connect';
 
@@ -117,11 +118,11 @@ export function Player({ meetingId, recording, onClose }: {
         </>
       )}
     >
-      {error && <div className="alert alert-danger py-2 !text-[0.8125rem]">{error}</div>}
+      {error && <Alert tone="danger" className="py-2 !text-[0.8125rem]">{error}</Alert>}
 
       {src === null ? (
         <div className="!p-[1.5rem] text-center !text-ink-muted !text-[0.8125rem]">
-          <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />
+          <Spinner inline />
           Opening…
         </div>
       ) : (

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
+import { Alert } from '@/components/ui/Page';
 import { Modal } from '@/components/ui/Modal';
 import { Player } from './Player';
 import { ShareDialog } from './Share';
@@ -164,7 +165,7 @@ export default function Recordings({ meetingId, isHost, canDelete, guestNames }:
           <Button onClick={() => void load()}>Refresh</Button>
         ) : undefined}
       >
-        {error && <div className="alert alert-danger py-2 !text-[0.8125rem]">{error}</div>}
+        {error && <Alert tone="danger" className="py-2 !text-[0.8125rem]">{error}</Alert>}
 
         {list.items.length === 0 ? (
           <Empty
@@ -294,7 +295,7 @@ function Row({ item, meetingId, isHost, canDelete, busy, act, onPlay, sharing, o
               wants, so this is the primary action and Download moved inside
               the player for the people who genuinely want the file. */}
           {r.hasFile && (
-            <Button variant="primary" className="btn-sm" onClick={() => onPlay(r)}>
+            <Button variant="primary" size="sm" onClick={() => onPlay(r)}>
               {r.mode === 'video' ? 'Watch' : 'Listen'}
             </Button>
           )}
@@ -304,19 +305,19 @@ function Row({ item, meetingId, isHost, canDelete, busy, act, onPlay, sharing, o
               host-only for the same reason. A co-host running the room is not
               the same as a co-host giving a recording of it away. */}
           {sharing !== null && isHost && r.hasFile && !live && (
-            <Button variant="ghost" className="btn-sm" onClick={() => onShare(r)}>
+            <Button variant="ghost" size="sm" onClick={() => onShare(r)}>
               Share
             </Button>
           )}
           {isHost && live && (
-            <Button variant="danger" className="btn-sm" disabled={busy}
+            <Button variant="danger" size="sm" disabled={busy}
                     onClick={() => void act(r.id,
                       () => recordingApi.stop(authedFetch, meetingId, r.id))}>
               Stop
             </Button>
           )}
           {canDelete && !live && r.status !== 'deleted' && (
-            <Button variant="ghost" className="btn-sm" disabled={busy}
+            <Button variant="ghost" size="sm" disabled={busy}
                     onClick={() => void act(r.id,
                       () => recordingApi.remove(authedFetch, meetingId, r.id))}>
               Delete
@@ -453,14 +454,14 @@ function NotesCard({
       {n.attendance.length > 0 && (
         <>
           <h6 className="!text-[0.8125rem] !text-ink-muted">Who attended ({n.attendance.length})</h6>
-          <div className="table-responsive !mb-[1rem]">
-            <table className="table table-sm text-nowrap mb-0">
+          <div className="overflow-x-auto !mb-[1rem]">
+            <table className="w-full border-collapse whitespace-nowrap mb-0 [&_td]:border-b [&_td]:border-line [&_td]:px-2 [&_td]:py-1.5 [&_td]:align-middle">
               <tbody>
                 {n.attendance.map((a) => (
                   <tr key={a.identity}>
                     <td className="!text-[0.8125rem]">
                       {a.name}
-                      {a.guest && <span className="badge bg-secondary-transparent ms-2">Guest</span>}
+                      {a.guest && <span className="ml-2"><Badge tone="neutral">Guest</Badge></span>}
                     </td>
                     <td className="!text-[0.8125rem] !text-ink-muted">
                       {a.joinedAt ? timeLabel(a.joinedAt) : '—'}
@@ -497,12 +498,12 @@ function NotesCard({
 
       {t?.text && (
         <>
-          <Button className="btn-sm" onClick={onToggle}>
+          <Button size="sm" onClick={onToggle}>
             {show ? 'Hide the transcript' : 'Show the transcript'}
           </Button>
           {show && (
             <>
-              <pre className="!mt-[1rem] !p-[1rem] !text-[0.75rem] bg-light rounded"
+              <pre className="!mt-[1rem] !p-[1rem] !text-[0.75rem] rounded bg-canvas"
                    style={{ maxHeight: 420, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
                 {t.segments.length > 0
                   ? t.segments.map((s) => `[${clock(s.start)}] ${s.speaker ? `${s.speaker}: ` : ''}${s.text}`).join('\n')

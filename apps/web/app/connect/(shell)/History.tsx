@@ -3,7 +3,8 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
-import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
+import { Badge, Button, Card, Empty, Spinner, Table, Td } from '@/components/ui/Kit';
+import { Alert, PageHeader } from '@/components/ui/Page';
 import { Modal } from '@/components/ui/Modal';
 import {
   connectApi, durationLabel, minutesApi, prettyCode, recordingApi, sizeLabel,
@@ -126,33 +127,24 @@ export default function History({ mode }: { mode: HistoryMode }) {
 
   return (
     <>
-      <div className="page-header-breadcrumb !flex !items-center !justify-between flex-wrap gap-2 !my-[1rem]">
-        <div>
-          <h1 className="page-title !font-semibold !text-[1.25rem] mb-1">{copy.title}</h1>
-          <ol className="breadcrumb mb-0">
-            <li className="breadcrumb-item"><Link href="/connect">Connect</Link></li>
-            <li className="breadcrumb-item active" aria-current="page">{copy.title}</li>
-          </ol>
-        </div>
-        <Button variant="primary" href="/connect/new">
-          <i className="ri-calendar-line me-1" />
-          Schedule
-        </Button>
-      </div>
+      <PageHeader
+        title={copy.title}
+        breadcrumb={[{ label: 'Connect', href: '/connect' }, { label: copy.title }]}
+        className="!my-[1rem]"
+        actions={
+          <Button variant="primary" href="/connect/new">
+            <i className="ri-calendar-line me-1" />
+            Schedule
+          </Button>
+        }
+      />
 
-      {error && (
-        <div className="alert alert-danger !flex !items-center !justify-between" role="alert">
-          <span>{error}</span>
-          <button type="button" className="btn btn-sm btn-light" onClick={() => setError(null)}>
-            Dismiss
-          </button>
-        </div>
-      )}
+      {error && <Alert tone="danger" onDismiss={() => setError(null)}>{error}</Alert>}
 
       <Card subtitle={copy.blurb} padded={false} title={copy.title}>
         {loading ? (
           <div className="!p-[1.5rem] text-center !text-ink-muted">
-            <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />
+            <Spinner inline />
             Loading…
           </div>
         ) : meetings.length === 0 ? (
@@ -252,7 +244,7 @@ function Row({
           <td colSpan={5} className="cx-drawer">
             {rowBusy ? (
               <span className="!text-ink-muted !text-[0.8125rem]">
-                <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />
+                <Spinner inline />
                 Loading…
               </span>
             ) : rowError ? (
