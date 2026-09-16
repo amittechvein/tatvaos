@@ -33,11 +33,28 @@ class MockLocalParticipant {
   }
 }
 
-const mockState = { lastRoom: null };
+// The engine as lib/engineReaper.js reads it. `revive()` is the race READ in
+// livekit-client 2.22.3 on 16 Sept: close() marks it closed, then an in-flight
+// join() sets _isClosed back to false.
+class MockEngine {
+  constructor() { this.isClosed = false; this.attemptingReconnect = false; this.closeCalls = 0; this.leaves = 0;
+    this.client = { isDisconnected: false, sendLeave: async () => { this.leaves++; } }; }
+  async close() { this.closeCalls++; this.isClosed = true; this.client.isDisconnected = true; }
+  revive() { this.isClosed = false; this.client.isDisconnected = false; }
+}
+
+const mockState = { lastRoom: null, rooms: [] };
 class MockRoom {
-  constructor() { Object.assign(this, listeners()); this.localParticipant = new MockLocalParticipant(); this.remoteParticipants = new Map(); mockState.lastRoom = this; this.connectCalls = []; }
-  async connect(url, token) { this.connectCalls.push({ url, token }); this.emit('connectionStateChanged', 'connected'); }
-  async disconnect() { this.emit('disconnected', 1); }
+  constructor() { Object.assign(this, listeners()); this.localParticipant = new MockLocalParticipant(); this.remoteParticipants = new Map(); mockState.lastRoom = this; mockState.rooms.push(this); this.connectCalls = []; this.state = 'disconnected'; }
+  async connect(url, token) { this.connectCalls.push({ url, token }); this.engine = new MockEngine(); this.state = 'connected'; this.emit('connectionStateChanged', 'connected'); }
+  // As the real one: already disconnected is a no-op; otherwise close the
+  // engine, FORGET it, then announce.
+  async disconnect() {
+    if (this.state === 'disconnected') return;
+    if (this.engine) { await this.engine.close(); this.engine = undefined; }
+    this.state = 'disconnected';
+    this.emit('disconnected', 1);
+  }
 }
 
 jest.mock('livekit-client', () => ({
@@ -93,7 +110,7 @@ jest.mock('../lib/connect', () => {
   };
 });
 
-module.exports = { steer: mockSteer, api: mockApi, room: () => mockState.lastRoom };
+module.exports = { steer: mockSteer, api: mockApi, room: () => mockState.lastRoom, rooms: mockState.rooms, MockEngine };
 
 // PermissionsAndroid has no native module under jest; give it one that says
 // yes and remembers what was asked.
