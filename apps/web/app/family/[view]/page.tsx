@@ -6,6 +6,7 @@ import { notFound, useParams, useRouter, useSearchParams } from 'next/navigation
 
 import { FamilyShell, useFamilyChrome } from '@/components/family/FamilyShell';
 import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
+import { Alert } from '@/components/ui/Page';
 import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 import { Input, Select } from '@/components/ui/Form';
@@ -407,20 +408,8 @@ export default function FamilyViewPage() {
 
   return (
     <FamilyShell title={spec.title} breadcrumb={spec.title}>
-      {error && (
-        <div className="alert alert-danger !flex !items-start !mb-[1.5rem]">
-          <div className="!flex-auto">{error}</div>
-          <button type="button" className="btn-close" aria-label="Dismiss"
-                  onClick={() => setError(null)} />
-        </div>
-      )}
-      {note && (
-        <div className="alert alert-success !flex !items-start !mb-[1.5rem]">
-          <div className="!flex-auto">{note}</div>
-          <button type="button" className="btn-close" aria-label="Dismiss"
-                  onClick={() => setNote(null)} />
-        </div>
-      )}
+      {error && <Alert tone="danger" onDismiss={() => setError(null)}>{error}</Alert>}
+      {note && <Alert tone="ok" onDismiss={() => setNote(null)}>{note}</Alert>}
 
       <p className="!text-[0.875rem] !text-ink-muted !mb-[1rem]">{spec.blurb}</p>
 
@@ -437,20 +426,22 @@ export default function FamilyViewPage() {
         <div className="!flex !items-center gap-2 !mb-[1rem] flex-wrap">
           <span className="!text-[0.875rem] !text-ink-muted">Showing only</span>
           <span
-            className="badge !rounded-[50rem] !inline-flex !items-center gap-2"
+            className="!inline-flex !items-center gap-2 !rounded-[50rem] px-2.5 py-0.5 text-xs font-semibold"
             style={activeGroup.colour
               ? { background: activeGroup.colour, color: '#fff' }
-              : { background: '#e9ecef', color: '#495057' }}
+              : { background: 'rgb(var(--canvas))', color: 'rgb(var(--ink-muted))' }}
           >
             {activeGroup.name}
             {/* The dismiss affordance MUI's Chip onDelete gave us. */}
             <button
               type="button"
-              className="btn-close btn-close-white p-0"
-              style={{ fontSize: 9, opacity: 0.9 }}
+              className="p-0 leading-none opacity-80 hover:opacity-100"
+              style={{ fontSize: 14 }}
               aria-label={`Stop filtering by ${activeGroup.name}`}
               onClick={() => chooseGroup('')}
-            />
+            >
+              ×
+            </button>
           </span>
           {!loading && (
             <span className="!text-[0.875rem] !text-ink-muted">
@@ -483,7 +474,7 @@ export default function FamilyViewPage() {
             {query && (
               <button
                 type="button"
-                className="btn btn-sm border-0 !absolute p-0"
+                className="!absolute p-0 text-ink-muted hover:text-ink"
                 style={{ right: 8, top: '50%', transform: 'translateY(-50%)', lineHeight: 1 }}
                 onClick={() => setQuery('')}
                 aria-label="Clear search"
@@ -502,9 +493,9 @@ export default function FamilyViewPage() {
                 key={key}
                 type="button"
                 aria-pressed={filter === key}
-                className={`badge !rounded-[50rem] border ${filter === key
-                  ? 'bg-primary text-white border-0'
-                  : 'bg-transparent text-body-secondary'}`}
+                className={`inline-flex items-center !rounded-[50rem] border px-2.5 py-0.5 text-xs ${filter === key
+                  ? 'border-transparent bg-brand-500 text-white'
+                  : 'border-line bg-transparent text-ink-muted hover:bg-canvas'}`}
                 style={{ cursor: 'pointer', fontWeight: 500 }}
                 onClick={() => { setFilter(key); setPage(1); }}
               >
@@ -590,7 +581,7 @@ export default function FamilyViewPage() {
                 <input
                   key="select-page"
                   type="checkbox"
-                  className="form-check-input m-0"
+                  className="m-0 h-4 w-4 cursor-pointer rounded border border-line accent-brand-500"
                   checked={allOnPage}
                   ref={(el) => { if (el) el.indeterminate = !allOnPage && someOnPage; }}
                   onChange={togglePage}
@@ -612,7 +603,7 @@ export default function FamilyViewPage() {
                     {/* stopPropagation, or ticking a box also opens the contact. */}
                     <input
                       type="checkbox"
-                      className="form-check-input m-0"
+                      className="m-0 h-4 w-4 cursor-pointer rounded border border-line accent-brand-500"
                       checked={allMatching || selected.has(c.id)}
                       disabled={allMatching}
                       onClick={(e) => e.stopPropagation()}
@@ -650,7 +641,7 @@ export default function FamilyViewPage() {
                       // title= replaces MUI's Tooltip — no library, and it is
                       // reachable on keyboard focus.
                       <span
-                        className="badge !rounded-[50rem] border text-body-secondary bg-transparent !font-normal"
+                        className="inline-flex items-center !rounded-[50rem] border border-line bg-transparent px-2.5 py-0.5 text-xs !font-normal text-ink-muted"
                         title={sourceLabel(c.source)}
                       >
                         auto
@@ -867,15 +858,13 @@ function CreateDialog({ groups, onClose, onCreated, onOpenExisting }: {
         </>
       }
     >
-      {error && <div className="alert alert-danger !mb-[1rem]">{error}</div>}
+      {error && <Alert tone="danger">{error}</Alert>}
 
       {duplicate && (
-        <div className="alert alert-warning !flex !items-center gap-2 !mb-[1rem]">
-          <div className="!flex-auto">{duplicate.message}</div>
-          <Button variant="ghost" onClick={() => onOpenExisting(duplicate.contactId)}>
-            Open it
-          </Button>
-        </div>
+        <Alert tone="warn"
+               action={<Button variant="ghost" onClick={() => onOpenExisting(duplicate.contactId)}>Open it</Button>}>
+          {duplicate.message}
+        </Alert>
       )}
 
       <Field label="Name" required hint="How this person appears in every list">
@@ -932,7 +921,8 @@ function CreateDialog({ groups, onClose, onCreated, onOpenExisting }: {
       )}
 
       <Field label="Notes">
-        <textarea className="form-control" rows={2} value={notes}
+        <textarea rows={2}
+                        className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/25" value={notes}
                   onChange={(e) => setNotes(e.target.value)} />
       </Field>
     </Modal>
@@ -1028,13 +1018,13 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
             ? <Badge tone="info">Shared</Badge>
             : <Badge tone="neutral">Mine</Badge>)}
           {c && isAutoSaved(c.source) && (
-            <span className="badge !rounded-[50rem] border text-body-secondary bg-transparent !font-normal">
+            <span className="inline-flex items-center !rounded-[50rem] border border-line bg-transparent px-2.5 py-0.5 text-xs !font-normal text-ink-muted">
               {sourceLabel(c.source)}
             </span>
           )}
         </div>
 
-        {error && <div className="alert alert-danger !mb-[1rem]">{error}</div>}
+        {error && <Alert tone="danger">{error}</Alert>}
 
         {!c ? (
           <div className="!flex !justify-center !py-[3rem]">
@@ -1064,7 +1054,8 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
                 </div>
               </div>
               <Field label="Notes">
-                <textarea className="form-control" rows={2} value={form.notes}
+                <textarea rows={2}
+                        className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/25" value={form.notes}
                           onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
               </Field>
               <div className="!flex gap-2">
@@ -1096,7 +1087,7 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
                 <Row key={e.id}>
                   <span>
                     {e.email}
-                    {e.isPrimary && <span className="badge bg-light !text-ink-muted ms-2">primary</span>}
+                    {e.isPrimary && <span className="ml-2 inline-flex items-center rounded-full border border-line bg-canvas px-2.5 py-0.5 text-xs font-semibold text-ink-muted">primary</span>}
                   </span>
                   <Button variant="ghost" disabled={busy}
                           onClick={() => run(() => familyApi.removeEmail(authedFetch, id, e.id))}>
@@ -1119,7 +1110,7 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
                 <Row key={p.id}>
                   <span>
                     {p.phone}
-                    {p.isPrimary && <span className="badge bg-light !text-ink-muted ms-2">primary</span>}
+                    {p.isPrimary && <span className="ml-2 inline-flex items-center rounded-full border border-line bg-canvas px-2.5 py-0.5 text-xs font-semibold text-ink-muted">primary</span>}
                   </span>
                   <Button variant="ghost" disabled={busy}
                           onClick={() => run(() => familyApi.removePhone(authedFetch, id, p.id))}>
@@ -1141,7 +1132,7 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
                 <Row key={a.id}>
                   <span>
                     {formatAddress(a)}
-                    {a.isPrimary && <span className="badge bg-light !text-ink-muted ms-2">primary</span>}
+                    {a.isPrimary && <span className="ml-2 inline-flex items-center rounded-full border border-line bg-canvas px-2.5 py-0.5 text-xs font-semibold text-ink-muted">primary</span>}
                   </span>
                   <Button variant="ghost" disabled={busy}
                           onClick={() => run(() => familyApi.removeAddress(authedFetch, id, a.id))}>
@@ -1194,9 +1185,9 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
                         type="button"
                         disabled={busy}
                         aria-pressed={member}
-                        className={`badge !rounded-[50rem] border ${member
-                          ? 'bg-primary text-white border-0'
-                          : 'bg-transparent text-body-secondary'}`}
+                        className={`inline-flex items-center !rounded-[50rem] border px-2.5 py-0.5 text-xs ${member
+                          ? 'border-transparent bg-brand-500 text-white'
+                          : 'border-line bg-transparent text-ink-muted hover:bg-canvas'}`}
                         style={{ cursor: 'pointer', fontWeight: 500 }}
                         onClick={() => run(() => member
                           ? familyApi.removeFromGroup(authedFetch, g.id, id)
@@ -1219,10 +1210,10 @@ function DetailDialog({ id, groups, onClose, onChanged, onDeleted }: {
             </p>
 
             {c.ownershipType === 'personal' && (
-              <div className="alert alert-info !flex !items-center gap-2 mb-0">
-                <div className="!flex-auto">Only you can see this contact.</div>
-                <Button variant="ghost" onClick={() => setConfirmShare(true)}>Share</Button>
-              </div>
+              <Alert tone="info" className="mb-0"
+                     action={<Button variant="ghost" onClick={() => setConfirmShare(true)}>Share</Button>}>
+                Only you can see this contact.
+              </Alert>
             )}
           </div>
         )}
