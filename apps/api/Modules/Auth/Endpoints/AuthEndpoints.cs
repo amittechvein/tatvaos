@@ -290,7 +290,10 @@ public static class AuthEndpoints
         // anonymous BY DEFINITION — the browser presenting the code is the one
         // that has no session yet. Its rate limit is the only thing between a
         // 256-bit code and someone guessing at it.
-        g.MapPost("/handoff", MintHandoffAsync).RequireAuthorization("User");
+        g.MapPost("/handoff", MintHandoffAsync)
+            .RequireAuthorization("User")
+            // Per user, ten a minute — Program.cs, "auth-handoff-mint".
+            .RequireRateLimiting("auth-handoff-mint");
         g.MapPost("/handoff/redeem", RedeemHandoffAsync)
             .AllowAnonymous()
             .RequireRateLimiting("auth-handoff-redeem");

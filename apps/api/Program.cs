@@ -404,6 +404,38 @@ builder.Services.AddRateLimiter(o =>
             });
     });
 
+    // The handoff MINT (decision 0003). Authenticated, and until 17 Sept 2026
+    // unlimited — while every successful call is a live sixty-second
+    // credential. A loop in the app, or one stolen bearer token, could mint
+    // thousands. The CTO's ruling, 16 Sept: per-user limit beside the others.
+    //
+    // Per USER, not per IP, unlike the redeem above. Mint always has a user;
+    // an IP key would make a whole office behind one NAT share a budget, and
+    // would hand a stolen token a fresh budget on every network it moved to.
+    // The id is read the way TenantMiddleware reads it. There is no anonymous
+    // fallback bucket to share: RequireAuthorization answers 401 before a
+    // request without a user reaches this, so "unknown" is unreachable and is
+    // only here so the partition can never throw.
+    //
+    // Ten a minute: a person opening products from the phone mints one per
+    // tap. HandoffMintPerMinute has a second copy in
+    // infra/scripts/verify-handoff-e2e.sh (MINT_LIMIT), which proves the
+    // limit refuses — change both, and that script fails if you change one.
+    const int HandoffMintPerMinute = 10;
+    o.AddPolicy("auth-handoff-mint", httpContext =>
+    {
+        var user = httpContext.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                   ?? httpContext.User.FindFirst("sub")?.Value
+                   ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter($"handoff-mint:{user}",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = HandoffMintPerMinute,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            });
+    });
+
     o.AddPolicy("space-public-links", httpContext =>
     {
         var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();
