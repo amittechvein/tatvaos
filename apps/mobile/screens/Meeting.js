@@ -139,6 +139,14 @@ export default function Meeting({ session, meeting, onLeave }) {
   const [cam, setCam] = useState(false);
   const [facing, setFacing] = useState('user');
   const [share, setShare] = useState(false);
+
+  // One screen at a time, or several — the host's choice (Connect PR #130).
+  // The SERVER enforces it: in 'single' mode everyone else's grant narrows the
+  // moment somebody presents, so pressing Share would fail. This state only
+  // lets the screen SAY who is presenting instead of offering a button that
+  // cannot work. A server that predates the setting sends nothing, and what it
+  // did was 'multiple'.
+  const [shareMode, setShareMode] = useState(meeting?.shareMode === 'single' ? 'single' : 'multiple');
   const [speaker, setSpeaker] = useState(true);
   const [role, setRole] = useState(null); // host | cohost | participant, once admitted
   const [lobby, setLobby] = useState([]); // people waiting, host/cohost only
@@ -270,6 +278,24 @@ export default function Meeting({ session, meeting, onLeave }) {
       }
     });
     room.on(RoomEvent.ConnectionStateChanged, (state) => log(`connection -> ${state}`));
+
+    // The web host's "Screens at once" select broadcasts {shareMode} on the
+    // data channel (Stage.tsx changeShareMode). Everything else on that channel
+    // — hands, reactions, chat — is not ours to read and is ignored. Decoded by
+    // hand rather than with TextDecoder: the message is short ASCII JSON, and
+    // whether Hermes provides TextDecoder depends on which polyfills happen to
+    // be loaded, which is not a thing to find out from a silent catch.
+    room.on(RoomEvent.DataReceived, (payload) => {
+      try {
+        let text = '';
+        for (let i = 0; i < payload.length; i++) text += String.fromCharCode(payload[i]);
+        const msg = JSON.parse(text);
+        if (msg && (msg.shareMode === 'single' || msg.shareMode === 'multiple')) {
+          log(`share mode is now ${msg.shareMode}`);
+          setShareMode(msg.shareMode);
+        }
+      } catch { /* not a message for this screen */ }
+    });
     room.on(RoomEvent.ParticipantConnected, (p) => log(`joined: ${p.identity}`));
     room.on(RoomEvent.ParticipantDisconnected, (p) => log(`left: ${p.identity}`));
 
@@ -485,6 +511,12 @@ export default function Meeting({ session, meeting, onLeave }) {
   const inCall = status === 'in';
   const others = Math.max(0, participants.length - 1);
 
+  // Who else is presenting, in a one-at-a-time meeting. Never ourselves: a
+  // person already sharing keeps their Stop button.
+  const otherPresenter = shareMode === 'single' && !share
+    ? participants.find((p) => !p.isLocal && p.isScreenShareEnabled)
+    : undefined;
+
   let headline;
   if (status === 'in') headline = others === 0 ? 'Only you so far' : `${others + 1} in the meeting`;
   else if (status === 'joining') headline = 'Joining…';
@@ -573,11 +605,15 @@ export default function Meeting({ session, meeting, onLeave }) {
       )}
 
       <View style={s.bar}>
-        {inCall && cam ? <Text style={s.hint}>Hold the camera button to switch cameras.</Text> : null}
+        {inCall && otherPresenter ? (
+          <Text style={s.hint}>
+            {otherPresenter.name || 'Someone'} is sharing — one screen at a time in this meeting.
+          </Text>
+        ) : inCall && cam ? <Text style={s.hint}>Hold the camera button to switch cameras.</Text> : null}
         <View style={s.controls}>
         <Control icon={mic ? 'mic' : 'mic-off'} label={mic ? 'Mute' : 'Unmute'} on={mic} onPress={toggleMic} disabled={!inCall} />
         <Control icon={cam ? 'videocam' : 'videocam-off'} label={cam ? 'Cam off' : 'Camera'} on={cam} onPress={toggleCam} onLongPress={cam ? flipCam : undefined} disabled={!inCall} />
-        <Control icon="phone-portrait-outline" label={share ? 'Stop share' : 'Share'} on={share} onPress={toggleShare} disabled={!inCall} />
+        <Control icon="phone-portrait-outline" label={share ? 'Stop share' : 'Share'} on={share} onPress={toggleShare} disabled={!inCall || !!otherPresenter} />
         <Control icon={speaker ? 'volume-high' : 'ear-outline'} label={speaker ? 'Speaker' : 'Earpiece'} on={speaker} onPress={toggleSpeaker} disabled={!inCall} />
         <Control icon="call" label="Leave" danger onPress={leave} />
         </View>
