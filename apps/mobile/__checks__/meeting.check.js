@@ -39,7 +39,7 @@ test('a renewed session mid-call does NOT reconnect — the cleanup would end th
 
   expect(room().connectCalls).toHaveLength(1);
   expect(api.join).toHaveBeenCalledTimes(1);
-  expect(r.queryByText(/Disconnected/)).toBeNull();
+  expect(r.queryByText(/Connection dropped/)).toBeNull();
   expect(r.getByText('Only you so far')).toBeTruthy();
 });
 
@@ -190,11 +190,76 @@ test('leave: disconnects and hands control back once', async () => {
   await waitFor(() => expect(onLeave).toHaveBeenCalledTimes(1));
 });
 
-test('server-side disconnect while in the call is shown by name', async () => {
+// ── The connection drops without anyone pressing Leave (16 Sept 2026) ──────
+// Locked while sharing, unlocked: the room went reconnecting -> disconnected,
+// the phone said "You have left the meeting", and eighteen seconds later the
+// library rejoined on its own — the laptop saw Amit in the call; the phone did
+// not. The real Room emits Disconnected after dropping its engine reference;
+// the fake does the same, which is what makes these checks mean anything.
+async function dropUnexpectedly(reason) {
+  const rm = room();
+  const engine = rm.engine;
+  await act(async () => {
+    await engine.close();
+    rm.engine = undefined;
+    rm.state = 'disconnected';
+    rm.emit('connectionStateChanged', 'disconnected');
+    rm.emit('disconnected', reason);
+  });
+  return engine;
+}
+
+afterEach(() => { require('../lib/engineReaper').stopAllReapers(); });
+
+test('dropped: says the connection dropped and offers Rejoin — not "you have left"', async () => {
+  const { r, onLeave } = await inCall();
+  await dropUnexpectedly(1);
+  await waitFor(() => expect(r.getByText('Connection dropped')).toBeTruthy());
+  expect(r.getByText('The connection to the meeting dropped. This often happens after the phone is locked.')).toBeTruthy();
+  expect(r.getByLabelText('Rejoin the meeting')).toBeTruthy();
+  expect(r.queryByText(/You have left/)).toBeNull();
+  expect(onLeave).not.toHaveBeenCalled();
+});
+
+test('dropped because the account joined elsewhere: says that, still offers Rejoin', async () => {
   const { r } = await inCall();
-  act(() => room().emit('disconnected', 2));
-  await waitFor(() => expect(r.getByText('Disconnected')).toBeTruthy());
-  expect(r.getByText('Disconnected: DUPLICATE_IDENTITY (2)')).toBeTruthy();
+  await dropUnexpectedly(2);
+  await waitFor(() => expect(r.getByText('This account joined the meeting from another device, so this phone was taken out.')).toBeTruthy());
+  expect(r.getByLabelText('Rejoin the meeting')).toBeTruthy();
+});
+
+test('THE GHOST: an engine that revives after the drop is closed again and sends leave', async () => {
+  const { r } = await inCall();
+  const engine = await dropUnexpectedly(1);
+  await waitFor(() => expect(r.getByText('Connection dropped')).toBeTruthy());
+  const closesBefore = engine.closeCalls;
+
+  // The in-flight join lands: the library is back in the meeting, unseen.
+  engine.revive();
+  await waitFor(() => expect(engine.isClosed).toBe(true), { timeout: 4000 });
+  expect(engine.closeCalls).toBeGreaterThan(closesBefore);
+  expect(engine.leaves).toBeGreaterThanOrEqual(1);
+});
+
+test('Rejoin: a NEW room, a fresh join call, and back in the call', async () => {
+  const { r } = await inCall();
+  const first = room();
+  const joinsBefore = api.join.mock.calls.length;
+  await dropUnexpectedly(1);
+  await waitFor(() => expect(r.getByLabelText('Rejoin the meeting')).toBeTruthy());
+
+  fireEvent.press(r.getByLabelText('Rejoin the meeting'));
+  await waitFor(() => expect(r.getByText('Only you so far')).toBeTruthy());
+  expect(room()).not.toBe(first);
+  expect(room().connectCalls).toHaveLength(1);
+  expect(api.join.mock.calls.length).toBe(joinsBefore + 1);
+});
+
+test('pressing Leave is not a drop: no Rejoin, control handed back', async () => {
+  const { r, onLeave } = await inCall();
+  fireEvent.press(r.getByLabelText('Leave'));
+  await waitFor(() => expect(onLeave).toHaveBeenCalledTimes(1));
+  expect(r.queryByLabelText('Rejoin the meeting')).toBeNull();
 });
 
 test('asks Android for microphone, camera and notifications BEFORE the first join call', async () => {

@@ -63,6 +63,7 @@ import {
 
 import { joinMeeting, pollWait, getLobby, admitFromLobby, denyFromLobby } from '../lib/connect';
 import { isRefusal, describeError } from '../lib/refusal';
+import { watchEngines, reapEngines } from '../lib/engineReaper';
 import { brand } from '../theme';
 
 registerGlobals();
@@ -110,7 +111,38 @@ async function askPermissions() {
   }
 }
 
-export default function Meeting({ session, meeting, onLeave }) {
+// What the screen says when the connection drops without anyone pressing
+// Leave. Honest about what happened and what to do; never "You have left",
+// which is what this said on 16 Sept while Amit had done nothing but lock the
+// phone.
+function dropSentence(reason) {
+  if (reason === DisconnectReason.DUPLICATE_IDENTITY) {
+    return 'This account joined the meeting from another device, so this phone was taken out.';
+  }
+  return 'The connection to the meeting dropped. This often happens after the phone is locked.';
+}
+
+/**
+ * The meeting screen, plus Rejoin.
+ *
+ * Rejoin mounts a brand-new session (new Room, new token, new engine) rather
+ * than calling connect() again on the old Room. The old Room is the one whose
+ * engine lost a race with its own reconnect (lib/engineReaper.js); it is not
+ * something to reuse, and a fresh mount goes through exactly the join path
+ * that is already proven on the phone, waiting room and password included.
+ */
+export default function Meeting(props) {
+  const [attempt, setAttempt] = useState(0);
+  return (
+    <MeetingSession
+      key={attempt}
+      {...props}
+      onRejoin={() => { log(`rejoining (attempt ${attempt + 2})`); setAttempt((n) => n + 1); }}
+    />
+  );
+}
+
+function MeetingSession({ session, meeting, onLeave, onRejoin }) {
   useKeepAwake();
 
   // ── THE TOKEN IS READ FRESH; THE SESSION IS NOT A REASON TO RECONNECT. ──
@@ -131,7 +163,11 @@ export default function Meeting({ session, meeting, onLeave }) {
   const [room] = useState(() => new Room());
   const { participants } = useRoom(room);
 
-  // joining | password | waiting | in | blocked | failed | left
+  // Every engine this Room uses, kept by us because the Room drops its own
+  // reference before it has finished closing it. See lib/engineReaper.js.
+  const [engines] = useState(() => watchEngines(room, log));
+
+  // joining | password | waiting | in | blocked | failed | dropped
   const [status, setStatus] = useState('joining');
   const [notice, setNotice] = useState('');
   const [password, setPassword] = useState('');
@@ -164,7 +200,8 @@ export default function Meeting({ session, meeting, onLeave }) {
   // speaker to match what the button says.
   async function enter(admitted) {
     await room.connect(admitted.wsUrl, admitted.token);
-    if (gone.current) { room.disconnect().catch(() => {}); return; }
+    engines.note();
+    if (gone.current) { room.disconnect().catch(() => {}).finally(() => reapEngines(engines, log)); return; }
     log(`in the room as ${admitted.identity} (${admitted.role})`);
     setRole(admitted.role);
     setStatus('in');
@@ -264,8 +301,16 @@ export default function Meeting({ session, meeting, onLeave }) {
     room.on(RoomEvent.Disconnected, (reason) => {
       log(`disconnected: ${reasonName(reason)}`);
       if (!leaving.current) {
-        setStatus('left');
-        setNotice(`Disconnected: ${reasonName(reason)}`);
+        // Nobody pressed Leave. Say so, offer the way back, and make sure the
+        // library is not quietly rejoining behind the screen's back — the
+        // ghost the laptop saw on 16 Sept.
+        stopWaiting();
+        setStatus('dropped');
+        setShare(false);
+        setMic(false);
+        setCam(false);
+        setNotice(dropSentence(reason));
+        reapEngines(engines, log);
       }
     });
     room.on(RoomEvent.LocalTrackUnpublished, (pub) => {
@@ -321,7 +366,7 @@ export default function Meeting({ session, meeting, onLeave }) {
       // A live capture outlives a React tree, and the foreground service keeps
       // it alive. Leaving on unmount is not tidiness; it is what stops a share
       // running after the screen that started it has gone.
-      room.disconnect().catch(() => {});
+      room.disconnect().catch(() => {}).finally(() => reapEngines(engines, log));
       AudioSession.stopAudioSession().catch(() => {});
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -504,6 +549,7 @@ export default function Meeting({ session, meeting, onLeave }) {
     stopWaiting();
     log('leaving');
     await room.disconnect().catch(() => {});
+    reapEngines(engines, log);
     onLeave();
   }
 
@@ -522,7 +568,7 @@ export default function Meeting({ session, meeting, onLeave }) {
   else if (status === 'joining') headline = 'Joining…';
   else if (status === 'waiting') headline = 'In the waiting room';
   else if (status === 'password') headline = 'Password needed';
-  else if (status === 'left') headline = 'Disconnected';
+  else if (status === 'dropped') headline = 'Connection dropped';
   else headline = 'Not in the meeting';
 
   return (
@@ -598,9 +644,16 @@ export default function Meeting({ session, meeting, onLeave }) {
         </ScrollView>
       ) : (
         <View style={s.centre}>
-          <Text style={s.sub}>
-            {status === 'left' ? 'You have left the meeting.' : notice || 'Not in the meeting.'}
-          </Text>
+          {status === 'dropped' ? (
+            <>
+              <Text style={s.sub}>You are no longer in the meeting.</Text>
+              <Pressable style={s.primary} onPress={onRejoin} accessibilityRole="button" accessibilityLabel="Rejoin the meeting">
+                <Text style={s.primaryText}>Rejoin</Text>
+              </Pressable>
+            </>
+          ) : (
+            <Text style={s.sub}>{notice || 'Not in the meeting.'}</Text>
+          )}
         </View>
       )}
 
