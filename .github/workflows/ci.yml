@@ -84,7 +84,7 @@ jobs:
       #  and exits non-zero on a failed assertion — so `dotnet run` IS the
       #  assertion, and a red here names the rule that broke.
       #
-      #  Added 17 Sept 2026, CTO ruling: "a check that does not run is
+      #  Added 16 Sept 2026, CTO ruling: "a check that does not run is
       #  documentation, which is rule 8". connect-order exists because the
       #  meetings list sorted one way for four weeks while its document and
       #  its own comment said another; it, connect-wire and connect-minutes
