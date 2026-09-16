@@ -84,19 +84,23 @@ curl -sf "$API/health" >/dev/null 2>&1 || {
   echo "  the API did not start. Last lines:"; tail -15 "$WORK/api.log"; exit 2; }
 echo "  answering on $API/health"
 
-TOKEN=$(KEY="$KEY" USER_ID="$USER_ID" TENANT_ID="$TENANT_ID" ISS="$API" node -e '
+# A bearer token for a seeded user: make_token <user-id> <tenant-id> <email>.
+make_token() {
+KEY="$KEY" USER_ID="$1" TENANT_ID="$2" EMAIL="$3" ISS="$API" node -e '
 const c=require("crypto");
 const b=(o)=>Buffer.from(JSON.stringify(o)).toString("base64url");
 const now=Math.floor(Date.now()/1000);
 const p={sub:process.env.USER_ID,
   "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier":process.env.USER_ID,
-  email:"amit@techvein.local",
+  email:process.env.EMAIL,
   "http://schemas.microsoft.com/ws/2008/06/identity/claims/role":"org_owner",
   tenant_id:process.env.TENANT_ID, jti:c.randomUUID(),
   iss:process.env.ISS, aud:"tatvaos-mail", nbf:now, exp:now+900};
 const h=b({alg:"HS256",typ:"JWT"}), y=b(p);
 const s=c.createHmac("sha256",Buffer.from(process.env.KEY,"utf8")).update(h+"."+y).digest("base64url");
-process.stdout.write(h+"."+y+"."+s);')
+process.stdout.write(h+"."+y+"."+s);'
+}
+TOKEN=$(make_token "$USER_ID" "$TENANT_ID" amit@techvein.local)
 
 mint() {
   curl -s -o "$WORK/mint.json" -w '%{http_code}' -X POST "$API/api/auth/handoff" \
@@ -145,6 +149,42 @@ st2=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/api/auth/handoff/rede
 st3=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/api/auth/handoff/redeem" \
        -H 'Content-Type: application/json' -d '{"code":"not-a-real-code"}')
 [ "$st3" = "401" ] && ok "an invented code gets the same 401" || bad "an unknown code answered $st3"
+
+echo
+echo "== mint rate limit"
+# Mint is authenticated but was UNLIMITED, and every successful call is a live
+# sixty-second credential: a loop in the app, or one stolen token, mints
+# thousands. The limit is per USER, not per IP — a whole office behind one NAT
+# must not share a budget, and a stolen token must not get a fresh one by
+# changing networks.
+#
+# MINT_LIMIT must equal HandoffMintPerMinute in apps/api/Program.cs (the other
+# copy of this number). If they drift, this section fails and says so.
+MINT_LIMIT=10
+read -r HR_ID HR_TENANT <<<"$(docker exec "$PG" psql -tAF' ' -U postgres -d tatvaos_mail \
+  -c "SELECT id, tenant_id FROM core.users WHERE email = 'hr@techvein.local' LIMIT 1")"
+if [ -z "${HR_ID:-}" ]; then
+  bad "the seed has no second user (hr@techvein.local) to spend a fresh budget"
+else
+  HR_TOKEN=$(make_token "$HR_ID" "$HR_TENANT" hr@techvein.local)
+  allowed=0; first_refusal=""
+  for i in $(seq 1 $((MINT_LIMIT + 3))); do
+    c=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/api/auth/handoff" \
+          -H "Authorization: Bearer $HR_TOKEN" -H 'Content-Type: application/json' -d '{"path":"/mail"}')
+    if [ "$c" = "200" ] && [ -z "$first_refusal" ]; then allowed=$((allowed + 1))
+    elif [ -z "$first_refusal" ]; then first_refusal="$i:$c"; fi
+  done
+  # Refusal first: this is the line that was red before the limit existed.
+  [ "${first_refusal#*:}" = "429" ] \
+    && ok "minting is refused (429) once one user passes $MINT_LIMIT a minute" \
+    || bad "minting was never refused — $((MINT_LIMIT + 3)) calls, first non-200: ${first_refusal:-none} (no limit on mint)"
+  [ "$allowed" = "$MINT_LIMIT" ] \
+    && ok "exactly $MINT_LIMIT mints are allowed before that" \
+    || bad "$allowed mints were allowed, expected $MINT_LIMIT (does Program.cs still say $MINT_LIMIT?)"
+  c=$(mint "/mail")
+  [ "$c" = "200" ] && ok "another user is unaffected — the budget is per user, not shared" \
+                   || bad "another user was refused ($c) — the limit is not per user"
+fi
 
 echo
 echo "  passed: $PASS   failed: $FAIL"
