@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { Button, Table, Td } from '@/components/ui/Kit';
 import { Field, Modal } from '@/components/ui/Modal';
+import { Alert } from '@/components/ui/Page';
 import { useAuth } from '@/lib/auth';
 
 // ---------------------------------------------------------------------------
@@ -312,7 +313,7 @@ export function AddManyPeople({
         </>
       }
     >
-      {error && <div className="alert alert-danger !mb-[1rem]">{error}</div>}
+      {error && <Alert tone="danger">{error}</Alert>}
 
       {step === 'choose' && (
         <div className="![display:grid] !gap-[1rem]">
@@ -320,17 +321,20 @@ export function AddManyPeople({
             <Button onClick={templateCsv}>Download CSV template</Button>
           </Field>
 
-          <div className="alert alert-warning">
+          <Alert tone="warn">
             <strong>Before you type phone numbers:</strong> select the Recovery Phone column
             in your spreadsheet and format it as <strong>Text</strong>. Otherwise Excel turns a
             number like <code>+91 98765 43210</code> into <code>9.18765E+11</code> and rounds
             away the last digits — they are gone from the file, and a rounded number is
             wrong exactly when somebody is locked out and needs it. Rows in that shape are
             refused rather than imported.
-          </div>
+          </Alert>
 
           <Field label="2. Upload the filled-in file" hint="A header row is recognised and skipped. Department is matched by name, exactly as it appears under Departments.">
-            <input ref={fileRef} type="file" accept=".csv,text/csv" className="form-control" onChange={onFile} />
+            {/* A file input is styled through its button pseudo-element; the
+                field itself is only a frame around it. */}
+            <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={onFile}
+                   className="block w-full rounded-lg border border-line bg-surface text-sm text-ink file:mr-3 file:cursor-pointer file:rounded-l-lg file:border-0 file:bg-canvas file:px-4 file:py-2 file:text-sm file:font-semibold file:text-ink hover:file:bg-line" />
           </Field>
         </div>
       )}
@@ -404,10 +408,10 @@ export function AddManyPeople({
 
       {step === 'done' && result && (
         <>
-          <div className="alert alert-warning">
+          <Alert tone="warn">
             <strong>These passwords are shown once.</strong> They are hashed on the server and
             cannot be shown again. Download or copy them now.
-          </div>
+          </Alert>
           <div className="!flex gap-2 !mb-[1rem]">
             <Button onClick={passwordsCsv}>Download CSV</Button>
             <Button onClick={() => navigator.clipboard?.writeText(
