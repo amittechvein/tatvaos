@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { AdminShell } from '@/components/admin/AdminShell';
-import { Card, Empty, Stat, Table, Td } from '@/components/ui/Kit';
+import { Badge, Card, Empty, Stat, Table, Td } from '@/components/ui/Kit';
+import { Alert } from '@/components/ui/Page';
 import { useAuth } from '@/lib/auth';
 
 // ============================================================================
@@ -83,7 +84,7 @@ export default function DraftsPage() {
     <AdminShell scope="platform" title="Signups in progress"
                 subtitle="People who started and have not finished">
       {error && (
-        <div className="alert alert-danger" role="alert">{error}</div>
+        <Alert tone="danger">{error}</Alert>
       )}
 
       <div className="!mb-[1.5rem] grid !gap-[1.5rem] sm:grid-cols-3">
@@ -143,10 +144,9 @@ export default function DraftsPage() {
                 </Td>
 
                 <Td>
-                  <span className={`badge ${d.stalledAtVerification
-                    ? '!bg-warn/10 !text-warn' : 'bg-light !text-ink-muted'}`}>
+                  <Badge tone={d.stalledAtVerification ? 'warn' : 'neutral'}>
                     {STEP_LABEL[d.reachedStep] ?? d.reachedStep}
-                  </span>
+                  </Badge>
                   {d.attempts > 0 && (
                     <div className="!text-[0.75rem] !text-ink-muted mt-1">
                       {d.attempts} attempt{d.attempts === 1 ? '' : 's'}
@@ -174,13 +174,13 @@ export default function DraftsPage() {
         )}
       </Card>
 
-      <div className="alert alert-info !mt-[1.5rem]" role="note">
+      <Alert tone="info" className="!mt-[1.5rem]">
         <strong>This queue is the point.</strong> Requiring domain verification
         before sign-in loses customers who cannot reach whoever manages their DNS.
         These are those customers, with a phone number. Working the list is what
         makes that trade-off worth making — leaving it unworked makes it a worse
         design than letting people straight in.
-      </div>
+      </Alert>
     </AdminShell>
   );
 }

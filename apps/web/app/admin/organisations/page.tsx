@@ -10,6 +10,7 @@ import { AdminShell } from '@/components/admin/AdminShell';
 import { StatusBadge } from '@/components/admin/StatusBadge';
 import { Button, Card, Empty, Meter, Table, Td } from '@/components/ui/Kit';
 import { Input, Select } from '@/components/ui/Form';
+import { Alert } from '@/components/ui/Page';
 
 const NAV = [
   { href: '/admin', label: 'Dashboard' },
@@ -285,7 +286,7 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
         </>
       }
     >
-      {error && <div className="alert alert-danger" role="alert">{error}</div>}
+      {error && <Alert tone="danger">{error}</Alert>}
 
       {/* ---- Details: name, type, owner ---------------------------- */}
       <h6 className="!font-semibold !mb-[1rem]">Details</h6>
@@ -302,26 +303,26 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
         </Select>
       </Field>
 
-      <div className="row g-3">
-        <div className="col-sm-6">
+      <div className="grid !gap-[1rem] sm:grid-cols-2">
+        <div>
           <Field label="Owner name">
             <Input  value={adminName}
                    onChange={(e) => setAdminName(e.target.value)} />
           </Field>
         </div>
-        <div className="col-sm-6">
+        <div>
           <Field label="Owner email">
             <Input  value={adminEmail}
                    onChange={(e) => setAdminEmail(e.target.value)} />
           </Field>
         </div>
-        <div className="col-sm-6">
+        <div>
           <Field label="Phone">
             <Input  value={phone}
                    onChange={(e) => setPhone(e.target.value)} />
           </Field>
         </div>
-        <div className="col-sm-6">
+        <div>
           <Field label="GSTIN">
             <Input  value={gstin}
                    onChange={(e) => setGstin(e.target.value)} />
@@ -393,11 +394,11 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
                onChange={(e) => setSeats(e.target.value.replace(/\D/g, ''))} />
       </Field>
 
-      <div className="alert alert-info mb-0" role="note">
+      <Alert tone="info" className="mb-0">
         The new plan&apos;s seat and domain limits apply immediately to new
         growth. Storage already provisioned is untouched — shrinking a live
         organisation&apos;s storage is a separate, deliberate action.
-      </div>
+      </Alert>
     </Modal>
   );
 }

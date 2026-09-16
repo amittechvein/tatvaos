@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { AdminShell } from '@/components/admin/AdminShell';
-import { Button } from '@/components/ui/Kit';
+import { Badge, Button, Card } from '@/components/ui/Kit';
 import { useAuth } from '@/lib/auth';
 import { Input, Select } from '@/components/ui/Form';
+import { Alert } from '@/components/ui/Page';
 
 // ============================================================================
 //  Platform settings — YZEN Bootstrap, no MUI
@@ -135,44 +136,41 @@ export default function SettingsPage() {
       }
     >
       {notice && (
-        <div className={`alert alert-${notice.kind} !flex !justify-between !items-center`} role="alert">
-          <span>{notice.text}</span>
-          <button type="button" className="btn-close" aria-label="Close" onClick={() => setNotice(null)} />
-        </div>
+        <Alert tone={notice.kind === 'success' ? 'ok' : 'danger'} onDismiss={() => setNotice(null)}>
+          {notice.text}
+        </Alert>
       )}
 
       {showOtpOn && (
-        <div className="alert alert-warning" role="alert">
+        <Alert tone="warn">
           <strong>Testing mode is on.</strong> When an SMS fails to send, the code is shown in the
           signup screen instead. Turn this off before going live — with it on, the phone check
           proves nothing.
-        </div>
+        </Alert>
       )}
 
       {loading ? (
-        <div className="card custom-card"><div className="card-body text-center !py-[3rem]">
-          <div className="spinner-border !text-brand-500" role="status"><span className="!sr-only">Loading…</span></div>
-        </div></div>
+        <Card>
+          <div className="grid place-items-center !py-[3rem]">
+            <span role="status" aria-label="Loading"
+                  className="block h-8 w-8 animate-spin rounded-full border-2 border-line border-t-brand-600" />
+          </div>
+        </Card>
       ) : (
         SECTIONS.map((section) => {
           const fields = items.filter((i) => i.section === section.id);
           if (fields.length === 0) return null;
 
           return (
-            <div className="card custom-card" key={section.id}>
-              <div className="card-header">
-                <div className="card-title">
-                  {section.title}
-                  <span className="!block !text-[0.75rem] !font-normal !text-ink-muted mt-1">{section.blurb}</span>
-                </div>
-              </div>
-              <div className="card-body">
-                <div className="row">
+            <Card key={section.id} title={section.title} subtitle={section.blurb}
+                  className="!mb-[1.5rem]">
+              <div>
+                <div className="grid !gap-[1rem] md:grid-cols-2">
                   {fields.map((s) => (
-                    <div className="col-md-6 !mb-[1rem]" key={s.key}>
-                      <label className="form-label !flex !items-center gap-2">
+                    <div className="!mb-[1rem]" key={s.key}>
+                      <label className="mb-1 !flex !items-center gap-2 text-[13px] font-medium text-ink">
                         {s.label}
-                        {s.isSecret && s.hasValue && <span className="badge !bg-ok/10 !text-ok">set</span>}
+                        {s.isSecret && s.hasValue && <Badge tone="ok">set</Badge>}
                       </label>
 
                       {s.key === 'sms.provider' ? (
@@ -199,22 +197,22 @@ export default function SettingsPage() {
                         />
                       )}
 
-                      {s.help && <div className="form-text">{s.help}</div>}
+                      {s.help && <div className="mt-1 text-xs text-ink-muted">{s.help}</div>}
                     </div>
                   ))}
                 </div>
 
                 {section.id === 'sms' && (
-                  <div className="mt-2 !pt-[1rem] border-top">
+                  <div className="mt-2 border-t border-line !pt-[1rem]">
                     <div className="!font-semibold mb-2">Send a test SMS</div>
                     <div className="!flex gap-2 flex-wrap !items-start">
                       <Input  style={{ maxWidth: 240 }}
                              placeholder="+91 98765 43210" value={testPhone}
                              onChange={(e) => setTestPhone(e.target.value)} />
-                      <button className="btn btn-outline-light" onClick={testSms}
+                      <Button variant="secondary" onClick={testSms}
                               disabled={testing || testPhone.replace(/\D/g, '').length < 8}>
                         {testing ? 'Sending…' : 'Send test SMS'}
-                      </button>
+                      </Button>
                     </div>
                     {dirty && (
                       <div className="!text-warn !text-[0.75rem] mt-2">
@@ -222,14 +220,14 @@ export default function SettingsPage() {
                       </div>
                     )}
                     {testResult && (
-                      <div className={`alert ${testResult.startsWith('Sent') ? 'alert-success' : 'alert-warning'} mt-2 mb-0`}>
+                      <Alert tone={testResult.startsWith('Sent') ? 'ok' : 'warn'} className="mt-2 mb-0">
                         {testResult}
-                      </div>
+                      </Alert>
                     )}
                   </div>
                 )}
               </div>
-            </div>
+            </Card>
           );
         })
       )}
