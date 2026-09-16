@@ -14,6 +14,7 @@ import {
   type LobbyEntry, type Meeting, type Recording, type RecordingMode, type Seat,
   type ChatPolicy, type SharePolicy, type WaitingRoom,
 } from '@/lib/connect';
+import { meetingInvitation } from '@/lib/meetingInvitation';
 import { captionsSupported, useCaptions } from '@/lib/useCaptions';
 import type { JoinPrefs } from './PreJoin';
 import {
@@ -1972,7 +1973,9 @@ export default function Stage({ seat, meeting, prefs }: {
   async function copyLink() {
     if (!meeting) return;
     try {
-      await navigator.clipboard.writeText(meeting.joinUrl);
+      // The whole invitation — name, date, time, link, code — not the bare
+      // URL. lib/meetingInvitation.ts says what is in it and what is not.
+      await navigator.clipboard.writeText(meetingInvitation(meeting));
       setCopied(true); setTimeout(() => setCopied(false), 1800);
     } catch { setError('Copy the link from the meeting page.'); }
   }
@@ -2582,7 +2585,7 @@ export default function Stage({ seat, meeting, prefs }: {
           <div className="cx-ghost">
             {meeting && (
               <button type="button" className="cx-mini" onClick={() => void copyLink()}>
-                <i className="ri-link me-1" />{copied ? 'Copied' : 'Copy link'}
+                <i className="ri-link me-1" />{copied ? 'Copied' : 'Copy invite'}
               </button>
             )}
           </div>
