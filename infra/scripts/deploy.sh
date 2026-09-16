@@ -658,6 +658,18 @@ if [ "$FAILURES" -gt 0 ]; then
     exit 1
 fi
 
+# Record this deploy — here, after the verdict, and nowhere earlier. The next
+# deploy's rollback point is read from this record; a deploy that failed above
+# exited before reaching it, so it can never become somebody's return point.
+# See infra/scripts/deploy-rollback-point.sh.
+if record_deploy; then
+    printf '   %srecorded%s %s as the %s return point for the next deploy\n' \
+        "$D" "$X" "$BUILD_SHA" "$ENV"
+else
+    printf '   %s[warn]%s could not record this deploy — the next deploy will ask for\n' "$Y" "$X"
+    note "its rollback point from the workflow history instead of naming one."
+fi
+
 DOMAIN=$(grep '^SITE_DOMAIN=' infra/docker/.env | cut -d= -f2)
 printf '\n   %s%s deployed.%s\n\n' "$G" "$ENV" "$X"
 printf '   App        https://%s\n' "$DOMAIN"
