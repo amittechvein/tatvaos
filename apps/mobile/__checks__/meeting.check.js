@@ -43,6 +43,53 @@ test('a renewed session mid-call does NOT reconnect — the cleanup would end th
   expect(r.getByText('Only you so far')).toBeTruthy();
 });
 
+// ── One screen at a time (Connect PR #130) ─────────────────────────────────
+const ravi = () => ({
+  identity: 'user:ravi', name: 'Ravi', sid: 'PA_ravi', isLocal: false, isScreenShareEnabled: true,
+  on() { return this; }, off() { return this; }, once() { return this; },
+});
+
+async function joinWithRaviSharing(m) {
+  api.join = jest.fn(async () => joined);
+  const r = render(<Meeting session={session} meeting={m} onLeave={() => {}} />);
+  await waitFor(() => expect(r.getByText('Only you so far')).toBeTruthy());
+  const p = ravi();
+  await act(async () => {
+    room().remoteParticipants.set(p.identity, p);
+    room().emit('participantConnected', p);
+  });
+  return r;
+}
+
+test('one screen at a time: while Ravi presents, Share is closed and the screen says who', async () => {
+  const r = await joinWithRaviSharing({ ...meeting, shareMode: 'single' });
+  expect(r.getByText(/Ravi is sharing — one screen at a time/)).toBeTruthy();
+  expect(r.getByLabelText('Share')).toBeDisabled();
+});
+
+test('several at once: somebody else presenting leaves Share open', async () => {
+  const r = await joinWithRaviSharing({ ...meeting, shareMode: 'multiple' });
+  expect(r.queryByText(/is sharing — one screen at a time/)).toBeNull();
+  expect(r.getByLabelText('Share')).not.toBeDisabled();
+});
+
+test('a server that predates the setting is treated as several at once', async () => {
+  const r = await joinWithRaviSharing({ ...meeting });   // no shareMode field at all
+  expect(r.getByLabelText('Share')).not.toBeDisabled();
+});
+
+test('the host switching to one-at-a-time mid-meeting reaches the phone over the data channel', async () => {
+  const r = await joinWithRaviSharing({ ...meeting, shareMode: 'multiple' });
+  expect(r.getByLabelText('Share')).not.toBeDisabled();
+  const bytes = Array.from('{"shareMode":"single"}', (c) => c.charCodeAt(0));
+  await act(async () => { room().emit('dataReceived', Uint8Array.from(bytes)); });
+  expect(r.getByLabelText('Share')).toBeDisabled();
+  // Somebody else's message on the same channel is ignored, not a crash.
+  const noise = Array.from('{"reaction":"👍"}', (c) => c.charCodeAt(0) & 0xff);
+  await act(async () => { room().emit('dataReceived', Uint8Array.from(noise)); });
+  expect(r.getByLabelText('Share')).toBeDisabled();
+});
+
 test('waiting room: polls, then enters with the token the POLL returned (one-shot)', async () => {
   api.join = jest.fn(async () => ({ kind: 'waiting', waitToken: 'W', message: 'You are in the waiting room. Someone has to let you in.' }));
   let polls = 0;

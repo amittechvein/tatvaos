@@ -9,7 +9,21 @@ const ScheduleMeeting = require('../screens/ScheduleMeeting').default;
 const session = { accessToken: 'AT' };
 const created = { id: 'new', title: 'Review' };
 
-beforeEach(() => { api.create = jest.fn(async () => created); });
+// THE CLOCK IS PINNED TO 10:00 TODAY. Found at 21:39 on 16 Sept 2026: these
+// checks read the real time, and after the last slot of the evening "today"
+// has no times — so four of them failed every night and passed every day, a
+// check whose answer depends on when you run it. Only Date is faked; timers
+// stay real so waitFor behaves exactly as it does elsewhere.
+const REAL_TIMERS = ['nextTick', 'setImmediate', 'clearImmediate', 'setInterval', 'clearInterval',
+  'setTimeout', 'clearTimeout', 'queueMicrotask', 'hrtime', 'performance'];
+
+beforeEach(() => {
+  api.create = jest.fn(async () => created);
+  const tenAm = new Date();
+  tenAm.setHours(10, 0, 0, 0);
+  jest.useFakeTimers({ now: tenAm.getTime(), doNotFake: REAL_TIMERS });
+});
+afterEach(() => { jest.useRealTimers(); });
 
 test('sends kind scheduled, a future start, and an end the chosen length later', async () => {
   const onCreated = jest.fn();
@@ -70,15 +84,19 @@ test('the server’s own sentence is shown when it refuses, and nothing is hande
   expect(onCreated).not.toHaveBeenCalled();
 });
 
-test('late at night, today offers nothing and says so instead of rendering a gap', () => {
+test('late at night the screen opens on tomorrow — and today still says why it is empty', () => {
   const at2330 = new Date();
   at2330.setHours(23, 30, 0, 0);
-  jest.useFakeTimers({ now: at2330.getTime(), doNotFake: ['performance'] });
+  jest.useFakeTimers({ now: at2330.getTime(), doNotFake: REAL_TIMERS });
   try {
     const r = render(<ScheduleMeeting session={session} onCreated={() => {}} onBack={() => {}} />);
+    // Opened on tomorrow with a time already chosen, so Schedule works at once.
+    expect(r.queryByText(/No times left today/)).toBeNull();
+    expect(r.getByText(/^Tomorrow, /)).toBeTruthy();
+    expect(r.getByLabelText('Schedule this meeting')).not.toBeDisabled();
+    // Choosing today explains itself rather than rendering a gap.
+    fireEvent.press(r.getByLabelText('Today'));
     expect(r.getByText(/No times left today/)).toBeTruthy();
-    // Tomorrow is still offered, which is the point of saying so.
-    expect(r.getByLabelText('Tomorrow')).toBeTruthy();
   } finally {
     jest.useRealTimers();
   }

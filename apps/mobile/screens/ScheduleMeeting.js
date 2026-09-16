@@ -97,7 +97,11 @@ export default function ScheduleMeeting({ session, onCreated, onBack }) {
     return out;
   }, [now]);
 
-  const [dayIndex, setDayIndex] = useState(0);
+  // Open on the first day that has a time to pick. Found at 21:39 on 16 Sept:
+  // after the last slot of the evening "Today" is empty, and a screen that opens
+  // on an empty day with its button disabled reads as broken. Tomorrow is the
+  // answer the person was about to look for anyway.
+  const [dayIndex, setDayIndex] = useState(() => (slotsFor(days[0], now).length > 0 ? 0 : 1));
   const [title, setTitle] = useState('');
   const [length, setLength] = useState(30);
   const [chosen, setChosen] = useState(null);

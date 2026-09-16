@@ -46,6 +46,7 @@ jest.mock('livekit-client', () => ({
     Disconnected: 'disconnected', LocalTrackUnpublished: 'localTrackUnpublished', ConnectionStateChanged: 'connectionStateChanged',
     ParticipantConnected: 'participantConnected', ParticipantDisconnected: 'participantDisconnected', Reconnected: 'reconnected',
     ActiveSpeakersChanged: 'activeSpeakersChanged', TrackSubscribed: 'trackSubscribed', TrackUnsubscribed: 'trackUnsubscribed',
+    DataReceived: 'dataReceived',
     LocalTrackPublished: 'localTrackPublished', AudioPlaybackStatusChanged: 'audioPlaybackStatusChanged',
   },
   DisconnectReason: { UNKNOWN_REASON: 0, CLIENT_INITIATED: 1, DUPLICATE_IDENTITY: 2, 0: 'UNKNOWN_REASON', 1: 'CLIENT_INITIATED', 2: 'DUPLICATE_IDENTITY' },
