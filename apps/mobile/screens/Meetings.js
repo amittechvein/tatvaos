@@ -17,19 +17,10 @@ import { SafeAreaView } from 'react-native-safe-area-context'; // see App.js
 import { Ionicons } from '@expo/vector-icons';
 
 import { listMeetings, createMeeting } from '../lib/connect';
+import { describeWhen } from '../lib/nextMeeting';
 import { brand, surface, text } from '../theme';
 
 const log = (line) => console.log(`[meetings] ${line}`);
-
-function when(m) {
-  if (m?.status === 'active') return 'Happening now';
-  if (!m?.scheduledStart) return 'Instant meeting';
-  const d = new Date(m.scheduledStart);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleString(undefined, {
-    weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
-  });
-}
 
 export default function Meetings({ session, onJoin, onBack }) {
   const [meetings, setMeetings] = useState(null); // null = still loading
@@ -131,7 +122,7 @@ export default function Meetings({ session, onJoin, onBack }) {
           >
             <View style={{ flex: 1 }}>
               <Text style={s.rowTitle} numberOfLines={1}>{m.title || 'Meeting'}</Text>
-              <Text style={s.rowWhen}>{when(m)}</Text>
+              <Text style={s.rowWhen}>{describeWhen(m)}</Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color={text.muted} />
           </Pressable>

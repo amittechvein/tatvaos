@@ -39,6 +39,7 @@ import { brand, text, surface, visibleProducts } from './theme';
 import { login, verifyMfa, restore, signOut, me } from './api';
 import Meetings from './screens/Meetings';
 import Meeting from './screens/Meeting';
+import NextMeetingCard from './components/NextMeetingCard';
 
 export default function App() {
   return (
@@ -113,9 +114,16 @@ function Root() {
     await signOut(token);
   }, [session]);
 
+  // Leaving a meeting goes back to wherever it was joined from. Joined from the
+  // dashboard's next-meeting card, back to the dashboard; joined from Connect's
+  // list, back to the list. Always sending people to the list would drop someone
+  // who never opened it onto a screen they did not come from.
+  const [meetingFrom, setMeetingFrom] = useState('meetings');
+
   const openConnect = useCallback(() => setView('meetings'), []);
-  const joinMeeting = useCallback((m) => { setActiveMeeting(m); setView('meeting'); }, []);
-  const leaveMeeting = useCallback(() => { setActiveMeeting(null); setView('meetings'); }, []);
+  const joinMeeting = useCallback((m) => { setMeetingFrom('meetings'); setActiveMeeting(m); setView('meeting'); }, []);
+  const joinFromHome = useCallback((m) => { setMeetingFrom('home'); setActiveMeeting(m); setView('meeting'); }, []);
+  const leaveMeeting = useCallback(() => { setActiveMeeting(null); setView(meetingFrom); }, [meetingFrom]);
   const backHome = useCallback(() => setView('home'), []);
 
   if (phase === 'restoring') return <Splash />;
@@ -132,6 +140,7 @@ function Root() {
         profile={profile}
         onSignOut={onSignOut}
         onOpenConnect={openConnect}
+        onJoinMeeting={joinFromHome}
       />
     );
   }
@@ -382,13 +391,19 @@ async function openProduct(p) {
   }
 }
 
-function Dashboard({ session, profile, onSignOut, onOpenConnect }) {
+function Dashboard({ session, profile, onSignOut, onOpenConnect, onJoinMeeting }) {
   const user = profile?.user ?? session?.user ?? {};
   // Falls back to the email while /me is in flight or if it failed. Showing
   // an address the person recognises beats showing a placeholder name.
   const name = user.displayName || user.email || 'Signed in';
   const org = profile?.organisation?.name || user.email || '';
   const tiles = visibleProducts(profile?.products, user.role);
+
+  // No Connect, no card: every meetings call would answer 403, and a card that
+  // can only ever say "could not check" is worse than no card. visibleProducts
+  // shows everything while /me is still in flight, so the card appears then and
+  // disappears if the answer says this person has no Connect — see theme.js.
+  const hasConnect = tiles.some((p) => p.key === 'connect');
 
   return (
     <SafeAreaView style={s.screen}>
@@ -410,6 +425,17 @@ function Dashboard({ session, profile, onSignOut, onOpenConnect }) {
               Your password needs changing. Sign in on core.tatvaos.com to set a new one.
             </Text>
           </View>
+        ) : null}
+
+        {/* Above the tiles on purpose: the brief's reason for the card is that
+            joining is the commonest thing someone opens this app to do, and a
+            card below six tiles is a card nobody sees. */}
+        {hasConnect ? (
+          <NextMeetingCard
+            session={session}
+            onJoin={onJoinMeeting}
+            onOpenConnect={onOpenConnect}
+          />
         ) : null}
 
         <View style={s.grid}>
