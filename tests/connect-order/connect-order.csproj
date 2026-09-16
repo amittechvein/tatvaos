@@ -1,0 +1,79 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ═══════════════════════════════════════════════════════════════════════
+     THE ORDER TESTS.
+
+     This project exists because of a sentence that was true in two places
+     and false in the code. docs/CONNECT_API.md promised that
+     `range=upcoming` "includes active meetings first", and the comment
+     directly above the filter in ListMeetingsAsync said "Live meetings
+     first, then what is coming". The query underneath ordered by
+     `ScheduledStart ?? CreatedAt` and nothing else, so a scheduled meeting
+     nobody ever joined — due an hour ago, still inside the two-hour grace
+     window — sorted ABOVE a meeting that was live at that moment.
+
+     Nothing failed. No log line, no error, no 500. The phone's Meetings
+     screen simply put the dead meeting at the top and the live one below
+     it, and the only way to notice was to be in a meeting and look.
+
+     It survived because the rule could not be RUN. Reading it is what
+     everybody did, and reading it is what missed it.
+
+     THREE DELIBERATE CHOICES, the first two copied from tests/connect-wire:
+
+     1. ConnectMeetingOrder.cs and ConnectEntities.cs are LINKED, not
+        copied. This compiles the exact files that run in production. A
+        copy would drift and the tests would go on passing against code
+        nobody ships.
+
+     2. No test framework. A console app with an exit code needs no package
+        restore, so it runs on a box with no network, in CI, and on a
+        laptop, identically. `dotnet run` and read the last line.
+
+     3. The rule is driven as LINQ-to-objects over a plain List. That
+        proves the ORDER — which is the thing that was wrong. It does not
+        prove that Npgsql translates the expression to SQL; the API build
+        and a real request do that, and the PR that added this file says so
+        rather than leaving it to be assumed.
+
+     It is not in any solution file on purpose: nothing about the API build
+     should depend on it, and it must never end up published.
+
+     WHAT STILL RUNS IT IS A PERSON. Nothing in CI does, as of 16 September
+     2026 — same as tests/connect-wire and tests/connect-minutes, which have
+     been green and hand-run since August. A step in ci.yml's backend job
+     would cost seconds (all three need no packages and no database) and was
+     written and then backed out of the PR that added this file, because
+     CLAUDE.md sends CI workflow changes to the CTO rather than letting this
+     session decide them. It is with him. If he says yes, the step goes in
+     and this paragraph goes out.
+
+     Until then this project has the defect it was built to catch: a rule
+     that only gets checked when somebody remembers. Saying so here is the
+     cheapest thing that keeps it from being forgotten quietly.
+    ═══════════════════════════════════════════════════════════════════════
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TatvaOS.Tests.Order</RootNamespace>
+    <AssemblyName>connect-order-test</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The production files themselves. Not copies. -->
+    <Compile Include="../../apps/api/Modules/Connect/ConnectMeetingOrder.cs"
+             Link="ConnectMeetingOrder.cs" />
+    <Compile Include="../../apps/api/Modules/Connect/ConnectEntities.cs"
+             Link="ConnectEntities.cs" />
+  </ItemGroup>
+
+</Project>

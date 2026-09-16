@@ -194,8 +194,14 @@ public static class ConnectEndpoints
         // ──────────────────────────────────────────────────────────────────
         all = which switch
         {
-            // Live meetings first, then what is coming. A meeting happening
-            // right now is the thing the person most likely wants.
+            // What is live, plus what is coming. This clause decides only
+            // WHICH meetings are in the list; the order they come back in is
+            // ConnectMeetingOrder.Sort, below.
+            //
+            // It used to say "Live meetings first, then what is coming" — a
+            // sentence about ordering, sitting above a filter, while the
+            // ordering itself did no such thing. Four weeks of everyone
+            // reading the promise here and nobody reading the ORDER BY.
             "upcoming" => all.Where(m =>
                 m.Status == "active"
                 || (m.Status == "scheduled"
@@ -222,13 +228,11 @@ public static class ConnectEndpoints
         };
 
         var total = await all.CountAsync(ct);
-        // ScheduledStart before CreatedAt in the Past ordering: a meeting that
-        // was never joined has no EndedAt, and sorting it by when it was
-        // CREATED puts a meeting booked for next Tuesday and made in January
-        // half a year away from the day it was supposed to happen.
-        var rows = which == "past"
-            ? await all.OrderByDescending(m => m.EndedAt ?? m.ScheduledStart ?? m.CreatedAt).Skip(skip).Take(take).ToListAsync(ct)
-            : await all.OrderBy(m => m.ScheduledStart ?? m.CreatedAt).Skip(skip).Take(take).ToListAsync(ct);
+        // The order is in ConnectMeetingOrder, in its own file, because a rule
+        // nothing can execute is a rule that drifts from its own comment. Read
+        // it there; it is the same expression this used to hold inline.
+        var rows = await ConnectMeetingOrder.Sort(all, which)
+            .Skip(skip).Take(take).ToListAsync(ct);
 
         var roles = await RolesForAsync(db, uid, rows.Select(r => r.Id).ToList(), ct);
         return Results.Ok(new
