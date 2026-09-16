@@ -105,11 +105,19 @@ const ADMIN_ROLES = ['super_admin', 'org_owner', 'org_admin'];
 //  Connect has none: it never opens a browser, it opens screens/Meetings.js.
 // ---------------------------------------------------------------------------
 export const products = [
-  { key: 'mail',     product: 'mail',     name: 'Mail',     icon: 'mail-outline',     tint: '#E1F5EE', ink: '#0F6E56', url: hosts.mail,              path: '/mail' },
+  // ── A PATH MUST BE A PAGE, NOT A PRODUCT'S PREFIX. 16 Sept 2026. ─────────
+  //  The first real handoff from a phone minted in 113ms, scrubbed its code,
+  //  landed on mail.tatvaos.com — and showed "404 This page could not be
+  //  found". apps/web/app/mail/ has no page.tsx: /mail is a folder of routes,
+  //  and the inbox is /mail/inbox. Same for /family, whose landing page is
+  //  /family/contacts. Measured live the same hour: mail.tatvaos.com/ → 302
+  //  /mail/inbox, but mail.tatvaos.com/mail → 404. These now match
+  //  apps/web/lib/nav.tsx's own hrefs, which is where to look if they change.
+  { key: 'mail',     product: 'mail',     name: 'Mail',     icon: 'mail-outline',     tint: '#E1F5EE', ink: '#0F6E56', url: hosts.mail,              path: '/mail/inbox' },
   { key: 'connect',  product: 'connect',  name: 'Connect',  icon: 'videocam-outline', tint: '#E6F1FB', ink: '#185FA5', url: hosts.connect },
   { key: 'space',    product: 'drive',    name: 'Space',    icon: 'folder-outline',   tint: '#EEEDFE', ink: '#534AB7', url: hosts.space,             path: '/space' },
   { key: 'calendar', product: 'calendar', name: 'Calendar', icon: 'calendar-outline', tint: '#FAECE7', ink: '#993C1D', url: hosts.calendar,          path: '/calendar' },
-  { key: 'contacts', product: 'family',   name: 'Contacts', icon: 'people-outline',   tint: '#FBEAF0', ink: '#993556', url: `${hosts.core}/family`,  path: '/family' },
+  { key: 'contacts', product: 'family',   name: 'Contacts', icon: 'people-outline',   tint: '#FBEAF0', ink: '#993556', url: `${hosts.core}/family/contacts`, path: '/family/contacts' },
   { key: 'admin',    roles: ADMIN_ROLES,  name: 'Admin',    icon: 'business-outline', tint: '#F1EFE8', ink: '#5F5E5A', url: `${hosts.core}/org`,     path: '/org' },
 ];
 

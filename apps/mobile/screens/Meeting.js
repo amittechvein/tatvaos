@@ -113,6 +113,19 @@ async function askPermissions() {
 export default function Meeting({ session, meeting, onLeave }) {
   useKeepAwake();
 
+  // ── THE TOKEN IS READ FRESH; THE SESSION IS NOT A REASON TO RECONNECT. ──
+  //
+  // Access tokens last fifteen minutes and api.js now renews one when a
+  // request meets an expired token (16 Sept 2026). The renewal hands App.js a
+  // NEW session object. The join effect below used to list `session` as a
+  // dependency — and its cleanup disconnects the room and stops the audio. So
+  // a host's lobby poll hitting 401 at minute fifteen would have renewed the
+  // token, re-run that effect, and dropped the call for everyone watching
+  // them, every fifteen minutes. Reading the token through this ref keeps each
+  // request current without the effect ever noticing the session changed.
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+
   // One Room per mount. useState's initialiser runs once, which is what makes
   // useRoom below stable across renders.
   const [room] = useState(() => new Room());
@@ -178,7 +191,7 @@ export default function Meeting({ session, meeting, onLeave }) {
   async function admit(pw) {
     let admitted;
     try {
-      admitted = await joinMeeting(session.accessToken, meeting.id, pw);
+      admitted = await joinMeeting(sessionRef.current.accessToken, meeting.id, pw);
     } catch (e) {
       if (gone.current) return;
       if (e?.status === 403) {
@@ -205,7 +218,7 @@ export default function Meeting({ session, meeting, onLeave }) {
       const poll = async () => {
         if (gone.current) return;
         try {
-          const answer = await pollWait(session.accessToken, admitted.waitToken);
+          const answer = await pollWait(sessionRef.current.accessToken, admitted.waitToken);
           if (gone.current) return;
           if (answer.kind === 'waiting') {
             waitTimer.current = setTimeout(poll, WAIT_POLL_MS);
@@ -286,7 +299,9 @@ export default function Meeting({ session, meeting, onLeave }) {
       AudioSession.stopAudioSession().catch(() => {});
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [room, session, meeting]);
+    // NOT `session`: see sessionRef at the top. A renewed token must never
+    // re-run this effect, because its cleanup ends the call.
+  }, [room, meeting]);
 
   // Waiting room, host side. Only a host or cohost may ask; everyone else gets
   // a 403, and a 403 stops the polling for good rather than being retried
@@ -300,7 +315,7 @@ export default function Meeting({ session, meeting, onLeave }) {
     const poll = async () => {
       if (stopped) return;
       try {
-        const waiting = await getLobby(session.accessToken, meeting.id);
+        const waiting = await getLobby(sessionRef.current.accessToken, meeting.id);
         if (stopped) return;
         const key = waiting.map((w) => w.requestId).join(',');
         if (key !== lastKey) {
@@ -317,12 +332,12 @@ export default function Meeting({ session, meeting, onLeave }) {
     };
     poll();
     return () => { stopped = true; if (timer) clearTimeout(timer); };
-  }, [status, role, session, meeting]);
+  }, [status, role, meeting]);   // not `session` — the ref keeps the token current
 
   async function decide(requestId, verdict) {
     const call = verdict === 'admit' ? admitFromLobby : denyFromLobby;
     try {
-      await call(session.accessToken, meeting.id, requestId);
+      await call(sessionRef.current.accessToken, meeting.id, requestId);
       log(`lobby: ${verdict} ${requestId}`);
       setLobby((l) => l.filter((w) => w.requestId !== requestId));
     } catch (e) {

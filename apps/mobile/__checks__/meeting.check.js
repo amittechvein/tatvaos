@@ -24,6 +24,25 @@ test('direct join: connects with the minted token, mic on, speaker selected', as
   expect(AudioSession.selectAudioOutput).toHaveBeenCalledWith('speaker');
 });
 
+test('a renewed session mid-call does NOT reconnect — the cleanup would end the call', async () => {
+  // 16 Sept 2026. api.js now renews an expired access token and App.js hands
+  // this screen a NEW session object. The join effect used to depend on it,
+  // and its cleanup disconnects the room: a renewal at minute fifteen would
+  // have dropped the call. Rerendering with a new session must change nothing.
+  api.join = jest.fn(async () => joined);
+  const r = render(<Meeting session={session} meeting={meeting} onLeave={() => {}} />);
+  await waitFor(() => expect(r.getByText('Only you so far')).toBeTruthy());
+  expect(room().connectCalls).toHaveLength(1);
+
+  r.rerender(<Meeting session={{ accessToken: 'AT-RENEWED' }} meeting={meeting} onLeave={() => {}} />);
+  await new Promise((done) => setTimeout(done, 50));
+
+  expect(room().connectCalls).toHaveLength(1);
+  expect(api.join).toHaveBeenCalledTimes(1);
+  expect(r.queryByText(/Disconnected/)).toBeNull();
+  expect(r.getByText('Only you so far')).toBeTruthy();
+});
+
 test('waiting room: polls, then enters with the token the POLL returned (one-shot)', async () => {
   api.join = jest.fn(async () => ({ kind: 'waiting', waitToken: 'W', message: 'You are in the waiting room. Someone has to let you in.' }));
   let polls = 0;
