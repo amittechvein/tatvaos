@@ -120,6 +120,27 @@ deploy "$C2"; check "deploy C2" "$C1"
 deploy "$C2"; check "deploy C2 AGAIN, by a second route (16 Sept)" "$C1"
 deploy "$C3"; check "deploy C3" "$C2"
 
+# ── The wiring. A right answer from a function deploy.sh does not call, or
+# a deploy recorded BEFORE the verdict can still fail, is the same wrong line
+# at the worst moment. Read from the file, by line number.
+echo
+echo "== deploy.sh uses it"
+DEPLOY="$(dirname "$LIB")/deploy.sh"
+src=$(grep -n '^\. infra/scripts/deploy-rollback-point\.sh$' "$DEPLOY" | head -1 | cut -d: -f1)
+call=$(grep -n '^rollback_point$' "$DEPLOY" | head -1 | cut -d: -f1)
+verdict=$(grep -n '^step "Verdict"$' "$DEPLOY" | tail -1 | cut -d: -f1)
+last_exit=$(awk -v v="${verdict:-0}" 'NR > v && /^    exit 1$/ { n = NR } END { print n + 0 }' "$DEPLOY")
+record=$(grep -n '^if record_deploy; then$' "$DEPLOY" | head -1 | cut -d: -f1)
+[ -n "$src" ] && [ -n "$call" ] && [ "$src" -lt "$call" ] \
+  && yes_ "deploy.sh sources the rollback file, then prints the rollback point" \
+  || no_ "deploy.sh does not source deploy-rollback-point.sh before calling rollback_point"
+[ -n "$record" ] && [ -n "$verdict" ] && [ "$last_exit" -gt 0 ] && [ "$record" -gt "$last_exit" ] \
+  && yes_ "record_deploy runs only after the verdict's failure exit — a failed deploy is never recorded" \
+  || no_ "record_deploy is missing, or runs before the verdict can exit (record at '${record:-none}', verdict exit at '${last_exit}')"
+[ "$(grep -c 'record_deploy' "$DEPLOY")" = 1 ] \
+  && yes_ "and nowhere else" \
+  || no_ "record_deploy is called more than once in deploy.sh"
+
 echo
 echo "  passed: $PASS   failed: $FAIL"
 [ "$FAIL" = 0 ]
