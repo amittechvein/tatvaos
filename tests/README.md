@@ -3,6 +3,7 @@
 | Folder | Purpose |
 |---|---|
 | `isolation/` | ★ Proves one tenant cannot reach another's data |
+| `invitations/` | Decision 0005 end to end against the local stack: invitation link, accept, expiry, resend, refusals, typed password, mail edge down. Needs `local/` up and the API on :5000 |
 | `e2e/` | Playwright — full user journeys |
 | `load/` | Throughput and latency |
 

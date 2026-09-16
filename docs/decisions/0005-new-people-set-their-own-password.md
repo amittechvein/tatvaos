@@ -1,6 +1,16 @@
 # 0005 — New people set their own password: an invitation link, or a password the admin types
 
-**Status:** proposed
+**Status:** built 16 Sept 2026 (Core), on the four proposals below as
+proposed — Amit has not yet said otherwise. Proven by
+`tests/invitations/test-invitations.sh` against the local stack (61 checks,
+including a red-first calibration of the single-use rule). Two departures
+from the text, both deliberate: the bulk import mails its invitations after
+the response, as it already did the welcomes, and writes each outcome to the
+row (`invite_delivered`) so the people list says "not delivered" rather than
+the results table — 200 synchronous sends would time the import out; and
+there is no `invite_attempts` column, because nothing counts attempts on a
+token that is found by its 256-bit hash (the reset's counter exists for the
+six-digit phone code).
 **Date:** 2026-09-15
 
 ## Context

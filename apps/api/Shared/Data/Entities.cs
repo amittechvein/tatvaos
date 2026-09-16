@@ -219,6 +219,25 @@ public class User
     public DateTimeOffset? PendingPhoneOtpSentAt { get; set; }
     public int PendingPhoneOtpAttempts { get; set; }
 
+    // ---- Invitation (20260916-user-invitations.sql, decision 0005) --------
+    // A person added with a recovery email and no typed password has NO usable
+    // password: PasswordHash stays null, sign-in refuses every password, and
+    // this token — stored only as its SHA-256, like every other secret on this
+    // row — is the one way in. Kept apart from the password-reset columns on
+    // purpose: a "forgot password" must not overwrite a pending invitation,
+    // and an invitation must not be spendable at the reset endpoint.
+    [MaxLength(64)] public string? InviteTokenHash { get; set; }
+    public DateTimeOffset? InviteSentAt { get; set; }
+    [MaxLength(8)] public string? InviteChannel { get; set; }
+    /// <summary>
+    /// What the mail edge said. Null: not attempted yet (a bulk import sends
+    /// after its response). True: accepted. False: the send failed, and the
+    /// people list says so — an invitation is how a person gets in, so its
+    /// failure is never swallowed the way the welcome mail's is.
+    /// </summary>
+    public bool? InviteDelivered { get; set; }
+    public DateTimeOffset? InviteAcceptedAt { get; set; }
+
     [MaxLength(200)] public required string DisplayName { get; set; }
 
     /// <summary>Argon2id. Never any other scheme in production.</summary>

@@ -49,6 +49,7 @@ public static class UserEndpoints
         users.MapPost("/{id:guid}/suspend", SuspendAsync);
         users.MapPost("/{id:guid}/reactivate", ReactivateAsync);
         users.MapPost("/{id:guid}/reset-password", ResetPasswordAsync);
+        users.MapPost("/{id:guid}/invitation/resend", ResendInvitationAsync);
         users.MapPost("/{id:guid}/reset-mailbox-password", ResetMailboxPasswordAsync);
         users.MapDelete("/{id:guid}", DeleteAsync);
         users.MapPost("/{id:guid}/offboard", OffboardAsync);
@@ -110,6 +111,18 @@ public static class UserEndpoints
                 .SetProperty(t => t.RevokedAt, (DateTimeOffset?)DateTimeOffset.UtcNow)
                 .SetProperty(t => t.RevokeReason, (string?)reason), ct);
 
+    /// <summary>The two facts every outgoing account email needs.</summary>
+    private static async Task<(string OrgName, string BaseUrl)> OrgNameAndBaseUrlAsync(
+        AppDbContext db, TenantContext tenant, IConfiguration config, CancellationToken ct)
+    {
+        var orgName = await db.Tenants.AsNoTracking()
+            .Where(t => t.Id == tenant.TenantId)
+            .Select(t => t.Name)
+            .FirstOrDefaultAsync(ct) ?? "your organisation";
+        var baseUrl = (config["Jwt:Issuer"] ?? "https://core.tatvaos.com").TrimEnd('/');
+        return (orgName, baseUrl);
+    }
+
     private static async Task<bool> WouldRemoveLastOwnerAsync(
         AppDbContext db, User target, CancellationToken ct) =>
         target.Role == "org_owner" &&
@@ -157,6 +170,11 @@ public static class UserEndpoints
                 DepartmentName = u.Department != null ? u.Department.Name : null,
                 u.Role, u.Status, u.MfaEnabled, u.LastLoginAt, u.CreatedAt,
                 HasVerifiedRecoveryEmail = u.RecoveryEmailVerifiedAt != null,
+                // The invitation columns, so the list can say "invited — not
+                // signed in yet" / "expired" / "not delivered" per person.
+                HasPassword = u.PasswordHash != null,
+                u.InviteTokenHash, u.InviteSentAt, u.InviteDelivered, u.InviteAcceptedAt,
+                u.RecoveryEmail,
             })
             .ToListAsync(ct);
 
@@ -198,6 +216,9 @@ public static class UserEndpoints
         var list = rows.Select(r =>
         {
             boxByUser.TryGetValue(r.Id, out var box);
+            var inviteState = Invitations.State(
+                r.InviteTokenHash, r.HasPassword ? "set" : null,
+                r.InviteSentAt, r.InviteDelivered, r.InviteAcceptedAt);
             return new UserResponse(
                 r.Id, r.Email, r.DisplayName,
                 box?.Address,
@@ -213,7 +234,10 @@ public static class UserEndpoints
                     ? use2.UsedBytes : box?.UsedBytes ?? 0,
                 r.MfaEnabled, r.LastLoginAt, r.CreatedAt,
                 r.HasVerifiedRecoveryEmail,
-                withAvatar.Contains(r.Id));
+                withAvatar.Contains(r.Id),
+                inviteState is null
+                    ? null
+                    : new InvitationInfo(inviteState, r.InviteSentAt, Mask.Email(r.RecoveryEmail)));
         }).ToList();
 
         return Results.Ok(list);
@@ -266,7 +290,34 @@ public static class UserEndpoints
              await db.Aliases.IgnoreQueryFilters().AnyAsync(a => a.Address == address, ct)))
             return Results.Conflict(new { error = $"{address} already exists." });
 
-        var password = req.Password ?? PasswordGenerator.Generate();
+        // ---- how this person gets in (decision 0005) ----------------------
+        // A typed password is the admin's to hand over and wins outright. With
+        // none typed there is NO generated password any more: a recovery email
+        // means an invitation link goes there instead, and no recovery info at
+        // all is refused — here, not only in the browser, so a request that
+        // skips the form cannot create an account nobody can enter.
+        var typedPassword = string.IsNullOrWhiteSpace(req.Password) ? null : req.Password.Trim();
+        if (typedPassword is not null && typedPassword.Length < PasswordPolicy.MinimumLength)
+            return Results.BadRequest(new { error = PasswordPolicy.TooShort });
+
+        var recoveryEmail = req.RecoveryEmail?.Trim();
+        if (!string.IsNullOrEmpty(recoveryEmail) && !EmailAddress.LooksValid(recoveryEmail))
+            return Results.BadRequest(new { error = $"Recovery email '{recoveryEmail}' is not an address." });
+
+        string? recoveryPhone = null;
+        if (!string.IsNullOrWhiteSpace(req.RecoveryPhone))
+        {
+            recoveryPhone = PhoneNumber.Normalise(req.RecoveryPhone);
+            if (recoveryPhone is null)
+                return Results.BadRequest(new
+                {
+                    error = $"'{req.RecoveryPhone}' is not a usable phone number. Include the country code, like +91 98765 43210.",
+                });
+        }
+
+        var inviteChannel = typedPassword is null ? Invitations.ChannelFor(recoveryEmail, recoveryPhone) : null;
+        if (typedPassword is null && inviteChannel is null)
+            return Results.BadRequest(new { error = Invitations.NoWayIn });
 
         // Explicit role wins over the department default. Owners making
         // owners is the succession path — without it the first owner is the
@@ -299,11 +350,20 @@ public static class UserEndpoints
             DepartmentId = category?.Id,
             Role = role,
             Status = "pending",
-            PasswordHash = hasher.Hash(password),
-            // An admin generated this and will send it over chat or read it
-            // aloud. It is a handover credential, not the person's password.
-            MustChangePassword = true,
+            // Null for an invited person: no password exists until they choose
+            // one, and sign-in refuses every password until then. A typed one
+            // is a handover credential the admin has seen, so it must not
+            // survive first sign-in.
+            PasswordHash = typedPassword is null ? null : hasher.Hash(typedPassword),
+            MustChangePassword = typedPassword is not null,
+            // The admin's claim, not the person's proof: verified only when
+            // the person follows the invitation, or confirms it themselves.
+            RecoveryEmail = string.IsNullOrEmpty(recoveryEmail) ? null : recoveryEmail,
+            Phone = recoveryPhone,
         };
+        // Minted before the row is saved so both land in one transaction; the
+        // raw token lives only in this method until it is mailed.
+        var inviteToken = inviteChannel is null ? null : Invitations.Issue(user, inviteChannel);
         // The person's allowance across every product. Resolved the same way
         // the mailbox quota was — explicit value, else department, else org —
         // so nothing about provisioning changes except where it is recorded.
@@ -337,8 +397,10 @@ public static class UserEndpoints
                 Type = "user",
                 // Same password to start with, so the person has one thing to
                 // remember on day one. It diverges the moment either is reset,
-                // which is the point of keeping them in separate columns.
-                ImapPasswordHash = hasher.Hash(password),
+                // which is the point of keeping them in separate columns. An
+                // invited person's mailbox waits, password-less, until they
+                // accept — the accept handler gives it the password they chose.
+                ImapPasswordHash = typedPassword is null ? null : hasher.Hash(typedPassword),
                 QuotaBytes = quota,
             };
             db.Mailboxes.Add(mailbox);
@@ -350,25 +412,40 @@ public static class UserEndpoints
         await db.SaveChangesAsync(ct);
 
         await audit.WriteAsync("user.created", "user", user.Id.ToString(),
-            after: new { user.Email, products, category = category?.Name }, ct: ct);
+            after: new { user.Email, products, category = category?.Name, invited = inviteChannel }, ct: ct);
+
+        var (orgName, baseUrl) = await OrgNameAndBaseUrlAsync(db, tenant, config, ct);
+
+        // ------------------------------------------------------------------
+        //  The invitation — sent NOW, on the request, and its outcome recorded
+        //  and returned. This is the one send that is not best-effort: it is
+        //  how the person gets in, so "sent" has to mean the mail edge took it,
+        //  and "not sent" has to reach the admin's screen with a way forward.
+        // ------------------------------------------------------------------
+        bool? inviteDelivered = null;
+        if (inviteToken is not null)
+        {
+            inviteDelivered = await Invitations.SendAsync(mailer, user, orgName, baseUrl, inviteToken, ct);
+            user.InviteDelivered = inviteDelivered;
+            await db.SaveChangesAsync(ct);
+            await audit.WriteAsync("user.invitation_sent", "user", user.Id.ToString(),
+                after: new { channel = inviteChannel, sentTo = Mask.Email(recoveryEmail), delivered = inviteDelivered },
+                ct: ct);
+        }
 
         // ------------------------------------------------------------------
         //  Welcome email — the branded first message in their new inbox.
         //
         //  Only when a mailbox was actually created: a Payroll-only person has
-        //  no inbox to receive it. This is LOCAL delivery to their own hosted
-        //  mailbox, so it lands even before outbound SMTP is unblocked, and it
-        //  is best-effort — a failed send never fails the person's creation.
-        //  Always from no_reply@tatvaos.com, regardless of the platform default.
+        //  no inbox to receive it. And only for someone given a typed password:
+        //  an invited person cannot open that inbox yet, and the invitation
+        //  above is their first message from us. This is LOCAL delivery to
+        //  their own hosted mailbox, so it lands even before outbound SMTP is
+        //  unblocked, and it is best-effort — a failed send never fails the
+        //  person's creation. Always from no_reply@tatvaos.com.
         // ------------------------------------------------------------------
-        if (mailbox is not null)
+        if (mailbox is not null && inviteToken is null)
         {
-            var orgName = await db.Tenants.AsNoTracking()
-                .Where(t => t.Id == tenant.TenantId)
-                .Select(t => t.Name)
-                .FirstOrDefaultAsync(ct) ?? "your organisation";
-            var baseUrl = config["Jwt:Issuer"] ?? "https://core.tatvaos.com";
-
             await mailer.SendHtmlAsync(
                 user.Email,
                 WelcomeEmail.Subject(orgName),
@@ -377,9 +454,8 @@ public static class UserEndpoints
                 ct: ct);
         }
 
-        // The generated password is returned once and never stored in
-        // recoverable form. Losing it means a reset, which is the correct
-        // trade — a retrievable password is a stored plaintext password.
+        // No password comes back, ever: nothing was generated. A typed one is
+        // the admin's own and is not echoed into one more place.
         return Results.Created($"/api/org/users/{user.Id}", new
         {
             user.Id,
@@ -387,8 +463,17 @@ public static class UserEndpoints
             mailboxAddress = mailbox?.Address,
             quotaBytes = mailbox?.QuotaBytes,
             products,
-            temporaryPassword = req.Password is null ? password : null,
-            note = "The user must change this on first sign-in.",
+            invitation = inviteToken is null ? null : new
+            {
+                channel = inviteChannel,
+                sentTo = Mask.Email(recoveryEmail),
+                delivered = inviteDelivered == true,
+            },
+            note = inviteToken is null
+                ? "They must change the password you typed on first sign-in."
+                : inviteDelivered == true
+                    ? $"An invitation to set their password has been sent to {Mask.Email(recoveryEmail)}."
+                    : "The invitation could not be sent. Resend it from their profile once the address is right, or set a password instead.",
         });
     }
 
@@ -576,6 +661,11 @@ public static class UserEndpoints
         // emails are sent AFTER the response, in the background, because 200
         // synchronous SMTP sends would turn a fast bulk import into a timeout.
         var welcomes = new List<(string Email, string Name)>();
+        // Invitations go the same way, for the same reason — but each one's
+        // outcome is written back to the row (invite_delivered), so the people
+        // list says "not delivered" for any that failed. The raw tokens live in
+        // this list until they are mailed and nowhere else.
+        var invites = new List<(Guid UserId, string Token)>();
         // Addresses claimed by an earlier row of THIS batch: the database
         // check below cannot see rows that are not saved yet.
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -647,12 +737,14 @@ public static class UserEndpoints
                 continue;
             }
             // --- password -------------------------------------------------
-            // Blank generates. A supplied one has to clear the same bar the
-            // change-password screen sets, or the person is handed a password
-            // they are not allowed to set again themselves.
+            // Blank means an INVITATION, decided below once the recovery info
+            // is known — nothing is generated any more (decision 0005). A
+            // typed one has to clear the same bar the change-password screen
+            // sets, or the person is handed a password they are not allowed
+            // to set again themselves.
             var suppliedPassword = entry.Password?.Trim();
-            var passwordGenerated = string.IsNullOrEmpty(suppliedPassword);
-            if (!passwordGenerated && suppliedPassword!.Length < PasswordPolicy.MinimumLength)
+            var passwordTyped = !string.IsNullOrEmpty(suppliedPassword);
+            if (passwordTyped && suppliedPassword!.Length < PasswordPolicy.MinimumLength)
             {
                 skipped.Add(new { address, displayName, reason = PasswordPolicy.TooShort });
                 continue;
@@ -688,11 +780,21 @@ public static class UserEndpoints
                 }
             }
 
-            // A password we generated is ALWAYS forced, whatever the column
-            // says: an admin who can read it must not also be able to leave it
-            // as the person's permanent one. A supplied password is the
-            // admin's to decide, because they already told the person.
-            var mustChange = passwordGenerated || (entry.MustChangePassword ?? true);
+            // --- how they get in (decision 0005) ---------------------------
+            // Refused HERE as well as in the browser's pre-check: a request
+            // posted without the preview must not create an account with no
+            // way in.
+            var inviteChannel = passwordTyped ? null : Invitations.ChannelFor(recoveryEmail, recoveryPhone);
+            if (!passwordTyped && inviteChannel is null)
+            {
+                skipped.Add(new { address, displayName, reason = Invitations.NoWayIn });
+                continue;
+            }
+
+            // A typed password is the admin's to decide, because they already
+            // told the person — the column is honoured, defaulting to forced.
+            // An invited person chooses their own, so there is nothing to force.
+            var mustChange = passwordTyped && (entry.MustChangePassword ?? true);
 
             var products = dept?.DefaultProducts ?? ["mail"];
             var wantsMailbox = products.Contains("mail");
@@ -701,14 +803,14 @@ public static class UserEndpoints
                 created.Add(new
                 {
                     email = address, displayName, department = dept?.Name, mailbox = wantsMailbox,
-                    passwordGenerated, mustChangePassword = mustChange,
+                    passwordTyped, mustChangePassword = mustChange,
+                    invitation = inviteChannel is null ? null : new { channel = inviteChannel, sentTo = Mask.Email(recoveryEmail) },
                     recoveryEmail, recoveryPhone,
                 });
                 continue;
             }
             var quota = await storage.ResolveQuotaAsync(
                 tenant.TenantId, dept?.Id, null, "mail", ct);
-            var password = passwordGenerated ? PasswordGenerator.Generate() : suppliedPassword!;
             var user = new User
             {
                 TenantId = tenant.TenantId,
@@ -718,11 +820,12 @@ public static class UserEndpoints
                 DepartmentId = dept?.Id,
                 Role = dept?.DefaultRole ?? "employee",
                 Status = "pending",
-                PasswordHash = hasher.Hash(password),
-                // The same reason the single-person path above gives: an admin
-                // generated this, it is shown in the results table, and it will
-                // be pasted into a chat or a spreadsheet. It is a handover
-                // credential, not the person's password.
+                // Null for an invited person — no password exists until they
+                // choose one. Same rule as the single-person path, and the two
+                // now share Invitations.ChannelFor so they cannot disagree.
+                PasswordHash = passwordTyped ? hasher.Hash(suppliedPassword!) : null,
+                // A typed password is a handover credential the admin has
+                // seen, so it is forced unless the column says otherwise.
                 //
                 // This line was missing from the bulk path from 7 Sept 2026
                 // until 11 Sept. Everyone imported in that window kept their
@@ -742,6 +845,8 @@ public static class UserEndpoints
             // it only to the mailbox. A user row with no quota falls back at
             // read time, so this was invisible rather than visibly wrong.
             user.StorageQuotaBytes = quota;
+            var inviteToken = inviteChannel is null ? null : Invitations.Issue(user, inviteChannel);
+            if (inviteToken is not null) invites.Add((user.Id, inviteToken));
             db.Users.Add(user);
             foreach (var code in products.Distinct())
                 db.ProductAccess.Add(new ProductAccess
@@ -760,18 +865,23 @@ public static class UserEndpoints
                     Address = address,
                     LocalPart = localPart,
                     Type = "user",
-                    ImapPasswordHash = hasher.Hash(password),
+                    // Password-less until the invitation is accepted; the
+                    // accept handler gives it the password the person chose.
+                    ImapPasswordHash = passwordTyped ? hasher.Hash(suppliedPassword!) : null,
                     QuotaBytes = quota,
                 });
-                welcomes.Add((address, displayName));
+                // An invited person gets the invitation as their first message,
+                // not a welcome in an inbox they cannot open yet.
+                if (inviteToken is null) welcomes.Add((address, displayName));
             }
             created.Add(new
             {
                 email = address, displayName, department = dept?.Name,
-                // Only shown when WE made it. Echoing back a password the admin
-                // supplied puts it in one more place for no benefit.
-                temporaryPassword = passwordGenerated ? password : null,
+                // Never a password: nothing is generated, and one the admin
+                // typed is not echoed into one more place.
+                passwordTyped,
                 mustChangePassword = mustChange,
+                invitation = inviteChannel is null ? null : new { channel = inviteChannel, sentTo = Mask.Email(recoveryEmail) },
                 recoveryEmail = string.IsNullOrEmpty(recoveryEmail) ? null : recoveryEmail,
                 recoveryPhone,
             });
@@ -792,21 +902,117 @@ public static class UserEndpoints
             {
                 count = created.Count,
                 skipped = skipped.Count,
+                invited = invites.Count,
                 addresses = createdAddresses,
             }, ct: ct);
         // Fire the welcome emails after the response, on a fresh DI scope (the
         // request's is disposed the moment we return). Best-effort: a school
         // importing 200 students gets its list instantly, and the inboxes fill
         // over the next few seconds without the admin waiting on SMTP.
-        if (welcomes.Count > 0)
+        //
+        // Invitations go the same way for the same reason, but NOT best-effort:
+        // each outcome is written to the row, and the people list shows it.
+        if (welcomes.Count > 0 || invites.Count > 0)
         {
-            var orgName = await db.Tenants.AsNoTracking()
-                .Where(t => t.Id == tenant.TenantId).Select(t => t.Name)
-                .FirstOrDefaultAsync(ct) ?? "your organisation";
-            var baseUrl = config["Jwt:Issuer"] ?? "https://core.tatvaos.com";
-            SendWelcomesInBackground(scopeFactory, welcomes, orgName, baseUrl);
+            var (orgName, baseUrl) = await OrgNameAndBaseUrlAsync(db, tenant, config, ct);
+            if (welcomes.Count > 0) SendWelcomesInBackground(scopeFactory, welcomes, orgName, baseUrl);
+            if (invites.Count > 0)
+                SendInvitationsInBackground(scopeFactory, tenant.TenantId, tenant.UserId!.Value, tenant.Role!,
+                                            invites, orgName, baseUrl);
         }
         return Results.Ok(new { dryRun = false, created, skipped });
+    }
+
+    /// <summary>
+    /// Mails a batch of invitations after the response and records, per
+    /// person, whether the mail edge accepted each one. Unlike the welcomes
+    /// this is NOT swallowed: a failed invitation is a person who cannot get
+    /// in, so the row says so and the people list shows "not delivered".
+    /// </summary>
+    private static void SendInvitationsInBackground(
+        IServiceScopeFactory scopeFactory,
+        Guid tenantId, Guid actorId, string actorRole,
+        IReadOnlyList<(Guid UserId, string Token)> invites,
+        string orgName, string baseUrl)
+    {
+        _ = Task.Run(async () =>
+        {
+            using var scope = scopeFactory.CreateScope();
+            var sp = scope.ServiceProvider;
+            var mailer = sp.GetRequiredService<SystemMailer>();
+            var db = sp.GetRequiredService<AppDbContext>();
+            var log = sp.GetRequiredService<ILogger<AppDbContext>>();
+            // The request's tenant, re-established on the fresh scope so the
+            // query filter finds the rows and the audit row has an actor.
+            sp.GetRequiredService<TenantContext>().Set(tenantId, actorId, actorRole);
+            await db.SyncTenantAsync();
+            var audit = sp.GetRequiredService<AuditWriter>();
+            foreach (var (userId, token) in invites)
+            {
+                try
+                {
+                    var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId);
+                    if (user is null || user.InviteTokenHash != TokenIssuer.HashRefreshToken(token))
+                        continue;   // resent or replaced before we got here; that link is dead
+                    var delivered = await Invitations.SendAsync(mailer, user, orgName, baseUrl, token);
+                    user.InviteDelivered = delivered;
+                    await db.SaveChangesAsync();
+                    await audit.WriteAsync("user.invitation_sent", "user", user.Id.ToString(),
+                        after: new { channel = user.InviteChannel, sentTo = Mask.Email(user.RecoveryEmail), delivered });
+                }
+                catch (Exception ex)
+                {
+                    // One bad row must not stop the other 199. It is logged,
+                    // and its invite_delivered stays null — which the list
+                    // shows as still pending, so the admin can resend.
+                    log.LogWarning(ex, "Invitation for user {UserId} could not be processed", userId);
+                }
+            }
+        });
+    }
+
+    /// <summary>
+    /// A new invitation for someone who has not got in yet: the old link dies
+    /// the moment the new token is minted. "Resend" on the profile. Refused
+    /// for anyone who already has a password — that is a reset, not an invite.
+    /// </summary>
+    private static async Task<IResult> ResendInvitationAsync(
+        Guid id, AppDbContext db, TenantContext tenant, AuditWriter audit,
+        SystemMailer mailer, IConfiguration config, CancellationToken ct)
+    {
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id, ct);
+        if (user is null) return Results.NotFound();
+        if (GuardActOn(tenant, user) is IResult denied) return denied;
+        if (user.Status is "deleted" or "suspended")
+            return Results.BadRequest(new { error = "This account is closed. Reactivate it first." });
+        if (user.PasswordHash is not null || user.InviteAcceptedAt is not null)
+            return Results.BadRequest(new
+            {
+                error = "This person already has a password. Use Reset password if they have lost it.",
+            });
+
+        var channel = Invitations.ChannelFor(user.RecoveryEmail, user.Phone);
+        if (channel is null) return Results.BadRequest(new { error = Invitations.NoWayIn });
+
+        var token = Invitations.Issue(user, channel);
+        await db.SaveChangesAsync(ct);
+
+        var (orgName, baseUrl) = await OrgNameAndBaseUrlAsync(db, tenant, config, ct);
+        var delivered = await Invitations.SendAsync(mailer, user, orgName, baseUrl, token, ct);
+        user.InviteDelivered = delivered;
+        await db.SaveChangesAsync(ct);
+
+        await audit.WriteAsync("user.invitation_resent", "user", user.Id.ToString(),
+            after: new { channel, sentTo = Mask.Email(user.RecoveryEmail), delivered }, ct: ct);
+
+        return Results.Ok(new
+        {
+            sent = delivered,
+            sentTo = Mask.Email(user.RecoveryEmail),
+            note = delivered
+                ? $"A new invitation has been sent to {Mask.Email(user.RecoveryEmail)}. The previous link no longer works."
+                : "The invitation could not be sent. Check the recovery address, or set a password instead.",
+        });
     }
 
     /// <summary>
@@ -1100,6 +1306,20 @@ public static class UserEndpoints
         // A password the admin has seen is a handover credential, exactly as
         // at creation — it must not survive first sign-in.
         user.MustChangePassword = true;
+
+        // "Set a password instead" for someone still holding an invitation
+        // (decision 0005): the link dies here, so two ways in never coexist.
+        // Their mailbox never had a password either, so it takes this one —
+        // the same "one thing to remember" rule creation applies.
+        var replacedInvitation = user.InviteTokenHash is not null && user.InviteAcceptedAt is null;
+        user.InviteTokenHash = null;
+        user.InviteSentAt = null;
+        user.InviteChannel = null;
+        user.InviteDelivered = null;
+        var box = await db.Mailboxes
+            .FirstOrDefaultAsync(m => m.UserId == user.Id && m.ImapPasswordHash == null, ct);
+        if (box is not null) box.ImapPasswordHash = hasher.Hash(password);
+
         await db.SaveChangesAsync(ct);
 
         // Whoever held the old password may hold a session. End them all.
@@ -1107,7 +1327,8 @@ public static class UserEndpoints
 
         // Audited because it is a common step in an account takeover. The
         // record is what makes that detectable afterwards.
-        await audit.WriteAsync("user.password_reset", "user", id.ToString(), ct: ct);
+        await audit.WriteAsync("user.password_reset", "user", id.ToString(),
+            after: new { replacedInvitation }, ct: ct);
 
         return Results.Ok(new
         {

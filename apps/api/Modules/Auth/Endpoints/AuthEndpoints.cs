@@ -319,6 +319,14 @@ public static class AuthEndpoints
         g.MapPost("/password/forgot-otp", ForgotPasswordOtpAsync).AllowAnonymous();
         g.MapPost("/password/reset-otp", ResetPasswordOtpAsync).AllowAnonymous();
 
+        // ---- invitation (decision 0005) ----------------------------------
+        // Anonymous: the token in the link IS the proof. Per-IP limited like
+        // the handoff redeem, for the same reason — a single-use token cannot
+        // be brute-forced, but nothing should get to try at wire speed.
+        g.MapPost("/invite/accept", AcceptInvitationAsync)
+            .AllowAnonymous()
+            .RequireRateLimiting("auth-invite-accept");
+
         // ---- multi-account ----------------------------------------------
         // All anonymous. The authority for every one of them is possession of
         // the slot's httpOnly cookie, which is a stronger claim than an access
@@ -1470,20 +1478,12 @@ public static class AuthEndpoints
         }, statusCode: 429);
     }
 
-    /// <summary>r•••@gmail.com — enough for the owner to recognise, not enough to reuse.</summary>
-    private static string MaskEmail(string? email)
-    {
-        if (string.IsNullOrWhiteSpace(email)) return "";
-        var at = email.IndexOf('@');
-        return at <= 0 ? "•••" : email[0] + "•••" + email[at..];
-    }
-
-    /// <summary>+91•••••3210.</summary>
-    private static string MaskPhone(string? phone)
-    {
-        if (string.IsNullOrWhiteSpace(phone)) return "";
-        return phone.Length <= 4 ? "•••" : phone[..3] + "•••••" + phone[^4..];
-    }
+    // Both live in Shared.Mask since 16 Sept 2026, because the admin endpoints
+    // mask the same addresses for the invitation flow. These are aliases so
+    // the many call sites here did not have to change; the implementation is
+    // in one place.
+    private static string MaskEmail(string? email) => Shared.Mask.Email(email);
+    private static string MaskPhone(string? phone) => Shared.Mask.Phone(phone);
 
     /// <summary>
     /// Mails the account's own address and, when there is one, the previous
@@ -2294,6 +2294,83 @@ public static class AuthEndpoints
         });
     }
 
+    // =====================================================================
+    //  INVITATION — decision 0005
+    // =====================================================================
+    //
+    //  A person added with a recovery email and no typed password has no
+    //  password at all until they open the link and choose one here. The token
+    //  is found BY its hash, single-use (the hash is cleared and the acceptance
+    //  timestamped), and dies after Invitations.Lifetime. Following an EMAILED
+    //  link proves the recovery address is readable, so it becomes verified —
+    //  the same inference the reset handler makes for the primary address.
+    //
+    //  401, not 400, for a dead token, as 0005 specifies: the request was well
+    //  formed; what it carried is no longer a credential.
+    // =====================================================================
+
+    private static async Task<IResult> AcceptInvitationAsync(
+        AcceptInvitationRequest req, AppDbContext db, IPasswordHasher hasher,
+        TenantContext tenant, AuditWriter audit, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req.Token) || string.IsNullOrEmpty(req.NewPassword))
+            return Results.BadRequest(new { error = "An invitation token and a new password are required." });
+
+        if (req.NewPassword.Length < MinPasswordLength)
+            return Results.BadRequest(new { error = ShortPasswordMessage });
+
+        var hash = TokenIssuer.HashRefreshToken(req.Token.Trim());
+
+        var user = await db.Users.IgnoreQueryFilters()
+            .FirstOrDefaultAsync(u => u.InviteTokenHash == hash
+                                      && u.InviteAcceptedAt == null
+                                      && u.Status != "deleted" && u.Status != "suspended", ct);
+
+        if (user is null || Invitations.IsExpired(user))
+            return Results.Json(new { error = Invitations.Expired }, statusCode: 401);
+
+        tenant.Set(user.TenantId, user.Id, user.Role);
+        await db.SyncTenantAsync(ct);
+
+        user.PasswordHash = hasher.Hash(req.NewPassword);
+        user.PasswordChangedAt = DateTimeOffset.UtcNow;
+        // Their own choice, not a handover credential — nothing to force.
+        user.MustChangePassword = false;
+
+        // Spent. The hash goes so the link can never match again, and the
+        // acceptance is timestamped so the people list stops saying "invited".
+        user.InviteTokenHash = null;
+        user.InviteAcceptedAt = DateTimeOffset.UtcNow;
+
+        // An emailed link that was followed proves the address is readable.
+        if (user.InviteChannel == "email")
+            user.RecoveryEmailVerifiedAt ??= DateTimeOffset.UtcNow;
+
+        // A lockout collected by someone guessing at an account that had no
+        // password should not now punish its rightful owner.
+        user.FailedLoginCount = 0;
+        user.LockedUntil = null;
+
+        // The mailbox was created without a password, since there was none to
+        // give it. It gets this one, exactly as creation gives a typed
+        // password to both — one thing to remember on day one. Only when it
+        // has none: an admin "set a password instead" may already have run.
+        var box = await db.Mailboxes
+            .FirstOrDefaultAsync(m => m.UserId == user.Id && m.ImapPasswordHash == null, ct);
+        if (box is not null) box.ImapPasswordHash = hasher.Hash(req.NewPassword);
+
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync("user.invitation_accepted", "user", user.Id.ToString(),
+            after: new { channel = user.InviteChannel }, ct: ct);
+
+        return Results.Ok(new
+        {
+            accepted = true,
+            email = user.Email,
+            note = "Your password is set. Sign in with it.",
+        });
+    }
+
     /// <summary>
     /// The tail shared by both reset paths: set the new password, clear the
     /// reset state and any lockout, and END EVERY OTHER SESSION. Written once
@@ -2449,6 +2526,7 @@ public sealed record MfaVerifyRequest(string? Challenge, string? Code);
 // ---- forgot password ----
 public sealed record ForgotPasswordRequest(string? Email);
 public sealed record ResetPasswordRequest(string? Token, string NewPassword);
+public sealed record AcceptInvitationRequest(string? Token, string? NewPassword);
 public sealed record ForgotPasswordOtpRequest(string? Phone);
 public sealed record ResetPasswordOtpRequest(string? Phone, string? Code, string NewPassword);
 
