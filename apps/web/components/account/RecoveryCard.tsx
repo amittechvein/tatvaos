@@ -25,6 +25,10 @@ import {
 //  Removing either asks twice, inline. No browser confirm(): it is modal,
 //  unstyled, and nothing else on this page uses it.
 //
+//  Adding, changing or removing either asks for the CURRENT PASSWORD (see
+//  lib/recovery.ts for why). The typed password lives only in this component's
+//  state and is cleared on success and on cancel.
+//
 //  Tailwind and components/ui throughout, like the rest of the account page.
 //  No colour literals — badges and text-* carry the theme.
 // ---------------------------------------------------------------------------
@@ -59,6 +63,7 @@ export function RecoveryCard() {
   const [code, setCode] = useState('');
   const [devCode, setDevCode] = useState<string | null>(null);
   const [removing, setRemoving] = useState<Removing>(null);
+  const [password, setPassword] = useState('');
   const firstLoad = useRef(true);
 
   const load = useCallback(async () => {
@@ -94,11 +99,13 @@ export function RecoveryCard() {
     e.preventDefault();
     const value = email.trim();
     if (!EMAIL_RE.test(value)) { setError('Enter a valid email address.'); return; }
+    if (!password) { setError('Enter your current password.'); return; }
     void run(async () => {
-      const r = await setRecoveryEmail(authedFetch, value);
+      const r = await setRecoveryEmail(authedFetch, value, password);
       setNotice(r.message);
       setEmailMode('view');
       setEmail('');
+      setPassword('');
       await load();
     });
   };
@@ -112,8 +119,10 @@ export function RecoveryCard() {
     });
   };
   const doRemoveEmail = () => {
+    if (!password) { setError('Enter your current password to remove it.'); return; }
     void run(async () => {
-      await removeRecoveryEmail(authedFetch);
+      await removeRecoveryEmail(authedFetch, password);
+      setPassword('');
       setRemoving(null);
       setNotice('Recovery email removed.');
       await load();
@@ -124,6 +133,7 @@ export function RecoveryCard() {
   const cancelPhone = () => {
     setPhoneMode('view');
     setPhone('');
+    setPassword('');
     setCode('');
     setDevCode(null);
     setError(null);
@@ -135,11 +145,13 @@ export function RecoveryCard() {
       setError('Enter the mobile number with its country code, like +91 98765 43210.');
       return;
     }
+    if (!password) { setError('Enter your current password.'); return; }
     void run(async () => {
-      const r = await requestPhoneChange(authedFetch, value);
+      const r = await requestPhoneChange(authedFetch, value, password);
       setNotice(r.message);
       setDevCode(r.devCode);
       setCode('');
+      setPassword('');
       setPhoneMode('code');
       await load();
     });
@@ -168,8 +180,10 @@ export function RecoveryCard() {
     });
   };
   const doRemovePhone = () => {
+    if (!password) { setError('Enter your current password to remove it.'); return; }
     void run(async () => {
-      await removePhone(authedFetch);
+      await removePhone(authedFetch, password);
+      setPassword('');
       setRemoving(null);
       setPhoneMode('view');
       setNotice('Recovery number removed.');
@@ -199,6 +213,9 @@ export function RecoveryCard() {
         A reset link goes to your recovery email, or a code to your recovery number.
         Keep at least one of them current.
       </p>
+      <p className="mb-2 text-xs text-ink-muted">
+        Changing either asks for your current password, and we email you whenever they change.
+      </p>
       {error && <Alert tone="danger" className="py-2">{error}</Alert>}
       {notice && !error && <Alert tone="info" className="py-2">{notice}</Alert>}
 
@@ -208,10 +225,13 @@ export function RecoveryCard() {
             <Input  type="email" autoComplete="email"
                    placeholder="you@example.com" value={email}
                    onChange={(e) => setEmail(e.target.value)} disabled={busy} />
+            <Input  type="password" autoComplete="current-password"
+                   placeholder="Current password" value={password}
+                   onChange={(e) => setPassword(e.target.value)} disabled={busy} />
             <div className="flex gap-2">
               <Button variant="primary" type="submit" disabled={busy}>Send link</Button>
               <Button variant="ghost" type="button" disabled={busy}
-                      onClick={() => { setEmailMode('view'); setEmail(''); setError(null); }}>
+                      onClick={() => { setEmailMode('view'); setEmail(''); setPassword(''); setError(null); }}>
                 Cancel
               </Button>
             </div>
@@ -247,10 +267,15 @@ export function RecoveryCard() {
               )}
               {status.recoveryEmail && (removing === 'email' ? (
                 <>
+                  <div className="w-full max-w-[16rem]">
+                    <Input  type="password" autoComplete="current-password"
+                   placeholder="Current password" value={password}
+                   onChange={(e) => setPassword(e.target.value)} disabled={busy} />
+                  </div>
                   <Button variant="ghost" type="button" className="text-danger" disabled={busy} onClick={doRemoveEmail}>
                     Confirm remove
                   </Button>
-                  <Button variant="ghost" type="button" disabled={busy} onClick={() => setRemoving(null)}>Keep</Button>
+                  <Button variant="ghost" type="button" disabled={busy} onClick={() => { setRemoving(null); setPassword(''); }}>Keep</Button>
                 </>
               ) : (
                 <Button variant="ghost" type="button" disabled={busy} onClick={() => setRemoving('email')}>Remove</Button>
@@ -266,6 +291,9 @@ export function RecoveryCard() {
             <Input  type="tel" autoComplete="tel"
                    placeholder="+91 98765 43210" value={phone}
                    onChange={(e) => setPhone(e.target.value)} disabled={busy} />
+            <Input  type="password" autoComplete="current-password"
+                   placeholder="Current password" value={password}
+                   onChange={(e) => setPassword(e.target.value)} disabled={busy} />
             <div className="flex gap-2">
               <Button variant="primary" type="submit" disabled={busy}>Send code</Button>
               <Button variant="ghost" type="button" disabled={busy} onClick={cancelPhone}>Cancel</Button>
@@ -304,10 +332,15 @@ export function RecoveryCard() {
               </Button>
               {status.phone && (removing === 'phone' ? (
                 <>
+                  <div className="w-full max-w-[16rem]">
+                    <Input  type="password" autoComplete="current-password"
+                   placeholder="Current password" value={password}
+                   onChange={(e) => setPassword(e.target.value)} disabled={busy} />
+                  </div>
                   <Button variant="ghost" type="button" className="text-danger" disabled={busy} onClick={doRemovePhone}>
                     Confirm remove
                   </Button>
-                  <Button variant="ghost" type="button" disabled={busy} onClick={() => setRemoving(null)}>Keep</Button>
+                  <Button variant="ghost" type="button" disabled={busy} onClick={() => { setRemoving(null); setPassword(''); }}>Keep</Button>
                 </>
               ) : (
                 <Button variant="ghost" type="button" disabled={busy} onClick={() => setRemoving('phone')}>Remove</Button>

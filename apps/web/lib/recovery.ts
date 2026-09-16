@@ -10,6 +10,13 @@
 //
 //  The nudge card (components/RecoveryReminder.tsx) reads the same status
 //  endpoint; the account page reads the extra fields.
+//
+//  EVERY CHANGE NEEDS THE CURRENT PASSWORD, from 15 September 2026. Without it,
+//  anyone at an unlocked, signed-in laptop could add their own recovery email,
+//  reset the password and keep the account. The server answers 403 (not 401,
+//  which the auth client would treat as an expired session) when the password
+//  is missing or wrong. Resending to an address or number that is ALREADY
+//  pending needs no password, so those calls may omit it.
 // ============================================================================
 
 type AuthedFetch = (path: string, init?: RequestInit) => Promise<Response>;
@@ -52,19 +59,23 @@ export async function fetchRecoveryStatus(authedFetch: AuthedFetch): Promise<Rec
   return res.json();
 }
 
-export async function setRecoveryEmail(authedFetch: AuthedFetch, email: string): Promise<SentReply> {
-  const res = await authedFetch('/auth/recovery-email', post({ email }));
+export async function setRecoveryEmail(
+  authedFetch: AuthedFetch, email: string, currentPassword?: string,
+): Promise<SentReply> {
+  const res = await authedFetch('/auth/recovery-email', post({ email, currentPassword }));
   if (!res.ok) throw new Error(await readError(res, 'Could not save that address.'));
   return res.json();
 }
 
-export async function removeRecoveryEmail(authedFetch: AuthedFetch): Promise<void> {
-  const res = await authedFetch('/auth/recovery-email', { method: 'DELETE' });
+export async function removeRecoveryEmail(authedFetch: AuthedFetch, currentPassword: string): Promise<void> {
+  const res = await authedFetch('/auth/recovery-email', { ...post({ currentPassword }), method: 'DELETE' });
   if (!res.ok) throw new Error(await readError(res, 'Could not remove the recovery email.'));
 }
 
-export async function requestPhoneChange(authedFetch: AuthedFetch, phone: string): Promise<CodeSentReply> {
-  const res = await authedFetch('/auth/phone', post({ phone }));
+export async function requestPhoneChange(
+  authedFetch: AuthedFetch, phone: string, currentPassword?: string,
+): Promise<CodeSentReply> {
+  const res = await authedFetch('/auth/phone', post({ phone, currentPassword }));
   if (!res.ok) throw new Error(await readError(res, 'Could not send a code to that number.'));
   return res.json();
 }
@@ -77,7 +88,7 @@ export async function verifyPhoneChange(
   return res.json();
 }
 
-export async function removePhone(authedFetch: AuthedFetch): Promise<void> {
-  const res = await authedFetch('/auth/phone', { method: 'DELETE' });
+export async function removePhone(authedFetch: AuthedFetch, currentPassword: string): Promise<void> {
+  const res = await authedFetch('/auth/phone', { ...post({ currentPassword }), method: 'DELETE' });
   if (!res.ok) throw new Error(await readError(res, 'Could not remove the recovery number.'));
 }

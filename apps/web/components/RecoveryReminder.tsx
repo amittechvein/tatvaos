@@ -35,6 +35,8 @@ export function RecoveryReminder() {
   const [status, setStatus] = useState<RecoveryStatus | null>(null);
   const [dismissed, setDismissed] = useState(true);
   const [email, setEmail] = useState('');
+  // Adding a recovery email needs the current password (lib/recovery.ts says why).
+  const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
@@ -76,16 +78,21 @@ export function RecoveryReminder() {
       setError('Enter a valid email address.');
       return;
     }
+    if (!password) {
+      setError('Enter your current password.');
+      return;
+    }
     setBusy(true);
     try {
       const r = await authedFetch('/auth/recovery-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: value }),
+        body: JSON.stringify({ email: value, currentPassword: password }),
       });
       const data = await r.json().catch(() => ({} as { error?: string }));
       if (!r.ok) { setError(data.error ?? 'Could not save that address.'); return; }
       setSent(true);
+      setPassword('');
       snooze();
     } catch {
       setError('Something went wrong. Please try again.');
@@ -121,6 +128,10 @@ export function RecoveryReminder() {
           </p>
           <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
             placeholder="you@personal.com" disabled={busy}
+            className={`${AUTH_INPUT} mb-2`} />
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+            placeholder="Current password" autoComplete="current-password" disabled={busy}
+            aria-label="Current password"
             className={`${AUTH_INPUT} mb-2`} />
           {error && <div className="mb-2 text-[13px] text-danger">{error}</div>}
           <div className="flex justify-end gap-2">
