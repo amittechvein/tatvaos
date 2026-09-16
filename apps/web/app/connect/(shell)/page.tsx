@@ -182,7 +182,7 @@ export default function ConnectHome() {
 
             {loading ? (
               <div className="p-6 text-center text-ink-muted">
-                <Spinner inline />
+                <Spinner inline className="mr-2" />
                 Loading…
               </div>
             ) : rest.length === 0 && live.length === 0 ? (

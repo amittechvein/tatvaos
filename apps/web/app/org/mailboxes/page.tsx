@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { AdminShell } from '@/components/admin/AdminShell';
-import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
+import { Badge, Button, Card, Empty, Spinner, Table, Td } from '@/components/ui/Kit';
 import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 import { Input, InputSuffix, Select } from '@/components/ui/Form';
@@ -124,11 +124,7 @@ export default function SharedMailboxesPage() {
 
       <Card padded={false}>
         {loading ? (
-          <div className="flex justify-center py-12">
-            <span className="inline-block animate-spin rounded-full"
-                  style={{ width: 30, height: 30, border: '3px solid rgba(0,0,0,.12)',
-                           borderTopColor: '#6C3CE9' }} />
-          </div>
+          <Spinner />
         ) : boxes.length === 0 ? (
           <Empty
             title="No shared mailboxes yet"

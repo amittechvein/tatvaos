@@ -37,7 +37,7 @@ import { avatarObjectUrl, bustAvatar } from '@/lib/avatars';
 import { RequireAuth } from '@/components/RequireAuth';
 import { AppLauncher } from '@/components/shell/AppLauncher';
 import { AccountMenu } from '@/components/shell/AccountMenu';
-import { Badge, Button, Card } from '@/components/ui/Kit';
+import { Badge, Button, Card, Spinner } from '@/components/ui/Kit';
 import { Alert } from '@/components/ui/Page';
 import { RecoveryCard } from '@/components/account/RecoveryCard';
 import { useAuth } from '@/lib/auth';
@@ -102,21 +102,6 @@ function when(iso: string): string {
   if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
   const days = Math.round(hrs / 24);
   return `${days} day${days === 1 ? '' : 's'} ago`;
-}
-
-/** Replaces MUI's CircularProgress. */
-function Spinner({ size = 22 }: { size?: number }) {
-  return (
-    <span
-      className="inline-block animate-spin rounded-full"
-      style={{
-        width: size, height: size,
-        border: '2px solid rgba(0,0,0,.12)', borderTopColor: BRAND,
-      }}
-      role="status"
-      aria-label="Loading"
-    />
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -255,11 +240,11 @@ function AccountHub() {
   const initial = (user?.displayName ?? '?').charAt(0).toUpperCase();
 
   return (
-    <div className="flex flex-col bg-white" style={{ minHeight: '100dvh' }}>
+    <div className="flex flex-col bg-surface" style={{ minHeight: '100dvh' }}>
 
       {/* ---- Top bar --------------------------------------------------- */}
       <div
-        className="flex items-center gap-2 px-4 md:px-6 bg-white border-b border-line sticky top-0"
+        className="flex items-center gap-2 px-4 md:px-6 bg-surface border-b border-line sticky top-0"
         style={{ paddingTop: 10, paddingBottom: 10, zIndex: 10 }}
       >
         <span style={{ fontSize: 20, fontWeight: 500 }}>

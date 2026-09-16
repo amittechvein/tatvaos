@@ -318,7 +318,7 @@ export default function ForgotPasswordPage() {
       )}
 
       <p className="mt-6 text-center text-sm text-ink-muted">
-        <Link href="/login" className="text-brand-600 hover:underline">Back to sign in</Link>
+        <Link href="/login" className="inline-flex min-h-[2.75rem] items-center px-3 text-brand-600 hover:underline">Back to sign in</Link>
       </p>
     </AuthCard>
   );

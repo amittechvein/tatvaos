@@ -144,7 +144,7 @@ export default function History({ mode }: { mode: HistoryMode }) {
       <Card subtitle={copy.blurb} padded={false} title={copy.title}>
         {loading ? (
           <div className="p-6 text-center text-ink-muted">
-            <Spinner inline />
+            <Spinner inline className="mr-2" />
             Loading…
           </div>
         ) : meetings.length === 0 ? (
@@ -244,7 +244,7 @@ function Row({
           <td colSpan={5} className="cx-drawer">
             {rowBusy ? (
               <span className="text-ink-muted text-[0.8125rem]">
-                <Spinner inline />
+                <Spinner inline className="mr-2" />
                 Loading…
               </span>
             ) : rowError ? (

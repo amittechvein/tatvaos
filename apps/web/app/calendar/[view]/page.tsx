@@ -8,6 +8,7 @@ import {
   type CalendarEvent, type CalendarSummary,
 } from '@/lib/calendar';
 import { Icon } from '@/components/ui/Icon';
+import { Spinner } from '@/components/ui/Kit';
 
 // ============================================================================
 //  TatvaOS Calendar
@@ -192,9 +193,7 @@ export default function CalendarPage({ params }: { params: Promise<{ view: strin
         {/* ---- The view ---- */}
         <section className="min-w-0 flex-1 overflow-hidden rounded-card border border-line bg-surface">
           {loading ? (
-            <div className="flex h-full items-center justify-center">
-              <span className="block h-8 w-8 animate-spin rounded-full border-2 border-line border-t-brand-600" />
-            </div>
+            <Spinner className="h-full" />
           ) : view === 'month' ? (
             <MonthGrid from={from} anchor={anchor} events={shown} onOpen={setOpen}
                        onPick={(d) => setComposing({

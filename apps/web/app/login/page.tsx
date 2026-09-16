@@ -216,7 +216,7 @@ function SignInForm() {
   return (
     // minHeight AND height: the panel is a fixed-height column that manages
     // its own overflow, so the page itself should not scroll on a laptop.
-    <div className="flex bg-white login-shell" style={{ minHeight: '100vh' }}>
+    <div className="flex bg-surface login-shell" style={{ minHeight: '100vh' }}>
       {/* ---------------------------------------------------------------- */}
       {/*  Left: what this is                                              */}
       {/* ---------------------------------------------------------------- */}
@@ -592,7 +592,7 @@ function SignInForm() {
               {/* Anonymous recovery. The mobile-code route works today; the
                   emailed link depends on outbound SMTP being unblocked. */}
               <p className="text-center text-[0.875rem] mt-6 mb-0">
-                <Link href="/forgot-password" className="no-underline" style={{ color: BRAND }}>
+                <Link href="/forgot-password" className="inline-flex min-h-[2.75rem] items-center px-3 no-underline" style={{ color: BRAND }}>
                   Forgot password?
                 </Link>
               </p>

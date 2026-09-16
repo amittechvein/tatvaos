@@ -393,12 +393,31 @@ export function Meter({ used, total, tone }: {
  * the rest. Inline is sized to the text it sits next to; block is the 32px
  * disc a loading card shows.
  */
-export function Spinner({ inline = false, label = 'Loading' }: { inline?: boolean; label?: string }) {
-  const cls = inline
-    ? 'mr-2 inline-block h-[1em] w-[1em] animate-spin rounded-full border-2 border-current border-r-transparent align-[-0.125em]'
-    : 'block h-8 w-8 animate-spin rounded-full border-2 border-line border-t-brand-600';
-  const disc = <span role="status" aria-label={label} className={cls} />;
-  return inline ? disc : <div className="grid place-items-center py-12">{disc}</div>;
+export function Spinner({
+  inline = false, label = 'Loading', className = '',
+}: {
+  inline?: boolean;
+  label?: string;
+  /**
+   * Block mode: goes on the centring wrapper (`h-full` to centre in a pane).
+   * Inline mode: goes on the disc itself. The disc is 1em, so `text-[18px]`
+   * sizes it; it carries no margin of its own because it cannot know what
+   * follows it — a caller with text after it adds `mr-2`.
+   */
+  className?: string;
+}) {
+  if (inline) {
+    return (
+      <span role="status" aria-label={label}
+            className={`inline-block h-[1em] w-[1em] animate-spin rounded-full border-2 border-current border-r-transparent align-[-0.125em] ${className}`.trim()} />
+    );
+  }
+  return (
+    <div className={`grid place-items-center py-12 ${className}`.trim()}>
+      <span role="status" aria-label={label}
+            className="block h-8 w-8 animate-spin rounded-full border-2 border-line border-t-brand-600" />
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------

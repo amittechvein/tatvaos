@@ -27,6 +27,7 @@ import { useEffect, useState } from 'react';
 import { useAuth, type AccountSlot } from '@/lib/auth';
 import { useSelfPhoto } from '@/components/ui/UserPhoto';
 import { AnchoredPopover } from '@/components/ui/AnchoredPopover';
+import { Spinner } from '@/components/ui/Kit';
 
 /** Stable per-address colour, so an account keeps the same tile every time. */
 const TILE = ['#7367f0', '#28c76f', '#ff9f43', '#ea5455', '#00cfe8', '#a855f7'];
@@ -166,7 +167,7 @@ export function AccountMenu({ anchorEl, onClose }: {
                     className="rounded-full p-1.5 text-ink-muted transition hover:bg-surface hover:text-ink disabled:opacity-40"
                   >
                     {busy === a.slot ? (
-                      <span className="block h-[18px] w-[18px] animate-spin rounded-full border-2 border-line border-t-brand-600" />
+                      <Spinner inline label="Switching" className="block text-[18px] text-brand-600" />
                     ) : (
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
                            stroke="currentColor" strokeWidth="2" strokeLinecap="round">

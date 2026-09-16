@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formatDateTime } from '@/lib/dates';
 
 import { AdminShell } from '@/components/admin/AdminShell';
-import { Badge, Button, Card, Empty, IconButton, Meter, Table, Td, statusTone } from '@/components/ui/Kit';
+import { Badge, Button, Card, Empty, IconButton, Meter, Spinner, Table, Td, statusTone } from '@/components/ui/Kit';
 import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 import { UserPhoto } from '@/components/ui/UserPhoto';
@@ -182,11 +182,7 @@ export default function PeoplePage() {
 
       <Card padded={false}>
         {loading ? (
-          <div className="flex justify-center py-12">
-            {/* Tokens, not literals: this spinner carried the brand violet as
-                a hex, which is the copy that gets missed when it changes. */}
-            <span className="inline-block h-[30px] w-[30px] animate-spin rounded-full border-[3px] border-line border-t-brand-600" />
-          </div>
+          <Spinner />
         ) : filtered.length === 0 ? (
           <Empty
             title={people.length === 0 ? 'Nobody yet' : 'Nobody matches that filter'}

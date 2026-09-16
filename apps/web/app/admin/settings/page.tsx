@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { AdminShell } from '@/components/admin/AdminShell';
-import { Badge, Button, Card } from '@/components/ui/Kit';
+import { Badge, Button, Card, Spinner } from '@/components/ui/Kit';
 import { useAuth } from '@/lib/auth';
 import { Input, Select } from '@/components/ui/Form';
 import { Alert } from '@/components/ui/Page';
@@ -151,10 +151,7 @@ export default function SettingsPage() {
 
       {loading ? (
         <Card>
-          <div className="grid place-items-center py-12">
-            <span role="status" aria-label="Loading"
-                  className="block h-8 w-8 animate-spin rounded-full border-2 border-line border-t-brand-600" />
-          </div>
+          <Spinner />
         </Card>
       ) : (
         SECTIONS.map((section) => {

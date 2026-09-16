@@ -387,7 +387,7 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
   if (loading) {
     return (
       <div className="p-12 text-center text-ink-muted">
-        <Spinner inline />
+        <Spinner inline className="mr-2" />
         Loading…
       </div>
     );

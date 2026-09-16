@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useState } from 'react';
 
 import { AdminShell } from '@/components/admin/AdminShell';
-import { Badge, Button, Card, Empty, IconButton, Meter, Stat } from '@/components/ui/Kit';
+import { Badge, Button, Card, Empty, IconButton, Meter, Spinner, Stat } from '@/components/ui/Kit';
 import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 import { Input, InputSuffix, Select, Switch } from '@/components/ui/Form';
@@ -143,9 +143,7 @@ export default function DepartmentsPage() {
 
       <Card padded={false}>
         {loading ? (
-          <div className="grid place-items-center py-12">
-            <span className="block h-8 w-8 animate-spin rounded-full border-2 border-line border-t-brand-600" />
-          </div>
+          <Spinner />
         ) : tree.length === 0 ? (
           <Empty
             title="No departments yet"

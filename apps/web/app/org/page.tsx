@@ -19,7 +19,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 
 import { AdminShell } from '@/components/admin/AdminShell';
-import { Button, Card, Meter, Stat } from '@/components/ui/Kit';
+import { Button, Card, Meter, Spinner, Stat } from '@/components/ui/Kit';
 import { Alert } from '@/components/ui/Page';
 import { useAuth } from '@/lib/auth';
 
@@ -76,9 +76,7 @@ export default function CoreOverview() {
   if (loading) {
     return (
       <AdminShell scope="organisation" title="TatvaOS Core">
-        <div className="grid place-items-center py-12">
-          <span className="block h-8 w-8 animate-spin rounded-full border-2 border-line border-t-brand-600" />
-        </div>
+        <Spinner />
       </AdminShell>
     );
   }
