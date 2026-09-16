@@ -56,6 +56,6 @@ public static class ConnectMeetingOrder
             // ScheduledStart, so no instant meeting), but a 09:00 nobody
             // joined still outranks the 11:00 that is running, and two arms
             // with two rules is how one of them drifts.
-            : meetings.OrderBy(m => m.Status == "active" ? 0 : 1)
-                      .ThenBy(m => m.ScheduledStart ?? m.CreatedAt);
+            // DELIBERATE RED — ci/connect-checks-deliberate-red only. Never merge.
+            : meetings.OrderBy(m => m.ScheduledStart ?? m.CreatedAt);
 }
