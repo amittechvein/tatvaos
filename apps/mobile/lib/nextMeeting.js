@@ -3,17 +3,26 @@
  *
  * CHOSEN HERE, NOT TAKEN FROM THE TOP OF THE LIST, AND THAT IS DELIBERATE.
  *
- * docs/CONNECT_API.md says `range=upcoming` "includes active meetings first",
+ * docs/CONNECT_API.md said `range=upcoming` "includes active meetings first",
  * and the comment inside ListMeetingsAsync (apps/api/Modules/Connect/Endpoints/
- * ConnectEndpoints.cs) says "Live meetings first". The query under both does
- * not: it orders by `ScheduledStart ?? CreatedAt` and nothing else. Read
+ * ConnectEndpoints.cs) said "Live meetings first". The query under both did
+ * not: it ordered by `ScheduledStart ?? CreatedAt` and nothing else. Read
  * 15 Sept 2026 against 3aa25bd. So a scheduled meeting nobody opened, due an
- * hour ago and still inside the server's grace window, sorts ABOVE an instant
- * meeting that is live right now. Taking row 0 would put the dead meeting on
- * the card and hide the live one — no error, no log, just the wrong meeting.
+ * hour ago and still inside the server's grace window, sorted ABOVE an instant
+ * meeting that was live right now. Taking row 0 would have put the dead meeting
+ * on the card and hidden the live one — no error, no log, just the wrong
+ * meeting.
  *
- * If the server is ever fixed, this still gives the same answer; it does not
- * depend on the order it is handed.
+ * THE SERVER WAS FIXED ON 16 SEPTEMBER 2026 (Connect lane; the order now lives
+ * in apps/api/Modules/Connect/ConnectMeetingOrder.cs and tests/connect-order
+ * executes it). This function is kept exactly as it is, and keeping it is the
+ * point: it never depended on the order it was handed, so it gave the right
+ * answer through the whole four weeks the server gave the wrong one, and it
+ * will go on doing so if anybody removes that ORDER BY term again.
+ *
+ * The paragraph above is left in the past tense rather than deleted. A comment
+ * that says what the code used to protect against is how the next person finds
+ * out why it is shaped like this.
  *
  * Rules, in order:
  *   1. A live meeting (status 'active') wins. If there are several, the one

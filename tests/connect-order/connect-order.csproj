@@ -39,6 +39,19 @@
 
      It is not in any solution file on purpose: nothing about the API build
      should depend on it, and it must never end up published.
+
+     WHAT STILL RUNS IT IS A PERSON. Nothing in CI does, as of 16 September
+     2026 — same as tests/connect-wire and tests/connect-minutes, which have
+     been green and hand-run since August. A step in ci.yml's backend job
+     would cost seconds (all three need no packages and no database) and was
+     written and then backed out of the PR that added this file, because
+     CLAUDE.md sends CI workflow changes to the CTO rather than letting this
+     session decide them. It is with him. If he says yes, the step goes in
+     and this paragraph goes out.
+
+     Until then this project has the defect it was built to catch: a rule
+     that only gets checked when somebody remembers. Saying so here is the
+     cheapest thing that keeps it from being forgotten quietly.
     ═══════════════════════════════════════════════════════════════════════
   -->
 

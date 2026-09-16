@@ -322,8 +322,16 @@ plus one `app.MapConnectEndpoints();` line in `Program.cs`.
 ### `GET /api/connect/meetings?range=upcoming|today|past&page=&pageSize=`
 
 Meetings I created or am a participant of, in my tenant. `upcoming` (default)
-sorts soonest-first and includes `active` meetings first; `past` sorts
-latest-first. `pageSize` default 50, max 200.
+and `today` put `active` meetings first and then sort soonest-first; `past`
+sorts latest-first. `pageSize` default 50, max 200.
+
+The order is one expression, in `Modules/Connect/ConnectMeetingOrder.cs`, and
+`tests/connect-order` executes it. **This paragraph promised active-first for
+four weeks before the query did it** — the sort was `ScheduledStart ??
+CreatedAt` alone, so a scheduled meeting nobody joined, due an hour ago and
+still inside the two-hour grace window, sorted above a meeting that was live.
+Fixed 16 September 2026. The reason it lasted is that nothing could run the
+rule; that is what the check is for, and why this sentence names it.
 
 ```jsonc
 // 200

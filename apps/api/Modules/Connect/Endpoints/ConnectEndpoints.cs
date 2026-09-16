@@ -194,8 +194,14 @@ public static class ConnectEndpoints
         // ──────────────────────────────────────────────────────────────────
         all = which switch
         {
-            // Live meetings first, then what is coming. A meeting happening
-            // right now is the thing the person most likely wants.
+            // What is live, plus what is coming. This clause decides only
+            // WHICH meetings are in the list; the order they come back in is
+            // ConnectMeetingOrder.Sort, below.
+            //
+            // It used to say "Live meetings first, then what is coming" — a
+            // sentence about ordering, sitting above a filter, while the
+            // ordering itself did no such thing. Four weeks of everyone
+            // reading the promise here and nobody reading the ORDER BY.
             "upcoming" => all.Where(m =>
                 m.Status == "active"
                 || (m.Status == "scheduled"
