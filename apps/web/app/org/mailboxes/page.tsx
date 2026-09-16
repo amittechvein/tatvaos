@@ -6,7 +6,8 @@ import { AdminShell } from '@/components/admin/AdminShell';
 import { Badge, Button, Card, Empty, Table, Td } from '@/components/ui/Kit';
 import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
-import { Input, Select } from '@/components/ui/Form';
+import { Input, InputSuffix, Select } from '@/components/ui/Form';
+import { Alert } from '@/components/ui/Page';
 
 // ============================================================================
 //  Shared mailboxes — admissions@, support@, accounts@
@@ -105,24 +106,14 @@ export default function SharedMailboxesPage() {
         </Button>
       }
     >
-      {error && (
-        <div className="alert alert-danger !flex !items-start !mb-[1rem]">
-          <div className="!flex-auto">{error}</div>
-          <button type="button" className="btn-close" aria-label="Dismiss" onClick={() => setError(null)} />
-        </div>
-      )}
-      {notice && (
-        <div className="alert alert-success !flex !items-start !mb-[1rem]">
-          <div className="!flex-auto">{notice}</div>
-          <button type="button" className="btn-close" aria-label="Dismiss" onClick={() => setNotice(null)} />
-        </div>
-      )}
+      {error && <Alert tone="danger" onDismiss={() => setError(null)}>{error}</Alert>}
+      {notice && <Alert tone="ok" onDismiss={() => setNotice(null)}>{notice}</Alert>}
 
       {usable.length === 0 && !loading && (
-        <div className="alert alert-warning !mb-[1rem]">
+        <Alert tone="warn">
           No verified domain yet, so a shared mailbox would receive nothing.
           Verify one under <strong>Domains</strong> first.
-        </div>
+        </Alert>
       )}
 
       <p className="!text-[0.75rem] !text-ink-muted !mb-[1rem]">
@@ -253,11 +244,11 @@ function CreateDialog({ domains, onClose, onCreated, onError }: {
       }
     >
       <Field label="Address" required hint="Letters, numbers, dots, hyphens or underscores.">
-        <div className="input-group">
-          <Input  value={localPart} placeholder="admissions"
-                 onChange={(e) => setLocalPart(e.target.value)} />
-          <span className="input-group-text">@{domain?.fqdn ?? '…'}</span>
-        </div>
+        <InputSuffix
+          suffix={`@${domain?.fqdn ?? '…'}`}
+          value={localPart} placeholder="admissions"
+          onChange={(e) => setLocalPart(e.target.value)}
+        />
       </Field>
 
       {domains.length > 1 && (
@@ -277,17 +268,17 @@ function CreateDialog({ domains, onClose, onCreated, onError }: {
       </Field>
 
       <Field label="Storage">
-        <div className="input-group" style={{ maxWidth: 200 }}>
-          <Input type="number"  min={1} max={5000} value={quotaGb}
-                 onChange={(e) => setQuotaGb(Math.max(1, Number(e.target.value)))} />
-          <span className="input-group-text">GB</span>
-        </div>
+        <InputSuffix
+          suffix="GB" type="number" min={1} max={5000} value={quotaGb}
+          style={{ maxWidth: 200 }}
+          onChange={(e) => setQuotaGb(Math.max(1, Number(e.target.value)))}
+        />
       </Field>
 
-      <div className="alert alert-info mb-0 !text-[0.75rem]">
+      <Alert tone="info" className="mb-0 !text-[0.75rem]">
         Nobody can open it until you grant access — that is the next step, on the
         <strong> Access</strong> button in the list.
-      </div>
+      </Alert>
     </Modal>
   );
 }
@@ -428,7 +419,7 @@ function AccessDialog({ box, people, onClose, onChanged, onError }: {
       ) : (
         <div style={{ maxHeight: 220, overflowY: 'auto' }}>
           {byPerson.map((p) => (
-            <div key={p.userId} className="!flex !items-center gap-2 py-2 border-bottom">
+            <div key={p.userId} className="!flex !items-center gap-2 border-b border-line py-2">
               <span className="!flex-auto min-w-0">
                 <span className="!block !font-semibold !truncate">{p.displayName}</span>
                 <span className="!block !text-[0.75rem] !text-ink-muted !truncate">{p.email}</span>
@@ -438,7 +429,8 @@ function AccessDialog({ box, people, onClose, onChanged, onError }: {
                   <Badge tone="neutral">{LEVEL_LABEL[lvl]}</Badge>
                   {/* Each level removable on its own: taking away someone's
                       ability to answer should not also stop them reading. */}
-                  <button type="button" className="btn btn-sm btn-link text-danger p-0"
+                  <button type="button"
+                          className="rounded px-1 leading-none text-danger hover:bg-danger/10 disabled:opacity-50"
                           disabled={busy} title={`Remove ${LEVEL_LABEL[lvl]}`}
                           aria-label={`Remove ${LEVEL_LABEL[lvl]}`}
                           onClick={() => void run(() => authedFetch(
@@ -490,16 +482,18 @@ function PickerBox({ label, hint, people, picked, onChange }: {
 
   return (
     <div className="!mb-[1rem]">
-      <label className="form-label !text-[0.8125rem] !font-semibold mb-1">{label}</label>
+      <label className="mb-1 block !text-[0.8125rem] !font-semibold text-ink">{label}</label>
       <div className="!relative">
-        <div className="form-control !flex flex-wrap !items-center gap-1"
+        {/* The same surface as an Input — it IS the field, it just holds chips
+            and a bare typing slot instead of one value. */}
+        <div className="!flex w-full flex-wrap !items-center gap-1 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-500/25"
              style={{ minHeight: 72, alignContent: 'flex-start', paddingTop: 8 }}>
           {chosen.map((p) => (
-            <span key={p.id} className="!inline-flex !items-center gap-1 !rounded-[50rem] bg-light px-2 py-1"
+            <span key={p.id} className="!inline-flex !items-center gap-1 !rounded-[50rem] bg-canvas px-2 py-1"
                   style={{ fontSize: 12 }}>
               {p.displayName}
               <button type="button" aria-label={`Remove ${p.displayName}`}
-                      className="btn btn-sm btn-link p-0 text-danger"
+                      className="rounded px-0.5 leading-none text-danger hover:bg-danger/10"
                       onClick={() => onChange(picked.filter((id) => id !== p.id))}>×</button>
             </span>
           ))}
@@ -513,7 +507,7 @@ function PickerBox({ label, hint, people, picked, onChange }: {
         </div>
 
         {hits.length > 0 && (
-          <div className="!absolute !w-full bg-white border rounded shadow-sm"
+          <div className="!absolute !w-full rounded-lg border border-line bg-surface shadow-raised"
                style={{ zIndex: 1400, top: '100%', marginTop: 2, overflow: 'hidden' }}>
             {hits.map((p) => (
               <button key={p.id} type="button"

@@ -160,6 +160,67 @@ export function Select({
 
 // ---------------------------------------------------------------------------
 /**
+ * A field with a fixed unit or domain glued to its right edge — "30 [GB]",
+ * "admissions [@school.edu.in]".
+ *
+ * One control, not a field with a caption beside it: the two share a border
+ * and cannot wrap apart. The suffix is static text, never a control.
+ */
+export function InputSuffix({
+  suffix, className = '', invalid = false, ...rest
+}: { suffix: React.ReactNode; className?: string; invalid?: boolean } & NativeInput) {
+  return (
+    <div className={`flex items-stretch ${className}`.trim()}>
+      <Input invalid={invalid} className="rounded-r-none" {...rest} />
+      <span className="inline-flex shrink-0 items-center rounded-r-lg border border-l-0 border-line bg-canvas px-3 text-sm text-ink-muted">
+        {suffix}
+      </span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+/**
+ * A switch: the same choice as a checkbox, drawn as a track and a knob, for
+ * settings that take effect as they are flipped rather than on a Save button.
+ *
+ * It is a REAL checkbox with role="switch", visually hidden behind the track.
+ * Keyboard focus, space to toggle, and what a screen reader announces are the
+ * browser's, not ours. YZEN drew its switch with a background image, which is
+ * why the one it replaces could not take our colours.
+ */
+export function Switch({
+  label, hint, className = '', id: givenId, ...rest
+}: { label: React.ReactNode; hint?: string; className?: string }
+  & React.InputHTMLAttributes<HTMLInputElement>) {
+  const generated = useId();
+  const id = givenId ?? generated;
+  return (
+    <div className={`mb-3 ${className}`.trim()}>
+      <label htmlFor={id} className="flex cursor-pointer items-start gap-3">
+        <span className="relative mt-0.5 inline-flex shrink-0">
+          <input id={id} type="checkbox" role="switch" className="peer sr-only" {...rest} />
+          <span aria-hidden="true"
+                className={
+                  'block h-5 w-9 rounded-full bg-line transition-colors '
+                  + 'peer-checked:bg-brand-500 peer-disabled:opacity-50 '
+                  + 'peer-focus-visible:ring-2 peer-focus-visible:ring-brand-500/40'
+                } />
+          <span aria-hidden="true"
+                className={
+                  'pointer-events-none absolute left-0.5 top-0.5 h-4 w-4 rounded-full '
+                  + 'bg-surface shadow-card transition-transform peer-checked:translate-x-4'
+                } />
+        </span>
+        <span className="text-sm text-ink">{label}</span>
+      </label>
+      {hint && <p className="ml-12 mt-1 text-xs text-ink-muted">{hint}</p>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+/**
  * Checkbox with its label inline, because a tick box with the text beside it
  * is one target: the whole row is clickable, which matters most on a phone.
  */

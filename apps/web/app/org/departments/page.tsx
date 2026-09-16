@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useId, useState } from 'react';
 
 import { AdminShell } from '@/components/admin/AdminShell';
-import { Button, Card, Empty, Meter, Stat } from '@/components/ui/Kit';
+import { Badge, Button, Card, Empty, IconButton, Meter, Stat } from '@/components/ui/Kit';
 import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
-import { Input, Select } from '@/components/ui/Form';
+import { Input, InputSuffix, Select, Switch } from '@/components/ui/Form';
+import { Alert } from '@/components/ui/Page';
 
 // ============================================================================
 //  Departments — what Google calls Organisational Units
@@ -117,10 +118,7 @@ export default function DepartmentsPage() {
       actions={<Button variant="primary" onClick={() => setAddingUnder(null)}>Add department</Button>}
     >
       {error && (
-        <div className="alert alert-danger !flex !items-center !justify-between" role="alert">
-          <span>{error}</span>
-          <button type="button" className="btn-close" aria-label="Dismiss" onClick={() => setError(null)} />
-        </div>
+        <Alert tone="danger" onDismiss={() => setError(null)}>{error}</Alert>
       )}
 
       {storage && (
@@ -165,11 +163,11 @@ export default function DepartmentsPage() {
       </Card>
 
       {unassigned > 0 && (
-        <div className="alert alert-info !mt-[1.5rem]" role="note">
+        <Alert tone="info" className="!mt-[1.5rem]">
           {unassigned} {unassigned === 1 ? 'person is' : 'people are'} in no department, so
           they get the organisation default of {fmt(storage?.perUserFloor ?? null)} and no
           departmental permissions.
-        </div>
+        </Alert>
       )}
 
       {(editing || addingUnder !== undefined) && (
@@ -232,7 +230,7 @@ function Row({ node, depth, onAddChild, onEdit, onDelete }: {
       >
         <button
           type="button"
-          className="btn btn-icon btn-sm btn-light border-0 bg-transparent"
+          className="inline-grid shrink-0 place-items-center rounded text-ink-muted hover:text-ink"
           onClick={() => setOpen((v) => !v)}
           aria-label={open ? 'Collapse' : 'Expand'}
           aria-expanded={open}
@@ -252,9 +250,8 @@ function Row({ node, depth, onAddChild, onEdit, onDelete }: {
           <div className="!flex !items-center gap-2 flex-wrap">
             <span className="!font-semibold !text-[0.875rem]">{node.name}</span>
             {!node.canSendExternal && (
-              <span className="badge bg-light !text-ink-muted"
-                    title="Members can email inside the organisation only">
-                internal only
+              <span title="Members can email inside the organisation only">
+                <Badge tone="neutral">internal only</Badge>
               </span>
             )}
           </div>
@@ -287,28 +284,22 @@ function Row({ node, depth, onAddChild, onEdit, onDelete }: {
             A touch screen has no hover at all, so there they are always shown —
             otherwise a phone could never edit or delete a department. */}
         <div className="!flex gap-1 flex-shrink-0 opacity-0 transition group-hover:!opacity-100 focus-within:!opacity-100 [@media(hover:none)]:!opacity-100">
-          <button type="button" className="btn btn-icon btn-sm btn-light"
-                  title="Add sub-department" aria-label={`Add a sub-department in ${node.name}`}
-                  onClick={() => onAddChild(node)}>
+          <IconButton label={`Add a sub-department in ${node.name}`} onClick={() => onAddChild(node)}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                  strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
-          </button>
-          <button type="button" className="btn btn-icon btn-sm btn-light"
-                  title="Edit" aria-label={`Edit ${node.name}`}
-                  onClick={() => onEdit(node)}>
+          </IconButton>
+          <IconButton label={`Edit ${node.name}`} onClick={() => onEdit(node)}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                  strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z" />
             </svg>
-          </button>
-          <button type="button" className="btn btn-icon btn-sm btn-light text-danger"
-                  title="Delete" aria-label={`Delete ${node.name}`}
-                  onClick={() => onDelete(node)}>
+          </IconButton>
+          <IconButton label={`Delete ${node.name}`} tone="danger" onClick={() => onDelete(node)}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                  strokeWidth="1.8" strokeLinecap="round">
               <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
             </svg>
-          </button>
+          </IconButton>
         </div>
       </div>
 
@@ -435,25 +426,28 @@ function DeptDialog({ node, parent, storage, onClose, onSaved, onError }: {
       <div className="rounded-card border border-line bg-canvas !p-[1rem] !mb-[1rem]">
         <div className="!font-semibold !text-[0.875rem] mb-2">Storage per person</div>
 
-        <div className="form-check form-switch">
-          <input className="form-check-input" type="checkbox" role="switch"
-                 id={`${uid}-inherit`} checked={inherit}
-                 onChange={(e) => setInherit(e.target.checked)} />
-          <label className="form-check-label !text-[0.8125rem]" htmlFor={`${uid}-inherit`}>
-            Inherit {inheritedFrom !== null && <strong>{fmt(inheritedFrom)}</strong>}
-            {parent ? ` from ${parent.name}` : ' from the organisation default'}
-          </label>
-        </div>
+        <Switch
+          id={`${uid}-inherit`}
+          checked={inherit}
+          onChange={(e) => setInherit(e.target.checked)}
+          className="mb-0"
+          label={
+            <>
+              Inherit {inheritedFrom !== null && <strong>{fmt(inheritedFrom)}</strong>}
+              {parent ? ` from ${parent.name}` : ' from the organisation default'}
+            </>
+          }
+        />
 
         {!inherit && (
           <div className="!mt-[1rem]">
             <Field label="Storage per person"
                    hint="Applies here and to every sub-department that inherits">
-              <div className="input-group" style={{ maxWidth: 220 }}>
-                <Input type="number"  min={1} max={5000} value={quotaGb}
-                       onChange={(e) => setQuotaGb(Math.max(1, Number(e.target.value)))} />
-                <span className="input-group-text">GB</span>
-              </div>
+              <InputSuffix
+                suffix="GB" type="number" min={1} max={5000} value={quotaGb}
+                style={{ maxWidth: 220 }}
+                onChange={(e) => setQuotaGb(Math.max(1, Number(e.target.value)))}
+              />
             </Field>
           </div>
         )}
@@ -469,18 +463,20 @@ function DeptDialog({ node, parent, storage, onClose, onSaved, onError }: {
       </div>
 
       {/* ---- Permission ---- */}
-      <div className="form-check form-switch">
-        <input className="form-check-input" type="checkbox" role="switch"
-               id={`${uid}-external`} checked={external}
-               onChange={(e) => setExternal(e.target.checked)} />
-        <label className="form-check-label" htmlFor={`${uid}-external`}>
-          <span className="!block !text-[0.875rem]">Can email outside the organisation</span>
-          <span className="!block !text-[0.75rem] !text-ink-muted">
-            Off means they can only email colleagues. This does <strong>not</strong> inherit —
-            it is chosen per department, so a new one is never accidentally permissive.
-          </span>
-        </label>
-      </div>
+      <Switch
+        id={`${uid}-external`}
+        checked={external}
+        onChange={(e) => setExternal(e.target.checked)}
+        label={
+          <>
+            <span className="!block !text-[0.875rem]">Can email outside the organisation</span>
+            <span className="!block !text-[0.75rem] !text-ink-muted">
+              Off means they can only email colleagues. This does <strong>not</strong> inherit —
+              it is chosen per department, so a new one is never accidentally permissive.
+            </span>
+          </>
+        }
+      />
     </Modal>
   );
 }
