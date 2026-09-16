@@ -78,6 +78,37 @@ jobs:
       - run: dotnet build --no-restore -c Release
         working-directory: apps/api
 
+      # ------------------------------------------------------------------
+      #  The Connect console checks under tests/. Each compiles production
+      #  source files LINKED, not copied, needs no packages and no database,
+      #  and exits non-zero on a failed assertion — so `dotnet run` IS the
+      #  assertion, and a red here names the rule that broke.
+      #
+      #  Added 17 Sept 2026, CTO ruling: "a check that does not run is
+      #  documentation, which is rule 8". connect-order exists because the
+      #  meetings list sorted one way for four weeks while its document and
+      #  its own comment said another; it, connect-wire and connect-minutes
+      #  had only ever run when somebody remembered. connect-share has the
+      #  same shape and joins them.
+      #
+      #  One step per check, not one step for all: a red names WHICH check in
+      #  the job summary without anyone opening the log. GitHub runs `run:`
+      #  under `bash -e`, so a failing `dotnet run` fails its step.
+      #
+      #  Not here, deliberately: tests/connect-pip (Node, driven by
+      #  infra/scripts/connect-pip-test.sh) and tests/connect-whisper (Python,
+      #  calls a paid transcription API). Different runtimes, and the second
+      #  must not spend money on every push.
+      # ------------------------------------------------------------------
+      - name: "Connect check: meetings-list order"
+        run: dotnet run --project tests/connect-order
+      - name: "Connect check: LiveKit wire format"
+        run: dotnet run --project tests/connect-wire
+      - name: "Connect check: minutes"
+        run: dotnet run --project tests/connect-minutes
+      - name: "Connect check: screen-share mode"
+        run: dotnet run --project tests/connect-share
+
   isolation:
     name: Tenant isolation
     runs-on: ubuntu-latest
