@@ -404,7 +404,7 @@ builder.Services.AddRateLimiter(o =>
             });
     });
 
-    // The handoff MINT (decision 0003). Authenticated, and until 17 Sept 2026
+    // The handoff MINT (decision 0003). Authenticated, and until 16 Sept 2026
     // unlimited — while every successful call is a live sixty-second
     // credential. A loop in the app, or one stolen bearer token, could mint
     // thousands. The CTO's ruling, 16 Sept: per-user limit beside the others.
