@@ -76,7 +76,12 @@ public sealed record CreateUserRequest(
     string[]? Products = null,
     // Null falls back to the department's default role, then to employee.
     // org_owner is only grantable by an org_owner — enforced server-side.
-    string? Role = null);
+    string? Role = null,
+    // Decision 0005: with no Password typed, a recovery email is where the
+    // invitation goes, and neither means the request is refused. Stored
+    // UNVERIFIED until the person follows the link (which proves it).
+    string? RecoveryEmail = null,
+    string? RecoveryPhone = null);
 
 /// <summary>
 /// Editing a person. Every field is optional — null means "leave it alone",
@@ -151,7 +156,16 @@ public sealed record UserResponse(
     // Whether a profile photo exists. The list carries only the flag, never the
     // bytes — the client fetches the image from /org/users/{id}/avatar for the
     // rows that have one.
-    bool HasAvatar = false);
+    bool HasAvatar = false,
+    // Null when there is nothing to say: never invited, or already in.
+    InvitationInfo? Invitation = null);
+
+/// <summary>
+/// What the people list shows about a pending invitation (decision 0005).
+/// State is "pending", "expired" or "undelivered"; SentTo is the masked
+/// recovery address the link went to.
+/// </summary>
+public sealed record InvitationInfo(string State, DateTimeOffset? SentAt, string? SentTo);
 
 public sealed record CreateDepartmentRequest(
     string Name, string? Description,

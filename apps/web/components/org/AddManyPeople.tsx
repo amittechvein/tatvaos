@@ -24,8 +24,10 @@ import { useAuth } from '@/lib/auth';
 //             already exist, unknown departments, repeats, short passwords —
 //             and reports what it WOULD do. Nothing is written. Create cannot
 //             be reached without seeing this.
-//    done     generated passwords, shown once. Download or copy them now;
-//             they are hashed on the server and cannot be shown again.
+//    done     who got an invitation and who gets the password the admin
+//             typed. Nothing is generated (decision 0005): a recovery email
+//             means a link to choose their own; no recovery info means the
+//             admin must have typed one, or the row is refused.
 //
 //  THE PHONE COLUMN. Excel turns a long number typed into a General-formatted
 //  cell into scientific notation and ROUNDS it — 9.1834E+11 is 918340000000,
@@ -54,15 +56,17 @@ interface Row {
   problem: string | null;
 }
 
+/** How a person gets in, as the server decided it. Null = the typed password. */
+interface Invitation { channel: string; sentTo: string }
 interface PreviewCreated {
   email: string; displayName: string; department: string | null; mailbox: boolean;
-  passwordGenerated: boolean; mustChangePassword: boolean;
+  passwordTyped: boolean; mustChangePassword: boolean; invitation: Invitation | null;
   recoveryEmail: string | null; recoveryPhone: string | null;
 }
 interface Skipped { address: string; displayName: string; reason: string }
 interface Created {
   email: string; displayName: string; department: string | null;
-  temporaryPassword: string | null; mustChangePassword: boolean;
+  passwordTyped: boolean; mustChangePassword: boolean; invitation: Invitation | null;
 }
 
 // The columns, in the order the template writes them. `keys` are the header
@@ -179,6 +183,10 @@ export function parseCsv(text: string, domains: DomainOpt[]): Row[] {
     else if (!dept) row.problem = 'no department';
     else if (password && password.length < MIN_PASSWORD) {
       row.problem = `password is ${password.length} characters; the minimum is ${MIN_PASSWORD}`;
+    } else if (!password && !recoveryEmail) {
+      // The server refuses this too. A phone alone does not count until an
+      // SMS template exists (0005's launch rule), so it is not checked here.
+      row.problem = 'no recovery email — type a password to hand to them';
     } else if (rawPhone && ROUNDED.test(rawPhone.replace(/\s/g, ''))) {
       row.problem = `"${rawPhone}" — the spreadsheet rounded this number and the digits are lost. Format the column as Text and export again.`;
     }
@@ -273,17 +281,12 @@ export function AddManyPeople({
   const check = () => run(async () => { setPreview(await call(true)); setStep('preview'); });
   const create = () => run(async () => { setResult(await call(false)); setStep('done'); });
 
-  const passwordsCsv = () => {
-    const made = result?.created ?? [];
-    download('tatvaos-new-people.csv', toCsv([
-      ['Email', 'Name', 'Department', 'Temporary password', 'Must change at first sign-in'],
-      ...made.map((c) => [
-        c.email, c.displayName, c.department ?? '',
-        c.temporaryPassword ?? '(the one you supplied)',
-        c.mustChangePassword ? 'yes' : 'no',
-      ]),
-    ]));
-  };
+  // One sentence per person for the preview and results tables, from the
+  // server's own decision rather than re-deriving it here.
+  const wayIn = (c: { invitation: Invitation | null; mustChangePassword: boolean }, sent: boolean) =>
+    c.invitation
+      ? `${sent ? 'invitation being sent to' : 'invitation to'} ${c.invitation.sentTo}`
+      : `the password you typed${c.mustChangePassword ? ' — changed at first sign-in' : ''}`;
 
   return (
     <Modal
@@ -317,7 +320,7 @@ export function AddManyPeople({
 
       {step === 'choose' && (
         <div className="grid gap-4">
-          <Field label="1. Download the template" hint="Seven columns. Password may be left blank — we generate a strong one and show it once.">
+          <Field label="1. Download the template" hint="Seven columns. Leave Password blank where there is a Recovery Email — they get a link to choose their own. Otherwise type one to hand to them; nothing is generated.">
             <Button onClick={templateCsv}>Download CSV template</Button>
           </Field>
 
@@ -365,7 +368,7 @@ export function AddManyPeople({
                   <Td>{r.name}</Td>
                   <Td>{r.localPart}@{r.domain}</Td>
                   <Td>{r.department}</Td>
-                  <Td>{r.password ? 'supplied' : <span className="text-ink-muted">generated</span>}</Td>
+                  <Td>{r.password ? 'typed' : <span className="text-ink-muted">invitation</span>}</Td>
                   <Td className="text-wrap">
                     {[r.recoveryEmail, r.recoveryPhone].filter(Boolean).join(' · ') || <span className="text-ink-muted">—</span>}
                   </Td>
@@ -393,12 +396,11 @@ export function AddManyPeople({
             </Table>
           )}
           {preview.created.length > 0 && (
-            <Table head={['Address', 'Name', 'Department', 'Password', 'Must change']}>
+            <Table head={['Address', 'Name', 'Department', 'How they get in']}>
               {preview.created.map((c) => (
                 <tr key={c.email}>
                   <Td>{c.email}</Td><Td>{c.displayName}</Td><Td>{c.department ?? '—'}</Td>
-                  <Td>{c.passwordGenerated ? 'generated' : 'supplied'}</Td>
-                  <Td>{c.mustChangePassword ? 'yes' : <span className="text-ink-muted">no</span>}</Td>
+                  <Td className="text-wrap">{wayIn(c, false)}</Td>
                 </tr>
               ))}
             </Table>
@@ -408,22 +410,17 @@ export function AddManyPeople({
 
       {step === 'done' && result && (
         <>
-          <Alert tone="warn">
-            <strong>These passwords are shown once.</strong> They are hashed on the server and
-            cannot be shown again. Download or copy them now.
+          <Alert tone="ok">
+            <strong>Nothing to hand out.</strong> Each person with a recovery email is being sent
+            a link to choose their own password; the people list will show anyone whose
+            invitation could not be delivered, with a way to resend it. The rest sign in with
+            the password you typed.
           </Alert>
-          <div className="flex gap-2 mb-4">
-            <Button onClick={passwordsCsv}>Download CSV</Button>
-            <Button onClick={() => navigator.clipboard?.writeText(
-              (result.created).map((c) => `${c.email}\t${c.temporaryPassword ?? ''}`).join('\n'),
-            )}>Copy all</Button>
-          </div>
-          <Table head={['Address', 'Name', 'Temporary password', 'Must change']}>
+          <Table head={['Address', 'Name', 'How they get in']}>
             {result.created.map((c) => (
               <tr key={c.email}>
                 <Td>{c.email}</Td><Td>{c.displayName}</Td>
-                <Td><code>{c.temporaryPassword ?? 'the one you supplied'}</code></Td>
-                <Td>{c.mustChangePassword ? 'yes' : <span className="text-ink-muted">no</span>}</Td>
+                <Td className="text-wrap">{wayIn(c, true)}</Td>
               </tr>
             ))}
           </Table>

@@ -13,6 +13,7 @@ import { AddManyPeople } from '@/components/org/AddManyPeople';
 import { avatarObjectUrl, bustAvatar } from '@/lib/avatars';
 import { Input, InputSuffix, Select, Switch } from '@/components/ui/Form';
 import { Alert } from '@/components/ui/Page';
+import { MIN_PASSWORD } from '@/components/ui/PasswordStrength';
 
 const GB = 1024 ** 3;
 
@@ -32,7 +33,21 @@ interface Person {
   mfaEnabled: boolean; lastLoginAt: string | null;
   hasVerifiedRecoveryEmail?: boolean;
   hasAvatar?: boolean;
+  /** Decision 0005. Null when there is nothing to say: never invited, or in. */
+  invitation?: { state: InviteState; sentAt: string | null; sentTo: string | null } | null;
 }
+
+type InviteState = 'pending' | 'expired' | 'undelivered';
+
+// The three things the list can say about an invitation, worded once. The
+// person cannot use "forgot password" until they are in (their recovery email
+// is not yet verified), so every one of these is the admin's to act on.
+const INVITE_LABEL: Record<InviteState, string> = {
+  pending: 'Invited — not signed in yet',
+  expired: 'Invitation expired',
+  undelivered: 'Invitation not delivered',
+};
+const inviteTone = (s: InviteState) => (s === 'pending' ? 'warn' : 'danger');
 
 interface DomainOpt { id: string; fqdn: string; isActive: boolean; ownershipVerified: boolean }
 
@@ -248,9 +263,13 @@ export default function PeoplePage() {
                     </span>
                   </Td>
                   <Td>
-                    <span className="text-[0.8125rem]">
-                      {p.hasVerifiedRecoveryEmail ? 'Verified' : '\u2014'}
-                    </span>
+                    {p.invitation ? (
+                      <Badge tone={inviteTone(p.invitation.state)}>{INVITE_LABEL[p.invitation.state]}</Badge>
+                    ) : (
+                      <span className="text-[0.8125rem]">
+                        {p.hasVerifiedRecoveryEmail ? 'Verified' : '\u2014'}
+                      </span>
+                    )}
                   </Td>
                 </tr>
               );
@@ -307,14 +326,30 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
   const [role, setRole] = useState('');    // '' = the department's default
   const [override, setOverride] = useState(false);
   const [quotaGb, setQuotaGb] = useState(15);
+  // How they get in (decision 0005): a recovery email means an invitation
+  // link and no password anywhere; a typed password means the admin hands
+  // it over. Neither is refused by the server, and pre-checked here.
+  const [recoveryEmail, setRecoveryEmail] = useState('');
+  const [recoveryPhone, setRecoveryPhone] = useState('');
+  const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
-  const [created, setCreated] = useState<{ email: string; password: string } | null>(null);
+  const [created, setCreated] = useState<{
+    email: string;
+    invitation: { sentTo: string; delivered: boolean } | null;
+    note: string;
+  } | null>(null);
   const [photo, setPhoto] = useState<string | null>(null);
   const [photoWarning, setPhotoWarning] = useState<string | null>(null);
 
   const dept = departments.find((f) => f.d.id === departmentId)?.d;
   const inherited = dept?.effectiveQuotaBytes ?? poolFloor;
   const domain = domains.find((d) => d.id === domainId);
+
+  // A phone alone does not count yet: invitations by text wait on an SMS
+  // template (0005's launch rule), so the server treats phone-only as no
+  // recovery info, and so does this.
+  const noWayIn = password.length === 0 && recoveryEmail.trim().length === 0;
+  const passwordTooShort = password.length > 0 && password.length < MIN_PASSWORD;
 
   async function create() {
     setBusy(true);
@@ -328,13 +363,14 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
           departmentId: departmentId || null,
           role: role || null,
           quotaBytes: override ? quotaGb * GB : null,
+          password: password || null,
+          recoveryEmail: recoveryEmail.trim() || null,
+          recoveryPhone: recoveryPhone.trim() || null,
         }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? 'Could not create this person.');
 
-      // Shown once, never stored recoverably. A retrievable password is a
-      // stored plaintext password.
       // Deliberately a second call: it keeps the create request lean, and a
       // photo that fails to attach must not fail the person — they already
       // exist by this point, so this surfaces as a warning, not an error.
@@ -357,7 +393,13 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
         }
       }
 
-      setCreated({ email: body.email, password: body.temporaryPassword });
+      setCreated({
+        email: body.email,
+        invitation: body.invitation
+          ? { sentTo: String(body.invitation.sentTo ?? ''), delivered: Boolean(body.invitation.delivered) }
+          : null,
+        note: String(body.note ?? ''),
+      });
     } catch (e) {
       onError(e instanceof Error ? e.message : 'Could not create this person.');
       setBusy(false);
@@ -380,29 +422,19 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
             {photoWarning} You can add it from their profile.
           </p>
         )}
-        <Alert tone="warn">
-          This password is shown once and cannot be retrieved later. Copy it now —
-          if it is lost, reset it rather than asking us for it.
-        </Alert>
-        <div className="flex gap-2 items-center">
-          <div className="flex-auto font-mono rounded bg-canvas"
-               style={{ padding: 12, fontSize: 15 }}>
-            {created.password}
-          </div>
-          <IconButton
-            label="Copy password"
-            onClick={() => void navigator.clipboard.writeText(created.password)}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                 strokeWidth="1.8" strokeLinecap="round">
-              <rect x="9" y="9" width="12" height="12" rx="2" />
-              <path d="M5 15V5a2 2 0 012-2h10" />
-            </svg>
-          </IconButton>
-        </div>
-        <p className="text-[0.75rem] text-ink-muted mt-4 mb-0">
-          They will be asked to change it when they first sign in.
-        </p>
+        {/* Nothing to copy any more: no password was generated. Either the
+            invitation went, or the admin typed the password and already has
+            it. What is shown is what happened, in the server's words. */}
+        {created.invitation ? (
+          <Alert tone={created.invitation.delivered ? 'ok' : 'warn'}>
+            {created.note}
+            {created.invitation.delivered && (
+              <> They choose their own password from the link; it works once and for three days.</>
+            )}
+          </Alert>
+        ) : (
+          <Alert tone="info">{created.note} Nothing was sent — you told them.</Alert>
+        )}
       </Modal>
     );
   }
@@ -417,7 +449,8 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
         <>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button variant="primary" onClick={create}
-                  disabled={busy || displayName.trim().length < 2 || localPart.length < 1 || !domain}>
+                  disabled={busy || displayName.trim().length < 2 || localPart.length < 1 || !domain
+                    || noWayIn || passwordTooShort}>
             {busy ? 'Creating…' : 'Create person'}
           </Button>
         </>
@@ -455,6 +488,35 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
             </Select>
           </Field>
         </div>
+      </div>
+
+      {/* ---- How they get in (decision 0005) --------------------------
+          No generated password exists any more. A recovery email gets an
+          invitation link and the person chooses their own; a typed password
+          is the admin's to hand over. Neither is refused, here and by the
+          server, so an account nobody can enter is never created. */}
+      <div className="rounded border border-line bg-canvas p-4 mb-4">
+        <div className="text-[0.875rem] font-semibold mb-1">How they get in</div>
+        <p className="text-[0.75rem] text-ink-muted mb-3">
+          With a recovery email they get a link to choose their own password — nobody
+          sees one. Without, type a password and hand it to them yourself.
+        </p>
+        <Field label="Recovery email"
+               hint="A personal address. The invitation goes here, and it becomes their verified recovery email the moment they use it.">
+          <Input type="email" autoComplete="off" spellCheck={false}
+                 value={recoveryEmail} onChange={(e) => setRecoveryEmail(e.target.value)} />
+        </Field>
+        <Field label="Recovery phone"
+               hint="With the country code, like +91 98765 43210. For sign-in by code and recovery — invitations by text are not available yet.">
+          <Input autoComplete="off" value={recoveryPhone}
+                 onChange={(e) => setRecoveryPhone(e.target.value)} />
+        </Field>
+        <Field label={recoveryEmail.trim() ? 'Password — optional, skips the invitation' : 'Password'}
+               hint={`At least ${MIN_PASSWORD} characters. They must change it at first sign-in.`}
+               error={passwordTooShort ? `Use at least ${MIN_PASSWORD} characters.` : noWayIn ? 'No recovery email — type a password to hand to them.' : null}>
+          <Input type="password" autoComplete="new-password"
+                 value={password} onChange={(e) => setPassword(e.target.value)} />
+        </Field>
       </div>
 
       <Field label="Department"
@@ -792,6 +854,16 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
               : 'Never'}
           </span>
         </div>
+        {person.invitation && (
+          <div>
+            <div className="text-[0.75rem] text-ink-muted">Invitation</div>
+            <Badge tone={inviteTone(person.invitation.state)}>{INVITE_LABEL[person.invitation.state]}</Badge>
+            <div className="text-[0.75rem] text-ink-muted mt-1">
+              {person.invitation.sentTo ? `Sent to ${person.invitation.sentTo}` : 'Not sent'}
+              {person.invitation.sentAt ? ` on ${formatDateTime(person.invitation.sentAt)}` : ''}
+            </div>
+          </div>
+        )}
       </div>
 
       <Field
@@ -811,12 +883,34 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
         </Select>
       </Field>
 
+      {/* Someone still holding an invitation has no password to reset. The
+          two ways forward are a fresh link (the old one dies) or the typed-
+          password path — which is the reset endpoint, shown once, exactly as
+          creation would have shown a typed one. Either way the invitation is
+          replaced, never left alongside. */}
       {!editingSelf && !targetLocked && person.status !== 'deleted' && (
-        <Button variant="ghost" disabled={busy}
-                onClick={() => void act('/reset-password', 'POST',
-                  (body) => { setTempPassword({ password: String(body.temporaryPassword), mailbox: false }); setBusy(false); })}>
-          Reset password
-        </Button>
+        person.invitation ? (
+          <div className="flex gap-2 flex-wrap">
+            <Button variant="ghost" disabled={busy}
+                    onClick={() => void act('/invitation/resend', 'POST', (body) => {
+                      if (body.sent) onSaved(String(body.note ?? 'Invitation sent.'));
+                      else { onError(String(body.note ?? 'The invitation could not be sent.')); setBusy(false); }
+                    })}>
+              Resend invitation
+            </Button>
+            <Button variant="ghost" disabled={busy}
+                    onClick={() => void act('/reset-password', 'POST',
+                      (body) => { setTempPassword({ password: String(body.temporaryPassword), mailbox: false }); setBusy(false); })}>
+              Set a password instead
+            </Button>
+          </div>
+        ) : (
+          <Button variant="ghost" disabled={busy}
+                  onClick={() => void act('/reset-password', 'POST',
+                    (body) => { setTempPassword({ password: String(body.temporaryPassword), mailbox: false }); setBusy(false); })}>
+            Reset password
+          </Button>
+        )
       )}
 
       <hr className="my-6" />
