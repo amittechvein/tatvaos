@@ -122,7 +122,7 @@ export default function DepartmentsPage() {
       )}
 
       {storage && (
-        <div className="!mb-[1.5rem] grid !gap-[1rem] sm:grid-cols-3">
+        <div className="mb-6 grid gap-4 sm:grid-cols-3">
           <Stat label="People" caption={storage.maxUsers ? `of ${storage.maxUsers} seats` : 'No seat limit'}
                 value={String(storage.userCount)} />
           <Stat label="Storage used" caption={`of ${fmt(storage.totalBytes)}`}
@@ -133,9 +133,9 @@ export default function DepartmentsPage() {
       )}
 
       {storage && storage.totalBytes > 0 && (
-        <div className="!mb-[1.5rem]">
+        <div className="mb-6">
           <Meter used={storage.usedBytes} total={storage.totalBytes} />
-          <div className="!text-[0.75rem] !text-ink-muted mt-1">
+          <div className="text-[0.75rem] text-ink-muted mt-1">
             {pct}% of the pool used · {fmt(storage.availableBytes)} free
           </div>
         </div>
@@ -143,7 +143,7 @@ export default function DepartmentsPage() {
 
       <Card padded={false}>
         {loading ? (
-          <div className="grid place-items-center !py-[3rem]">
+          <div className="grid place-items-center py-12">
             <span className="block h-8 w-8 animate-spin rounded-full border-2 border-line border-t-brand-600" />
           </div>
         ) : tree.length === 0 ? (
@@ -163,7 +163,7 @@ export default function DepartmentsPage() {
       </Card>
 
       {unassigned > 0 && (
-        <Alert tone="info" className="!mt-[1.5rem]">
+        <Alert tone="info" className="mt-6">
           {unassigned} {unassigned === 1 ? 'person is' : 'people are'} in no department, so
           they get the organisation default of {fmt(storage?.perUserFloor ?? null)} and no
           departmental permissions.
@@ -197,7 +197,7 @@ export default function DepartmentsPage() {
             </>
           }
         >
-          <p className="!text-[0.8125rem] !text-ink-muted mb-0">
+          <p className="text-[0.8125rem] text-ink-muted mb-0">
             {deleting.children.length > 0
               ? `It has ${deleting.children.length} sub-department${deleting.children.length === 1 ? '' : 's'} underneath it. `
               : ''}
@@ -225,7 +225,7 @@ function Row({ node, depth, onAddChild, onEdit, onDelete }: {
   return (
     <>
       <div
-        className="group flex items-center gap-2 py-2 !pe-[1rem] hover:bg-canvas"
+        className="group flex items-center gap-2 py-2 pe-4 hover:bg-canvas"
         style={{ paddingInlineStart: 16 + depth * 24 }}
       >
         <button
@@ -243,19 +243,19 @@ function Row({ node, depth, onAddChild, onEdit, onDelete }: {
           </svg>
         </button>
 
-        <span className="flex-shrink-0 !rounded-[50%]"
+        <span className="flex-shrink-0 rounded-full"
               style={{ width: 10, height: 10, background: node.colour }} />
 
-        <div className="min-w-0 !flex-auto">
-          <div className="!flex !items-center gap-2 flex-wrap">
-            <span className="!font-semibold !text-[0.875rem]">{node.name}</span>
+        <div className="min-w-0 flex-auto">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-semibold text-[0.875rem]">{node.name}</span>
             {!node.canSendExternal && (
               <span title="Members can email inside the organisation only">
                 <Badge tone="neutral">internal only</Badge>
               </span>
             )}
           </div>
-          <div className="!text-[0.75rem] !text-ink-muted">
+          <div className="text-[0.75rem] text-ink-muted">
             {node.userCount} direct
             {node.descendantUserCount !== node.userCount && ` · ${node.descendantUserCount} including sub-departments`}
             {node.description && ` · ${node.description}`}
@@ -266,8 +266,8 @@ function Row({ node, depth, onAddChild, onEdit, onDelete }: {
             from. An admin who cannot see that 30 GB was inherited will set it
             again on every team, and the tree stops earning its keep. */}
         <div className="text-end flex-shrink-0" style={{ minWidth: 130 }}>
-          <div className="!text-[0.875rem]">{fmt(node.effectiveQuotaBytes)}</div>
-          <div className={`!text-[0.6875rem] ${node.quotaInherited ? '!text-ink-muted' : '!text-brand-500 !font-medium'}`}>
+          <div className="text-[0.875rem]">{fmt(node.effectiveQuotaBytes)}</div>
+          <div className={`text-[0.6875rem] ${node.quotaInherited ? 'text-ink-muted' : 'text-brand-500 font-medium'}`}>
             {node.quotaInherited ? 'inherited' : 'set here'}
           </div>
         </div>
@@ -283,7 +283,7 @@ function Row({ node, depth, onAddChild, onEdit, onDelete }: {
             way in was the browser's "Edit" tooltip over an invisible button.
             A touch screen has no hover at all, so there they are always shown —
             otherwise a phone could never edit or delete a department. */}
-        <div className="!flex gap-1 flex-shrink-0 opacity-0 transition group-hover:!opacity-100 focus-within:!opacity-100 [@media(hover:none)]:!opacity-100">
+        <div className="flex gap-1 flex-shrink-0 opacity-0 transition group-hover:!opacity-100 focus-within:!opacity-100 [@media(hover:none)]:!opacity-100">
           <IconButton label={`Add a sub-department in ${node.name}`} onClick={() => onAddChild(node)}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                  strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
@@ -402,8 +402,8 @@ function DeptDialog({ node, parent, storage, onClose, onSaved, onError }: {
       {/* Flex rather than an arbitrary grid template: overrides.css can only
           re-assert the enumerated grid-cols-* utilities after neutralising
           YZEN's own .grid rule, so a custom template silently collapses. */}
-      <div className="!flex !gap-[1rem] flex-wrap !items-start">
-        <div className="!flex-auto" style={{ minWidth: 180 }}>
+      <div className="flex gap-4 flex-wrap items-start">
+        <div className="flex-auto" style={{ minWidth: 180 }}>
           <Field label="Default role" hint="Given to new people added here">
             <Select  value={role} onChange={(e) => setRole(e.target.value)}>
               {ROLES.map((r) => (
@@ -423,8 +423,8 @@ function DeptDialog({ node, parent, storage, onClose, onSaved, onError }: {
       </div>
 
       {/* ---- Storage ---- */}
-      <div className="rounded-card border border-line bg-canvas !p-[1rem] !mb-[1rem]">
-        <div className="!font-semibold !text-[0.875rem] mb-2">Storage per person</div>
+      <div className="rounded-card border border-line bg-canvas p-4 mb-4">
+        <div className="font-semibold text-[0.875rem] mb-2">Storage per person</div>
 
         <Switch
           id={`${uid}-inherit`}
@@ -440,7 +440,7 @@ function DeptDialog({ node, parent, storage, onClose, onSaved, onError }: {
         />
 
         {!inherit && (
-          <div className="!mt-[1rem]">
+          <div className="mt-4">
             <Field label="Storage per person"
                    hint="Applies here and to every sub-department that inherits">
               <InputSuffix
@@ -453,7 +453,7 @@ function DeptDialog({ node, parent, storage, onClose, onSaved, onError }: {
         )}
 
         {storage && !inherit && (
-          <div className="!text-[0.75rem] !text-ink-muted">
+          <div className="text-[0.75rem] text-ink-muted">
             {fmt(storage.availableBytes)} free in the pool.
             {storage.storageModel === 'per_user'
               ? ' Per-user plan — each person is capped individually.'
@@ -469,8 +469,8 @@ function DeptDialog({ node, parent, storage, onClose, onSaved, onError }: {
         onChange={(e) => setExternal(e.target.checked)}
         label={
           <>
-            <span className="!block !text-[0.875rem]">Can email outside the organisation</span>
-            <span className="!block !text-[0.75rem] !text-ink-muted">
+            <span className="block text-[0.875rem]">Can email outside the organisation</span>
+            <span className="block text-[0.75rem] text-ink-muted">
               Off means they can only email colleagues. This does <strong>not</strong> inherit —
               it is chosen per department, so a new one is never accidentally permissive.
             </span>

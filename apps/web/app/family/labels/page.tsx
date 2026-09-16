@@ -108,7 +108,7 @@ function Labels() {
       {error && <Alert tone="danger" onDismiss={() => setError(null)}>{error}</Alert>}
       {note && <Alert tone="ok" onDismiss={() => setNote(null)}>{note}</Alert>}
 
-      <p className="!text-[0.875rem] !text-ink-muted !mb-[1rem]">
+      <p className="text-[0.875rem] text-ink-muted mb-4">
         Labels group contacts without moving them. A contact can carry any number, and
         deleting a label never deletes the people in it.
       </p>
@@ -118,8 +118,8 @@ function Labels() {
         actions={<Button variant="primary" onClick={() => setEditing('new')}>New label</Button>}
       >
         {loading ? (
-          <div className="!flex !justify-center !py-[3rem]">
-            <span className="!inline-block animate-spin !rounded-[50%]"
+          <div className="flex justify-center py-12">
+            <span className="inline-block animate-spin rounded-full"
                   style={{ width: 30, height: 30, border: '3px solid rgba(0,0,0,.12)',
                            borderTopColor: '#6C3CE9' }} />
           </div>
@@ -136,19 +136,19 @@ function Labels() {
                 <Td>
                   <span
                     aria-hidden
-                    className="!inline-block !rounded-[50%]"
+                    className="inline-block rounded-full"
                     style={{ width: 12, height: 12, background: l.colour ?? '#98a2b8' }}
                   />
                 </Td>
                 <Td>
-                  <span className="!text-[0.875rem] !font-semibold">{l.name}</span>
+                  <span className="text-[0.875rem] font-semibold">{l.name}</span>
                 </Td>
                 <Td>
-                  <span className="!text-[0.875rem] !text-ink-muted">{l.description ?? '—'}</span>
+                  <span className="text-[0.875rem] text-ink-muted">{l.description ?? '—'}</span>
                 </Td>
                 <Td>
                   {l.count === 0 ? (
-                    <span className="!text-[0.875rem] !text-ink-muted">Empty</span>
+                    <span className="text-[0.875rem] text-ink-muted">Empty</span>
                   ) : (
                     <Button variant="ghost" href={`/family/contacts?groupId=${l.id}`}>
                       {l.count === 1 ? '1 contact' : `${l.count} contacts`}
@@ -156,7 +156,7 @@ function Labels() {
                   )}
                 </Td>
                 <Td>
-                  <div className="!flex gap-2 !justify-end">
+                  <div className="flex gap-2 justify-end">
                     <Button variant="ghost" onClick={() => setEditing(l)}>Rename</Button>
                     <Button variant="ghost" onClick={() => setDeleting(l)}>Delete</Button>
                   </div>
@@ -191,13 +191,13 @@ function Labels() {
             </>
           }
         >
-          <p className="!text-[0.875rem] mb-0">
+          <p className="text-[0.875rem] mb-0">
             {deleting.count > 0
               ? `“${deleting.name}” comes off ${deleting.count === 1
                   ? 'one contact' : `${deleting.count} contacts`}. The contacts themselves stay exactly where they are.`
               : 'This label is empty, so nothing else changes.'}
           </p>
-          <p className="!text-[0.875rem] !text-ink-muted !mt-[1rem] mb-0">
+          <p className="text-[0.875rem] text-ink-muted mt-4 mb-0">
             There is no undo for the label itself — you would have to create it again and
             re-add the contacts.
           </p>
@@ -294,11 +294,11 @@ function LabelDialog({ label, onClose, onSaved }: {
       </Field>
 
       <div>
-        <div className="!text-[0.75rem] !text-ink-muted mb-2">Colour — this is the dot in the sidebar</div>
+        <div className="text-[0.75rem] text-ink-muted mb-2">Colour — this is the dot in the sidebar</div>
         {/* Real buttons rather than divs with role="button": type="button" keeps
             them out of the form's submit path, and Space/Enter activation comes
             from the browser instead of a hand-written key handler. */}
-        <div className="!flex gap-2 flex-wrap">
+        <div className="flex gap-2 flex-wrap">
           {COLOURS.map((c) => (
             <button
               key={c}
@@ -306,7 +306,7 @@ function LabelDialog({ label, onClose, onSaved }: {
               aria-label={`Use ${c}`}
               aria-pressed={colour === c}
               onClick={() => setColour(c)}
-              className="!rounded-[50%] border-0 p-0"
+              className="rounded-full border-0 p-0"
               style={{
                 width: 28,
                 height: 28,

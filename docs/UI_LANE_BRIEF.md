@@ -399,6 +399,66 @@ not a real failure. **The rule that matters: if the only errors left are in
 
 ---
 
+## 4.3 Stages 3 and 4 done — 15–16 September 2026
+
+**YZEN is deleted.** `styles/yzen/` (27,779 lines plus Bootstrap) and
+`styles/overrides.css` are gone from the tree; `app/layout.tsx` imports one
+stylesheet; the eight `data-*` attributes YZEN read from `<html>` are gone with
+it; Tailwind's preflight is ON. The console is Tailwind and `components/ui/`
+throughout. Done in nine pull requests over two days, in this order, each one
+typechecked and linted and — while GitHub Actions still ran — CI-green:
+
+| PR | What |
+|---|---|
+| #112 | **Utilities**, 1,321 class names in 34 files, by codemod, each kept `!important` and pinned to the value that rendered that day (`mb-3` → `!mb-[1rem]`). Proven the same by computed-style diff on the three public pages at three widths. |
+| #113 | The hover-revealed buttons on Departments had never appeared — Bootstrap's `.opacity-0` is `!important`. Found by Amit, four days old, not a migration bug. |
+| #115–#117 | Every `/org` page's **components**: `Alert`, `Badge`, `Checkbox`, `Switch`, `IconButton`, `InputSuffix` — the last four new in the kit. |
+| #118 | Account and the admin area. |
+| #119 | Family. |
+| #122 | Connect's console pages; `Spinner` and `Button size="sm"` new in the kit. |
+| #123 | Marketing, login's tabs, ComingSoon. |
+| stage 4 | The shell — `Sidebar`, `Topbar`, `AppShell` — rewritten in Tailwind with the same shape (15rem / 5rem rail, 4.25rem header, hover-peek, pin, off-canvas on phones) and its state in React rather than on `<html>`. Then the deletion, then the second codemod stripping the 1,208 temporary `!`s. |
+
+**What it looks like now.** The same product, on the tokens in `globals.css`
+alone. Three things changed on purpose and are worth knowing:
+
+1. **Card padding is 20px, not 48px.** The collision in §4.2 is gone, so every
+   `px-5` finally means what it says. Nobody chose 48; it was the bug.
+2. **Preflight's baseline replaces Bootstrap's reboot.** Headings and lists
+   carry no default margins or bullets; pages set their own. The three public
+   pages were checked by eye at phone and laptop width after the switch.
+3. **Colour literals are gone.** Five hexes of the old green brand and three
+   copies of the violet were found in pages during stage 3 — a spinner, a
+   storage panel, the marketing pillar chips. They are tokens now, which is
+   the only way a palette change can be complete.
+
+**Two lessons from the tooling, written down so nobody pays twice.**
+
+- The first `!`-stripping codemod scanned every string literal in a file. A
+  backtick inside a *comment* opened a fake template literal that ran to the
+  next backtick, and every `!` in the code between them was "a class":
+  `meeting !== null` became `meeting == null` in 35 files, and typecheck
+  caught three of them. The files were reverted from git. The rewrite scans
+  only `className` contexts, refuses any token that does not look like a
+  utility, and **refuses the whole file if anything outside a string literal
+  differs** — the guard that would have caught the first version. Both
+  scripts are in `infra/scripts/ui-migration/`.
+- "Looks the same" was measurable only on the three public pages; the 31
+  signed-in pages cannot render signed-in on localhost (§4.2, trap 4) and
+  were checked on production by eye after each deploy while deploys were
+  possible. From 16 September GitHub Actions is out of minutes until
+  1 October, so #122, #123 and stage 4 are merged on local checks only and
+  **have not been seen on production**. The first deploy in October needs a
+  walk through the signed-in pages before anything else lands.
+
+**Still to do in this lane:** fold the 21 hand-rolled `animate-spin` spinners
+into `Kit.Spinner` (rule 10); `ConnectSkin.tsx` still carries 32 rules
+restyling `.btn-*`, `.nav-pills` and friends that nothing uses now, for the
+room pages that never used them either; dark mode has never been checked
+against the new shell.
+
+---
+
 ## 5. The rule while this is running
 
 **Every new page built from today uses Tailwind and `components/ui/` only.**

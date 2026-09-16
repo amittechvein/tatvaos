@@ -2,16 +2,27 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 // ============================================================================
-//  Sidebar — YZEN's exact markup (.app-sidebar / .main-menu / .slide)
+//  Sidebar — the rail, in Tailwind and the tokens
 // ============================================================================
 //
-//  This renders the DOM structure YZEN's styles.css expects, so their real
-//  stylesheet styles it pixel-for-pixel: the dark rail, the green icons, the
-//  category labels, the active-item wash. Our navigation data drives it and
-//  React handles the submenu open/close; none of YZEN's jQuery is involved.
+//  Until 16 Sept 2026 this emitted YZEN's exact DOM (.app-sidebar / .main-menu
+//  / .slide) so their 27,000-line stylesheet could lay it out. YZEN is gone
+//  (stage 4 of docs/UI_LANE_BRIEF.md), so the rail draws itself.
+//
+//  The SHAPE is unchanged, because pages and people were laid out around it:
+//    - 15rem wide when expanded, 5rem when collapsed to icons;
+//    - a 4.25rem brand header that lines up with the topbar;
+//    - fixed to the viewport, scrolling its own contents.
+//
+//  The STATE lives in AppShell, not in data attributes on <html>. YZEN drove
+//  everything from data-toggled / data-icon-overlay, which meant the header
+//  toggle, the hover-peek and the phone close-on-navigate all had to reach
+//  into the document and agree on a string. Three components reading one
+//  attribute is how the desktop rail once got pinned open by a fix meant for
+//  phones. Now AppShell owns one object and hands each part what it needs.
 // ============================================================================
 
 export interface NavItem {
@@ -28,21 +39,33 @@ export interface NavSection {
   items: NavItem[];
 }
 
-// Kept for the AppShell import; YZEN positions the rail via CSS, so these are
-// no longer used to offset the content column by hand.
-export const PANEL_WIDTH = 262;
-export const PANEL_WIDTH_ICONS = 72;
+/** The rail's two widths, as the one fact every part of the shell reads. */
+export const RAIL_WIDTH = '15rem';
+export const RAIL_WIDTH_ICONS = '5rem';
+export const TOPBAR_HEIGHT = '4.25rem';
 
-export function Sidebar({ sections, brand, scope, footer, header }: {
+export interface RailState {
+  /** Desktop: pinned open at full width. Otherwise it rests as icons. */
+  pinned: boolean;
+  /** Desktop, resting as icons: expanded as an overlay while hovered. */
+  peek: boolean;
+  /** Phone: slid in over the page. */
+  mobileOpen: boolean;
+}
+
+export function Sidebar({ sections, brand, scope, footer, header, rail, onPeek, onCloseMobile }: {
   sections: NavSection[];
   brand: string;
   scope: 'platform' | 'organisation' | 'mail' | 'family' | 'space' | 'calendar' | 'connect';
   /** Pinned to the bottom of the rail (Mail puts the storage meter here).
-   *  Hidden while the rail is collapsed to icons — see overrides.css. */
+   *  Hidden while the rail is collapsed to icons. */
   footer?: React.ReactNode;
   /** Rendered directly under the brand, ABOVE the nav — for context that
    *  changes what the nav beneath it means (Mail's mailbox switcher). */
   header?: React.ReactNode;
+  rail: RailState;
+  onPeek: (open: boolean) => void;
+  onCloseMobile: () => void;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState<string | null>(null);
@@ -61,184 +84,153 @@ export function Sidebar({ sections, brand, scope, footer, header }: {
     .filter((h) => h && (pathname === h || pathname.startsWith(`${h}/`)))
     .sort((a, b) => b.length - a.length)[0];
 
-  // Keep the rail's resting state matched to the viewport: icons-only overlay on
-  // desktop (it peeks open on hover, below), off-canvas on mobile. Runs on mount
-  // and whenever the breakpoint is crossed, clearing any hover-peek so the rail
-  // never gets stuck half-open after a resize.
-  useEffect(() => {
-    const root = document.documentElement;
-    const desktop = window.matchMedia('(min-width: 992px)');
-    const sync = () => {
-      delete root.dataset.iconOverlay;
-      // Don't fight a rail the user has explicitly pinned/opened via the header
-      // toggle; only (re)assert the resting default for the current breakpoint.
-      root.dataset.toggled = desktop.matches ? 'icon-overlay-close' : 'close';
-    };
-    sync();
-    desktop.addEventListener('change', sync);
-    return () => desktop.removeEventListener('change', sync);
-  }, []);
-
-  // Hover-to-peek: while the rail is resting as icons, entering it expands it as
-  // an overlay (YZEN's data-icon-overlay=open → 15rem, floating over content, no
-  // reflow); leaving collapses it back. A pinned-open rail (data-toggled=close)
-  // ignores this, since the icon-overlay CSS only applies in the collapsed state.
-  const peekOpen = () => {
-    const root = document.documentElement;
-    if (root.dataset.toggled === 'icon-overlay-close') root.dataset.iconOverlay = 'open';
-  };
-  const peekClose = () => { delete document.documentElement.dataset.iconOverlay; };
-
-  // --------------------------------------------------------------------------
-  //  CLOSING THE RAIL ON A PHONE.
-  //
-  //  Below 992px the rail slides over the page as a full-height panel, and
-  //  until now the ONLY way to dismiss it was the header toggle — which the
-  //  open rail covers. Tapping the page did nothing, Escape did nothing, and
-  //  following a link left it sitting on top of the page you had just opened.
-  //  On a phone that is a trap: the app looks frozen behind a menu.
-  //
-  //  YZEN drives all of this from a data attribute rather than React state, so
-  //  this observes the attribute instead of owning it. Fighting it for
-  //  ownership would mean reimplementing the header toggle too.
-  const [railOpen, setRailOpen] = useState(false);
-
-  useEffect(() => {
-    const root = document.documentElement;
-    const read = () => setRailOpen(
-      root.dataset.toggled === 'open' && !window.matchMedia('(min-width: 992px)').matches,
-    );
-    read();
-    const mo = new MutationObserver(read);
-    mo.observe(root, { attributes: true, attributeFilter: ['data-toggled'] });
-    window.addEventListener('resize', read);
-    return () => { mo.disconnect(); window.removeEventListener('resize', read); };
-  }, []);
-
-  const closeRail = () => { document.documentElement.dataset.toggled = 'close'; };
-
-  useEffect(() => {
-    if (!railOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') document.documentElement.dataset.toggled = 'close';
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [railOpen]);
-
-  // Following a link must dismiss it. Otherwise you tap "People", the page
-  // loads underneath, and the menu is still covering it — which reads as the
-  // tap not having worked, so people tap it again.
-  //
-  // GUARDED TO MOBILE, and the guard is the whole point. On DESKTOP
-  // data-toggled="close" does not mean closed — it means the rail is PINNED
-  // OPEN at full width (see Topbar, which toggles between "close" and
-  // "icon-overlay-close"). Without this check, every navigation would pin the
-  // desktop sidebar open: a mobile fix silently changing desktop behaviour,
-  // which is the kind of regression nobody connects back to this commit.
-  useEffect(() => {
-    if (window.matchMedia('(min-width: 992px)').matches) return;
-    document.documentElement.dataset.toggled = 'close';
-  }, [pathname]);
+  // Labels show whenever the rail is at full width for any reason. On a phone
+  // it is always full width; the icon strip is a desktop shape only.
+  const wide = rail.pinned || rail.peek;
+  const labels = 'lg:' + (wide ? 'block' : 'hidden');
 
   return (
     <>
-    {railOpen && (
-      <button
-        type="button"
-        aria-label="Close menu"
-        onClick={closeRail}
-        className="fixed inset-0 z-[1035] bg-[rgb(21_20_27_/_0.45)] lg:hidden"
-      />
-    )}
-    <aside className="app-sidebar sticky" id="sidebar" onMouseEnter={peekOpen} onMouseLeave={peekClose}>
-      {/* Brand — the product logo lockup. The mark is a self-contained badge;
-          the wordmark is dark artwork, so the header sits on white (overrides.css)
-          and lines up with the white topbar. The collapsed icon rail shows only
-          the mark. */}
-      <div className="main-sidebar-header">
-        <Link href="/" className="header-logo">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img className="brand-mark" src={`/brand/${logo}-logo.png`} alt={brand} />
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img className="brand-name" src={`/brand/${logo}-name.png`} alt={brand} />
-        </Link>
-      </div>
+      {/* PHONE: the page behind the open rail is a close button. Until this
+          existed the only way to dismiss the rail was the header toggle, which
+          the open rail covered — the app looked frozen behind a menu. */}
+      {rail.mobileOpen && (
+        <button
+          type="button"
+          aria-label="Close menu"
+          onClick={onCloseMobile}
+          className="fixed inset-0 z-[1035] bg-[rgb(21_20_27_/_0.45)] lg:hidden"
+        />
+      )}
 
-      {/* Both slots render INSIDE .main-sidebar, not as siblings of it.
-          YZEN gives that element a calculated height and its own scroll, so
-          anything placed outside it is pushed past the bottom of the rail and
-          silently invisible — which is exactly how the storage meter and the
-          mailbox switcher both shipped without ever being seen. */}
-      <div className="main-sidebar" id="sidebar-scroll">
-        {header && <div className="sidebar-context">{header}</div>}
+      <aside
+        id="sidebar"
+        onMouseEnter={() => onPeek(true)}
+        onMouseLeave={() => onPeek(false)}
+        className={
+          'fixed inset-y-0 left-0 z-[1040] flex flex-col border-r border-line bg-rail '
+          + 'transition-[width,transform] duration-150 ease-out '
+          // Phone: off-canvas unless open, always full width.
+          + (rail.mobileOpen ? 'translate-x-0 ' : '-translate-x-full ')
+          + 'lg:translate-x-0'
+        }
+        style={{ width: RAIL_WIDTH }}
+        data-wide={wide || undefined}
+      >
+        {/* Desktop width is set by data-wide through the style tag below, so the
+            phone width above never has to know about it. */}
+        <style>{`@media (min-width:1024px){#sidebar{width:${RAIL_WIDTH_ICONS}}#sidebar[data-wide]{width:${RAIL_WIDTH}}}`}</style>
 
-        <nav className="main-menu-container nav nav-pills flex-column sub-open">
-          <ul className="main-menu">
+        {/* Brand — the product logo lockup. The mark is a self-contained badge;
+            the wordmark is dark artwork and needs a light ground, which the
+            rail is. The collapsed icon rail shows only the mark. */}
+        <div className="flex shrink-0 items-center justify-center border-b border-line px-4"
+             style={{ height: TOPBAR_HEIGHT }}>
+          <Link href="/" className="flex items-center gap-2 no-underline" aria-label={brand}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img className="h-8 w-auto" src={`/brand/${logo}-logo.png`} alt="" />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img className={`h-[30px] w-auto ${labels}`} src={`/brand/${logo}-name.png`} alt="" />
+          </Link>
+        </div>
+
+        <div className="scroll-thin min-h-0 flex-1 overflow-y-auto pb-6 pt-2">
+          {header && <div className={`px-4 pt-3 text-rail-text ${labels}`}>{header}</div>}
+
+          <nav aria-label="Sections">
             {sections.map((section) => (
-              <li key={section.heading} style={{ listStyle: 'none' }}>
-                <ul className="main-menu" style={{ padding: 0 }}>
-                  <li className="slide__category">
-                    <span className="category-name">{section.heading}</span>
-                  </li>
+              <div key={section.heading} className="px-3 pt-3">
+                {/* The heading, or a hairline when there is no room for words. */}
+                <div className={`mb-1 px-2 text-[11px] font-semibold uppercase tracking-wider text-rail-heading ${labels}`}>
+                  {section.heading}
+                </div>
+                <div className={`mx-2 mb-2 h-px bg-line ${wide ? 'lg:hidden' : 'hidden lg:block'}`} aria-hidden="true" />
 
+                <ul className="m-0 list-none p-0">
                   {section.items.map((item) => {
                     const active =
                       item.href === activeHref ||
                       item.children?.some((c) => c.href === activeHref);
                     const expanded = open === item.href || (active && open === null);
 
+                    const rowCls =
+                      'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm no-underline transition-colors '
+                      + (active
+                        ? 'bg-brand-500 text-white'
+                        : 'text-rail-text hover:bg-rail-soft hover:text-ink');
+
                     if (item.children) {
                       return (
-                        <li key={item.href} className={`slide has-sub${expanded ? ' open' : ''}`}>
-                          <a
-                            href="javascript:void(0);"
-                            className={`side-menu__item${active ? ' active' : ''}`}
+                        <li key={item.href} className="mb-0.5">
+                          <button
+                            type="button"
+                            className={rowCls}
+                            aria-expanded={expanded}
                             onClick={() => setOpen(expanded ? '' : item.href)}
                           >
-                            <span className="side-menu__icon">{item.icon}</span>
-                            <span className="side-menu__label">{item.label}</span>
-                            <i className="ri-arrow-right-s-line side-menu__angle" />
-                          </a>
-                          <ul className="slide-menu child1" style={{ display: expanded ? 'block' : 'none' }}>
-                            {item.children.map((c) => (
-                              <li key={c.href} className="slide">
-                                <Link
-                                  href={c.href}
-                                  className={`side-menu__item${pathname === c.href ? ' active' : ''}`}
-                                >
-                                  {c.label}
-                                </Link>
-                              </li>
-                            ))}
-                          </ul>
+                            <span className="grid h-5 w-5 shrink-0 place-items-center text-[18px]">{item.icon}</span>
+                            <span className={`min-w-0 flex-1 truncate text-left ${labels}`}>{item.label}</span>
+                            <i className={`ri-arrow-right-s-line shrink-0 transition-transform ${expanded ? 'rotate-90' : ''} ${labels}`} />
+                          </button>
+                          {expanded && (
+                            <ul className={`m-0 list-none p-0 pl-6 ${labels}`}>
+                              {item.children.map((c) => (
+                                <li key={c.href}>
+                                  <Link
+                                    href={c.href}
+                                    onClick={onCloseMobile}
+                                    className={
+                                      'block truncate rounded-lg px-3 py-1.5 text-[13px] no-underline transition-colors '
+                                      + (pathname === c.href
+                                        ? 'font-semibold text-brand-700'
+                                        : 'text-rail-text hover:bg-rail-soft hover:text-ink')
+                                    }
+                                  >
+                                    {c.label}
+                                  </Link>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
                         </li>
                       );
                     }
 
                     return (
-                      <li key={item.href} className={`slide${active ? ' active' : ''}`}>
+                      <li key={item.href} className="mb-0.5">
                         <Link
                           href={item.disabled ? '#' : item.href}
-                          className={`side-menu__item${active ? ' active' : ''}`}
+                          className={rowCls + (item.disabled ? ' opacity-50' : '')}
                           aria-disabled={item.disabled}
+                          aria-current={active ? 'page' : undefined}
+                          title={wide ? undefined : item.label}
+                          // Following a link must dismiss the phone rail. Otherwise
+                          // you tap "People", the page loads underneath, and the
+                          // menu is still covering it — which reads as the tap not
+                          // having worked, so people tap it again.
+                          onClick={onCloseMobile}
                         >
-                          <span className="side-menu__icon">{item.icon}</span>
-                          <span className="side-menu__label">{item.label}</span>
-                          {item.badge && <span className="badge bg-primary-transparent ms-auto">{item.badge}</span>}
+                          <span className="grid h-5 w-5 shrink-0 place-items-center text-[18px]">{item.icon}</span>
+                          <span className={`min-w-0 flex-1 truncate ${labels}`}>{item.label}</span>
+                          {item.badge && (
+                            <span className={`rounded-full bg-brand-500/10 px-2 py-0.5 text-[11px] font-semibold text-brand-700 ${labels}`}>
+                              {item.badge}
+                            </span>
+                          )}
                         </Link>
                       </li>
                     );
                   })}
                 </ul>
-              </li>
+              </div>
             ))}
-          </ul>
-        </nav>
+          </nav>
 
-        {footer && <div className="sidebar-footer">{footer}</div>}
-      </div>
-    </aside>
+          {footer && (
+            <div className={`mt-4 border-t border-line px-5 pt-3 text-rail-text ${labels}`}>{footer}</div>
+          )}
+        </div>
+      </aside>
     </>
   );
 }

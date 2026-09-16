@@ -159,10 +159,10 @@ export default function NewMeetingPage() {
       <PageHeader
         title="Schedule a meeting"
         breadcrumb={[{ label: 'Connect', href: '/connect' }, { label: 'New' }]}
-        className="!my-[1rem]"
+        className="my-4"
       />
 
-      <div className="grid !gap-[1.5rem] xl:grid-cols-12">
+      <div className="grid gap-6 xl:grid-cols-12">
         <div className="xl:col-span-7">
           <form onSubmit={submit}>
             <Card>
@@ -176,7 +176,7 @@ export default function NewMeetingPage() {
               </Field>
 
               <Field label="When" hint="Your own time zone. Everyone else sees it in theirs.">
-                <div className="grid !gap-[1rem] md:grid-cols-2">
+                <div className="grid gap-4 md:grid-cols-2">
                   <div>
                     <label className="cx-sublab" htmlFor="starts">Starts</label>
                     <Input id="starts" type="datetime-local"
@@ -294,7 +294,7 @@ export default function NewMeetingPage() {
                        autoComplete="off" spellCheck={false} />
               </Field>
 
-              <div className="!flex gap-2">
+              <div className="flex gap-2">
                 <Button variant="primary" type="submit" disabled={saving}>
                   {saving ? 'Creating…' : 'Create meeting'}
                 </Button>

@@ -118,10 +118,10 @@ export function Player({ meetingId, recording, onClose }: {
         </>
       )}
     >
-      {error && <Alert tone="danger" className="py-2 !text-[0.8125rem]">{error}</Alert>}
+      {error && <Alert tone="danger" className="py-2 text-[0.8125rem]">{error}</Alert>}
 
       {src === null ? (
-        <div className="!p-[1.5rem] text-center !text-ink-muted !text-[0.8125rem]">
+        <div className="p-6 text-center text-ink-muted text-[0.8125rem]">
           <Spinner inline />
           Opening…
         </div>
@@ -142,7 +142,7 @@ export function Player({ meetingId, recording, onClose }: {
         </div>
       )}
 
-      <p className="!text-[0.6875rem] !text-ink-muted mt-2 mb-0">
+      <p className="text-[0.6875rem] text-ink-muted mt-2 mb-0">
         Streamed from this server. Nothing is saved to your computer unless you
         press Download.
       </p>

@@ -130,7 +130,7 @@ export default function History({ mode }: { mode: HistoryMode }) {
       <PageHeader
         title={copy.title}
         breadcrumb={[{ label: 'Connect', href: '/connect' }, { label: copy.title }]}
-        className="!my-[1rem]"
+        className="my-4"
         actions={
           <Button variant="primary" href="/connect/new">
             <i className="ri-calendar-line me-1" />
@@ -143,7 +143,7 @@ export default function History({ mode }: { mode: HistoryMode }) {
 
       <Card subtitle={copy.blurb} padded={false} title={copy.title}>
         {loading ? (
-          <div className="!p-[1.5rem] text-center !text-ink-muted">
+          <div className="p-6 text-center text-ink-muted">
             <Spinner inline />
             Loading…
           </div>
@@ -216,7 +216,7 @@ function Row({
             </div>
           </div>
         </Td>
-        <Td className="!text-ink-muted">{whenLabel(m)}</Td>
+        <Td className="text-ink-muted">{whenLabel(m)}</Td>
         <Td><span className="cx-code">{prettyCode(m.code)}</span></Td>
         <Td><Badge tone={m.status === 'cancelled' ? 'danger' : 'neutral'}>{m.status}</Badge></Td>
         <Td className="text-end">
@@ -243,14 +243,14 @@ function Row({
               reads as a broken cell rather than a panel. */}
           <td colSpan={5} className="cx-drawer">
             {rowBusy ? (
-              <span className="!text-ink-muted !text-[0.8125rem]">
+              <span className="text-ink-muted text-[0.8125rem]">
                 <Spinner inline />
                 Loading…
               </span>
             ) : rowError ? (
-              <span className="text-danger !text-[0.8125rem]">{rowError}</span>
+              <span className="text-danger text-[0.8125rem]">{rowError}</span>
             ) : !items || items.length === 0 ? (
-              <span className="!text-ink-muted !text-[0.8125rem]">Nothing was recorded in this meeting.</span>
+              <span className="text-ink-muted text-[0.8125rem]">Nothing was recorded in this meeting.</span>
             ) : (
               <div className="cx-recs">
                 {items.map((it) => (

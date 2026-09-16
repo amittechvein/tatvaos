@@ -88,7 +88,7 @@ export default function SharingPolicyPage() {
           )
         }
       >
-        {allow === null && !error && <p className="!text-ink-muted mb-0">Loading…</p>}
+        {allow === null && !error && <p className="text-ink-muted mb-0">Loading…</p>}
 
         {allow === true && (
           <>
@@ -99,7 +99,7 @@ export default function SharingPolicyPage() {
               (30 days unless the sharer chooses otherwise, one year at most),
               and every download is a forced attachment, never a page.
             </p>
-            <p className="!text-ink-muted !text-[0.75rem] mb-0">
+            <p className="text-ink-muted text-[0.75rem] mb-0">
               Individual links are created and revoked by the file&rsquo;s owner in
               Space&rsquo;s share dialog. This switch is the organisation-wide policy
               over all of them.
@@ -116,7 +116,7 @@ export default function SharingPolicyPage() {
               working — visitors see &ldquo;this link does not exist or has
               expired&rdquo;.
             </p>
-            <p className="!text-ink-muted !text-[0.75rem] mb-0">
+            <p className="text-ink-muted text-[0.75rem] mb-0">
               The links themselves still exist. Turning this back on makes
               every unexpired, unrevoked link work again exactly as before.
             </p>
@@ -136,12 +136,12 @@ export default function SharingPolicyPage() {
           emails that have already been delivered. Recipients will see
           &ldquo;this link does not exist or has expired&rdquo;.
         </p>
-        <p className="!text-ink-muted">
+        <p className="text-ink-muted">
           This is reversible: the links are kept, and turning the switch back
           on restores every one that has not expired or been revoked. The
           change is recorded in the audit trail either way.
         </p>
-        <div className="!flex !justify-end gap-2 !mt-[1rem]">
+        <div className="flex justify-end gap-2 mt-4">
           <Button variant="ghost" disabled={saving} onClick={() => setConfirmOff(false)}>
             Cancel
           </Button>

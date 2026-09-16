@@ -37,11 +37,10 @@ export function RailStorage() {
     // Same lesson as MailboxSwitcher: this used white-alpha backgrounds and an
     // inherited colour, which vanish on a light rail. Tokens flip with the
     // theme; white does not.
-    <Link href="/account" className="d-block text-decoration-none"
-          style={{ color: 'rgb(var(--rail-text))' }}
+    <Link href="/account" className="block text-rail-text no-underline"
           title="See what is using your space">
-      <div className="d-inline-flex align-items-center gap-2 rounded-pill"
-           style={{ background: 'rgb(var(--rail-soft))', padding: '4px 14px 4px 10px', marginBottom: 8 }}>
+      <div className="inline-flex items-center gap-2 rounded-full bg-rail-soft"
+           style={{ padding: '4px 14px 4px 10px', marginBottom: 8 }}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
              strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.85 }}>
           <path d="M17.5 19H7a5 5 0 1 1 .9-9.92A6 6 0 0 1 19.6 11a4 4 0 0 1-2.1 8z" />
@@ -63,7 +62,7 @@ export function RailStorage() {
       {/* Said only when it matters. A warning on every screen every day is
           furniture; a warning at 80% is information. */}
       {s.isCritical && (
-        <div style={{ fontSize: 11, marginTop: 4, color: '#ffb4bd' }}>
+        <div className="text-danger" style={{ fontSize: 11, marginTop: 4 }}>
           Almost full — new mail and uploads will be refused.
         </div>
       )}

@@ -108,7 +108,7 @@ function when(iso: string): string {
 function Spinner({ size = 22 }: { size?: number }) {
   return (
     <span
-      className="!inline-block animate-spin !rounded-[50%]"
+      className="inline-block animate-spin rounded-full"
       style={{
         width: size, height: size,
         border: '2px solid rgba(0,0,0,.12)', borderTopColor: BRAND,
@@ -255,17 +255,17 @@ function AccountHub() {
   const initial = (user?.displayName ?? '?').charAt(0).toUpperCase();
 
   return (
-    <div className="!flex !flex-col bg-white" style={{ minHeight: '100dvh' }}>
+    <div className="flex flex-col bg-white" style={{ minHeight: '100dvh' }}>
 
       {/* ---- Top bar --------------------------------------------------- */}
       <div
-        className="!flex !items-center gap-2 !px-[1rem] md:!px-[1.5rem] bg-white border-b border-line !sticky top-0"
+        className="flex items-center gap-2 px-4 md:px-6 bg-white border-b border-line sticky top-0"
         style={{ paddingTop: 10, paddingBottom: 10, zIndex: 10 }}
       >
         <span style={{ fontSize: 20, fontWeight: 500 }}>
           <span style={{ fontWeight: 700, color: BRAND }}>TatvaOS</span> Account
         </span>
-        <div className="!flex-auto" />
+        <div className="flex-auto" />
         <AppLauncher />
         <button
           type="button"
@@ -274,7 +274,7 @@ function AccountHub() {
           aria-label="Account menu"
         >
           <span
-            className="![display:grid] !rounded-[50%] text-white"
+            className="grid rounded-full text-white"
             style={{
               width: 34, height: 34, placeItems: 'center',
               fontSize: 15, fontWeight: 600, background: BRAND,
@@ -287,10 +287,10 @@ function AccountHub() {
       </div>
 
       {/* ---- Body: sections rail + content ----------------------------- */}
-      <div className="!flex !flex-auto" style={{ minHeight: 0 }}>
+      <div className="flex flex-auto" style={{ minHeight: 0 }}>
 
         <nav
-          className="!hidden md:!block flex-shrink-0 !py-[1rem] pe-2 !sticky !self-start"
+          className="hidden md:block flex-shrink-0 py-4 pe-2 sticky self-start"
           style={{ width: 290, top: 57 }}
         >
           {visible.map((s) => {
@@ -307,14 +307,14 @@ function AccountHub() {
                 onClick={() => { setSection(s.id); setQ(''); }}
                 onMouseEnter={() => setHovered(s.id)}
                 onMouseLeave={() => setHovered(null)}
-                className="!flex !items-center !gap-[1rem] !px-[1rem] mb-1 !select-none"
+                className="flex items-center gap-4 px-4 mb-1 select-none"
                 style={{
                   paddingTop: 10, paddingBottom: 10, cursor: 'pointer',
                   borderRadius: '0 999px 999px 0', background: bg,
                 }}
               >
                 <span
-                  className="![display:grid] !rounded-[50%] flex-shrink-0"
+                  className="grid rounded-full flex-shrink-0"
                   style={{
                     width: 38, height: 38, placeItems: 'center',
                     background: tint(s.tint, 0.15), color: s.tint,
@@ -326,24 +326,24 @@ function AccountHub() {
                     {s.icon}
                   </svg>
                 </span>
-                <span className="!text-[0.875rem]" style={{ fontWeight: isActive ? 600 : 500 }}>
+                <span className="text-[0.875rem]" style={{ fontWeight: isActive ? 600 : 500 }}>
                   {s.label}
                 </span>
               </div>
             );
           })}
           {visible.length === 0 && (
-            <p className="!text-[0.875rem] !text-ink-muted !px-[1rem] !py-[1rem] mb-0">Nothing matches “{q}”.</p>
+            <p className="text-[0.875rem] text-ink-muted px-4 py-4 mb-0">Nothing matches “{q}”.</p>
           )}
         </nav>
 
-        <div className="!flex-auto !px-[1rem] md:!px-[1.5rem]" style={{ minWidth: 0, overflowY: 'auto', paddingBottom: 64 }}>
+        <div className="flex-auto px-4 md:px-6" style={{ minWidth: 0, overflowY: 'auto', paddingBottom: 64 }}>
           <div className="mx-auto" style={{ maxWidth: 760 }}>
 
             {section === 'home' && (
               <>
                 <div className="text-center" style={{ paddingTop: 48, paddingBottom: 32 }}>
-                  <div className="!flex !justify-center !mb-[1rem]">
+                  <div className="flex justify-center mb-4">
                     <PhotoPicker
                       preview={myPhoto}
                       name={user?.displayName}
@@ -355,14 +355,14 @@ function AccountHub() {
                     />
                   </div>
                   {photoError && (
-                    <p className="!text-[0.875rem] text-danger mb-2">{photoError}</p>
+                    <p className="text-[0.875rem] text-danger mb-2">{photoError}</p>
                   )}
                   <h1 className="mb-0" style={{ fontSize: 30, fontWeight: 500 }}>
                     {user?.displayName}
                   </h1>
-                  <p className="!text-ink-muted mt-1 mb-0">{user?.email}</p>
+                  <p className="text-ink-muted mt-1 mb-0">{user?.email}</p>
                   {me?.organisation && (
-                    <span className="!mt-[1rem] inline-block">
+                    <span className="mt-4 inline-block">
                       <Badge tone="neutral">Managed by {me.organisation.name}</Badge>
                     </span>
                   )}
@@ -370,9 +370,9 @@ function AccountHub() {
 
                 {/* The search pill. The icon is positioned rather than an input
                     group, so the field keeps its fully rounded shape. */}
-                <div className="!relative" style={{ marginBottom: 40 }}>
+                <div className="relative" style={{ marginBottom: 40 }}>
                   <span
-                    className="!absolute !text-ink-muted !flex !items-center"
+                    className="absolute text-ink-muted flex items-center"
                     style={{ left: 18, top: 0, bottom: 0, pointerEvents: 'none' }}
                   >
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -396,11 +396,11 @@ function AccountHub() {
                   />
                 </div>
 
-                <div className="grid !gap-[1rem] sm:grid-cols-2">
+                <div className="grid gap-4 sm:grid-cols-2">
                   <div>
                     <Card title="Security check"
                           subtitle={`Signed in on ${sessions.length || '…'} device${sessions.length === 1 ? '' : 's'}`}>
-                      <p className="!text-[0.875rem] !text-ink-muted !mb-[1rem]">
+                      <p className="text-[0.875rem] text-ink-muted mb-4">
                         Review where your account is signed in, and end anything
                         you do not recognise.
                       </p>
@@ -410,7 +410,7 @@ function AccountHub() {
                   <div>
                     <Card title="Password"
                           subtitle={user?.mfaEnabled ? 'Two-step verification is on' : 'Two-step verification is off'}>
-                      <p className="!text-[0.875rem] !text-ink-muted !mb-[1rem]">
+                      <p className="text-[0.875rem] text-ink-muted mb-4">
                         A password only you know is the one lock on everything here.
                       </p>
                       <Button variant="ghost" href="/change-password">Change password</Button>
@@ -440,7 +440,7 @@ function AccountHub() {
                     <InfoRow label="Products"
                              value={me?.products?.length ? me.products.join(', ') : '—'}
                              capitalize last />
-                    <Alert tone="info" className="!mt-[1.5rem] mb-0">
+                    <Alert tone="info" className="mt-6 mb-0">
                       Name, email and role are managed by your organisation&apos;s
                       administrator — ask them for a change. Everything on the
                       Security page you control yourself.
@@ -451,7 +451,7 @@ function AccountHub() {
             )}
 
             {section === 'security' && (
-              <div className="!flex !flex-col !gap-[1rem]">
+              <div className="flex flex-col gap-4">
                 <Card title="Password"
                       subtitle="Changing it signs out every session, including this one">
                   <Button variant="primary" href="/change-password">Change password</Button>
@@ -465,7 +465,7 @@ function AccountHub() {
                           See devices
                         </Button>
                       }>
-                  <p className="!text-[0.875rem] !text-ink-muted mb-0">
+                  <p className="text-[0.875rem] text-ink-muted mb-0">
                     {sessions.length} active session{sessions.length === 1 ? '' : 's'}.
                   </p>
                 </Card>
@@ -479,25 +479,25 @@ function AccountHub() {
                 </Button>
               }>
                 {loading ? (
-                  <div className="!flex !justify-center !py-[1.5rem]">
+                  <div className="flex justify-center py-6">
                     <Spinner />
                   </div>
                 ) : sessions.length === 0 ? (
-                  <p className="!text-[0.875rem] !text-ink-muted mb-0">No sessions.</p>
+                  <p className="text-[0.875rem] text-ink-muted mb-0">No sessions.</p>
                 ) : (
-                  <div className="!flex !flex-col !gap-[1rem]">
+                  <div className="flex flex-col gap-4">
                     {sessions.map((s) => (
-                      <div key={s.id} className="!flex gap-2 !items-start">
-                        <span className="!text-ink-muted" style={{ marginTop: 2 }}>
+                      <div key={s.id} className="flex gap-2 items-start">
+                        <span className="text-ink-muted" style={{ marginTop: 2 }}>
                           <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
                                stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
                             <rect x="3" y="4" width="18" height="12" rx="2" />
                             <path d="M8 20h8M12 16v4" />
                           </svg>
                         </span>
-                        <div className="!flex-auto" style={{ minWidth: 0 }}>
-                          <div className="!text-[0.875rem]">{describeAgent(s.userAgent)}</div>
-                          <div className="!text-[0.75rem] !text-ink-muted">
+                        <div className="flex-auto" style={{ minWidth: 0 }}>
+                          <div className="text-[0.875rem]">{describeAgent(s.userAgent)}</div>
+                          <div className="text-[0.75rem] text-ink-muted">
                             {s.ipAddress ?? 'unknown address'} · started {when(s.issuedAt)}
                           </div>
                         </div>
@@ -505,7 +505,7 @@ function AccountHub() {
                     ))}
                   </div>
                 )}
-                <Alert tone="info" className="!mt-[1.5rem] mb-0">
+                <Alert tone="info" className="mt-6 mb-0">
                   Signing out everywhere also ends this one. Changing your password
                   does the same thing — which is what you want if the reason for
                   changing it is that somebody else knows it.
@@ -518,32 +518,32 @@ function AccountHub() {
             {section === 'accounts' && (
               <Card subtitle="Switch between them from the avatar in the top right — no password needed">
                 {accounts.length <= 1 ? (
-                  <p className="!text-[0.875rem] !text-ink-muted mb-0">
+                  <p className="text-[0.875rem] text-ink-muted mb-0">
                     Only this account is on this browser. Add another from the
                     avatar menu in the top right.
                   </p>
                 ) : (
-                  <div className="!flex !flex-col gap-2">
+                  <div className="flex flex-col gap-2">
                     {accounts.map((a) => (
-                      <div key={a.slot} className="!flex !items-center gap-2">
+                      <div key={a.slot} className="flex items-center gap-2">
                         <span
-                          className="!rounded-[50%] flex-shrink-0"
+                          className="rounded-full flex-shrink-0"
                           style={{
                             width: 8, height: 8,
                             background: a.signedIn ? '#22a35b' : '#adb5bd',
                           }}
                         />
-                        <span className="!text-[0.875rem] !flex-auto !truncate">
+                        <span className="text-[0.875rem] flex-auto truncate">
                           {a.email}{a.active ? ' — this one' : ''}
                         </span>
-                        <span className="!text-[0.75rem] !text-ink-muted">
+                        <span className="text-[0.75rem] text-ink-muted">
                           {a.signedIn ? 'Signed in' : 'Signed out'}
                         </span>
                       </div>
                     ))}
                   </div>
                 )}
-                <p className="!text-[0.75rem] !text-ink-muted !block !mt-[1rem] mb-0">
+                <p className="text-[0.75rem] text-ink-muted block mt-4 mb-0">
                   They stay on this browser only. On a shared machine, use sign
                   out everywhere on the devices page.
                 </p>
@@ -551,7 +551,7 @@ function AccountHub() {
             )}
 
             <hr style={{ marginTop: 64, marginBottom: 16 }} />
-            <p className="!text-[0.75rem] !text-ink-muted text-center mb-0">
+            <p className="text-[0.75rem] text-ink-muted text-center mb-0">
               Only you can see your settings.
               {active?.organisation ? ` Your account is managed by ${active.organisation}.` : ''}
             </p>
@@ -577,14 +577,14 @@ function InfoRow({ label, value, capitalize, last }: {
     >
       <div className="sm:w-1/3">
         <span
-          className="!text-[0.75rem] !text-ink-muted !uppercase !block"
+          className="text-[0.75rem] text-ink-muted uppercase block"
           style={{ letterSpacing: '0.4px', paddingTop: 2 }}
         >
           {label}
         </span>
       </div>
       <div className="min-w-0 sm:w-2/3">
-        <span className="!text-[0.875rem]" style={{ textTransform: capitalize ? 'capitalize' : 'none' }}>
+        <span className="text-[0.875rem]" style={{ textTransform: capitalize ? 'capitalize' : 'none' }}>
           {value}
         </span>
       </div>
@@ -671,12 +671,12 @@ function MfaCard() {
           as your phone.
         </Alert>
 
-        <ul className="!list-none !pl-0 !font-mono rounded bg-canvas !p-[1rem] !mb-[1rem]"
+        <ul className="list-none pl-0 font-mono rounded bg-canvas p-4 mb-4"
             style={{ columnCount: 2, columnGap: 24 }}>
           {codes.map((c) => <li key={c} className="py-1">{c}</li>)}
         </ul>
 
-        <div className="!flex gap-2">
+        <div className="flex gap-2">
           <Button variant="secondary"
                   onClick={() => void navigator.clipboard.writeText(codes.join('\n'))}>
             Copy all
@@ -697,7 +697,7 @@ function MfaCard() {
             subtitle="Add TatvaOS to your authenticator app, then enter the code it shows">
         {error && <Alert tone="danger">{error}</Alert>}
 
-        <ol className="!ps-[1rem] !text-[0.875rem] !mb-[1rem]">
+        <ol className="ps-4 text-[0.875rem] mb-4">
           <li className="mb-2">
             Open your authenticator app — Google Authenticator, Authy, 1Password
             or Microsoft Authenticator all work.
@@ -708,16 +708,16 @@ function MfaCard() {
               // eslint-disable-next-line @next/next/no-img-element
               <img src={qr} alt="QR code for your authenticator app"
                    width={200} height={200}
-                   className="!block my-2 rounded border border-line bg-white p-2" />
+                   className="block my-2 rounded border border-line bg-white p-2" />
             ) : (
-              <div className="my-2 !text-[0.8125rem] !text-ink-muted">
+              <div className="my-2 text-[0.8125rem] text-ink-muted">
                 The QR could not be drawn — use the key below instead.
               </div>
             )}
           </li>
           <li className="mb-2">
             No camera? Enter this key by hand instead:
-            <div className="!font-mono rounded bg-canvas !p-[1rem] my-2"
+            <div className="font-mono rounded bg-canvas p-4 my-2"
                  style={{ fontSize: 15, letterSpacing: '0.05em', wordBreak: 'break-all' }}>
               {groupSecret(setup.secret)}
             </div>
@@ -729,8 +729,8 @@ function MfaCard() {
           <li>Enter the six-digit code it shows.</li>
         </ol>
 
-        <div className="!mb-[1rem]" style={{ maxWidth: 220 }}>
-          <label className="mb-1 block !text-[0.8125rem] !font-medium text-ink" htmlFor="tv-mfa-confirm">
+        <div className="mb-4" style={{ maxWidth: 220 }}>
+          <label className="mb-1 block text-[0.8125rem] font-medium text-ink" htmlFor="tv-mfa-confirm">
             Code from your app
           </label>
           <Input
@@ -744,7 +744,7 @@ function MfaCard() {
           />
         </div>
 
-        <div className="!flex gap-2">
+        <div className="flex gap-2">
           <Button variant="ghost" disabled={busy}
                   onClick={() => { setSetup(null); setCode(''); setError(null); }}>
             Cancel
@@ -768,14 +768,14 @@ function MfaCard() {
             subtitle="On — a code from your app is required alongside your password">
         {error && <Alert tone="danger">{error}</Alert>}
 
-        <p className="!text-[0.875rem] !text-ink-muted">
+        <p className="text-[0.875rem] text-ink-muted">
           {status.recoveryCodesRemaining === 0
             ? 'You have no recovery codes left. Generate a new set — without one, losing your phone means asking an administrator to reset this.'
             : `${status.recoveryCodesRemaining} recovery code${status.recoveryCodesRemaining === 1 ? '' : 's'} remaining.`}
         </p>
 
-        <div className="!mb-[1rem]" style={{ maxWidth: 320 }}>
-          <label className="mb-1 block !text-[0.8125rem] !font-medium text-ink" htmlFor="tv-mfa-pw">
+        <div className="mb-4" style={{ maxWidth: 320 }}>
+          <label className="mb-1 block text-[0.8125rem] font-medium text-ink" htmlFor="tv-mfa-pw">
             Your password
           </label>
           <Input
@@ -789,10 +789,10 @@ function MfaCard() {
           {/* Asked for because a live session is not enough to weaken the
               factor — a borrowed unlocked laptop is exactly what it defends
               against. */}
-          <div className="mt-1 !text-[0.75rem] text-ink-muted">Required to change these settings.</div>
+          <div className="mt-1 text-[0.75rem] text-ink-muted">Required to change these settings.</div>
         </div>
 
-        <div className="!flex gap-2 flex-wrap">
+        <div className="flex gap-2 flex-wrap">
           <Button variant="secondary" disabled={busy || password.length === 0}
                   onClick={() => void run(async () => {
                     const fresh = await regenerateRecoveryCodes(authedFetch, password);
@@ -820,7 +820,7 @@ function MfaCard() {
           subtitle="Off — your password alone signs you in">
       {error && <Alert tone="danger">{error}</Alert>}
 
-      <p className="!text-[0.875rem] !text-ink-muted">
+      <p className="text-[0.875rem] text-ink-muted">
         Ask for a code from your phone as well as your password. It means a
         stolen password on its own is not enough to reach your account or your
         mail.
@@ -857,17 +857,17 @@ function StorageSection() {
     fetchMyStorage(authedFetch).then(setS).catch(() => setErr('Could not load your storage.'));
   }, [authedFetch]);
 
-  if (err) return <Card title="Storage"><p className="!text-[0.875rem] text-danger mb-0">{err}</p></Card>;
+  if (err) return <Card title="Storage"><p className="text-[0.875rem] text-danger mb-0">{err}</p></Card>;
   if (!s) return <Card title="Storage"><Spinner /></Card>;
 
   const pct = Math.min(100, s.usedFraction * 100);
 
   return (
-    <div className="!flex !flex-col !gap-[1rem]">
+    <div className="flex flex-col gap-4">
       <Card title="Your storage" subtitle={s.note}>
-        <div className="!flex !items-baseline gap-2 mb-2">
-          <span className="!text-[1.5rem] !font-semibold">{formatBytes(s.usedBytes)}</span>
-          <span className="!text-[0.875rem] !text-ink-muted">of {formatBytes(s.quotaBytes)} used</span>
+        <div className="flex items-baseline gap-2 mb-2">
+          <span className="text-[1.5rem] font-semibold">{formatBytes(s.usedBytes)}</span>
+          <span className="text-[0.875rem] text-ink-muted">of {formatBytes(s.quotaBytes)} used</span>
         </div>
 
         <div style={{ height: 10, borderRadius: 999, background: 'rgba(0,0,0,.08)', overflow: 'hidden' }}>
@@ -875,7 +875,7 @@ function StorageSection() {
                         background: meterColour(s.usedFraction), transition: 'width 200ms ease' }} />
         </div>
 
-        <p className="!text-[0.8125rem] !text-ink-muted mt-2 mb-0">
+        <p className="text-[0.8125rem] text-ink-muted mt-2 mb-0">
           {formatBytes(s.availableBytes)} still free.
           {s.isCritical
             ? ' You are nearly out — new mail and uploads will be refused.'
@@ -887,14 +887,14 @@ function StorageSection() {
 
       <Card title="What is using it" subtitle="Heaviest first">
         {s.products.length === 0 ? (
-          <p className="!text-[0.875rem] !text-ink-muted mb-0">Nothing stored yet.</p>
+          <p className="text-[0.875rem] text-ink-muted mb-0">Nothing stored yet.</p>
         ) : s.products.map((p) => {
           const share = s.usedBytes > 0 ? (p.usedBytes / s.usedBytes) * 100 : 0;
           return (
-            <div key={p.code} className="!mb-[1rem]">
-              <div className="!flex !justify-between !text-[0.875rem] mb-1">
-                <span className="!font-semibold">{p.name}</span>
-                <span className="!text-ink-muted">{formatBytes(p.usedBytes)}</span>
+            <div key={p.code} className="mb-4">
+              <div className="flex justify-between text-[0.875rem] mb-1">
+                <span className="font-semibold">{p.name}</span>
+                <span className="text-ink-muted">{formatBytes(p.usedBytes)}</span>
               </div>
               <div style={{ height: 6, borderRadius: 999, background: 'rgba(0,0,0,.06)', overflow: 'hidden' }}>
                 {/* Share of what is USED, not of the quota — this bar answers
@@ -907,7 +907,7 @@ function StorageSection() {
           );
         })}
 
-        <p className="!text-[0.75rem] !text-ink-muted mb-0">
+        <p className="text-[0.75rem] text-ink-muted mb-0">
           Files in Space that are in the trash still take up room until they are
           purged, thirty days after you delete them.
         </p>

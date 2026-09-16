@@ -149,9 +149,9 @@ export default function OrgAuditPage() {
             where it was before too. One column on a phone. `grid-cols-12` is
             re-declared in overrides.css because YZEN's own `.grid` would
             otherwise flatten it to a single column with no warning. */}
-        <div className="grid !gap-[0.5rem] !items-end !mb-[1rem] md:grid-cols-12">
+        <div className="grid gap-2 items-end mb-4 md:grid-cols-12">
           <div className="md:col-span-3">
-            <label className="mb-1 block !text-[0.75rem] !font-medium !text-ink-muted">Action</label>
+            <label className="mb-1 block text-[0.75rem] font-medium text-ink-muted">Action</label>
             <Select
               
               value={action}
@@ -164,7 +164,7 @@ export default function OrgAuditPage() {
             </Select>
           </div>
           <div className="md:col-span-3">
-            <label className="mb-1 block !text-[0.75rem] !font-medium !text-ink-muted">Who</label>
+            <label className="mb-1 block text-[0.75rem] font-medium text-ink-muted">Who</label>
             <Select
               
               value={actor}
@@ -177,7 +177,7 @@ export default function OrgAuditPage() {
             </Select>
           </div>
           <div className="md:col-span-2">
-            <label className="mb-1 block !text-[0.75rem] !font-medium !text-ink-muted">Product</label>
+            <label className="mb-1 block text-[0.75rem] font-medium text-ink-muted">Product</label>
             <Select
               
               value={product}
@@ -192,12 +192,12 @@ export default function OrgAuditPage() {
             </Select>
           </div>
           <div className="md:col-span-2">
-            <label className="mb-1 block !text-[0.75rem] !font-medium !text-ink-muted">From</label>
+            <label className="mb-1 block text-[0.75rem] font-medium text-ink-muted">From</label>
             <Input type="date" 
                    value={from} onChange={(e) => setFrom(e.target.value)} />
           </div>
           <div className="md:col-span-2">
-            <label className="mb-1 block !text-[0.75rem] !font-medium !text-ink-muted">To</label>
+            <label className="mb-1 block text-[0.75rem] font-medium text-ink-muted">To</label>
             <Input type="date" 
                    value={to} onChange={(e) => setTo(e.target.value)} />
           </div>
@@ -211,7 +211,7 @@ export default function OrgAuditPage() {
         {error && <Alert tone="danger">{error}</Alert>}
 
         {loading ? (
-          <div className="grid place-items-center !py-[3rem]">
+          <div className="grid place-items-center py-12">
             <span className="block h-8 w-8 animate-spin rounded-full border-2 border-line border-t-brand-600" />
           </div>
         ) : entries.length === 0 ? (
@@ -230,10 +230,10 @@ export default function OrgAuditPage() {
                 <Fragment key={e.id}>
                   <tr>
                     <Td>
-                      <div className="!text-[0.8125rem]">{when(e.occurredAt)}</div>
+                      <div className="text-[0.8125rem]">{when(e.occurredAt)}</div>
                     </Td>
                     <Td>
-                      <div className="!font-semibold">
+                      <div className="font-semibold">
                         {humaniseAction(e.action)}
                         {/* Credential and access changes are what somebody is
                             looking for after an incident; routine entries are
@@ -242,7 +242,7 @@ export default function OrgAuditPage() {
                           <span className="ms-2"><Badge tone="warn">Sensitive</Badge></span>
                         )}
                       </div>
-                      <div className="!text-[0.75rem] !text-ink-muted">
+                      <div className="text-[0.75rem] text-ink-muted">
                         {e.action}
                         {e.productCode && e.productCode !== 'core' && ` · ${e.productCode}`}
                       </div>
@@ -251,16 +251,16 @@ export default function OrgAuditPage() {
                       {e.actorName ?? e.actorEmail ?? (
                         // A deleted actor, or the platform itself. Saying so is
                         // more honest than printing a bare id nobody can resolve.
-                        <span className="!text-ink-muted">Not recorded</span>
+                        <span className="text-ink-muted">Not recorded</span>
                       )}
-                      {e.actorIp && <div className="!text-[0.75rem] !text-ink-muted">{e.actorIp}</div>}
+                      {e.actorIp && <div className="text-[0.75rem] text-ink-muted">{e.actorIp}</div>}
                     </Td>
                     <Td>
                       {e.targetType
-                        ? <span className="!text-[0.8125rem]">{e.targetType}</span>
-                        : <span className="!text-ink-muted">—</span>}
+                        ? <span className="text-[0.8125rem]">{e.targetType}</span>
+                        : <span className="text-ink-muted">—</span>}
                       {e.targetId && (
-                        <div className="!text-[0.75rem] !text-ink-muted !truncate" style={{ maxWidth: 220 }}>
+                        <div className="text-[0.75rem] text-ink-muted truncate" style={{ maxWidth: 220 }}>
                           {e.targetId}
                         </div>
                       )}
@@ -269,7 +269,7 @@ export default function OrgAuditPage() {
                       {e.hasDetail && (
                         <Button
                           variant="secondary"
-                          className="!px-[0.8rem] !py-[0.25rem] !text-[0.8rem]"
+                          className="px-[0.8rem] py-1 text-[0.8rem]"
                           onClick={() => setExpanded(expanded === e.id ? null : e.id)}
                         >
                           {expanded === e.id ? 'Hide' : 'Detail'}
@@ -281,16 +281,16 @@ export default function OrgAuditPage() {
                   {expanded === e.id && (
                     <tr>
                       <td colSpan={5} className="bg-canvas">
-                        <div className="grid !gap-[1rem] p-2 md:grid-cols-2">
+                        <div className="grid gap-4 p-2 md:grid-cols-2">
                           <div>
-                            <div className="!text-[0.75rem] !font-semibold !text-ink-muted mb-1">BEFORE</div>
-                            <pre className="!text-[0.75rem] mb-0" style={{ whiteSpace: 'pre-wrap' }}>
+                            <div className="text-[0.75rem] font-semibold text-ink-muted mb-1">BEFORE</div>
+                            <pre className="text-[0.75rem] mb-0" style={{ whiteSpace: 'pre-wrap' }}>
                               {formatState(e.beforeState) ?? '—'}
                             </pre>
                           </div>
                           <div>
-                            <div className="!text-[0.75rem] !font-semibold !text-ink-muted mb-1">AFTER</div>
-                            <pre className="!text-[0.75rem] mb-0" style={{ whiteSpace: 'pre-wrap' }}>
+                            <div className="text-[0.75rem] font-semibold text-ink-muted mb-1">AFTER</div>
+                            <pre className="text-[0.75rem] mb-0" style={{ whiteSpace: 'pre-wrap' }}>
                               {formatState(e.afterState) ?? '—'}
                             </pre>
                           </div>
@@ -302,13 +302,13 @@ export default function OrgAuditPage() {
               ))}
             </Table>
 
-            <div className="!flex !justify-center !mt-[1rem]">
+            <div className="flex justify-center mt-4">
               {hasMore ? (
                 <Button variant="secondary" onClick={loadMore} disabled={loadingMore}>
                   {loadingMore ? 'Loading…' : 'Load more'}
                 </Button>
               ) : (
-                <span className="!text-[0.75rem] !text-ink-muted">
+                <span className="text-[0.75rem] text-ink-muted">
                   {entries.length} entr{entries.length === 1 ? 'y' : 'ies'} — that is everything.
                 </span>
               )}

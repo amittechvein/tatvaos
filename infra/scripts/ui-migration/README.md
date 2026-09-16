@@ -8,6 +8,7 @@ Run every script from `apps/web`. None of them changes anything unless told to.
 | `decls.cjs <outDir>` | The real CSS declarations behind every legacy and colliding class, from Bootstrap, YZEN and Tailwind side by side. This is the evidence behind every mapping in the codemod. |
 | `codemod-utilities.cjs --dry\|--write <files…>` | Rewrites Bootstrap/YZEN **utility** classes into the Tailwind class that renders the same value, and reports the component classes it left (btn, form-*, card, badge, alert, row/col…). |
 | `check-generated.cjs` | Every `!`-prefixed class added in the working tree makes Tailwind emit an `!important` rule. A class Tailwind does not recognise is dropped silently. |
+| `codemod-unimportant.cjs --dry\|--write <files…>` | Stage 4's second pass: strips the temporary `!` and folds pinned values back onto the scale (`!mb-[1rem]` → `mb-4`). Only inside `className` contexts, only tokens that look like utilities, and it **refuses a file** if anything outside a string literal would change. |
 | `snapshot.js` | In the browser: `tvSnap('save')` before a change, `tvSnap('compare')` after. Lists every element whose computed style moved. |
 
 ## Why the output is full of `!`
@@ -35,3 +36,15 @@ arbitrary values back onto Tailwind's scale (`!mb-[1rem]` → `mb-4`).
 A dev server keeps every class it has ever generated until it restarts. After
 fixing a bad class, restart it (and delete `apps/web/.next`), or the old
 broken rule stays in the stylesheet and the page stays broken.
+
+## The third failure, from the second pass
+
+The first `codemod-unimportant` scanned every string literal in a file. A
+backtick inside a **comment** opened a fake template literal that ran to the
+next backtick, and every `!` in the code between them was treated as a class
+prefix: `meeting !== null` → `meeting == null`, `!over` → `over`, across 35
+files. Typecheck caught three of the changes. The files were reverted from git
+and the script rewritten with the guard it now has: with all string literals
+blanked, the file must be byte-identical before and after, or nothing is
+written. **A codemod that edits source needs that guard from its first run**,
+not after it has proven the point.

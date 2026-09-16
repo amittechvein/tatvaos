@@ -98,7 +98,7 @@ export default function OrgAiPage() {
           )
         }
       >
-        {!state && !error && <p className="!text-ink-muted mb-0">Loading…</p>}
+        {!state && !error && <p className="text-ink-muted mb-0">Loading…</p>}
 
         {state && !state.platformConfigured && (
           <p className="mb-0">
@@ -117,7 +117,7 @@ export default function OrgAiPage() {
               Meeting minutes are written by the model; every call is metered
               and attributed to this organisation.
             </p>
-            <p className="!text-ink-muted !text-[0.75rem] mb-0">{state.disclosure}</p>
+            <p className="text-ink-muted text-[0.75rem] mb-0">{state.disclosure}</p>
           </>
         )}
 
@@ -129,7 +129,7 @@ export default function OrgAiPage() {
               Features that would use AI fall back to their non-AI form —
               meeting minutes become a mechanical digest, clearly labelled.
             </p>
-            <p className="!text-ink-muted !text-[0.75rem] mb-0">
+            <p className="text-ink-muted text-[0.75rem] mb-0">
               Turning this on is recorded in the audit trail with who and when,
               because for many organisations that record is the point.
             </p>
@@ -144,11 +144,11 @@ export default function OrgAiPage() {
           busy={saving}
         >
           <p>{state.disclosure}</p>
-          <p className="!text-ink-muted">
+          <p className="text-ink-muted">
             You can turn it off again at any time with one click — sending
             stops immediately. Both changes are recorded in the audit trail.
           </p>
-          <div className="!flex !justify-end gap-2 !mt-[1rem]">
+          <div className="flex justify-end gap-2 mt-4">
             <Button variant="ghost" disabled={saving} onClick={() => setConfirmOn(false)}>
               Cancel
             </Button>

@@ -20,15 +20,10 @@
 //  this. Anything that looks different is this file's fault, not the caller's,
 //  which is what makes it revertible in one commit.
 //
-//  WHAT THIS DOES NOT DO. The pages that import these still sit inside YZEN's
-//  grid (`row`, `col-md-*`) and inside its app shell. Those are stage 3's long
-//  tail and stage 4. Components first, layout after — migrating both at once
-//  means a broken page cannot be told from a deliberate one.
-//
-//  NOTE ON BORDERS. Tailwind's preflight is off here, so `border` sets a WIDTH
-//  against a style of `none` and renders nothing. globals.css supplies
-//  `border-style: solid` for that reason. If a border ever vanishes, that rule
-//  is the first place to look — not the token.
+//  16 Sept 2026: stage 3 and stage 4 are done. Every page is on these
+//  components, the shell is ours, and YZEN is deleted. Preflight is on, so
+//  the old note about `border` needing a hand-written border-style no longer
+//  applies; globals.css keeps only the default border COLOUR.
 // ============================================================================
 
 import Link from 'next/link';
@@ -85,7 +80,7 @@ type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 //  invisible.
 const BTN_BASE =
   'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg '
-  + 'px-4 py-2 text-sm font-semibold transition-colors '
+  + 'font-semibold transition-colors '
   + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 '
   + 'disabled:pointer-events-none disabled:opacity-50';
 
@@ -96,10 +91,13 @@ const BTN: Record<Variant, string> = {
   danger:    'bg-danger text-white hover:brightness-95',
 };
 
+//  Size is its own slot, so the two never sit in one class list competing.
 //  The small size keeps Bootstrap's btn-sm numbers exactly, because the rows
-//  and toolbars that used btn-sm were laid out around that height. The `!`
-//  is what lets it beat BTN_BASE's px-4 py-2 in the same class list.
-const BTN_SM = '!px-[0.8rem] !py-[0.25rem] !text-[0.8rem]';
+//  and toolbars that used btn-sm were laid out around that height.
+const BTN_SIZE = {
+  md: 'px-4 py-2 text-sm',
+  sm: 'px-[0.8rem] py-1 text-[0.8rem]',
+};
 
 export function Button({
   variant = 'secondary', size, className = '', href, children, ...rest
@@ -110,7 +108,7 @@ export function Button({
   href?: string;
   children?: React.ReactNode;
 } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  const cls = `${BTN_BASE} ${BTN[variant]} ${size === 'sm' ? BTN_SM : ''} ${className}`.replace(/\s+/g, ' ').trim();
+  const cls = `${BTN_BASE} ${BTN_SIZE[size ?? 'md']} ${BTN[variant]} ${className}`.replace(/\s+/g, ' ').trim();
   if (href) {
     // Only onClick is forwarded to link-buttons; spreading button attributes
     // onto a Next Link is a type mismatch and none of the others apply here.
@@ -400,7 +398,7 @@ export function Spinner({ inline = false, label = 'Loading' }: { inline?: boolea
     ? 'mr-2 inline-block h-[1em] w-[1em] animate-spin rounded-full border-2 border-current border-r-transparent align-[-0.125em]'
     : 'block h-8 w-8 animate-spin rounded-full border-2 border-line border-t-brand-600';
   const disc = <span role="status" aria-label={label} className={cls} />;
-  return inline ? disc : <div className="grid place-items-center !py-[3rem]">{disc}</div>;
+  return inline ? disc : <div className="grid place-items-center py-12">{disc}</div>;
 }
 
 // ---------------------------------------------------------------------------

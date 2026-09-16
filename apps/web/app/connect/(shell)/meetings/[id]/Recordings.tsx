@@ -133,7 +133,7 @@ export default function Recordings({ meetingId, isHost, canDelete, guestNames }:
   if (!list.enabled) {
     return (
       <>
-        <Card title="Recording" className="!mt-[1rem]">
+        <Card title="Recording" className="mt-4">
           <Empty
             title="Recording is not switched on for this server"
             hint="The recorder is a separate service. Once it is deployed, hosts can record a meeting's audio and have what was said written up automatically."
@@ -160,12 +160,12 @@ export default function Recordings({ meetingId, isHost, canDelete, guestNames }:
         subtitle={'Recordings are kept as they were made. Nothing is sent away to be '
           + 'transcribed — the minutes come from live captions during the meeting, '
           + 'which cost nothing and can say who said what.'}
-        className="!mt-[1rem]"
+        className="mt-4"
         actions={isHost && list.items.length > 0 ? (
           <Button onClick={() => void load()}>Refresh</Button>
         ) : undefined}
       >
-        {error && <Alert tone="danger" className="py-2 !text-[0.8125rem]">{error}</Alert>}
+        {error && <Alert tone="danger" className="py-2 text-[0.8125rem]">{error}</Alert>}
 
         {list.items.length === 0 ? (
           <Empty
@@ -234,7 +234,7 @@ function GuestGap({ names }: { names: string[] }) {
       : shown[0];
 
   return (
-    <div className="cx-gap !mb-[1rem]">
+    <div className="cx-gap mb-4">
       <strong>Not everything said is in here.</strong>
       <p>
         Minutes are written from what each person&rsquo;s own browser heard, and
@@ -274,17 +274,17 @@ function Row({ item, meetingId, isHost, canDelete, busy, act, onPlay, sharing, o
       <Td>{sizeLabel(r.sizeBytes)}</Td>
       <Td>
         <Badge tone={recordingTone(r.status)}>{RECORDING_LABEL[r.status]}</Badge>
-        {r.error && <div className="!text-[0.6875rem] text-danger mt-1">{r.error}</div>}
+        {r.error && <div className="text-[0.6875rem] text-danger mt-1">{r.error}</div>}
         {item.transcript && (
-          <div className={`!text-[0.6875rem] mt-1 ${
-            item.transcript.status === 'failed' ? 'text-danger' : '!text-ink-muted'
+          <div className={`text-[0.6875rem] mt-1 ${
+            item.transcript.status === 'failed' ? 'text-danger' : 'text-ink-muted'
           }`}>
             {transcriptLine(item.transcript)}
           </div>
         )}
       </Td>
       <Td className="text-end">
-        <div className="!flex gap-2 !justify-end flex-wrap">
+        <div className="flex gap-2 justify-end flex-wrap">
           {/* A BUTTON, not a link — see recordingApi.download. A plain <a>
               here answered 401 every time, because this app's access token is
               an Authorization header and a navigation does not carry one. */}
@@ -393,7 +393,7 @@ function NotesCard({
     }
 
     return (
-      <Card title="Meeting notes" className="!mt-[1rem]">
+      <Card title="Meeting notes" className="mt-4">
         <Empty title={title} hint={hint} />
       </Card>
     );
@@ -422,7 +422,7 @@ function NotesCard({
           : n.hadRecording
             ? 'From attendance only — the meeting was recorded, but no transcript was made of it'
             : 'From attendance only — this meeting was not recorded'}
-      className="!mt-[1rem]"
+      className="mt-4"
       actions={(
         <>
           <MinutesActions meetingId={meetingId} isHost={isHost} />
@@ -443,7 +443,7 @@ function NotesCard({
           here rather than being left with a general disclaimer to discount. */}
       {guestNames.length > 0 && <GuestGap names={guestNames} />}
 
-      {n.summary && <p className="!mb-[1rem]">{n.summary}</p>}
+      {n.summary && <p className="mb-4">{n.summary}</p>}
 
       <Points title="Decisions" items={n.decisions} />
       <Points title="Follow-ups" items={n.actionItems} />
@@ -453,26 +453,26 @@ function NotesCard({
           for a school marking a register it is the thing they came for. */}
       {n.attendance.length > 0 && (
         <>
-          <h6 className="!text-[0.8125rem] !text-ink-muted">Who attended ({n.attendance.length})</h6>
-          <div className="overflow-x-auto !mb-[1rem]">
+          <h6 className="text-[0.8125rem] text-ink-muted">Who attended ({n.attendance.length})</h6>
+          <div className="overflow-x-auto mb-4">
             <table className="w-full border-collapse whitespace-nowrap mb-0 [&_td]:border-b [&_td]:border-line [&_td]:px-2 [&_td]:py-1.5 [&_td]:align-middle">
               <tbody>
                 {n.attendance.map((a) => (
                   <tr key={a.identity}>
-                    <td className="!text-[0.8125rem]">
+                    <td className="text-[0.8125rem]">
                       {a.name}
                       {a.guest && <span className="ml-2"><Badge tone="neutral">Guest</Badge></span>}
                     </td>
-                    <td className="!text-[0.8125rem] !text-ink-muted">
+                    <td className="text-[0.8125rem] text-ink-muted">
                       {a.joinedAt ? timeLabel(a.joinedAt) : '—'}
                     </td>
-                    <td className="!text-[0.8125rem] !text-ink-muted">
+                    <td className="text-[0.8125rem] text-ink-muted">
                       {/* 0 seconds means the API saw them join but the media
                           server never reported it. Saying "0:00" would read as
                           "they were not there", which is not what we know. */}
                       {a.seconds > 0 ? durationLabel(a.seconds * 1000) : 'not recorded'}
                     </td>
-                    <td className="!text-[0.8125rem] !text-ink-muted">
+                    <td className="text-[0.8125rem] text-ink-muted">
                       {a.joins > 1 ? `rejoined ${a.joins - 1}×` : ''}
                     </td>
                   </tr>
@@ -485,10 +485,10 @@ function NotesCard({
 
       {n.speakers.length > 0 && (
         <>
-          <h6 className="!text-[0.8125rem] !text-ink-muted !mt-[1rem]">Who spoke</h6>
-          <ul className="!list-none !pl-0 !mb-[1rem]">
+          <h6 className="text-[0.8125rem] text-ink-muted mt-4">Who spoke</h6>
+          <ul className="list-none pl-0 mb-4">
             {n.speakers.map((s) => (
-              <li key={s.name} className="!text-[0.8125rem]">
+              <li key={s.name} className="text-[0.8125rem]">
                 {s.name} — {durationLabel(s.seconds * 1000)} over {s.turns} turns
               </li>
             ))}
@@ -503,13 +503,13 @@ function NotesCard({
           </Button>
           {show && (
             <>
-              <pre className="!mt-[1rem] !p-[1rem] !text-[0.75rem] rounded bg-canvas"
+              <pre className="mt-4 p-4 text-[0.75rem] rounded bg-canvas"
                    style={{ maxHeight: 420, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
                 {t.segments.length > 0
                   ? t.segments.map((s) => `[${clock(s.start)}] ${s.speaker ? `${s.speaker}: ` : ''}${s.text}`).join('\n')
                   : t.text}
               </pre>
-              <div className="!text-[0.6875rem] !text-ink-muted">
+              <div className="text-[0.6875rem] text-ink-muted">
                 Transcribed by {t.provider ?? 'the configured service'}
                 {t.language ? ` · ${t.language}` : ''}
                 {' · '}
@@ -527,9 +527,9 @@ function Points({ title, items }: { title: string; items: string[] }) {
   if (items.length === 0) return null;
   return (
     <>
-      <h6 className="!text-[0.8125rem] !text-ink-muted">{title}</h6>
-      <ul className="!mb-[1rem]">
-        {items.map((s) => <li key={s} className="!text-[0.8125rem]">{s}</li>)}
+      <h6 className="text-[0.8125rem] text-ink-muted">{title}</h6>
+      <ul className="mb-4">
+        {items.map((s) => <li key={s} className="text-[0.8125rem]">{s}</li>)}
       </ul>
     </>
   );
@@ -649,7 +649,7 @@ function MinutesActions({ meetingId, isHost }: { meetingId: string; isHost: bool
           and made a confirmation look like a broken control. A sentence is
           not a button and should not queue with them. */}
       {said && (
-        <span className={`!w-full !text-[0.75rem] ${failed ? 'text-danger' : '!text-ink-muted'}`}>{said}</span>
+        <span className={`w-full text-[0.75rem] ${failed ? 'text-danger' : 'text-ink-muted'}`}>{said}</span>
       )}
 
       {showing && minutes !== null && (
