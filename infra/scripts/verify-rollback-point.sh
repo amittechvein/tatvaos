@@ -7,7 +7,7 @@
 #  Exit 0 = right on every deploy. Exit 1 = wrong. Exit 2 = could not run.
 #
 #  ─────────────────────────────────────────────────────────────────────────
-#   WHY, 17 SEPTEMBER 2026 (CTO ruling after the 16th).
+#   WHY, 16 SEPTEMBER 2026 (CTO ruling that evening).
 #
 #   The rollback line is what a person reads at the worst moment, and it was
 #   wrong in two independent ways:
