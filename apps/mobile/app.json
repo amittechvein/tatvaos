@@ -45,7 +45,8 @@
             "enableScreenShareService": true
           }
         }
-      ]
+      ],
+      "./plugins/withShortNativeObjectPaths"
     ],
     "extra": {
       "hosts": {
