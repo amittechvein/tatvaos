@@ -3,10 +3,21 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { AdminShell } from '@/components/admin/AdminShell';
-import { Button } from '@/components/ui/Kit';
+import { Badge, Button } from '@/components/ui/Kit';
 import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
 import { Input } from '@/components/ui/Form';
+import { Alert } from '@/components/ui/Page';
+
+/** A pill in the brand colour. Badge's tones are the status set (ok, warn,
+ *  danger, info, neutral) and "this address is ours" is not a status. */
+function BrandPill({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center rounded-full bg-brand-500/10 px-2.5 py-0.5 text-xs font-semibold text-brand-700">
+      {children}
+    </span>
+  );
+}
 
 // ============================================================================
 //  Domains
@@ -205,10 +216,7 @@ export default function DomainsPage() {
       actions={<Button variant="primary" onClick={() => setAdding(true)}>Add domain</Button>}
     >
       {error && (
-        <div className="alert alert-danger !flex !items-center !justify-between" role="alert">
-          <span>{error}</span>
-          <button type="button" className="btn-close" aria-label="Dismiss" onClick={() => setError(null)} />
-        </div>
+        <Alert tone="danger" onDismiss={() => setError(null)}>{error}</Alert>
       )}
 
       {loading ? (
@@ -218,18 +226,17 @@ export default function DomainsPage() {
       ) : (
         <div className="grid !gap-[1rem]">
           {domains.map((d) => (
-            <div className="card custom-card mb-0" key={d.id}>
-              <div className="card-body !flex !items-center !gap-[1rem] flex-wrap">
+            <div className="rounded-card border border-line bg-surface !p-[1rem] !flex !items-center !gap-[1rem] flex-wrap" key={d.id}>
                 <div className="min-w-0 !flex-auto">
                   <div className="!flex !items-center gap-2 flex-wrap">
                     <h6 className="!font-semibold mb-0" style={{ wordBreak: 'break-all' }}>{d.fqdn}</h6>
 
                     {d.isPlatform ? (
-                      <span className="badge !bg-brand-500/10 !text-brand-500">TatvaOS address</span>
+                      <BrandPill>TatvaOS address</BrandPill>
                     ) : d.ownershipVerified ? (
-                      <span className="badge !bg-ok/10 !text-ok">Verified</span>
+                      <Badge tone="ok">Verified</Badge>
                     ) : (
-                      <span className="badge !bg-warn/10 !text-warn">Not verified</span>
+                      <Badge tone="warn">Not verified</Badge>
                     )}
                   </div>
 
@@ -247,21 +254,20 @@ export default function DomainsPage() {
                     {d.ownershipVerified ? 'DNS records' : 'Set up'}
                   </Button>
                 )}
-              </div>
             </div>
           ))}
 
           {domains.length === 0 && (
-            <div className="card custom-card mb-0"><div className="card-body">No domains yet.</div></div>
+            <div className="rounded-card border border-line bg-surface !p-[1rem]">No domains yet.</div>
           )}
         </div>
       )}
 
-      <div className="alert alert-info !mt-[1.5rem]" role="note">
+      <Alert tone="info" className="!mt-[1.5rem]">
         Adding a domain changes nothing about your existing mail. It keeps arriving
         wherever it does today until <strong>you</strong> move the MX record — and
         that step is reversible.
-      </div>
+      </Alert>
 
       {/* ---------------------------------------------------------------- */}
       {adding && (
@@ -310,9 +316,7 @@ export default function DomainsPage() {
           }
         >
           {summary && (
-            <div className={`alert ${ownershipPassed ? 'alert-success' : 'alert-warning'}`} role="status">
-              {summary}
-            </div>
+            <Alert tone={ownershipPassed ? 'ok' : 'warn'}>{summary}</Alert>
           )}
 
           {/* ------------------------------------------------------------
@@ -357,12 +361,14 @@ export default function DomainsPage() {
                       {check?.label ?? r.purpose.split('.')[0]}
                     </span>
 
-                    <span className="badge bg-light !text-ink-muted !font-mono">{r.type}</span>
+                    <span className="inline-flex items-center rounded-full border border-line bg-canvas px-2.5 py-0.5 !font-mono text-xs font-semibold text-ink-muted">
+                      {r.type}
+                    </span>
                     {check?.passed
-                      ? <span className="badge !bg-ok/10 !text-ok">verified</span>
+                      ? <Badge tone="ok">verified</Badge>
                       : r.required
-                        ? <span className="badge !bg-danger/10 !text-danger">required</span>
-                        : <span className="badge bg-light !text-ink-muted">optional</span>}
+                        ? <Badge tone="danger">required</Badge>
+                        : <Badge tone="neutral">optional</Badge>}
                   </div>
 
                   {/* The server's own words when a check ran; the record's

@@ -137,11 +137,19 @@ const ALERT_MARK: Record<AlertTone, string> = {
  * anyone who cannot separate the tints.
  */
 export function Alert({
-  tone = 'info', title, children, onDismiss, className = '',
+  tone = 'info', title, children, action, onDismiss, className = '',
 }: {
   tone?: AlertTone;
   title?: string;
   children?: React.ReactNode;
+  /**
+   * The one thing to do about this message — almost always "Try again" on a
+   * load failure. It sits at the end of the row, beside the dismiss button if
+   * there is one, and drops below the text when the alert is too narrow to
+   * hold both. Put a control here rather than inside `children`: in children
+   * it lands under the text as another paragraph.
+   */
+  action?: React.ReactNode;
   onDismiss?: () => void;
   className?: string;
 }) {
@@ -152,11 +160,12 @@ export function Alert({
     >
       <span aria-hidden="true"
             className={`absolute inset-y-0 left-0 w-1 ${ALERT_MARK[tone]}`} />
-      <div className="flex items-start justify-between gap-3 pl-2">
-        <div className="min-w-0">
+      <div className="flex flex-wrap items-start justify-between gap-3 pl-2">
+        <div className="min-w-0 flex-1">
           {title && <div className="font-semibold text-ink">{title}</div>}
           {children && <div className={title ? 'mt-0.5 text-ink-muted' : 'text-ink'}>{children}</div>}
         </div>
+        {action && <div className="shrink-0">{action}</div>}
         {onDismiss && (
           <button
             type="button"

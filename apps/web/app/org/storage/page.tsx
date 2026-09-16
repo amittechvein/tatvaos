@@ -4,10 +4,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { formatBytes } from '@tatvaos/core';
 
 import { AdminShell } from '@/components/admin/AdminShell';
-import { Button, Card, Empty, Meter, Stat, Table, Td } from '@/components/ui/Kit';
+import { Badge, Button, Card, Empty, Meter, Stat, Table, Td } from '@/components/ui/Kit';
 import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
-import { Input } from '@/components/ui/Form';
+import { Checkbox, Input } from '@/components/ui/Form';
+import { Alert } from '@/components/ui/Page';
 import {
   AllocationError, fetchMailboxUsage, fetchOrgStorage, setAllocation,
   type MailboxUsage, type OrgStorage, type StorageProduct,
@@ -63,7 +64,7 @@ export default function OrgStoragePage() {
   if (error || !storage) {
     return (
       <AdminShell scope="organisation" title="Storage">
-        <div className="alert alert-danger" role="alert">{error ?? 'Could not load storage.'}</div>
+        <Alert tone="danger">{error ?? 'Could not load storage.'}</Alert>
       </AdminShell>
     );
   }
@@ -83,7 +84,7 @@ export default function OrgStoragePage() {
       {/* The gate's own words. Writing our own sentence here would eventually
           describe a rule the server no longer enforces. */}
       {!s.canAddUser && s.reason && (
-        <div className="alert alert-warning" role="alert">{s.reason}</div>
+        <Alert tone="warn">{s.reason}</Alert>
       )}
 
       <div className="!mb-[1.5rem] grid grid-cols-2 !gap-[1.5rem] lg:grid-cols-4">
@@ -159,7 +160,7 @@ export default function OrgStoragePage() {
                       {/* A shared mailbox has nobody behind it — saying so stops
                           somebody hunting for who owns support@. */}
                       {m.isShared && (
-                        <span className="badge bg-light !text-ink-muted ms-2">Shared</span>
+                        <span className="ml-2"><Badge tone="neutral">Shared</Badge></span>
                       )}
                     </div>
                     {m.displayName && <div className="!text-[0.75rem] !text-ink-muted">{m.address}</div>}
@@ -244,21 +245,20 @@ function AllocationDialog({ product, pool, onClose, onSaved }: {
       }
     >
       {error && (
-        <div className="alert alert-danger" role="alert">
+        <Alert tone="danger">
           {error}
           {headroom != null && (
             <div className="!text-[0.75rem] mt-1">{formatBytes(headroom)} is unallocated in the pool.</div>
           )}
-        </div>
+        </Alert>
       )}
 
-      <div className="form-check !mb-[1rem]">
-        <input className="form-check-input" type="checkbox" id="from-pool"
-               checked={fromPool} onChange={(e) => setFromPool(e.target.checked)} />
-        <label className="form-check-label" htmlFor="from-pool">
-          Draw from whatever is left in the pool
-        </label>
-      </div>
+      <Checkbox
+        id="from-pool"
+        label="Draw from whatever is left in the pool"
+        checked={fromPool}
+        onChange={(e) => setFromPool(e.target.checked)}
+      />
 
       {!fromPool && (
         <Field
