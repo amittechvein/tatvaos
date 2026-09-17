@@ -27,7 +27,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
 import { useAuth } from '@/lib/auth';
-import { AuthCard, AUTH_BUTTON } from '@/components/ui/AuthCard';
+import { AuthCard } from '@/components/ui/AuthCard';
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? '/api';
 
@@ -37,11 +37,6 @@ interface ConsentDetails {
   returnsTo: string;
   receives: string[];
   staysSignedIn: boolean;
-}
-
-function joinWords(items: string[]): string {
-  if (items.length <= 1) return items.join('');
-  return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`;
 }
 
 export default function OAuthConsentPage() {
@@ -113,40 +108,85 @@ export default function OAuthConsentPage() {
         <form method="post" action={`${API}/auth/oauth/authorize`}>
           {params.map(([k, v]) => <input key={k} type="hidden" name={k} value={v} />)}
 
-          <p className="text-xs font-medium uppercase tracking-wide text-ink-muted">Sign in to</p>
-          <h1 className="mt-1 text-xl font-semibold text-ink">{details.name}</h1>
-          {details.organisation && (
-            <p className="mt-1 text-sm text-ink-muted">Added by {details.organisation} administrators</p>
-          )}
+          {/* The two parties, connected: the application on the left, the
+              person on the right. Still a bare page (CTO, 17 Sept): nothing
+              here competes with the decision. */}
+          <div className="flex items-center justify-center gap-3">
+            <div className="grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 text-xl font-bold text-white shadow-lg shadow-brand-600/25"
+                 aria-hidden="true">
+              {details.name.trim().charAt(0).toUpperCase() || '?'}
+            </div>
+            <div className="flex items-center gap-1 text-ink-faint" aria-hidden="true">
+              <span className="h-1.5 w-1.5 rounded-full bg-current" />
+              <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
+              <span className="h-1.5 w-1.5 rounded-full bg-current opacity-40" />
+            </div>
+            <div className="grid h-14 w-14 place-items-center rounded-2xl border border-line bg-surface text-xl font-bold text-ink"
+                 aria-hidden="true">
+              {(user?.displayName?.trim().charAt(0) || 'T').toUpperCase()}
+            </div>
+          </div>
 
-          <div className="mt-5 space-y-3 text-sm text-ink">
-            <p>
-              <span className="font-medium">{details.name}</span> will receive {joinWords(details.receives)}.
-              {details.staysSignedIn && ' It can keep you signed in without asking again.'}
-            </p>
-            <p>
-              You will be returned to <span className="font-medium">{details.returnsTo}</span>.
-            </p>
-            {user && (
-              <p className="text-ink-muted">
-                Signed in as {user.displayName} ({user.email}).
-              </p>
+          <div className="mt-5 text-center">
+            <h1 className="text-2xl font-semibold tracking-tight text-ink">
+              Sign in to {details.name}
+            </h1>
+            {details.organisation && (
+              <span className="mt-2 inline-block rounded-full border border-line bg-canvas px-3 py-1 text-xs font-medium text-ink-muted">
+                Added by {details.organisation} administrators
+              </span>
             )}
           </div>
 
-          <div className="mt-6 flex flex-col gap-2">
-            <button type="submit" name="tv_decision" value="allow" className={AUTH_BUTTON}>
+          <div className="mt-6 rounded-xl border border-line bg-canvas p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-ink-muted">
+              {details.name} will receive
+            </p>
+            <ul className="mt-2 space-y-2 text-sm text-ink">
+              {[...details.receives, ...(details.staysSignedIn ? ['permission to keep you signed in without asking again'] : [])].map((item) => (
+                <li key={item} className="flex items-start gap-2">
+                  <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-brand-100 text-brand-700"
+                        aria-hidden="true">
+                    <svg viewBox="0 0 20 20" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M4 10.5l4 4 8-9" />
+                    </svg>
+                  </span>
+                  <span>{item.charAt(0).toUpperCase() + item.slice(1)}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-3 border-t border-line pt-3 text-sm text-ink">
+              You will be returned to <span className="font-semibold">{details.returnsTo}</span>.
+            </p>
+          </div>
+
+          <div className="mt-6 flex flex-col gap-3">
+            <button
+              type="submit"
+              name="tv_decision"
+              value="allow"
+              className="group inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-brand-600 to-brand-800 px-4 py-3 text-base font-semibold text-white shadow-lg shadow-brand-600/30 transition hover:-translate-y-0.5 hover:shadow-xl hover:shadow-brand-600/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/50 active:translate-y-0"
+            >
               Continue
+              <svg viewBox="0 0 20 20" className="h-4 w-4 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 10h12M11 5l5 5-5 5" />
+              </svg>
             </button>
             <button
               type="submit"
               name="tv_decision"
               value="deny"
-              className="w-full rounded-lg border border-line bg-surface px-4 py-2.5 text-sm font-medium text-ink transition hover:bg-canvas"
+              className="w-full rounded-xl px-4 py-2.5 text-sm font-medium text-ink-muted transition hover:bg-canvas hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40"
             >
               Cancel
             </button>
           </div>
+
+          {user && (
+            <p className="mt-5 text-center text-xs text-ink-muted">
+              Signed in as {user.displayName} ({user.email}). You can remove this later from your account page.
+            </p>
+          )}
         </form>
       )}
     </AuthCard>
