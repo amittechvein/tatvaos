@@ -2,9 +2,8 @@
 
 *Decision 0004. Every 90 days, or immediately if the key may have been seen by
 anyone. Written 17 Sept 2026; exercised on the local stack the same day by
-`tests/oidc/stage2-discovery.sh`, and on production before the first customer
-connects (date to be recorded below — a runbook nobody has executed is not a
-runbook).*
+`tests/oidc/stage2-discovery.sh`, and on production on 17 Sept 2026, before the first customer
+connects (recorded below — a runbook nobody has executed is not a runbook).*
 
 ## What rotation does
 
@@ -79,3 +78,4 @@ stops verifying at once; that is the point. Tell the CTO.
 | Date | Where | Old kid | New kid | By |
 |---|---|---|---|---|
 | 2026-09-17 | local stack, via the stage 2 test | (per run) | (per run) | developer |
+| 2026-09-17 09:35 UTC | production, first rotation, before any customer connects (steps 1-4 as written; API back on health in ~10 s; both kids published, new one first) | hopz3hlnfTpa3P2y | 4Z9b4haC-jJ4T9Fu | Core session, on the CTO's post-deploy list for c1ec4b5 |
