@@ -648,9 +648,15 @@ function ConsentsCard() {
                   {' '}Allowed {new Date(c.grantedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}.
                 </div>
               </div>
-              <Button variant="ghost" disabled={busy === c.id} onClick={() => void remove(c)}>
-                <span className="text-danger">{busy === c.id ? 'Removing…' : 'Remove'}</span>
-              </Button>
+              {c.allowedForEveryone ? (
+                <span className="max-w-[16rem] text-right text-[0.75rem] text-ink-muted">
+                  Approved for everyone by your organisation&apos;s administrators. Only an administrator can change that.
+                </span>
+              ) : (
+                <Button variant="ghost" disabled={busy === c.id} onClick={() => void remove(c)}>
+                  <span className="text-danger">{busy === c.id ? 'Removing…' : 'Remove'}</span>
+                </Button>
+              )}
             </li>
           ))}
         </ul>
@@ -666,6 +672,7 @@ interface ConsentRow {
   receives: string[];
   staysSignedIn: boolean;
   grantedAt: string;
+  allowedForEveryone: boolean;
 }
 
 function MfaCard() {
