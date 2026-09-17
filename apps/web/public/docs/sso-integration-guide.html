@@ -4,25 +4,25 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>TatvaOS SSO Integration Guide</title>
-<meta name="description" content="How to let your application sign people in with their TatvaOS account, using OpenID Connect with the authorization code flow and PKCE.">
+<meta name="description" content="Let your application sign people in with their TatvaOS account. OpenID Connect, authorization code flow with PKCE, explained simply.">
 <style>
   :root {
     --brand-600: 90 47 204; --brand-700: 74 41 168;
     --canvas: 250 246 239; --surface: 255 255 255;
     --ink: 21 20 27; --ink-muted: 107 104 128; --line: 236 231 221;
-    --ok: 22 128 61; --warn: 180 83 9;
+    --warn: 180 83 9;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --canvas: 25 25 28; --surface: 35 35 39;
       --ink: 230 231 236; --ink-muted: 152 156 166; --line: 50 50 56;
-      --ok: 74 222 128; --warn: 251 191 36;
+      --warn: 251 191 36;
     }
   }
   :root[data-theme="dark"] {
     --canvas: 25 25 28; --surface: 35 35 39;
     --ink: 230 231 236; --ink-muted: 152 156 166; --line: 50 50 56;
-    --ok: 74 222 128; --warn: 251 191 36;
+    --warn: 251 191 36;
   }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
@@ -30,13 +30,13 @@
     margin: 0; background: rgb(var(--canvas)); color: rgb(var(--ink));
     font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", Ubuntu, Cantarell, "Helvetica Neue", Arial, sans-serif;
   }
-  main { max-width: 860px; margin: 0 auto; padding: 32px 16px 96px; }
-  header.top { border-bottom: 1px solid rgb(var(--line)); padding-bottom: 20px; margin-bottom: 28px; }
+  main { max-width: 820px; margin: 0 auto; padding: 32px 16px 96px; }
+  header.top { border-bottom: 1px solid rgb(var(--line)); padding-bottom: 20px; margin-bottom: 24px; }
   .eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: rgb(var(--ink-muted)); margin: 0 0 6px; }
   h1 { font-size: 30px; line-height: 1.2; margin: 0 0 8px; font-weight: 650; }
-  h2 { font-size: 21px; margin: 44px 0 10px; padding-top: 8px; font-weight: 650; }
-  h3 { font-size: 16px; margin: 26px 0 6px; font-weight: 650; }
-  p, li { max-width: 70ch; }
+  h2 { font-size: 21px; margin: 40px 0 10px; font-weight: 650; }
+  h3 { font-size: 16px; margin: 22px 0 6px; font-weight: 650; }
+  p, li { max-width: 68ch; }
   p.lead { font-size: 17px; color: rgb(var(--ink-muted)); margin: 0; }
   a { color: rgb(var(--brand-600)); }
   a:hover { color: rgb(var(--brand-700)); }
@@ -47,14 +47,13 @@
   table { border-collapse: collapse; width: 100%; margin: 10px 0 18px; font-size: 14.5px; }
   th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid rgb(var(--line)); }
   th { color: rgb(var(--ink-muted)); font-weight: 600; font-size: 13px; }
-  .card { background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: 12px; padding: 16px 18px; margin: 14px 0; }
+  .card { background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: 12px; padding: 14px 18px; margin: 14px 0; }
   .card.warn { border-color: rgb(var(--warn) / .6); }
   .card.warn strong { color: rgb(var(--warn)); }
-  .muted { color: rgb(var(--ink-muted)); }
   .toc { columns: 2; column-gap: 32px; padding-left: 18px; margin: 0 0 8px; font-size: 15px; }
   .toc li { break-inside: avoid; }
-  ol.steps > li { margin-bottom: 10px; }
-  .checklist li { margin-bottom: 6px; }
+  ol.steps > li { margin-bottom: 12px; }
+  ul.tight li { margin-bottom: 5px; }
   footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid rgb(var(--line)); color: rgb(var(--ink-muted)); font-size: 13px; }
   @media (max-width: 640px) { .toc { columns: 1; } h1 { font-size: 26px; } table { display: block; overflow-x: auto; } }
   @media print { body { background: #fff; color: #000; } pre { border-color: #ccc; } a { color: inherit; } }
@@ -65,74 +64,83 @@
   <header class="top">
     <p class="eyebrow">TatvaOS · Applications</p>
     <h1>SSO Integration Guide</h1>
-    <p class="lead">Let your application sign people in with their TatvaOS account. Standard OpenID Connect: the authorization code flow with PKCE. This guide is for the developer of the application; the TatvaOS administrator's part is one screen and takes a minute.</p>
+    <p class="lead">Let people sign in to your application with their TatvaOS account. It uses OpenID Connect, the same standard as "Sign in with Google". If you have never done this before, read from the top. It is shorter than it looks.</p>
   </header>
 
   <ol class="toc">
-    <li><a href="#how">How it works</a></li>
-    <li><a href="#register">Registering the application</a></li>
-    <li><a href="#values">The values your application needs</a></li>
-    <li><a href="#rules">Rules every application must follow</a></li>
-    <li><a href="#flow">The flow, request by request</a></li>
-    <li><a href="#idtoken">The ID token and its claims</a></li>
-    <li><a href="#refresh">Staying signed in: refresh tokens</a></li>
-    <li><a href="#libraries">Using a library</a></li>
-    <li><a href="#errors">Errors you may see</a></li>
-    <li><a href="#limits">Lifetimes, limits and what revocation does</a></li>
-    <li><a href="#checklist">Security checklist</a></li>
-    <li><a href="#testing">Testing without writing code</a></li>
+    <li><a href="#idea">The idea in one minute</a></li>
+    <li><a href="#register">Step 1: get registered</a></li>
+    <li><a href="#values">Step 2: put these values in your app</a></li>
+    <li><a href="#rules">The rules</a></li>
+    <li><a href="#flow">What happens, request by request</a></li>
+    <li><a href="#idtoken">The ID token: who the person is</a></li>
+    <li><a href="#refresh">Keeping people signed in</a></li>
+    <li><a href="#libraries">Using a library (recommended)</a></li>
+    <li><a href="#errors">Errors and what they mean</a></li>
+    <li><a href="#limits">Lifetimes and limits</a></li>
+    <li><a href="#revoke">When access is taken away</a></li>
+    <li><a href="#checklist">Checklist before going live</a></li>
+    <li><a href="#testing">Try it without writing code</a></li>
   </ol>
 
-  <h2 id="how">How it works</h2>
-  <p>Your application never sees a TatvaOS password. When a person needs to sign in, your application sends their browser to TatvaOS. TatvaOS signs them in if they are not already, asks them once whether your application may receive their name, work email address and organisation, and sends the browser back to your application with a one-time code. Your application's server exchanges that code for an ID token that says who the person is, an access token for the userinfo endpoint, and, if you asked for it, a refresh token so the person stays signed in.</p>
-  <p>If the organisation removes the person from TatvaOS, or suspends them, or revokes your application, their tokens stop working at their next use. That is the reason organisations connect applications this way instead of keeping separate passwords in each one.</p>
+  <h2 id="idea">The idea in one minute</h2>
+  <p>Your app never sees a password. Instead:</p>
+  <ol class="steps">
+    <li>Your app sends the person's browser to TatvaOS.</li>
+    <li>TatvaOS signs them in (if they are not already) and asks once: "may this app receive your name, work email and organisation?"</li>
+    <li>TatvaOS sends the browser back to your app with a one-time <strong>code</strong>.</li>
+    <li>Your server swaps the code for tokens. One of them, the <strong>ID token</strong>, says who the person is.</li>
+  </ol>
+  <p>If the organisation later removes or suspends the person, or removes your app, their tokens stop working. That is the whole point: one account, managed in one place.</p>
 
-  <h2 id="register">Registering the application</h2>
-  <p>An organisation administrator does this in TatvaOS under <strong>Organisation → Applications → New application</strong>. They need three things from you:</p>
+  <h2 id="register">Step 1: get registered</h2>
+  <p>An administrator of the organisation registers your app in TatvaOS: <strong>Organisation → Applications → New application</strong>. Give them three things.</p>
   <table>
-    <tr><th>What</th><th>What to give them</th></tr>
-    <tr><td>Name</td><td>What people will see on the consent screen, for example <em>Payroll</em>.</td></tr>
-    <tr><td>Redirect URIs</td><td>The exact <code>https://</code> address TatvaOS returns people to after sign-in — your application's callback. One per line. Matched character for character: no wildcards, and a trailing slash or a query string counts. <code>http://localhost</code> and <code>http://127.0.0.1</code> are allowed for an application running on a developer's own machine.</td></tr>
-    <tr><td>Server application?</td><td><strong>Yes</strong> if your application has a server that can keep a secret (a web application, a backend). It receives a client secret. <strong>No</strong> if it runs entirely on a phone or in a browser and cannot keep a secret; it proves itself with PKCE alone.</td></tr>
+    <tr><th>They need</th><th>Give them</th></tr>
+    <tr><td>Name</td><td>What people see on the consent screen. For example <em>Payroll</em>.</td></tr>
+    <tr><td>Redirect URI</td><td>The exact <code>https://</code> address in your app where TatvaOS sends people back (your callback). It must match character for character: no wildcards, and a trailing slash counts. For a developer's own machine, <code>http://localhost…</code> is allowed.</td></tr>
+    <tr><td>Server app or not?</td><td><strong>Yes</strong> if your app has a server that can keep a secret (websites, backends). <strong>No</strong> if it runs only on a phone or in a browser.</td></tr>
   </table>
-  <p>TatvaOS then shows the administrator a <strong>client id</strong> (starts with <code>tos_</code>) and, for a server application, a <strong>client secret</strong> (starts with <code>toss_</code>). <strong>The secret is shown once.</strong> It cannot be shown again; if it is lost, the administrator registers the application again and you update your configuration with the new client id and secret.</p>
+  <p>They get back a <strong>client id</strong> (starts with <code>tos_</code>) and, for a server app, a <strong>client secret</strong> (starts with <code>toss_</code>). <strong>The secret is shown only once.</strong> If it is lost, the app must be registered again.</p>
 
-  <h2 id="values">The values your application needs</h2>
+  <h2 id="values">Step 2: put these values in your app</h2>
+  <p>Most libraries and frameworks have a settings page or config for exactly these.</p>
   <table>
     <tr><th>Setting</th><th>Value</th></tr>
-    <tr><td>Issuer (also called provider, authority)</td><td><code>https://core.tatvaos.com</code></td></tr>
-    <tr><td>Discovery document</td><td><code>https://core.tatvaos.com/.well-known/openid-configuration</code></td></tr>
+    <tr><td>Issuer (also called provider or authority)</td><td><code>https://core.tatvaos.com</code></td></tr>
+    <tr><td>Discovery URL</td><td><code>https://core.tatvaos.com/.well-known/openid-configuration</code></td></tr>
     <tr><td>Client id</td><td>from the administrator</td></tr>
-    <tr><td>Client secret</td><td>from the administrator (server applications only)</td></tr>
-    <tr><td>Scopes</td><td><code>openid profile email</code>, plus <code>offline_access</code> if you want a refresh token</td></tr>
+    <tr><td>Client secret</td><td>from the administrator (server apps only)</td></tr>
+    <tr><td>Scopes</td><td><code>openid profile email</code> — add <code>offline_access</code> to keep people signed in</td></tr>
     <tr><td>Response type</td><td><code>code</code></td></tr>
-    <tr><td>PKCE</td><td>required, method <code>S256</code></td></tr>
+    <tr><td>PKCE</td><td>on, method <code>S256</code></td></tr>
   </table>
-  <p>Most libraries need only the issuer or the discovery URL, the client id, the secret and the scopes; they read everything else from the discovery document. For reference, the endpoints it lists:</p>
+  <p>Your library reads the endpoints from the discovery URL. For reference, they are:</p>
   <table>
     <tr><th>Endpoint</th><th>URL</th></tr>
-    <tr><td>Authorization</td><td><code>https://core.tatvaos.com/oauth/authorize</code></td></tr>
-    <tr><td>Token</td><td><code>https://core.tatvaos.com/api/oauth/token</code></td></tr>
+    <tr><td>Authorize (send the browser here)</td><td><code>https://core.tatvaos.com/oauth/authorize</code></td></tr>
+    <tr><td>Token (your server calls this)</td><td><code>https://core.tatvaos.com/api/oauth/token</code></td></tr>
     <tr><td>Userinfo</td><td><code>https://core.tatvaos.com/api/oauth/userinfo</code></td></tr>
-    <tr><td>Key set (JWKS)</td><td><code>https://core.tatvaos.com/api/oauth/jwks</code></td></tr>
+    <tr><td>Keys (JWKS)</td><td><code>https://core.tatvaos.com/api/oauth/jwks</code></td></tr>
     <tr><td>Introspection</td><td><code>https://core.tatvaos.com/api/oauth/introspect</code></td></tr>
     <tr><td>Revocation</td><td><code>https://core.tatvaos.com/api/oauth/revoke</code></td></tr>
   </table>
 
-  <h2 id="rules">Rules every application must follow</h2>
-  <ul>
-    <li><strong>Authorization code flow only.</strong> <code>response_type=code</code>. Implicit and hybrid flows are refused.</li>
-    <li><strong>PKCE with S256, always</strong> — for server applications too. A request without <code>code_challenge</code>, or with <code>code_challenge_method=plain</code>, is refused.</li>
-    <li><strong>Redirect URIs match exactly.</strong> Register the precise callback address. <code>https://app.example.com/cb</code> and <code>https://app.example.com/cb/</code> are different addresses.</li>
-    <li><strong>The secret stays on your server.</strong> Never in a browser, a mobile app, a repository or a log.</li>
-    <li><strong>Send <code>state</code> and <code>nonce</code></strong> and check both when the browser comes back.</li>
-    <li><strong>Check the organisation.</strong> Every token carries <code>tid</code>, the organisation's id. If your application serves one organisation, refuse a token whose <code>tid</code> is not that organisation's.</li>
+  <h2 id="rules">The rules</h2>
+  <ul class="tight">
+    <li><strong>Code flow only.</strong> <code>response_type=code</code>. Other flows are refused.</li>
+    <li><strong>PKCE with S256, always.</strong> Even for server apps. Without it, or with <code>plain</code>, the request is refused.</li>
+    <li><strong>Exact redirect URI.</strong> <code>https://app.example.com/cb</code> and <code>https://app.example.com/cb/</code> are different.</li>
+    <li><strong>The secret stays on your server.</strong> Never in a browser, a phone app, a repository or a log.</li>
+    <li><strong>Send <code>state</code> and <code>nonce</code></strong>, and check them when the browser comes back.</li>
+    <li><strong>Check <code>tid</code>.</strong> Every token names the organisation. If your app serves one organisation, refuse tokens from any other.</li>
   </ul>
 
-  <h2 id="flow">The flow, request by request</h2>
+  <h2 id="flow">What happens, request by request</h2>
+  <p>You only need this if you are not using a library, or want to understand what the library does.</p>
 
   <h3>1. Send the person to TatvaOS</h3>
-  <p>Generate a random <code>code_verifier</code> (43 to 128 characters), compute <code>code_challenge = base64url(sha256(code_verifier))</code>, generate a random <code>state</code> and <code>nonce</code>, remember all three in the person's session, and redirect the browser to:</p>
+  <p>Make a random <code>code_verifier</code> (43 to 128 characters). Compute <code>code_challenge = base64url(sha256(code_verifier))</code>. Make a random <code>state</code> and <code>nonce</code>. Keep all three in the person's session. Then redirect the browser to:</p>
 <pre><code>https://core.tatvaos.com/oauth/authorize
   ?response_type=code
   &amp;client_id=tos_…
@@ -142,16 +150,13 @@
   &amp;nonce=…
   &amp;code_challenge=…
   &amp;code_challenge_method=S256</code></pre>
-  <p>If the person is not signed in to TatvaOS they sign in there, with two-step verification if they use it. The first time your application asks for them, TatvaOS shows a consent screen naming your application and what it will receive. After that, TatvaOS remembers the answer.</p>
+  <p>The person signs in to TatvaOS if needed. The first time, they see a consent screen naming your app. After that, TatvaOS remembers.</p>
 
-  <h3>2. Receive the code</h3>
-  <p>TatvaOS sends the browser to your redirect URI:</p>
+  <h3>2. Get the code back</h3>
 <pre><code>https://app.example.com/auth/callback?code=…&amp;state=…&amp;iss=https%3A%2F%2Fcore.tatvaos.com%2F</code></pre>
-  <p>Check that <code>state</code> equals the one you stored, and that <code>iss</code> is <code>https://core.tatvaos.com/</code>. If the person cancelled, or is not allowed, you receive <code>error=access_denied</code> instead of a code.</p>
-  <p>The code lives <strong>60 seconds</strong> and works <strong>once</strong>. Exchange it straight away.</p>
+  <p>Check <code>state</code> matches what you stored, and <code>iss</code> is <code>https://core.tatvaos.com/</code>. If the person cancelled or is not allowed, you get <code>error=access_denied</code> instead. The code works <strong>once</strong> and only for <strong>60 seconds</strong>, so do the next step right away.</p>
 
-  <h3>3. Exchange the code for tokens</h3>
-  <p>From your server, a POST to the token endpoint. A server application sends its secret; a phone or browser application sends only its client id.</p>
+  <h3>3. Swap the code for tokens (from your server)</h3>
 <pre><code>curl -X POST https://core.tatvaos.com/api/oauth/token \
   -d grant_type=authorization_code \
   -d code=… \
@@ -159,7 +164,7 @@
   -d client_id=tos_… \
   -d client_secret=toss_… \
   -d code_verifier=…</code></pre>
-  <p>The secret may also be sent as HTTP Basic authentication (<code>client_id:client_secret</code>). The response:</p>
+  <p>A phone or browser app leaves out <code>client_secret</code>. The secret may also go in an HTTP Basic header as <code>client_id:client_secret</code>. You get back:</p>
 <pre><code>{
   "access_token":  "…",
   "token_type":    "Bearer",
@@ -168,70 +173,68 @@
   "refresh_token": "…",
   "scope":         "openid profile email offline_access"
 }</code></pre>
-  <p><code>refresh_token</code> is present only when you asked for <code>offline_access</code>. The access and refresh tokens are opaque strings; do not try to decode them. The ID token is a signed JWT, described next.</p>
+  <p><code>refresh_token</code> appears only if you asked for <code>offline_access</code>. The access and refresh tokens are opaque strings; do not try to read them. The ID token is explained next.</p>
 
-  <h3>4. Read who the person is</h3>
-  <p>Verify the ID token (below) and read <code>sub</code>, <code>email</code>, <code>name</code> and <code>tid</code> from it. Or call userinfo with the access token:</p>
-<pre><code>curl https://core.tatvaos.com/api/oauth/userinfo \
-  -H "Authorization: Bearer …"
+  <h3>4. Find out who the person is</h3>
+  <p>Read it from the ID token, or ask userinfo with the access token:</p>
+<pre><code>curl https://core.tatvaos.com/api/oauth/userinfo -H "Authorization: Bearer …"
 
 { "sub": "…", "tid": "…", "name": "Asha Rao", "email": "asha@example.com", "email_verified": true }</code></pre>
-  <p>Userinfo answers <code>401</code> the moment the person is suspended, removed, or your application is revoked — it checks on every call.</p>
+  <p>Userinfo checks every time. It answers <code>401</code> the moment the person is suspended, removed, or your app is revoked.</p>
 
-  <h2 id="idtoken">The ID token and its claims</h2>
-  <p>The ID token is a JWT signed with <strong>RS256</strong>. Verify its signature against the key in the key set whose <code>kid</code> matches the token's header; then check the claims. Every OpenID Connect library does this for you when given the issuer.</p>
+  <h2 id="idtoken">The ID token: who the person is</h2>
+  <p>The ID token is a signed JWT (RS256). Your library verifies it against the keys at the JWKS URL, picking the key whose <code>kid</code> matches the token. Then read these claims:</p>
   <table>
     <tr><th>Claim</th><th>Meaning</th></tr>
-    <tr><td><code>iss</code></td><td><code>https://core.tatvaos.com/</code>. Must match exactly.</td></tr>
-    <tr><td><code>aud</code></td><td>Your client id. Must match.</td></tr>
-    <tr><td><code>sub</code></td><td><strong>The person's permanent id.</strong> Use this as the key for the person in your application. Never the email, which can change.</td></tr>
-    <tr><td><code>tid</code></td><td>The organisation's id. The same for everyone in that organisation. Check it if your application serves specific organisations.</td></tr>
-    <tr><td><code>email</code>, <code>email_verified</code></td><td>The person's work address, with <code>email</code> scope. <code>email_verified</code> is true when the address is on a domain the organisation has proved it owns.</td></tr>
-    <tr><td><code>name</code></td><td>The person's display name, with <code>profile</code> scope.</td></tr>
-    <tr><td><code>nonce</code></td><td>The nonce you sent. Must match.</td></tr>
-    <tr><td><code>exp</code>, <code>iat</code></td><td>The ID token lives <strong>5 minutes</strong>. Use it to establish the person's session in your application, then rely on your own session.</td></tr>
+    <tr><td><code>sub</code></td><td><strong>The person's permanent id.</strong> Use this as your key for the person. Never the email; emails change.</td></tr>
+    <tr><td><code>tid</code></td><td>The organisation's id. Same for everyone in that organisation.</td></tr>
+    <tr><td><code>email</code>, <code>email_verified</code></td><td>Work address (with <code>email</code> scope). Verified means the organisation has proved it owns that domain.</td></tr>
+    <tr><td><code>name</code></td><td>Display name (with <code>profile</code> scope).</td></tr>
+    <tr><td><code>iss</code></td><td>Must be exactly <code>https://core.tatvaos.com/</code>.</td></tr>
+    <tr><td><code>aud</code></td><td>Must be your client id.</td></tr>
+    <tr><td><code>nonce</code></td><td>Must match the one you sent.</td></tr>
+    <tr><td><code>exp</code></td><td>The ID token lives <strong>5 minutes</strong>. Use it to start the person's session in your app, then rely on your own session.</td></tr>
   </table>
-  <div class="card">
-    <strong>Keys rotate.</strong> TatvaOS rotates its signing key every 90 days and publishes the retired key for one more day. Fetch the key set by <code>kid</code> and re-fetch it when you meet a <code>kid</code> you do not know; do not pin a key.
-  </div>
+  <div class="card"><strong>Keys rotate</strong> every 90 days, and a retired key stays published for one more day. Fetch keys by <code>kid</code> and fetch again when you meet an unknown one. Never hard-code a key.</div>
 
-  <h2 id="refresh">Staying signed in: refresh tokens</h2>
-  <p>With <code>offline_access</code>, the token response includes a refresh token. Access tokens live 10 minutes; when one expires, exchange the refresh token for a new set:</p>
+  <h2 id="refresh">Keeping people signed in</h2>
+  <p>Access tokens last 10 minutes. With <code>offline_access</code> you also get a refresh token. When the access token expires, swap the refresh token for a new set:</p>
 <pre><code>curl -X POST https://core.tatvaos.com/api/oauth/token \
   -d grant_type=refresh_token \
   -d refresh_token=… \
   -d client_id=tos_… \
   -d client_secret=toss_…</code></pre>
-  <p>Each use returns a <strong>new</strong> refresh token and retires the old one. Store the new one every time. <strong>Using a retired refresh token again revokes the whole chain</strong> — TatvaOS treats a second use as a sign that the token was copied — and the person has to sign in through TatvaOS again. A refresh token lives 14 days from its issue if unused; every refresh re-checks that the person and the organisation are still active and that your application is still allowed.</p>
+  <p>Three things to know:</p>
+  <ul class="tight">
+    <li>Every refresh returns a <strong>new</strong> refresh token. Store it. The old one is retired.</li>
+    <li><strong>Using a retired refresh token again cancels the whole chain.</strong> TatvaOS treats it as a sign the token was copied. The person must sign in through TatvaOS again.</li>
+    <li>A refresh token lasts 14 days if unused. Every refresh re-checks that the person, the organisation and your app are all still active.</li>
+  </ul>
 
-  <h2 id="libraries">Using a library</h2>
-  <p>You do not need to implement the requests above by hand. Give your framework's OpenID Connect client the issuer, the client id, the secret and the scopes, and make sure PKCE is on. The shape, in three common stacks:</p>
+  <h2 id="libraries">Using a library (recommended)</h2>
+  <p>Do not write the requests above yourself. Give your framework's OpenID Connect client the issuer, client id, secret and scopes, and turn PKCE on. Three examples of the shape:</p>
 
   <h3>ASP.NET Core</h3>
-<pre><code>builder.Services.AddAuthentication(options =&gt; {
-        options.DefaultScheme = "Cookies";
-        options.DefaultChallengeScheme = "oidc";
-    })
+<pre><code>builder.Services.AddAuthentication(o =&gt; { o.DefaultScheme = "Cookies"; o.DefaultChallengeScheme = "oidc"; })
     .AddCookie("Cookies")
-    .AddOpenIdConnect("oidc", options =&gt; {
-        options.Authority = "https://core.tatvaos.com";
-        options.ClientId = "tos_…";
-        options.ClientSecret = "toss_…";          // from configuration, never in code
-        options.ResponseType = "code";
-        options.UsePkce = true;
-        options.Scope.Clear();
-        foreach (var s in new[] { "openid", "profile", "email", "offline_access" }) options.Scope.Add(s);
-        options.CallbackPath = "/auth/callback";  // register https://your-app/auth/callback
-        options.SaveTokens = true;
+    .AddOpenIdConnect("oidc", o =&gt; {
+        o.Authority = "https://core.tatvaos.com";
+        o.ClientId = "tos_…";
+        o.ClientSecret = builder.Configuration["TatvaOS:ClientSecret"]; // never in code
+        o.ResponseType = "code";
+        o.UsePkce = true;
+        o.Scope.Clear();
+        foreach (var s in new[] { "openid", "profile", "email", "offline_access" }) o.Scope.Add(s);
+        o.CallbackPath = "/auth/callback";   // register https://your-app/auth/callback
+        o.SaveTokens = true;
     });</code></pre>
 
   <h3>Node.js (openid-client)</h3>
 <pre><code>import * as client from 'openid-client';
 
-const config = await client.discovery(
-  new URL('https://core.tatvaos.com'), 'tos_…', process.env.TATVAOS_CLIENT_SECRET);
+const config = await client.discovery(new URL('https://core.tatvaos.com'), 'tos_…', process.env.TATVAOS_CLIENT_SECRET);
 
-// 1. redirect
+// send the person to TatvaOS
 const codeVerifier = client.randomPKCECodeVerifier();
 const url = client.buildAuthorizationUrl(config, {
   redirect_uri: 'https://app.example.com/auth/callback',
@@ -241,13 +244,13 @@ const url = client.buildAuthorizationUrl(config, {
   state, nonce,
 });
 
-// 2. callback
+// in the callback
 const tokens = await client.authorizationCodeGrant(config, new URL(req.url, 'https://app.example.com'), {
   pkceCodeVerifier: codeVerifier, expectedState: state, expectedNonce: nonce,
 });
-const claims = tokens.claims();   // claims.sub, claims.email, claims.tid</code></pre>
+const who = tokens.claims();   // who.sub, who.email, who.name, who.tid</code></pre>
 
-  <h3>Python (Authlib, Flask)</h3>
+  <h3>Python (Authlib with Flask)</h3>
 <pre><code>oauth = OAuth(app)
 oauth.register(
     name='tatvaos',
@@ -256,59 +259,70 @@ oauth.register(
     client_secret=os.environ['TATVAOS_CLIENT_SECRET'],
     client_kwargs={'scope': 'openid profile email offline_access', 'code_challenge_method': 'S256'},
 )
-# redirect: oauth.tatvaos.authorize_redirect(url_for('callback', _external=True))
-# callback: token = oauth.tatvaos.authorize_access_token(); user = token['userinfo']</code></pre>
+# send:     return oauth.tatvaos.authorize_redirect(url_for('callback', _external=True))
+# callback: token = oauth.tatvaos.authorize_access_token(); who = token['userinfo']</code></pre>
 
-  <h2 id="errors">Errors you may see</h2>
+  <h2 id="errors">Errors and what they mean</h2>
   <table>
-    <tr><th>Error</th><th>Where</th><th>What it means</th></tr>
-    <tr><td><code>invalid_request</code> "client_id is invalid"</td><td>authorize</td><td>The client id is unknown, or the application was revoked. Shown on a TatvaOS page; the browser is not sent back to you.</td></tr>
-    <tr><td><code>invalid_request</code> about the redirect URI</td><td>authorize</td><td>The redirect URI does not exactly match a registered one. Shown on a TatvaOS page.</td></tr>
-    <tr><td><code>invalid_request</code> about <code>code_challenge</code></td><td>authorize</td><td>PKCE is missing or not S256.</td></tr>
-    <tr><td><code>access_denied</code></td><td>your callback</td><td>The person cancelled on the consent screen, belongs to a different organisation than the application, or cannot sign in.</td></tr>
-    <tr><td><code>login_required</code>, <code>consent_required</code></td><td>your callback</td><td>You sent <code>prompt=none</code> and the person is not signed in, or has not consented.</td></tr>
-    <tr><td><code>invalid_client</code></td><td>token</td><td>Wrong secret, unknown client id, or the application was revoked.</td></tr>
-    <tr><td><code>invalid_grant</code></td><td>token</td><td>The code expired, was already used, or the verifier is wrong; a refresh token was retired, reused, or its person or organisation is no longer active.</td></tr>
-    <tr><td><code>temporarily_unavailable</code> (HTTP 429)</td><td>token, authorize</td><td>Too many requests from your address in one minute. Wait a minute; do not retry in a tight loop.</td></tr>
+    <tr><th>Error</th><th>Where</th><th>Meaning</th></tr>
+    <tr><td><code>invalid_request</code> "client_id is invalid"</td><td>authorize</td><td>Unknown client id, or the app was revoked. Shown on a TatvaOS page; the browser does not come back to you.</td></tr>
+    <tr><td><code>invalid_request</code> about the redirect URI</td><td>authorize</td><td>The redirect URI does not exactly match a registered one.</td></tr>
+    <tr><td><code>invalid_request</code> about <code>code_challenge</code></td><td>authorize</td><td>PKCE missing, or not S256.</td></tr>
+    <tr><td><code>access_denied</code></td><td>your callback</td><td>The person cancelled, belongs to another organisation, or cannot sign in.</td></tr>
+    <tr><td><code>login_required</code>, <code>consent_required</code></td><td>your callback</td><td>You sent <code>prompt=none</code> and the person is not signed in or has not consented.</td></tr>
+    <tr><td><code>invalid_client</code></td><td>token</td><td>Wrong secret, unknown client id, or the app was revoked.</td></tr>
+    <tr><td><code>invalid_grant</code></td><td>token</td><td>The code expired, was already used, or the verifier is wrong. Or the refresh token was retired, reused, or its person or organisation is no longer active.</td></tr>
+    <tr><td><code>temporarily_unavailable</code> (HTTP 429)</td><td>token, authorize</td><td>Too many requests from your address in one minute. Wait a minute; do not retry in a loop.</td></tr>
     <tr><td>HTTP 401</td><td>userinfo</td><td>The access token expired or was revoked. Refresh, or sign the person in again.</td></tr>
   </table>
 
-  <h2 id="limits">Lifetimes, limits and what revocation does</h2>
+  <h2 id="limits">Lifetimes and limits</h2>
   <table>
     <tr><th>Item</th><th>Value</th></tr>
-    <tr><td>Authorization code</td><td>60 seconds, single use</td></tr>
+    <tr><td>Code</td><td>60 seconds, single use</td></tr>
     <tr><td>ID token</td><td>5 minutes</td></tr>
     <tr><td>Access token</td><td>10 minutes, checked on every call</td></tr>
-    <tr><td>Refresh token</td><td>14 days, rotated on every use</td></tr>
+    <tr><td>Refresh token</td><td>14 days, replaced on every use</td></tr>
     <tr><td>Token endpoint</td><td>120 requests a minute per address</td></tr>
-    <tr><td>Authorization endpoint</td><td>60 requests a minute per address</td></tr>
+    <tr><td>Authorize endpoint</td><td>60 requests a minute per address</td></tr>
   </table>
-  <p><strong>When an administrator revokes your application</strong>, new sign-ins are refused, its refresh tokens stop working, and its access tokens are refused on their next call. <strong>When a person removes their consent</strong> on their account page, the same happens for that person alone, and the next sign-in asks them again. <strong>When a person is suspended or removed</strong>, their refresh and access tokens stop at their next use.</p>
+
+  <h2 id="revoke">When access is taken away</h2>
+  <ul class="tight">
+    <li><strong>The administrator revokes your app:</strong> new sign-ins are refused, its refresh tokens stop, its access tokens are refused on their next call.</li>
+    <li><strong>A person removes your app</strong> on their account page: the same, for that person only. Their next sign-in asks them again.</li>
+    <li><strong>A person is suspended or removed:</strong> their refresh and access tokens stop at their next use.</li>
+  </ul>
   <div class="card warn">
-    <strong>What revocation cannot do.</strong> An ID token already delivered stays valid until it expires, which is why it lives five minutes. And your application's own session — the cookie you set after sign-in — is yours; TatvaOS cannot end it. People already signed in to your application stay signed in there until your application signs them out. If your application must react to a revocation quickly, keep your own sessions short or call userinfo when it matters.
+    <strong>What TatvaOS cannot undo.</strong> An ID token already delivered stays valid until it expires (that is why it lives five minutes). And your app's own session, the cookie you set after sign-in, is yours: TatvaOS cannot end it. People already signed in to your app stay signed in there until your app signs them out. If you need to react quickly, keep your own sessions short, or call userinfo when it matters.
   </div>
   <div class="card">
-    <strong>Browser-only applications.</strong> An application that runs entirely in the browser with no server of its own would need the token endpoint to accept cross-origin requests, which TatvaOS does not offer today. Give such an application a small backend that performs the exchange, or ask your TatvaOS contact about the timeline.
+    <strong>Browser-only apps.</strong> An app that runs entirely in the browser, with no server, would need the token endpoint to accept cross-origin calls. TatvaOS does not offer that today. Give such an app a small backend to do the token exchange.
   </div>
 
-  <h2 id="checklist">Security checklist</h2>
-  <ul class="checklist">
-    <li>Register the exact callback address, and only <code>https://</code> outside a developer machine.</li>
-    <li>Keep the client secret in configuration on the server. Never ship it to a browser or a phone; never commit it; never log it.</li>
-    <li>Use PKCE with S256 on every request, and a fresh <code>state</code>, <code>nonce</code> and verifier each time.</li>
-    <li>Verify the ID token: signature by <code>kid</code>, <code>iss</code>, <code>aud</code>, <code>nonce</code>, <code>exp</code>.</li>
-    <li>Key the person on <code>sub</code>, never on <code>email</code>.</li>
-    <li>Check <code>tid</code> against the organisations your application serves.</li>
-    <li>Store each new refresh token as it arrives; never reuse a retired one.</li>
-    <li>Treat <code>401</code> from userinfo and <code>invalid_grant</code> from refresh as "sign in again", not as transient errors.</li>
-    <li>Do not log codes, tokens, verifiers, or the full callback URL.</li>
+  <h2 id="checklist">Checklist before going live</h2>
+  <ul class="tight">
+    <li>Registered the exact callback address, <code>https://</code> only (except a developer's own machine).</li>
+    <li>Client secret lives in server configuration. Never in a browser, a phone, a repository or a log.</li>
+    <li>PKCE S256 on every request. Fresh <code>state</code>, <code>nonce</code> and verifier every time.</li>
+    <li>ID token verified: signature by <code>kid</code>, then <code>iss</code>, <code>aud</code>, <code>nonce</code>, <code>exp</code>.</li>
+    <li>People keyed on <code>sub</code>, never on <code>email</code>.</li>
+    <li><code>tid</code> checked against the organisations you serve.</li>
+    <li>Each new refresh token stored as it arrives; a retired one never reused.</li>
+    <li><code>401</code> from userinfo and <code>invalid_grant</code> from refresh handled as "sign in again", not retried.</li>
+    <li>No codes, tokens, verifiers or full callback URLs in your logs.</li>
   </ul>
 
-  <h2 id="testing">Testing without writing code</h2>
-  <p>To see the sign-in leg work before your code exists, register a test application with the redirect URI <code>https://oidcdebugger.com/debug</code> and <em>Server application</em> unticked, then at <a href="https://oidcdebugger.com" rel="noopener">oidcdebugger.com</a> enter the authorize URI <code>https://core.tatvaos.com/oauth/authorize</code>, your client id, scope <code>openid profile email</code>, response type <code>code</code>, and tick <em>Use PKCE</em>. Send the request: you will see the TatvaOS consent screen, then a page showing the code and your state. Revoke the test application afterwards. The debugger shows the code only; the code-for-tokens exchange is your server's part.</p>
+  <h2 id="testing">Try it without writing code</h2>
+  <ol class="steps">
+    <li>Ask the administrator to register a test app with redirect URI <code>https://oidcdebugger.com/debug</code> and "Server application" <em>unticked</em>. Get the client id.</li>
+    <li>Go to <a href="https://oidcdebugger.com" rel="noopener">oidcdebugger.com</a>. Authorize URI: <code>https://core.tatvaos.com/oauth/authorize</code>. Client ID: yours. Scope: <code>openid profile email</code>. Response type: <code>code</code>. Tick <em>Use PKCE</em>. Send request.</li>
+    <li>You see the TatvaOS consent screen, then a page showing the code and your state. That is the sign-in leg working. The code-for-tokens leg is your server's part, which the debugger does not do.</li>
+    <li>Ask the administrator to revoke the test app when you are done.</li>
+  </ol>
 
   <footer>
-    TatvaOS · Applications · This guide describes the provider as deployed on 17 September 2026. Endpoints and lifetimes are also published in the discovery document, which is the authoritative source if the two ever differ.
+    TatvaOS · Applications · Describes the provider as deployed on 17 September 2026. If this page and the discovery document ever differ, the discovery document is right.
   </footer>
 </main>
 </body>
