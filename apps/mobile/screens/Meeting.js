@@ -80,6 +80,21 @@ function reasonName(reason) {
 const REFUSED = 'Screen sharing needs your permission. Nothing was shared.';
 const WAIT_POLL_MS = 2000; // docs/CONNECT_API.md: "client polls every 2 s"
 const LOBBY_POLL_MS = 3000; // host side has no push either (Open Question §4)
+const SHARE_STATS_MS = 10000; // how often a running share reports what it is actually sending
+
+// ── NO CAPPED SHARE (measured, 17 Sept 2026, Samsung SM-A356E). ──────────
+//  PR #90 added "hold Share for 1280x720 @ 15" as the lever if a phone share
+//  pushed the recorder (egress, 2 GiB hard limit) too far. The capacity test
+//  answered both halves:
+//   - Android ignores the requested capture size: capped and default both
+//     logged "share capture settings: 1080x2340 @ 30fps".
+//   - The recorder did not need the lever: ~870 MiB recording cameras alone,
+//     peak 1014 MiB with a default phone share, about the same capped, on a
+//     4-core box with the recorder near one core.
+//  A hidden gesture that changes nothing measurable is worse than none, so it
+//  is gone. The per-10s stats line stays: it is how the next question gets
+//  answered too.
+// ─────────────────────────────────────────────────────────────────────────
 
 /**
  * Ask Android for the runtime permissions a call needs, BEFORE the first
@@ -184,6 +199,7 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
   // did was 'multiple'.
   const [shareMode, setShareMode] = useState(meeting?.shareMode === 'single' ? 'single' : 'multiple');
   const [speaker, setSpeaker] = useState(true);
+  const [recording, setRecording] = useState(false);
   const [role, setRole] = useState(null); // host | cohost | participant, once admitted
   const [lobby, setLobby] = useState([]); // people waiting, host/cohost only
   const leaving = useRef(false);
@@ -196,10 +212,44 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
   const focusRef = useRef(null);
   focusRef.current = focusKey;
   const waitTimer = useRef(null);
+  const statsTimer = useRef(null);
+  const lastStats = useRef(null);
   const gone = useRef(false); // set on unmount; every async path checks it
 
   function stopWaiting() {
     if (waitTimer.current) { clearTimeout(waitTimer.current); waitTimer.current = null; }
+  }
+
+  function stopShareStats() {
+    if (statsTimer.current) { clearInterval(statsTimer.current); statsTimer.current = null; }
+    lastStats.current = null;
+  }
+
+  // What the share is ACTUALLY sending — negotiated, not requested. LiveKit
+  // and the encoder may not give what was asked for, and the capacity test
+  // needs the real numbers next to Connect's `docker stats`. One line per
+  // layer: size, frame rate, bitrate since the last line, and why the encoder
+  // is holding back if it is (cpu, bandwidth, none).
+  async function reportShareStats(track, why) {
+    try {
+      const layers = await track.getSenderStats();
+      const now = Date.now();
+      const prev = lastStats.current;
+      const parts = (layers || []).map((l) => {
+        const key = l.rid || l.id || 'layer';
+        let kbps = '';
+        if (prev && prev.by[key] != null && l.bytesSent != null) {
+          const secs = (now - prev.at) / 1000;
+          if (secs > 0) kbps = ` ${Math.round(((l.bytesSent - prev.by[key]) * 8) / 1000 / secs)} kbps`;
+        }
+        return `${l.frameWidth}x${l.frameHeight} @ ${l.framesPerSecond ?? '?'}fps${kbps}` +
+          (l.qualityLimitationReason && l.qualityLimitationReason !== 'none' ? ` (limited by ${l.qualityLimitationReason})` : '');
+      });
+      lastStats.current = { at: now, by: Object.fromEntries((layers || []).map((l) => [l.rid || l.id || 'layer', l.bytesSent])) };
+      log(`share stats (${why}): ${parts.join(' | ') || 'no sender stats yet'}`);
+    } catch (e) {
+      log(`share stats failed: ${describeError(e)}`);
+    }
   }
 
   // The part after we hold a LiveKit token. Shared by the direct join, the
@@ -209,6 +259,12 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
   async function enter(admitted) {
     await room.connect(admitted.wsUrl, admitted.token);
     engines.note();
+    // Joining a meeting that is ALREADY recording fires no change event.
+    if (room.isRecording) {
+      log('recording already running at join');
+      setRecording(true);
+      setNotice('This meeting is being recorded.');
+    }
     if (gone.current) { room.disconnect().catch(() => {}).finally(() => reapEngines(engines, log)); return; }
     log(`in the room as ${admitted.identity} (${admitted.role})`);
     setRole(admitted.role);
@@ -313,6 +369,7 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
         // library is not quietly rejoining behind the screen's back — the
         // ghost the laptop saw on 16 Sept.
         stopWaiting();
+        stopShareStats();
         setStatus('dropped');
         setShare(false);
         setMic(false);
@@ -326,9 +383,39 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
         // Trap 3. This fires whether the person pressed Stop or the OS took the
         // capture away; either way "sharing" is no longer true.
         log('screen share track unpublished — the share has stopped');
+        stopShareStats();
         setShare(false);
         setNotice('Screen sharing stopped.');
       }
+    });
+
+    // ── A RECONNECT UNPUBLISHES AND THEN REPUBLISHES THE SHARE. ────────────
+    //  17 Sept 2026, 15:41:16, Samsung on Wi-Fi: the connection blipped, the
+    //  library fired LocalTrackUnpublished for the share (so the button went
+    //  back to "Share"), reconnected, and put the share back up: the server
+    //  logged SCREEN_SHARE published again at 10:11:18 UTC and the laptop kept
+    //  showing the phone's screen. The phone was sharing while its own button
+    //  said it was not, and the only way to stop was to leave the meeting.
+    //  So the button follows the publication, both ways, and a reconnect
+    //  re-reads it rather than trusting the last event.
+    room.on(RoomEvent.LocalTrackPublished, (pub) => {
+      if (pub?.source === Track.Source.ScreenShare) {
+        log('screen share track published — the share is live');
+        setShare(true);
+      }
+    });
+    room.on(RoomEvent.Reconnected, () => {
+      const live = !!room.localParticipant?.isScreenShareEnabled;
+      log(`reconnected; screen share is ${live ? 'live' : 'off'}`);
+      setShare(live);
+    });
+
+    // Everyone in a recorded meeting is told, on a phone as much as on the
+    // web. The media server sets this from the room's active recording.
+    room.on(RoomEvent.RecordingStatusChanged, (on) => {
+      log(`recording ${on ? 'started' : 'stopped'}`);
+      setRecording(!!on);
+      setNotice(on ? 'This meeting is being recorded.' : 'Recording stopped.');
     });
     room.on(RoomEvent.ConnectionStateChanged, (state) => log(`connection -> ${state}`));
 
@@ -371,6 +458,7 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
     return () => {
       gone.current = true;
       stopWaiting();
+      stopShareStats();
       // A live capture outlives a React tree, and the foreground service keeps
       // it alive. Leaving on unmount is not tidiness; it is what stops a share
       // running after the screen that started it has gone.
@@ -509,6 +597,10 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
   async function toggleShare() {
     setNotice('');
     if (share) {
+      // Logged, because 17 Sept had a share end after three seconds and
+      // nothing in the log could say whether a finger or the system ended it.
+      log('stop share pressed');
+      stopShareStats();
       try { await room.localParticipant.setScreenShareEnabled(false); } catch (e) { log(`stop share: ${describeError(e)}`); }
       setShare(false);
       return;
@@ -524,6 +616,20 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
       }
       log(`sharing screen: ${pub.trackSid}`);
       setShare(true);
+      // Requested vs captured vs sent. getSettings is what the capture gave us;
+      // the sender stats (below, every SHARE_STATS_MS) are what leaves the phone.
+      try {
+        const st = pub.track?.mediaStreamTrack?.getSettings?.();
+        if (st) log(`share capture settings: ${st.width}x${st.height} @ ${st.frameRate ?? '?'}fps`);
+      } catch (e) { log(`share capture settings unavailable: ${describeError(e)}`); }
+      if (pub.track?.getSenderStats) {
+        stopShareStats();
+        setTimeout(() => { if (!gone.current) reportShareStats(pub.track, 'first'); }, 2000);
+        statsTimer.current = setInterval(() => {
+          if (gone.current) { stopShareStats(); return; }
+          reportShareStats(pub.track, 'periodic');
+        }, SHARE_STATS_MS);
+      }
     } catch (e) {
       // Trap 2, exit two: threw. The Samsung does this, with the inverted shape.
       if (isRefusal(e)) {
@@ -586,7 +692,15 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
       <View style={s.header}>
         <View style={{ flex: 1 }}>
           <Text style={s.title} numberOfLines={1}>{title}</Text>
-          <Text style={s.count}>{headline}</Text>
+          <View style={s.countRow}>
+            {recording && inCall ? (
+              <View style={s.rec} accessibilityRole="text" accessibilityLabel="This meeting is being recorded">
+                <View style={s.recDot} />
+                <Text style={s.recText}>REC</Text>
+              </View>
+            ) : null}
+            <Text style={s.count}>{headline}</Text>
+          </View>
         </View>
         {meeting?.joinUrl ? (
           <Pressable style={s.invite} onPress={invite} accessibilityRole="button" accessibilityLabel="Invite">
@@ -815,7 +929,11 @@ const s = StyleSheet.create({
   lobbyDeny: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, backgroundColor: '#3A3548' },
   lobbyDenyText: { color: '#EAE6F3', fontSize: 13, fontWeight: '600' },
   title: { fontSize: 18, fontWeight: '700', color: '#FFFFFF' },
-  count: { fontSize: 13, color: '#9C99AB', marginTop: 2 },
+  count: { fontSize: 13, color: '#9C99AB' },
+  countRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
+  rec: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#B3261E', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 1 },
+  recDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#FFFFFF' },
+  recText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700', letterSpacing: 0.5 },
   notice: {
     flexDirection: 'row', gap: 8, alignItems: 'center',
     marginHorizontal: 18, marginBottom: 8, padding: 10,

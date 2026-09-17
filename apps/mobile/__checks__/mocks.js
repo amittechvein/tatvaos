@@ -21,9 +21,18 @@ class MockLocalParticipant {
   getTrackPublication() { return undefined; }
   async setMicrophoneEnabled(on) { if (mockSteer.mic === 'refuse') { const e = new Error('NotAllowedError'); throw e; } return on; }
   async setCameraEnabled(on) { return on; }
-  async setScreenShareEnabled(on) {
+  async setScreenShareEnabled(on, capture, publish) {
     if (!on) return undefined;
-    if (mockSteer.share === 'started') return { trackSid: 'TR_share', source: 'screen_share' };
+    mockSteer.lastShareArgs = { capture, publish };
+    if (mockSteer.share === 'started') {
+      return {
+        trackSid: 'TR_share', source: 'screen_share',
+        track: {
+          mediaStreamTrack: { getSettings: () => ({ width: 1080, height: 2400, frameRate: 30 }) },
+          getSenderStats: async () => [{ rid: 'f', frameWidth: 1080, frameHeight: 2400, framesPerSecond: 28, bytesSent: 100000, qualityLimitationReason: 'none' }],
+        },
+      };
+    }
     // MEASURED, emulator, 9 Sept 2026: refusal resolved undefined.
     if (mockSteer.share === 'undefined') return undefined;
     // MEASURED, Samsung, 9 Sept 2026: refusal THREW with name='Error' and
@@ -46,7 +55,7 @@ class MockEngine {
 const mockState = { lastRoom: null, rooms: [] };
 class MockRoom {
   constructor() { Object.assign(this, listeners()); this.localParticipant = new MockLocalParticipant(); this.remoteParticipants = new Map(); mockState.lastRoom = this; mockState.rooms.push(this); this.connectCalls = []; this.state = 'disconnected'; }
-  async connect(url, token) { this.connectCalls.push({ url, token }); this.engine = new MockEngine(); this.state = 'connected'; this.emit('connectionStateChanged', 'connected'); }
+  async connect(url, token) { this.connectCalls.push({ url, token }); this.engine = new MockEngine(); this.state = 'connected'; this.isRecording = !!mockSteer.recordingAtJoin; this.emit('connectionStateChanged', 'connected'); }
   // As the real one: already disconnected is a no-op; otherwise close the
   // engine, FORGET it, then announce.
   async disconnect() {
@@ -63,7 +72,7 @@ jest.mock('livekit-client', () => ({
     Disconnected: 'disconnected', LocalTrackUnpublished: 'localTrackUnpublished', ConnectionStateChanged: 'connectionStateChanged',
     ParticipantConnected: 'participantConnected', ParticipantDisconnected: 'participantDisconnected', Reconnected: 'reconnected',
     ActiveSpeakersChanged: 'activeSpeakersChanged', TrackSubscribed: 'trackSubscribed', TrackUnsubscribed: 'trackUnsubscribed',
-    DataReceived: 'dataReceived',
+    DataReceived: 'dataReceived', RecordingStatusChanged: 'recordingStatusChanged',
     LocalTrackPublished: 'localTrackPublished', AudioPlaybackStatusChanged: 'audioPlaybackStatusChanged',
   },
   DisconnectReason: { UNKNOWN_REASON: 0, CLIENT_INITIATED: 1, DUPLICATE_IDENTITY: 2, 0: 'UNKNOWN_REASON', 1: 'CLIENT_INITIATED', 2: 'DUPLICATE_IDENTITY' },

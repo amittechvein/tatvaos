@@ -377,3 +377,65 @@ test('the person shown full screen leaves: back to everyone, not a blank screen'
   await waitFor(() => expect(r.getByLabelText('Show Me full screen')).toBeTruthy());
   expect(r.queryByLabelText('Back to everyone')).toBeNull();
 });
+
+test('share: the negotiated numbers are read from the sender, not assumed', async () => {
+  const logs = [];
+  const spy = jest.spyOn(console, 'log').mockImplementation((line) => logs.push(String(line)));
+  try {
+    const { r } = await inCall();
+    fireEvent.press(r.getByLabelText('Share'));
+    await waitFor(() => expect(r.getByLabelText('Stop share')).toBeTruthy());
+    await waitFor(() => expect(logs.some((l) => l.includes('share stats (first): 1080x2400 @ 28fps'))).toBe(true), { timeout: 5000 });
+    expect(logs.some((l) => l.includes('share capture settings: 1080x2400 @ 30fps'))).toBe(true);
+  } finally { spy.mockRestore(); }
+}, 10000);
+
+// ── After a reconnect the button follows the publication (17 Sept, 15:41) ──
+test('a reconnect that republishes the share: the button says Stop share again', async () => {
+  const { r } = await inCall();
+  fireEvent.press(r.getByLabelText('Share'));
+  await waitFor(() => expect(r.getByLabelText('Stop share')).toBeTruthy());
+
+  // What the library did on the Samsung: unpublish during the restart…
+  await act(async () => { room().emit('localTrackUnpublished', { source: 'screen_share' }); });
+  expect(r.getByLabelText('Share')).toBeTruthy();
+  // …then publish it again once reconnected.
+  await act(async () => {
+    room().localParticipant.isScreenShareEnabled = true;
+    room().emit('localTrackPublished', { source: 'screen_share' });
+    room().emit('reconnected');
+  });
+  expect(r.getByLabelText('Stop share')).toBeTruthy();
+});
+
+test('a reconnect with no share left: the button says Share', async () => {
+  const { r } = await inCall();
+  fireEvent.press(r.getByLabelText('Share'));
+  await waitFor(() => expect(r.getByLabelText('Stop share')).toBeTruthy());
+  await act(async () => {
+    room().localParticipant.isScreenShareEnabled = false;
+    room().emit('reconnected');
+  });
+  expect(r.getByLabelText('Share')).toBeTruthy();
+});
+
+// ── The phone says when it is being recorded ──
+test('recording starts mid-meeting: REC badge and a sentence; stops: both go', async () => {
+  const { r } = await inCall();
+  expect(r.queryByLabelText('This meeting is being recorded')).toBeNull();
+  await act(async () => { room().emit('recordingStatusChanged', true); });
+  expect(r.getByLabelText('This meeting is being recorded')).toBeTruthy();
+  expect(r.getByText('This meeting is being recorded.')).toBeTruthy();
+  await act(async () => { room().emit('recordingStatusChanged', false); });
+  expect(r.queryByLabelText('This meeting is being recorded')).toBeNull();
+  expect(r.getByText('Recording stopped.')).toBeTruthy();
+});
+
+test('joining a meeting that is already recording shows REC at once', async () => {
+  const { steer } = require('./mocks');
+  steer.recordingAtJoin = true;
+  try {
+    const { r } = await inCall();
+    expect(r.getByLabelText('This meeting is being recorded')).toBeTruthy();
+  } finally { steer.recordingAtJoin = false; }
+});
