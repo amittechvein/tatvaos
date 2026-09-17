@@ -619,8 +619,8 @@ export default function Stage({ seat, meeting, prefs }: {
   //
   // See docs/connect-recording-notice-clip.md for what to record. It is a
   // one-sentence voice file and it wants a person, not a synthesiser.
-  // 17 Sept 2026: the file exists now, a generated (ElevenLabs) voice by
-  // Amit's decision; the doc records what it is and what was not measured.
+  // 17 Sept 2026: the file exists now: Amit's own recorded voice, trimmed and
+  // measured (the doc has the numbers and the exact ffmpeg command).
   const spokenRef = useRef(false);
   useEffect(() => {
     if (!beingRecorded) { spokenRef.current = false; return; }
