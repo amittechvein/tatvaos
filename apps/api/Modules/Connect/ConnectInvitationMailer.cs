@@ -72,8 +72,9 @@ public static class ConnectInvitationMailer
         {
             try
             {
+                var sequence = ConnectInvitations.SequenceFor(meeting, t.SequenceSent);
                 var ical = withCalendar
-                    ? ConnectInvitations.BuildCalendar(meeting, joinUrl, t.Email, box.Address, sender.DisplayName, method)
+                    ? ConnectInvitations.BuildCalendar(meeting, joinUrl, t.Email, box.Address, sender.DisplayName, method, sequence)
                     : null;
 
                 var submission = new MailSubmission(
@@ -93,7 +94,7 @@ public static class ConnectInvitationMailer
                 {
                     t.Status = ConnectInvitations.StatusSent;
                     t.Note = null;
-                    t.SequenceSent = meeting.InviteSequence;
+                    t.SequenceSent = sequence;
                     t.LastSentAt = DateTimeOffset.UtcNow;
                     sent++;
                 }

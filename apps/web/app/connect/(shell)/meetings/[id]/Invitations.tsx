@@ -19,10 +19,15 @@ import { Textarea } from '@/components/ui/Form';
 import { Alert } from '@/components/ui/Page';
 import { connectApi, type MeetingInvitation } from '@/lib/connect';
 
-const STATUS: Record<MeetingInvitation['status'], { label: string; tone: 'ok' | 'warn' | 'danger' | 'neutral' }> = {
+// The labels say what is KNOWN, which is whether OUR mail server took it.
+// Nothing here learns about a bounce: the bounce pipeline has never been
+// proven end to end (CTO review, 17 Sept 2026), so "Delivered" or "Not
+// delivered" would be a claim this page cannot back. The line under the list
+// says the same in words.
+const STATUS: Record<Exclude<MeetingInvitation['status'], 'withdrawn'>, { label: string; tone: 'ok' | 'warn' | 'danger' | 'neutral' }> = {
   sent: { label: 'Sent', tone: 'ok' },
   pending: { label: 'Sending…', tone: 'warn' },
-  failed: { label: 'Not delivered', tone: 'danger' },
+  failed: { label: 'Could not send', tone: 'danger' },
   not_sent: { label: 'Not sent', tone: 'neutral' },
 };
 
@@ -103,19 +108,23 @@ export default function Invitations({ meetingId, over, allowGuests }: {
       ) : rows.length === 0 ? (
         <div className="text-sm text-ink-muted">Nobody has been invited by email yet.</div>
       ) : (
+        <>
+        <div className="mb-1 text-xs text-ink-muted">
+          &ldquo;Sent&rdquo; means your mail server accepted it. It does not confirm it reached their inbox.
+        </div>
         <ul className="mb-3">
           {rows.map((inv) => (
             <li key={inv.id} className="border-b border-line py-2">
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate text-sm font-medium" title={inv.email}>{inv.email}</span>
-                <Badge tone={inv.outOfDate ? 'warn' : STATUS[inv.status].tone}>
-                  {inv.outOfDate ? 'Old time' : STATUS[inv.status].label}
+                <Badge tone={inv.outOfDate ? 'warn' : STATUS[inv.status as keyof typeof STATUS].tone}>
+                  {inv.outOfDate ? 'Old time' : STATUS[inv.status as keyof typeof STATUS].label}
                 </Badge>
               </div>
               {(inv.note || inv.outOfDate) && (
                 <div className="mt-1 text-xs text-ink-muted">
                   {inv.outOfDate
-                    ? 'The meeting moved after this was sent, and the update did not reach them. Send it again.'
+                    ? 'The meeting changed after this was sent, and the update could not be sent to them. Send it again.'
                     : inv.note}
                 </div>
               )}
@@ -136,6 +145,7 @@ export default function Invitations({ meetingId, over, allowGuests }: {
             </li>
           ))}
         </ul>
+        </>
       )}
 
       {!over && (

@@ -270,7 +270,7 @@ export class DoorClosedError extends Error {
 export type MeetingInvitation = {
   id: string;
   email: string;
-  status: 'pending' | 'sent' | 'failed' | 'not_sent';
+  status: 'pending' | 'sent' | 'failed' | 'not_sent' | 'withdrawn';
   note: string | null;
   createdAt: string;
   lastSentAt: string | null;

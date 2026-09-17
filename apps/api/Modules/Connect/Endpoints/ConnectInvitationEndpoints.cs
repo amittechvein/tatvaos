@@ -61,18 +61,23 @@ public static class ConnectInvitationEndpoints
         return (meeting, null);
     }
 
+    /// <summary>Every row, withdrawn included (a re-invite needs their SEQUENCE).</summary>
     private static async Task<List<ConnectMeetingInvitation>> AllOfAsync(AppDbContext db, Guid meetingId, CancellationToken ct) =>
         await db.Set<ConnectMeetingInvitation>()
             .Where(i => i.MeetingId == meetingId)
             .OrderBy(i => i.CreatedAt)
             .ToListAsync(ct);
 
+    /// <summary>What the page shows: withdrawn people are not invited.</summary>
+    private static IEnumerable<object> Visible(IEnumerable<ConnectMeetingInvitation> all, ConnectMeeting m) =>
+        all.Where(i => i.Status != ConnectInvitations.StatusWithdrawn).Select(i => ShapeOf(i, m));
+
     private static async Task<IResult> ListAsync(Guid id, AppDbContext db, TenantContext tenant, CancellationToken ct)
     {
         var (meeting, refusal) = await GuardAsync(db, tenant, id, mustBeOpen: false, ct);
         if (refusal is not null) return refusal;
         var all = await AllOfAsync(db, id, ct);
-        return Results.Ok(new { invitations = all.Select(i => ShapeOf(i, meeting!)) });
+        return Results.Ok(new { invitations = Visible(all, meeting!) });
     }
 
     private static async Task<IResult> InviteAsync(
@@ -96,11 +101,22 @@ public static class ConnectInvitationEndpoints
             return Results.BadRequest(new { error = $"Invite at most {ConnectInvitations.MaxPerRequest} people at a time." });
 
         var existing = await AllOfAsync(db, id, ct);
-        var already = new HashSet<string>(existing.Select(e => e.Email.ToLowerInvariant()), StringComparer.Ordinal);
-        var fresh = parsed.Valid.Where(e => !already.Contains(e)).ToList();
-        var alreadyInvited = parsed.Valid.Where(already.Contains).ToList();
+        var byEmail = existing.ToDictionary(e => e.Email.ToLowerInvariant(), StringComparer.Ordinal);
+        var alreadyInvited = parsed.Valid
+            .Where(e => byEmail.TryGetValue(e, out var row) && row.Status != ConnectInvitations.StatusWithdrawn)
+            .ToList();
+        // Somebody withdrawn earlier and invited again is the SAME row, not a
+        // new one: the unique index on (meeting_id, lower(email)) would refuse
+        // a second row, and the row's sequence_sent is what the new REQUEST
+        // must exceed for their calendar to accept it (ConnectInvitations.SequenceFor).
+        var reinvited = parsed.Valid
+            .Where(e => byEmail.TryGetValue(e, out var row) && row.Status == ConnectInvitations.StatusWithdrawn)
+            .Select(e => byEmail[e])
+            .ToList();
+        var fresh = parsed.Valid.Where(e => !byEmail.ContainsKey(e)).ToList();
 
-        if (existing.Count + fresh.Count > ConnectInvitations.MaxPerMeeting)
+        var standing = existing.Count(e => e.Status != ConnectInvitations.StatusWithdrawn);
+        if (standing + fresh.Count + reinvited.Count > ConnectInvitations.MaxPerMeeting)
             return Results.BadRequest(new { error = $"A meeting can have at most {ConnectInvitations.MaxPerMeeting} email invitations." });
 
         var now = DateTimeOffset.UtcNow;
@@ -114,11 +130,18 @@ public static class ConnectInvitationEndpoints
             Status = ConnectInvitations.StatusPending,
             CreatedAt = now,
         }).ToList();
+        foreach (var row in reinvited)
+        {
+            row.Status = ConnectInvitations.StatusPending;
+            row.Note = null;
+            row.InvitedByUserId = tenant.UserId;
+        }
 
         ConnectInvitationMailer.Outcome outcome = new(0, 0, null);
-        if (added.Count > 0)
+        if (added.Count + reinvited.Count > 0)
         {
             db.Set<ConnectMeetingInvitation>().AddRange(added);
+            added = [.. added, .. reinvited];
             // Saved BEFORE sending: a crash mid-send leaves 'pending' rows that
             // say exactly what happened, not addresses nobody recorded.
             await db.SaveChangesAsync(ct);
@@ -132,7 +155,7 @@ public static class ConnectInvitationEndpoints
         var all = await AllOfAsync(db, id, ct);
         return Results.Ok(new
         {
-            invitations = all.Select(i => ShapeOf(i, meeting!)),
+            invitations = Visible(all, meeting!),
             added = added.Count,
             sent = outcome.Sent,
             failed = outcome.Failed,
@@ -154,7 +177,8 @@ public static class ConnectInvitationEndpoints
         var (meeting, refusal) = await GuardAsync(db, tenant, id, mustBeOpen: true, ct);
         if (refusal is not null) return refusal;
         var inv = await db.Set<ConnectMeetingInvitation>()
-            .FirstOrDefaultAsync(i => i.Id == invitationId && i.MeetingId == id, ct);
+            .FirstOrDefaultAsync(i => i.Id == invitationId && i.MeetingId == id
+                                      && i.Status != ConnectInvitations.StatusWithdrawn, ct);
         if (inv is null) return Results.NotFound(new { error = "No such invitation." });
 
         var outcome = await ConnectInvitationMailer.SendAsync(meeting!, [inv], Imip.MethodRequest,
@@ -170,21 +194,25 @@ public static class ConnectInvitationEndpoints
         var (meeting, refusal) = await GuardAsync(db, tenant, id, mustBeOpen: false, ct);
         if (refusal is not null) return refusal;
         var inv = await db.Set<ConnectMeetingInvitation>()
-            .FirstOrDefaultAsync(i => i.Id == invitationId && i.MeetingId == id, ct);
+            .FirstOrDefaultAsync(i => i.Id == invitationId && i.MeetingId == id
+                                      && i.Status != ConnectInvitations.StatusWithdrawn, ct);
         if (inv is null) return Results.NotFound(new { error = "No such invitation." });
 
         string? note = null;
-        // Only a delivered invitation left something in a calendar to take back.
+        // Only a sent invitation left something in a calendar to take back.
+        // The CANCEL goes out at this person's next SEQUENCE (SequenceFor),
+        // and the meeting's own SEQUENCE is left alone: nobody else changed.
         if (inv.Status == ConnectInvitations.StatusSent && meeting!.Status is not ("ended" or "cancelled"))
         {
-            meeting.InviteSequence += 1;
-            await db.SaveChangesAsync(ct);
             var outcome = await ConnectInvitationMailer.SendAsync(meeting, [inv], Imip.MethodCancel,
                 db, tenant, config, logs.CreateLogger("Connect.Invitations"), autoSave, audit, ct);
-            note = outcome.Note;
+            note = outcome.Sent > 0 ? null
+                : $"Withdrawn, but the cancellation could not be emailed: {inv.Note ?? outcome.Note}";
         }
 
-        db.Set<ConnectMeetingInvitation>().Remove(inv);
+        // KEPT, marked withdrawn: its sequence_sent is what a re-invite must
+        // exceed. The 90-day sweep removes it with the rest.
+        inv.Status = ConnectInvitations.StatusWithdrawn;
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("connect.meeting.invitation_withdrawn", "connect.meeting", id.ToString(),
             ct: ct, productCode: "connect");

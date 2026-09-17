@@ -29,15 +29,23 @@ CREATE TABLE IF NOT EXISTS connect.meeting_invitations (
 
     invited_by_user_id  uuid,
 
-    -- pending   saved, not yet attempted (the request is still running)
-    -- sent      the mail submission accepted it
-    -- failed    the submission refused or could not be reached; `note` says why
-    -- not_sent  deliberately not attempted (e.g. the sender has no mailbox)
+    -- pending    saved, not yet attempted (the request is still running)
+    -- sent       OUR mail server accepted it. Not "delivered": nothing here
+    --            learns about a bounce (CTO, 17 Sept: the bounce pipeline has
+    --            never been proven end to end), and the page says so.
+    -- failed     our mail server refused it or could not be reached; `note` says why
+    -- not_sent   deliberately not attempted (e.g. the sender has no mailbox)
+    -- withdrawn  the host took it back. The row is KEPT, not deleted, because
+    --            its sequence_sent is what a later re-invite must exceed: a
+    --            REQUEST at or below the SEQUENCE of the CANCEL that person
+    --            already holds is ignored by their calendar.
     status              text        NOT NULL DEFAULT 'pending',
     note                text,
 
-    -- The meetings.invite_sequence this person last received. Lower than the
-    -- meeting's means they hold a stale time in their calendar.
+    -- The RFC 5545 SEQUENCE of the last message this person received. Every
+    -- message to a person goes out strictly higher than this (and never lower
+    -- than meetings.invite_sequence). Lower than the meeting's means the
+    -- meeting changed after they were last told.
     sequence_sent       integer,
 
     created_at          timestamptz NOT NULL DEFAULT now(),
@@ -51,7 +59,7 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'meeting_invitations_status_check') THEN
         ALTER TABLE connect.meeting_invitations
             ADD CONSTRAINT meeting_invitations_status_check
-            CHECK (status IN ('pending', 'sent', 'failed', 'not_sent'));
+            CHECK (status IN ('pending', 'sent', 'failed', 'not_sent', 'withdrawn'));
     END IF;
 END $$;
 
@@ -81,6 +89,42 @@ CREATE POLICY tenant_isolation ON connect.meeting_invitations
     WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON connect.meeting_invitations TO tatvaos_app;
+
+-- ============================================================================
+--  RETENTION — 90 days after the meeting is over (Amit, 17 Sept 2026).
+--
+--  This table accumulates the email addresses of people OUTSIDE the
+--  organisation, who never agreed to be kept anywhere. 90 days leaves room to
+--  resend or to answer "who was invited", and then they go. "Over" means ended
+--  or cancelled, or a scheduled meeting whose time passed without either.
+--
+--  SECURITY DEFINER because the sweep runs with no tenant set, which RLS
+--  (correctly) refuses; the window is in here and not a parameter, so no
+--  caller can pass a shorter one — the same shape as core.sweep_handoff_codes.
+--  Called hourly by ConnectNotesWorker, which already wakes every minute.
+-- ============================================================================
+CREATE OR REPLACE FUNCTION connect.sweep_meeting_invitations()
+RETURNS integer
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = connect, pg_temp
+AS $$
+    WITH gone AS (
+        DELETE FROM connect.meeting_invitations i
+         USING connect.meetings m
+         WHERE m.id = i.meeting_id
+           AND (
+                 (m.status IN ('ended', 'cancelled')
+                    AND coalesce(m.ended_at, m.updated_at) < now() - interval '90 days')
+              OR (m.status = 'scheduled'
+                    AND coalesce(m.scheduled_end, m.scheduled_start) < now() - interval '90 days')
+               )
+        RETURNING 1
+    )
+    SELECT count(*)::int FROM gone;
+$$;
+REVOKE ALL ON FUNCTION connect.sweep_meeting_invitations() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION connect.sweep_meeting_invitations() TO tatvaos_app;
 
 COMMENT ON TABLE connect.meeting_invitations IS
     'One row per person invited to a Connect meeting by email, with what the send actually answered.';

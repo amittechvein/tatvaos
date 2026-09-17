@@ -76,7 +76,7 @@ internal static class Program
         var m = Meeting();
         // Unfolded: RFC 5545 wraps lines at 75 octets, and a check that reads
         // the folded text misses an address split across two lines.
-        var ics = ConnectInvitations.BuildCalendar(m, Join, "ravi@example.com", "amit@techvein.com", "Amit Dadhich", Imip.MethodRequest)
+        var ics = ConnectInvitations.BuildCalendar(m, Join, "ravi@example.com", "amit@techvein.com", "Amit Dadhich", Imip.MethodRequest, 0)
             .Replace("\r\n ", "");
 
         t.Ok("METHOD:REQUEST", ics.Contains("METHOD:REQUEST"));
@@ -103,24 +103,42 @@ internal static class Program
     {
         t.Section("reschedule and cancel — replace the entry, never duplicate it");
         var m = Meeting();
-        var first = ConnectInvitations.BuildCalendar(m, Join, "ravi@example.com", "amit@techvein.com", null, Imip.MethodRequest);
+        string Build(int seq, string method) =>
+            ConnectInvitations.BuildCalendar(m, Join, "ravi@example.com", "amit@techvein.com", null, method, seq);
+        string Uid(string s) => s.Split("\r\n").First(l => l.StartsWith("UID:"));
+
+        var first = Build(ConnectInvitations.SequenceFor(m, null), Imip.MethodRequest);
+        t.Ok("first message to a person: SEQUENCE 0", first.Contains("SEQUENCE:0"));
+
         m.InviteSequence = 1;
         m.ScheduledStart = m.ScheduledStart!.Value.AddHours(2);
         m.ScheduledEnd = m.ScheduledEnd!.Value.AddHours(2);
-        var moved = ConnectInvitations.BuildCalendar(m, Join, "ravi@example.com", "amit@techvein.com", null, Imip.MethodRequest);
-
-        string Uid(string s) => s.Split("\r\n").First(l => l.StartsWith("UID:"));
+        var moved = Build(ConnectInvitations.SequenceFor(m, 0), Imip.MethodRequest);
         t.Ok("same UID after a move (so it REPLACES)", Uid(first) == Uid(moved));
         t.Ok("higher SEQUENCE after a move (so it is not ignored)", moved.Contains("SEQUENCE:1"));
         t.Ok("the new time", moved.Contains("DTSTART:20260918T113000Z"));
 
         m.InviteSequence = 2;
-        var cancel = ConnectInvitations.BuildCalendar(m, Join, "ravi@example.com", "amit@techvein.com", null, Imip.MethodCancel);
+        var cancel = Build(ConnectInvitations.SequenceFor(m, 1), Imip.MethodCancel);
         t.Ok("METHOD:CANCEL", cancel.Contains("METHOD:CANCEL"));
         t.Ok("STATUS:CANCELLED in the event too", cancel.Contains("STATUS:CANCELLED"));
         t.Ok("same UID on cancel", Uid(cancel) == Uid(first));
         t.Ok("subject says Cancelled", ConnectInvitations.Subject(m, Imip.MethodCancel) == "Cancelled: Quarterly review");
         t.Ok("subject says Invitation", ConnectInvitations.Subject(m, Imip.MethodRequest) == "Invitation: Quarterly review");
+
+        t.Section("SequenceFor — withdraw, then invite the same person again (CTO condition 3)");
+        var w = Meeting();                         // meeting never changed: InviteSequence 0
+        var invited = ConnectInvitations.SequenceFor(w, null);        // REQUEST
+        var withdrawn = ConnectInvitations.SequenceFor(w, invited);   // CANCEL to that person only
+        var reinvited = ConnectInvitations.SequenceFor(w, withdrawn); // REQUEST again
+        t.Note($"invite {invited}, withdraw {withdrawn}, re-invite {reinvited}; meeting stays at {w.InviteSequence}");
+        t.Ok("the CANCEL is above the REQUEST it cancels", withdrawn > invited);
+        t.Ok("the re-invite is above the CANCEL they hold (else their calendar ignores it)", reinvited > withdrawn);
+        t.Ok("withdrawing one person does not move the meeting's SEQUENCE for everyone else", w.InviteSequence == 0);
+
+        var ahead = Meeting(); ahead.InviteSequence = 5;
+        t.Ok("never below the meeting's SEQUENCE (someone invited after two moves)", ConnectInvitations.SequenceFor(ahead, null) == 5);
+        t.Ok("a person ahead of the meeting still goes up", ConnectInvitations.SequenceFor(ahead, 7) == 8);
     }
 
     private static void TheEmailText(Harness t)

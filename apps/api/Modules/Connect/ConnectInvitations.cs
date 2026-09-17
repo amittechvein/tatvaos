@@ -20,6 +20,7 @@ public static class ConnectInvitations
     public const string StatusSent = "sent";
     public const string StatusFailed = "failed";
     public const string StatusNotSent = "not_sent";
+    public const string StatusWithdrawn = "withdrawn";
 
     /// <summary>Per request. A host inviting a whole department pastes a list;
     /// a script pasting ten thousand addresses is refused before any mail moves.</summary>
@@ -111,14 +112,28 @@ public static class ConnectInvitations
     public static DateTimeOffset EndOf(ConnectMeeting m) =>
         m.ScheduledEnd is DateTimeOffset e && e > m.ScheduledStart!.Value ? e : m.ScheduledStart!.Value.AddHours(1);
 
+    /// <summary>
+    /// The SEQUENCE for the next message to ONE person: strictly above the last
+    /// one they received, and never below the meeting's.
+    ///
+    /// Why per person (CTO review, 17 Sept 2026, "withdraw then re-invite"): a
+    /// calendar ignores a message for a UID whose SEQUENCE is not newer than
+    /// what it holds. Withdrawing sends that person a CANCEL; re-inviting them
+    /// with the meeting's unchanged SEQUENCE would be ignored, and they would
+    /// have an invitation email and no event. Each person only ever sees their
+    /// own messages, so monotonic per person is exactly what is needed.
+    /// </summary>
+    public static int SequenceFor(ConnectMeeting m, int? lastSentToThem) =>
+        Math.Max(m.InviteSequence, (lastSentToThem ?? -1) + 1);
+
     /// <summary>The in-memory event Imip.Build needs. Nothing here is saved:
     /// Connect has no calendar row, only the meeting.</summary>
-    public static CalendarEvent ToCalendarEvent(ConnectMeeting m, string joinUrl) => new()
+    public static CalendarEvent ToCalendarEvent(ConnectMeeting m, string joinUrl, int sequence) => new()
     {
         Id = m.Id,
         TenantId = m.TenantId,
         Uid = Uid(m.Id),
-        Sequence = m.InviteSequence,
+        Sequence = sequence,
         Title = string.IsNullOrWhiteSpace(m.Title) ? "Meeting" : m.Title,
         Description = "A TatvaOS Connect meeting. Open the link at the time of the meeting to join.",
         MeetingUrl = joinUrl,
@@ -133,9 +148,9 @@ public static class ConnectInvitations
     /// address is shown to a stranger in another company; the calendar file
     /// names only that person as attendee, for the same reason.</summary>
     public static string BuildCalendar(ConnectMeeting m, string joinUrl, string inviteeEmail,
-        string organiserEmail, string? organiserName, string method) =>
+        string organiserEmail, string? organiserName, string method, int sequence) =>
         Imip.Build(
-            ToCalendarEvent(m, joinUrl),
+            ToCalendarEvent(m, joinUrl, sequence),
             [new CalendarAttendee { Email = inviteeEmail }],
             organiserEmail, organiserName, method);
 

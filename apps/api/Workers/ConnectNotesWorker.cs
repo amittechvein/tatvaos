@@ -114,6 +114,15 @@ public sealed class ConnectNotesWorker(
                 // asked for. It also means a mail server being down cannot
                 // stop notes being written for everybody else.
                 await MailMinutesAsync(stopping);
+
+                // Hourly, not every tick: nothing about a 90-day window needs
+                // a minute's precision. Its own try inside, so a failure here
+                // cannot stop notes or minutes.
+                if (DateTimeOffset.UtcNow - lastInvitationSweep >= InvitationSweepEvery)
+                {
+                    await SweepInvitationsAsync(stopping);
+                    lastInvitationSweep = DateTimeOffset.UtcNow;
+                }
             }
             catch (OperationCanceledException) when (stopping.IsCancellationRequested)
             {
@@ -127,6 +136,38 @@ public sealed class ConnectNotesWorker(
             }
         }
         while (await SafeWaitAsync(timer, stopping));
+    }
+
+    private static readonly TimeSpan InvitationSweepEvery = TimeSpan.FromHours(1);
+    private DateTimeOffset lastInvitationSweep = DateTimeOffset.MinValue;
+
+    /// <summary>
+    /// Delete meeting email invitations 90 days after the meeting is over
+    /// (Amit's decision, 17 Sept 2026: the table holds outsiders' addresses).
+    /// The window and the DELETE are in connect.sweep_meeting_invitations()
+    /// (20260917-b-connect-meeting-invitations.sql), SECURITY DEFINER because
+    /// this runs with no tenant; proven by tests/connect-invitations/verify-schema.sh.
+    /// </summary>
+    private async Task SweepInvitationsAsync(CancellationToken ct)
+    {
+        try
+        {
+            using var scope = scopes.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var deleted = await db.Database
+                .SqlQuery<int>($"""SELECT connect.sweep_meeting_invitations() AS "Value" """)
+                .SingleAsync(ct);
+            log.LogInformation(
+                "Meeting invitation sweep: {Deleted} invitation(s) older than 90 days after their meeting deleted.", deleted);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Shutting down.
+        }
+        catch (Exception ex)
+        {
+            log.LogError(ex, "Meeting invitation sweep failed; will try again next hour.");
+        }
     }
 
     private static async Task<bool> SafeWaitAsync(PeriodicTimer timer, CancellationToken ct)
