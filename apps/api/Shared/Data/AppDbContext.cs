@@ -1,6 +1,7 @@
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using TatvaOS.Api.Shared.Auth.Oidc;
 using TatvaOS.Api.Shared.Tenancy;
 
 namespace TatvaOS.Api.Shared.Data;
@@ -56,6 +57,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     /// returns its tenant in one statement.
     /// </summary>
     public DbSet<AuthHandoffCode> AuthHandoffCodes => Set<AuthHandoffCode>();
+    // OpenID Connect provider (decision 0004) — OpenIddict's four entities
+    // with a TenantId each; see Shared/Auth/Oidc/OidcEntities.cs.
+    public DbSet<OidcApplication> OidcApplications => Set<OidcApplication>();
+    public DbSet<OidcAuthorization> OidcAuthorizations => Set<OidcAuthorization>();
+    public DbSet<OidcScope> OidcScopes => Set<OidcScope>();
+    public DbSet<OidcToken> OidcTokens => Set<OidcToken>();
 
     /// <summary>
     /// Two-step recovery codes. NO query filter, deliberately — they are
@@ -182,6 +189,17 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<AuditLog>().ToTable("audit_logs", "core");
         b.Entity<RefreshToken>().ToTable("refresh_tokens", "core");
         b.Entity<AuthHandoffCode>().ToTable("auth_handoff_codes", "core");
+
+        // OpenIddict registers its own configuration (keys, indexes, the
+        // shadow foreign keys ApplicationId/AuthorizationId) for the entity
+        // types below; the table names are ours, in core, snake_case like
+        // everything else. The SQL in 20260917-oidc-provider.sql is written
+        // to match what this produces.
+        b.UseOpenIddict<OidcApplication, OidcAuthorization, OidcScope, OidcToken, Guid>();
+        b.Entity<OidcApplication>().ToTable("oidc_applications", "core");
+        b.Entity<OidcAuthorization>().ToTable("oidc_authorizations", "core");
+        b.Entity<OidcScope>().ToTable("oidc_scopes", "core");
+        b.Entity<OidcToken>().ToTable("oidc_tokens", "core");
         b.Entity<MfaRecoveryCode>().ToTable("mfa_recovery_codes", "core");
         b.Entity<UserAvatar>().ToTable("user_avatars", "core");
         b.Entity<UserAvatar>().HasKey(a => a.UserId);
@@ -392,6 +410,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<AuditLog>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<RefreshToken>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<AuthHandoffCode>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        // The provider tables: same fence. A query with no tenant set throws
+        // here before RLS would have returned nothing — fail closed, loudly.
+        // The two pre-tenant lookups set the tenant first (TenantSafeStores).
+        b.Entity<OidcApplication>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<OidcAuthorization>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<OidcToken>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<UserAvatar>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Mailbox>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Alias>().HasQueryFilter(e => e.TenantId == tenant.TenantId);

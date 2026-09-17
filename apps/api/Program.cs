@@ -17,6 +17,7 @@ using TatvaOS.Api.Modules.Space.Endpoints;
 using TatvaOS.Api.Modules.Calendar.Endpoints;
 using TatvaOS.Api.Modules.Connect.Endpoints;
 using TatvaOS.Api.Workers;
+using TatvaOS.Api.Shared.Auth.Oidc;
 using TatvaOS.Api.Shared.Ai;
 using TatvaOS.Api.Shared.Notify;
 using TatvaOS.Api.Shared.Settings;
@@ -96,6 +97,22 @@ builder.Services.AddScoped<TokenIssuer>();
 builder.Services.AddScoped<TotpService>();
 builder.Services.AddScoped<StorageAllocator>();
 builder.Services.AddScoped<AuditWriter>();
+
+// ---- OpenID Connect provider (decision 0004) — stage 1: the stores -------
+// OpenIddict's core with EF Core storage on our own entities, and the two
+// pre-tenant lookups replaced by tenant-safe stores that consult SECURITY
+// DEFINER resolvers (option (b)). The server half — signing keys, discovery,
+// authorize, token, userinfo — is a later stage; nothing answers on
+// /.well-known yet.
+builder.Services.AddOpenIddict()
+    .AddCore(o =>
+    {
+        o.UseEntityFrameworkCore()
+         .UseDbContext<AppDbContext>()
+         .ReplaceDefaultEntities<OidcApplication, OidcAuthorization, OidcScope, OidcToken, Guid>();
+        o.ReplaceApplicationStore<OidcApplication, TenantSafeApplicationStore>();
+        o.ReplaceTokenStore<OidcToken, TenantSafeTokenStore>();
+    });
 
 // Where Space's bytes live. Singleton — it holds only the root path; key
 // format and path validation live inside. Swapping to S3-compatible object
@@ -468,6 +485,32 @@ builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
 var app = builder.Build();
 
 // ---------------------------------------------------------------------------
+//  Refuse to start as production with Development-only logging switched on.
+//
+//  EF's EnableSensitiveDataLogging prints every query parameter in the clear —
+//  in this codebase that means hashed client secrets, token hashes, e-mail
+//  addresses — and it is enabled above only under IsDevelopment(). That makes
+//  ASPNETCORE_ENVIRONMENT, one hand-edited variable in a .env file that has
+//  been copied around, the only thing between a secret and the log. CTO,
+//  17 Sept 2026: assert it, so a wrong environment on the box is a loud
+//  failure at startup rather than a quiet leak into `docker logs`.
+//
+//  Read from the OPTIONS that were actually built, not from the environment
+//  name, so the check cannot drift from the code it guards.
+// ---------------------------------------------------------------------------
+using (var startupScope = app.Services.CreateScope())
+{
+    var dbOptions = startupScope.ServiceProvider.GetRequiredService<DbContextOptions<AppDbContext>>();
+    var core = dbOptions.FindExtension<Microsoft.EntityFrameworkCore.Infrastructure.CoreOptionsExtension>();
+    if (!app.Environment.IsDevelopment() && core?.IsSensitiveDataLoggingEnabled == true)
+        throw new InvalidOperationException(
+            "Refusing to start: EF Core sensitive-data logging is enabled but " +
+            $"ASPNETCORE_ENVIRONMENT is '{app.Environment.EnvironmentName}'. That logging prints every " +
+            "query parameter — hashed secrets and token hashes included — and is only ever meant for " +
+            "Development. Fix the environment on this box, or the code that enabled it.");
+}
+
+// ---------------------------------------------------------------------------
 //  Pipeline — order matters
 // ---------------------------------------------------------------------------
 if (app.Environment.IsDevelopment())
@@ -498,6 +541,7 @@ app.MapAuthEndpoints();
 app.MapMfaEndpoints();
 app.MapOrganisationEndpoints();
 app.MapUserEndpoints();
+app.MapOidcApplicationEndpoints();
 app.MapDomainEndpoints();
 app.MapSignupEndpoints();
 app.MapSettingsEndpoints();
