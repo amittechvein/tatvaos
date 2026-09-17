@@ -88,7 +88,7 @@ disc=$(curl -s "$API/.well-known/openid-configuration")
 # https://core.tatvaos.com/… whatever host this request arrived on (here,
 # localhost with no proxy at all), and whatever a forwarded header claims.
 [ "$(printf '%s' "$disc" | j "d['jwks_uri']")" = "$ISSUER/api/oauth/jwks" ] && pass "discovery: jwks_uri pinned to the issuer" || fail "jwks_uri: $(printf '%s' "$disc" | j "d.get('jwks_uri')")"
-[ "$(printf '%s' "$disc" | j "d['authorization_endpoint']")" = "$ISSUER/api/oauth/authorize" ] && pass "discovery: authorize pinned to the issuer" || fail "authorization_endpoint: $(printf '%s' "$disc" | j "d.get('authorization_endpoint')")"
+[ "$(printf '%s' "$disc" | j "d['authorization_endpoint']")" = "$ISSUER/oauth/authorize" ] && pass "discovery: authorize pinned to the issuer, at the web page (stage 3)" || fail "authorization_endpoint: $(printf '%s' "$disc" | j "d.get('authorization_endpoint')")"
 [ "$(printf '%s' "$disc" | j "d['token_endpoint']")" = "$ISSUER/api/oauth/token" ] && pass "discovery: token pinned to the issuer" || fail "token_endpoint: $(printf '%s' "$disc" | j "d.get('token_endpoint')")"
 printf '%s' "$disc" | grep -q "localhost" && fail "the request's own host leaked into the document" || pass "discovery: nothing in the document names the request's host"
 # As Caddy sends it (scheme and host forwarded): same document, byte for byte.
@@ -106,7 +106,7 @@ printf '%s' "$evil" | grep -q "evil.example" && fail "spoofed host appears in th
 [ "$(printf '%s' "$disc" | j "sorted(d.get('grant_types_supported',[]))")" = "['authorization_code', 'refresh_token']" ] && pass "discovery: code and refresh grants only" || fail "grant_types_supported: $(printf '%s' "$disc" | j "d.get('grant_types_supported')")"
 [ "$(printf '%s' "$disc" | j "d.get('response_types_supported')")" = "['code']" ] && pass "discovery: response_type code only" || fail "response_types_supported: $(printf '%s' "$disc" | j "d.get('response_types_supported')")"
 # The endpoints exist and answer honestly before stage 3 builds sign-in.
-h=$(curl -s -o /dev/null -w '%{http_code}' "$API/api/oauth/authorize?client_id=x&response_type=code&redirect_uri=https%3A%2F%2Fa.b%2Fc")
+h=$(curl -s -o /dev/null -w '%{http_code}' "$API/api/auth/oauth/authorize?client_id=x&response_type=code&redirect_uri=https%3A%2F%2Fa.b%2Fc")
 [ "$h" = "501" ] || [ "$h" = "400" ] && pass "authorize answers $h, not a hang or a 500" || fail "authorize answered $h"
 h=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/api/oauth/token" -d "grant_type=authorization_code&code=x&client_id=nobody")
 [ "$h" = "400" ] || [ "$h" = "401" ] && pass "token endpoint refuses an unknown client ($h)" || fail "token endpoint answered $h"

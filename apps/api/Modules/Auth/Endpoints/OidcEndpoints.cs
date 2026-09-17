@@ -1,37 +1,469 @@
+using System.Collections.Immutable;
+using System.Security.Claims;
+using Microsoft.AspNetCore;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using OpenIddict.Abstractions;
+using OpenIddict.Core;
+using OpenIddict.Server.AspNetCore;
+using OpenIddict.Validation.AspNetCore;
+using TatvaOS.Api.Shared.Auth;
+using TatvaOS.Api.Shared.Auth.Oidc;
+using TatvaOS.Api.Shared.Data;
+using TatvaOS.Api.Shared.Tenancy;
+using static OpenIddict.Abstractions.OpenIddictConstants;
+
 namespace TatvaOS.Api.Modules.Auth.Endpoints;
 
 /// <summary>
-/// The OpenID Connect provider's own endpoints — decision 0004.
+/// The OpenID Connect provider's own endpoints — decision 0004, stage 3.
 ///
-/// Stage 2: OpenIddict handles discovery, the key set and the token,
-/// introspection and revocation endpoints itself. The authorize endpoint is
-/// passed through to us because it is where a PERSON arrives in a browser
-/// and has to be signed in, asked for consent, and sent back — and that is
-/// stage 3. Until then it answers 501 in plain words, so an application
-/// registered today gets a sentence and not a stack trace or a silent hang.
+/// Three of them are ours to answer after OpenIddict has validated the
+/// request (passthrough): authorize, where a PERSON arrives in a browser and
+/// must be recognised, checked for consent and sent back with a code; token,
+/// where the person's liveness is checked again before anything is minted
+/// from a code or a refresh token; and userinfo, where the application's and
+/// the person's liveness are checked before a claim is read. Introspection,
+/// revocation, discovery and the key set stay OpenIddict's.
+///
+/// WHERE AUTHORIZE LIVES, AND WHY IT IS TWO ADDRESSES. The session cookies
+/// are httpOnly, SameSite=Strict and scoped to Path=/api/auth. Strict means a
+/// cross-site navigation — the customer's application sending the person
+/// here — carries no cookie at all, so an API endpoint reached directly from
+/// the application would never see a session. The advertised endpoint is
+/// therefore the WEB page /oauth/authorize (what 0004 says: "the authorize
+/// page is a web page"), which loads with no cookie needed and then makes one
+/// same-site navigation to this API endpoint under /api/auth/, where the
+/// cookie does arrive. Discovery publishes the web address; the API matches
+/// the /api/auth/ one. Both are registered in Program.cs.
+///
+/// CONSENT IS A POST FOR THE SAME REASON. The consent page answers by a form
+/// POST to this endpoint with tv_decision=allow or deny. The decision is
+/// honoured on POST only: a cross-site page cannot forge it, because a
+/// cross-site POST carries no Strict cookie and lands as "not signed in"; and
+/// the login redirect it would cause rebuilds a GET without the decision.
+///
+/// WHAT NEVER APPEARS IN A LOG (0004): the code, the tokens, the verifier,
+/// and the redirect's Location. Nothing here writes any of them; test step 9
+/// searches the API's output for every value the script used.
 /// </summary>
 public static class OidcEndpoints
 {
-    public const string AuthorizePath = "/api/oauth/authorize";
+    /// <summary>The web page relying parties send people to; advertised in discovery.</summary>
+    public const string AuthorizePagePath = "/oauth/authorize";
+    /// <summary>The API endpoint the page hops to, under the session cookies' path.</summary>
+    public const string AuthorizePath = "/api/auth/oauth/authorize";
+    public const string ConsentPagePath = "/oauth/consent";
+    public const string ConsentDetailsPath = "/api/auth/oauth/consent";
     public const string TokenPath = "/api/oauth/token";
     public const string UserInfoPath = "/api/oauth/userinfo";
     public const string IntrospectionPath = "/api/oauth/introspect";
     public const string RevocationPath = "/api/oauth/revoke";
     public const string JwksPath = "/api/oauth/jwks";
 
+    /// <summary>The organisation claim (0004): an application can refuse people from organisations it does not serve.</summary>
+    public const string TenantClaim = "tid";
+
+    private const string DecisionParameter = "tv_decision";
+
     public static void MapOidcEndpoints(this IEndpointRouteBuilder app)
     {
-        // Both verbs: the protocol allows an authorization request by GET or
-        // POST, and OpenIddict has already parsed and validated it by the time
-        // this runs (passthrough means "after validation, hand it to me").
-        app.MapMethods(AuthorizePath, ["GET", "POST"], () =>
-                Results.Problem(
-                    title: "Sign-in through applications is not available yet",
-                    detail: "This TatvaOS server publishes its OpenID Connect configuration and keys, but the "
-                          + "sign-in step is not built yet. Registering an application works; signing in "
-                          + "through one does not, until the next release.",
-                    statusCode: StatusCodes.Status501NotImplemented))
+        var tag = "OpenID Connect";
+
+        // Both verbs: GET is how the person arrives, POST is how the consent
+        // page answers. OpenIddict has parsed and validated the request —
+        // client, exact redirect URI, PKCE S256, scopes — before this runs.
+        app.MapMethods(AuthorizePath, ["GET", "POST"], AuthorizeAsync)
             .AllowAnonymous()
-            .WithTags("OpenID Connect");
+            .WithTags(tag);
+
+        app.MapPost(TokenPath, ExchangeAsync)
+            .AllowAnonymous()
+            .WithTags(tag);
+
+        // The access token is the credential: OpenIddict's validation handler
+        // finds the reference token by its hash (the resolver names the
+        // tenant), checks status and expiry, and hands us the principal.
+        app.MapMethods(UserInfoPath, ["GET", "POST"], UserInfoAsync)
+            .RequireAuthorization(new AuthorizeAttribute
+            {
+                AuthenticationSchemes = OpenIddictValidationAspNetCoreDefaults.AuthenticationScheme,
+            })
+            .WithTags(tag);
+
+        // What the consent page shows. A signed-in person's own request, on
+        // their own session, under their own tenant — an application from
+        // another organisation is simply not found.
+        app.MapGet(ConsentDetailsPath, ConsentDetailsAsync)
+            .RequireAuthorization("User")
+            .WithTags(tag);
+    }
+
+    // ==================================================================
+    //  Authorize
+    // ==================================================================
+    private static async Task<IResult> AuthorizeAsync(
+        HttpContext http, AppDbContext db, TenantContext tenant,
+        OpenIddictApplicationManager<OidcApplication> applications,
+        OpenIddictAuthorizationManager<OidcAuthorization> authorizations,
+        IConfiguration config, CancellationToken ct)
+    {
+        var request = http.GetOpenIddictServerRequest()
+            ?? throw new InvalidOperationException("OpenIddict did not attach the authorization request.");
+        var web = WebBase(config);
+
+        // The client store already put this request inside the application's
+        // organisation (TenantSafeStores): from here every read is RLS.
+        var applicationTenant = tenant.TenantId;
+
+        // 1. Who is here — from the active slot's refresh cookie, read but
+        //    NOT rotated: rotation is the refresh endpoint's job, and a peek
+        //    that rotated would sign the person out of the tab they came from.
+        var session = await SessionPeek.ReadAsync(http, db, ct);
+        if (session is null)
+        {
+            if (request.HasPromptValue(PromptValues.None))
+                return Forbid(Errors.LoginRequired, "The person is not signed in.");
+
+            // To sign-in, then back to the WEB page, which re-enters here
+            // same-site. The login page's `next` is a client-side route, so it
+            // must be the page and not this endpoint.
+            var back = AuthorizePagePath + QueryFrom(request);
+            return Results.Redirect(web + "/login?next=" + Uri.EscapeDataString(back));
+        }
+
+        // 2. The person's organisation must be the application's. The cookie
+        //    named the person's tenant through its own resolver; the client
+        //    resolver named the application's; they are compared BEFORE any
+        //    row of the person's is read, so nothing crosses (0004 step 4).
+        if (session.TenantId != applicationTenant)
+            return Forbid(Errors.AccessDenied, "This application belongs to a different organisation.");
+
+        // 3. Liveness — the rule every credential store here applies.
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == session.UserId, ct);
+        var org = user is null ? null : await db.Tenants.FirstOrDefaultAsync(t => t.Id == user.TenantId, ct);
+        if (user is null || user.Status is not "active" || org is null || org.Status is not ("active" or "trial"))
+            return Forbid(Errors.AccessDenied, "This account cannot sign in.");
+        tenant.Set(user.TenantId, user.Id, user.Role);
+
+        var application = await applications.FindByClientIdAsync(request.ClientId!, ct)
+            ?? throw new InvalidOperationException("OpenIddict validated a client the store cannot find.");
+        var applicationId = (await applications.GetIdAsync(application, ct))!;
+        var subject = user.Id.ToString();
+
+        // 4. Consent: remembered per person, application and scope set
+        //    (0004), or skipped when the admin marked the application
+        //    "allowed for everyone", or given just now by the consent page.
+        var existing = new List<OidcAuthorization>();
+        await foreach (var a in authorizations.FindAsync(subject, applicationId, Statuses.Valid,
+                           AuthorizationTypes.Permanent, request.GetScopes(), ct))
+            existing.Add(a);
+
+        var decision = http.Request.Method == "POST" ? (string?)request.GetParameter(DecisionParameter) : null;
+        if (decision == "deny")
+            return Forbid(Errors.AccessDenied, "The person declined.");
+
+        var allowedForEveryone = await applications.GetConsentTypeAsync(application, ct) == ConsentTypes.Implicit;
+        if (existing.Count == 0 && !allowedForEveryone && decision != "allow")
+        {
+            if (request.HasPromptValue(PromptValues.None))
+                return Forbid(Errors.ConsentRequired, "The person has not allowed this application.");
+            return Results.Redirect(web + ConsentPagePath + QueryFrom(request));
+        }
+
+        // 5. The identity the tokens carry. `sub` is the user id, never the
+        //    email (0004). `tid` always; name and email by scope.
+        var identity = NewIdentity(user, request.GetScopes());
+
+        var authorization = existing.LastOrDefault()
+            ?? await authorizations.CreateAsync(identity, subject, applicationId,
+                   AuthorizationTypes.Permanent, identity.GetScopes(), ct);
+        identity.SetAuthorizationId(await authorizations.GetIdAsync(authorization, ct));
+        identity.SetDestinations(Destinations);
+
+        return Results.SignIn(new ClaimsPrincipal(identity),
+            authenticationScheme: OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
+    }
+
+    // ==================================================================
+    //  Token — code and refresh grants (0004 v1 allows nothing else)
+    // ==================================================================
+    private static async Task<IResult> ExchangeAsync(
+        HttpContext http, AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var request = http.GetOpenIddictServerRequest()
+            ?? throw new InvalidOperationException("OpenIddict did not attach the token request.");
+
+        if (!request.IsAuthorizationCodeGrantType() && !request.IsRefreshTokenGrantType())
+            return Forbid(Errors.UnsupportedGrantType, "Only the authorization code and refresh token grants exist here.");
+
+        // The principal OpenIddict restored from the code or refresh token —
+        // already checked for status, expiry, redemption, PKCE and the client.
+        var restored = (await http.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)).Principal
+            ?? throw new InvalidOperationException("OpenIddict validated a grant without a principal.");
+
+        // LIVENESS AGAIN, at every mint. A refresh token lives fourteen days;
+        // a person suspended on day two must be refused on day three (0004
+        // step 8), and the ID token must carry today's name and email, not
+        // the ones from the first sign-in. The client resolver put this
+        // request in the application's tenant; the person's row must be there.
+        if (!Guid.TryParse(restored.GetClaim(Claims.Subject), out var userId)
+            || restored.GetClaim(TenantClaim) != tenant.TenantId.ToString())
+            return Forbid(Errors.InvalidGrant, "The token does not belong to this application's organisation.");
+
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
+        var org = user is null ? null : await db.Tenants.FirstOrDefaultAsync(t => t.Id == user.TenantId, ct);
+        if (user is null || user.Status is not "active" || org is null || org.Status is not ("active" or "trial"))
+            return Forbid(Errors.InvalidGrant, "This account can no longer sign in.");
+
+        // Fresh claims, same scopes and same authorization: the private
+        // claims (scopes, authorization id, presenters) come across with the
+        // restored principal; the person's claims are rewritten from the row.
+        var identity = new ClaimsIdentity(restored.Claims,
+            TokenValidationParameters.DefaultAuthenticationType, Claims.Name, Claims.Role);
+        SetPersonClaims(identity, user);
+        identity.SetDestinations(Destinations);
+
+        return Results.SignIn(new ClaimsPrincipal(identity),
+            authenticationScheme: OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
+    }
+
+    // ==================================================================
+    //  Userinfo
+    // ==================================================================
+    private static async Task<IResult> UserInfoAsync(
+        HttpContext http, AppDbContext db, TenantContext tenant, CancellationToken ct)
+    {
+        var principal = http.User;
+
+        // THE LIVENESS CHECK 0004's red-first run names. The token store's
+        // resolver put us in the token's tenant; the token row names the
+        // application; the application must not be revoked and the person
+        // must still be active. Revoking an application also revokes its
+        // tokens (OidcApplicationEndpoints), so a revoked application's
+        // token is normally refused one layer earlier — this is the check
+        // that holds when that layer does not, and it is the ONLY check that
+        // refuses a suspended person's still-valid access token.
+        if (!Guid.TryParse(principal.GetTokenId(), out var tokenId)
+            || !Guid.TryParse(principal.GetClaim(Claims.Subject), out var userId))
+            return Challenge(Errors.InvalidToken, "The token names no person.");
+
+        var token = await db.OidcTokens.AsNoTracking()
+            .Where(t => t.Id == tokenId)
+            .Select(t => new { t.Application!.RevokedAt, ApplicationId = (Guid?)t.Application.Id })
+            .FirstOrDefaultAsync(ct);
+        if (token is null || token.ApplicationId is null || token.RevokedAt is not null)
+            return Challenge(Errors.InvalidToken, "The application this token was issued to is no longer allowed.");
+
+        var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId, ct);
+        var org = user is null ? null : await db.Tenants.AsNoTracking().FirstOrDefaultAsync(t => t.Id == user.TenantId, ct);
+        if (user is null || user.Status is not "active" || org is null || org.Status is not ("active" or "trial"))
+            return Challenge(Errors.InvalidToken, "This account can no longer sign in.");
+
+        var claims = new Dictionary<string, object>
+        {
+            [Claims.Subject] = user.Id.ToString(),
+            [TenantClaim] = user.TenantId.ToString(),
+        };
+        if (principal.HasScope(Scopes.Profile)) claims[Claims.Name] = user.DisplayName;
+        if (principal.HasScope(Scopes.Email))
+        {
+            claims[Claims.Email] = user.Email;
+            claims[Claims.EmailVerified] = await EmailVerifiedAsync(db, user, ct);
+        }
+        return Results.Ok(claims);
+    }
+
+    // ==================================================================
+    //  Consent details — what the page shows before asking
+    // ==================================================================
+    private static async Task<IResult> ConsentDetailsAsync(
+        string? client_id, string? redirect_uri, string? scope,
+        AppDbContext db, TenantContext tenant,
+        OpenIddictApplicationManager<OidcApplication> applications, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(client_id))
+            return Results.BadRequest(new { error = "client_id is required." });
+
+        // Signed in → the store consults no resolver: another organisation's
+        // application is not found, and says nothing about whether it exists.
+        var application = await applications.FindByClientIdAsync(client_id, ct);
+        if (application is null)
+            return Results.NotFound(new { error = "No such application in your organisation." });
+
+        if (string.IsNullOrWhiteSpace(redirect_uri)
+            || !await applications.ValidateRedirectUriAsync(application, redirect_uri, ct))
+            return Results.BadRequest(new { error = "That return address is not one the application registered." });
+
+        var scopes = (scope ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries).ToImmutableArray();
+        var org = await db.Tenants.AsNoTracking().FirstOrDefaultAsync(t => t.Id == tenant.TenantId, ct);
+
+        // In words, not scope names (0004): the person is told what leaves.
+        var receives = new List<string>();
+        if (scopes.Contains(Scopes.Profile)) receives.Add("your name");
+        if (scopes.Contains(Scopes.Email)) receives.Add("your work email address");
+        receives.Add("which organisation you belong to");
+        var staysSignedIn = scopes.Contains(Scopes.OfflineAccess);
+
+        return Results.Ok(new
+        {
+            name = await applications.GetDisplayNameAsync(application, ct),
+            organisation = org?.Name,
+            returnsTo = new Uri(redirect_uri).Host,
+            receives,
+            staysSignedIn,
+            allowedForEveryone = await applications.GetConsentTypeAsync(application, ct) == ConsentTypes.Implicit,
+        });
+    }
+
+    // ==================================================================
+    //  Helpers
+    // ==================================================================
+    private static ClaimsIdentity NewIdentity(Shared.Data.User user, ImmutableArray<string> scopes)
+    {
+        var identity = new ClaimsIdentity(TokenValidationParameters.DefaultAuthenticationType, Claims.Name, Claims.Role);
+        identity.SetClaim(Claims.Subject, user.Id.ToString());
+        SetPersonClaims(identity, user);
+        identity.SetScopes(scopes);
+        return identity;
+    }
+
+    private static void SetPersonClaims(ClaimsIdentity identity, Shared.Data.User user)
+    {
+        identity.SetClaim(Claims.Name, user.DisplayName);
+        identity.SetClaim(Claims.Email, user.Email);
+        identity.SetClaim(TenantClaim, user.TenantId.ToString());
+    }
+
+    /// <summary>
+    /// Which token each claim goes into. The ID token is what the
+    /// application reads the person from, so it carries name and email only
+    /// when the matching scope was granted; the access token carries them for
+    /// userinfo. Everything else — OpenIddict's own private claims — goes to
+    /// the access token, which is opaque and never leaves this server's stores.
+    /// </summary>
+    private static IEnumerable<string> Destinations(Claim claim)
+    {
+        var identity = claim.Subject!;
+        switch (claim.Type)
+        {
+            case Claims.Subject:
+            case TenantClaim:
+                yield return OpenIddictConstants.Destinations.AccessToken;
+                yield return OpenIddictConstants.Destinations.IdentityToken;
+                yield break;
+            case Claims.Name:
+                yield return OpenIddictConstants.Destinations.AccessToken;
+                if (identity.HasScope(Scopes.Profile)) yield return OpenIddictConstants.Destinations.IdentityToken;
+                yield break;
+            case Claims.Email:
+            case Claims.EmailVerified:
+                yield return OpenIddictConstants.Destinations.AccessToken;
+                if (identity.HasScope(Scopes.Email)) yield return OpenIddictConstants.Destinations.IdentityToken;
+                yield break;
+            default:
+                yield return OpenIddictConstants.Destinations.AccessToken;
+                yield break;
+        }
+    }
+
+    /// <summary>
+    /// A work address is verified when its domain is one the organisation
+    /// proved it owns (core.domains, ownership verified). Never asserted from
+    /// the fact that the person signed in: that proves the password, not the
+    /// mailbox.
+    /// </summary>
+    private static async Task<bool> EmailVerifiedAsync(AppDbContext db, Shared.Data.User user, CancellationToken ct)
+    {
+        var at = user.Email.LastIndexOf('@');
+        if (at < 0) return false;
+        var domain = user.Email[(at + 1)..].ToLowerInvariant();
+        return await db.Domains.AsNoTracking()
+            .AnyAsync(d => d.Fqdn == domain && d.IsActive && d.OwnershipVerifiedAt != null, ct);
+    }
+
+    /// <summary>
+    /// The original request's parameters as a query string, minus the
+    /// decision — so a login or consent detour returns to the same request
+    /// and never carries a decision the person did not just make.
+    /// </summary>
+    private static string QueryFrom(OpenIddictRequest request)
+    {
+        var parts = new List<string>();
+        foreach (var (name, value) in request.GetParameters())
+        {
+            if (name == DecisionParameter) continue;
+            var s = (string?)value;
+            if (s is null) continue;
+            parts.Add(Uri.EscapeDataString(name) + "=" + Uri.EscapeDataString(s));
+        }
+        return parts.Count == 0 ? "" : "?" + string.Join("&", parts);
+    }
+
+    /// <summary>
+    /// Where the web pages live, for the two redirects that leave the API:
+    /// the issuer's origin, which is the web app's too (one host, Caddy in
+    /// front), unless Oidc:WebBaseUrl says otherwise — a laptop running the
+    /// web app on :3000 and the API on another port sets it. Absolute, because
+    /// a relative Location resolves against the API's origin.
+    /// </summary>
+    private static string WebBase(IConfiguration config) =>
+        (config["Oidc:WebBaseUrl"] ?? config["Oidc:Issuer"] ?? "https://core.tatvaos.com").TrimEnd('/');
+
+    private static IResult Forbid(string error, string description) =>
+        Results.Forbid(
+            new AuthenticationProperties(new Dictionary<string, string?>
+            {
+                [OpenIddictServerAspNetCoreConstants.Properties.Error] = error,
+                [OpenIddictServerAspNetCoreConstants.Properties.ErrorDescription] = description,
+            }),
+            [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
+
+    private static IResult Challenge(string error, string description) =>
+        Results.Challenge(
+            new AuthenticationProperties(new Dictionary<string, string?>
+            {
+                [OpenIddictValidationAspNetCoreConstants.Properties.Error] = error,
+                [OpenIddictValidationAspNetCoreConstants.Properties.ErrorDescription] = description,
+            }),
+            [OpenIddictValidationAspNetCoreDefaults.AuthenticationScheme]);
+}
+
+/// <summary>
+/// Reads who is signed in from the browser's session cookies WITHOUT
+/// rotating anything — the peek the authorize endpoint needs. The refresh
+/// endpoint owns rotation; this only answers "which person, which
+/// organisation, still live?" and never writes.
+///
+/// The token's tenant comes from the same SECURITY DEFINER resolver the
+/// refresh endpoint uses, because at this point the request sits in the
+/// APPLICATION's tenant and the person may belong to another one. That is
+/// precisely the case the caller has to detect, so the answer carries the
+/// tenant for the caller to compare and no row of the person's is read here.
+/// </summary>
+public static class SessionPeek
+{
+    public sealed record Session(Guid TenantId, Guid UserId);
+
+    public static async Task<Session?> ReadAsync(HttpContext http, AppDbContext db, CancellationToken ct)
+    {
+        var presented = http.Request.Cookies[AuthEndpoints.RefreshCookie(AuthEndpoints.ActiveSlot(http))];
+        if (string.IsNullOrWhiteSpace(presented))
+            for (var i = 0; i < AuthEndpoints.MaxAccounts && string.IsNullOrWhiteSpace(presented); i++)
+                presented = http.Request.Cookies[AuthEndpoints.RefreshCookie(i)];
+        if (string.IsNullOrWhiteSpace(presented)) return null;
+
+        var conn = db.Database.GetDbConnection();
+        if (conn.State != System.Data.ConnectionState.Open) await conn.OpenAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT tenant_id, user_id, was_revoked FROM core.resolve_refresh_token(@hash)";
+        var p = cmd.CreateParameter(); p.ParameterName = "@hash"; p.Value = TokenIssuer.HashRefreshToken(presented);
+        cmd.Parameters.Add(p);
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        if (!await r.ReadAsync(ct)) return null;
+        if (r.GetBoolean(2)) return null;
+        return new Session(r.GetGuid(0), r.GetGuid(1));
     }
 }

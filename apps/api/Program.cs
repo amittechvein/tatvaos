@@ -119,9 +119,16 @@ builder.Services.AddScoped<AuditWriter>();
 // ---- OpenID Connect provider (decision 0004) — stage 1: the stores -------
 // OpenIddict's core with EF Core storage on our own entities, and the two
 // pre-tenant lookups replaced by tenant-safe stores that consult SECURITY
-// DEFINER resolvers (option (b)). The server half — signing keys, discovery,
-// authorize, token, userinfo — is a later stage; nothing answers on
-// /.well-known yet.
+// DEFINER resolvers (option (b)). The server half follows below: stage 2
+// (keys, discovery, the key set) and stage 3 (authorize, token, userinfo).
+// OPENIDDICT LOGS AT "Warning" AND NOT "Information" (appsettings.json).
+// At Information its dispatcher prints every extracted request and every
+// response. It redacts the code, the tokens and the client secret — and NOT
+// the PKCE code_verifier, which stage 3's log check found in the clear four
+// times on the first run (17 Sept 2026). A verifier without its code opens
+// nothing, but 0004 says verifiers never appear in a log, and a log is read
+// by more people than a database. Do not raise this level to debug a
+// production flow; run the flow on a laptop instead.
 builder.Services.AddOpenIddict()
     .AddCore(o =>
     {
@@ -134,9 +141,8 @@ builder.Services.AddOpenIddict()
     // ---- stage 2: the issuer, its keys, discovery and the key set ---------
     // One issuer for every organisation. Discovery sits at the root, where
     // the standard says; everything else the document advertises lives under
-    // /api/oauth/, which Caddy already routes to the API. No flow and no
-    // protocol endpoint is enabled here yet — stage 3 adds authorize, token
-    // and userinfo; until then the document describes only the key set.
+    // /api/oauth/, which Caddy already routes to the API — except authorize,
+    // whose advertised address is a web page (OidcEndpoints.cs, stage 3).
     .AddServer(o =>
     {
         var issuer = builder.Configuration["Oidc:Issuer"]
@@ -148,8 +154,7 @@ builder.Services.AddOpenIddict()
         // The protocol shape of v1 (0004): authorization code with PKCE S256
         // required for every client, refresh tokens, nothing else. Declared
         // here because OpenIddict refuses to serve even discovery with no
-        // flow enabled; the endpoints that make the flow reachable are
-        // stage 3, and the discovery document advertises only what exists.
+        // flow enabled.
         o.AllowAuthorizationCodeFlow()
          .RequireProofKeyForCodeExchange()
          .AllowRefreshTokenFlow();
@@ -159,10 +164,9 @@ builder.Services.AddOpenIddict()
         o.Configure(options => options.CodeChallengeMethods.Remove(
             OpenIddict.Abstractions.OpenIddictConstants.CodeChallengeMethods.Plain));
 
-        // Where the flow's endpoints live — all under /api/oauth/, which Caddy
-        // already routes to the API. OpenIddict refuses the code flow without
-        // an authorize endpoint, so it is declared now and answers "not yet"
-        // (OidcEndpoints.cs) until stage 3 builds sign-in and consent.
+        // Where the flow's endpoints live — under /api/oauth/, which Caddy
+        // already routes to the API, and authorize under /api/auth/ so the
+        // session cookie reaches it (OidcEndpoints.cs).
         //
         // PINNED TO THE ISSUER. Each endpoint is registered twice: first the
         // absolute URI on the issuer, second the bare path. OpenIddict
@@ -175,7 +179,13 @@ builder.Services.AddOpenIddict()
         // on, so a laptop with no proxy still reaches the endpoints.
         var issuerUri = new Uri(issuer.TrimEnd('/') + "/");
         Uri[] Pinned(string path) => [new Uri(issuerUri, path), new Uri(path, UriKind.Relative)];
-        o.SetAuthorizationEndpointUris(Pinned(OidcEndpoints.AuthorizePath));
+        // Authorize is TWO addresses on purpose (OidcEndpoints.cs): the
+        // advertised one is the web page relying parties send people to, and
+        // the matched one is the API endpoint under /api/auth/ that the page
+        // hops to same-site, so the Strict session cookie arrives.
+        o.SetAuthorizationEndpointUris(
+            new Uri(issuerUri, OidcEndpoints.AuthorizePagePath),
+            new Uri(OidcEndpoints.AuthorizePath, UriKind.Relative));
         o.SetTokenEndpointUris(Pinned(OidcEndpoints.TokenPath));
         o.SetUserInfoEndpointUris(Pinned(OidcEndpoints.UserInfoPath));
         o.SetIntrospectionEndpointUris(Pinned(OidcEndpoints.IntrospectionPath));
@@ -191,6 +201,11 @@ builder.Services.AddOpenIddict()
         o.SetIdentityTokenLifetime(TimeSpan.FromMinutes(5));
         o.SetAccessTokenLifetime(TimeSpan.FromMinutes(10));
         o.SetRefreshTokenLifetime(TimeSpan.FromDays(14));
+        // "A refresh token used twice revokes its whole chain" (0004).
+        // OpenIddict's default forgives a second use within thirty seconds,
+        // for clients that retry a lost response; here the second use is the
+        // signal, as it is for core.refresh_tokens families.
+        o.SetRefreshTokenReuseLeeway(TimeSpan.Zero);
 
         // The keys, from the oidckeys volume and nowhere else. Newest active
         // first: that is the one OpenIddict signs with; the rest — earlier
@@ -205,7 +220,13 @@ builder.Services.AddOpenIddict()
 
         var aspnet = o.UseAspNetCore()
             // Authorize is ours: a person in a browser, sign-in, consent.
-            .EnableAuthorizationEndpointPassthrough();
+            .EnableAuthorizationEndpointPassthrough()
+            // Token and userinfo are ours too, for one reason each: liveness.
+            // A code or refresh token is minted from only after the person's
+            // and the organisation's status are read again; a claim is
+            // answered only after the application's and the person's are.
+            .EnableTokenEndpointPassthrough()
+            .EnableUserInfoEndpointPassthrough();
 
         // OpenIddict refuses anything that is not HTTPS, and it is right to:
         // codes and tokens travel in these requests. On the box Caddy
@@ -216,6 +237,19 @@ builder.Services.AddOpenIddict()
         // process that thinks it is Development.
         if (builder.Environment.IsDevelopment())
             aspnet.DisableTransportSecurityRequirement();
+    })
+    // ---- stage 3: validating our own access tokens at userinfo ---------
+    // The access token is an opaque reference (0004): validation finds its
+    // row by hash — through the token store's resolver, which names the
+    // tenant — and refuses it the moment the row says revoked. Authorization
+    // entries are checked too, so revoking an application's authorizations
+    // refuses every token under them at once, not at expiry.
+    .AddValidation(o =>
+    {
+        o.UseLocalServer();
+        o.UseAspNetCore();
+        o.EnableTokenEntryValidation();
+        o.EnableAuthorizationEntryValidation();
     });
 
 // Where Space's bytes live. Singleton — it holds only the root path; key

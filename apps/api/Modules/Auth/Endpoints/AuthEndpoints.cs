@@ -98,10 +98,10 @@ public static class AuthEndpoints
 
     /// <summary>Slots 0-5. Six is past what anyone juggles; the cap stops
     /// cookie headers growing without bound.</summary>
-    private const int MaxAccounts = 6;
+    internal const int MaxAccounts = 6;
 
-    private const string ActiveCookie = "tv_active";
-    private static string RefreshCookie(int slot) => $"tv_refresh_{slot}";
+    internal const string ActiveCookie = "tv_active";
+    internal static string RefreshCookie(int slot) => $"tv_refresh_{slot}";
     private static string LabelCookie(int slot) => $"tv_label_{slot}";
 
     // ---------------------------------------------------------------------
@@ -201,7 +201,7 @@ public static class AuthEndpoints
         }
     }
 
-    private static int ActiveSlot(HttpContext http) =>
+    internal static int ActiveSlot(HttpContext http) =>
         int.TryParse(http.Request.Cookies[ActiveCookie], out var s)
         && s is >= 0 and < MaxAccounts ? s : 0;
 

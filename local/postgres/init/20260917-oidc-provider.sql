@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS core.oidc_applications (
 );
 -- Client ids are random and platform-wide unique: the resolver finds the
 -- tenant FROM the client id, so two tenants must never share one.
-CREATE UNIQUE INDEX IF NOT EXISTS ix_oidc_applications_client_id ON core.oidc_applications (client_id);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_oidc_applications_client_id ON core.oidc_applications (client_id);
 CREATE INDEX IF NOT EXISTS ix_oidc_applications_tenant
     ON core.oidc_applications (tenant_id) WHERE revoked_at IS NULL;
 COMMENT ON TABLE core.oidc_applications IS
@@ -125,7 +125,7 @@ CREATE TABLE IF NOT EXISTS core.oidc_tokens (
     subject            text,
     type               text
 );
-CREATE UNIQUE INDEX IF NOT EXISTS ix_oidc_tokens_reference_id
+CREATE UNIQUE INDEX IF NOT EXISTS ux_oidc_tokens_reference_id
     ON core.oidc_tokens (reference_id) WHERE reference_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS ix_oidc_tokens_authorization ON core.oidc_tokens (authorization_id);
 CREATE INDEX IF NOT EXISTS ix_oidc_tokens_app_subject
@@ -177,11 +177,11 @@ CREATE POLICY reference_read ON core.oidc_scopes FOR SELECT USING (true);
 -- and is it still live. A revoked application answers as if it did not
 -- exist, so both endpoints say invalid_client from the revoking commit.
 --
--- ONE ROW, BY CONSTRAINT: ix_oidc_applications_client_id above is UNIQUE, so
+-- ONE ROW, BY CONSTRAINT: ux_oidc_applications_client_id above is UNIQUE, so
 -- two tenants can never share a client id and this can never answer with
 -- an arbitrary one of two rows — the day "choose your own client id" is
 -- added to the console, the constraint is already there. Likewise
--- ix_oidc_tokens_reference_id for the resolver below.
+-- ux_oidc_tokens_reference_id for the resolver below.
 --
 -- HOW THE TENANT THEN REACHES THE CONNECTION: the API sets app.tenant_id
 -- with set_config on the open connection, exactly as every signed-in request
