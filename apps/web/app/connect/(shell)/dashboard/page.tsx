@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth';
 import { Button, Card, Spinner } from '@/components/ui/Kit';
 import { Alert, PageHeader } from '@/components/ui/Page';
 import { connectApi, prettyCode, whenLabel, type Meeting } from '@/lib/connect';
+import { mergeById } from '@/lib/meetingLists';
 import { faceOf, toneOf } from '../ConnectSkin';
 
 // ============================================================================
@@ -128,7 +129,10 @@ export default function DashboardPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const live = [...today, ...upcoming].filter((m) => m.status === 'active');
+  // today and upcoming OVERLAP: a meeting scheduled for today that is live
+  // now is in both. Merged by id, or it shows twice and the tile counts 2
+  // (Amit's own meeting, 17 Sept 2026). lib/meetingLists.ts.
+  const live = mergeById(today, upcoming).filter((m) => m.status === 'active');
 
   const soon = upcoming
     .filter((m) => m.status === 'scheduled' && m.scheduledStart !== null)
@@ -141,7 +145,7 @@ export default function DashboardPage() {
 
   // The door open: no waiting room AND guests allowed, on a meeting that has
   // not happened yet. Both halves matter — either alone is a normal choice.
-  const openDoor = [...soon, ...today].filter(
+  const openDoor = mergeById(soon, today).filter(
     (m) => m.waitingRoom === 'off' && m.allowGuests && m.status !== 'ended');
 
   const days = byDay(past);
