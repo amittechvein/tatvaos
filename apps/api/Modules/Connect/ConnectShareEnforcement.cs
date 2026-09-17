@@ -85,7 +85,7 @@ public static class ConnectShareEnforcement
         foreach (var person in present)
         {
             if (person.Identity is not { Length: > 0 } who) continue;
-            var role = roleOf.GetValueOrDefault(who);
+            var role = roleOf.GetValueOrDefault(ConnectCodes.PersonOf(who));
             var sources = single
                 ? ConnectShare.SourcesInSingleMode(meeting.SharePolicy, role,
                     isTheSharer: who == current, someoneIsSharing: current is not null)

@@ -104,7 +104,9 @@ public static class ConnectMinutesEndpoints
 
         // Who this line is attributed to has to be somebody who was actually
         // in this meeting — not a name the caller invented.
-        var identity = (req.Identity ?? "").Trim();
+        // Stored against the PERSON: a line typed on the phone and one typed on
+        // the laptop are the same speaker in the minutes.
+        var identity = ConnectCodes.PersonOf((req.Identity ?? "").Trim());
         if (identity.Length == 0)
             return Results.BadRequest(new { error = "Every chat line needs an identity." });
 

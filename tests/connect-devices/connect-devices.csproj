@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ═══════════════════════════════════════════════════════════════════════
+     ONE PERSON, SEVERAL DEVICES.
+
+     17 Sept 2026: the same account on a phone and a laptop evicted one of
+     them (LiveKit DUPLICATE_IDENTITY), because every token carried
+     `user:{id}`. Tokens now carry `user:{id}#{tag}` per join, rows keep
+     `user:{id}`, and ConnectCodes.PersonOf / Answers decide which is which.
+     Get PersonOf wrong and roles, host controls and attendance stop finding
+     people; get Answers wrong and "remove" leaves someone's other device in
+     the call, or reaches a different person.
+
+     Same choices as tests/connect-share: the production file is LINKED, no
+     test framework (`dotnet run`, read the last line), not in any solution,
+     never published, not in CI (a workflow change goes to the CTO).
+    ═══════════════════════════════════════════════════════════════════════
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TatvaOS.Tests.Devices</RootNamespace>
+    <AssemblyName>connect-devices-test</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The production file itself. Not a copy. -->
+    <Compile Include="../../apps/api/Modules/Connect/ConnectCodes.cs"
+             Link="ConnectCodes.cs" />
+  </ItemGroup>
+
+</Project>
