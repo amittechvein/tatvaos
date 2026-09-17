@@ -34,5 +34,10 @@
     "jest-expo": "~57.0.5",
     "react-test-renderer": "19.2.3",
     "typescript": "~6.0.3"
+  },
+  "pnpm": {
+    "patchedDependencies": {
+      "livekit-client@2.22.3": "patches/livekit-client@2.22.3.patch"
+    }
   }
 }
