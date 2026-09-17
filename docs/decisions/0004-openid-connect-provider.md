@@ -96,7 +96,21 @@ exact string match, no wildcards. Scopes: `openid`, `profile`, `email`,
 
 **Issuer.** One issuer, `https://core.tatvaos.com`, for every organisation.
 One Caddy `handle` sends `/.well-known/openid-configuration` to the API; the
-authorize page is a web page; everything else sits under `/api/oauth/`.
+authorize page is a web page; everything else sits under `/api/oauth/` —
+**except the API half of authorize, which sits under `/api/auth/oauth/`, and
+must stay there** (built in stage 3, approved by the CTO 17 Sept 2026). The
+session cookies are `SameSite=Strict` and scoped to `Path=/api/auth`. The
+customer's application sending a person to authorize is a cross-site
+navigation, and a Strict cookie is never sent on one — so an API endpoint
+reached straight from the application would always see "not signed in".
+The advertised `/oauth/authorize` is therefore the web page, which loads
+with no cookie and makes one same-site hop to `/api/auth/oauth/authorize`,
+where the cookie does arrive. The alternatives were rejected: widening the
+cookie's path would send the refresh cookie to every API route, and
+relaxing it to Lax would open a CSRF surface on every session in the
+product to save one redirect. **Anyone "tidying" the path to `/api/oauth/`
+for consistency will not see a break: identity silently stops arriving at
+authorize, and it presents as an intermittent sign-in bug.**
 
 **Claims.** `sub` is the person's user id — never the email, which changes.
 Also `email`, `email_verified`, `name`, and `tid`, the organisation id, so

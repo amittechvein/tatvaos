@@ -442,6 +442,16 @@ public static class OidcEndpoints
 /// APPLICATION's tenant and the person may belong to another one. That is
 /// precisely the case the caller has to detect, so the answer carries the
 /// tenant for the caller to compare and no row of the person's is read here.
+///
+/// THE SAME VALIDATION AS SIGN-IN, minus the rotation (CTO's question, 17 Sept
+/// 2026): the cookie is hashed, never decoded or trusted; the resolver is the
+/// one the refresh endpoint uses and its SQL answers only a token whose
+/// expires_at is in the future; a revoked token — its own revocation or its
+/// family's, since a reuse kills every token of the family — answers "not
+/// signed in"; and the caller then checks the tenant, the person's status
+/// and the organisation's before anything is issued. What a peek does NOT do
+/// is kill the family when it meets a revoked token: that is the refresh
+/// endpoint's job, and the next refresh in that browser does it.
 /// </summary>
 public static class SessionPeek
 {
