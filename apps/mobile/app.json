@@ -6,10 +6,6 @@
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "scheme": "tatvaos",
-    "splash": {
-      "backgroundColor": "#6C3CE9",
-      "resizeMode": "contain"
-    },
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.techvein.tatvaos",
@@ -37,6 +33,14 @@
       "expo-asset",
       "expo-font",
       "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#6C3CE9",
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 96
+        }
+      ],
       [
         "@livekit/react-native-expo-plugin",
         {
