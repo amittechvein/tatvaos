@@ -81,3 +81,6 @@ npm-debug.log*
 # (Claude outputs/mobile.tgz, tatvaos-bundle.bundle). Nothing in the build reads them.
 Claude outputs/
 *.bundle
+
+# Scratch space for tests that must give a Windows process a real path (tests/oidc)
+.tmp/

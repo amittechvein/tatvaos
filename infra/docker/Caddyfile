@@ -56,6 +56,14 @@
         reverse_proxy api:8080
     }
 
+    # OpenID Connect discovery (decision 0004). The standard puts it at the
+    # root of the issuer, so this is the one path outside /api/* the API
+    # answers on core. The document itself points every other endpoint at
+    # /api/oauth/…, which the /api/* handle above already routes.
+    handle /.well-known/openid-configuration {
+        reverse_proxy api:8080
+    }
+
     handle {
         reverse_proxy web:3000
     }

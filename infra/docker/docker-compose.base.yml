@@ -173,6 +173,12 @@ services:
       postgres: { condition: service_healthy }
     volumes:
       - dkimkeys:/dkim
+      # The OpenID Connect provider's RSA keys (decision 0004). Mounted into
+      # the API ONLY, writable because the API generates and rotates them —
+      # the dkimkeys pattern. Deliberately NOT in backup.sh: a lost key is
+      # replaced by generating a new one and relying parties pick it up from
+      # the published key set; a backed-up key is one more copy to steal.
+      - oidckeys:/oidc
       # READ-ONLY. The ingest worker indexes what Dovecot delivered into
       # mail.messages; it must never be able to write the maildir — one
       # writer per store, and Dovecot is the maildir's.
@@ -208,6 +214,10 @@ services:
       # Where DKIM private keys are written for OpenDKIM to read. The API is
       # the only writer; the signer mounts the same volume read-only.
       Dkim__KeyDirectory: /dkim
+      # OpenID Connect provider (decision 0004): where the keys are, and the
+      # one issuer URL every relying party will store permanently.
+      Oidc__KeyDirectory: /oidc
+      Oidc__Issuer: https://${SITE_DOMAIN}
       # Where Space writes file bytes — the volume above. The database holds
       # opaque blob keys only; see apps/api/Modules/Space/BlobStore.cs.
       Space__BlobRoot: /var/lib/space/blobs
@@ -627,6 +637,8 @@ volumes:
   # limits. Read-only in both mail containers.
   mailcerts:
   dkimkeys:
+  # The provider's signing keys. Not backed up, on purpose — see the api mount.
+  oidckeys:
   connectrec:
   spaceblobs:
   pgdata:
