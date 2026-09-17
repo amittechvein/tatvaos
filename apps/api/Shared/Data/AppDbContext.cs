@@ -264,6 +264,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>().ToTable("meeting_notes", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingChat>().ToTable("meeting_chat", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingBlock>().ToTable("meeting_blocks", "connect");
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingInvitation>().ToTable("meeting_invitations", "connect");
 
         // Recording sharing. Mapped but given no DbSet property: every caller
         // is in ConnectShareEndpoints and reaches them through db.Set<T>(),

@@ -13,6 +13,7 @@ import {
 } from '@/lib/connect';
 import { meetingInvitation } from '@/lib/meetingInvitation';
 import Recordings from './Recordings';
+import Invitations from './Invitations';
 import { SumRow, faceOf, toneOf } from '../../ConnectSkin';
 
 // ============================================================================
@@ -797,6 +798,10 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
               <SumRow k="Password" v={meeting.hasPassword ? 'Required' : 'None'} />
             </ul>
           </Card>
+
+          {isHost && (
+            <Invitations meetingId={meeting.id} over={over} allowGuests={meeting.allowGuests} />
+          )}
 
           {isHost && !over && (
             <Card title="Organiser" className="mt-4">

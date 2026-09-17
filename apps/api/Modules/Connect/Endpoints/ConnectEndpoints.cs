@@ -77,6 +77,10 @@ public static class ConnectEndpoints
         g.MapPost("/meetings/{id:guid}/reopen", ReopenAsync);
         g.MapGet("/meetings/{id:guid}/blocks", ListBlocksAsync);
         g.MapDelete("/meetings/{id:guid}/blocks/{blockId:guid}", UnblockAsync);
+
+        // Email invitations (17 Sept 2026). In their own file; mapped here so
+        // Program.cs, a shared registry, does not change.
+        ConnectInvitationEndpoints.Map(g);
     }
 
     // ==================================================================
@@ -109,11 +113,15 @@ public static class ConnectEndpoints
 
     private const string PublicBase = "https://connect.tatvaos.com";
 
+    /// <summary>The join link, the same one Shape returns: invitations must
+    /// carry exactly what the meeting page shows.</summary>
+    internal static string JoinUrlOf(ConnectMeeting m) => $"{PublicBase}/connect/room/{m.Code}";
+
     private static object Shape(ConnectMeeting m, string? myRole) => new
     {
         m.Id,
         m.Code,
-        joinUrl = $"{PublicBase}/connect/room/{m.Code}",
+        joinUrl = JoinUrlOf(m),
         m.Title,
         m.Kind,
         m.Status,
@@ -478,7 +486,8 @@ public static class ConnectEndpoints
     private static async Task<IResult> UpdateMeetingAsync(
         Guid id, UpdateMeetingRequest req, AppDbContext db, TenantContext tenant,
         IPasswordHasher hasher, LiveKitRoomClient rooms, AuditWriter audit,
-        ILogger<LiveKitRoomClient> log, CancellationToken ct)
+        ILogger<LiveKitRoomClient> log, IConfiguration config,
+        TatvaOS.Api.Modules.Family.ContactAutoSave autoSave, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
         var meeting = await FindAsync(db, id, ct);
@@ -488,6 +497,11 @@ public static class ConnectEndpoints
         if (role is not ("host" or "cohost")) return Forbidden();
         if (meeting.Status is "ended" or "cancelled")
             return Results.Conflict(new { error = "That meeting is over." });
+
+        // What an emailed calendar invitation holds. If any of it changes, the
+        // people invited must get the replacement, or their calendar keeps the
+        // old time and they turn up to an empty room.
+        var calendarBefore = (meeting.Title, meeting.ScheduledStart, meeting.ScheduledEnd);
 
         if (req.Title is { } t)
         {
@@ -689,11 +703,17 @@ public static class ConnectEndpoints
                 ct: ct, productCode: "connect");
         }
 
+        if ((meeting.Title, meeting.ScheduledStart, meeting.ScheduledEnd) != calendarBefore)
+            await ConnectInvitationMailer.ReissueAsync(meeting, TatvaOS.Api.Modules.Calendar.Imip.MethodRequest,
+                db, tenant, config, log, autoSave, audit, ct);
+
         return Results.Ok(Shape(meeting, role));
     }
 
     private static async Task<IResult> CancelMeetingAsync(
-        Guid id, AppDbContext db, TenantContext tenant, AuditWriter audit, CancellationToken ct)
+        Guid id, AppDbContext db, TenantContext tenant, AuditWriter audit,
+        IConfiguration config, TatvaOS.Api.Modules.Family.ContactAutoSave autoSave,
+        ILogger<LiveKitRoomClient> log, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
         var meeting = await FindAsync(db, id, ct);
@@ -711,6 +731,10 @@ public static class ConnectEndpoints
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("connect.meeting.cancelled", "connect.meeting", meeting.Id.ToString(),
             ct: ct, productCode: "connect");
+        // Take it out of the calendars it was sent to. After the save: the
+        // cancellation stands whether or not the mail goes.
+        await ConnectInvitationMailer.ReissueAsync(meeting, TatvaOS.Api.Modules.Calendar.Imip.MethodCancel,
+            db, tenant, config, log, autoSave, audit, ct);
         return Results.NoContent();
     }
 

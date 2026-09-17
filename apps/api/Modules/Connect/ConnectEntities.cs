@@ -101,6 +101,11 @@ public sealed class ConnectMeeting
     /// <summary>Reserved for Phase 2's Calendar toggle; unused in Phase 1.</summary>
     public Guid? CalendarEventId { get; set; }
 
+    /// <summary>RFC 5545 SEQUENCE of this meeting's email invitation. Bumped
+    /// when a sent invitation is replaced (moved, renamed) or withdrawn
+    /// (cancelled); a receiver ignores a same-SEQUENCE resend as a duplicate.</summary>
+    public int InviteSequence { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 
@@ -332,4 +337,23 @@ public sealed class ConnectMeetingEvent
 
     public string? Payload { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+}
+
+/// <summary>
+/// One person invited to a meeting by email (20260917-b-connect-meeting-invitations.sql).
+/// <see cref="Status"/> is what the mail submission ANSWERED — pending until
+/// it is tried, never written as 'sent' in advance.
+/// </summary>
+public sealed class ConnectMeetingInvitation
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid MeetingId { get; set; }
+    public string Email { get; set; } = "";
+    public Guid? InvitedByUserId { get; set; }
+    public string Status { get; set; } = "pending"; // ConnectInvitations.StatusPending; a literal so tests linking only this file still compile
+    public string? Note { get; set; }
+    public int? SequenceSent { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? LastSentAt { get; set; }
 }

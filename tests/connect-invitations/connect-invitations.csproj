@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ═══════════════════════════════════════════════════════════════════════
+     MEETING EMAIL INVITATIONS — the pure rules.
+
+     17 Sept 2026, Amit: "Invite on the meeting". ConnectInvitations decides
+     which typed addresses are acceptable, what calendar file each person gets
+     (built by Calendar's own Imip.Build) and what the email says. Get the
+     parser wrong and a typo goes nowhere silently; get the calendar wrong and
+     the meeting lands at the wrong hour, or a reschedule is ignored as a
+     duplicate; get the body wrong and it prints a UTC clock with an IST label.
+
+     The sending half (ConnectInvitationMailer: mailbox lookup, MailSender,
+     status rows) needs Postgres and Postfix and is NOT tested here; the
+     production proof is a real invitation arriving in a real calendar.
+
+     Same choices as tests/connect-share and tests/calendar-imip: production
+     files LINKED, not copied; no test framework (`dotnet run`, read the last
+     line); not in any solution; not in CI (a workflow change goes to the CTO).
+    ═══════════════════════════════════════════════════════════════════════
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TatvaOS.Tests.Invitations</RootNamespace>
+    <AssemblyName>connect-invitations-test</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- ImipStructure.cs needs it. Pinned to the API's version, as calendar-imip does. -->
+    <PackageReference Include="MimeKit" Version="4.17.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The production files themselves. Not copies. -->
+    <Compile Include="../../apps/api/Modules/Connect/ConnectInvitations.cs" Link="ConnectInvitations.cs" />
+    <Compile Include="../../apps/api/Modules/Connect/ConnectEntities.cs" Link="ConnectEntities.cs" />
+    <Compile Include="../../apps/api/Modules/Calendar/Imip.cs" Link="Imip.cs" />
+    <Compile Include="../../apps/api/Modules/Calendar/ImipStructure.cs" Link="ImipStructure.cs" />
+    <Compile Include="../../apps/api/Shared/Data/CalendarEntities.cs" Link="CalendarEntities.cs" />
+  </ItemGroup>
+
+</Project>

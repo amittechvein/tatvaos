@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { Button, Card } from '@/components/ui/Kit';
-import { Input } from '@/components/ui/Form';
+import { Input, Textarea } from '@/components/ui/Form';
 import { Alert, PageHeader } from '@/components/ui/Page';
 import {
   connectApi, PRIVATE_BLURB, RECORDED_BLURB,
@@ -107,6 +107,7 @@ export default function NewMeetingPage() {
   const [sharePolicy, setSharePolicy] = useState<SharePolicy>('everyone');
   const [shareMode, setShareMode] = useState<ShareMode>('multiple');
   const [chatPolicy, setChatPolicy] = useState<ChatPolicy>('everyone');
+  const [invitees, setInvitees] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -149,7 +150,25 @@ export default function NewMeetingPage() {
         chatPolicy,
         mode,
       });
-      router.push(`/connect/meetings/${m.id}`);
+      // Invitations AFTER the meeting exists, as a second call: the meeting is
+      // the thing that must not be lost, and the meeting page lists every
+      // invitation with whether it actually went. A failure here is carried
+      // to that page as a sentence rather than swallowed.
+      let inviteProblem: string | null = null;
+      if (invitees.trim().length > 0) {
+        try {
+          const out = await connectApi.invite(authedFetch, m.id, [invitees]);
+          const parts: string[] = [];
+          if (out.invalid.length > 0) parts.push(`Not sent — not an email address: ${out.invalid.join(', ')}.`);
+          if (out.note) parts.push(out.note);
+          if (out.warning) parts.push(out.warning);
+          inviteProblem = parts.length > 0 ? parts.join(' ') : null;
+        } catch (err) {
+          inviteProblem = err instanceof Error ? err.message : 'The invitations could not be sent.';
+        }
+      }
+      router.push(`/connect/meetings/${m.id}`
+        + (inviteProblem ? `?invite_problem=${encodeURIComponent(inviteProblem)}` : ''));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create the meeting.');
       setSaving(false);
@@ -309,9 +328,21 @@ export default function NewMeetingPage() {
                        autoComplete="off" spellCheck={false} />
               </Field>
 
+              <Field label="Invite by email" htmlFor="invitees"
+                     hint="Optional. Separate addresses with commas or new lines."
+                     why={'Each person gets their own email with the link, and a calendar '
+                       + 'invitation that adds the meeting to Gmail or Outlook. It is sent from '
+                       + 'your TatvaOS mailbox, so replies come to you. Nobody sees who else '
+                       + 'was invited. You can invite more people from the meeting page.'}>
+                <Textarea id="invitees" rows={3} value={invitees}
+                          onChange={(e) => setInvitees(e.target.value)}
+                          placeholder="ravi@example.com, priya@example.com"
+                          autoComplete="off" spellCheck={false} />
+              </Field>
+
               <div className="flex gap-2">
                 <Button variant="primary" type="submit" disabled={saving}>
-                  {saving ? 'Creating…' : 'Create meeting'}
+                  {saving ? (invitees.trim() ? 'Creating and inviting…' : 'Creating…') : 'Create meeting'}
                 </Button>
                 <Button href="/connect">Cancel</Button>
               </div>
