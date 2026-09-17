@@ -231,6 +231,55 @@ with no error naming memory. Check `(Get-CimInstance
 Win32_OperatingSystem).FreeVirtualMemory` before blaming your change. The
 durable fix is Windows' page file set to system-managed, which is Amit's to do.*
 
+**10. The RELEASE build (the APK that goes on a real phone) will not build from
+the lane folder on Windows.** 16–17 September 2026. Each attempt below failed
+for a different reason, in this order, and cost about an hour apiece:
+
+| Tried | What broke |
+|---|---|
+| `tatvaos-mobile/apps/mobile` as is | ninja: *"Filename longer than 260 characters"*. CMake names an object built from a source outside the project after that source's whole path (263 characters on its own). |
+| `CMAKE_OBJECT_PATH_MAX=128` | *"cannot be safely placed"*: the limit was shorter than the object directory itself. |
+| A `subst` drive letter over the folder | Expo cannot find `package.json` at a drive root, and Gradle cannot relativise paths across drives through `node_modules`, which in `tatvaos-mobile` is a **junction into `tatvaOS`**. |
+| Default Metro and Gradle settings | Metro ran out of memory bundling. Then lint ran out of Metaspace. |
+
+**What works:**
+
+1. **A short, real checkout with its own `node_modules`:**
+   `git -C tatvaOS worktree add --detach C:\Users\amitd\tvb origin/main`,
+   then in `tvb\apps\mobile` run
+   `corepack pnpm@9.15.0 install --ignore-workspace --frozen-lockfile`.
+   Check that `node_modules` is a real directory, not a link.
+2. **`expo prebuild --platform android --no-install`.** `plugins/withShortNativeObjectPaths.js`
+   (PR #133) sets `CMAKE_OBJECT_PATH_MAX=240`. That is long enough for the
+   object directory and short enough that directory + hash + name fits 260.
+   It is **not** enough from a deep folder, which is why step 1 comes first.
+3. **Add `extraPackagerArgs = ["--max-workers", "1"]` by hand** inside
+   `react { … }` in `android/app/build.gradle`. It is not committed: it only
+   matters on this laptop. **`prebuild` regenerates the file and silently
+   removes it** (17 Sept), so check for it after every prebuild.
+4. **Build:**
+   `gradlew assembleRelease -x lintVitalAnalyzeRelease -x lintVitalRelease -x lintVitalReportRelease -PreactNativeArchitectures=arm64-v8a --no-parallel --max-workers=1 "-Dorg.gradle.jvmargs=-Xmx1536m -XX:MaxMetaspaceSize=768m" "-Pkotlin.compiler.execution.strategy=in-process"`.
+   The first build takes 25–40 minutes; later ones take 2–5.
+5. **Prove the APK is the one you meant.** Trap 7 applies twice over here:
+   check the APK's timestamp, then
+   `unzip -p app-release.apk assets/index.android.bundle | grep -a -c '<a string only the new code has>'`.
+   **Hermes stores any string containing a non-ASCII character (an em dash,
+   say) as UTF-16**, so a grep for such a string finds nothing even when it
+   is there. Pick an ASCII-only string.
+6. **Install to the right user:** `adb install --user 0 -r app-release.apk`.
+   The Samsung has a Dual App profile (user 95). An install that landed there
+   ran with no permissions granted and looked like a permissions bug.
+
+**Keeping `tvb` current:** copy files from a commit with
+`git show <sha>:path > path`, and after every copy compare md5s **and** check
+the file is not empty. On 16 Sept a `git show` of a commit that had not been
+fetched failed, wrote empty files, and "empty md5 == empty md5" passed. Or,
+when nothing local matters, `git checkout -f --detach origin/main` in `tvb`
+(its `android/` is gitignored and survives). A change to `package.json` or
+`patches/` needs `pnpm install --ignore-workspace` in `tvb` too:
+`tatvaos-mobile`'s junctioned `node_modules` is **not** patched, so
+`__checks__/livekitOfferRace.check.js` fails there by design. Run jest in `tvb`.
+
 ---
 
 ## 4. Two bugs I fixed that tell you what this codebase's failures look like
