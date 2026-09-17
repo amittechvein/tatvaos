@@ -58,6 +58,8 @@ public static class OidcEndpoints
     public const string AuthorizePath = "/api/auth/oauth/authorize";
     public const string ConsentPagePath = "/oauth/consent";
     public const string ConsentDetailsPath = "/api/auth/oauth/consent";
+    /// <summary>The person's own list of applications they have allowed, with Remove (0004: "listed on the person's account page with a Remove button").</summary>
+    public const string ConsentsPath = "/api/auth/oauth/consents";
     public const string TokenPath = "/api/oauth/token";
     public const string UserInfoPath = "/api/oauth/userinfo";
     public const string IntrospectionPath = "/api/oauth/introspect";
@@ -98,6 +100,15 @@ public static class OidcEndpoints
         // their own session, under their own tenant — an application from
         // another organisation is simply not found.
         app.MapGet(ConsentDetailsPath, ConsentDetailsAsync)
+            .RequireAuthorization("User")
+            .WithTags(tag);
+
+        // Stage 4: what the person has allowed, and taking it back. Their
+        // own rows only — the subject is the signed-in user id, under RLS.
+        app.MapGet(ConsentsPath, ListConsentsAsync)
+            .RequireAuthorization("User")
+            .WithTags(tag);
+        app.MapDelete(ConsentsPath + "/{id:guid}", RemoveConsentAsync)
             .RequireAuthorization("User")
             .WithTags(tag);
     }
@@ -314,11 +325,7 @@ public static class OidcEndpoints
         var scopes = (scope ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries).ToImmutableArray();
         var org = await db.Tenants.AsNoTracking().FirstOrDefaultAsync(t => t.Id == tenant.TenantId, ct);
 
-        // In words, not scope names (0004): the person is told what leaves.
-        var receives = new List<string>();
-        if (scopes.Contains(Scopes.Profile)) receives.Add("your name");
-        if (scopes.Contains(Scopes.Email)) receives.Add("your work email address");
-        receives.Add("which organisation you belong to");
+        var receives = ReceivesInWords(scopes);
         var staysSignedIn = scopes.Contains(Scopes.OfflineAccess);
 
         return Results.Ok(new
@@ -333,8 +340,91 @@ public static class OidcEndpoints
     }
 
     // ==================================================================
+    //  Consents — the person's own list, and Remove (stage 4)
+    // ==================================================================
+    private static async Task<IResult> ListConsentsAsync(
+        AppDbContext db, TenantContext tenant,
+        OpenIddictAuthorizationManager<OidcAuthorization> authorizations, CancellationToken ct)
+    {
+        var subject = tenant.UserId!.Value.ToString();
+        var rows = await db.OidcAuthorizations.AsNoTracking()
+            .Include(a => a.Application)
+            .Where(a => a.Subject == subject
+                        && a.Status == Statuses.Valid
+                        && a.Type == AuthorizationTypes.Permanent
+                        && a.Application != null && a.Application.RevokedAt == null)
+            .OrderByDescending(a => a.CreationDate)
+            .ToListAsync(ct);
+
+        var list = new List<object>(rows.Count);
+        foreach (var a in rows)
+        {
+            var scopes = await authorizations.GetScopesAsync(a, ct);
+            list.Add(new
+            {
+                a.Id,
+                application = a.Application!.DisplayName,
+                clientId = a.Application.ClientId,
+                receives = ReceivesInWords(scopes),
+                staysSignedIn = scopes.Contains(Scopes.OfflineAccess),
+                grantedAt = a.CreationDate,
+            });
+        }
+        return Results.Ok(list);
+    }
+
+    /// <summary>
+    /// Remove: the authorization is revoked and every token under it with
+    /// it, so the application's refresh token stops at its next use and its
+    /// access token at its next call — the same posture as revoking the
+    /// application, scoped to one person. The next sign-in through that
+    /// application asks again. What this cannot do is the same as always:
+    /// recall an ID token already delivered, or end the application's own
+    /// session.
+    /// </summary>
+    private static async Task<IResult> RemoveConsentAsync(
+        Guid id, AppDbContext db, TenantContext tenant,
+        OpenIddictAuthorizationManager<OidcAuthorization> authorizations,
+        OpenIddictTokenManager<OidcToken> tokens, AuditWriter audit, CancellationToken ct)
+    {
+        var subject = tenant.UserId!.Value.ToString();
+        // The subject is part of the lookup: another person's consent, even
+        // one in the same organisation, is not found rather than refused.
+        var a = await db.OidcAuthorizations.Include(x => x.Application)
+            .FirstOrDefaultAsync(x => x.Id == id && x.Subject == subject, ct);
+        if (a is null) return Results.NotFound(new { error = "No such consent." });
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await authorizations.TryRevokeAsync(a, ct);
+        var revokedTokens = 0;
+        await foreach (var t in tokens.FindByAuthorizationIdAsync(id.ToString(), ct))
+            if (await tokens.TryRevokeAsync(t, ct)) revokedTokens++;
+        await tx.CommitAsync(ct);
+
+        await audit.WriteAsync("oidc.consent_removed", "oidc_authorization", id.ToString(),
+            after: new { clientId = a.Application?.ClientId, application = a.Application?.DisplayName, revokedTokens }, ct: ct);
+
+        return Results.Ok(new
+        {
+            id,
+            revokedTokens,
+            note = "The application can no longer act for you from now. If you are still signed in to it, that session is its own until it signs you out.",
+        });
+    }
+
+    // ==================================================================
     //  Helpers
     // ==================================================================
+    /// <summary>In words, not scope names (0004): the person is told what leaves.</summary>
+    private static List<string> ReceivesInWords(ImmutableArray<string> scopes)
+    {
+        var receives = new List<string>();
+        if (scopes.Contains(Scopes.Profile)) receives.Add("your name");
+        if (scopes.Contains(Scopes.Email)) receives.Add("your work email address");
+        receives.Add("which organisation you belong to");
+        return receives;
+    }
+
     private static ClaimsIdentity NewIdentity(Shared.Data.User user, ImmutableArray<string> scopes)
     {
         var identity = new ClaimsIdentity(TokenValidationParameters.DefaultAuthenticationType, Claims.Name, Claims.Role);

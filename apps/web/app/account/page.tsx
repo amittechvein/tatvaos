@@ -454,6 +454,7 @@ function AccountHub() {
                     {sessions.length} active session{sessions.length === 1 ? '' : 's'}.
                   </p>
                 </Card>
+                <ConsentsCard />
               </div>
             )}
 
@@ -593,6 +594,79 @@ function InfoRow({ label, value, capitalize, last }: {
 //
 //  The typed key stays below it. Cameras fail, desktop authenticators have no
 //  camera at all, and a scan-only flow strands those people.
+
+/**
+ * The applications this person has allowed to sign them in (decision 0004,
+ * stage 4): listed with what each receives, and a Remove that revokes the
+ * consent and every token under it. The next sign-in through that
+ * application asks again. Its own fetch, so the rest of the page does not
+ * wait on it.
+ */
+function ConsentsCard() {
+  const { authedFetch } = useAuth();
+  const [rows, setRows] = useState<ConsentRow[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await authedFetch('/auth/oauth/consents');
+      if (!r.ok) throw new Error('Could not load your connected applications.');
+      setRows((await r.json()) as ConsentRow[]);
+    } catch (e) { setErr((e as Error).message); setRows([]); }
+  }, [authedFetch]);
+  useEffect(() => { void load(); }, [load]);
+
+  const remove = async (c: ConsentRow) => {
+    setBusy(c.id); setErr(null);
+    try {
+      const r = await authedFetch(`/auth/oauth/consents/${c.id}`, { method: 'DELETE' });
+      if (!r.ok) throw new Error((await r.json().catch(() => null))?.error ?? 'Could not remove it.');
+      setNote(`${c.application} can no longer act for you. If you are still signed in to it, that session is its own until it signs you out.`);
+      await load();
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(null); }
+  };
+
+  return (
+    <Card title="Connected applications"
+          subtitle="Other software you have allowed to sign you in with your TatvaOS account">
+      {err && <p className="text-[0.875rem] text-danger">{err}</p>}
+      {note && <p className="text-[0.875rem] text-ink-muted">{note}</p>}
+      {rows === null ? (
+        <Spinner />
+      ) : rows.length === 0 ? (
+        <p className="text-[0.875rem] text-ink-muted mb-0">None yet. When an application of your organisation asks to sign you in and you allow it, it appears here.</p>
+      ) : (
+        <ul className="m-0 list-none p-0 divide-y divide-line">
+          {rows.map((c) => (
+            <li key={c.id} className="flex items-start justify-between gap-4 py-3 first:pt-0 last:pb-0">
+              <div>
+                <div className="font-semibold">{c.application}</div>
+                <div className="text-[0.75rem] text-ink-muted">
+                  Receives {c.receives.join(', ')}{c.staysSignedIn ? '; can stay signed in without asking again' : ''}.
+                  {' '}Allowed {new Date(c.grantedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}.
+                </div>
+              </div>
+              <Button variant="ghost" disabled={busy === c.id} onClick={() => void remove(c)}>
+                <span className="text-danger">{busy === c.id ? 'Removing…' : 'Remove'}</span>
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+interface ConsentRow {
+  id: string;
+  application: string;
+  clientId: string;
+  receives: string[];
+  staysSignedIn: boolean;
+  grantedAt: string;
+}
 
 function MfaCard() {
   const { authedFetch } = useAuth();

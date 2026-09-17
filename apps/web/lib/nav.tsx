@@ -187,6 +187,10 @@ export function organisationNav(): NavSection[] {
         // Shared mailboxes because that is where its sender addresses come
         // from — the two screens link to each other.
         { href: '/org/api-keys', label: 'API keys', icon: <Icon d={PATHS.key} /> },
+        // The other direction: the organisation's own software signing people
+        // in WITH TatvaOS (decision 0004). Beside API keys because both are
+        // "our software, their credential" screens for the same admin.
+        { href: '/org/applications', label: 'Applications', icon: <Icon d={PATHS.key} /> },
         { href: '/org/storage', label: 'Storage', icon: <Icon d={PATHS.database} /> },
         // Org-wide policy over what leaves by link. One switch today (Space's
         // public links); Connect's recording-retention choice lands here next,
