@@ -138,6 +138,11 @@ backup_volume tatvaos_spaceblobs spaceblobs
 step "Mail store"
 backup_volume tatvaos_vmail vmail
 
+# NOT here, on purpose: tatvaos_oidckeys, the OpenID Connect provider's RSA
+# keys (decision 0004). A lost signing key is replaced by generating a new one
+# and relying parties fetch it from the published key set; a backed-up copy
+# is one more place the key that signs everyone's sign-in could be taken
+# from. If you are adding a volume below and it is this one, stop.
 step "DKIM keys"
 # Small, and losing them means re-publishing DNS for every customer domain.
 backup_volume tatvaos_dkimkeys dkimkeys

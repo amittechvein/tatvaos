@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.HttpOverrides;
 using System.Text;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -26,6 +27,23 @@ using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Tenancy;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// ---------------------------------------------------------------------------
+//  `TatvaOS.Api --oidc-rotate` — the key-rotation runbook's one step. Runs in
+//  the API container against the same key directory, generates a new signing
+//  key, marks the previous one retired (still published for a day), prints
+//  the two kids and exits. Nothing private is printed. Restart the API after.
+//  docs/runbooks/oidc-key-rotation.md.
+// ---------------------------------------------------------------------------
+var oidcKeyDirectory = builder.Configuration["Oidc:KeyDirectory"] ?? "/oidc";
+if (args.Contains("--oidc-rotate"))
+{
+    var (newKid, retiredKid) = TatvaOS.Api.Shared.Auth.Oidc.OidcKeyRing.Rotate(oidcKeyDirectory);
+    Console.WriteLine($"oidc: new signing key {newKid} is active; " +
+                      (retiredKid is null ? "no previous key to retire." : $"{retiredKid} retired, published for one more day."));
+    Console.WriteLine("Restart the API for the change to take effect.");
+    return;
+}
 
 // ---------------------------------------------------------------------------
 //  Tenancy — registered first because everything below depends on it
@@ -112,6 +130,92 @@ builder.Services.AddOpenIddict()
          .ReplaceDefaultEntities<OidcApplication, OidcAuthorization, OidcScope, OidcToken, Guid>();
         o.ReplaceApplicationStore<OidcApplication, TenantSafeApplicationStore>();
         o.ReplaceTokenStore<OidcToken, TenantSafeTokenStore>();
+    })
+    // ---- stage 2: the issuer, its keys, discovery and the key set ---------
+    // One issuer for every organisation. Discovery sits at the root, where
+    // the standard says; everything else the document advertises lives under
+    // /api/oauth/, which Caddy already routes to the API. No flow and no
+    // protocol endpoint is enabled here yet — stage 3 adds authorize, token
+    // and userinfo; until then the document describes only the key set.
+    .AddServer(o =>
+    {
+        var issuer = builder.Configuration["Oidc:Issuer"]
+                     ?? builder.Configuration["Jwt:Issuer"]
+                     ?? "https://core.tatvaos.com";
+        o.SetIssuer(new Uri(issuer.TrimEnd('/') + "/"));
+        o.SetConfigurationEndpointUris("/.well-known/openid-configuration");
+
+        // The protocol shape of v1 (0004): authorization code with PKCE S256
+        // required for every client, refresh tokens, nothing else. Declared
+        // here because OpenIddict refuses to serve even discovery with no
+        // flow enabled; the endpoints that make the flow reachable are
+        // stage 3, and the discovery document advertises only what exists.
+        o.AllowAuthorizationCodeFlow()
+         .RequireProofKeyForCodeExchange()
+         .AllowRefreshTokenFlow();
+        o.RegisterScopes("openid", "profile", "email", "offline_access");
+        // S256 only. OpenIddict also offers "plain" by default, which sends
+        // the verifier itself as the challenge and protects nothing.
+        o.Configure(options => options.CodeChallengeMethods.Remove(
+            OpenIddict.Abstractions.OpenIddictConstants.CodeChallengeMethods.Plain));
+
+        // Where the flow's endpoints live — all under /api/oauth/, which Caddy
+        // already routes to the API. OpenIddict refuses the code flow without
+        // an authorize endpoint, so it is declared now and answers "not yet"
+        // (OidcEndpoints.cs) until stage 3 builds sign-in and consent.
+        //
+        // PINNED TO THE ISSUER. Each endpoint is registered twice: first the
+        // absolute URI on the issuer, second the bare path. OpenIddict
+        // publishes only the FIRST in the discovery document, so every URL a
+        // relying party stores is https://core.tatvaos.com/… whatever the
+        // request's Host header or forwarded host said — issuer confusion is
+        // a real attack on relying parties, and the forwarded-headers trust
+        // below is defence in depth rather than the only defence (CTO, 17
+        // Sept 2026). The bare path is what an incoming request is matched
+        // on, so a laptop with no proxy still reaches the endpoints.
+        var issuerUri = new Uri(issuer.TrimEnd('/') + "/");
+        Uri[] Pinned(string path) => [new Uri(issuerUri, path), new Uri(path, UriKind.Relative)];
+        o.SetAuthorizationEndpointUris(Pinned(OidcEndpoints.AuthorizePath));
+        o.SetTokenEndpointUris(Pinned(OidcEndpoints.TokenPath));
+        o.SetUserInfoEndpointUris(Pinned(OidcEndpoints.UserInfoPath));
+        o.SetIntrospectionEndpointUris(Pinned(OidcEndpoints.IntrospectionPath));
+        o.SetRevocationEndpointUris(Pinned(OidcEndpoints.RevocationPath));
+        o.SetJsonWebKeySetEndpointUris(Pinned(OidcEndpoints.JwksPath));
+
+        // The token shape of 0004: codes, access and refresh tokens are OPAQUE
+        // references stored hashed and revocable at once; only the ID token is
+        // a JWT, and it lives five minutes because it cannot be recalled.
+        o.UseReferenceAccessTokens();
+        o.UseReferenceRefreshTokens();
+        o.SetAuthorizationCodeLifetime(TimeSpan.FromSeconds(60));
+        o.SetIdentityTokenLifetime(TimeSpan.FromMinutes(5));
+        o.SetAccessTokenLifetime(TimeSpan.FromMinutes(10));
+        o.SetRefreshTokenLifetime(TimeSpan.FromDays(14));
+
+        // The keys, from the oidckeys volume and nowhere else. Newest active
+        // first: that is the one OpenIddict signs with; the rest — earlier
+        // actives and keys retired within the last day — are published so
+        // anything they signed still verifies. The encryption key is for
+        // OpenIddict's own token payloads and is never published.
+        var ring = TatvaOS.Api.Shared.Auth.Oidc.OidcKeyRing.Load(oidcKeyDirectory, Console.WriteLine);
+        foreach (var k in ring.Signing) o.AddSigningKey(k.Key);
+        foreach (var k in ring.Encryption) o.AddEncryptionKey(k.Key);
+        Console.WriteLine($"oidc: issuer {issuer}; signing with {ring.Current.Kid}; " +
+                          $"{ring.Signing.Count} signing key(s) published");
+
+        var aspnet = o.UseAspNetCore()
+            // Authorize is ours: a person in a browser, sign-in, consent.
+            .EnableAuthorizationEndpointPassthrough();
+
+        // OpenIddict refuses anything that is not HTTPS, and it is right to:
+        // codes and tokens travel in these requests. On the box Caddy
+        // terminates TLS and forwards the scheme, which the forwarded-headers
+        // middleware turns back into an HTTPS request. On a laptop there is no
+        // Caddy, so Development alone may speak plain HTTP to it. Never in
+        // production: the startup guard above already refuses a production
+        // process that thinks it is Development.
+        if (builder.Environment.IsDevelopment())
+            aspnet.DisableTransportSecurityRequirement();
     });
 
 // Where Space's bytes live. Singleton — it holds only the root path; key
@@ -522,6 +626,35 @@ else
     app.UseHsts();
 }
 
+// ---------------------------------------------------------------------------
+//  Trust the scheme and host Caddy forwards. Caddy terminates TLS and proxies
+//  to api:8080 over plain HTTP, so without this every request looks like
+//  http://api:8080 to the API. Nothing minded until the OpenID Connect
+//  provider (decision 0004): OpenIddict refuses non-HTTPS requests and builds
+//  every URL in the discovery document from the request, so it would refuse
+//  every call and advertise an address nobody can reach. With these headers
+//  applied the request is https://core.tatvaos.com/… again.
+//
+//  SCHEME AND HOST ONLY — deliberately not X-Forwarded-For. The rate limiters
+//  above read that header themselves and take its LAST entry, which is the
+//  one Caddy appended; this middleware would consume that entry and leave any
+//  client-supplied ones in front of it for the limiters to trust. Audit rows
+//  keep recording Caddy's address as they do today; a real-client-IP change
+//  is its own decision, not a side effect of the provider.
+//
+//  No known-proxy list, on purpose: the API publishes no port, so the only
+//  thing that can reach it is Caddy on the compose network, whose container
+//  address changes on every recreate. ForwardLimit 1: the nearest proxy only.
+// ---------------------------------------------------------------------------
+var forwarded = new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost,
+    ForwardLimit = 1,
+};
+forwarded.KnownIPNetworks.Clear();
+forwarded.KnownProxies.Clear();
+app.UseForwardedHeaders(forwarded);
+
 app.UseHttpsRedirection();
 app.UseCors();
 
@@ -542,6 +675,7 @@ app.MapMfaEndpoints();
 app.MapOrganisationEndpoints();
 app.MapUserEndpoints();
 app.MapOidcApplicationEndpoints();
+app.MapOidcEndpoints();
 app.MapDomainEndpoints();
 app.MapSignupEndpoints();
 app.MapSettingsEndpoints();

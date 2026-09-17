@@ -80,6 +80,10 @@ RUN apt-get update \
 #  directory's ownership; an EXISTING volume keeps its old ownership, so a
 #  one-time `chown 5000:5000` of the dkimkeys volume is needed when migrating.
 RUN mkdir -p /dkim && chown 5000:5000 /dkim && chmod 700 /dkim
+# Same for the OpenID Connect provider's keys (decision 0004): a fresh
+# oidckeys volume takes this directory's ownership; the API generates the
+# first key pair on its first start and rotates them with --oidc-rotate.
+RUN mkdir -p /oidc && chown 5000:5000 /oidc && chmod 700 /oidc
 
 # vmail — uid/gid 5000, matching Dovecot's mail user. Numeric on purpose: the
 # slim runtime image has no such named account, and Docker does not need one.

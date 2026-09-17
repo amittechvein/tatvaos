@@ -4,7 +4,7 @@
 |---|---|
 | `isolation/` | ★ Proves one tenant cannot reach another's data |
 | `invitations/` | Decision 0005 end to end against the local stack: invitation link, accept, expiry, resend, refusals, typed password, mail edge down. Needs `local/` up and the API on :5000 |
-| `oidc/` | Decision 0004, the OpenID Connect provider, stage by stage against the local stack. `stage1-applications.sh`: stores, resolvers, the Applications API, secret shown once and in no log. Pass `TATVAOS_API_LOG=<the API's stdout>` for the log check |
+| `oidc/` | Decision 0004, the OpenID Connect provider, stage by stage against the local stack. `stage1-applications.sh`: stores, resolvers, the Applications API, secret shown once and in no log. Pass `TATVAOS_API_LOG=<the API's stdout>` for the log check. `stage2-discovery.sh`: starts the API itself against an empty key directory — keys, discovery, the key set, rotation and retirement |
 | `e2e/` | Playwright — full user journeys |
 | `load/` | Throughput and latency |
 
