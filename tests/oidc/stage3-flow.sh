@@ -445,6 +445,36 @@ done
 h=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/api/oauth/token" -H 'X-Forwarded-For: 203.0.113.11' -d grant_type=authorization_code -d code=x -d client_id=tos_nonsense)
 [ "$h" != "429" ] && pass "another address is not affected ($h)" || fail "another address was limited too"
 
+# ===========================================================================
+step "12. The person's own consents: listed, removed, asked again (stage 4)"
+pkce; V12=$VERIFIER; URL12=$(authorize_url "$CID_B" "$RP" "s12$RUN" "n12$RUN" "$CHALLENGE")
+authorize "$JAR_A" "$URL12"; [[ "$LOCATION" == */oauth/consent?* ]] && authorize "$JAR_A" "$URL12" allow
+CODE12=$(code_from "$LOCATION"); remember "$CODE12"
+r=$(token -d grant_type=authorization_code -d "code=$CODE12" -d "redirect_uri=$RP" -d "client_id=$CID_B" -d "client_secret=$SEC_B" -d "code_verifier=$V12")
+[ "$(status "$r")" = "200" ] && pass "owner signed in through application B again" || fail "step 12 token: $(status "$r") $(brief "$(body "$r")")"
+ACCESS12=$(jq_ "$(body "$r")" "d.get('access_token','')"); REFRESH12=$(jq_ "$(body "$r")" "d.get('refresh_token','')"); remember "$ACCESS12"; remember "$REFRESH12"; remember "$(jq_ "$(body "$r")" "d.get('id_token','')")"
+r=$(curl -s -w '\n%{http_code}' "$API/api/auth/oauth/consents" -H "Authorization: Bearer $OWNER_TOKEN")
+[ "$(status "$r")" = "200" ] && pass "consents listed (200)" || fail "consents: $(status "$r") $(brief "$(body "$r")")"
+CONSENT_ID=$(jq_ "$(body "$r")" "[c for c in d if c['clientId']=='$CID_B'][0]['id']")
+[ -n "$CONSENT_ID" ] && [ "$CONSENT_ID" != "None" ] && pass "application B is in the owner's list" || fail "application B missing from the consents list"
+[ "$(jq_ "$(body "$r")" "[c for c in d if c['clientId']=='$CID_A']")" = "[]" ] && pass "the REVOKED application A is not listed" || fail "revoked application still listed"
+[ "$(jq_ "$(body "$r")" "', '.join([c for c in d if c['clientId']=='$CID_B'][0]['receives'])")" = "your name, your work email address, which organisation you belong to" ] && pass "each row says in words what the application receives" || fail "receives: $(brief "$(body "$r")")"
+printf '%s' "$(body "$r")" | grep -q "$SEC_B" && fail "the consents list carries a client secret" || pass "no secret in the list"
+# Another person cannot remove it: HR's token, the owner's consent id.
+h=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$API/api/auth/oauth/consents/$CONSENT_ID" -H "Authorization: Bearer $TOKEN")
+[ "$h" = "404" ] && pass "another person removing it: 404, not found rather than refused" || fail "cross-person remove answered $h"
+r=$(curl -s -w '\n%{http_code}' -X DELETE "$API/api/auth/oauth/consents/$CONSENT_ID" -H "Authorization: Bearer $OWNER_TOKEN")
+[ "$(status "$r")" = "200" ] && pass "the owner removes it (200)" || fail "remove: $(status "$r") $(brief "$(body "$r")")"
+[ "$(jq_ "$(body "$r")" "d['revokedTokens']")" -ge 2 ] 2>/dev/null && pass "its tokens were revoked with it" || fail "revokedTokens: $(brief "$(body "$r")")"
+r=$(token -d grant_type=refresh_token -d "refresh_token=$REFRESH12" -d "client_id=$CID_B" -d "client_secret=$SEC_B")
+[ "$(jq_ "$(body "$r")" "d.get('error','')")" = "invalid_grant" ] && pass "the application's refresh token: invalid_grant" || fail "refresh after remove: $(status "$r") $(brief "$(body "$r")")"
+[ "$(userinfo "$ACCESS12")" = "401" ] && pass "its still-unexpired access token: 401" || fail "userinfo after remove: $(userinfo "$ACCESS12")"
+pkce; URL12b=$(authorize_url "$CID_B" "$RP" "s12b$RUN" "n12b$RUN" "$CHALLENGE")
+authorize "$JAR_A" "$URL12b"
+[ "$HTTP_CODE" = "302" ] && [[ "$LOCATION" == */oauth/consent?* ]] && pass "the next sign-in through B asks for consent again" || fail "after remove, authorize: $HTTP_CODE → ${LOCATION%%\?*}"
+n=$(PG "SELECT count(*) FROM core.audit_logs WHERE action='oidc.consent_removed' AND target_id='$CONSENT_ID'")
+[ "${n:-0}" -ge 1 ] && pass "the removal is in the audit log" || fail "no audit row for the removal"
+
 printf '\n%s%s%s\n  %s%d passed%s, ' "$CYAN" "----------------------------------------" "$RST" "$GREEN" "$PASSED" "$RST"
 [ "$FAILED" -eq 0 ] && printf '%s0 failed%s\n\n' "$GREEN" "$RST" || printf '%s%d failed%s\n\n' "$RED" "$FAILED" "$RST"
 [ "$FAILED" -eq 0 ]
