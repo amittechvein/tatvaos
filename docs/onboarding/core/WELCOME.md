@@ -22,7 +22,7 @@ Seven products, all live in production today:
 | **Calendar** | Events, invitations, iMIP | calendar.tatvaos.com |
 | **Family** | Contacts | (inside the suite) |
 | **Connect** | Video meetings, recordings, live captions, AI minutes | connect.tatvaos.com |
-| **Platform** | Developer-facing: connection settings, API keys, docs | platform.tatvaos.com |
+| **Platform** | Developer-facing: connection settings, API keys, docs | core.tatvaos.com/platform (platform.tatvaos.com redirects there since 17 Sept 2026; DNS retires later) |
 
 One server in Mumbai, one Postgres 17, eleven containers behind Caddy. One
 codebase: a .NET 10 modular monolith (`apps/api`) and a Next.js 15 app
