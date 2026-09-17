@@ -1,7 +1,32 @@
 # The recording notice clip
 
-**Status: not recorded.** This is a five-minute job for a person with a phone,
-and it has been outstanding since the recording feature shipped.
+**Status: IN PLACE since 17 September 2026 — a generated voice, by Amit's
+decision, not the recorded human voice this page asks for below.**
+
+What landed, measured from the file itself rather than taken on trust:
+
+| | asked for | the file |
+|---|---|---|
+| words | "This meeting is being recorded." | as supplied by Amit, file named for that sentence |
+| voice | a person, not a synthesiser | **ElevenLabs**: its embedded C2PA manifest names Eleven Labs Inc. with digitalSourceType `trainedAlgorithmicMedia` |
+| length | under 2 s | 2.09 s (80 MPEG-1 Layer III frames) |
+| channels / rate | mono, 44.1 kHz | mono, 44.1 kHz |
+| bitrate / size | 96 kbps, under 30 kB | 128 kbps, 50,084 bytes, of which 16,648 are the ID3 tag carrying the C2PA manifest |
+| loudness | about −16 LUFS, peak ≤ −3 dBFS | **not measured**: no decoder on the laptop it was added from |
+
+Left as supplied, deliberately. Trimming and re-encoding needs ffmpeg, which is
+not installed and needs Amit's go to download. And stripping the tag would
+also strip the content credentials that say this voice is generated; that is
+not a thing to remove quietly to save 16 kB.
+
+Two things for whoever touches this next: listen to it inside a live meeting
+to check its loudness against speech, and check that TatvaOS's ElevenLabs plan
+allows commercial use of the output (Amit's to confirm). The section below is
+still the brief for a human recording if that decision changes.
+
+**Original status (until 17 Sept): not recorded.** This is a five-minute job for
+a person with a phone, and it had been outstanding since the recording feature
+shipped.
 
 ## What is missing
 
