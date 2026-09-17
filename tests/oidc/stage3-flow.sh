@@ -475,6 +475,24 @@ authorize "$JAR_A" "$URL12b"
 n=$(PG "SELECT count(*) FROM core.audit_logs WHERE action='oidc.consent_removed' AND target_id='$CONSENT_ID'")
 [ "${n:-0}" -ge 1 ] && pass "the removal is in the audit log" || fail "no audit row for the removal"
 
+# "Allowed for everyone" and a personal Remove (CTO's question, 17 Sept):
+# the row says why instead of a button, and the endpoint refuses, because
+# authorize would silently re-create the consent at the next sign-in.
+authorize "$JAR_A" "$URL12b" allow; CODE12b=$(code_from "$LOCATION"); remember "$CODE12b"
+r=$(curl -s -w '\n%{http_code}' -X POST "$API/api/org/applications/$APP_B/consent" -H 'Content-Type: application/json' -H "Authorization: Bearer $OWNER_TOKEN" -d '{"allowedForEveryone":true}')
+[ "$(status "$r")" = "200" ] && pass "application B switched to allowed for everyone" || fail "consent switch: $(status "$r") $(brief "$(body "$r")")"
+n=$(PG "SELECT count(*) FROM core.audit_logs WHERE action='oidc.application_consent_changed' AND target_id='$APP_B'")
+[ "${n:-0}" -ge 1 ] && pass "…and the switch is in the audit log (0004)" || fail "no audit row for the consent switch"
+r=$(curl -s "$API/api/auth/oauth/consents" -H "Authorization: Bearer $OWNER_TOKEN")
+CONSENT_B=$(jq_ "$r" "[c for c in d if c['clientId']=='$CID_B'][0]['id']")
+[ "$(jq_ "$r" "[c for c in d if c['clientId']=='$CID_B'][0]['allowedForEveryone']")" = "True" ] && pass "the person's list marks it as approved for everyone" || fail "allowedForEveryone flag missing: $(brief "$r")"
+r=$(curl -s -w '\n%{http_code}' -X DELETE "$API/api/auth/oauth/consents/$CONSENT_B" -H "Authorization: Bearer $OWNER_TOKEN")
+[ "$(status "$r")" = "409" ] && pass "a personal Remove is refused (409) with the reason, not granted and silently undone" || fail "remove under allowed-for-everyone: $(status "$r") $(brief "$(body "$r")")"
+r=$(token -d grant_type=authorization_code -d "code=$CODE12b" -d "redirect_uri=$RP" -d "client_id=$CID_B" -d "client_secret=$SEC_B" -d "code_verifier=$VERIFIER")
+[ "$(status "$r")" = "200" ] && pass "the consent still stands: the code from before the switch redeems" || fail "code after the switch: $(status "$r")"
+remember "$(jq_ "$(body "$r")" "d.get('access_token','')")"; remember "$(jq_ "$(body "$r")" "d.get('refresh_token','')")"; remember "$(jq_ "$(body "$r")" "d.get('id_token','')")"
+curl -s -o /dev/null -X POST "$API/api/org/applications/$APP_B/consent" -H 'Content-Type: application/json' -H "Authorization: Bearer $OWNER_TOKEN" -d '{"allowedForEveryone":false}'
+
 printf '\n%s%s%s\n  %s%d passed%s, ' "$CYAN" "----------------------------------------" "$RST" "$GREEN" "$PASSED" "$RST"
 [ "$FAILED" -eq 0 ] && printf '%s0 failed%s\n\n' "$GREEN" "$RST" || printf '%s%d failed%s\n\n' "$RED" "$FAILED" "$RST"
 [ "$FAILED" -eq 0 ]

@@ -368,6 +368,11 @@ public static class OidcEndpoints
                 receives = ReceivesInWords(scopes),
                 staysSignedIn = scopes.Contains(Scopes.OfflineAccess),
                 grantedAt = a.CreationDate,
+                // "Allowed for everyone" by the organisation: a personal Remove
+                // would look like it worked and be undone silently at the next
+                // sign-in, so the page shows why instead of a button (CTO, 17
+                // Sept 2026), and RemoveConsentAsync refuses it.
+                allowedForEveryone = a.Application.AllowedForEveryone,
             });
         }
         return Results.Ok(list);
@@ -393,6 +398,17 @@ public static class OidcEndpoints
         var a = await db.OidcAuthorizations.Include(x => x.Application)
             .FirstOrDefaultAsync(x => x.Id == id && x.Subject == subject, ct);
         if (a is null) return Results.NotFound(new { error = "No such consent." });
+
+        // A control that appears to work and does not is worse than no control.
+        // With the organisation's "allowed for everyone" on, authorize skips
+        // the prompt and would re-create this row at the next sign-in, so the
+        // removal is refused with the reason rather than granted and undone.
+        if (a.Application?.AllowedForEveryone == true)
+            return Results.Conflict(new
+            {
+                error = "Your organisation's administrators have approved this application for everyone. Only an administrator can change that.",
+                allowedForEveryone = true,
+            });
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await authorizations.TryRevokeAsync(a, ct);
