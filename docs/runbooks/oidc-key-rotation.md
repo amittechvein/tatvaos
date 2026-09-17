@@ -79,3 +79,13 @@ stops verifying at once; that is the point. Tell the CTO.
 |---|---|---|---|---|
 | 2026-09-17 | local stack, via the stage 2 test | (per run) | (per run) | developer |
 | 2026-09-17 09:35 UTC | production, first rotation, before any customer connects (steps 1-4 as written; API back on health in ~10 s; both kids published, new one first) | hopz3hlnfTpa3P2y | 4Z9b4haC-jJ4T9Fu | Core session, on the CTO's post-deploy list for c1ec4b5 |
+
+**What the 17 Sept production row did and did not test (CTO, 17 Sept).** It
+rehearsed the mechanism: the file layout, the one-off container, the
+restart, the key set publishing both kids with the new one first. It did
+NOT test the interesting case, a key that relying parties have already
+fetched and cached, because there were no relying parties yet — the
+retired key was minutes old and nobody had ever asked for it. The first
+rotation after the first customer connects is the one that proves the
+one-day overlap works; read this row as proof of the runbook's steps, not
+of that.
