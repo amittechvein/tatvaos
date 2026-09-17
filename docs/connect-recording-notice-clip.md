@@ -13,19 +13,24 @@ checked against the published sum) rather than taken on trust:
 |---|---|---|
 | words | "This meeting is being recorded." | Amit's WhatsApp voice note, supplied for this sentence |
 | length | under 2 s, ~100 ms at each end | 1.78 s — cut at 0.70–2.45 s of the original, whose speech ran 0.80–2.35 s (silencedetect −40 dB); a tap at 0.28 s is outside the cut |
-| loudness | about −16 LUFS | −16.1 LUFS integrated (ebur128) |
-| peak | no higher than −3 dBFS | −3.5 dBFS (alimiter at 0.70 after +6.5 dB) |
+| loudness | about −16 LUFS | **−24.0 LUFS** integrated (ebur128) — deliberately quieter, see below |
+| peak | no higher than −3 dBFS | −11.4 dBFS |
 | channels / rate | mono, 44.1 kHz | mono, 44.1 kHz |
 | bitrate / size | 96 kbps, under 30 kB | 96 kbps, 21,316 bytes, no ID3 tag, metadata stripped |
 
 The command, so the next version can be made the same way:
 
     ffmpeg -ss 0.70 -to 2.45 -i <voice-note>.ogg -map_metadata -1 \
-      -af "aresample=44100,volume=6.5dB,alimiter=limit=0.70:attack=1:release=40:level=disabled,afade=t=in:d=0.02,areverse,afade=t=in:d=0.03,areverse" \
+      -af "aresample=44100,volume=6.5dB,alimiter=limit=0.70:attack=1:release=40:level=disabled,volume=0.4,afade=t=in:d=0.02,areverse,afade=t=in:d=0.03,areverse" \
       -ac 1 -ar 44100 -c:a libmp3lame -b:a 96k -id3v2_version 0 -write_xing 0 connect-recording-notice.mp3
 
-Still to do by ear, not by meter: listen inside a live meeting, over speech,
-on a phone speaker.
+**Heard in a live meeting, 17 Sept 2026, and turned down.** The first cut met
+the −16 LUFS target exactly and Amit reported it "very high volume", asking
+for it 60% quieter. `volume=0.4` after the limiter is 40% of the amplitude,
+−7.9 dB: measured −24.0 LUFS, −11.4 dBFS peak. The −16 LUFS target in the brief
+below was a number chosen without hearing it over a meeting; this is the level
+chosen by listening, and it wins. The file is otherwise identical (1.78 s,
+21,316 bytes).
 
 **Original status (until 17 Sept): not recorded.** This is a five-minute job for
 a person with a phone, and it had been outstanding since the recording feature

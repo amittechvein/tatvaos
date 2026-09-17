@@ -25,6 +25,27 @@ internal static class Program
         TheCalendarFile(t);
         UpdatesAndCancels(t);
         TheEmailText(t);
+        TheDesignedEmail(t);
+        TheUpdateSaysWhatChanged(t);
+
+        // A look, not a test: INVITE_PREVIEW_DIR=<dir> writes the three emails
+        // as .html so a person can see them before anyone receives one. Asserts
+        // prove the parts are there; only eyes prove it looks right.
+        if (Environment.GetEnvironmentVariable("INVITE_PREVIEW_DIR") is { Length: > 0 } dir)
+        {
+            Directory.CreateDirectory(dir);
+            var m = Meeting(); m.Title = "Curriculum discussion for B2C";
+            var prev = new ConnectInvitations.Previous(m.Title, m.ScheduledStart, m.ScheduledEnd);
+            var moved = Meeting(); moved.Title = m.Title;
+            moved.ScheduledStart = m.ScheduledStart!.Value.AddHours(2); moved.ScheduledEnd = m.ScheduledEnd!.Value.AddHours(2);
+            File.WriteAllText(Path.Combine(dir, "1-invitation.html"),
+                ConnectInvitations.BodyHtml(m, Join, "Amit Dadhich", "amit@tatvaos.com", Imip.MethodRequest, true));
+            File.WriteAllText(Path.Combine(dir, "2-time-changed.html"),
+                ConnectInvitations.BodyHtml(moved, Join, "Amit Dadhich", "amit@tatvaos.com", Imip.MethodRequest, true, prev));
+            File.WriteAllText(Path.Combine(dir, "3-cancelled.html"),
+                ConnectInvitations.BodyHtml(m, Join, "Amit Dadhich", "amit@tatvaos.com", Imip.MethodCancel, true));
+            Console.WriteLine($"  preview written to {dir}");
+        }
 
         return t.Report();
     }
@@ -148,7 +169,7 @@ internal static class Program
         var body = ConnectInvitations.BodyText(m, Join, "Amit Dadhich", "amit@techvein.com", Imip.MethodRequest, guestsAllowed: true);
         t.Note(ConnectInvitations.When(m) ?? "(no time)");
         t.Ok("time printed in IST, not the UTC clock (15:00, not 09:30)",
-            body.Contains("18 Sep 2026, 15:00–16:00 (Asia/Kolkata)") && !body.Contains("09:30"));
+            body.Contains("18 Sep 2026, 15:00–16:00 (IST)") && !body.Contains("09:30"));
         t.Ok("the join link", body.Contains("Join: " + Join));
         t.Ok("who invited them", body.StartsWith("Amit Dadhich invited you"));
         t.Ok("guests are told no account is needed", body.Contains("do not need a TatvaOS account"));
@@ -166,6 +187,71 @@ internal static class Program
 
         var odd = Meeting(); odd.Timezone = "Not/AZone";
         t.Ok("an unknown zone falls back to UTC and SAYS UTC", ConnectInvitations.When(odd)!.EndsWith("(UTC)"));
+    }
+
+    private static void TheDesignedEmail(Harness t)
+    {
+        t.Section("the designed email (Amit: \"give some modern UI design, not simple text\")");
+        var m = Meeting();
+        var html = ConnectInvitations.BodyHtml(m, Join, "Amit Dadhich", "amit@techvein.com", Imip.MethodRequest, guestsAllowed: true);
+        t.Ok("a Join button that links to the meeting", html.Contains($"href=\"{Join}\"") && html.Contains(">Join meeting</a>"));
+        t.Ok("the date as a person reads it", html.Contains("Friday, 18 September 2026"));
+        t.Ok("the time in IST", html.Contains("3:00 PM – 4:00 PM IST"));
+        t.Ok("IST, not the database name of the zone", !html.Contains("Asia/Kolkata") && !html.Contains("Asia/Calcutta"));
+        t.Ok("who invited them", html.Contains("Amit Dadhich invited you to a meeting"));
+        t.Ok("inline styles only: no <style> block Gmail would strip", !html.Contains("<style"));
+        t.Ok("the logo has a size and empty alt, so a blocked image leaves no broken box",
+            html.Contains("connect-logo.png\" width=\"28\" height=\"28\" alt=\"\""));
+
+        var nasty = Meeting(); nasty.Title = "<script>alert(1)</script> & \"Q3\"";
+        var hn = ConnectInvitations.BodyHtml(nasty, Join, "<b>Eve</b>", "eve@example.com", Imip.MethodRequest, true);
+        t.Ok("a title with markup arrives as text, not markup", !hn.Contains("<script>") && hn.Contains("&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;Q3&quot;"));
+        t.Ok("a name with markup arrives as text", !hn.Contains("<b>Eve</b>") && hn.Contains("&lt;b&gt;Eve&lt;/b&gt;"));
+
+        var closed = ConnectInvitations.BodyHtml(m, Join, "Amit", "amit@techvein.com", Imip.MethodRequest, guestsAllowed: false);
+        t.Ok("guests not allowed: told to sign in", closed.Contains("sign in to TatvaOS"));
+
+        var cancel = ConnectInvitations.BodyHtml(m, Join, "Amit", "amit@techvein.com", Imip.MethodCancel, true);
+        t.Ok("cancelled: says so, and offers no Join button", cancel.Contains(">Cancelled</div>") && !cancel.Contains("Join meeting"));
+
+        var instant = Meeting(); instant.ScheduledStart = null;
+        var hi = ConnectInvitations.BodyHtml(instant, Join, "Amit", "amit@techvein.com", Imip.MethodRequest, true);
+        t.Ok("instant meeting: no date block, still the button", !hi.Contains("September") && hi.Contains("Join meeting"));
+    }
+
+    private static void TheUpdateSaysWhatChanged(Harness t)
+    {
+        t.Section("an update says what changed (Amit: \"time change mail but there is no written that time is change\")");
+        var before = Meeting();
+        var prev = new ConnectInvitations.Previous(before.Title, before.ScheduledStart, before.ScheduledEnd);
+        var m = Meeting();
+        m.ScheduledStart = m.ScheduledStart!.Value.AddHours(2);
+        m.ScheduledEnd = m.ScheduledEnd!.Value.AddHours(2);
+
+        t.Ok("a first invitation has nothing changed", ConnectInvitations.Changes(m, null).Count == 0);
+        t.Ok("subject: Updated", ConnectInvitations.Subject(m, Imip.MethodRequest, prev) == "Updated: Quarterly review");
+        t.Ok("subject stays Invitation when nothing a recipient sees changed",
+            ConnectInvitations.Subject(before, Imip.MethodRequest, prev) == "Invitation: Quarterly review");
+
+        var text = ConnectInvitations.BodyText(m, Join, "Amit", "amit@techvein.com", Imip.MethodRequest, true, prev);
+        t.Ok("text: says the time changed", text.StartsWith("Amit changed this meeting's time."));
+        t.Ok("text: the new time", text.Contains("New time: 18 Sep 2026, 17:00–18:00 (IST)"));
+        t.Ok("text: the old time", text.Contains("Was: 18 Sep 2026, 15:00–16:00 (IST)"));
+
+        var html = ConnectInvitations.BodyHtml(m, Join, "Amit", "amit@techvein.com", Imip.MethodRequest, true, prev);
+        t.Ok("html: a Time changed badge", html.Contains(">Time changed</div>"));
+        t.Ok("html: the new time labelled", html.Contains(">New time</div>") && html.Contains("5:00 PM – 6:00 PM IST"));
+        t.Ok("html: the old time, struck through", html.Contains("line-through;\">Friday, 18 September 2026, 3:00 PM – 4:00 PM IST</span>"));
+        t.Ok("html: still a Join button", html.Contains("Join meeting"));
+
+        var renamed = Meeting(); renamed.Title = "Q3 review";
+        var hr = ConnectInvitations.BodyHtml(renamed, Join, "Amit", "amit@techvein.com", Imip.MethodRequest, true, prev);
+        t.Ok("a rename says what it was called", hr.Contains(">Updated</div>") && hr.Contains(">Quarterly review</span>"));
+        t.Ok("…and does not claim the time changed", !hr.Contains("Time changed") && !hr.Contains("New time"));
+
+        // Only the START moved — what Amit's first live reschedule did (14:00–23:30).
+        var startOnly = Meeting(); startOnly.ScheduledStart = startOnly.ScheduledStart!.Value.AddHours(-1);
+        t.Ok("moving only the start is still a time change", ConnectInvitations.Changes(startOnly, prev).SequenceEqual(["time"]));
     }
 }
 
