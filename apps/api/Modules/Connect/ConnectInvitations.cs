@@ -122,6 +122,19 @@ public static class ConnectInvitations
     /// with the meeting's unchanged SEQUENCE would be ignored, and they would
     /// have an invitation email and no event. Each person only ever sees their
     /// own messages, so monotonic per person is exactly what is needed.
+    ///
+    /// ── THIS DEVIATES FROM THE PLAIN READING OF RFC 5545. DO NOT "TIDY" IT. ──
+    /// SEQUENCE belongs to the EVENT in the spec, and a single event-wide
+    /// counter looks like the obvious simplification. It is safe to depart
+    /// from here only because every recipient is addressed individually (one
+    /// message per person, only that person as ATTENDEE — ConnectInvitationMailer),
+    /// so nobody ever sees another person's stream for this UID and nothing can
+    /// compare them. Collapse it to one event-wide number and either a re-invite
+    /// after a withdrawal is silently discarded by the recipient's calendar (the
+    /// bug this replaced: an email arrives, "add to calendar", nothing appears),
+    /// or withdrawing one person churns every other attendee's calendar entry.
+    /// If invitations ever go out as ONE message to many people, this must change
+    /// with it. CTO review, 17 Sept 2026.
     /// </summary>
     public static int SequenceFor(ConnectMeeting m, int? lastSentToThem) =>
         Math.Max(m.InviteSequence, (lastSentToThem ?? -1) + 1);
