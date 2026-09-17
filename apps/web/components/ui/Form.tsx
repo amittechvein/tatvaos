@@ -112,7 +112,12 @@ export function Field({
 }
 
 // ---------------------------------------------------------------------------
-type NativeInput = React.InputHTMLAttributes<HTMLInputElement>;
+// ComponentPropsWithRef, not InputHTMLAttributes: React 19 passes `ref` like
+// any other prop to a function component, and Connect's invite fields hand
+// theirs to ContactPicker so it can measure the input and place the
+// suggestions list under it (17 Sept 2026). Without `ref` in the type that is
+// a type error on a call that would work at runtime.
+type NativeInput = React.ComponentPropsWithRef<'input'>;
 
 export function Input({
   invalid = false, describedBy, className = '', ...rest

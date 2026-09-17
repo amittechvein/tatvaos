@@ -15,7 +15,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import { Badge, Button, Card } from '@/components/ui/Kit';
-import { Textarea } from '@/components/ui/Form';
+import { Input } from '@/components/ui/Form';
+import { ContactPicker } from '@/components/family/ContactPicker';
 import { Alert } from '@/components/ui/Page';
 import { connectApi, type MeetingInvitation } from '@/lib/connect';
 
@@ -153,10 +154,16 @@ export default function Invitations({ meetingId, over, allowGuests }: {
           <label className="mb-1 block text-[13px] font-medium text-ink" htmlFor="invite-more">
             Invite people
           </label>
-          <Textarea id="invite-more" rows={2} value={text} disabled={busy !== null}
-                    onChange={(e) => setText(e.target.value)}
-                    placeholder="ravi@example.com, priya@example.com"
-                    autoComplete="off" spellCheck={false} />
+          {/* Suggestions from contacts and colleagues while typing a name. */}
+          <ContactPicker value={text} onPick={setText}>
+            {(pickerRef, onPickerKeyDown) => (
+              <Input id="invite-more" ref={pickerRef} value={text} disabled={busy !== null}
+                     onChange={(e) => setText(e.target.value)}
+                     onKeyDown={onPickerKeyDown}
+                     placeholder="Type a name, or ravi@example.com"
+                     autoComplete="off" spellCheck={false} />
+            )}
+          </ContactPicker>
           <div className="mt-1 text-xs text-ink-muted">
             Each person gets their own email with the link and a calendar invitation, sent from your mailbox.
             {!allowGuests && ' Guests are not allowed in this meeting, so only colleagues signed in to TatvaOS can join.'}

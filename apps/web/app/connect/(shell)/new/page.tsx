@@ -4,7 +4,8 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { Button, Card } from '@/components/ui/Kit';
-import { Input, Textarea } from '@/components/ui/Form';
+import { Input } from '@/components/ui/Form';
+import { ContactPicker } from '@/components/family/ContactPicker';
 import { Alert, PageHeader } from '@/components/ui/Page';
 import {
   connectApi, PRIVATE_BLURB, RECORDED_BLURB,
@@ -328,16 +329,27 @@ export default function NewMeetingPage() {
                        autoComplete="off" spellCheck={false} />
               </Field>
 
+              {/* Type a name and pick from your contacts and colleagues
+                  (ContactPicker, the same suggestions the mail composer uses).
+                  Amit, 17 Sept 2026, typing "amit" into this box: "give
+                  suggestion when we enter name here". The field still owns the
+                  value and the server still parses it, so invitations work
+                  exactly as before when Family has nothing to offer. */}
               <Field label="Invite by email" htmlFor="invitees"
-                     hint="Optional. Separate addresses with commas or new lines."
+                     hint="Optional. Type a name to pick someone, or separate addresses with commas."
                      why={'Each person gets their own email with the link, and a calendar '
                        + 'invitation that adds the meeting to Gmail or Outlook. It is sent from '
                        + 'your TatvaOS mailbox, so replies come to you. Nobody sees who else '
                        + 'was invited. You can invite more people from the meeting page.'}>
-                <Textarea id="invitees" rows={3} value={invitees}
-                          onChange={(e) => setInvitees(e.target.value)}
-                          placeholder="ravi@example.com, priya@example.com"
-                          autoComplete="off" spellCheck={false} />
+                <ContactPicker value={invitees} onPick={setInvitees}>
+                  {(pickerRef, onPickerKeyDown) => (
+                    <Input id="invitees" ref={pickerRef} value={invitees}
+                           onChange={(e) => setInvitees(e.target.value)}
+                           onKeyDown={onPickerKeyDown}
+                           placeholder="Type a name, or ravi@example.com"
+                           autoComplete="off" spellCheck={false} />
+                  )}
+                </ContactPicker>
               </Field>
 
               <div className="flex gap-2">
