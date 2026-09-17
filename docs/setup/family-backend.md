@@ -22,7 +22,7 @@ Seven files were edited and six added. Nothing outside these paths was touched.
 | `apps/api/Modules/Family/ContactMatching.cs` | Email and phone normalisation — the duplicate rule |
 | `apps/api/Modules/Family/ContactAutoSave.cs` | Turns delivered and sent mail into contacts |
 | `apps/api/Modules/Family/Endpoints/ContactEndpoints.cs` | The 23 routes under `/api/family` |
-| `infra/docker/conf.d/family.caddy` | The `family.tatvaos.com` front door |
+| `infra/docker/caddy/conf.d/family.caddy` | The `family.tatvaos.com` front door |
 | `tests/isolation/family/family-rls.sql` | Proves a colleague cannot read a personal contact |
 
 **Edited**
@@ -170,7 +170,7 @@ Note which of those two Family follows. `MAIL_HOSTNAME` is what Postfix calls
 itself in HELO; `MAIL_DOMAIN` is a Caddy site address and nothing else.
 `FAMILY_DOMAIN` is the second kind.
 
-`infra/docker/conf.d/family.caddy` is mounted by the production overlay and
+`infra/docker/caddy/conf.d/family.caddy` is mounted by the production overlay and
 proxies `/api/*` to the API container on that host, so the frontend calls its
 own origin and no CORS entry is needed.
 

@@ -13,7 +13,7 @@ single-use, hashed at rest, sixty seconds, bound to user and tenant — and the
 code must travel in the URL **fragment**, never the query string, so it
 never reaches a server log or a proxy.
 
-**What logs today.** `infra/docker/Caddyfile` and every `conf.d/*.caddy`
+**What logs today.** `infra/docker/caddy/Caddyfile` and every `conf.d/*.caddy`
 fragment have no `log` directive, and the running Caddy container printed
 zero request lines in ten minutes on 13 Sept and in sixty minutes on 15 Sept:
 Caddy access logging is off. On 15 Sept the web container printed six lines

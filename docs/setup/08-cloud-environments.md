@@ -211,7 +211,7 @@ un-deleting a file.
    process takes production down with it, and you cannot rehearse an OS upgrade
    on the machine you are protecting.
 2. **DNS** for the hostname you choose. `staging.tatvaos.com` currently
-   308-redirects to Core (see `infra/docker/conf.d/legacy-staging.caddy`);
+   308-redirects to Core (see `infra/docker/caddy/conf.d/legacy-staging.caddy`);
    delete that block to reclaim the name.
 3. **A new overlay**, `docker-compose.testing.yml`, written fresh against the
    current base. Recovering the deleted one from git history is a trap — it

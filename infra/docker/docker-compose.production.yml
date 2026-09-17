@@ -21,11 +21,10 @@ name: tatvaos
 
 services:
 
-  caddy:
-    # Adds the Mail front door. Staging does not mount this, so its import
-    # matches nothing and one host keeps serving everything.
-    volumes:
-      - ./conf.d:/etc/caddy/conf.d:ro
+  # caddy: nothing to add since 17 Sept 2026. The base mounts the whole
+  # infra/docker/caddy/ directory, fragments included; this overlay used to
+  # mount conf.d on its own so that "staging" — which no longer exists as an
+  # overlay in this repository — served one host with no product doors.
 
   postgres:
     # No ports section at all. Deliberate — the database is not on the network.

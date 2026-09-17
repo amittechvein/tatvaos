@@ -402,6 +402,69 @@ in a hurry.*
 
 ---
 
+## 12. A deploy step prints `[ok]` only when it has checked something
+
+CTO's ruling, 17 Sept 2026, proposed by the Core session the same day.
+
+A step earns an `[ok]` by comparing something it just measured against
+something it expected. If it has nothing to compare, it prints **what
+happened** — the command's own output, the component's own log line — and
+no verdict at all. A confident line with no failure mode behind it is worse
+than no line: it is the thing the next reader trusts instead of looking.
+
+The test, for every `[ok]` in a script: *what result would have printed
+`[FAIL]` here instead?* If the answer is "nothing", the line is not a check,
+it is a rule 6 check-shaped object wearing a deploy step's clothes.
+
+Three instances in one week, all in `deploy.sh`, all the same error:
+
+- **The rollback line, 16 Sept.** It read `BUILD_SHA` from the live
+  container and printed it as the commit to return to. When something had
+  deployed outside the workflow, the line named the commit that was already
+  running — it pointed at itself — and it did so under a green verdict, twice.
+  Nothing in the step could have printed anything else.
+- **The compose output, 12–13 Sept.** `docker compose up -d` was piped
+  through `tail -12`. Compose prints one line per container it recreates,
+  and those lines were the answer to "were the containers replaced?" — cut
+  off, so the question took a day of `docker inspect` to answer instead of
+  one read of the log.
+- **The Caddy reload, 17 Sept.** `caddy reload` exited 0, so the step printed
+  `[ok] caddy reloaded from the mounted Caddyfile`. Caddy had just logged
+  `config is unchanged`, because the single-file bind mount still held the
+  inode `git reset --hard` had replaced. The right component produced the
+  exact answer at the right moment, and the step printed a success over the
+  top of it. The new `/.well-known/` route was missing until the container
+  was recreated by hand. The container's stale copy was byte-for-byte the
+  pre-deploy file, which bounds the damage to that one deploy — an earlier
+  lost edit would have left an older copy, not an equal one.
+
+What the third one shows that the first two do not: Caddy terminates TLS and
+carries the header and access policy. The failure mode is not "a route did not
+appear"; it is "somebody tightens a security directive, the deploy says ok,
+and the old policy is still live" — with every reason to believe it landed.
+
+So, in a deploy step:
+
+- **Print the component's own words.** Compose's `Recreate` lines, Caddy's
+  `config is unchanged`, the API's startup line. They are the record, not
+  noise; a `tail`, a `grep -c` or a `>/dev/null` on them is a decision to
+  not know.
+- **Check the artefact where it lives** (rule 6): the running config from
+  Caddy's admin endpoint against the adapted file on disk, not the file's
+  presence in the container; the SHA the container reports, not the one the
+  checkout is sitting on.
+- **A verdict follows a comparison.** `[ok]` after the compare passes,
+  `[FAIL]` after it does not, and the compared values printed beside it so a
+  reader can see what was compared.
+
+*Cost: one deploy whose advertised OpenID Connect discovery URL answered a
+404 for the minutes until the container was recreated, found because the
+post-deploy checklist asked for the document by hand; a rollback line wrong
+twice; and one day of reconstruction from `docker inspect` for an answer the
+log had already printed and thrown away.*
+
+---
+
 ## Why this keeps happening to careful people
 
 **The failure is not in the writing. It is in the direction of attention:
