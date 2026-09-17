@@ -339,3 +339,41 @@ test('invite: no joinUrl, no button', async () => {
   await waitFor(() => expect(r.getByText('Only you so far')).toBeTruthy());
   expect(r.queryByLabelText('Invite')).toBeNull();
 });
+
+// ── Full screen (Amit, 17 Sept: "when turn on video full screen not visible") ──
+test('two people fill the screen; tapping one shows them full screen; tapping again returns', async () => {
+  const { r } = await inCall();
+  const p = ravi();
+  await act(async () => {
+    room().remoteParticipants.set(p.identity, p);
+    room().emit('participantConnected', p);
+  });
+  await waitFor(() => expect(r.getByLabelText('Show Ravi full screen')).toBeTruthy());
+  expect(r.getByLabelText('Show Me full screen')).toBeTruthy();
+
+  fireEvent.press(r.getByLabelText('Show Ravi full screen'));
+  expect(r.getByLabelText('Back to everyone')).toBeTruthy();
+  expect(r.queryByLabelText('Show Me full screen')).toBeNull(); // only Ravi is on screen
+  expect(r.getByText('Tap the video to see everyone')).toBeTruthy();
+
+  fireEvent.press(r.getByLabelText('Back to everyone'));
+  expect(r.getByLabelText('Show Me full screen')).toBeTruthy();
+  expect(r.getByLabelText('Show Ravi full screen')).toBeTruthy();
+});
+
+test('the person shown full screen leaves: back to everyone, not a blank screen', async () => {
+  const { r } = await inCall();
+  const p = ravi();
+  await act(async () => {
+    room().remoteParticipants.set(p.identity, p);
+    room().emit('participantConnected', p);
+  });
+  await waitFor(() => expect(r.getByLabelText('Show Ravi full screen')).toBeTruthy());
+  fireEvent.press(r.getByLabelText('Show Ravi full screen'));
+  await act(async () => {
+    room().remoteParticipants.delete(p.identity);
+    room().emit('participantConnected', room().localParticipant); // the fake useRoom re-reads on this event
+  });
+  await waitFor(() => expect(r.getByLabelText('Show Me full screen')).toBeTruthy());
+  expect(r.queryByLabelText('Back to everyone')).toBeNull();
+});

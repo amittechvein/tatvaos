@@ -187,6 +187,14 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
   const [role, setRole] = useState(null); // host | cohost | participant, once admitted
   const [lobby, setLobby] = useState([]); // people waiting, host/cohost only
   const leaving = useRef(false);
+
+  // One video full screen, or everyone. Keyed like the tiles are, so a person
+  // who leaves while focused simply drops the screen back to everyone.
+  // Amit, 17 Sept: "when turn on video full screen not visible" — every video
+  // was a 220-point card with nothing to tap, and half the phone stayed empty.
+  const [focusKey, setFocusKey] = useState(null);
+  const focusRef = useRef(null);
+  focusRef.current = focusKey;
   const waitTimer = useRef(null);
   const gone = useRef(false); // set on unmount; every async path checks it
 
@@ -437,6 +445,8 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
   // being backgrounded with a call still running in it.
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      // Back leaves full screen first; only from everyone does it leave the call.
+      if (focusRef.current) { setFocusKey(null); return true; }
       log('back button: leaving');
       leave();
       return true;
@@ -639,9 +649,7 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
           </Pressable>
         </View>
       ) : inCall ? (
-        <ScrollView contentContainerStyle={s.tiles}>
-          {participants.map((p) => <Tile key={p.sid || p.identity} participant={p} />)}
-        </ScrollView>
+        <Stage participants={participants} focusKey={focusKey} onFocus={setFocusKey} />
       ) : (
         <View style={s.centre}>
           {status === 'dropped' ? (
@@ -675,7 +683,53 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
   );
 }
 
-function Tile({ participant }) {
+const tileKey = (p) => p.sid || p.identity;
+
+// Up to this many people share the screen between them; beyond it the tiles
+// keep a fixed height and scroll, because a sixth of a phone is not a face.
+const FILL_UP_TO = 2;
+
+function Stage({ participants, focusKey, onFocus }) {
+  const focused = focusKey ? participants.find((p) => tileKey(p) === focusKey) : undefined;
+
+  if (focused) {
+    return (
+      <View style={s.stage}>
+        <Tile
+          participant={focused}
+          style={s.tileFull}
+          full
+          onSelect={() => onFocus(null)}
+          pressLabel="Back to everyone"
+        />
+        <Text style={s.focusHint}>Tap the video to see everyone</Text>
+      </View>
+    );
+  }
+
+  const fill = participants.length <= FILL_UP_TO;
+  const tiles = participants.map((p) => {
+    const name = p.name || p.identity || 'Someone';
+    return (
+      <Tile
+        key={tileKey(p)}
+        participant={p}
+        style={fill ? s.tileFill : null}
+        onSelect={() => onFocus(tileKey(p))}
+        pressLabel={`Show ${name} full screen`}
+      />
+    );
+  });
+
+  return fill
+    ? <View style={[s.stage, s.tiles]}>{tiles}</View>
+    : <ScrollView contentContainerStyle={s.tiles}>{tiles}</ScrollView>;
+}
+
+// `onSelect`, not `onPress`: the checks' fireEvent.press walks up to the first
+// component with an onPress prop, so a Tile prop of that name let a tile that
+// ignored taps pass (found by breaking it on purpose, 17 Sept).
+function Tile({ participant, style, onSelect, pressLabel, full = false }) {
   const {
     cameraPublication, screenSharePublication, microphonePublication, isSpeaking, isLocal,
   } = useParticipant(participant);
@@ -697,12 +751,19 @@ function Tile({ participant }) {
   const initial = name.replace(/^user:|^guest:/, '').slice(0, 1).toUpperCase();
 
   return (
-    <View style={[s.tile, isSpeaking && s.tileSpeaking]}>
+    <Pressable
+      style={[s.tile, style, isSpeaking && s.tileSpeaking]}
+      onPress={onSelect}
+      accessibilityRole="button"
+      accessibilityLabel={pressLabel}
+    >
       {track ? (
         <VideoView
           style={s.video}
           videoTrack={track}
-          objectFit={track === screenTrack ? 'contain' : 'cover'}
+          // Full screen shows the WHOLE picture: a landscape laptop camera
+          // cropped to fill a portrait phone keeps only a nose.
+          objectFit={full || track === screenTrack ? 'contain' : 'cover'}
           mirror={isLocal && track === camTrack}
         />
       ) : (
@@ -716,7 +777,7 @@ function Tile({ participant }) {
           {!isLocal && track === screenTrack && track ? ' · screen' : ''}
         </Text>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -775,6 +836,11 @@ const s = StyleSheet.create({
   primaryDisabled: { opacity: 0.5 },
   primaryText: { color: brand.onBase, fontSize: 16, fontWeight: '500' },
   tiles: { padding: 12, gap: 10 },
+  stage: { flex: 1 },
+  // flex, not a height: two people split the space the screen actually has.
+  tileFill: { flex: 1, height: undefined },
+  tileFull: { flex: 1, height: undefined, margin: 8, borderRadius: 12 },
+  focusHint: { color: '#9C99AB', fontSize: 13, textAlign: 'center', paddingBottom: 6 },
   tile: {
     height: 220, borderRadius: 12, overflow: 'hidden', backgroundColor: '#242030',
     borderWidth: 2, borderColor: 'transparent', justifyContent: 'center', alignItems: 'center',
