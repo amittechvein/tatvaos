@@ -144,7 +144,6 @@ builder.Services.AddOpenIddict()
                      ?? "https://core.tatvaos.com";
         o.SetIssuer(new Uri(issuer.TrimEnd('/') + "/"));
         o.SetConfigurationEndpointUris("/.well-known/openid-configuration");
-        o.SetJsonWebKeySetEndpointUris("/api/oauth/jwks");
 
         // The protocol shape of v1 (0004): authorization code with PKCE S256
         // required for every client, refresh tokens, nothing else. Declared
@@ -164,11 +163,24 @@ builder.Services.AddOpenIddict()
         // already routes to the API. OpenIddict refuses the code flow without
         // an authorize endpoint, so it is declared now and answers "not yet"
         // (OidcEndpoints.cs) until stage 3 builds sign-in and consent.
-        o.SetAuthorizationEndpointUris(OidcEndpoints.AuthorizePath);
-        o.SetTokenEndpointUris(OidcEndpoints.TokenPath);
-        o.SetUserInfoEndpointUris(OidcEndpoints.UserInfoPath);
-        o.SetIntrospectionEndpointUris(OidcEndpoints.IntrospectionPath);
-        o.SetRevocationEndpointUris(OidcEndpoints.RevocationPath);
+        //
+        // PINNED TO THE ISSUER. Each endpoint is registered twice: first the
+        // absolute URI on the issuer, second the bare path. OpenIddict
+        // publishes only the FIRST in the discovery document, so every URL a
+        // relying party stores is https://core.tatvaos.com/… whatever the
+        // request's Host header or forwarded host said — issuer confusion is
+        // a real attack on relying parties, and the forwarded-headers trust
+        // below is defence in depth rather than the only defence (CTO, 17
+        // Sept 2026). The bare path is what an incoming request is matched
+        // on, so a laptop with no proxy still reaches the endpoints.
+        var issuerUri = new Uri(issuer.TrimEnd('/') + "/");
+        Uri[] Pinned(string path) => [new Uri(issuerUri, path), new Uri(path, UriKind.Relative)];
+        o.SetAuthorizationEndpointUris(Pinned(OidcEndpoints.AuthorizePath));
+        o.SetTokenEndpointUris(Pinned(OidcEndpoints.TokenPath));
+        o.SetUserInfoEndpointUris(Pinned(OidcEndpoints.UserInfoPath));
+        o.SetIntrospectionEndpointUris(Pinned(OidcEndpoints.IntrospectionPath));
+        o.SetRevocationEndpointUris(Pinned(OidcEndpoints.RevocationPath));
+        o.SetJsonWebKeySetEndpointUris(Pinned(OidcEndpoints.JwksPath));
 
         // The token shape of 0004: codes, access and refresh tokens are OPAQUE
         // references stored hashed and revocable at once; only the ID token is

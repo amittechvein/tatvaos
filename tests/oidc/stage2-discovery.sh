@@ -84,18 +84,24 @@ grep -q "PRIVATE KEY" "$LOG" && fail "private key material reached the log" || p
 
 disc=$(curl -s "$API/.well-known/openid-configuration")
 [ "$(printf '%s' "$disc" | j "d['issuer']")" = "$ISSUER/" ] && pass "discovery: issuer $ISSUER/" || fail "discovery issuer: $(printf '%s' "$disc" | j "d.get('issuer')")"
-# Endpoint URLs are built from the REQUEST, not the issuer: on the box Caddy
-# forwards scheme and host and they come out as https://core.tatvaos.com/…;
-# here, with no proxy, they come out as this API's own address. Both are
-# checked: the plain request below, and the forwarded one after it.
-[ "$(printf '%s' "$disc" | j "d['jwks_uri']")" = "$API/api/oauth/jwks" ] && pass "discovery: jwks_uri under /api/oauth/ on the request's own address" || fail "jwks_uri: $(printf '%s' "$disc" | j "d.get('jwks_uri')")"
-[ "$(printf '%s' "$disc" | j "d['authorization_endpoint']")" = "$API/api/oauth/authorize" ] && pass "discovery: authorize under /api/oauth/" || fail "authorization_endpoint: $(printf '%s' "$disc" | j "d.get('authorization_endpoint')")"
-[ "$(printf '%s' "$disc" | j "d['token_endpoint']")" = "$API/api/oauth/token" ] && pass "discovery: token under /api/oauth/" || fail "token_endpoint: $(printf '%s' "$disc" | j "d.get('token_endpoint')")"
-# As Caddy sends it: the forwarded scheme and host must become the public
-# address in every advertised URL, or production advertises api:8080.
+# Every advertised URL is PINNED to the issuer: it must read
+# https://core.tatvaos.com/… whatever host this request arrived on (here,
+# localhost with no proxy at all), and whatever a forwarded header claims.
+[ "$(printf '%s' "$disc" | j "d['jwks_uri']")" = "$ISSUER/api/oauth/jwks" ] && pass "discovery: jwks_uri pinned to the issuer" || fail "jwks_uri: $(printf '%s' "$disc" | j "d.get('jwks_uri')")"
+[ "$(printf '%s' "$disc" | j "d['authorization_endpoint']")" = "$ISSUER/api/oauth/authorize" ] && pass "discovery: authorize pinned to the issuer" || fail "authorization_endpoint: $(printf '%s' "$disc" | j "d.get('authorization_endpoint')")"
+[ "$(printf '%s' "$disc" | j "d['token_endpoint']")" = "$ISSUER/api/oauth/token" ] && pass "discovery: token pinned to the issuer" || fail "token_endpoint: $(printf '%s' "$disc" | j "d.get('token_endpoint')")"
+printf '%s' "$disc" | grep -q "localhost" && fail "the request's own host leaked into the document" || pass "discovery: nothing in the document names the request's host"
+# As Caddy sends it (scheme and host forwarded): same document, byte for byte.
 fwd=$(curl -s -H "X-Forwarded-Proto: https" -H "X-Forwarded-Host: core.tatvaos.com" "$API/.well-known/openid-configuration")
-[ "$(printf '%s' "$fwd" | j "d['token_endpoint']")" = "$ISSUER/api/oauth/token" ] && pass "forwarded headers: endpoints advertised as $ISSUER/…" || fail "with forwarded headers, token_endpoint: $(printf '%s' "$fwd" | j "d.get('token_endpoint')")"
-[ "$(printf '%s' "$fwd" | j "d['jwks_uri']")" = "$ISSUER/api/oauth/jwks" ] && pass "forwarded headers: jwks_uri as $ISSUER/…" || fail "with forwarded headers, jwks_uri: $(printf '%s' "$fwd" | j "d.get('jwks_uri')")"
+[ "$fwd" = "$disc" ] && pass "forwarded headers from Caddy: the document is unchanged" || fail "the document differs when Caddy's headers are present"
+# ISSUER CONFUSION: a caller that could set the forwarded host must not be
+# able to move the issuer or any endpoint. Red first: with the absolute URIs
+# removed from Program.cs this check fails, because OpenIddict then builds
+# the URLs from the (spoofed) request.
+evil=$(curl -s -H "X-Forwarded-Proto: https" -H "X-Forwarded-Host: evil.example" "$API/.well-known/openid-configuration")
+[ "$(printf '%s' "$evil" | j "d['issuer']")" = "$ISSUER/" ] && pass "spoofed host: issuer unchanged" || fail "spoofed host moved the issuer: $(printf '%s' "$evil" | j "d.get('issuer')")"
+printf '%s' "$evil" | grep -q "evil.example" && fail "spoofed host appears in the document" || pass "spoofed host: no advertised URL follows it"
+[ "$evil" = "$disc" ] && pass "spoofed host: the document is unchanged, byte for byte" || fail "the document differs under a spoofed host"
 [ "$(printf '%s' "$disc" | j "'S256' in d.get('code_challenge_methods_supported',[]) and 'plain' not in d.get('code_challenge_methods_supported',[])")" = "True" ] && pass "discovery: PKCE S256 only" || fail "code_challenge_methods_supported: $(printf '%s' "$disc" | j "d.get('code_challenge_methods_supported')")"
 [ "$(printf '%s' "$disc" | j "sorted(d.get('grant_types_supported',[]))")" = "['authorization_code', 'refresh_token']" ] && pass "discovery: code and refresh grants only" || fail "grant_types_supported: $(printf '%s' "$disc" | j "d.get('grant_types_supported')")"
 [ "$(printf '%s' "$disc" | j "d.get('response_types_supported')")" = "['code']" ] && pass "discovery: response_type code only" || fail "response_types_supported: $(printf '%s' "$disc" | j "d.get('response_types_supported')")"
