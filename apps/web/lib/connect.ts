@@ -262,6 +262,32 @@ export class DoorClosedError extends Error {
  * problem with it: "Could not start recording" is true of a server with no
  * spare CPU, a server with no egress at all, and a server that is on fire.
  */
+/**
+ * One person invited to a meeting by email (17 Sept 2026). `status` is what the
+ * mail server ANSWERED: pending until tried, not_sent when the sender has no
+ * TatvaOS mailbox. `outOfDate` means it was sent before the meeting last moved.
+ */
+export type MeetingInvitation = {
+  id: string;
+  email: string;
+  status: 'pending' | 'sent' | 'failed' | 'not_sent';
+  note: string | null;
+  createdAt: string;
+  lastSentAt: string | null;
+  outOfDate: boolean;
+};
+
+export type InviteResult = {
+  invitations: MeetingInvitation[];
+  added: number;
+  sent: number;
+  failed: number;
+  alreadyInvited: string[];
+  invalid: string[];
+  note: string | null;
+  warning: string | null;
+};
+
 async function json<T>(res: Response, fallback: string): Promise<T> {
   if (!res.ok) {
     const body: unknown = await res.json().catch(() => ({}));
@@ -385,6 +411,25 @@ export const connectApi = {
   update: (f: AuthedFetch, id: string, body: UpdateMeeting) =>
     f(`/connect/meetings/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
       .then((r) => json<Meeting>(r, 'Could not save that change.')),
+
+  // --- email invitations. Host and cohost only; the server says why if not.
+  invitations: (f: AuthedFetch, id: string) =>
+    f(`/connect/meetings/${id}/invitations`)
+      .then((r) => json<{ invitations: MeetingInvitation[] }>(r, 'Could not load the invitations.')),
+
+  /** Sends one email per person; the result says, per person, whether it went. */
+  invite: (f: AuthedFetch, id: string, emails: string[]) =>
+    f(`/connect/meetings/${id}/invitations`, { method: 'POST', body: JSON.stringify({ emails }) })
+      .then((r) => json<InviteResult>(r, 'Could not send the invitations.')),
+
+  resendInvitation: (f: AuthedFetch, id: string, invitationId: string) =>
+    f(`/connect/meetings/${id}/invitations/${invitationId}/resend`, { method: 'POST' })
+      .then((r) => json<{ invitation: MeetingInvitation; sent: number; note: string | null }>(r, 'Could not resend it.')),
+
+  /** Withdraws the invitation; a delivered one is taken out of their calendar. */
+  withdrawInvitation: (f: AuthedFetch, id: string, invitationId: string) =>
+    f(`/connect/meetings/${id}/invitations/${invitationId}`, { method: 'DELETE' })
+      .then((r) => json<{ note: string | null }>(r, 'Could not withdraw it.')),
 
   cancel: (f: AuthedFetch, id: string) =>
     f(`/connect/meetings/${id}`, { method: 'DELETE' })
