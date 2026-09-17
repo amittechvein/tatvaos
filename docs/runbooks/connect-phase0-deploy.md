@@ -224,7 +224,7 @@ phone, both with no permission prompt and no site setting to change.
 ```
 git checkout -- infra/docker/docker-compose.base.yml \
                 infra/docker/docker-compose.production.yml \
-                infra/docker/conf.d/connect.caddy
+                infra/docker/caddy/conf.d/connect.caddy
 $COMPOSE up -d --remove-orphans
 $COMPOSE exec -T caddy caddy reload --config /etc/caddy/Caddyfile
 ```

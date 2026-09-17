@@ -452,7 +452,21 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # THE DIRECTORY, NEVER THE SINGLE FILE. Until 17 Sept 2026 this line was
+      # `./Caddyfile:/etc/caddy/Caddyfile:ro`. A single-file bind mount is a
+      # mount of one INODE: when deploy.sh's `git reset --hard` replaced the
+      # file, the container kept the old inode, `caddy reload` re-read the old
+      # content, Caddy logged "config is unchanged", and deploy.sh printed
+      # "[ok] caddy reloaded" over the top of it. The stale copy in the
+      # container was byte-for-byte the pre-deploy file, which bounds the
+      # damage to that one deploy: an earlier lost edit would have left an
+      # OLDER copy, not an equal one. A directory mount sees every file inside
+      # it by name, so a replaced file is the new file.
+      #
+      # Everything Caddy reads lives under infra/docker/caddy/ — the Caddyfile
+      # and the conf.d fragments — and nothing else does, because the parent
+      # directory holds .env and this mount must never reach it.
+      - ./caddy:/etc/caddy:ro
       - caddydata:/data
       - caddyconfig:/config
     networks: [mailnet]

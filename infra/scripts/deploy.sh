@@ -451,13 +451,67 @@ step "Reloading the reverse proxy"
 # container happened to restart for another reason — which is how mail.
 # tatvaos.com kept serving the admin console after the redirect was "deployed".
 # `caddy reload` re-reads the mounted Caddyfile in place, no downtime.
-if $COMPOSE exec -T caddy caddy reload --config /etc/caddy/Caddyfile 2>&1 | sed 's/^/   /'; then
-    ok "caddy reloaded from the mounted Caddyfile"
+#
+# AND THEN THE RELOAD ITSELF DID NOTHING — 17 Sept 2026. The Caddyfile was
+# mounted as a single file, which is a mount of one inode. The `git reset
+# --hard` above replaces files, so the file on disk had a new inode and the
+# container still held the old one. `caddy reload` re-read the OLD content,
+# Caddy logged `"msg":"config is unchanged"` — the exact answer, produced by
+# the right component at the right moment — and this step printed
+# "[ok] caddy reloaded from the mounted Caddyfile" on top of it. The new
+# /.well-known/ route was not there and discovery answered the web app's 404
+# until the container was recreated by hand. The stale copy in the container
+# was byte-for-byte the PRE-deploy file, which bounds the damage to that one
+# deploy: had earlier edits been lost too, the copy would have been older
+# than the pre-deploy file, not equal to it.
+#
+# The mount is now the directory (docker-compose.base.yml), which removes the
+# cause. This step keeps three things regardless, because a security
+# directive tightened in the Caddyfile and silently not applied would look
+# exactly like a success (CTO, 17 Sept 2026):
+#   1. Caddy's own log lines from the reload are printed, not swallowed —
+#      "config is unchanged" is the answer, not noise;
+#   2. the post-condition: the RUNNING config, read from Caddy's admin
+#      endpoint, must equal the on-disk Caddyfile adapted in a fresh
+#      container that mounts the current files. Not the file inside the
+#      container — a config that was read and not applied would pass that;
+#   3. when they differ, the container is recreated and the comparison runs
+#      again, and only a second match prints [ok].
+# House rule 12: an [ok] here is printed only after something was checked.
+reload_started=$(date -u +%Y-%m-%dT%H:%M:%S)
+$COMPOSE exec -T caddy caddy reload --config /etc/caddy/Caddyfile 2>&1 | sed 's/^/   /'
+reload_rc=${PIPESTATUS[0]}
+# What Caddy itself said about the reload — its log, not the CLI's exit code.
+$COMPOSE logs --no-log-prefix --since "$reload_started" caddy 2>/dev/null \
+    | grep -iE '"msg":"[^"]*(config|reload|adapt|error)[^"]*"' -o | sed 's/^"msg":/   caddy said: /'
+if [ "$reload_rc" -ne 0 ]; then
+    # A reload failure usually means a config typo, and the OLD config is still
+    # serving. Say so loudly; the post-condition below then says which config
+    # is live.
+    bad "caddy reload failed (exit $reload_rc) — the previous config is still live; check the Caddyfile"
+fi
+
+CADDY_ADAPT="$COMPOSE run --rm --no-deps -T caddy caddy adapt --config /etc/caddy/Caddyfile"
+# 127.0.0.1, not localhost: inside the alpine image busybox wget resolves
+# localhost to ::1 first and Caddy's admin endpoint listens on 127.0.0.1 only,
+# so "localhost" is a connection refused — found by the red-first run of this
+# step on a scratch container, 17 Sept 2026.
+CADDY_RUNNING="$COMPOSE exec -T caddy wget -qO- http://127.0.0.1:2019/config/"
+if verdict=$(infra/scripts/caddy-config-matches.sh "$CADDY_ADAPT" "$CADDY_RUNNING"); then
+    note "$verdict"
+    ok "caddy is serving the Caddyfile on disk — running config equals the adapted file"
 else
-    # Non-fatal: a reload failure usually means a config typo, and the OLD
-    # config is still serving. Say so loudly rather than failing the deploy and
-    # leaving the operator unsure whether the site is down.
-    bad "caddy reload failed — the previous config is still live; check the Caddyfile"
+    printf '%s\n' "$verdict" | sed 's/^/   /'
+    note "recreating caddy so it reads the files on disk (a few seconds of refused connections)"
+    $COMPOSE up -d --force-recreate --no-deps caddy 2>&1 | sed 's/^/   /'
+    sleep 4
+    if verdict=$(infra/scripts/caddy-config-matches.sh "$CADDY_ADAPT" "$CADDY_RUNNING"); then
+        note "$verdict"
+        ok "caddy recreated — running config now equals the adapted file on disk"
+    else
+        printf '%s\n' "$verdict" | sed 's/^/   /'
+        bad "caddy is NOT serving the on-disk Caddyfile even after a recreate — check the Caddyfile and $COMPOSE logs caddy"
+    fi
 fi
 
 # ---------------------------------------------------------------------------

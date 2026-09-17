@@ -35,7 +35,7 @@ Browser B ──┘                          └──► livekit container (mai
 | `livekit` service | `infra/docker/docker-compose.base.yml` | `0001` |
 | `coturn` service | same file | `0001` |
 | LiveKit config | `infra/docker/livekit.yaml` (new) | `0002` |
-| Signalling route | `infra/docker/conf.d/connect.caddy` — add `handle /rtc*` | `0003` |
+| Signalling route | `infra/docker/caddy/conf.d/connect.caddy` — add `handle /rtc*` | `0003` |
 | Variables | `infra/docker/.env.production.example` | `0004` |
 | Production limits/logging | `infra/docker/docker-compose.production.yml` | `0005` |
 | Throwaway test page | `apps/web/app/connect/dev/page.tsx` (new) | `0006` |

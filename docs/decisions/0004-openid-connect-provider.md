@@ -29,7 +29,7 @@ What exists today, read on 15 Sept:
   Mail API keys are shown once, stored as SHA-256 with a visible prefix, and
   resolved through `mail.resolve_api_key`, a SECURITY DEFINER function,
   because row-level security hides the row until the tenant is set.
-- `infra/docker/Caddyfile` sends the Core host's `/api/*` and `/health*` to
+- `infra/docker/caddy/Caddyfile` sends the Core host's `/api/*` and `/health*` to
   the API and everything else to the web app. Nothing claims `/.well-known/`.
 - `apps/api/Shared/Settings/PlatformSettings.cs` defines
   `sso.google.client_id` and `sso.google.client_secret`, and nothing reads

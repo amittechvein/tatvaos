@@ -167,7 +167,7 @@ Browser ──── signalling + media (WebSocket/WebRTC) ────► LiveK
 
 ### What already exists, done for you
 
-- `connect.tatvaos.com` — DNS is live, `infra/docker/conf.d/connect.caddy`
+- `connect.tatvaos.com` — DNS is live, `infra/docker/caddy/conf.d/connect.caddy`
   is written, `CONNECT_DOMAIN` is in the compose file and `.env`.
 - A "being built" page at `apps/web/app/connect/page.tsx` — replace it.
 - The `connect` row in `core.products`, and the launcher tile (currently
@@ -1065,7 +1065,7 @@ Then send yours to Core for a line-by-line review, as Space did.
 ```
 infra/docker/docker-compose.base.yml       services; LiveKit + coturn go here
 infra/docker/docker-compose.production.yml the overlay that owns the project name
-infra/docker/conf.d/connect.caddy          already written for you
+infra/docker/caddy/conf.d/connect.caddy          already written for you
 infra/docker/.env.production.example       CONNECT_DOMAIN already listed
 infra/scripts/deploy.sh                    read it before running it
 infra/scripts/backup.sh                    what is protected, and what is not

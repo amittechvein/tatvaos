@@ -123,7 +123,7 @@ will fail outright.
 **`space.caddy` needs `SPACE_DOMAIN` set in `infra/docker/.env`.** If the file is
 mounted and the variable is unset, **Caddy rejects the entire config and
 crash-loops** — that is a full site outage, not a broken subdomain. It has
-happened here. Model the file on `infra/docker/conf.d/mail.caddy`, which proxies
+happened here. Model the file on `infra/docker/caddy/conf.d/mail.caddy`, which proxies
 `/api/*` same-origin deliberately so the browser never makes a cross-origin call
 and the refresh cookie stays first-party.
 

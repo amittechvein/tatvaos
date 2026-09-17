@@ -45,7 +45,7 @@ else
 fi
 
 echo "== files the new services mount =="
-for f in infra/docker/livekit.yaml infra/docker/conf.d/connect.caddy; do
+for f in infra/docker/livekit.yaml infra/docker/caddy/conf.d/connect.caddy; do
     [ -f "$f" ] && ok "$f present" || bad "$f missing — is the checkout on the right commit?"
 done
 
