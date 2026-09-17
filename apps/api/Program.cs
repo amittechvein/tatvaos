@@ -699,6 +699,13 @@ app.UseForwardedHeaders(forwarded);
 app.UseHttpsRedirection();
 app.UseCors();
 
+// OIDC's two public paths are limited HERE, before UseAuthentication, because
+// that is where OpenIddict finds the client (a database round trip) — a limit
+// at the endpoint would sit behind the cost it exists to cap. The rest of the
+// platform's limits are endpoint policies below, after the user is known.
+app.UseWhen(ctx => OidcEndpoints.IsRateLimitedPath(ctx.Request.Path),
+    branch => branch.UseRateLimiter(OidcEndpoints.RateLimiterOptions(builder.Configuration)));
+
 app.UseAuthentication();
 // AFTER authentication — it reads the tenant claim from the validated principal.
 // BEFORE the endpoints — they hit the database and need the context set.
