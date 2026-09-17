@@ -48,7 +48,22 @@ class El {
         this._class = [...set].join(' ');
       },
       contains: (name) => this._class.split(' ').includes(name),
+      add: (name) => this.classList.toggle(name, true),
+      remove: (name) => this.classList.toggle(name, false),
     };
+    // Attributes, since 22 Aug 2026 when the controls gained SVG icons
+    // (viewBox, aria-hidden, aria-label). The fake lacked them and this
+    // check was red for four weeks without anyone running it — which is
+    // why it runs in CI from 17 Sept (rule 8).
+    this.attrs = {};
+  }
+  setAttribute(name, value) { this.attrs[name] = String(value); }
+  getAttribute(name) { return name in this.attrs ? this.attrs[name] : null; }
+  removeAttribute(name) { delete this.attrs[name]; }
+  replaceChildren(...kids) {
+    for (const c of this.children) c.parent = null;
+    this.children = [];
+    this.append(...kids);
   }
   get className() { return this._class; }
   set className(v) { this._class = v; }
@@ -72,6 +87,7 @@ const doc = {
   head: new El('head'),
   body: new El('body'),
   createElement: (tag) => new El(tag),
+  createElementNS: (_ns, tag) => new El(tag),
   createTextNode: (t) => ({ text: t }),
 };
 
@@ -104,7 +120,11 @@ const tile = (id, over = {}) => ({
 });
 
 const handles = await openPipWindow({ onToggleMute() {}, onReturn() {}, onClosed() {} });
-const grid = () => doc.body.children[0].children[0];
+// By class, not by position: since 22 Aug 2026 the recording pill sits
+// before the grid inside the wrap, and children[0] was the pill — every
+// tiles() below was empty, and the "same element" assertion passed as
+// undefined === undefined until it refused undefined (17 Sept 2026).
+const grid = () => doc.body.querySelectorAll('.grid')[0];
 const tiles = () => grid().children.filter((c) => c._class.includes('tile'));
 
 section('layout — columns fit the window, not a constant');
@@ -142,7 +162,7 @@ const first = tiles()[0];
 log.length = 0;
 handles.setTiles([tile('asha', { trackId: 't1', speaking: true }), tile('ravi', { trackId: 't2' })]);
 ok('a re-render with the same tracks attaches NOTHING again', log.length === 0);
-ok('and reuses the very same element — no flicker', tiles()[0] === first);
+ok('and reuses the very same element — no flicker', first !== undefined && tiles()[0] === first);
 ok('speaking is shown with a ring, not a rebuild', tiles()[0]._class.includes('spk'));
 
 log.length = 0;
