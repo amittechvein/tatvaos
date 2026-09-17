@@ -453,6 +453,32 @@ builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
 var app = builder.Build();
 
 // ---------------------------------------------------------------------------
+//  Refuse to start as production with Development-only logging switched on.
+//
+//  EF's EnableSensitiveDataLogging prints every query parameter in the clear —
+//  in this codebase that means hashed client secrets, token hashes, e-mail
+//  addresses — and it is enabled above only under IsDevelopment(). That makes
+//  ASPNETCORE_ENVIRONMENT, one hand-edited variable in a .env file that has
+//  been copied around, the only thing between a secret and the log. CTO,
+//  17 Sept 2026: assert it, so a wrong environment on the box is a loud
+//  failure at startup rather than a quiet leak into `docker logs`.
+//
+//  Read from the OPTIONS that were actually built, not from the environment
+//  name, so the check cannot drift from the code it guards.
+// ---------------------------------------------------------------------------
+using (var startupScope = app.Services.CreateScope())
+{
+    var dbOptions = startupScope.ServiceProvider.GetRequiredService<DbContextOptions<AppDbContext>>();
+    var core = dbOptions.FindExtension<Microsoft.EntityFrameworkCore.Infrastructure.CoreOptionsExtension>();
+    if (!app.Environment.IsDevelopment() && core?.IsSensitiveDataLoggingEnabled == true)
+        throw new InvalidOperationException(
+            "Refusing to start: EF Core sensitive-data logging is enabled but " +
+            $"ASPNETCORE_ENVIRONMENT is '{app.Environment.EnvironmentName}'. That logging prints every " +
+            "query parameter — hashed secrets and token hashes included — and is only ever meant for " +
+            "Development. Fix the environment on this box, or the code that enabled it.");
+}
+
+// ---------------------------------------------------------------------------
 //  Pipeline — order matters
 // ---------------------------------------------------------------------------
 if (app.Environment.IsDevelopment())
