@@ -109,6 +109,11 @@ public sealed class SpaceBlobSweepWorker(
         using var timer = new PeriodicTimer(Tick);
         do
         {
+            // FIRST, and outside the Space try below — which `continue`s past
+            // everything when the blob volume is missing, and would take the
+            // handoff sweep with it on any box without Space.
+            await SweepHandoffCodesAsync(stopping);
+
             try
             {
                 if (!Directory.Exists(_root))
@@ -140,6 +145,47 @@ public sealed class SpaceBlobSweepWorker(
             }
         }
         while (await SafeWaitAsync(timer, stopping));
+    }
+
+    /// <summary>
+    /// Delete sign-in handoff codes more than 24 hours past expiry.
+    ///
+    /// NOT SPACE'S JOB, AND IT IS HERE ANYWAY. The CTO's ruling, 16 Sept 2026:
+    /// put it in a worker that already wakes up rather than adding one, and
+    /// this is Core's sweeper on a six-hour tick. The two share a timer and
+    /// nothing else — each has its own try, so neither can stop the other.
+    ///
+    /// The window and the DELETE are in core.sweep_handoff_codes()
+    /// (20260916-c-auth-handoff-sweep.sql), not here: the number lives in one
+    /// place, and a caller cannot pass a smaller one. The redeem never depends
+    /// on this running — an unswept expired code can only ever fail it — so a
+    /// failure here is logged and nothing else.
+    ///
+    /// Proven by infra/scripts/verify-handoff-sweep.sh, as tatvaos_app with no
+    /// tenant, which is how this call reaches the database.
+    /// </summary>
+    private async Task SweepHandoffCodesAsync(CancellationToken ct)
+    {
+        try
+        {
+            using var scope = scopes.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            var deleted = await db.Database
+                .SqlQuery<int>($"""SELECT core.sweep_handoff_codes() AS "Value" """)
+                .SingleAsync(ct);
+
+            log.LogInformation(
+                "Handoff code sweep: {Deleted} code(s) more than 24h past expiry deleted.", deleted);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Shutting down; the outer loop notices on its next wait.
+        }
+        catch (Exception ex)
+        {
+            log.LogError(ex, "Handoff code sweep failed; will try again next tick.");
+        }
     }
 
     private static async Task<bool> SafeWaitAsync(PeriodicTimer timer, CancellationToken ct)
