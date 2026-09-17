@@ -171,6 +171,106 @@ jobs:
           PGDATABASE: tatvaos_mail
         run: bash tests/isolation/test-isolation.sh
 
+  # ------------------------------------------------------------------
+  #  The verification scripts that, until 17 Sept 2026, ran on one laptop:
+  #  the OpenID Connect provider's three stage scripts (tests/oidc, decision
+  #  0004) and the Connect picture-in-picture check (tests/connect-pip). CTO
+  #  ruling, 17 Sept: one job for them, because "a check that does not run
+  #  is documentation" (rule 8) and these had only ever run when somebody
+  #  remembered.
+  #
+  #  The same scripts the developer runs locally, with only the connection
+  #  details parameterised (the isolation job's lesson). Stage 1 needs an
+  #  API already listening; stages 2 and 3 start their own. Each is its own
+  #  step so a red names WHICH script without opening the log.
+  #
+  #  Not here: tests/connect-whisper, which needs the production env file
+  #  rendered through docker compose and, for test.py, a paid transcription
+  #  API that must not be spent on every push.
+  # ------------------------------------------------------------------
+  verification:
+    name: Verification scripts
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: devpass
+          POSTGRES_DB: tatvaos_mail
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+        ports: ['5432:5432']
+
+    env:
+      # What every stage script needs to find Postgres and the tools. The
+      # scripts default to Docker or WSL on a laptop; here it is the service.
+      PGPASSWORD: devpass
+      TATVAOS_PSQL: psql -h localhost -U postgres -d tatvaos_mail -Atc
+      TATVAOS_PSQL_APP: psql postgresql://tatvaos_app:dev_app_pw@localhost/tatvaos_mail -Atc
+      TATVAOS_PG_HOST: localhost
+      TATVAOS_PYTHON: python3
+      # The API's environment for the stage that needs one started here.
+      JWT_SIGNING_KEY: ci-only-key-at-least-32-characters-long-x
+      ASPNETCORE_ENVIRONMENT: Development
+      Oidc__Issuer: https://core.tatvaos.com
+      Smtp__Host: localhost
+      Smtp__Port: '5870'
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '10.0.x' }
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install client
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list /etc/apt/sources.list.d/google-chrome*.sources
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+
+      - name: Apply schema
+        run: |
+          for f in local/postgres/init/*.sql; do
+            echo "-- $f"
+            psql -h localhost -U postgres -d tatvaos_mail -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Build the API
+        run: dotnet build -c Release apps/api/TatvaOS.Api.csproj
+
+      # Stage 1 expects an API already on :5000. Started here with a key
+      # directory of its own; stopped before the next stage starts another.
+      - name: "OIDC stage 1: applications and stores"
+        run: |
+          mkdir -p "$RUNNER_TEMP/oidc-keys-1"
+          Oidc__KeyDirectory="$RUNNER_TEMP/oidc-keys-1" ASPNETCORE_URLS=http://localhost:5000 \
+            dotnet run --no-build -c Release --project apps/api/TatvaOS.Api.csproj > "$RUNNER_TEMP/api-stage1.log" 2>&1 &
+          for _ in $(seq 1 150); do
+            curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/health 2>/dev/null | grep -q 200 && break
+            sleep 1
+          done
+          TATVAOS_API_LOG="$RUNNER_TEMP/api-stage1.log" bash tests/oidc/stage1-applications.sh
+          rc=$?
+          fuser -k 5000/tcp >/dev/null 2>&1 || true
+          exit $rc
+
+      - name: "OIDC stage 2: keys, discovery, rotation"
+        run: bash tests/oidc/stage2-discovery.sh
+
+      - name: "OIDC stage 3: the ten-step flow"
+        run: bash tests/oidc/stage3-flow.sh
+
+      - name: Install the web app's TypeScript (for the PiP check)
+        run: pnpm install --frozen-lockfile
+
+      - name: "Connect check: picture-in-picture grid"
+        run: bash infra/scripts/connect-pip-test.sh
+
   mail-stack:
     name: Mail stack
     runs-on: ubuntu-latest

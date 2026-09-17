@@ -35,7 +35,16 @@ role `owner` where the OrgAdmin policy wants `org_owner`; production carries
 no `owner` rows, so the seed was corrected rather than a migration written.)
 
 Elsewhere — a Docker `tv-postgres`, or CI — set `TATVAOS_PSQL`,
-`TATVAOS_PSQL_APP` and `TATVAOS_PG_HOST` to match.
+`TATVAOS_PSQL_APP` and `TATVAOS_PG_HOST` to match. All three scripts take
+them; stage 1 also needs an API already listening (`TATVAOS_API`, default
+:5000) and reads its log through `TATVAOS_API_LOG`.
+
+## In CI (from 17 Sept 2026)
+
+The `Verification scripts` job in `.github/workflows/ci.yml` runs all three
+stages and the Connect picture-in-picture check on every push, against a
+Postgres service with the same init SQL applied — the same scripts as
+here, only the connection details differ. A red there names which script.
 
 ## The two red-first runs (0004)
 

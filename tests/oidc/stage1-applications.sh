@@ -23,8 +23,12 @@
 set -uo pipefail
 PY="${TATVAOS_PYTHON:-python}"
 API="${TATVAOS_API:-http://localhost:5000}"
-PG="docker exec tv-postgres psql -U postgres -d tatvaos_mail -Atc"
-PGAPP() { docker exec tv-postgres psql -U tatvaos_app -d tatvaos_mail -Atc "$1" | tail -n1; }
+# psql, as the superuser and as the app role. Defaults are the Docker dev
+# stack; CI and a WSL Postgres pass their own (see tests/oidc/README.md).
+TATVAOS_PSQL="${TATVAOS_PSQL:-docker exec tv-postgres psql -U postgres -d tatvaos_mail -Atc}"
+TATVAOS_PSQL_APP="${TATVAOS_PSQL_APP:-docker exec tv-postgres psql -U tatvaos_app -d tatvaos_mail -Atc}"
+PG="$TATVAOS_PSQL"
+PGAPP() { $TATVAOS_PSQL_APP "$1" 2>/dev/null | grep -v "^wsl:" | tail -n1; }
 OWNER_PHONE="${TATVAOS_OWNER_PHONE:-+919999900001}"
 TECHVEIN='11111111-1111-1111-1111-111111111111'
 SCHOOL='22222222-2222-2222-2222-222222222222'
@@ -47,7 +51,9 @@ step "0. The API answers"
 h=$(curl -s -o /dev/null -w '%{http_code}' "$API/health"); [ "$h" = "200" ] && pass "health 200" || { fail "health $h"; exit 1; }
 
 step "Sign in as the seeded owner"
-$PG "UPDATE core.users SET login_otp_sent_at=NULL WHERE phone='$OWNER_PHONE'" >/dev/null
+# The seed gives the owner no phone; a fresh database (CI) gets one here.
+$PG "UPDATE core.users SET phone='$OWNER_PHONE' WHERE email='amit@techvein.local' AND phone IS NULL" >/dev/null
+$PG "UPDATE core.users SET login_otp_sent_at=NULL, login_otp_attempts=0 WHERE phone='$OWNER_PHONE'" >/dev/null
 r=$(post "$API/api/auth/otp/request" "" "{\"phone\":\"$OWNER_PHONE\"}")
 code=$(jq_ "$(body "$r")" "d.get('devCode') or ''"); [ -n "$code" ] || { fail "no devCode"; exit 1; }
 r=$(post "$API/api/auth/otp/verify" "" "{\"phone\":\"$OWNER_PHONE\",\"code\":\"$code\"}")
