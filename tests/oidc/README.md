@@ -29,9 +29,10 @@ bash tests/oidc/stage3-flow.sh
 
 The schema is the same `local/postgres/init/*.sql`, applied in C-locale
 order into a database named `tatvaos_mail` (only the `.sql` files: the
-directory holds a README). The seed gives nobody a phone and gives the owner
-the role `owner` where the OrgAdmin policy wants `org_owner`; the script
-sets both in its step 0, so a fresh database works.
+directory holds a README). The seed gives nobody a phone; the script sets
+them in its step 0. (Until 17 Sept 2026 the seed also gave the owner the
+role `owner` where the OrgAdmin policy wants `org_owner`; production carries
+no `owner` rows, so the seed was corrected rather than a migration written.)
 
 Elsewhere — a Docker `tv-postgres`, or CI — set `TATVAOS_PSQL`,
 `TATVAOS_PSQL_APP` and `TATVAOS_PG_HOST` to match.

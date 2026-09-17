@@ -129,6 +129,32 @@ A check that measures something adjacent to the thing is not a weak check, it
 is a check-shaped object — it reports success while the thing it stands for is
 false, and it does so most confidently exactly when something has gone wrong.
 
+**Calibrate the red, both ways — CTO, 17 Sept 2026.** Showing a check red on
+purpose is not enough: a check can go red for the wrong reason, and it can
+stay green under calibration, and only the calibration tells them apart. So:
+
+- when a check goes red under calibration, confirm it went red **for the
+  reason you broke**, not for something else that happened to be broken;
+- when a check stays green under calibration, the check is measuring
+  something other than what it claims. That is not an inconvenience to work
+  around; it is the check telling you it has been lying.
+
+Three in one week, each obeying the "show it red" rule and still wrong:
+
+- *The isolation suite.* Deleting the security policy made the table
+  unreadable to everyone, so every leak check passed — for the wrong reason.
+  The "can I see my own row" case is what caught it.
+- *The Caddy guard (PR 150).* Its first calibration run went red, but not
+  for the stale config it was meant to catch: busybox `wget` resolved
+  `localhost` to IPv6 while Caddy's admin endpoint listens on 127.0.0.1, so
+  the guard was comparing against nothing. Red for the wrong reason.
+- *Stage 3's userinfo liveness check (PR 154).* With the check patched out,
+  the suspended person's token still answered 401 — because refresh-reuse
+  detection had already revoked it a few lines earlier. The 401 owed nothing
+  to liveness, and the check had never tested what its name said. Green
+  under calibration; the step was rewritten to use a fresh token, and only
+  then did the patched build fail it.
+
 ## 6b. A result is about a version. Say which one.
 
 Rule 6 asks whether a check *can* fail. This asks whether its result still

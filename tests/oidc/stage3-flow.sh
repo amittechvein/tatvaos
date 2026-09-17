@@ -201,10 +201,7 @@ for _ in $(seq 1 30); do [ -n "$(PG 'SELECT 1')" ] && break; sleep 1; done
 [ -n "$(PG 'SELECT 1')" ] || { fail "psql does not answer ($TATVAOS_PSQL)"; exit 1; }
 start_api || exit 1
 pass "API up; log at $LOG"
-# The seeded people, given phones for OTP sign-in (the seed has none), and
-# the owner given the role the OrgAdmin policy knows: the seed says 'owner',
-# the sign-up flow and the policy say 'org_owner'.
-PG "UPDATE core.users SET role='org_owner' WHERE email='amit@techvein.local' AND role='owner'" >/dev/null
+# The seeded people, given phones for OTP sign-in (the seed has none).
 PG "UPDATE core.users SET phone='+919999900001' WHERE email='amit@techvein.local' AND phone IS NULL" >/dev/null
 PG "UPDATE core.users SET phone='+919999900002' WHERE email='hr@techvein.local' AND phone IS NULL" >/dev/null
 PG "UPDATE core.users SET phone='+919999900003' WHERE email='principal@abcschool.local' AND phone IS NULL" >/dev/null
@@ -384,6 +381,17 @@ pkce; URL8b=$(authorize_url "$CID_B" "$RP" "s8b$RUN" "n8b$RUN" "$CHALLENGE")
 authorize "$JAR_C" "$URL8b"
 [[ "$LOCATION" != *code=* ]] && pass "suspended: authorize issues no code" || fail "suspended person got a code"
 PG "UPDATE core.users SET status='active' WHERE id='$HR_ID'" >/dev/null
+
+# The peek at authorize validates like sign-in does (CTO's question): an
+# expired or revoked session cookie is "not signed in", never a code.
+PG "UPDATE core.refresh_tokens SET expires_at=now()-interval '1 minute' WHERE user_id='$HR_ID' AND revoked_at IS NULL" >/dev/null
+pkce; URL8d=$(authorize_url "$CID_B" "$RP" "s8d$RUN" "n8d$RUN" "$CHALLENGE")
+authorize "$JAR_C" "$URL8d"
+[[ "$LOCATION" != *code=* ]] && [[ "$LOCATION" == */login?next=* ]] && pass "an EXPIRED session cookie at authorize: sent to sign-in, no code" || fail "expired cookie: $HTTP_CODE → ${LOCATION%%\?*}"
+[[ "$LOCATION" == *next=%2Foauth%2Fauthorize* ]] && pass "…and sign-in will return to the web authorize page" || fail "login next: ${LOCATION#*next=}"
+PG "UPDATE core.refresh_tokens SET expires_at=now()+interval '1 day', revoked_at=now(), revoke_reason='test' WHERE user_id='$HR_ID' AND revoked_at IS NULL" >/dev/null
+authorize "$JAR_C" "$URL8d"
+[[ "$LOCATION" != *code=* ]] && [[ "$LOCATION" == */login?next=* ]] && pass "a REVOKED session cookie at authorize: sent to sign-in, no code" || fail "revoked cookie: $HTTP_CODE → ${LOCATION%%\?*}"
 
 # ===========================================================================
 step "9. Nothing secret in the API log"

@@ -1,5 +1,6 @@
 'use client';
 
+import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useAuth } from '@/lib/auth';
@@ -31,6 +32,7 @@ interface RecoveryStatus {
  * changed; it now recolours with the rest of the product.
  */
 export function RecoveryReminder() {
+  const pathname = usePathname();
   const { user, authedFetch } = useAuth();
   const [status, setStatus] = useState<RecoveryStatus | null>(null);
   const [dismissed, setDismissed] = useState(true);
@@ -59,6 +61,11 @@ export function RecoveryReminder() {
     return () => { cancelled = true; };
   }, [user, authedFetch]);
 
+  // Never on the OpenID Connect pages: a consent screen is a security decision
+  // about a third party, and everything on it that is not that decision
+  // competes with it — cluttered consent screens teach people to click
+  // through (CTO, 17 Sept 2026). Those pages are bare on purpose.
+  if (pathname.startsWith('/oauth/')) return null;
   if (!user || dismissed) return null;
   if (!status || status.hasVerifiedRecoveryEmail) return null;
 

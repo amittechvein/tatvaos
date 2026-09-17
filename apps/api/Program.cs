@@ -127,8 +127,15 @@ builder.Services.AddScoped<AuditWriter>();
 // the PKCE code_verifier, which stage 3's log check found in the clear four
 // times on the first run (17 Sept 2026). A verifier without its code opens
 // nothing, but 0004 says verifiers never appear in a log, and a log is read
-// by more people than a database. Do not raise this level to debug a
-// production flow; run the flow on a laptop instead.
+// by more people than a database.
+//
+// WHAT THIS TRADES (CTO, 17 Sept 2026): OpenIddict's Information diagnostics
+// are silenced in production too, so when SSO misbehaves in front of a
+// customer, the detail is not in the log. Safe and blunt over clever and
+// leaky, made deliberately. Diagnosing a production SSO problem means
+// temporarily raising this level — and every minute it is raised, PKCE
+// verifiers are written to the log until it is lowered again. Prefer
+// reproducing the flow on a laptop with tests/oidc/stage3-flow.sh.
 builder.Services.AddOpenIddict()
     .AddCore(o =>
     {
