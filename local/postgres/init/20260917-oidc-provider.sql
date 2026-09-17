@@ -176,6 +176,19 @@ CREATE POLICY reference_read ON core.oidc_scopes FOR SELECT USING (true);
 -- Authorize and the token endpoint: which organisation owns this client id,
 -- and is it still live. A revoked application answers as if it did not
 -- exist, so both endpoints say invalid_client from the revoking commit.
+--
+-- ONE ROW, BY CONSTRAINT: ix_oidc_applications_client_id above is UNIQUE, so
+-- two tenants can never share a client id and this can never answer with
+-- an arbitrary one of two rows — the day "choose your own client id" is
+-- added to the console, the constraint is already there. Likewise
+-- ix_oidc_tokens_reference_id for the resolver below.
+--
+-- HOW THE TENANT THEN REACHES THE CONNECTION: the API sets app.tenant_id
+-- with set_config on the open connection, exactly as every signed-in request
+-- does (TenantConnectionInterceptor), and the same interceptor RESETs it when
+-- the connection closes, before the pool can hand it to the next request.
+-- The anonymous entry point (TenantContext.EnterAnonymousScope +
+-- SyncTenantAsync) is the one the forgot-password flow already uses.
 DROP FUNCTION IF EXISTS core.resolve_oidc_client(text);
 CREATE OR REPLACE FUNCTION core.resolve_oidc_client(p_client_id text)
 RETURNS TABLE (application_id uuid, tenant_id uuid, was_revoked boolean)

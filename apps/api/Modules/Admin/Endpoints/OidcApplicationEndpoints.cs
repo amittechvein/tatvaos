@@ -121,6 +121,19 @@ public static class OidcApplicationEndpoints
             ClientSecretPrefix = secret is null ? null : secret[..10] + "…",
         };
         await manager.PopulateAsync(entity, descriptor, ct);
+        // HOW THE SECRET IS STORED, and why it differs from mail.api_keys.
+        // OpenIddict's manager hashes it: PBKDF2-HMAC-SHA256, 10,000
+        // iterations, 16-byte salt, 32-byte subkey (the ASP.NET Core Identity
+        // V3 layout), and verifies it at the token endpoint with the same
+        // code. mail.api_keys stores a plain SHA-256 because that lookup is BY
+        // the key and must be indexable; this lookup is by client id, so the
+        // salted, slow hash is free. And 10,000 iterations is NOT low here:
+        // an iteration count defends low-entropy human passwords by making
+        // each guess expensive, and this secret is 32 random bytes, where no
+        // guess count is the thing standing between an attacker and success.
+        // Do not "fix" the number, and do not swap this for SHA-256 to match
+        // the API keys — the two lookups have different shapes (CTO, 17 Sept
+        // 2026).
         await manager.CreateAsync(entity, secret, ct);
 
         await audit.WriteAsync("oidc.application_created", "oidc_application", entity.Id.ToString(),
