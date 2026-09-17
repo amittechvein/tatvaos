@@ -50,6 +50,51 @@ public static partial class ConnectCodes
     /// </summary>
     public static string IdentityForUser(Guid userId) => $"user:{userId}";
 
+    // ── ONE PERSON, SEVERAL DEVICES (17 Sept 2026). ─────────────────────────
+    //  LiveKit allows ONE connection per identity: a second join with the same
+    //  identity evicts the first with DUPLICATE_IDENTITY. With `user:{id}` on
+    //  every token, Amit opening the meeting on his laptop threw his phone out
+    //  of it (seen twice on the Samsung that morning). Amit's decision: the same
+    //  account must work on both devices.
+    //
+    //  So the TOKEN carries a device identity, `user:{id}#{tag}`, fresh per
+    //  join, while OUR ROWS keep the person identity `user:{id}`. Anything that
+    //  asks "who is this" (roles, host controls, attendance, chat attribution,
+    //  webhook bookkeeping) goes through PersonOf first. Anything that acts on
+    //  LiveKit for a PERSON (mute, remove, grants) acts on every device of that
+    //  person: see Answers, used by LiveKitRoomClient.
+    //
+    //  Guests are untouched: their identity is already unique per door.
+    // ─────────────────────────────────────────────────────────────────────────
+    public const char DeviceSeparator = '#';
+
+    /// <summary>The identity for one device's connection. Never stored as a
+    /// participant row's identity; that stays <see cref="IdentityForUser"/>.</summary>
+    public static string IdentityForUserDevice(Guid userId) =>
+        $"{IdentityForUser(userId)}{DeviceSeparator}{Convert.ToHexString(RandomNumberGenerator.GetBytes(4)).ToLowerInvariant()}";
+
+    /// <summary>The person behind a LiveKit identity: the device tag removed.
+    /// An identity with no tag (a guest, or a connection made before device
+    /// identities existed) is already a person identity.</summary>
+    public static string PersonOf(string? identity)
+    {
+        if (string.IsNullOrEmpty(identity)) return "";
+        var at = identity.IndexOf(DeviceSeparator);
+        return at < 0 ? identity : identity[..at];
+    }
+
+    /// <summary>
+    /// Does a connected LiveKit identity answer to `target`? A device identity
+    /// names exactly that device; a person identity names every device of the
+    /// person, because the host who removes somebody means all of their screens.
+    /// </summary>
+    public static bool Answers(string? connected, string target)
+    {
+        if (string.IsNullOrEmpty(connected) || string.IsNullOrEmpty(target)) return false;
+        if (connected == target) return true;
+        return target.IndexOf(DeviceSeparator) < 0 && PersonOf(connected) == target;
+    }
+
     /// <summary>The identity for someone with no account, keyed to their
     /// participant row rather than to their name — two people may both be
     /// "Ravi", and a display name is not an identity.</summary>

@@ -309,12 +309,18 @@ public static class ConnectEndpoints
             .OrderBy(e => e.OccurredAt)
             .ToListAsync(ct);
 
-        var connected = new Dictionary<string, bool>();
+        // Per PERSON, counted over devices: somebody on a phone and a laptop
+        // who closes the laptop is still here. Events carry the device
+        // identity; a row carries the person (ConnectCodes.PersonOf).
+        var devicesIn = new Dictionary<string, HashSet<string>>();
         foreach (var e in events)
         {
             if (e.Identity is null) continue;
-            if (e.Kind == "participant_joined") connected[e.Identity] = true;
-            else if (e.Kind == "participant_left") connected[e.Identity] = false;
+            var person = ConnectCodes.PersonOf(e.Identity);
+            if (!devicesIn.TryGetValue(person, out var devices))
+                devicesIn[person] = devices = [];
+            if (e.Kind == "participant_joined") devices.Add(e.Identity);
+            else if (e.Kind == "participant_left") devices.Remove(e.Identity);
         }
 
         return Results.Ok(new
@@ -325,7 +331,7 @@ public static class ConnectEndpoints
                 p.DisplayName,
                 p.Role,
                 p.IsGuest,
-                connected = connected.GetValueOrDefault(p.Identity),
+                connected = devicesIn.TryGetValue(p.Identity, out var d) && d.Count > 0,
                 p.FirstJoinedAt,
                 p.LastSeenAt,
             }).ToList(),
@@ -753,7 +759,10 @@ public static class ConnectEndpoints
                 return Results.StatusCode(403);
         }
 
+        // The ROW is the person; the TOKEN is this device (ConnectCodes). Two
+        // devices of one account are then two connections, not an eviction.
         var identity = ConnectCodes.IdentityForUser(uid);
+        var deviceIdentity = ConnectCodes.IdentityForUserDevice(uid);
         var participant = await db.ConnectParticipants
             .Where(p => p.MeetingId == id && p.UserId == uid)
             .FirstOrDefaultAsync(ct);
@@ -788,13 +797,13 @@ public static class ConnectEndpoints
         {
             status = "joined",
             token = tokens.MintJoinToken(new LiveKitGrantOptions(
-                ConnectCodes.RoomName(id), identity, participant.DisplayName, RoomAdmin: isHost,
+                ConnectCodes.RoomName(id), deviceIdentity, participant.DisplayName, RoomAdmin: isHost,
                 // The share policy, decided here from the role in OUR row.
                 // null = all sources; ["camera","microphone"] keeps them off
                 // screen share without touching their face or voice.
                 CanPublishSources: ConnectShare.SourcesFor(meeting.SharePolicy, role))),
             wsUrl = tokens.PublicUrl,
-            identity,
+            identity = deviceIdentity,
             role = role ?? "participant",
             meeting.Mode,
             // ── THE MEDIA KEY, and only for a private meeting. ───────────
@@ -919,7 +928,9 @@ public static class ConnectEndpoints
         var guard = await HostGuardAsync(db, tenant, id, identity, ct);
         if (guard is not null) return guard;
 
-        if (!await rooms.RemoveAsync(id, identity, ct))
+        // The PERSON, not the tile that was tapped: removing somebody from
+        // their laptop while their phone stays in the call removes nobody.
+        if (!await rooms.RemoveAsync(id, ConnectCodes.PersonOf(identity), ct))
             return Results.Problem("The media server did not accept that.", statusCode: 502);
 
         // Removal must survive the removal: a guest who is thrown out and
@@ -936,8 +947,9 @@ public static class ConnectEndpoints
         // guests the waiting room is the control and this row is audit only.
         // The host and any cohost are not blockable: /role and /host are how
         // their standing changes, not the Remove button.
+        var removedPerson = ConnectCodes.PersonOf(identity);
         var removed = await db.ConnectParticipants.AsNoTracking()
-            .Where(p => p.MeetingId == id && p.Identity == identity)
+            .Where(p => p.MeetingId == id && p.Identity == removedPerson)
             .FirstOrDefaultAsync(ct);
         if (removed is not null && removed.Role == "participant")
         {
@@ -981,6 +993,8 @@ public static class ConnectEndpoints
         if (role is not ("cohost" or "participant"))
             return Results.BadRequest(new { error = "A person is either a cohost or a participant." });
 
+        // A tile carries a device identity; the role belongs to the person.
+        identity = ConnectCodes.PersonOf(identity);
         var person = await db.ConnectParticipants
             .Where(p => p.MeetingId == id && p.Identity == identity)
             .FirstOrDefaultAsync(ct);
@@ -1035,7 +1049,7 @@ public static class ConnectEndpoints
         if (meeting is null) return NotFound();
         if (await RoleOfAsync(db, id, uid, ct) != "host") return Forbidden();
 
-        var identity = (req.Identity ?? "").Trim();
+        var identity = ConnectCodes.PersonOf((req.Identity ?? "").Trim());
         if (identity.Length == 0)
             return Results.BadRequest(new { error = "Say who the new host is." });
 
@@ -1294,8 +1308,9 @@ public static class ConnectEndpoints
         if (await FindAsync(db, meetingId, ct) is null) return NotFound();
         if (await RoleOfAsync(db, meetingId, uid, ct) is not ("host" or "cohost")) return Forbidden();
 
+        var person = ConnectCodes.PersonOf(identity);
         var exists = await db.ConnectParticipants.AsNoTracking()
-            .AnyAsync(p => p.MeetingId == meetingId && p.Identity == identity, ct);
+            .AnyAsync(p => p.MeetingId == meetingId && p.Identity == person, ct);
         return exists ? null : NotFound();
     }
 }

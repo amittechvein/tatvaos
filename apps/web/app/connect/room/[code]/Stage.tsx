@@ -12,8 +12,7 @@ import { useAuth } from '@/lib/auth';
 import {
   connectApi, minutesApi, recordingApi, screenCaptureSupported,
   type LobbyEntry, type Meeting, type Recording, type RecordingMode, type Seat,
-  type ChatPolicy, type ShareMode, type SharePolicy, type WaitingRoom,
-} from '@/lib/connect';
+  type ChatPolicy, type ShareMode, type SharePolicy, type WaitingRoom, personOf } from '@/lib/connect';
 import { meetingInvitation } from '@/lib/meetingInvitation';
 import { captionsSupported, useCaptions } from '@/lib/useCaptions';
 import type { JoinPrefs } from './PreJoin';
@@ -964,8 +963,10 @@ export default function Stage({ seat, meeting, prefs }: {
             if (who.length === 0) return;
             if (what !== 'cohost' && what !== 'participant') return;
 
-            setRoles((rr) => ({ ...rr, [who]: what }));
-            if (who === r.localParticipant.identity) {
+            // Keyed by PERSON (personOf): the same account on another device is
+            // the same co-host, on this screen and that one.
+            setRoles((rr) => ({ ...rr, [personOf(who)]: what }));
+            if (personOf(who) === personOf(r.localParticipant.identity)) {
               setRolePatch(what);
               // Said out loud. A row of new buttons appearing with no
               // explanation is worse than no buttons at all.
@@ -1250,7 +1251,7 @@ export default function Stage({ seat, meeting, prefs }: {
     if (!meeting) return;
     try {
       await connectApi.setRole(authedFetch, meeting.id, identity, role);
-      setRoles((r) => ({ ...r, [identity]: role }));
+      setRoles((r) => ({ ...r, [personOf(identity)]: role }));
       const r = roomRef.current;
       if (r) {
         void r.localParticipant.publishData(
@@ -2210,7 +2211,7 @@ export default function Stage({ seat, meeting, prefs }: {
   //  count, and that chip opens People.
   // ---------------------------------------------------------------------
   const runsTheMeeting = (p: LKParticipant) =>
-    roles[p.identity] === 'host' || roles[p.identity] === 'cohost';
+    roles[personOf(p.identity)] === 'host' || roles[personOf(p.identity)] === 'cohost';
 
   const sideList = main.length === 1
     ? restAll.filter((t) => t.screen || hasCamera(t.p) || runsTheMeeting(t.p))
@@ -2306,8 +2307,12 @@ export default function Stage({ seat, meeting, prefs }: {
 
   // Who could take the meeting over: signed-in people other than you. A guest
   // cannot host — every host control keys on a user account they do not have.
+  // Once per PERSON, and never yourself on another device: handing the meeting
+  // to your own phone is not a handover.
   const eligibleHosts = participants.filter(
-    (p) => p !== room?.localParticipant && p.identity.startsWith('user:'));
+    (p, i, all) => p.identity.startsWith('user:')
+      && personOf(p.identity) !== personOf(room?.localParticipant.identity)
+      && all.findIndex((q) => personOf(q.identity) === personOf(p.identity)) === i);
 
   // What the SHARE BUTTON should say, from the policy and OUR role. This is
   // display logic only — the token and UpdateParticipant are the enforcement,
@@ -2834,7 +2839,7 @@ export default function Stage({ seat, meeting, prefs }: {
                       {eligibleHosts.map((p) => (
                         <option key={p.identity} value={p.identity}>
                           {(p.name && p.name.length > 0 ? p.name : p.identity)
-                            + (roles[p.identity] === 'cohost' ? ' (co-host)' : '')}
+                            + (roles[personOf(p.identity)] === 'cohost' ? ' (co-host)' : '')}
                         </option>
                       ))}
                     </select>
@@ -3124,12 +3129,12 @@ export default function Stage({ seat, meeting, prefs }: {
               // wrong thing to whoever edits this next.
               const theirCam = hasCamera(p);
               const up = hands[p.identity] === true;
-              const role = roles[p.identity];
+              const role = roles[personOf(p.identity)];
               const isSharing = p.getTrackPublication(Track.Source.ScreenShare)?.videoTrack !== undefined;
               // Only a signed-in person can hold controls — the same rule the
               // server enforces — and only the HOST hands roles out.
               const roleable = myRole === 'host'
-                && p !== room?.localParticipant
+                && personOf(p.identity) !== personOf(room?.localParticipant.identity)
                 && p.identity.startsWith('user:');
               return (
                 <div className="cx-row cx-row--person" key={p.identity}>

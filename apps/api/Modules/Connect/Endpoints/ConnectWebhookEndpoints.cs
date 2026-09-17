@@ -217,8 +217,10 @@ public static class ConnectWebhookEndpoints
 
         if (!string.IsNullOrEmpty(identity) && kind is "participant_joined" or "participant_left")
         {
+            // The event names a device; the row is the person.
+            var personIdentity = ConnectCodes.PersonOf(identity);
             var person = await db.ConnectParticipants
-                .Where(p => p.MeetingId == meetingId && p.Identity == identity)
+                .Where(p => p.MeetingId == meetingId && p.Identity == personIdentity)
                 .FirstOrDefaultAsync(ct);
             if (person is not null)
             {

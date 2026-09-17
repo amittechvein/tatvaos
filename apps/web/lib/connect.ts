@@ -1033,3 +1033,20 @@ export function timeLabel(iso: string): string {
   if (d.toDateString() === tomorrow.toDateString()) return `Tomorrow ${time}`;
   return `${d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} ${time}`;
 }
+
+/**
+ * The person behind a LiveKit identity.
+ *
+ * Since 17 Sept 2026 a signed-in person joins with one identity PER DEVICE,
+ * `user:{id}#{tag}`, so the same account can be in a meeting on a phone and a
+ * laptop at once (LiveKit evicts a second connection with an identical
+ * identity). The API's participant rows, and so every role it returns, keep
+ * the person identity `user:{id}`. Look a role up with this, never with the raw
+ * LiveKit identity, or a host's badge and controls vanish on their own screen.
+ * Mirrors ConnectCodes.PersonOf in the API.
+ */
+export function personOf(identity: string | undefined | null): string {
+  if (!identity) return '';
+  const at = identity.indexOf('#');
+  return at < 0 ? identity : identity.slice(0, at);
+}

@@ -98,9 +98,20 @@ public sealed class LiveKitRoomClient(
     /// </summary>
     public async Task<bool> MuteAsync(Guid meetingId, string identity, string kind, CancellationToken ct)
     {
+        // A device identity mutes that device; a person identity mutes the
+        // person on every device they are in the room with (ConnectCodes.Answers).
         var participants = await ListParticipantsAsync(meetingId, ct);
-        var person = participants.FirstOrDefault(p => p.Identity == identity);
-        if (person is null) return false;
+        var devices = participants.Where(p => ConnectCodes.Answers(p.Identity, identity)).ToList();
+        if (devices.Count == 0) return false;
+
+        var allAccepted = true;
+        foreach (var device in devices)
+            allAccepted &= await MuteDeviceAsync(meetingId, device, kind, ct);
+        return allAccepted;
+    }
+
+    private async Task<bool> MuteDeviceAsync(Guid meetingId, LkParticipant person, string kind, CancellationToken ct)
+    {
 
         // 'screen' targets the SOURCE, not the media type: a screen share is a
         // VIDEO track like a camera is, and matching on type alone would stop
@@ -118,7 +129,7 @@ public sealed class LiveKitRoomClient(
         var response = await CallAsync(meetingId, "MutePublishedTrack", new
         {
             room = ConnectCodes.RoomName(meetingId),
-            identity,
+            identity = person.Identity,
             track_sid = track.Sid,
             muted = true,
         }, ct);
@@ -128,12 +139,41 @@ public sealed class LiveKitRoomClient(
     /// <summary>Remove someone from the room. Their next join needs re-admission.</summary>
     public async Task<bool> RemoveAsync(Guid meetingId, string identity, CancellationToken ct)
     {
-        var response = await CallAsync(meetingId, "RemoveParticipant", new
+        var allAccepted = true;
+        foreach (var device in await DevicesOfAsync(meetingId, identity, ct))
         {
-            room = ConnectCodes.RoomName(meetingId),
-            identity,
-        }, ct);
-        return response is not null;
+            var response = await CallAsync(meetingId, "RemoveParticipant", new
+            {
+                room = ConnectCodes.RoomName(meetingId),
+                identity = device,
+            }, ct);
+            allAccepted &= response is not null;
+        }
+        return allAccepted;
+    }
+
+    /// <summary>
+    /// The connected identities that answer to `identity`: every device of a
+    /// person, or the one device named. When LiveKit cannot be asked, or nobody
+    /// matches, the identity itself, so the call still goes out and LiveKit's
+    /// own answer (usually "not found") reaches the caller exactly as it did
+    /// before device identities existed, instead of a silent success.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> DevicesOfAsync(Guid meetingId, string identity, CancellationToken ct)
+    {
+        // Only a signed-in PERSON can span devices. A device identity or a
+        // guest names one connection, and share enforcement calls this once per
+        // connected device, so asking LiveKit again for each would be N lists.
+        if (identity.IndexOf(ConnectCodes.DeviceSeparator) >= 0
+            || !identity.StartsWith("user:", StringComparison.Ordinal))
+            return [identity];
+
+        var present = await TryListParticipantsAsync(meetingId, ct);
+        var devices = present?
+            .Where(p => ConnectCodes.Answers(p.Identity, identity))
+            .Select(p => p.Identity!)
+            .ToList();
+        return devices is { Count: > 0 } ? devices : [identity];
     }
 
     /// <summary>
@@ -159,20 +199,25 @@ public sealed class LiveKitRoomClient(
         Guid meetingId, string identity, string[]? sources, CancellationToken ct)
     {
         var enumNames = sources?.Select(s => s.ToUpperInvariant()).ToArray();
-        var response = await CallAsync(meetingId, "UpdateParticipant", new
+        var allAccepted = true;
+        foreach (var device in await DevicesOfAsync(meetingId, identity, ct))
         {
-            room = ConnectCodes.RoomName(meetingId),
-            identity,
-            permission = new
+            var response = await CallAsync(meetingId, "UpdateParticipant", new
             {
-                can_subscribe = true,
-                can_publish = true,
-                can_publish_data = true,
-                // Empty/absent = all sources, matching the token grant's rule.
-                can_publish_sources = enumNames ?? [],
-            },
-        }, ct);
-        return response is not null;
+                room = ConnectCodes.RoomName(meetingId),
+                identity = device,
+                permission = new
+                {
+                    can_subscribe = true,
+                    can_publish = true,
+                    can_publish_data = true,
+                    // Empty/absent = all sources, matching the token grant's rule.
+                    can_publish_sources = enumNames ?? [],
+                },
+            }, ct);
+            allAccepted &= response is not null;
+        }
+        return allAccepted;
     }
 
     /// <summary>
