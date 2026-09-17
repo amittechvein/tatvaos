@@ -233,6 +233,54 @@ run_as postgres "
     DELETE FROM core.auth_handoff_codes
      WHERE code_hash IN ('iso-handoff-techvein','iso-handoff-school','iso-handoff-forged');" >/dev/null 2>&1
 
+hdr "OpenID Connect provider tables are isolated; the two resolvers reach one row each"
+# Decision 0004, option (b): the four provider tables are FORCE RLS like every
+# other table, and only the client-by-id and token-by-hash lookups go through
+# SECURITY DEFINER resolvers. Rows for both tenants, then: neither tenant sees
+# the other's; no context sees nothing; the resolvers answer with the right
+# tenant and nothing else; a revoked client is reported as such.
+run_as postgres "
+    INSERT INTO core.oidc_applications (id, tenant_id, client_id, client_type, display_name)
+    VALUES ('0a000000-0000-0000-0000-00000000000a','$TECHVEIN','tos_iso_techvein','confidential','iso-techvein'),
+           ('0b000000-0000-0000-0000-00000000000b','$SCHOOL','tos_iso_school','confidential','iso-school'),
+           ('0c000000-0000-0000-0000-00000000000c','$SCHOOL','tos_iso_school_revoked','confidential','iso-school-revoked')
+    ON CONFLICT (id) DO NOTHING;
+    UPDATE core.oidc_applications SET revoked_at = now() WHERE id = '0c000000-0000-0000-0000-00000000000c';
+    INSERT INTO core.oidc_authorizations (id, tenant_id, application_id, subject, status, type)
+    VALUES ('0a000000-0000-0000-0000-0000000000aa','$TECHVEIN','0a000000-0000-0000-0000-00000000000a','user-t','valid','permanent'),
+           ('0b000000-0000-0000-0000-0000000000bb','$SCHOOL','0b000000-0000-0000-0000-00000000000b','user-s','valid','permanent')
+    ON CONFLICT (id) DO NOTHING;
+    INSERT INTO core.oidc_tokens (id, tenant_id, application_id, authorization_id, reference_id, subject, status, type)
+    VALUES ('0a000000-0000-0000-0000-000000000aaa','$TECHVEIN','0a000000-0000-0000-0000-00000000000a','0a000000-0000-0000-0000-0000000000aa','isohash_techvein','user-t','valid','access_token'),
+           ('0b000000-0000-0000-0000-000000000bbb','$SCHOOL','0b000000-0000-0000-0000-00000000000b','0b000000-0000-0000-0000-0000000000bb','isohash_school','user-s','valid','access_token')
+    ON CONFLICT (id) DO NOTHING;
+" >/dev/null 2>&1
+
+for tbl in core.oidc_applications core.oidc_authorizations core.oidc_tokens; do
+    leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM $tbl WHERE tenant_id = '$SCHOOL'")
+    [ "${leak:-1}" -eq 0 ] && pass "Techvein cannot see ABC School rows in $tbl" || fail "LEAK: Techvein sees $leak ABC School row(s) in $tbl"
+    leak=$(as_tenant "$SCHOOL" "SELECT count(*) FROM $tbl WHERE tenant_id = '$TECHVEIN'")
+    [ "${leak:-1}" -eq 0 ] && pass "ABC School cannot see Techvein rows in $tbl" || fail "LEAK: ABC School sees $leak Techvein row(s) in $tbl"
+    own=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM $tbl WHERE tenant_id = '$TECHVEIN'")
+    [ "${own:-0}" -ge 1 ] && pass "Techvein sees its own rows in $tbl ($own)" || fail "Techvein sees nothing in $tbl - RLS too strict"
+    n=$(no_context "SELECT count(*) FROM $tbl")
+    [ "${n:-1}" -eq 0 ] && pass "no tenant context: zero rows in $tbl" || fail "DANGEROUS: $n row(s) in $tbl with no tenant set"
+done
+
+# The resolvers work with NO tenant set (that is their whole purpose) and
+# answer only the row for the key presented.
+r=$(no_context "SELECT tenant_id::text FROM core.resolve_oidc_client('tos_iso_school')")
+[ "$r" = "$SCHOOL" ] && pass "resolve_oidc_client names the owning tenant with no context set" || fail "resolve_oidc_client answered '$r' for a school client"
+r=$(no_context "SELECT was_revoked::text FROM core.resolve_oidc_client('tos_iso_school_revoked')")
+[ "$r" = "true" ] && pass "resolve_oidc_client reports a revoked client as revoked" || fail "resolve_oidc_client says '$r' for a revoked client"
+r=$(no_context "SELECT count(*) FROM core.resolve_oidc_client('tos_iso_nobody')")
+[ "${r:-1}" -eq 0 ] && pass "resolve_oidc_client answers nothing for an unknown client id" || fail "resolve_oidc_client answered $r row(s) for an unknown id"
+r=$(no_context "SELECT tenant_id::text FROM core.resolve_oidc_token('isohash_techvein')")
+[ "$r" = "$TECHVEIN" ] && pass "resolve_oidc_token names the owning tenant from the hash" || fail "resolve_oidc_token answered '$r'"
+# and the resolver is a key, not a window: it cannot be asked for "all rows"
+r=$(no_context "SELECT count(*) FROM core.resolve_oidc_token('')")
+[ "${r:-1}" -eq 0 ] && pass "resolve_oidc_token answers nothing for an empty hash" || fail "resolve_oidc_token answered $r row(s) for ''"
+
 hdr "Writes cannot be forged into another tenant"
 
 forge_out=$(run_as tatvaos_app \

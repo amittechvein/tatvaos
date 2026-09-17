@@ -17,6 +17,7 @@ using TatvaOS.Api.Modules.Space.Endpoints;
 using TatvaOS.Api.Modules.Calendar.Endpoints;
 using TatvaOS.Api.Modules.Connect.Endpoints;
 using TatvaOS.Api.Workers;
+using TatvaOS.Api.Shared.Auth.Oidc;
 using TatvaOS.Api.Shared.Ai;
 using TatvaOS.Api.Shared.Notify;
 using TatvaOS.Api.Shared.Settings;
@@ -96,6 +97,22 @@ builder.Services.AddScoped<TokenIssuer>();
 builder.Services.AddScoped<TotpService>();
 builder.Services.AddScoped<StorageAllocator>();
 builder.Services.AddScoped<AuditWriter>();
+
+// ---- OpenID Connect provider (decision 0004) — stage 1: the stores -------
+// OpenIddict's core with EF Core storage on our own entities, and the two
+// pre-tenant lookups replaced by tenant-safe stores that consult SECURITY
+// DEFINER resolvers (option (b)). The server half — signing keys, discovery,
+// authorize, token, userinfo — is a later stage; nothing answers on
+// /.well-known yet.
+builder.Services.AddOpenIddict()
+    .AddCore(o =>
+    {
+        o.UseEntityFrameworkCore()
+         .UseDbContext<AppDbContext>()
+         .ReplaceDefaultEntities<OidcApplication, OidcAuthorization, OidcScope, OidcToken, Guid>();
+        o.ReplaceApplicationStore<OidcApplication, TenantSafeApplicationStore>();
+        o.ReplaceTokenStore<OidcToken, TenantSafeTokenStore>();
+    });
 
 // Where Space's bytes live. Singleton — it holds only the root path; key
 // format and path validation live inside. Swapping to S3-compatible object
@@ -466,6 +483,7 @@ app.MapAuthEndpoints();
 app.MapMfaEndpoints();
 app.MapOrganisationEndpoints();
 app.MapUserEndpoints();
+app.MapOidcApplicationEndpoints();
 app.MapDomainEndpoints();
 app.MapSignupEndpoints();
 app.MapSettingsEndpoints();
