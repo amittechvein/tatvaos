@@ -44,7 +44,8 @@ public static class ConnectInvitationMailer
         ILogger log,
         ContactAutoSave autoSave,
         AuditWriter audit,
-        CancellationToken ct)
+        CancellationToken ct,
+        ConnectInvitations.Previous? previous = null)
     {
         if (targets.Count == 0) return new Outcome(0, 0, null);
         if (tenant.UserId is not Guid uid) return new Outcome(0, 0, "No signed-in user to send as.");
@@ -80,9 +81,9 @@ public static class ConnectInvitationMailer
                 var submission = new MailSubmission(
                     To: [new MailboxAddress("", t.Email)],
                     Cc: [],
-                    Subject: ConnectInvitations.Subject(meeting, method),
-                    BodyText: ConnectInvitations.BodyText(meeting, joinUrl, sender.DisplayName, box.Address, method, meeting.AllowGuests),
-                    BodyHtml: "",
+                    Subject: ConnectInvitations.Subject(meeting, method, previous),
+                    BodyText: ConnectInvitations.BodyText(meeting, joinUrl, sender.DisplayName, box.Address, method, meeting.AllowGuests, previous),
+                    BodyHtml: ConnectInvitations.BodyHtml(meeting, joinUrl, sender.DisplayName, box.Address, method, meeting.AllowGuests, previous),
                     Attachments: [],
                     ICalendar: ical,
                     ICalendarMethod: ical is null ? null : method,
@@ -137,7 +138,8 @@ public static class ConnectInvitationMailer
     /// </summary>
     public static async Task<Outcome> ReissueAsync(
         ConnectMeeting meeting, string method, AppDbContext db, TenantContext tenant,
-        IConfiguration config, ILogger log, ContactAutoSave autoSave, AuditWriter audit, CancellationToken ct)
+        IConfiguration config, ILogger log, ContactAutoSave autoSave, AuditWriter audit, CancellationToken ct,
+        ConnectInvitations.Previous? previous = null)
     {
         var delivered = await db.Set<ConnectMeetingInvitation>()
             .Where(i => i.MeetingId == meeting.Id && i.Status == ConnectInvitations.StatusSent)
@@ -146,6 +148,6 @@ public static class ConnectInvitationMailer
 
         meeting.InviteSequence += 1;
         await db.SaveChangesAsync(ct);
-        return await SendAsync(meeting, delivered, method, db, tenant, config, log, autoSave, audit, ct);
+        return await SendAsync(meeting, delivered, method, db, tenant, config, log, autoSave, audit, ct, previous);
     }
 }

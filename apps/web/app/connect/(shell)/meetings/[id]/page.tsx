@@ -515,8 +515,24 @@ export default function MeetingPage({ params }: { params: Promise<{ id: string }
 
             <div>
               <label className="mb-1 block text-[13px] font-medium text-ink" htmlFor="ed-start">Starts</label>
+              {/* Moving the start MOVES THE END WITH IT, keeping the length,
+                  as every calendar does. 17 Sept 2026: Amit moved a 23:00–23:30
+                  meeting to 14:00 and it became 14:00–23:30 — nine and a half
+                  hours — and every invited person was emailed that. The end
+                  field can still be changed on its own afterwards. */}
               <Input id="ed-start" type="datetime-local" value={form.start}
-                     onChange={(e) => setForm({ ...form, start: e.target.value })} />
+                     onChange={(e) => {
+                       const next = e.target.value;
+                       const oldStart = new Date(form.start).getTime();
+                       const oldEnd = new Date(form.end).getTime();
+                       const newStart = new Date(next).getTime();
+                       if ([oldStart, oldEnd, newStart].every(Number.isFinite) && oldEnd >= oldStart) {
+                         const end = new Date(newStart + (oldEnd - oldStart));
+                         setForm({ ...form, start: next, end: toLocalInput(end.toISOString()) });
+                       } else {
+                         setForm({ ...form, start: next });
+                       }
+                     }} />
             </div>
             <div>
               <label className="mb-1 block text-[13px] font-medium text-ink" htmlFor="ed-end">Ends</label>

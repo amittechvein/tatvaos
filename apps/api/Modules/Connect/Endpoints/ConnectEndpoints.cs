@@ -705,7 +705,8 @@ public static class ConnectEndpoints
 
         if ((meeting.Title, meeting.ScheduledStart, meeting.ScheduledEnd) != calendarBefore)
             await ConnectInvitationMailer.ReissueAsync(meeting, TatvaOS.Api.Modules.Calendar.Imip.MethodRequest,
-                db, tenant, config, log, autoSave, audit, ct);
+                db, tenant, config, log, autoSave, audit, ct,
+                new ConnectInvitations.Previous(calendarBefore.Title, calendarBefore.ScheduledStart, calendarBefore.ScheduledEnd));
 
         return Results.Ok(Shape(meeting, role));
     }
