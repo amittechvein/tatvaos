@@ -99,6 +99,10 @@ export ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS="$API"
 export Oidc__KeyDirectory="$KEYDIR" Oidc__Issuer="$ISSUER"
 export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
 export Smtp__Host=localhost Smtp__Port=5870
+# Low limits for step 11, high enough that the flow itself never trips them
+# (the flow makes about a dozen token and two dozen authorize calls, all from
+# 127.0.0.1; step 11 hammers from its own forwarded address).
+export Oidc__TokenRequestsPerMinute=25 Oidc__AuthorizeRequestsPerMinute=40
 
 API_PID=""
 start_api() {
@@ -392,6 +396,8 @@ authorize "$JAR_C" "$URL8d"
 PG "UPDATE core.refresh_tokens SET expires_at=now()+interval '1 day', revoked_at=now(), revoke_reason='test' WHERE user_id='$HR_ID' AND revoked_at IS NULL" >/dev/null
 authorize "$JAR_C" "$URL8d"
 [[ "$LOCATION" != *code=* ]] && [[ "$LOCATION" == */login?next=* ]] && pass "a REVOKED session cookie at authorize: sent to sign-in, no code" || fail "revoked cookie: $HTTP_CODE → ${LOCATION%%\?*}"
+n=$(PG "SELECT count(*) FROM core.audit_logs WHERE action='oidc.revoked_session_at_authorize' AND target_id='$HR_ID' AND after_state::text LIKE '%"from"%'")
+[ "${n:-0}" -ge 1 ] && pass "…and the attempt is in the audit log with the address it came from (audited, not escalated)" || fail "no audit row for the revoked cookie at authorize"
 
 # ===========================================================================
 step "9. Nothing secret in the API log"
@@ -415,6 +421,29 @@ for t in oidc_applications oidc_authorizations oidc_tokens; do
     n=$(PGAPP "SELECT count(*) FROM core.$t")
     [ "${n:-1}" -eq 0 ] && pass "no context: core.$t shows nothing" || fail "DANGEROUS: ${n:-?} row(s) with no tenant in core.$t"
 done
+
+# ===========================================================================
+step "11. The two public paths are rate-limited per address, before the client lookup"
+# From a forwarded address of its own, so the flow above is not in the count.
+# A nonsense client: the limiter answers 429 before OpenIddict ever looks it
+# up; without the limiter every request would answer 400/401 and this fails.
+first429=0; after=0
+for i in $(seq 1 30); do
+    h=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/api/oauth/token" -H 'X-Forwarded-For: 203.0.113.9' -d grant_type=authorization_code -d code=x -d client_id=tos_nonsense -d client_secret=toss_nonsense -d redirect_uri=https://rp.test/cb -d code_verifier=x)
+    if [ "$h" = "429" ]; then [ "$first429" -eq 0 ] && first429=$i; after=$((after+1)); elif [ "$first429" -ne 0 ]; then fail "request $i answered $h after the limit was reached"; fi
+done
+[ "$first429" -eq 26 ] && pass "token: 25 allowed a minute per address, the 26th answers 429 (first 429 at request $first429)" || fail "token: first 429 at request ${first429:-none} (expected 26)"
+[ "$after" -eq 5 ] && pass "token: every request after the limit answers 429" || fail "token: $after of 5 post-limit requests were 429"
+r=$(curl -s -X POST "$API/api/oauth/token" -H 'X-Forwarded-For: 203.0.113.9' -d grant_type=authorization_code -d code=x -d client_id=tos_nonsense)
+[ "$(jq_ "$r" "d.get('error','')")" = "temporarily_unavailable" ] && pass "token: the 429 body is a protocol error the client library understands" || fail "429 body: $(brief "$r")"
+first429=0
+for i in $(seq 1 45); do
+    h=$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Forwarded-For: 203.0.113.10' "$API/api/auth/oauth/authorize?response_type=code&client_id=tos_nonsense&redirect_uri=https%3A%2F%2Frp.test%2Fcb")
+    [ "$h" = "429" ] && [ "$first429" -eq 0 ] && first429=$i
+done
+[ "$first429" -eq 41 ] && pass "authorize: 40 allowed a minute per address, the 41st answers 429" || fail "authorize: first 429 at request ${first429:-none} (expected 41)"
+h=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/api/oauth/token" -H 'X-Forwarded-For: 203.0.113.11' -d grant_type=authorization_code -d code=x -d client_id=tos_nonsense)
+[ "$h" != "429" ] && pass "another address is not affected ($h)" || fail "another address was limited too"
 
 printf '\n%s%s%s\n  %s%d passed%s, ' "$CYAN" "----------------------------------------" "$RST" "$GREEN" "$PASSED" "$RST"
 [ "$FAILED" -eq 0 ] && printf '%s0 failed%s\n\n' "$GREEN" "$RST" || printf '%s%d failed%s\n\n' "$RED" "$FAILED" "$RST"

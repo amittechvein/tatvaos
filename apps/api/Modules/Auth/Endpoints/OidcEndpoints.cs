@@ -9,6 +9,7 @@ using OpenIddict.Abstractions;
 using OpenIddict.Core;
 using OpenIddict.Server.AspNetCore;
 using OpenIddict.Validation.AspNetCore;
+using TatvaOS.Api.Modules.Admin;
 using TatvaOS.Api.Shared.Auth;
 using TatvaOS.Api.Shared.Auth.Oidc;
 using TatvaOS.Api.Shared.Data;
@@ -108,7 +109,7 @@ public static class OidcEndpoints
         HttpContext http, AppDbContext db, TenantContext tenant,
         OpenIddictApplicationManager<OidcApplication> applications,
         OpenIddictAuthorizationManager<OidcAuthorization> authorizations,
-        IConfiguration config, CancellationToken ct)
+        AuditWriter audit, IConfiguration config, CancellationToken ct)
     {
         var request = http.GetOpenIddictServerRequest()
             ?? throw new InvalidOperationException("OpenIddict did not attach the authorization request.");
@@ -122,6 +123,19 @@ public static class OidcEndpoints
         //    NOT rotated: rotation is the refresh endpoint's job, and a peek
         //    that rotated would sign the person out of the tab they came from.
         var session = await SessionPeek.ReadAsync(http, db, ct);
+        if (session is { Revoked: true })
+        {
+            // Audited, not escalated (see SessionPeek). Written under the
+            // application's tenant, which is the request's scope; a revoked
+            // cookie from ANOTHER organisation is not written, because a row
+            // naming a foreign user id inside this tenant would be wrong
+            // and switching tenants mid-request is the one thing the stores
+            // forbid — that case ends as access_denied a few lines down anyway.
+            if (session.TenantId == applicationTenant)
+                await audit.WriteAsync("oidc.revoked_session_at_authorize", "user", session.UserId.ToString(),
+                    after: new { from = ClientAddress(http), clientId = request.ClientId }, ct: ct);
+            session = null;
+        }
         if (session is null)
         {
             if (request.HasPromptValue(PromptValues.None))
@@ -412,6 +426,66 @@ public static class OidcEndpoints
     private static string WebBase(IConfiguration config) =>
         (config["Oidc:WebBaseUrl"] ?? config["Oidc:Issuer"] ?? "https://core.tatvaos.com").TrimEnd('/');
 
+    /// <summary>
+    /// The address a request came from, for limiting and auditing. Behind
+    /// Caddy the connection's address is Caddy's; Caddy appends the real
+    /// client to X-Forwarded-For, so the LAST entry is the one Caddy wrote and
+    /// the only one not chosen by the client. The same rule as every other
+    /// limiter in Program.cs.
+    /// </summary>
+    public static string ClientAddress(HttpContext http)
+    {
+        var xff = http.Request.Headers["X-Forwarded-For"].ToString();
+        return string.IsNullOrEmpty(xff)
+            ? http.Connection.RemoteIpAddress?.ToString() ?? "unknown"
+            : xff.Split(',')[^1].Trim();
+    }
+
+    /// <summary>
+    /// The two public, unauthenticated, database-costing paths (CTO, 17 Sept
+    /// 2026): token, where the client secret arrives in the body, and
+    /// authorize. The limiter must sit IN FRONT of OpenIddict's client lookup,
+    /// which happens inside the authentication middleware, not at the
+    /// endpoint — so Program.cs mounts these options on a branch before
+    /// UseAuthentication, keyed per client address and per path. Defaults:
+    /// 120 token requests and 60 authorize requests a minute per address,
+    /// configurable as Oidc:TokenRequestsPerMinute and
+    /// Oidc:AuthorizeRequestsPerMinute (the test lowers them to prove the 429).
+    /// </summary>
+    public static bool IsRateLimitedPath(PathString path) =>
+        path.Equals(TokenPath, StringComparison.OrdinalIgnoreCase)
+        || path.Equals(AuthorizePath, StringComparison.OrdinalIgnoreCase);
+
+    public static Microsoft.AspNetCore.RateLimiting.RateLimiterOptions RateLimiterOptions(IConfiguration config)
+    {
+        var tokenPerMinute = config.GetValue<int?>("Oidc:TokenRequestsPerMinute") ?? 120;
+        var authorizePerMinute = config.GetValue<int?>("Oidc:AuthorizeRequestsPerMinute") ?? 60;
+        return new Microsoft.AspNetCore.RateLimiting.RateLimiterOptions
+        {
+            RejectionStatusCode = StatusCodes.Status429TooManyRequests,
+            GlobalLimiter = System.Threading.RateLimiting.PartitionedRateLimiter.Create<HttpContext, string>(http =>
+            {
+                var isToken = http.Request.Path.Equals(TokenPath, StringComparison.OrdinalIgnoreCase);
+                return System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+                    (isToken ? "oidc-token:" : "oidc-authorize:") + ClientAddress(http),
+                    _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = isToken ? tokenPerMinute : authorizePerMinute,
+                        Window = TimeSpan.FromMinutes(1),
+                        QueueLimit = 0,
+                    });
+            }),
+            OnRejected = (ctx, _) =>
+            {
+                // The protocol's own shape for "not now", so a relying party's
+                // client library reads it as an error and not as a token.
+                ctx.HttpContext.Response.ContentType = "application/json";
+                return new ValueTask(ctx.HttpContext.Response.WriteAsync(
+                    "{\"error\":\"temporarily_unavailable\",\"error_description\":\"Too many requests from this address. Try again in a minute.\"}"));
+            },
+        };
+    }
+
     private static IResult Forbid(string error, string description) =>
         Results.Forbid(
             new AuthenticationProperties(new Dictionary<string, string?>
@@ -449,13 +523,24 @@ public static class OidcEndpoints
 /// expires_at is in the future; a revoked token — its own revocation or its
 /// family's, since a reuse kills every token of the family — answers "not
 /// signed in"; and the caller then checks the tenant, the person's status
-/// and the organisation's before anything is issued. What a peek does NOT do
-/// is kill the family when it meets a revoked token: that is the refresh
-/// endpoint's job, and the next refresh in that browser does it.
+/// and the organisation's before anything is issued.
+///
+/// WHAT A PEEK DOES NOT DO — a decision, not an omission (CTO, 17 Sept 2026):
+/// it does not kill the family when it meets a revoked token. A revoked token
+/// at authorize is very often a stale second tab, not theft — someone clicked
+/// "sign in with TatvaOS" from a tab whose session was rotated elsewhere —
+/// and tearing down their whole session for that would be hostile.
+/// Escalation belongs to the write path (the refresh endpoint), which the
+/// next refresh in that browser reaches. What the peek DOES do is hand the
+/// revoked outcome back so the caller writes it to the audit log: the first
+/// time anyone investigates a suspected session theft, "a revoked cookie was
+/// presented at authorize, from this address, at this time" is the line they
+/// will want and cannot reconstruct later.
 /// </summary>
 public static class SessionPeek
 {
-    public sealed record Session(Guid TenantId, Guid UserId);
+    /// <summary>Revoked: the cookie named a real person but its token is dead — not signed in, and worth a line in the audit log.</summary>
+    public sealed record Session(Guid TenantId, Guid UserId, bool Revoked);
 
     public static async Task<Session?> ReadAsync(HttpContext http, AppDbContext db, CancellationToken ct)
     {
@@ -473,7 +558,6 @@ public static class SessionPeek
         cmd.Parameters.Add(p);
         await using var r = await cmd.ExecuteReaderAsync(ct);
         if (!await r.ReadAsync(ct)) return null;
-        if (r.GetBoolean(2)) return null;
-        return new Session(r.GetGuid(0), r.GetGuid(1));
+        return new Session(r.GetGuid(0), r.GetGuid(1), Revoked: r.GetBoolean(2));
     }
 }
