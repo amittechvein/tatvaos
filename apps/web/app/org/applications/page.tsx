@@ -115,9 +115,17 @@ export default function ApplicationsPage() {
       title="Applications"
       subtitle="Let your other software sign people in with their TatvaOS account"
       actions={
-        <Button variant="primary" onClick={() => setCreating(true)}>
-          New application
-        </Button>
+        <div className="flex gap-2">
+          {/* A real link, not a Button with href: Button renders a Next <Link>,
+              which routes instead of opening the static page. */}
+          <a href="/docs/sso-integration-guide.html" target="_blank" rel="noopener"
+             className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink no-underline transition-colors hover:bg-canvas">
+            Integration guide
+          </a>
+          <Button variant="primary" onClick={() => setCreating(true)}>
+            New application
+          </Button>
+        </div>
       }
     >
       {error && <Alert tone="danger" onDismiss={() => setError(null)}>{error}</Alert>}
@@ -293,7 +301,8 @@ function FreshCard({ fresh, origin, onDismiss }: { fresh: Fresh; origin: string;
       )}
 
       <div className="text-[0.75rem] text-ink-muted mb-1">
-        Give the application these, in whatever form its settings ask for them.
+        Give the application these, in whatever form its settings ask for them. Its developer
+        will want the <a href="/docs/sso-integration-guide.html" target="_blank" rel="noopener">integration guide</a>.
       </div>
       <pre className="bg-canvas rounded p-4 text-[0.75rem] mb-0" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
         {`Provider / issuer:  ${origin}
@@ -310,6 +319,12 @@ PKCE:               required, S256`}
 function HowToConnect({ origin }: { origin: string }) {
   return (
     <Card title="How an application connects" subtitle="Standard OpenID Connect. Most software has a settings page for exactly this.">
+      <p className="text-[0.8125rem] text-ink-muted mb-4">
+        Handing this to a developer? The{' '}
+        <a href="/docs/sso-integration-guide.html" target="_blank" rel="noopener">integration guide</a>{' '}
+        has every value, the flow request by request, the ID token&apos;s claims, and configuration
+        for ASP.NET Core, Node.js and Python.
+      </p>
       <ol className="ps-4 mb-4">
         <li className="mb-3">
           <div className="font-semibold">Register it here</div>
