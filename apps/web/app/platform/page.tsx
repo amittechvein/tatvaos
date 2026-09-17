@@ -1,8 +1,11 @@
 import Link from 'next/link';
 
 // ============================================================================
-//  The Platform page — platform.tatvaos.com lands here. The developer
-//  console: where TatvaOS faces programs rather than people.
+//  The Platform page — core.tatvaos.com/platform. The developer console:
+//  where TatvaOS faces programs rather than people. (platform.tatvaos.com
+//  used to be its own door; since 17 Sept 2026 that host 301s here, path
+//  preserved, and keeps answering until its DNS retires — see
+//  infra/docker/conf.d/platform.caddy.)
 //
 //  DELIBERATELY STATIC AND SERVER-RENDERED: this page is what a client's
 //  developer reads before they have signed in to anything, so it must not

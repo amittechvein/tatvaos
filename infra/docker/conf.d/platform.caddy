@@ -1,45 +1,65 @@
 # ============================================================================
-#  TatvaOS Platform — platform.tatvaos.com (the developer console)
+#  platform.tatvaos.com — RETIRED into core.tatvaos.com (phase 2 of 3)
 # ============================================================================
 #
-#  Where the platform faces PROGRAMS rather than people: mail-client settings
-#  and app passwords today; personal access tokens and the public APIs
-#  (create users, create mailboxes, create meetings) as they ship. Amit's
-#  ask of 28 Aug 2026 — one address a client's developer can be sent to.
+#  Amit's decision, 17 Sept 2026: platform.tatvaos.com goes away; everything it
+#  served lives on core.tatvaos.com. What it served was the developer page at
+#  /platform (mail-client settings, app passwords) — the SAME web and API
+#  containers core proxies to, under a second hostname. Core already answers
+#  /platform; nothing existed here that core lacked (phase 1 needed no work).
 #
-#  Same skeleton as every other door. Requires PLATFORM_DOMAIN in the
-#  production environment file AND a DNS record — see the warning in
-#  account.caddy about what a mounted-but-unset variable does to Caddy
-#  (refuses the whole config; every product goes down). deploy.sh's
-#  validate-before-reload gate is the net, but the variable still has to
-#  exist BEFORE this file first deploys.
+#  WHY THIS FRAGMENT STILL EXISTS. Deleting a public host turns every bookmark,
+#  every link in mail we have already sent, every password-manager entry and
+#  every browser autocomplete into a connection error with no explanation.
+#  docs/CLIENT_MAIL_SETUP.md — the one-page sheet attached to emails to
+#  clients — said "served live at platform.tatvaos.com" until this change, and
+#  a copy in a customer's inbox cannot be edited. So the host keeps answering,
+#  keeps its own certificate (Caddy renews it as long as the name is here),
+#  and sends every request on with a PERMANENT redirect, PATH PRESERVED: a
+#  bookmark to a deep page lands on the same page, not the home page.
+#
+#  The root is the one exception. platform's root used to redirect to
+#  /platform (core's root is the marketing page), so "/" goes to
+#  core.tatvaos.com/platform — where it always landed.
+#
+#  Phase 3, retiring the DNS record, is months away and Amit's to do in the
+#  DNS panel — and only once the access log below shows nothing but our own
+#  checks. That log is the only evidence there will be: Caddy logs no host by
+#  default, and nothing else can count who still arrives here. It lives on
+#  the caddydata volume so it survives container recreation. Read it with:
+#
+#      docker exec tatvaos-caddy-1 sh -c 'wc -l /data/logs/platform-access.log'
+#      docker exec tatvaos-caddy-1 sh -c 'tail /data/logs/platform-access.log'
+#
+#  Requires PLATFORM_DOMAIN in the production environment file, exactly as
+#  before — see the warning in account.caddy about what a mounted-but-unset
+#  variable does to Caddy (refuses the whole config; every product goes
+#  down). Removing that variable is part of phase 3, not before.
 # ============================================================================
 
 {$PLATFORM_DOMAIN} {
-    encode zstd gzip
-
-    # Send every other product's paths to their own door — see the
-    # product_doors snippet file for why and for the self-redirect guard.
-    import /etc/caddy/conf.d/core/product-doors.caddy
-
-    handle /api/* {
-        reverse_proxy api:8080
+    # The evidence for phase 3. JSON, one line per request, rolled so it can
+    # never fill the disk. Nothing secret arrives on a redirect-only host.
+    log {
+        output file /data/logs/platform-access.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+        format json
     }
 
-    redir / /platform
+    # Exactly "/" — where the old root redirect took people.
+    @root path /
+    redir @root https://{$SITE_DOMAIN}/platform permanent
 
-    @consolepaths path /org /org/* /admin /admin/* /signup /signup/*
-    redir @consolepaths https://{$SITE_DOMAIN}{uri}
-
-    handle {
-        reverse_proxy web:3000
-    }
+    # Everything else, same path on core. 301 so browsers and crawlers learn
+    # the move; the old name stops being a second front door for the SSO
+    # issuer URL that decision 0004 publishes.
+    redir * https://{$SITE_DOMAIN}{uri} permanent
 
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
         X-Content-Type-Options "nosniff"
-        X-Frame-Options "DENY"
-        Referrer-Policy "strict-origin-when-cross-origin"
         -Server
     }
 }

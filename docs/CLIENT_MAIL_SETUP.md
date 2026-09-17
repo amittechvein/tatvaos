@@ -1,7 +1,10 @@
 # Using your TatvaOS mailbox from other software
 
 *The one-page sheet a client receives. Everything on it is served live at
-platform.tatvaos.com; this copy exists so it can be attached to an email.*
+core.tatvaos.com/platform; this copy exists so it can be attached to an
+email. (Until 17 Sept 2026 it said platform.tatvaos.com; that address now
+redirects to the same page, and stays answering because copies of this sheet
+already sit in clients' inboxes.)*
 
 ---
 
