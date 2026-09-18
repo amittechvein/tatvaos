@@ -664,6 +664,45 @@ r=$(curl -s "$API/api/org/applications" -H "Authorization: Bearer $OWNER_TOKEN")
 [ "$(jq_ "$r" "[a for a in d if a['id']=='$APP_D'][0]['status']")" = "active" ] && pass "and its status" || fail "status missing"
 [ "$(jq_ "$r" "[a for a in d if a['id']=='$APP_A'][0]['status']")" = "revoked" ] && pass "a revoked application reads as revoked" || fail "revoked status wrong"
 
+# ===========================================================================
+step "16. The logo's own headers, and no refresh token in a browser"
+# ASKED OF THE API DIRECTLY, with no Caddy in the way. Until 18 Sept the
+# endpoint's comment claimed nosniff and the header came only from Caddy's
+# site block - true in production, false everywhere else, and false in the
+# place the comment was written (CTO, 18 Sept).
+r=$(curl -s "$API/api/auth/oauth/consent?client_id=$CID_B&redirect_uri=$(urlenc "$RP")&scope=openid%20profile" -H "Authorization: Bearer $OWNER_TOKEN")
+LOGO2=$(jq_ "$r" "d['logoUri'] or ''")
+[ -n "$LOGO2" ] && pass "application B still has our logo address" || fail "no logoUri to check headers on"
+hdrs=$(curl -s -D - -o /dev/null "$API$LOGO2" -H "Authorization: Bearer $OWNER_TOKEN")
+printf '%s' "$hdrs" | grep -qi "x-content-type-options: *nosniff" && pass "the API itself sends nosniff" || fail "no nosniff from the API: $(printf '%s' "$hdrs" | tr -d '\r' | tr '\n' ' ' | head -c 160)"
+printf '%s' "$hdrs" | grep -qi "content-security-policy:.*sandbox" && pass "and a sandboxing content security policy" || fail "no sandboxing CSP from the API"
+printf '%s' "$hdrs" | grep -qi "content-type: *image/png" && pass "served as image/png, the type its bytes were" || fail "content type header wrong"
+
+# A browser-only application may not be given a refresh token.
+r=$(post "$API/api/org/applications" "$OWNER_TOKEN" "{\"name\":\"Browser only $RUN\",\"redirectUris\":[\"$RP\"],\"confidential\":false,\"scopes\":[\"profile\",\"offline_access\"]}")
+[ "$(status "$r")" = "400" ] && pass "a public application asking for offline_access is REFUSED at registration" || fail "public+offline_access answered $(status "$r")"
+printf '%s' "$(body "$r")" | grep -q "refresh token" && pass "…and the reason names the refresh token" || fail "reason: $(brief "$(body "$r")")"
+
+# The same application without it registers, and is a real public client.
+r=$(post "$API/api/org/applications" "$OWNER_TOKEN" "{\"name\":\"Browser only ok $RUN\",\"redirectUris\":[\"$RP\"],\"confidential\":false,\"scopes\":[\"profile\",\"email\"]}")
+[ "$(status "$r")" = "201" ] && pass "without it, a browser application registers" || fail "public create: $(status "$r") $(brief "$(body "$r")")"
+CID_P=$(jq_ "$(body "$r")" "d['clientId']")
+[ "$(jq_ "$(body "$r")" "d['clientSecret']")" = "None" ] && pass "and gets no secret" || fail "a public app got a secret"
+
+# PKCE alone carries it: the code flow still works with no secret at all.
+pkce; VP=$VERIFIER; URLP=$(authorize_url "$CID_P" "$RP" "s16$RUN" "n16$RUN" "$CHALLENGE" "openid profile email")
+authorize "$JAR_A" "$URLP"; [[ "$LOCATION" == */oauth/consent?* ]] && authorize "$JAR_A" "$URLP" allow
+CODEP=$(code_from "$LOCATION"); remember "$CODEP"
+r=$(token -d grant_type=authorization_code -d "code=$CODEP" -d "redirect_uri=$RP" -d "client_id=$CID_P" -d "code_verifier=$VP")
+[ "$(status "$r")" = "200" ] && pass "it signs a person in with PKCE and no secret" || fail "public exchange: $(status "$r") $(brief "$(body "$r")")"
+remember "$(jq_ "$(body "$r")" "d.get('access_token','')")"; remember "$(jq_ "$(body "$r")" "d.get('id_token','')")"
+[ "$(jq_ "$(body "$r")" "'refresh_token' in d")" = "False" ] && pass "and receives NO refresh token" || fail "a public client got a refresh token"
+
+# Asking for offline_access at authorize is refused too, not just at registration.
+pkce; URLP2=$(authorize_url "$CID_P" "$RP" "s16b$RUN" "n16b$RUN" "$CHALLENGE" "openid profile offline_access")
+authorize "$JAR_A" "$URLP2"
+[[ "$LOCATION" != *code=* ]] && pass "and asking for offline_access at sign-in is refused as well" || fail "LEAK: a public client got a code for offline_access"
+
 printf '\n%s%s%s\n  %s%d passed%s, ' "$CYAN" "----------------------------------------" "$RST" "$GREEN" "$PASSED" "$RST"
 [ "$FAILED" -eq 0 ] && printf '%s0 failed%s\n\n' "$GREEN" "$RST" || printf '%s%d failed%s\n\n' "$RED" "$FAILED" "$RST"
 [ "$FAILED" -eq 0 ]

@@ -123,17 +123,34 @@ public static class OidcEndpoints
 
     /// <summary>
     /// Serves the logo an administrator uploaded, as the type its own bytes
-    /// were sniffed to be, with nosniff beside it. Never a redirect to the
-    /// application's own server: that is the whole point of keeping a copy
-    /// (CTO, 18 Sept 2026).
+    /// were sniffed to be. Never a redirect to the application's own server:
+    /// that is the whole point of keeping a copy (CTO, 18 Sept 2026).
+    ///
+    /// THE HEADERS ARE SET HERE, NOT LEFT TO THE PROXY. Until 18 Sept 2026
+    /// this method's own comment claimed "with nosniff beside it" and the
+    /// method set no such header — the header existed only because Caddy's
+    /// core site block adds it to everything, so the claim was true in
+    /// production and false on a laptop, in CI, and anywhere the API is
+    /// reached directly. A comment asserting a protection the code does not
+    /// apply is worse than no comment: it is what the next person checks
+    /// instead of the behaviour. Both are now set here, and step 16 asks the
+    /// API for them directly, with no proxy in the way.
+    ///
+    /// Only PNG, JPEG and WebP ever reach storage (SniffImage, from the
+    /// file's own first bytes), so this cannot serve a document. nosniff
+    /// stops a browser second-guessing the type anyway, and the sandboxing
+    /// policy means that even if one ever did, it would run nothing.
     /// </summary>
-    private static async Task<IResult> LogoAsync(Guid id, AppDbContext db, CancellationToken ct)
+    private static async Task<IResult> LogoAsync(Guid id, AppDbContext db, HttpContext http, CancellationToken ct)
     {
         var row = await db.OidcApplications.AsNoTracking()
             .Where(a => a.Id == id && a.LogoBytes != null)
             .Select(a => new { a.LogoBytes, a.LogoContentType })
             .FirstOrDefaultAsync(ct);
         if (row is null) return Results.NotFound();
+
+        http.Response.Headers.XContentTypeOptions = "nosniff";
+        http.Response.Headers.ContentSecurityPolicy = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
         return Results.File(row.LogoBytes!, row.LogoContentType ?? "application/octet-stream");
     }
 

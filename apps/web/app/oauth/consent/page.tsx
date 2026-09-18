@@ -133,21 +133,21 @@ export default function OAuthConsentPage() {
               person on the right. Still a bare page (CTO, 17 Sept): nothing
               here competes with the decision. */}
           <div className="flex items-center justify-center gap-3">
-            {/* The logo is served from OUR store, never from the
-                application's server: otherwise reaching this screen would
-                hand the person's IP address to the application before they
-                agreed to anything, and the image could change after the
-                administrator approved it (CTO, 18 Sept 2026). */}
-            {details.logoUri ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={logoSrc(details.logoUri)} alt=""
-                   className="h-14 w-14 rounded-2xl border border-line bg-surface object-contain p-1.5" />
-            ) : (
-              <div className="grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 text-xl font-bold text-white shadow-lg shadow-brand-600/25"
-                   aria-hidden="true">
-                {details.name.trim().charAt(0).toUpperCase() || '?'}
-              </div>
-            )}
+            {/* THE LOGO IS NOT HERE, ON THIS SCREEN, DELIBERATELY.
+                A logo is wayfinding where the viewer already trusts the list,
+                and evidence where they do not (CTO, 18 Sept 2026). In the
+                console an administrator is looking at applications they
+                registered themselves, so it sits in the tile and helps them
+                find the right row. Here it is a mark that could resemble a
+                bank or a government service, and the top of this screen is
+                reserved for the one thing we can stand behind: the name, and
+                "Added by <organisation> administrators". The logo appears
+                below, inside the block labelled as the application's own
+                claims, with everything else nobody has checked. */}
+            <div className="grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 text-xl font-bold text-white shadow-lg shadow-brand-600/25"
+                 aria-hidden="true">
+              {details.name.trim().charAt(0).toUpperCase() || '?'}
+            </div>
             <div className="flex items-center gap-1 text-ink-faint" aria-hidden="true">
               <span className="h-1.5 w-1.5 rounded-full bg-current" />
               <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
@@ -204,8 +204,8 @@ export default function OAuthConsentPage() {
               below the decision rather than beside the name. A self-declared
               company name rendered with the authority of a verified one is a
               phishing vector (CTO, 18 Sept 2026). */}
-          {details.declared && (details.declared.description || details.declared.operatorName
-            || details.declared.clientUri || details.declared.policyUri || details.declared.tosUri) && (
+          {(details.logoUri || (details.declared && (details.declared.description || details.declared.operatorName
+            || details.declared.clientUri || details.declared.policyUri || details.declared.tosUri))) && (
             <details className="mt-4 rounded-xl border border-line">
               <summary className="cursor-pointer px-4 py-2.5 text-xs font-medium text-ink-muted">
                 What {details.name} says about itself
@@ -214,19 +214,29 @@ export default function OAuthConsentPage() {
                 <p className="mb-2 text-[0.6875rem] uppercase tracking-wide">
                   Provided by whoever registered it. TatvaOS has not checked any of it.
                 </p>
-                {details.declared.description && <p className="mb-2">{details.declared.description}</p>}
-                {details.declared.operatorName && <p className="mb-2">Says it is operated by {details.declared.operatorName}.</p>}
+                {details.logoUri && (
+                  <p className="mb-2">
+                    {/* Served from our own copy, never the application's
+                        server — see the migration. It sits here, not at the
+                        top, because it is a claim like the rest. */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={logoSrc(details.logoUri)} alt=""
+                         className="h-10 w-10 rounded-lg border border-line bg-surface object-contain p-1" />
+                  </p>
+                )}
+                {details.declared?.description && <p className="mb-2">{details.declared.description}</p>}
+                {details.declared?.operatorName && <p className="mb-2">Says it is operated by {details.declared.operatorName}.</p>}
                 <p className="mb-0 flex flex-wrap gap-x-4 gap-y-1">
-                  {details.declared.clientUri && (
+                  {details.declared?.clientUri && (
                     <a href={details.declared.clientUri} target="_blank" rel="noopener noreferrer nofollow">Website</a>
                   )}
-                  {details.declared.policyUri && (
+                  {details.declared?.policyUri && (
                     <a href={details.declared.policyUri} target="_blank" rel="noopener noreferrer nofollow">Privacy policy</a>
                   )}
-                  {details.declared.tosUri && (
+                  {details.declared?.tosUri && (
                     <a href={details.declared.tosUri} target="_blank" rel="noopener noreferrer nofollow">Terms</a>
                   )}
-                  {details.declared.contacts && <span>Support: {details.declared.contacts}</span>}
+                  {details.declared?.contacts && <span>Support: {details.declared.contacts}</span>}
                 </p>
               </div>
             </details>
