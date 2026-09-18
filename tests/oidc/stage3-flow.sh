@@ -570,6 +570,58 @@ n=$(PG "SELECT count(*) FROM core.audit_logs WHERE action='oidc.application_secr
 r=$(curl -s "$API/api/org/applications" -H "Authorization: Bearer $OWNER_TOKEN")
 printf '%s' "$r" | grep -q "$SEC_C2" && fail "the list carries the new secret" || pass "the list still never carries a secret"
 
+# ===========================================================================
+step "14. What the application SAYS about itself, and the logo we keep"
+# stage 1 has a `post` helper; this script does not, so one lives here.
+post() { curl -s -w '
+%{http_code}' -X POST "$1" -H 'Content-Type: application/json' -H "Authorization: Bearer $2" -d "$3"; }
+IDENT='{"description":"Runs payroll","operatorName":"Techvein IT Solutions Pvt. Ltd.","clientUri":"https://payroll.example.test","policyUri":"https://payroll.example.test/privacy","tosUri":"https://payroll.example.test/terms","contacts":"support@payroll.example.test"}'
+r=$(post "$API/api/org/applications/$APP_B/identity" "$OWNER_TOKEN" "$IDENT")
+[ "$(status "$r")" = "200" ] && pass "identity saved" || fail "identity: $(status "$r") $(brief "$(body "$r")")"
+
+# Shape only, but the shape is checked: http, a relative path and an address
+# carrying credentials are all refused.
+for bad in "http://payroll.example.test" "/privacy" "https://user:pw@payroll.example.test"; do
+    r=$(post "$API/api/org/applications/$APP_B/identity" "$OWNER_TOKEN" "{\"clientUri\":\"$bad\"}")
+    [ "$(status "$r")" = "400" ] && pass "refused as a website: '$bad'" || fail "'$bad' answered $(status "$r")"
+done
+r=$(post "$API/api/org/applications/$APP_B/identity" "$OWNER_TOKEN" '{"contacts":"not-an-address"}')
+[ "$(status "$r")" = "400" ] && pass "refused as a support address: 'not-an-address'" || fail "bad contact answered $(status "$r")"
+# Put the good values back after the refusals.
+post "$API/api/org/applications/$APP_B/identity" "$OWNER_TOKEN" "$IDENT" >/dev/null
+
+# The consent screen carries them, marked as the application's own words.
+r=$(curl -s "$API/api/auth/oauth/consent?client_id=$CID_B&redirect_uri=$(urlenc "$RP")&scope=openid%20profile" -H "Authorization: Bearer $OWNER_TOKEN")
+[ "$(jq_ "$r" "d['declared']['operatorName']")" = "Techvein IT Solutions Pvt. Ltd." ] && pass "consent details carry the claimed operator" || fail "declared: $(brief "$r")"
+[ "$(jq_ "$r" "d['organisation']")" = "Techvein" ] && pass "and the organisation we DO vouch for, as a separate field" || fail "organisation missing from consent details"
+[ "$(jq_ "$r" "d['logoUri']")" = "None" ] && pass "no logo yet, so no address is offered" || fail "logoUri: $(brief "$r")"
+
+# The logo: ours to keep, and only real images.
+printf 'PNG?' > "$SCRATCH/not-an-image.png"
+h=$(curl -s -o /dev/null -w '%{http_code}' -X PUT "$API/api/org/applications/$APP_B/logo" -H "Authorization: Bearer $OWNER_TOKEN" -H 'Content-Type: image/png' --data-binary "@$SCRATCH/not-an-image.png")
+[ "$h" = "400" ] && pass "a file that only CLAIMS to be a PNG is refused" || fail "fake png answered $h"
+printf '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>' > "$SCRATCH/x.svg"
+h=$(curl -s -o /dev/null -w '%{http_code}' -X PUT "$API/api/org/applications/$APP_B/logo" -H "Authorization: Bearer $OWNER_TOKEN" -H 'Content-Type: image/svg+xml' --data-binary "@$SCRATCH/x.svg")
+[ "$h" = "400" ] && pass "an SVG is refused - it can carry script and this is a sign-in screen" || fail "svg answered $h"
+"$PY" -c "import base64,sys; open(sys.argv[1],'wb').write(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='))" "$SCRATCH/real.png"
+r=$(curl -s -w '\n%{http_code}' -X PUT "$API/api/org/applications/$APP_B/logo" -H "Authorization: Bearer $OWNER_TOKEN" -H 'Content-Type: application/octet-stream' --data-binary "@$SCRATCH/real.png")
+[ "$(status "$r")" = "200" ] && pass "a real PNG is accepted" || fail "png: $(status "$r") $(brief "$(body "$r")")"
+[ "$(jq_ "$(body "$r")" "d['logoContentType']")" = "image/png" ] && pass "typed from its own bytes, not from what the upload claimed" || fail "content type: $(brief "$(body "$r")")"
+"$PY" -c "import sys; open(sys.argv[1],'wb').write(b'\x89PNG\r\n\x1a\n' + b'x'*70000)" "$SCRATCH/big.png"
+h=$(curl -s -o /dev/null -w '%{http_code}' -X PUT "$API/api/org/applications/$APP_B/logo" -H "Authorization: Bearer $OWNER_TOKEN" -H 'Content-Type: image/png' --data-binary "@$SCRATCH/big.png")
+[ "$h" = "400" ] && pass "an image over 64 KB is refused" || fail "large image answered $h"
+
+# It is served from US, as the type we sniffed, to a signed-in person.
+r=$(curl -s "$API/api/auth/oauth/consent?client_id=$CID_B&redirect_uri=$(urlenc "$RP")&scope=openid%20profile" -H "Authorization: Bearer $OWNER_TOKEN")
+LOGO=$(jq_ "$r" "d['logoUri'] or ''")
+[[ "$LOGO" == /api/auth/oauth/applications/* ]] && pass "the consent screen is given OUR address for the logo" || fail "logoUri: $LOGO"
+ct=$(curl -s -o /dev/null -w '%{content_type}' "$API$LOGO" -H "Authorization: Bearer $OWNER_TOKEN")
+printf '%s' "$ct" | grep -q "image/png" && pass "and it serves as image/png" || fail "logo served as '$ct'"
+h=$(curl -s -o /dev/null -w '%{http_code}' "$API$LOGO")
+[ "$h" = "401" ] && pass "an anonymous caller cannot read it" || fail "anonymous logo read answered $h"
+n=$(PG "SELECT count(*) FROM core.audit_logs WHERE action='oidc.application_logo_changed' AND target_id='$APP_B'")
+[ "${n:-0}" -ge 1 ] && pass "the logo change is in the audit log" || fail "no audit row for the logo"
+
 printf '\n%s%s%s\n  %s%d passed%s, ' "$CYAN" "----------------------------------------" "$RST" "$GREEN" "$PASSED" "$RST"
 [ "$FAILED" -eq 0 ] && printf '%s0 failed%s\n\n' "$GREEN" "$RST" || printf '%s%d failed%s\n\n' "$RED" "$FAILED" "$RST"
 [ "$FAILED" -eq 0 ]

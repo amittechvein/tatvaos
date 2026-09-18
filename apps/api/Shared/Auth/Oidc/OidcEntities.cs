@@ -57,6 +57,36 @@ public sealed class OidcApplication : OpenIddictEntityFrameworkCoreApplication<G
     /// one boolean and OpenIddict has its own word for the same fact.
     /// </summary>
     public bool AllowedForEveryone { get; set; }
+
+    // ----------------------------------------------------------------------
+    //  WHO THE APPLICATION SAYS IT IS (0004; Amit's review, 18 Sept 2026).
+    //
+    //  Every field below is a string somebody typed into a form. None of it
+    //  is verified by us, and the consent screen must never present it with
+    //  the authority of "Added by <organisation> administrators", which IS a
+    //  fact we can vouch for. A self-declared company name shown as a checked
+    //  one is a phishing vector (CTO, 18 Sept 2026).
+    //
+    //  Standard OpenID Connect client-metadata names where they exist
+    //  (RFC 7591 section 2): ClientUri, PolicyUri, TosUri, Contacts.
+    //  Description and OperatorName are ours and are not dressed up as
+    //  protocol fields.
+    // ----------------------------------------------------------------------
+    public string? Description { get; set; }
+    public string? OperatorName { get; set; }
+    public string? ClientUri { get; set; }
+    public string? PolicyUri { get; set; }
+    public string? TosUri { get; set; }
+    public string? Contacts { get; set; }
+
+    /// <summary>
+    /// Our copy of the logo, served from our own endpoint and never
+    /// hotlinked from the application's server - see the migration for why.
+    /// LogoContentType is the only type it is ever served as.
+    /// </summary>
+    public byte[]? LogoBytes { get; set; }
+    public string? LogoContentType { get; set; }
+    public DateTimeOffset? LogoUpdatedAt { get; set; }
 }
 
 public sealed class OidcAuthorization : OpenIddictEntityFrameworkCoreAuthorization<Guid, OidcApplication, OidcToken>

@@ -36,6 +36,9 @@ public static class OidcApplicationEndpoints
         g.MapPost("/{id:guid}/consent", SetConsentAsync);
         g.MapPost("/{id:guid}/revoke", RevokeAsync);
         g.MapPost("/{id:guid}/secret", RegenerateSecretAsync);
+        g.MapPost("/{id:guid}/identity", SetIdentityAsync);
+        g.MapPut("/{id:guid}/logo", SetLogoAsync).DisableAntiforgery();
+        g.MapDelete("/{id:guid}/logo", RemoveLogoAsync);
     }
 
     // ------------------------------------------------------------------
@@ -274,6 +277,154 @@ public static class OidcApplicationEndpoints
 
     // ------------------------------------------------------------------
     /// <summary>
+    /// What the application says about itself. Claimed, never verified, and
+    /// shown as such (0004; Amit's review, 18 Sept 2026).
+    ///
+    /// Every URL is checked for shape only - https, absolute, no credentials
+    /// - which is all a URL check can honestly do. We do not fetch them: a
+    /// server that follows an address a customer typed is a server that can
+    /// be pointed at our own network.
+    /// </summary>
+    private static async Task<IResult> SetIdentityAsync(
+        Guid id, ApplicationIdentityRequest req, AppDbContext db, AuditWriter audit, CancellationToken ct)
+    {
+        var app = await db.OidcApplications.FirstOrDefaultAsync(a => a.Id == id, ct);
+        if (app is null) return Results.NotFound();
+        if (app.RevokedAt is not null) return Results.BadRequest(new { error = "This application is revoked." });
+
+        static string? Trim(string? s, int max)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return null;
+            var t = s.Trim();
+            return t.Length <= max ? t : t[..max];
+        }
+
+        foreach (var (label, value) in new[] { ("website", req.ClientUri), ("privacy policy", req.PolicyUri), ("terms", req.TosUri) })
+        {
+            if (string.IsNullOrWhiteSpace(value)) continue;
+            var problem = CheckPublicUrl(value!, label);
+            if (problem is not null) return Results.BadRequest(new { error = problem });
+        }
+        if (!string.IsNullOrWhiteSpace(req.Contacts))
+            foreach (var c in req.Contacts!.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                if (!c.Contains('@') || c.Contains(' '))
+                    return Results.BadRequest(new { error = $"'{c}' is not an email address. Give one or more support addresses, separated by commas." });
+
+        var before = new { app.Description, app.OperatorName, app.ClientUri, app.PolicyUri, app.TosUri, app.Contacts };
+        app.Description = Trim(req.Description, 500);
+        app.OperatorName = Trim(req.OperatorName, 200);
+        app.ClientUri = Trim(req.ClientUri, 500);
+        app.PolicyUri = Trim(req.PolicyUri, 500);
+        app.TosUri = Trim(req.TosUri, 500);
+        app.Contacts = Trim(req.Contacts, 500);
+        await db.SaveChangesAsync(ct);
+
+        await audit.WriteAsync("oidc.application_identity_changed", "oidc_application", id.ToString(),
+            before: before,
+            after: new { app.Description, app.OperatorName, app.ClientUri, app.PolicyUri, app.TosUri, app.Contacts }, ct: ct);
+
+        return Results.Ok(new { app.Id, saved = true });
+    }
+
+    /// <summary>
+    /// The logo, uploaded and kept by us.
+    ///
+    /// AN ADDRESS IS NOT ACCEPTED, on purpose. If the consent screen loaded
+    /// the image from the application's own server, every person reaching
+    /// that screen would hand their IP address to the application before
+    /// agreeing to anything, and the image could be swapped for something
+    /// else after the administrator approved it (CTO, 18 Sept 2026). Nor do
+    /// we fetch a URL once and keep the result: a server that fetches an
+    /// address a customer typed can be pointed at our own network.
+    ///
+    /// PNG, JPEG and WebP only. SVG is refused: it is a document that can
+    /// carry script, and this one would be rendered on a consent screen. The
+    /// stored content type is the only type it is ever served as, beside
+    /// nosniff, so a file claiming to be an image cannot be served as
+    /// something a browser will execute.
+    /// </summary>
+    private static async Task<IResult> SetLogoAsync(
+        Guid id, HttpRequest request, AppDbContext db, AuditWriter audit, CancellationToken ct)
+    {
+        var app = await db.OidcApplications.FirstOrDefaultAsync(a => a.Id == id, ct);
+        if (app is null) return Results.NotFound();
+        if (app.RevokedAt is not null) return Results.BadRequest(new { error = "This application is revoked." });
+
+        using var buffer = new MemoryStream();
+        await request.Body.CopyToAsync(buffer, ct);
+        var bytes = buffer.ToArray();
+        if (bytes.Length == 0) return Results.BadRequest(new { error = "No image was sent." });
+        if (bytes.Length > MaxLogoBytes)
+            return Results.BadRequest(new { error = $"That image is {bytes.Length / 1024} KB. The limit is {MaxLogoBytes / 1024} KB." });
+
+        var type = SniffImage(bytes);
+        if (type is null)
+            return Results.BadRequest(new { error = "That file is not a PNG, JPEG or WebP image. SVG is not accepted, because it can carry script and this logo is shown on a sign-in screen." });
+
+        app.LogoBytes = bytes;
+        app.LogoContentType = type;
+        app.LogoUpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+
+        await audit.WriteAsync("oidc.application_logo_changed", "oidc_application", id.ToString(),
+            after: new { app.ClientId, contentType = type, bytes = bytes.Length }, ct: ct);
+
+        return Results.Ok(new { app.Id, logoContentType = type, bytes = bytes.Length });
+    }
+
+    private static async Task<IResult> RemoveLogoAsync(
+        Guid id, AppDbContext db, AuditWriter audit, CancellationToken ct)
+    {
+        var app = await db.OidcApplications.FirstOrDefaultAsync(a => a.Id == id, ct);
+        if (app is null) return Results.NotFound();
+        if (app.LogoBytes is null) return Results.Ok(new { app.Id, removed = false });
+        app.LogoBytes = null; app.LogoContentType = null; app.LogoUpdatedAt = null;
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync("oidc.application_logo_removed", "oidc_application", id.ToString(), ct: ct);
+        return Results.Ok(new { app.Id, removed = true });
+    }
+
+    /// <summary>64 KB. A logo is drawn at 48 pixels; anything larger is a photograph by mistake.</summary>
+    public const int MaxLogoBytes = 64 * 1024;
+
+    /// <summary>
+    /// The type from the bytes themselves, never from what the upload claimed.
+    /// A declared content type is a string the caller chose; these are the
+    /// file's own first bytes.
+    /// </summary>
+    public static string? SniffImage(byte[] b)
+    {
+        if (b.Length >= 8 && b[0] == 0x89 && b[1] == 0x50 && b[2] == 0x4E && b[3] == 0x47) return "image/png";
+        if (b.Length >= 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF) return "image/jpeg";
+        if (b.Length >= 12 && b[0] == 0x52 && b[1] == 0x49 && b[2] == 0x46 && b[3] == 0x46
+            && b[8] == 0x57 && b[9] == 0x45 && b[10] == 0x42 && b[11] == 0x50) return "image/webp";
+        return null;
+    }
+
+    /// <summary>
+    /// Shape only: https, absolute, no user information. We do not fetch it,
+    /// so we cannot say more than this, and the screen says these are the
+    /// application's own claims.
+    /// </summary>
+    public static string? CheckPublicUrl(string raw, string label)
+    {
+        var s = raw.Trim();
+        if (!Uri.TryCreate(s, UriKind.Absolute, out var u))
+            return $"The {label} address is not a full web address.";
+        if (u.Scheme != "https") return $"The {label} address must start with https://.";
+        if (!string.IsNullOrEmpty(u.UserInfo)) return $"The {label} address must not carry a username or password.";
+        return null;
+    }
+
+    /// <summary>
+    /// Where a logo is served from - ours, always. The timestamp is a cache
+    /// buster so a replaced logo is not the old one for an hour.
+    /// </summary>
+    public static string LogoPath(Guid id, DateTimeOffset? updatedAt) =>
+        $"/api/auth/oauth/applications/{id}/logo?v={updatedAt?.ToUnixTimeSeconds() ?? 0}";
+
+    // ------------------------------------------------------------------
+    /// <summary>
     /// A new client secret, shown once, replacing the old one.
     ///
     /// THE OLD SECRET STOPS WORKING THE INSTANT THIS COMMITS, and that is an
@@ -330,6 +481,19 @@ public static class OidcApplicationEndpoints
             .Where(p => p.StartsWith(Permissions.Prefixes.Scope, StringComparison.Ordinal))
             .Select(p => p[Permissions.Prefixes.Scope.Length..])
             .ToArray(),
+        // Claimed by whoever registered it, never verified by us.
+        declared = new
+        {
+            a.Description,
+            a.OperatorName,
+            a.ClientUri,
+            a.PolicyUri,
+            a.TosUri,
+            a.Contacts,
+        },
+        // OUR address for the logo, never the application's. Null when none
+        // was uploaded, so a screen shows its letter tile instead.
+        logoUri = a.LogoBytes is null ? null : LogoPath(a.Id, a.LogoUpdatedAt),
         a.AllowedForEveryone,
         secretPrefix = a.ClientSecretPrefix,
         a.CreatedAt,
@@ -362,4 +526,6 @@ public static class OidcApplicationEndpoints
 }
 
 public sealed record CreateApplicationRequest(string? Name, string[]? RedirectUris, bool Confidential = true, string[]? Scopes = null);
+public sealed record ApplicationIdentityRequest(
+    string? Description, string? OperatorName, string? ClientUri, string? PolicyUri, string? TosUri, string? Contacts);
 public sealed record SetApplicationConsentRequest(bool AllowedForEveryone);

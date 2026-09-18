@@ -24,6 +24,15 @@ import { Checkbox, Input, Switch, Textarea } from '@/components/ui/Form';
 import { Alert } from '@/components/ui/Page';
 import { useAuth } from '@/lib/auth';
 
+interface Declared {
+  description: string | null;
+  operatorName: string | null;
+  clientUri: string | null;
+  policyUri: string | null;
+  tosUri: string | null;
+  contacts: string | null;
+}
+
 interface AppRow {
   id: string;
   clientId: string;
@@ -35,6 +44,10 @@ interface AppRow {
   secretPrefix: string | null;
   createdAt: string;
   revokedAt: string | null;
+  /** What whoever registered it says about it. Checked by nobody. */
+  declared: Declared;
+  /** Our copy of the logo, or null. Never the application's own address. */
+  logoUri: string | null;
 }
 
 /**
@@ -78,6 +91,13 @@ interface Fresh {
 
 const SCOPES = 'openid profile email offline_access';
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? '/api';
+
+/** See the same helper on the consent screen: logoUri is the real path. */
+function logoSrc(path: string): string {
+  return API_BASE.endsWith('/api') ? API_BASE.slice(0, -4) + path : path;
+}
+
 function when(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
@@ -91,6 +111,7 @@ export default function ApplicationsPage() {
   const [creating, setCreating] = useState(false);
   const [revoking, setRevoking] = useState<AppRow | null>(null);
   const [regenerating, setRegenerating] = useState<AppRow | null>(null);
+  const [editing, setEditing] = useState<AppRow | null>(null);
   const [fresh, setFresh] = useState<Fresh | null>(null);
   const [origin, setOrigin] = useState('https://core.tatvaos.com');
 
@@ -198,7 +219,19 @@ export default function ApplicationsPage() {
           <Table head={['Application', 'Client id', 'Can receive', 'Secret', 'Returns to', 'Asks people', 'Since', '']}>
             {live.map((a) => (
               <tr key={a.id}>
-                <Td><span className="font-semibold">{a.name}</span></Td>
+                <Td>
+                  <div className="flex items-center gap-2">
+                    {a.logoUri ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={logoSrc(a.logoUri)} alt="" className="h-6 w-6 rounded border border-line object-contain" />
+                    ) : (
+                      <span className="grid h-6 w-6 place-items-center rounded bg-canvas text-[0.625rem] font-bold text-ink-muted" aria-hidden="true">
+                        {a.name.trim().charAt(0).toUpperCase()}
+                      </span>
+                    )}
+                    <span className="font-semibold">{a.name}</span>
+                  </div>
+                </Td>
                 <Td><code className="text-[0.75rem]">{a.clientId}</code></Td>
                 <Td>
                   <ul className="m-0 list-none p-0 text-[0.75rem]">
@@ -234,7 +267,8 @@ export default function ApplicationsPage() {
                 </Td>
                 <Td>{when(a.createdAt)}</Td>
                 <Td>
-                  <div className="flex justify-end">
+                  <div className="flex justify-end gap-1">
+                    <Button variant="ghost" onClick={() => setEditing(a)}>Details</Button>
                     <Button variant="ghost" onClick={() => setRevoking(a)}>
                       <span className="text-danger">Revoke</span>
                     </Button>
@@ -271,6 +305,16 @@ export default function ApplicationsPage() {
             setNotice(null);
             await load();
           }}
+          onError={setError}
+        />
+      )}
+
+      {editing && (
+        <DetailsDialog
+          key={editing.id}
+          app={editing}
+          onClose={() => setEditing(null)}
+          onSaved={async (msg) => { setEditing(null); setNotice(msg); await load(); }}
           onError={setError}
         />
       )}
@@ -453,6 +497,123 @@ function HowToConnect({ origin }: { origin: string }) {
         a person can also remove their own consent from their account page.
       </div>
     </Card>
+  );
+}
+
+/**
+ * What the application says about itself, and its logo.
+ *
+ * NONE OF THIS IS VERIFIED and the consent screen says so where a person
+ * reads it. The logo is UPLOADED rather than linked: an address would mean
+ * the consent screen fetches from the application's own server, handing it
+ * every viewer's IP address before they agree to anything, and letting the
+ * image change after approval (CTO, 18 Sept 2026).
+ */
+function DetailsDialog({ app, onClose, onSaved, onError }: {
+  app: AppRow;
+  onClose: () => void;
+  onSaved: (message: string) => Promise<void>;
+  onError: (m: string) => void;
+}) {
+  const { authedFetch } = useAuth();
+  const d = app.declared ?? {} as Declared;
+  const [description, setDescription] = useState(d.description ?? '');
+  const [operatorName, setOperatorName] = useState(d.operatorName ?? '');
+  const [clientUri, setClientUri] = useState(d.clientUri ?? '');
+  const [policyUri, setPolicyUri] = useState(d.policyUri ?? '');
+  const [tosUri, setTosUri] = useState(d.tosUri ?? '');
+  const [contacts, setContacts] = useState(d.contacts ?? '');
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    setBusy(true);
+    try {
+      const r = await authedFetch(`/org/applications/${app.id}/identity`, {
+        method: 'POST',
+        body: JSON.stringify({ description, operatorName, clientUri, policyUri, tosUri, contacts }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => null))?.error ?? 'Could not save.');
+      await onSaved(`Saved what "${app.name}" says about itself.`);
+    } catch (e) { onError((e as Error).message); onClose(); } finally { setBusy(false); }
+  }
+
+  async function upload(file: File) {
+    setBusy(true);
+    try {
+      const r = await authedFetch(`/org/applications/${app.id}/logo`, {
+        method: 'PUT',
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+        body: file,
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => null))?.error ?? 'Could not upload the logo.');
+      await onSaved(`Logo updated for "${app.name}".`);
+    } catch (e) { onError((e as Error).message); onClose(); } finally { setBusy(false); }
+  }
+
+  async function removeLogo() {
+    setBusy(true);
+    try {
+      const r = await authedFetch(`/org/applications/${app.id}/logo`, { method: 'DELETE' });
+      if (!r.ok) throw new Error('Could not remove the logo.');
+      await onSaved(`Logo removed from "${app.name}".`);
+    } catch (e) { onError((e as Error).message); onClose(); } finally { setBusy(false); }
+  }
+
+  return (
+    <Modal
+      title={`Details for "${app.name}"`}
+      onClose={onClose}
+      busy={busy}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Close</Button>
+          <Button variant="primary" onClick={() => void save()} disabled={busy}>
+            {busy ? 'Saving…' : 'Save'}
+          </Button>
+        </>
+      }
+    >
+      <p className="mb-4 text-[0.75rem] text-ink-muted">
+        People see this on the sign-in screen, under &quot;What {app.name} says about itself&quot;, marked
+        as unchecked. TatvaOS does not verify any of it — only that a web address looks like one.
+      </p>
+
+      <Field label="Logo" hint="PNG, JPEG or WebP, up to 64 KB. Kept by TatvaOS and served from here, never fetched from the application.">
+        <div className="flex items-center gap-3">
+          {app.logoUri ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={logoSrc(app.logoUri)} alt="" className="h-12 w-12 rounded-lg border border-line object-contain" />
+          ) : (
+            <span className="grid h-12 w-12 place-items-center rounded-lg border border-line bg-canvas text-ink-muted" aria-hidden="true">
+              {app.name.trim().charAt(0).toUpperCase()}
+            </span>
+          )}
+          <input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy}
+                 onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f); }}
+                 className="text-[0.75rem]" />
+          {app.logoUri && <Button variant="ghost" onClick={() => void removeLogo()} disabled={busy}>Remove</Button>}
+        </div>
+      </Field>
+
+      <Field label="What it does" hint="One or two sentences.">
+        <Textarea value={description} rows={2} maxLength={500} onChange={(e) => setDescription(e.target.value)} />
+      </Field>
+      <Field label="Operated by" hint="The company or team that runs it.">
+        <Input value={operatorName} maxLength={200} placeholder="Techvein IT Solutions Pvt. Ltd." onChange={(e) => setOperatorName(e.target.value)} />
+      </Field>
+      <Field label="Website">
+        <Input value={clientUri} maxLength={500} placeholder="https://payroll.example.com" onChange={(e) => setClientUri(e.target.value)} />
+      </Field>
+      <Field label="Privacy policy">
+        <Input value={policyUri} maxLength={500} placeholder="https://payroll.example.com/privacy" onChange={(e) => setPolicyUri(e.target.value)} />
+      </Field>
+      <Field label="Terms">
+        <Input value={tosUri} maxLength={500} placeholder="https://payroll.example.com/terms" onChange={(e) => setTosUri(e.target.value)} />
+      </Field>
+      <Field label="Support email" hint="One or more addresses, separated by commas.">
+        <Input value={contacts} maxLength={500} placeholder="support@example.com" onChange={(e) => setContacts(e.target.value)} />
+      </Field>
+    </Modal>
   );
 }
 

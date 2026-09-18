@@ -60,6 +60,8 @@ public static class OidcEndpoints
     public const string ConsentDetailsPath = "/api/auth/oauth/consent";
     /// <summary>The person's own list of applications they have allowed, with Remove (0004: "listed on the person's account page with a Remove button").</summary>
     public const string ConsentsPath = "/api/auth/oauth/consents";
+    /// <summary>Our copy of an application's logo. Any signed-in person may read their own organisation's.</summary>
+    public const string LogoPath = "/api/auth/oauth/applications/{id:guid}/logo";
     public const string TokenPath = "/api/oauth/token";
     public const string UserInfoPath = "/api/oauth/userinfo";
     public const string IntrospectionPath = "/api/oauth/introspect";
@@ -111,6 +113,28 @@ public static class OidcEndpoints
         app.MapDelete(ConsentsPath + "/{id:guid}", RemoveConsentAsync)
             .RequireAuthorization("User")
             .WithTags(tag);
+
+        // The logo, from OUR store. Signed in, and under RLS, so a person
+        // reads their own organisation's applications and no others.
+        app.MapGet(LogoPath, LogoAsync)
+            .RequireAuthorization("User")
+            .WithTags(tag);
+    }
+
+    /// <summary>
+    /// Serves the logo an administrator uploaded, as the type its own bytes
+    /// were sniffed to be, with nosniff beside it. Never a redirect to the
+    /// application's own server: that is the whole point of keeping a copy
+    /// (CTO, 18 Sept 2026).
+    /// </summary>
+    private static async Task<IResult> LogoAsync(Guid id, AppDbContext db, CancellationToken ct)
+    {
+        var row = await db.OidcApplications.AsNoTracking()
+            .Where(a => a.Id == id && a.LogoBytes != null)
+            .Select(a => new { a.LogoBytes, a.LogoContentType })
+            .FirstOrDefaultAsync(ct);
+        if (row is null) return Results.NotFound();
+        return Results.File(row.LogoBytes!, row.LogoContentType ?? "application/octet-stream");
     }
 
     // ==================================================================
@@ -328,6 +352,19 @@ public static class OidcEndpoints
         var receives = ReceivesInWords(scopes);
         var staysSignedIn = scopes.Contains(Scopes.OfflineAccess);
 
+        // What the application SAYS about itself, kept apart from what we can
+        // vouch for. The screen labels this block as the application's own
+        // description; "Added by <organisation> administrators" is the fact,
+        // and the two must not look alike (CTO, 18 Sept 2026).
+        var row = await db.OidcApplications.AsNoTracking()
+            .Where(a => a.ClientId == client_id)
+            .Select(a => new
+            {
+                a.Id, a.Description, a.OperatorName, a.ClientUri, a.PolicyUri, a.TosUri, a.Contacts,
+                HasLogo = a.LogoBytes != null, a.LogoUpdatedAt,
+            })
+            .FirstOrDefaultAsync(ct);
+
         return Results.Ok(new
         {
             name = await applications.GetDisplayNameAsync(application, ct),
@@ -336,6 +373,18 @@ public static class OidcEndpoints
             receives,
             staysSignedIn,
             allowedForEveryone = await applications.GetConsentTypeAsync(application, ct) == ConsentTypes.Implicit,
+            logoUri = row is { HasLogo: true }
+                ? Modules.Admin.Endpoints.OidcApplicationEndpoints.LogoPath(row.Id, row.LogoUpdatedAt)
+                : null,
+            declared = row is null ? null : new
+            {
+                row.Description,
+                row.OperatorName,
+                row.ClientUri,
+                row.PolicyUri,
+                row.TosUri,
+                row.Contacts,
+            },
         });
     }
 

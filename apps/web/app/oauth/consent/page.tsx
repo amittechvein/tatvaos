@@ -31,12 +31,33 @@ import { AuthCard } from '@/components/ui/AuthCard';
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? '/api';
 
+/**
+ * logoUri from the API is the REAL path, '/api/auth/oauth/applications/…'.
+ * API already ends with '/api' (it is '/api' in production and an absolute
+ * origin plus '/api' on a laptop), so the duplicate prefix comes off rather
+ * than being pasted twice.
+ */
+function logoSrc(path: string): string {
+  return API.endsWith('/api') ? API.slice(0, -4) + path : path;
+}
+
 interface ConsentDetails {
   name: string;
   organisation: string | null;
   returnsTo: string;
   receives: string[];
   staysSignedIn: boolean;
+  /** Our copy, never the application's own server. Null when none was uploaded. */
+  logoUri: string | null;
+  /** What the application SAYS about itself. Not verified by anyone. */
+  declared: {
+    description: string | null;
+    operatorName: string | null;
+    clientUri: string | null;
+    policyUri: string | null;
+    tosUri: string | null;
+    contacts: string | null;
+  } | null;
 }
 
 export default function OAuthConsentPage() {
@@ -112,10 +133,21 @@ export default function OAuthConsentPage() {
               person on the right. Still a bare page (CTO, 17 Sept): nothing
               here competes with the decision. */}
           <div className="flex items-center justify-center gap-3">
-            <div className="grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 text-xl font-bold text-white shadow-lg shadow-brand-600/25"
-                 aria-hidden="true">
-              {details.name.trim().charAt(0).toUpperCase() || '?'}
-            </div>
+            {/* The logo is served from OUR store, never from the
+                application's server: otherwise reaching this screen would
+                hand the person's IP address to the application before they
+                agreed to anything, and the image could change after the
+                administrator approved it (CTO, 18 Sept 2026). */}
+            {details.logoUri ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={logoSrc(details.logoUri)} alt=""
+                   className="h-14 w-14 rounded-2xl border border-line bg-surface object-contain p-1.5" />
+            ) : (
+              <div className="grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 text-xl font-bold text-white shadow-lg shadow-brand-600/25"
+                   aria-hidden="true">
+                {details.name.trim().charAt(0).toUpperCase() || '?'}
+              </div>
+            )}
             <div className="flex items-center gap-1 text-ink-faint" aria-hidden="true">
               <span className="h-1.5 w-1.5 rounded-full bg-current" />
               <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
@@ -163,6 +195,42 @@ export default function OAuthConsentPage() {
               You will be returned to <span className="font-semibold">{details.returnsTo}</span>.
             </p>
           </div>
+
+          {/* WHAT WE VOUCH FOR AND WHAT IS CLAIMED ARE DIFFERENT THINGS.
+              "Added by <organisation> administrators" above is a fact: their
+              own admin registered it. Everything here was typed into a form
+              by whoever registered the application and is checked by nobody,
+              so it is smaller, labelled as the application's own words, and
+              below the decision rather than beside the name. A self-declared
+              company name rendered with the authority of a verified one is a
+              phishing vector (CTO, 18 Sept 2026). */}
+          {details.declared && (details.declared.description || details.declared.operatorName
+            || details.declared.clientUri || details.declared.policyUri || details.declared.tosUri) && (
+            <details className="mt-4 rounded-xl border border-line">
+              <summary className="cursor-pointer px-4 py-2.5 text-xs font-medium text-ink-muted">
+                What {details.name} says about itself
+              </summary>
+              <div className="border-t border-line px-4 py-3 text-xs text-ink-muted">
+                <p className="mb-2 text-[0.6875rem] uppercase tracking-wide">
+                  Provided by whoever registered it. TatvaOS has not checked any of it.
+                </p>
+                {details.declared.description && <p className="mb-2">{details.declared.description}</p>}
+                {details.declared.operatorName && <p className="mb-2">Says it is operated by {details.declared.operatorName}.</p>}
+                <p className="mb-0 flex flex-wrap gap-x-4 gap-y-1">
+                  {details.declared.clientUri && (
+                    <a href={details.declared.clientUri} target="_blank" rel="noopener noreferrer nofollow">Website</a>
+                  )}
+                  {details.declared.policyUri && (
+                    <a href={details.declared.policyUri} target="_blank" rel="noopener noreferrer nofollow">Privacy policy</a>
+                  )}
+                  {details.declared.tosUri && (
+                    <a href={details.declared.tosUri} target="_blank" rel="noopener noreferrer nofollow">Terms</a>
+                  )}
+                  {details.declared.contacts && <span>Support: {details.declared.contacts}</span>}
+                </p>
+              </div>
+            </details>
+          )}
 
           <div className="mt-6 flex flex-col gap-3">
             <button
