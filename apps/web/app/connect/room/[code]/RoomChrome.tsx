@@ -458,6 +458,7 @@ export const CSS = `
 
 .cx-btn--mic{--tone:#2ecc71}
 .cx-btn--cam{--tone:#00b8d9}
+.cx-btn--flip{--tone:#00b8d9}   /* the camera's own hue: it is a camera control */
 .cx-btn--share{--tone:#7c5cff}
 .cx-btn--view{--tone:#f5a623}
 .cx-btn--full{--tone:#3ec9c9}
@@ -727,7 +728,62 @@ export const CSS = `
   border-radius:10px;padding:11px;font-size:14px;cursor:pointer}
 .cx-cta:hover{filter:brightness(1.08)}
 .cx-cta[disabled]{opacity:.55;cursor:not-allowed}
-@media (max-width:640px){.cx-btn{min-width:52px;font-size:0;padding:11px}.cx-btn i{font-size:20px}}
+/* ── ON A PHONE THE BAR IS THE APP'S BAR. ───────────────────────────────
+   Amit, 18 Sept 2026, after using the meeting in his phone's browser:
+   "fix the mobile browser view similar to app for connect".
+
+   The native app's control bar is five controls, each flex:1 so they share
+   the width evenly, an icon with a word under it, on a solid strip along
+   the bottom (apps/mobile/screens/Meeting.js, the controls and control
+   styles). No backticks in here, as the top of this file warns.
+   The base .cx-btn above is ALREADY that shape: a column, icon over an
+   11px label. It was only this breakpoint that took it apart — font-size:0
+   hid every label and a fixed 52px width made the controls a row of pills
+   that wrapped onto two lines instead of one deliberate strip.
+
+   Hiding the labels was the worse half. On a laptop a nameless icon has a
+   tooltip; a phone has no hover, so "what does this one do" can only be
+   answered by pressing it — and two of these buttons end the meeting or
+   start sharing your screen. The app never made people guess, and now
+   neither does this.
+
+   Labels survive at this width because they are short and the row no
+   longer wraps: seven controls across 375px is ~50px each, and "Screen",
+   "React" and "Leave" all fit inside that at 11px. */
+@media (max-width:640px){
+  .cx-bar{gap:4px;flex-wrap:nowrap;
+    padding:8px 6px calc(8px + env(safe-area-inset-bottom,0px))}
+  /* flex:1 1 0 with min-width:0 is what makes them share the width EVENLY,
+     the way the app's flex:1 controls do. Without min-width:0 a flex item
+     refuses to shrink below its content and the row overflows instead. */
+  .cx-bar .cx-btn{flex:1 1 0;min-width:0;padding:8px 2px;border-radius:10px;gap:3px;
+    white-space:nowrap;overflow:hidden}
+  .cx-bar .cx-btn i{font-size:20px}
+
+  /* The rail is a desktop idea. 92px of a 375px screen is a quarter of the
+     picture spent on six buttons, so below this width the left rail becomes
+     the bottom bar — column-reverse puts the stage first and the controls
+     under it, which is where a thumb already is. */
+  .cx-root--bar-left{flex-direction:column-reverse}
+  .cx-bar--left{flex-direction:row;flex-wrap:nowrap;max-height:none;overflow:visible;
+    justify-content:center;border-right:none;border-top:1px solid var(--cx-line)}
+  /* The menu is anchored to where the rail WAS (left:92px, bottom:16px), so
+     without this it opens underneath the bar it belongs to — the same
+     "dead button" the note above .cx-more describes, in a new place. */
+  .cx-root--bar-left .cx-more{left:50%;right:auto;bottom:104px;
+    transform:translateX(-50%)}
+  .cx-root--bar-left .cx-fab{bottom:104px}
+}
+
+/* A small phone, where the arithmetic stops being comfortable. Seven controls
+   across 320px leaves about 37px of content each once padding and gaps are
+   taken out, and "Screen" at 11px is roughly 36px — a fit that depends on the
+   font, which is not a fit. One point smaller and it stops depending on
+   anything. Measured, not guessed: 320 - 12 padding - 24 gaps = 284, over 7. */
+@media (max-width:400px){
+  .cx-bar .cx-btn{font-size:10px;padding:8px 1px}
+  .cx-bar .cx-btn i{font-size:19px}
+}
 
 /* The pre-join screen. The preview mirrors like the self tile does — people
    expect a mirror before a meeting, and un-mirrored feels like a stranger. */

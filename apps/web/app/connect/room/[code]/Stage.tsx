@@ -13,6 +13,7 @@ import {
   connectApi, minutesApi, recordingApi, screenCaptureSupported,
   type LobbyEntry, type Meeting, type Recording, type RecordingMode, type Seat,
   type ChatPolicy, type ShareMode, type SharePolicy, type WaitingRoom, personOf } from '@/lib/connect';
+import { nextCamera, switchLabel } from '@/lib/cameras';
 import { meetingInvitation } from '@/lib/meetingInvitation';
 import { captionsSupported, useCaptions } from '@/lib/useCaptions';
 import type { JoinPrefs } from './PreJoin';
@@ -1150,6 +1151,17 @@ export default function Stage({ seat, meeting, prefs }: {
     })();
   }, [camOn, micOn]);
 
+  // Which camera is live right now. Only used to name the button ("Switch to
+  // back camera") — a label that says the wrong side is worse than a plain
+  // one, and the device id is not something React would otherwise re-read.
+  const [camId, setCamId] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (!camOn) { setCamId(undefined); return; }
+    const t = roomRef.current?.localParticipant
+      .getTrackPublication(Track.Source.Camera)?.videoTrack;
+    setCamId(t?.mediaStreamTrack?.getSettings?.().deviceId);
+  }, [camOn, cams]);
+
   // ---------------------------------------------------------------------
   //  The door, from inside the room.
   //
@@ -1974,6 +1986,42 @@ export default function Stage({ seat, meeting, prefs }: {
     try { await r.switchActiveDevice(kind, deviceId); }
     catch (e) { setError(e instanceof Error ? e.message : 'Could not switch device.'); }
   }
+
+  /**
+   * Front camera to back and round again — Amit, 18 Sept 2026, joining a
+   * meeting from his phone's browser: "need switch camera option in the mobile
+   * browser". The camera menu in Settings could already do it, but nobody
+   * opens a menu mid-sentence to show somebody what is on their desk.
+   *
+   * Two ways, because phones disagree. switchActiveDevice with a deviceId is
+   * the reliable one where the browser enumerates cameras. Some mobile
+   * browsers report a single "camera" device until a track exists, and there
+   * facingMode on the running track is what actually turns it round.
+   */
+  async function flipCamera() {
+    const r = roomRef.current; if (!r) return;
+    const pub = r.localParticipant.getTrackPublication(Track.Source.Camera);
+    const track = pub?.videoTrack;
+    if (!track) { setError('Turn your camera on first.'); return; }
+
+    const settings = track.mediaStreamTrack?.getSettings?.() ?? {};
+    const next = nextCamera(cams, settings.deviceId);
+    try {
+      if (next) {
+        await r.switchActiveDevice('videoinput', next.deviceId);
+      } else {
+        // One device reported, or none yet: ask for the other side by facing.
+        const facing = settings.facingMode === 'environment' ? 'user' : 'environment';
+        await track.restartTrack({ facingMode: facing });
+      }
+      // The list's labels only fill in once permission exists, and the ids can
+      // change after a restart, so re-read rather than trusting what we had.
+      setCams(await Room.getLocalDevices('videoinput'));
+      setCamId(track.mediaStreamTrack?.getSettings?.().deviceId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not switch the camera.');
+    }
+  }
   function send(e: React.FormEvent) {
     e.preventDefault();
     const r = roomRef.current;
@@ -2405,6 +2453,21 @@ export default function Stage({ seat, meeting, prefs }: {
         <i className="ri-vidicon-line" />
         Video
       </button>
+
+      {/* Only while the camera is ON, and only when there is somewhere to
+          switch TO — a phone with two cameras, or a browser that has not
+          enumerated them yet and can still be asked by facing mode. On a
+          laptop with one webcam the button would do nothing, so it is not
+          drawn. */}
+      {camOn && (cams.length > 1 || cams.length === 0) && (
+        <button type="button" className="cx-btn cx-btn--flip"
+                onClick={() => void flipCamera()}
+                title={switchLabel(nextCamera(cams, camId))}
+                aria-label={switchLabel(nextCamera(cams, camId))}>
+          <i className="ri-camera-switch-line" />
+          Flip
+        </button>
+      )}
 
       <button type="button" className={`cx-btn cx-btn--share ${sharing ? 'is-on' : ''}`}
               onClick={() => void toggleShare()} aria-pressed={sharing}
