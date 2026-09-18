@@ -36,13 +36,32 @@ jest.mock('expo-document-picker', () => ({
   getDocumentAsync: jest.fn(async () => picker.next),
 }));
 
-const files = { downloads: [] };
-jest.mock('expo-file-system', () => ({
+const files = { downloads: [], written: [], created: [], grant: { granted: true, directoryUri: 'content://tree/downloads' } };
+// The path the SCREEN imports. Mocking 'expo-file-system' instead was how a
+// deprecated download call passed every check and failed on the phone
+// (18 Sept 2026) — a fake that offers a method the real module has removed
+// proves the fake, not the code.
+jest.mock('expo-file-system/legacy', () => ({
   cacheDirectory: 'file:///cache/',
+  EncodingType: { Base64: 'base64' },
   downloadAsync: jest.fn(async (url, target, opts) => {
     files.downloads.push({ url, target, headers: opts?.headers });
     return { status: 200, uri: target };
   }),
+  readAsStringAsync: jest.fn(async () => 'BASE64DATA'),
+  writeAsStringAsync: jest.fn(async (uri, data) => { files.written.push({ uri, data }); }),
+  StorageAccessFramework: {
+    requestDirectoryPermissionsAsync: jest.fn(async () => files.grant),
+    createFileAsync: jest.fn(async (dir, name) => { files.created.push({ dir, name }); return `${dir}/${name}`; }),
+  },
+}));
+
+// The keychain, where the chosen folder is remembered between launches.
+const keychain = { store: {} };
+jest.mock('expo-secure-store', () => ({
+  getItemAsync: jest.fn(async (k) => keychain.store[k] ?? null),
+  setItemAsync: jest.fn(async (k, v) => { keychain.store[k] = v; }),
+  deleteItemAsync: jest.fn(async (k) => { delete keychain.store[k]; }),
 }));
 
 const sharing = { shared: [] };
@@ -61,6 +80,9 @@ const alerts = { calls: [] };
 const opened = { urls: [] };
 const RN = require('react-native');
 beforeEach(() => {
+  // Call counts do not reset themselves: the mock factories run once per file,
+  // so "asked for a folder once" counted the previous test's call too.
+  jest.clearAllMocks();
   jest.spyOn(RN.Alert, 'alert').mockImplementation((title, message, buttons) => {
     alerts.calls.push({ title, message, buttons });
   });
@@ -75,4 +97,4 @@ function pressAlertButton(text) {
   return button.onPress?.();
 }
 
-module.exports = { mailApi, webview, picker, files, sharing, alerts, opened, pressAlertButton };
+module.exports = { mailApi, webview, picker, files, sharing, alerts, opened, keychain, pressAlertButton };

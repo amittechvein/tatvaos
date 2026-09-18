@@ -25,8 +25,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { WebView } from 'react-native-webview';
-import * as FileSystem from 'expo-file-system';
+// expo-file-system/legacy, deliberately. SDK 57 deprecated downloadAsync on
+// the main entry point and THROWS when it is called — found on the phone,
+// 18 Sept 2026: "Method downloadAsync imported from expo-file-system is
+// deprecated". The new File/Directory API has no one-call download that sends
+// an Authorization header, which this needs: the attachment URL is not public.
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
+import * as SecureStore from 'expo-secure-store';
 
 import { getMessage, setRead, setFlag, deleteMessage, attachmentUrl, senderLabel, addressList } from '../lib/mail';
 import { buildDocument } from '../lib/mailHtml';
@@ -41,7 +47,6 @@ export default function MailMessage({ session, messageId, onBack, onReply, onCha
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState('');
   const [showImages, setShowImages] = useState(false);
-  const [height, setHeight] = useState(320);
   const [saving, setSaving] = useState(null);
   const gone = useRef(false);
   const changed = useRef(false);
@@ -126,33 +131,110 @@ export default function MailMessage({ session, messageId, onBack, onReply, onCha
   }
 
   /**
-   * Download an attachment and hand it to the phone's share sheet, which is
-   * how a file gets out of an app's private storage on Android. The request
-   * carries the bearer token — the download URL is not public, and opening it
-   * in a browser would only produce a sign-in page.
+   * ── OPENING AND SAVING ARE DIFFERENT THINGS ON ANDROID. ─────────────────
+   *  Amit, 18 Sept 2026: "it is not direct save its give option to share".
+   *
+   *  An app cannot write into Downloads by itself: everything it downloads
+   *  lands in its own private storage, which nothing else can read. There are
+   *  exactly two ways out, and this offers both because they answer different
+   *  questions:
+   *
+   *    Open   — hand the file to another app (the share sheet). Right for
+   *             "look at this now", wrong for "keep this".
+   *    Save   — the Storage Access Framework: the person picks a folder ONCE
+   *             (Downloads, Documents, an SD card), Android remembers the
+   *             grant, and every later save goes straight there with no
+   *             picker. That is as close to "direct save" as Android allows
+   *             an app that has not asked for access to all your files.
+   *
+   *  The folder grant is kept in the keychain, not in memory, so it survives
+   *  a restart — otherwise the second save would ask again and the feature
+   *  would feel broken.
+   * ─────────────────────────────────────────────────────────────────────────
    */
-  async function openAttachment(a) {
+  const SAVE_DIR_KEY = 'tatvaos.mail.saveDir';
+
+  async function downloadToCache(a) {
+    const safe = (a.filename || 'attachment').replace(/[^\w.\- ]+/g, '_');
+    const target = `${FileSystem.cacheDirectory}${Date.now()}-${safe}`;
+    const res = await FileSystem.downloadAsync(attachmentUrl(msg.id, a.id), target, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.status !== 200) throw new Error(`The server answered ${res.status}.`);
+    return { uri: res.uri, safe };
+  }
+
+  async function saveToFolder(a) {
+    const { uri, safe } = await downloadToCache(a);
+    const SAF = FileSystem.StorageAccessFramework;
+
+    let dir = await SecureStore.getItemAsync(SAVE_DIR_KEY).catch(() => null);
+    if (!dir) {
+      const granted = await SAF.requestDirectoryPermissionsAsync();
+      if (!granted.granted) { log('save cancelled: no folder chosen'); return null; }
+      dir = granted.directoryUri;
+      await SecureStore.setItemAsync(SAVE_DIR_KEY, dir).catch(() => {});
+      log('folder for saving chosen; it will not be asked for again');
+    }
+
+    let out;
+    try {
+      out = await SAF.createFileAsync(dir, safe, a.contentType || 'application/octet-stream');
+    } catch (e) {
+      // The grant can go stale — the folder was removed, or the card ejected.
+      // Forget it and ask once more rather than failing for good.
+      log(`saved folder no longer usable (${e?.message ?? e}); asking again`);
+      await SecureStore.deleteItemAsync(SAVE_DIR_KEY).catch(() => {});
+      const again = await SAF.requestDirectoryPermissionsAsync();
+      if (!again.granted) return null;
+      await SecureStore.setItemAsync(SAVE_DIR_KEY, again.directoryUri).catch(() => {});
+      out = await SAF.createFileAsync(again.directoryUri, safe, a.contentType || 'application/octet-stream');
+    }
+
+    const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+    await FileSystem.writeAsStringAsync(out, base64, { encoding: FileSystem.EncodingType.Base64 });
+    return safe;
+  }
+
+  function openAttachment(a) {
     if (a.scanStatus === 'infected') {
       Alert.alert('Blocked', 'This attachment failed a virus scan and cannot be opened.');
       return;
     }
-    setSaving(a.id);
-    try {
-      const safe = (a.filename || 'attachment').replace(/[^\w.\- ]+/g, '_');
-      const target = `${FileSystem.cacheDirectory}${Date.now()}-${safe}`;
-      const res = await FileSystem.downloadAsync(attachmentUrl(msg.id, a.id), target, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.status !== 200) throw new Error(`The server answered ${res.status}.`);
-      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(res.uri);
-      else Alert.alert('Saved', `Saved as ${safe}.`);
-      log(`attachment ${a.id} saved (${a.sizeBytes ?? '?'} bytes)`);
-    } catch (e) {
-      log(`attachment failed: ${e?.message ?? e}`);
-      Alert.alert('Could not open that file', e?.message ?? 'The download failed.');
-    } finally {
-      setSaving(null);
-    }
+    Alert.alert(a.filename || 'Attachment', sizeLabel(a.sizeBytes), [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Open',
+        onPress: async () => {
+          setSaving(a.id);
+          try {
+            const { uri, safe } = await downloadToCache(a);
+            if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri);
+            else Alert.alert('Downloaded', `${safe} is ready.`);
+            log(`attachment ${a.id} opened (${a.sizeBytes ?? '?'} bytes)`);
+          } catch (e) {
+            log(`attachment open failed: ${e?.message ?? e}`);
+            Alert.alert('Could not open that file', e?.message ?? 'The download failed.');
+          } finally { setSaving(null); }
+        },
+      },
+      {
+        text: 'Save',
+        onPress: async () => {
+          setSaving(a.id);
+          try {
+            const saved = await saveToFolder(a);
+            if (saved) {
+              Alert.alert('Saved', `${saved} was saved to your chosen folder.`);
+              log(`attachment ${a.id} saved to folder (${a.sizeBytes ?? '?'} bytes)`);
+            }
+          } catch (e) {
+            log(`attachment save failed: ${e?.message ?? e}`);
+            Alert.alert('Could not save that file', e?.message ?? 'The download failed.');
+          } finally { setSaving(null); }
+        },
+      },
+    ]);
   }
 
   if (busy) {
@@ -177,7 +259,15 @@ export default function MailMessage({ session, messageId, onBack, onReply, onCha
   }
 
   const { document, blocked } = buildDocument({
-    html: msg.bodyHtml, text: msg.bodyText, showImages,
+    html: msg.bodyHtml,
+    text: msg.bodyText,
+    showImages,
+    header: {
+      subject: msg.subject,
+      from: senderLabel(msg),
+      to: `to ${addressList(msg.to) || 'you'}${msg.cc?.length ? ` · cc ${addressList(msg.cc)}` : ''}`,
+      date: new Date(msg.receivedAt || msg.sentAt).toLocaleString(),
+    },
   });
 
   return (
@@ -200,31 +290,23 @@ export default function MailMessage({ session, messageId, onBack, onReply, onCha
         </Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={s.body}>
-        <Text style={s.subject}>{msg.subject || '(no subject)'}</Text>
-        <Text style={s.from}>{senderLabel(msg)}</Text>
-        <Text style={s.meta} numberOfLines={2}>
-          to {addressList(msg.to) || 'you'}
-          {msg.cc?.length ? ` · cc ${addressList(msg.cc)}` : ''}
-        </Text>
-        <Text style={s.meta}>
-          {new Date(msg.receivedAt || msg.sentAt).toLocaleString()}
-        </Text>
+      {error ? <Text style={s.error}>{error}</Text> : null}
 
-        {error ? <Text style={s.error}>{error}</Text> : null}
+      {blocked > 0 ? (
+        <Pressable style={s.banner} onPress={() => setShowImages(true)}
+                   accessibilityLabel="Show images in this message">
+          <Ionicons name="image-outline" size={16} color={text.secondary} />
+          <Text style={s.bannerText}>
+            {blocked} image{blocked === 1 ? '' : 's'} blocked. Showing them tells the sender you opened this.
+          </Text>
+          <Text style={s.bannerAction}>Show</Text>
+        </Pressable>
+      ) : null}
 
-        {blocked > 0 ? (
-          <Pressable style={s.banner} onPress={() => setShowImages(true)}
-                     accessibilityLabel="Show images in this message">
-            <Ionicons name="image-outline" size={16} color={text.secondary} />
-            <Text style={s.bannerText}>
-              {blocked} image{blocked === 1 ? '' : 's'} blocked. Showing them tells the sender you opened this.
-            </Text>
-            <Text style={s.bannerAction}>Show</Text>
-          </Pressable>
-        ) : null}
-
-        <View style={[s.webWrap, { height }]}>
+      {/* The one scrolling area: the message scrolls itself, in both
+          directions, so a long email is not cut off and a wide one is not
+          trapped (18 Sept 2026). */}
+      <View style={s.webWrap}>
           <WebView
             originWhitelist={['*']}
             source={{ html: document }}
@@ -238,33 +320,27 @@ export default function MailMessage({ session, messageId, onBack, onReply, onCha
               if (/^mailto:/i.test(req.url)) { Linking.openURL(req.url).catch(() => {}); return false; }
               return false;
             }}
-            // The document reports its own height once, so the message scrolls
-            // with the rest of the screen instead of inside a box.
-            injectedJavaScriptBeforeContentLoaded=""
-            onMessage={() => {}}
-            scrollEnabled={false}
-            onLoadEnd={() => setHeight((h) => Math.max(h, 320))}
+            scrollEnabled
             style={{ backgroundColor: 'transparent' }}
           />
-        </View>
+      </View>
 
-        {msg.attachments?.length ? (
-          <View style={s.attach}>
-            <Text style={s.attachTitle}>
-              {msg.attachments.length} attachment{msg.attachments.length === 1 ? '' : 's'}
-            </Text>
-            {msg.attachments.map((a) => (
-              <Pressable key={a.id} style={s.attachRow} onPress={() => openAttachment(a)}
-                         accessibilityLabel={`Open ${a.filename}`}>
-                <Ionicons name="document-outline" size={18} color={text.secondary} />
-                <Text style={s.attachName} numberOfLines={1}>{a.filename}</Text>
-                <Text style={s.attachSize}>{sizeLabel(a.sizeBytes)}</Text>
-                {saving === a.id ? <ActivityIndicator color={brand.base} /> : null}
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
-      </ScrollView>
+      {msg.attachments?.length ? (
+        <ScrollView style={s.attach} contentContainerStyle={s.attachInner}>
+          <Text style={s.attachTitle}>
+            {msg.attachments.length} attachment{msg.attachments.length === 1 ? '' : 's'}
+          </Text>
+          {msg.attachments.map((a) => (
+            <Pressable key={a.id} style={s.attachRow} onPress={() => openAttachment(a)}
+                       accessibilityLabel={`Open ${a.filename}`}>
+              <Ionicons name="document-outline" size={18} color={text.secondary} />
+              <Text style={s.attachName} numberOfLines={1}>{a.filename}</Text>
+              <Text style={s.attachSize}>{sizeLabel(a.sizeBytes)}</Text>
+              {saving === a.id ? <ActivityIndicator color={brand.base} /> : null}
+            </Pressable>
+          ))}
+        </ScrollView>
+      ) : null}
 
       <View style={s.actions}>
         <Action icon="arrow-undo-outline" label="Reply"
@@ -299,20 +375,19 @@ const s = StyleSheet.create({
     paddingHorizontal: 16, paddingTop: 10, paddingBottom: 8,
     borderBottomWidth: 1, borderBottomColor: surface.border,
   },
-  body: { padding: 16, paddingBottom: 28 },
-  subject: { fontSize: 20, fontWeight: '700', color: text.primary, marginBottom: 8 },
-  from: { fontSize: 15, fontWeight: '600', color: text.primary },
-  meta: { fontSize: 12, color: text.muted, marginTop: 2 },
-  error: { color: '#993556', fontSize: 13, marginTop: 8 },
+  error: { color: '#993556', fontSize: 13, paddingHorizontal: 16, paddingTop: 8 },
   banner: {
-    flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12,
+    flexDirection: 'row', alignItems: 'center', gap: 8, margin: 12,
     padding: 10, borderRadius: 8, backgroundColor: surface.card,
     borderWidth: 1, borderColor: surface.border,
   },
   bannerText: { flex: 1, fontSize: 12, color: text.secondary },
   bannerAction: { fontSize: 13, fontWeight: '700', color: brand.base },
-  webWrap: { marginTop: 12, borderRadius: 8, overflow: 'hidden', backgroundColor: '#FFFFFF' },
-  attach: { marginTop: 16 },
+  webWrap: { flex: 1, backgroundColor: '#FFFFFF' },
+  // Capped: a message with twelve attachments must not push the message itself
+  // off the screen. It scrolls on its own beyond that.
+  attach: { maxHeight: 160, borderTopWidth: 1, borderTopColor: surface.border },
+  attachInner: { paddingHorizontal: 16, paddingVertical: 10 },
   attachTitle: { fontSize: 12, fontWeight: '700', letterSpacing: 1, color: text.muted, marginBottom: 6 },
   attachRow: {
     flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10,

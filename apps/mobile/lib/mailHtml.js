@@ -73,16 +73,38 @@ export function textToHtml(textBody) {
  * this message talk to a server about who read it" any more than it has to.
  * (A remote image IS a read receipt; that is why it is off until asked.)
  */
-export function buildDocument({ html, text, showImages, dark = false }) {
+export function buildDocument({ html, text, showImages, dark = false, header = null }) {
   const source = html && html.trim().length > 0 ? strip(html) : textToHtml(text);
   const { html: body, blocked } = showImages
     ? { html: source, blocked: 0 }
     : blockRemoteImages(source);
 
+  const esc = (v) => (v ?? '').toString()
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
   const img = showImages ? "img-src data: cid: https:" : "img-src data: cid:";
   const ink = dark ? '#EDEAF6' : '#1F1B2E';
   const paper = dark ? '#15131D' : '#FFFFFF';
   const muted = dark ? '#A9A4BC' : '#6B6780';
+
+  // ── THE HEADER IS IN THE DOCUMENT, NOT ABOVE IT. ───────────────────────
+  //  18 Sept 2026, Amit: "check screen for scrolling issue". The body used to
+  //  sit in a fixed 320-point box with its own scrolling switched off, inside
+  //  a native ScrollView — so a long email was simply cut off, with blank
+  //  space underneath, and a wide one could not be scrolled sideways at all.
+  //
+  //  Height cannot be measured from outside: reporting it needs JavaScript in
+  //  the page, and JavaScript is exactly what this screen refuses to run. So
+  //  the WebView becomes the ONE scrolling area and the subject, sender and
+  //  date go inside it, which also removes the nested-scroll problem rather
+  //  than trading it for a different one.
+  // ───────────────────────────────────────────────────────────────────────
+  const head = header ? `<div class="tv-head">
+      <h1>${esc(header.subject) || '(no subject)'}</h1>
+      <div class="tv-from">${esc(header.from)}</div>
+      <div class="tv-meta">${esc(header.to)}</div>
+      <div class="tv-meta">${esc(header.date)}</div>
+    </div>` : '';
 
   return {
     blocked,
@@ -95,12 +117,17 @@ export function buildDocument({ html, text, showImages, dark = false }) {
     font:15px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
     word-break:break-word;overflow-wrap:anywhere;-webkit-text-size-adjust:100%;}
   .tv-wrap{padding:16px;}
+  .tv-head{padding:16px 16px 0 16px;}
+  .tv-head h1{margin:0 0 8px 0;font-size:20px;line-height:1.3;}
+  .tv-from{font-size:15px;font-weight:600;}
+  .tv-meta{font-size:12px;color:${muted};margin-top:2px;}
+  .tv-rule{height:1px;background:${dark ? '#2A2536' : '#EFEBFA'};margin:14px 16px 0 16px;}
   img{max-width:100% !important;height:auto !important;}
   table{max-width:100% !important;}
   a{color:#6C3CE9;}
   blockquote{margin:8px 0;padding-left:10px;border-left:3px solid ${muted};color:${muted};}
   pre{white-space:pre-wrap;}
   img[data-blocked-src]{display:none;}
-</style></head><body><div class="tv-wrap">${body}</div></body></html>`,
+</style></head><body>${head}${header ? '<div class="tv-rule"></div>' : ''}<div class="tv-wrap">${body}</div></body></html>`,
   };
 }

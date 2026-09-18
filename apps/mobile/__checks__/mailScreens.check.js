@@ -6,7 +6,7 @@
 // JavaScript OFF, and that a reply carries inReplyToId — the field that makes
 // it a reply rather than a new conversation.
 
-const { mailApi, webview, picker, files, sharing, alerts, opened, pressAlertButton } = require('./mailMocks');
+const { mailApi, webview, picker, files, sharing, alerts, opened, keychain, pressAlertButton } = require('./mailMocks');
 const React = require('react');
 const { render, fireEvent, waitFor, act } = require('@testing-library/react-native');
 
@@ -30,7 +30,11 @@ const row = (over = {}) => ({
 beforeEach(() => {
   alerts.calls.length = 0;
   files.downloads.length = 0;
+  files.written.length = 0;
+  files.created.length = 0;
+  files.grant = { granted: true, directoryUri: 'content://tree/downloads' };
   sharing.shared.length = 0;
+  for (const k of Object.keys(keychain.store)) delete keychain.store[k];
   picker.next = { canceled: true };
   mailApi.bootstrap = jest.fn(async () => ({
     mailbox: { id: 'mb1', address: 'amit@tatvaos.com' },
@@ -100,9 +104,16 @@ const full = (over = {}) => ({
 test('the body reaches the WebView with JavaScript OFF and remote images blocked', async () => {
   mailApi.getMessage = jest.fn(async () => full());
   const r = render(<MailMessage session={session} messageId="m1" onBack={() => {}} onReply={() => {}} />);
-  await waitFor(() => expect(r.getByText('Invoice for August')).toBeTruthy());
+  // The subject is drawn INSIDE the message document now (one scrolling area),
+  // so the screen is ready when its own controls are.
+  await waitFor(() => expect(r.getByLabelText('Reply')).toBeTruthy());
 
   expect(webview.lastProps.javaScriptEnabled).toBe(false);
+  // The message is the ONE scrolling area, and it carries its own header —
+  // a fixed-height box cut long emails off (18 Sept 2026).
+  expect(webview.lastProps.scrollEnabled).toBe(true);
+  expect(webview.lastProps.source.html).toContain('Invoice for August');
+  expect(webview.lastProps.source.html).toContain('Ravi Kumar');
   expect(webview.lastProps.source.html).toContain("default-src 'none'");
   expect(webview.lastProps.source.html).toContain('data-blocked-src="https://track.example/o.gif"');
   expect(r.getByLabelText('Show images in this message')).toBeTruthy();
@@ -120,13 +131,16 @@ test('Show images widens the policy for that message only', async () => {
   await act(async () => { fireEvent.press(r.getByLabelText('Show images in this message')); });
   expect(webview.lastProps.source.html).toContain('img-src data: cid: https:');
   expect(webview.lastProps.source.html).toContain("default-src 'none'");
+  // A subject with markup must not become markup inside the header either.
+  const nasty = webview.lastProps.source.html;
+  expect(nasty).not.toContain('<script');
 });
 
 test('an unread message is marked read AFTER it is shown; a read one is left alone', async () => {
   mailApi.getMessage = jest.fn(async () => full({ isRead: false }));
   const r = render(<MailMessage session={session} messageId="m1" onBack={() => {}} onReply={() => {}} />);
   await waitFor(() => expect(mailApi.setRead).toHaveBeenCalledWith('AT', 'm1', true));
-  expect(r.getByText('Invoice for August')).toBeTruthy();
+  expect(webview.lastProps.source.html).toContain('Invoice for August');
 
   mailApi.setRead.mockClear();
   mailApi.getMessage = jest.fn(async () => full({ isRead: true }));
@@ -148,7 +162,7 @@ test('delete asks first, and says Trash rather than gone', async () => {
   mailApi.getMessage = jest.fn(async () => full());
   const onBack = jest.fn();
   const r = render(<MailMessage session={session} messageId="m1" onBack={onBack} onReply={() => {}} />);
-  await waitFor(() => expect(r.getByText('Invoice for August')).toBeTruthy());
+  await waitFor(() => expect(r.getByLabelText('Delete this message')).toBeTruthy());
   fireEvent.press(r.getByLabelText('Delete this message'));
   expect(alerts.calls[0].message).toMatch(/moves to Trash/);
   expect(mailApi.deleteMessage).not.toHaveBeenCalled();
@@ -157,16 +171,61 @@ test('delete asks first, and says Trash rather than gone', async () => {
   expect(onBack).toHaveBeenCalledWith(true);
 });
 
-test('an attachment downloads WITH the token and is handed to the share sheet', async () => {
-  mailApi.getMessage = jest.fn(async () => full({
-    attachments: [{ id: 'a1', filename: 'invoice.pdf', sizeBytes: 2048, scanStatus: 'clean' }],
-  }));
-  const r = render(<MailMessage session={session} messageId="m1" onBack={() => {}} onReply={() => {}} />);
+const withFile = () => full({
+  attachments: [{ id: 'a1', filename: 'invoice.pdf', sizeBytes: 2048, contentType: 'application/pdf', scanStatus: 'clean' }],
+});
+
+async function tapAttachment(r) {
   await waitFor(() => expect(r.getByLabelText('Open invoice.pdf')).toBeTruthy());
   await act(async () => { fireEvent.press(r.getByLabelText('Open invoice.pdf')); });
+}
+
+test('Open downloads WITH the token and hands the file to another app', async () => {
+  mailApi.getMessage = jest.fn(async () => withFile());
+  const r = render(<MailMessage session={session} messageId="m1" onBack={() => {}} onReply={() => {}} />);
+  await tapAttachment(r);
+  // Nothing is downloaded until a choice is made: tapping the row asks.
+  expect(files.downloads).toHaveLength(0);
+  await act(async () => { await pressAlertButton('Open'); });
   expect(files.downloads[0].url).toContain('/api/mail/messages/m1/attachments/a1');
   expect(files.downloads[0].headers.Authorization).toBe('Bearer AT');
   expect(sharing.shared).toHaveLength(1);
+});
+
+test('Save writes the file into the folder the person chose', async () => {
+  mailApi.getMessage = jest.fn(async () => withFile());
+  const r = render(<MailMessage session={session} messageId="m1" onBack={() => {}} onReply={() => {}} />);
+  await tapAttachment(r);
+  await act(async () => { await pressAlertButton('Save'); });
+  expect(files.created[0]).toEqual({ dir: 'content://tree/downloads', name: 'invoice.pdf' });
+  expect(files.written[0].uri).toBe('content://tree/downloads/invoice.pdf');
+  expect(sharing.shared).toHaveLength(0);   // saving is not sharing
+  expect(alerts.calls[alerts.calls.length - 1].title).toBe('Saved');
+});
+
+test('the folder is asked for ONCE and remembered for the next save', async () => {
+  mailApi.getMessage = jest.fn(async () => withFile());
+  const r = render(<MailMessage session={session} messageId="m1" onBack={() => {}} onReply={() => {}} />);
+  await tapAttachment(r);
+  await act(async () => { await pressAlertButton('Save'); });
+  const SAF = require('expo-file-system/legacy').StorageAccessFramework;
+  expect(SAF.requestDirectoryPermissionsAsync).toHaveBeenCalledTimes(1);
+  expect(keychain.store['tatvaos.mail.saveDir']).toBe('content://tree/downloads');
+
+  await tapAttachment(r);
+  await act(async () => { await pressAlertButton('Save'); });
+  expect(SAF.requestDirectoryPermissionsAsync).toHaveBeenCalledTimes(1);  // not asked again
+  expect(files.created).toHaveLength(2);
+});
+
+test('refusing the folder saves nothing and says nothing alarming', async () => {
+  files.grant = { granted: false };
+  mailApi.getMessage = jest.fn(async () => withFile());
+  const r = render(<MailMessage session={session} messageId="m1" onBack={() => {}} onReply={() => {}} />);
+  await tapAttachment(r);
+  await act(async () => { await pressAlertButton('Save'); });
+  expect(files.written).toHaveLength(0);
+  expect(alerts.calls.some((c) => /Could not/.test(c.title ?? ''))).toBe(false);
 });
 
 test('an infected attachment is refused without downloading anything', async () => {
@@ -178,6 +237,8 @@ test('an infected attachment is refused without downloading anything', async () 
   await act(async () => { fireEvent.press(r.getByLabelText('Open bad.exe')); });
   expect(files.downloads).toHaveLength(0);
   expect(alerts.calls[0].title).toBe('Blocked');
+  // Refused outright: not even the Open/Save choice is offered.
+  expect(alerts.calls[0].buttons).toBeUndefined();
 });
 
 // ── writing one ────────────────────────────────────────────────────────────

@@ -19,6 +19,8 @@
  * ─────────────────────────────────────────────────────────────────────────
  */
 
+import { File } from 'expo-file-system';
+
 import { request, API_BASE } from '../api';
 
 /** Mailbox, folders and signature in one call — what the app opens Mail with. */
@@ -104,10 +106,28 @@ export async function send(token, {
   if (bodyHtml) form.append('bodyHtml', bodyHtml);
   if (inReplyToId) form.append('inReplyToId', inReplyToId);
   if (draftId) form.append('draftId', draftId);
+  // ── ATTACHMENTS GO UP AS FILE OBJECTS, NOT { uri, name, type }. ─────────
+  //  Every React Native example says to append { uri, name, type }, and it is
+  //  what RN's own networking understands. Expo SDK 54+ replaces global fetch
+  //  with its own (expo/src/winter/fetch), which builds the multipart body in
+  //  JavaScript and accepts only strings, Blobs, and objects with bytes() —
+  //  everything else throws "Unsupported FormDataPart implementation".
+  //
+  //  That arrived as a NETWORK failure ("Cannot reach TatvaOS") on the phone,
+  //  18 Sept 2026: a send with no attachment answered 200 in half a second,
+  //  and the same send with a 36 KB photo failed in 8 ms, which is the tell —
+  //  nothing that crosses a network fails that fast.
+  //
+  //  expo-file-system's File is a Blob with bytes(), a name and a type, and it
+  //  reads from disk natively. The 25 MB cap the compose screen enforces is
+  //  what keeps bytes() from being a memory problem.
+  // ───────────────────────────────────────────────────────────────────────
   for (const f of files) {
-    // React Native's FormData takes { uri, name, type } and streams the file
-    // from disk; there is no Blob to read it into first.
-    form.append('files', { uri: f.uri, name: f.name, type: f.mimeType || 'application/octet-stream' });
+    if (!f?.uri) {
+      console.log(`[mail] attachment has no uri, keys: ${Object.keys(f ?? {}).join(',')}`);
+      throw new Error(`Could not read ${f?.name ?? 'that file'}. Attach it again.`);
+    }
+    form.append('files', new File(f.uri));
   }
   return request('/api/mail/send', { method: 'POST', token, form, timeoutMs: 120000 });
 }
