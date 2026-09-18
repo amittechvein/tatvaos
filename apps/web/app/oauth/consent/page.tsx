@@ -160,6 +160,14 @@ export default function OAuthConsentPage() {
             </p>
           </div>
 
+          {/* EQUAL WEIGHT, DELIBERATELY (CTO, 18 Sept 2026). The first draft
+              had Cancel as quiet muted text under a gradient Continue — the
+              known consent-screen pattern where the safe choice is quieter
+              than the agreeable one, which teaches people to click through.
+              Both are now the same size, the same padding and full-strength
+              ink; Continue is filled because it is the action, not because it
+              is preferred. If anyone "tidies" Cancel back to a text link,
+              this is the reason not to. */}
           <div className="mt-6 flex flex-col gap-3">
             <button
               type="submit"
@@ -176,7 +184,7 @@ export default function OAuthConsentPage() {
               type="submit"
               name="tv_decision"
               value="deny"
-              className="w-full rounded-xl px-4 py-2.5 text-sm font-medium text-ink-muted transition hover:bg-canvas hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40"
+              className="w-full rounded-xl border border-line bg-surface px-4 py-3 text-base font-semibold text-ink transition hover:bg-canvas focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40"
             >
               Cancel
             </button>
