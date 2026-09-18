@@ -458,6 +458,7 @@ export const CSS = `
 
 .cx-btn--mic{--tone:#2ecc71}
 .cx-btn--cam{--tone:#00b8d9}
+.cx-btn--flip{--tone:#00b8d9}   /* the camera's own hue: it is a camera control */
 .cx-btn--share{--tone:#7c5cff}
 .cx-btn--view{--tone:#f5a623}
 .cx-btn--full{--tone:#3ec9c9}
