@@ -243,11 +243,41 @@ public static class UserEndpoints
         return Results.Ok(list);
     }
 
-    private static async Task<IResult> CreateAsync(
+    private static Task<IResult> CreateAsync(
         CreateUserRequest req,
         AppDbContext db, StorageAllocator storage, TenantContext tenant,
         AuditWriter audit, IPasswordHasher hasher,
         SystemMailer mailer, IConfiguration config, CancellationToken ct)
+        => CreatePersonAsync(req, db, storage, tenant, audit, hasher, mailer, config,
+                             allowPrivilegedRoles: true, ct);
+
+    /// <summary>
+    /// Creating a person — every rule in one place, because there are now two
+    /// callers: this console endpoint, and the organisation API key path
+    /// (OrgApiEndpoints, 18 Sept 2026).
+    ///
+    /// IT IS AN EXTRACTION, NOT A REWRITE. The body below is what the console
+    /// has always run, moved and given one parameter. That matters more than
+    /// it looks: capacity, domain verification, address uniqueness, the
+    /// invitation channel and the role rules are the difference between
+    /// "added a colleague" and "created an account nobody can enter, or one
+    /// that can administer the organisation". A second copy for the API would
+    /// have drifted from this one, and the drift would have been silent.
+    ///
+    /// <param name="allowPrivilegedRoles">
+    /// False for an API key. A key may create ordinary people and nothing
+    /// else: a credential that can manufacture an administrator is the
+    /// privilege-escalation path an attacker reaches for first, and no scope
+    /// grants it. The console keeps its own rules, where an owner may make an
+    /// owner because succession has to be possible.
+    /// </param>
+    /// </summary>
+    internal static async Task<IResult> CreatePersonAsync(
+        CreateUserRequest req,
+        AppDbContext db, StorageAllocator storage, TenantContext tenant,
+        AuditWriter audit, IPasswordHasher hasher,
+        SystemMailer mailer, IConfiguration config,
+        bool allowPrivilegedRoles, CancellationToken ct)
     {
         var capacity = await storage.GetCapacityAsync(tenant.TenantId, "mail", ct);
         if (!capacity.CanAddUser)
@@ -329,6 +359,15 @@ public static class UserEndpoints
             role = req.Role.Trim().ToLowerInvariant();
             if (!AssignableRoles.Contains(role))
                 return Results.BadRequest(new { error = "Unknown role." });
+            // An API key may not manufacture an administrator, whatever its
+            // scopes say (18 Sept 2026). Checked here rather than at the
+            // endpoint so it cannot be forgotten by a future caller.
+            if (!allowPrivilegedRoles && role is not "employee")
+                return Results.Json(new
+                {
+                    error = "An API key can add people, but not administrators. "
+                          + "Give this person the employee role, and change it in the console if they need more.",
+                }, statusCode: 403);
             if (role == "org_owner" && !IsOwnerScope(tenant))
                 return Results.Json(new
                 {
@@ -338,6 +377,11 @@ public static class UserEndpoints
         else
         {
             role = category?.DefaultRole ?? "employee";
+            // A department's default role is set by an administrator, so it
+            // can be org_admin. An API key must not inherit that by choosing
+            // a department, which would be the same escalation by a longer
+            // route.
+            if (!allowPrivilegedRoles && role is not "employee") role = "employee";
         }
 
         // ---- Core: the person -------------------------------------------

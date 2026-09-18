@@ -551,6 +551,32 @@ builder.Services.AddRateLimiter(o =>
 
     // Same shape and reasoning as auth-handoff-redeem: per-IP, because the
     // token is single-use and a token-keyed bucket would bound nothing.
+    // ------------------------------------------------------------------
+    //  The organisation API (/api/v1/org/*). Anonymous, internet-reachable,
+    //  and it CREATES PEOPLE, so it is limited harder than the read paths:
+    //  30 a minute per address. A real onboarding run adds tens of people,
+    //  not hundreds a minute, and anything faster is either a mistake worth
+    //  interrupting or somebody enumerating.
+    //
+    //  Keyed on the address rather than the key: keying on the key would let
+    //  anyone who learns a customer's key id exhaust that customer's budget,
+    //  and the key is not in the URL to key on anyway.
+    // ------------------------------------------------------------------
+    o.AddPolicy("org-api", httpContext =>
+    {
+        var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();
+        var client = string.IsNullOrEmpty(xff)
+            ? httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"
+            : xff.Split(',')[^1].Trim();
+        return RateLimitPartition.GetFixedWindowLimiter($"org-api:{client}",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 30,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            });
+    });
+
     o.AddPolicy("auth-invite-accept", httpContext =>
     {
         var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();
@@ -737,6 +763,9 @@ app.MapSharedMailboxEndpoints();
 // as a declared lane exception (see the endpoint header).
 app.MapMailAppPasswordEndpoints();
 app.MapMailApiKeyEndpoints();
+// An organisation's own key, and the public call it authenticates.
+app.MapOrgApiKeyEndpoints();
+app.MapOrgApiEndpoints();
 app.MapMailSendApiEndpoints();
 // "How much room do I have left?" — one answer for every product's meter.
 app.MapMyStorageEndpoints();
