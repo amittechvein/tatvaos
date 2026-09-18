@@ -76,9 +76,16 @@ export default function ApiKeysPage() {
         <div className="flex gap-2">
           {/* A real download link, not a Button with href: Button renders a
               Next <Link>, which routes instead of downloading the file. */}
+          {/* The same guide as a page and as a file. The page is what a
+              developer reads; the PDF is what gets forwarded to someone who
+              is not at a computer. Both come from the same source. */}
+          <a href="/docs/mail-api-guide.html" target="_blank" rel="noopener"
+             className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink no-underline transition-colors hover:bg-canvas">
+            Integration guide
+          </a>
           <a href="/docs/TatvaOS-Mail-API-Integration-Guide.pdf" download
              className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink no-underline transition-colors hover:bg-canvas">
-            Integration guide (PDF)
+            PDF
           </a>
           <Button variant="primary" onClick={() => setCreating(true)}>
             New API key
@@ -282,8 +289,9 @@ function HowToUse({ endpoint }: { endpoint: string }) {
     <Card title="How to send mail with a key" subtitle="Three steps. The whole API is one request.">
       <p className="text-[0.8125rem] text-ink-muted mb-4">
         Handing this to a developer? The{' '}
-        <a href="/docs/TatvaOS-Mail-API-Integration-Guide.pdf" download>integration guide (PDF)</a>{' '}
-        has everything on this page plus working examples in curl, Node.js, Python and PHP.
+        <a href="/docs/mail-api-guide.html" target="_blank" rel="noopener">integration guide</a>{' '}
+        has everything on this page plus working examples in curl, Node.js, Python and PHP
+        (also as a <a href="/docs/TatvaOS-Mail-API-Integration-Guide.pdf" download>PDF</a>).
       </p>
       <ol className="ps-4 mb-6">
         <li className="mb-4">
