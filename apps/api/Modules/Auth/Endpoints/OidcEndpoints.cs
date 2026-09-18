@@ -431,13 +431,27 @@ public static class OidcEndpoints
     // ==================================================================
     //  Helpers
     // ==================================================================
-    /// <summary>In words, not scope names (0004): the person is told what leaves.</summary>
+    /// <summary>
+    /// In words, not scope names (0004): the person is told what leaves.
+    ///
+    /// ONE IMPLEMENTATION, used by the consent screen and by the person's own
+    /// list on their account page, so the two can never describe the same
+    /// grant differently (house rule 10).
+    ///
+    /// offline_access says what it does. It was "keep you signed in without
+    /// asking again" until 18 Sept 2026, which made the most powerful item in
+    /// the list read as the mildest: a refresh token lets the application
+    /// reach the person's information for fourteen days at a time, while they
+    /// are elsewhere and not using it (CTO).
+    /// </summary>
     private static List<string> ReceivesInWords(ImmutableArray<string> scopes)
     {
         var receives = new List<string>();
         if (scopes.Contains(Scopes.Profile)) receives.Add("your name");
         if (scopes.Contains(Scopes.Email)) receives.Add("your work email address");
         receives.Add("which organisation you belong to");
+        if (scopes.Contains(Scopes.OfflineAccess))
+            receives.Add("access to your information when you are not using the application");
         return receives;
     }
 

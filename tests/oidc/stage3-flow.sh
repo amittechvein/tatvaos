@@ -193,7 +193,7 @@ sign_in() {
 register_app() {
     local r
     r=$(curl -s -w '\n%{http_code}' -X POST "$API/api/org/applications" -H 'Content-Type: application/json' -H "Authorization: Bearer $1" \
-        -d "{\"name\":\"$2\",\"redirectUris\":[\"$RP\"],\"confidential\":true}")
+        -d "{\"name\":\"$2\",\"redirectUris\":[\"$RP\"],\"confidential\":true,\"scopes\":[\"profile\",\"email\",\"offline_access\"]}")
     [ "$(status "$r")" = "201" ] || { fail "register '$2': $(status "$r") $(brief "$(body "$r")")"; return 1; }
     APP_ID=$(jq_ "$(body "$r")" "d['id']"); CLIENT_ID=$(jq_ "$(body "$r")" "d['clientId']"); CLIENT_SECRET=$(jq_ "$(body "$r")" "d['clientSecret']")
     remember "$CLIENT_SECRET"
@@ -237,9 +237,9 @@ authorize "$JAR_A" "$URL"
 r=$(curl -s -w '\n%{http_code}' "$API/api/auth/oauth/consent?client_id=$CID_A&redirect_uri=$(urlenc "$RP")&scope=openid%20profile%20email%20offline_access" -H "Authorization: Bearer $OWNER_TOKEN")
 [ "$(status "$r")" = "200" ] && pass "consent details 200" || fail "consent details: $(status "$r") $(brief "$(body "$r")")"
 [ "$(jq_ "$(body "$r")" "d['returnsTo']")" = "rp.test" ] && pass "consent shows the return host" || fail "returnsTo: $(body "$r")"
-[ "$(jq_ "$(body "$r")" "', '.join(d['receives'])")" = "your name, your work email address, and which organisation you belong to" ] \
-    || [ "$(jq_ "$(body "$r")" "', '.join(d['receives'])")" = "your name, your work email address, which organisation you belong to" ] \
-    && pass "consent lists what leaves, in words" || fail "receives: $(body "$r")"
+[ "$(jq_ "$(body "$r")" "', '.join(d['receives'])")" = "your name, your work email address, which organisation you belong to, access to your information when you are not using the application" ] \
+    && pass "consent lists what leaves, in words - offline_access says what it does" \
+    || fail "receives: $(brief "$(body "$r")")"
 # The person clicks Continue.
 authorize "$JAR_A" "$URL" allow
 [ "$HTTP_CODE" = "302" ] && [[ "$LOCATION" == "$RP?"* ]] && pass "consent given: redirected to the application (302)" || fail "after consent: $HTTP_CODE → ${LOCATION%%\?*}"
@@ -458,7 +458,7 @@ r=$(curl -s -w '\n%{http_code}' "$API/api/auth/oauth/consents" -H "Authorization
 CONSENT_ID=$(jq_ "$(body "$r")" "[c for c in d if c['clientId']=='$CID_B'][0]['id']")
 [ -n "$CONSENT_ID" ] && [ "$CONSENT_ID" != "None" ] && pass "application B is in the owner's list" || fail "application B missing from the consents list"
 [ "$(jq_ "$(body "$r")" "[c for c in d if c['clientId']=='$CID_A']")" = "[]" ] && pass "the REVOKED application A is not listed" || fail "revoked application still listed"
-[ "$(jq_ "$(body "$r")" "', '.join([c for c in d if c['clientId']=='$CID_B'][0]['receives'])")" = "your name, your work email address, which organisation you belong to" ] && pass "each row says in words what the application receives" || fail "receives: $(brief "$(body "$r")")"
+[ "$(jq_ "$(body "$r")" "', '.join([c for c in d if c['clientId']=='$CID_B'][0]['receives'])")" = "your name, your work email address, which organisation you belong to, access to your information when you are not using the application" ] && pass "each row says in words what the application receives" || fail "receives: $(brief "$(body "$r")")"
 printf '%s' "$(body "$r")" | grep -q "$SEC_B" && fail "the consents list carries a client secret" || pass "no secret in the list"
 # Another person cannot remove it: HR's token, the owner's consent id.
 h=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$API/api/auth/oauth/consents/$CONSENT_ID" -H "Authorization: Bearer $TOKEN")
@@ -492,6 +492,83 @@ r=$(token -d grant_type=authorization_code -d "code=$CODE12b" -d "redirect_uri=$
 [ "$(status "$r")" = "200" ] && pass "the consent still stands: the code from before the switch redeems" || fail "code after the switch: $(status "$r")"
 remember "$(jq_ "$(body "$r")" "d.get('access_token','')")"; remember "$(jq_ "$(body "$r")" "d.get('refresh_token','')")"; remember "$(jq_ "$(body "$r")" "d.get('id_token','')")"
 curl -s -o /dev/null -X POST "$API/api/org/applications/$APP_B/consent" -H 'Content-Type: application/json' -H "Authorization: Bearer $OWNER_TOKEN" -d '{"allowedForEveryone":false}'
+
+# ===========================================================================
+step "13. The scope ticks are real, and a new secret retires the old one"
+# An application the administrator gave ONE thing: the name. No email, no
+# offline_access. If the ticks were decorative every check below passes
+# anyway, which is why this step exists (CTO, 18 Sept).
+r=$(curl -s -w '\n%{http_code}' -X POST "$API/api/org/applications" -H 'Content-Type: application/json' -H "Authorization: Bearer $OWNER_TOKEN" \
+    -d "{\"name\":\"Least privilege $RUN\",\"redirectUris\":[\"$RP\"],\"confidential\":true,\"scopes\":[\"profile\"]}")
+[ "$(status "$r")" = "201" ] && pass "registered with only 'profile' ticked" || fail "create: $(status "$r") $(brief "$(body "$r")")"
+APP_C=$(jq_ "$(body "$r")" "d['id']"); CID_C=$(jq_ "$(body "$r")" "d['clientId']"); SEC_C=$(jq_ "$(body "$r")" "d['clientSecret']")
+remember "$SEC_C"
+[ "$(jq_ "$(body "$r")" "','.join(d['scopes'])")" = "profile" ] && pass "the response names just that one" || fail "scopes: $(brief "$(body "$r")")"
+
+# An unknown scope name is refused, not quietly dropped.
+r=$(curl -s -w '\n%{http_code}' -X POST "$API/api/org/applications" -H 'Content-Type: application/json' -H "Authorization: Bearer $OWNER_TOKEN" \
+    -d "{\"name\":\"Bad scope $RUN\",\"redirectUris\":[\"$RP\"],\"scopes\":[\"profile\",\"payroll\"]}")
+[ "$(status "$r")" = "400" ] && pass "an unknown scope is refused with a sentence" || fail "unknown scope answered $(status "$r")"
+
+# THE CHECK THE TICKS EXIST FOR: asking for an unticked scope is refused.
+#
+# WHICH ASSERTION CARRIES THE CLAIM, learned from calibrating this step
+# (rule 6, 18 Sept 2026): with the ticks made decorative, ONLY this refusal
+# goes red. The "ID token carries no email" and "no refresh token" checks
+# below ask for `openid profile` and would pass either way, because claims
+# follow the REQUESTED scope, not the granted permission. They are worth
+# keeping - they prove the claims track the request - but they prove nothing
+# about the tick. This refusal is the whole of that evidence.
+pkce; URL13=$(authorize_url "$CID_C" "$RP" "s13$RUN" "n13$RUN" "$CHALLENGE" "openid profile email")
+authorize "$JAR_A" "$URL13"
+[[ "$LOCATION" != *code=* ]] && pass "asking for the UNTICKED email scope: no code" || fail "LEAK: an unticked scope was granted"
+# HOW it refuses, measured rather than assumed: OpenIddict answers on our
+# own page with 400 invalid_scope rather than redirecting the error to the
+# application. That is the stricter of the two and matches step 6's
+# treatment of a bad redirect URI - nothing is sent to the application at
+# all. Asserted as it behaves, so a change of behaviour is a red here.
+[ "$HTTP_CODE" = "400" ] && [ -z "$LOCATION" ] && pass "…refused on TatvaOS with 400, nothing sent to the application" || fail "unticked scope: $HTTP_CODE -> ${LOCATION%%\?*}"
+pkce; URL13b=$(authorize_url "$CID_C" "$RP" "s13b$RUN" "n13b$RUN" "$CHALLENGE" "openid profile offline_access")
+authorize "$JAR_A" "$URL13b"
+[[ "$LOCATION" != *code=* ]] && pass "asking for UNTICKED offline_access: no code" || fail "LEAK: offline_access granted without the tick"
+
+# What was ticked still works, and the ID token carries no email.
+pkce; V13=$VERIFIER; URL13c=$(authorize_url "$CID_C" "$RP" "s13c$RUN" "n13c$RUN" "$CHALLENGE" "openid profile")
+authorize "$JAR_A" "$URL13c"; [[ "$LOCATION" == */oauth/consent?* ]] && authorize "$JAR_A" "$URL13c" allow
+CODE13=$(code_from "$LOCATION"); remember "$CODE13"
+r=$(token -d grant_type=authorization_code -d "code=$CODE13" -d "redirect_uri=$RP" -d "client_id=$CID_C" -d "client_secret=$SEC_C" -d "code_verifier=$V13")
+[ "$(status "$r")" = "200" ] && pass "the ticked scope works" || fail "ticked scope: $(status "$r") $(brief "$(body "$r")")"
+ID13=$(jq_ "$(body "$r")" "d.get('id_token','')"); ACCESS13=$(jq_ "$(body "$r")" "d.get('access_token','')")
+remember "$ID13"; remember "$ACCESS13"
+[ "$(jq_ "$(body "$r")" "'refresh_token' in d")" = "False" ] && pass "no refresh token, because offline_access was not ticked" || fail "a refresh token was issued without the tick"
+claim=$("$PY" -c "import sys,json,base64; p=sys.argv[1].split('.')[1]; p+='='*(-len(p)%4); d=json.loads(base64.urlsafe_b64decode(p)); print(d.get('email','(none)'), '|', d.get('name','(none)'))" "$ID13")
+[ "${claim%% *}" = "(none)" ] && pass "the ID token carries NO email — the untick reached the claims" || fail "ID token email: $claim"
+[ "${claim##*| }" = "Amit Dadhich" ] && pass "and it does carry the name, which was ticked" || fail "ID token name: $claim"
+r=$(userinfo_body "$ACCESS13")
+[ "$(jq_ "$r" "d.get('email','(none)')")" = "(none)" ] && pass "userinfo withholds the email too" || fail "userinfo leaked the email: $r"
+
+# The consent screen offers the person the same words.
+r=$(curl -s "$API/api/auth/oauth/consent?client_id=$CID_C&redirect_uri=$(urlenc "$RP")&scope=openid%20profile" -H "Authorization: Bearer $OWNER_TOKEN")
+printf '%s' "$r" | grep -q "work email address" && fail "consent details mention the email this app cannot have" || pass "consent details name only what it may receive"
+
+# A new secret retires the old one, at once.
+r=$(curl -s -w '\n%{http_code}' -X POST "$API/api/org/applications/$APP_C/secret" -H "Authorization: Bearer $OWNER_TOKEN")
+[ "$(status "$r")" = "200" ] && pass "a new secret is issued" || fail "regenerate: $(status "$r") $(brief "$(body "$r")")"
+SEC_C2=$(jq_ "$(body "$r")" "d['clientSecret']"); remember "$SEC_C2"
+[ -n "$SEC_C2" ] && [ "$SEC_C2" != "$SEC_C" ] && pass "…and it is a different secret" || fail "the secret did not change"
+pkce; V13d=$VERIFIER; URL13d=$(authorize_url "$CID_C" "$RP" "s13d$RUN" "n13d$RUN" "$CHALLENGE" "openid profile")
+authorize "$JAR_A" "$URL13d"; CODE13d=$(code_from "$LOCATION"); remember "$CODE13d"
+r=$(token -d grant_type=authorization_code -d "code=$CODE13d" -d "redirect_uri=$RP" -d "client_id=$CID_C" -d "client_secret=$SEC_C" -d "code_verifier=$V13d")
+[ "$(status "$r")" != "200" ] && pass "the OLD secret is refused from that moment" || fail "the old secret still works"
+pkce; V13e=$VERIFIER; URL13e=$(authorize_url "$CID_C" "$RP" "s13e$RUN" "n13e$RUN" "$CHALLENGE" "openid profile")
+authorize "$JAR_A" "$URL13e"; CODE13e=$(code_from "$LOCATION"); remember "$CODE13e"
+r=$(token -d grant_type=authorization_code -d "code=$CODE13e" -d "redirect_uri=$RP" -d "client_id=$CID_C" -d "client_secret=$SEC_C2" -d "code_verifier=$V13e")
+[ "$(status "$r")" = "200" ] && pass "the new secret works" || fail "new secret: $(status "$r") $(brief "$(body "$r")")"
+remember "$(jq_ "$(body "$r")" "d.get('access_token','')")"; remember "$(jq_ "$(body "$r")" "d.get('id_token','')")"
+n=$(PG "SELECT count(*) FROM core.audit_logs WHERE action='oidc.application_secret_regenerated' AND target_id='$APP_C'")
+[ "${n:-0}" -ge 1 ] && pass "the regeneration is in the audit log" || fail "no audit row for the new secret"
+r=$(curl -s "$API/api/org/applications" -H "Authorization: Bearer $OWNER_TOKEN")
+printf '%s' "$r" | grep -q "$SEC_C2" && fail "the list carries the new secret" || pass "the list still never carries a secret"
 
 printf '\n%s%s%s\n  %s%d passed%s, ' "$CYAN" "----------------------------------------" "$RST" "$GREEN" "$PASSED" "$RST"
 [ "$FAILED" -eq 0 ] && printf '%s0 failed%s\n\n' "$GREEN" "$RST" || printf '%s%d failed%s\n\n' "$RED" "$FAILED" "$RST"

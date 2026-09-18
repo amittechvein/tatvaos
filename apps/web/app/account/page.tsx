@@ -644,7 +644,7 @@ function ConsentsCard() {
               <div>
                 <div className="font-semibold">{c.application}</div>
                 <div className="text-[0.75rem] text-ink-muted">
-                  Receives {c.receives.join(', ')}{c.staysSignedIn ? '; can stay signed in without asking again' : ''}.
+                  Receives {c.receives.join(', ')}.
                   {' '}Allowed {new Date(c.grantedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}.
                 </div>
               </div>

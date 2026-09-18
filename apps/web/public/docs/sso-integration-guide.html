@@ -76,6 +76,7 @@
     <li><a href="#idtoken">The ID token: who the person is</a></li>
     <li><a href="#refresh">Keeping people signed in</a></li>
     <li><a href="#libraries">Using a library (recommended)</a></li>
+    <li><a href="#button">The sign-in button</a></li>
     <li><a href="#errors">Errors and what they mean</a></li>
     <li><a href="#limits">Lifetimes and limits</a></li>
     <li><a href="#revoke">When access is taken away</a></li>
@@ -261,6 +262,66 @@ oauth.register(
 )
 # send:     return oauth.tatvaos.authorize_redirect(url_for('callback', _external=True))
 # callback: token = oauth.tatvaos.authorize_access_token(); who = token['userinfo']</code></pre>
+
+  <h2 id="button">The sign-in button</h2>
+  <p>Use the same button everyone else uses, so a person recognises what it does before they click it. It is self-contained: no font to load, no image to host, no stylesheet to link. Point <code>href</code> at your own endpoint that starts the flow.</p>
+
+  <div class="card">
+    <p style="margin:0 0 12px">This is the button, at the size it should be:</p>
+    <a href="#button" style="display:inline-flex;align-items:center;gap:12px;height:44px;padding:0 20px 0 16px;border-radius:8px;border:1px solid #D9DEE8;background:#fff;color:#0B1B3F;text-decoration:none;font:600 15px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;letter-spacing:-.01em">
+      <svg viewBox="0 0 48 48" aria-hidden="true" style="flex:none;width:20px;height:20px"><defs><linearGradient id="tosMarkGuide" x1="6" y1="4" x2="42" y2="44" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#1E52D9"/><stop offset=".55" stop-color="#2A7BEE"/><stop offset="1" stop-color="#3BA9F7"/></linearGradient></defs><path fill="url(#tosMarkGuide)" d="M17.94 3.5 Q24 0 30.06 3.5 L38.72 8.5 Q44.78 12 44.78 19 L44.78 29 Q44.78 36 38.72 39.5 L30.06 44.5 Q24 48 17.94 44.5 L9.28 39.5 Q3.22 36 3.22 29 L3.22 19 Q3.22 12 9.28 8.5 Z"/><rect x="13" y="13" width="22" height="6.5" rx="2" fill="#fff"/><rect x="20.75" y="13" width="6.5" height="23" rx="2" fill="#fff"/></svg>
+      Sign in with TatvaOS
+    </a>
+  </div>
+
+  <p>Copy this. A dark-background version and an icon-only version for tight spaces are on the
+  <a href="/docs/sign-in-with-tatvaos.html" target="_blank" rel="noopener">button assets page</a>.</p>
+
+<pre><code>&lt;style&gt;
+.tos-btn{display:inline-flex;align-items:center;gap:12px;height:44px;
+  padding:0 20px 0 16px;border-radius:8px;border:1px solid #D9DEE8;
+  background:#fff;color:#0B1B3F;text-decoration:none;cursor:pointer;
+  font:600 15px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,
+  Helvetica,Arial,sans-serif;letter-spacing:-.01em}
+.tos-btn:hover{background:#F4F7FC;border-color:#C3CBDA}
+.tos-btn:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(15,124,245,.35)}
+.tos-btn svg{flex:none;width:20px;height:20px}
+&lt;/style&gt;
+
+&lt;a class="tos-btn" href="/auth/tatvaos/start"&gt;
+  &lt;svg viewBox="0 0 48 48" aria-hidden="true"&gt;
+    &lt;defs&gt;&lt;linearGradient id="tosMark" x1="6" y1="4" x2="42" y2="44"
+      gradientUnits="userSpaceOnUse"&gt;
+      &lt;stop offset="0" stop-color="#1E52D9"/&gt;
+      &lt;stop offset=".55" stop-color="#2A7BEE"/&gt;
+      &lt;stop offset="1" stop-color="#3BA9F7"/&gt;
+    &lt;/linearGradient&gt;&lt;/defs&gt;
+    &lt;path fill="url(#tosMark)" d="M17.94 3.5 Q24 0 30.06 3.5 L38.72 8.5
+      Q44.78 12 44.78 19 L44.78 29 Q44.78 36 38.72 39.5 L30.06 44.5
+      Q24 48 17.94 44.5 L9.28 39.5 Q3.22 36 3.22 29 L3.22 19
+      Q3.22 12 9.28 8.5 Z"/&gt;
+    &lt;rect x="13" y="13" width="22" height="6.5" rx="2" fill="#fff"/&gt;
+    &lt;rect x="20.75" y="13" width="6.5" height="23" rx="2" fill="#fff"/&gt;
+  &lt;/svg&gt;
+  Sign in with TatvaOS
+&lt;/a&gt;</code></pre>
+
+  <h3>Rules for using it</h3>
+  <p>These exist so a person seeing the button knows what it does and can trust it.</p>
+  <ul class="tight">
+    <li><strong>Do not recolour the mark.</strong> The gradient hexagon is the only version. No solid fills, no inverted colours, no tinting to match your brand.</li>
+    <li><strong>Do not change the wording.</strong> It reads <em>Sign in with TatvaOS</em>. Not "Login with", not "Continue with", not "TatvaOS SSO".</li>
+    <li><strong>Keep the mark's proportions.</strong> Scale it, do not stretch it, and do not crop the hexagon.</li>
+    <li><strong>Leave clear space</strong> of at least the mark's own height on every side.</li>
+    <li><strong>Minimum height 36px.</strong> Below that the mark stops being legible.</li>
+    <li><strong>Give it equal weight</strong> beside other sign-in providers. Do not make it smaller or quieter than the others on the same screen.</li>
+    <li><strong>Never</strong> use the mark or the name to suggest TatvaOS endorses, built, owns or has reviewed your application. The button means people can sign in with a TatvaOS account. It means nothing else.</li>
+    <li><strong>Never</strong> put the button on a page that collects a TatvaOS password. Sign-in happens on TatvaOS's own pages and nowhere else. An application that asks for a TatvaOS password is doing something wrong, whatever its intentions.</li>
+  </ul>
+
+  <div class="card warn">
+    <strong>Tell the people who click it one thing.</strong> Signing in with TatvaOS means their sign-in to your application depends on TatvaOS being reachable. If TatvaOS is down, they cannot sign in to you either. This is true of every identity provider, and it is worth saying plainly in your own help pages rather than leaving people to discover it during an outage.
+  </div>
 
   <h2 id="errors">Errors and what they mean</h2>
   <table>
