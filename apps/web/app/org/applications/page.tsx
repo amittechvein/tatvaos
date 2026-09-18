@@ -715,7 +715,13 @@ function CreateDialog({ onClose, onCreated, onError }: {
         label="Server application (gets a client secret)"
         hint="Untick for a phone or browser application, which cannot keep a secret and uses PKCE instead."
         checked={confidential}
-        onChange={(e) => setConfidential(e.target.checked)}
+        onChange={(e) => {
+          setConfidential(e.target.checked);
+          // A browser cannot hold a refresh token safely, so the option goes
+          // with the secret. The server refuses it too — this only keeps the
+          // screen honest about what will be accepted (CTO, 18 Sept 2026).
+          if (!e.target.checked) setScopes((cur) => cur.filter((s) => s !== 'offline_access'));
+        }}
       />
 
       <div className="mt-4 rounded-lg border border-line bg-canvas p-3">
@@ -724,7 +730,7 @@ function CreateDialog({ onClose, onCreated, onError }: {
           Give it the least it needs. Anything unticked is refused, even if the application asks for it.
         </p>
         <p className="mb-2 text-[0.8125rem] text-ink">Sign them in <span className="text-ink-muted">— always</span></p>
-        {OFFERABLE.map((o) => (
+        {OFFERABLE.filter((o) => confidential || o.scope !== 'offline_access').map((o) => (
           <Checkbox
             key={o.scope}
             label={o.label}
@@ -733,6 +739,12 @@ function CreateDialog({ onClose, onCreated, onError }: {
             onChange={(e) => setScopes((cur) => (e.target.checked ? [...cur, o.scope] : cur.filter((s) => s !== o.scope)))}
           />
         ))}
+        {!confidential && (
+          <p className="mb-0 mt-1 text-[0.75rem] text-ink-muted">
+            A phone or browser application cannot be given access while the person is away: that needs a
+            refresh token, which nothing running in a browser can keep safe.
+          </p>
+        )}
       </div>
     </Modal>
   );

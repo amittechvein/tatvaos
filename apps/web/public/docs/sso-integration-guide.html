@@ -112,7 +112,7 @@
     <tr><td>Discovery URL</td><td><code>https://core.tatvaos.com/.well-known/openid-configuration</code></td></tr>
     <tr><td>Client id</td><td>from the administrator</td></tr>
     <tr><td>Client secret</td><td>from the administrator (server apps only)</td></tr>
-    <tr><td>Scopes</td><td><code>openid profile email</code> — add <code>offline_access</code> to keep people signed in</td></tr>
+    <tr><td>Scopes</td><td><code>openid profile email</code>, plus <code>offline_access</code> for a refresh token — <strong>server apps only</strong> (see below)</td></tr>
     <tr><td>Response type</td><td><code>code</code></td></tr>
     <tr><td>PKCE</td><td>on, method <code>S256</code></td></tr>
   </table>
@@ -199,6 +199,14 @@
   <div class="card"><strong>Keys rotate</strong> every 90 days, and a retired key stays published for one more day. Fetch keys by <code>kid</code> and fetch again when you meet an unknown one. Never hard-code a key.</div>
 
   <h2 id="refresh">Keeping people signed in</h2>
+  <div class="card warn">
+    <strong>Server applications only.</strong> A phone or browser application cannot be given
+    <code>offline_access</code>: TatvaOS refuses it when the application is registered, and refuses it
+    again if it is asked for at sign-in. A refresh token grants weeks of access while nobody is
+    present, and anything running in a browser cannot keep one safe — any cross-site scripting flaw
+    in your own page would hand it over. Use short access tokens and send the person through TatvaOS
+    again when one expires; if they still have a TatvaOS session, they will not be asked anything.
+  </div>
   <p>Access tokens last 10 minutes. With <code>offline_access</code> you also get a refresh token. When the access token expires, swap the refresh token for a new set:</p>
 <pre><code>curl -X POST https://core.tatvaos.com/api/oauth/token \
   -d grant_type=refresh_token \

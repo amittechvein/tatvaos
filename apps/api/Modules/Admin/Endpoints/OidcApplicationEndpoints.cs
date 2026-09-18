@@ -119,6 +119,22 @@ public static class OidcApplicationEndpoints
             if (!Offerable.Any(o => o.Scope == s))
                 return Results.BadRequest(new { error = $"'{s}' is not something an application can be given. Choose from: {string.Join(", ", Offerable.Select(o => o.Scope))}." });
 
+        // A REFRESH TOKEN MUST NOT GO INTO A BROWSER (CTO, 18 Sept 2026).
+        // A public client keeps nothing secret, so a refresh token it holds
+        // is readable by any cross-site scripting flaw in the customer's own
+        // application — and it grants weeks of access while nobody is there.
+        // Short access tokens and re-authorising through the live TatvaOS
+        // session cover the legitimate need. Refused here, not merely hidden
+        // on the screen: the ticks are real controls, so the server enforces
+        // what the interface implies.
+        if (!req.Confidential && chosen.Contains("offline_access"))
+            return Results.BadRequest(new
+            {
+                error = "A phone or browser application cannot be given access when the person is away. "
+                      + "That needs a refresh token, which anything running in a browser cannot keep safe. "
+                      + "Register it as a server application, or leave that unticked.",
+            });
+
         var uris = new List<Uri>();
         foreach (var raw in req.RedirectUris ?? [])
         {
@@ -346,10 +362,12 @@ public static class OidcApplicationEndpoints
     /// address a customer typed can be pointed at our own network.
     ///
     /// PNG, JPEG and WebP only. SVG is refused: it is a document that can
-    /// carry script, and this one would be rendered on a consent screen. The
-    /// stored content type is the only type it is ever served as, beside
-    /// nosniff, so a file claiming to be an image cannot be served as
-    /// something a browser will execute.
+    /// carry script, and served from our own origin it would run in our
+    /// origin, with our cookies, in the session of anyone viewing the
+    /// applications list or a consent screen (CTO, 18 Sept 2026). The type
+    /// is taken from the file's own first bytes, and the serving endpoint
+    /// (OidcEndpoints.LogoAsync) sets nosniff and a sandboxing policy itself
+    /// rather than relying on the proxy to do it.
     /// </summary>
     private static async Task<IResult> SetLogoAsync(
         Guid id, HttpRequest request, AppDbContext db, AuditWriter audit, CancellationToken ct)
