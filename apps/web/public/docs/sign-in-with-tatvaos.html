@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in with TatvaOS — button assets</title>
+<style>
+  :root{
+    --navy:#0B1B3F;
+    --azure:#0F7CF5;
+    --ink:#0B1B3F;
+    --muted:#5A6580;
+    --line:#D9DEE8;
+    --paper:#FBFBFD;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:48px 32px 96px;
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--ink); background:var(--paper);
+  }
+  .wrap{max-width:860px;margin:0 auto}
+  h1{font-size:28px;letter-spacing:-.02em;margin:0 0 6px}
+  h2{font-size:18px;letter-spacing:-.01em;margin:44px 0 14px;padding-top:22px;border-top:1px solid var(--line)}
+  h3{font-size:14px;margin:26px 0 10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+  p{margin:0 0 14px;max-width:62ch}
+  .lede{color:var(--muted);margin-bottom:8px}
+  .stage{display:flex;flex-wrap:wrap;gap:16px;align-items:center;padding:28px;border:1px solid var(--line);border-radius:12px;background:#fff;margin:0 0 14px}
+  .stage.on-dark{background:var(--navy);border-color:var(--navy)}
+  pre{margin:0 0 20px;padding:16px 18px;background:#0B1B3F;color:#E6ECF7;border-radius:10px;overflow-x:auto;font:12.5px/1.65 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  code{font:inherit}
+  ul{margin:0 0 16px;padding-left:20px;max-width:62ch}
+  li{margin:0 0 7px}
+  .rule-no{color:#B3261E}
+  .swatch{display:inline-flex;align-items:center;gap:10px;margin-right:18px;font-size:13px;color:var(--muted)}
+  .chip{width:22px;height:22px;border-radius:6px;border:1px solid rgba(0,0,0,.08)}
+
+  /* ---- THE BUTTON ---- */
+  .tos-btn{
+    display:inline-flex;align-items:center;gap:12px;
+    height:44px;padding:0 20px 0 16px;
+    border-radius:8px;border:1px solid var(--line);
+    background:#fff;color:var(--navy);
+    font:600 15px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    letter-spacing:-.01em;text-decoration:none;cursor:pointer;
+    transition:background .12s ease,border-color .12s ease,box-shadow .12s ease;
+  }
+  .tos-btn:hover{background:#F4F7FC;border-color:#C3CBDA}
+  .tos-btn:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(15,124,245,.35)}
+  .tos-btn svg{flex:none;width:20px;height:20px}
+
+  .tos-btn--dark{background:var(--navy);border-color:var(--navy);color:#fff}
+  .tos-btn--dark:hover{background:#13245010;background:#132450;border-color:#132450}
+
+  .tos-btn--icon{padding:0;width:44px;justify-content:center;gap:0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Sign in with TatvaOS</h1>
+  <p class="lede">Button assets for applications that use TatvaOS as their identity provider. Give this page to any developer integrating with TatvaOS SSO.</p>
+
+  <h2>The buttons</h2>
+
+  <h3>On a light background — use this one unless you have a reason not to</h3>
+  <div class="stage">
+    <a class="tos-btn" href="#">
+      <svg viewBox="0 0 48 48" aria-hidden="true"><defs><linearGradient id="m1" x1="6" y1="4" x2="42" y2="44" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#1E52D9"/><stop offset=".55" stop-color="#2A7BEE"/><stop offset="1" stop-color="#3BA9F7"/></linearGradient></defs><path fill="url(#m1)" d="M17.94 3.5 Q24 0 30.06 3.5 L38.72 8.5 Q44.78 12 44.78 19 L44.78 29 Q44.78 36 38.72 39.5 L30.06 44.5 Q24 48 17.94 44.5 L9.28 39.5 Q3.22 36 3.22 29 L3.22 19 Q3.22 12 9.28 8.5 Z"/><rect x="13" y="13" width="22" height="6.5" rx="2" fill="#fff"/><rect x="20.75" y="13" width="6.5" height="23" rx="2" fill="#fff"/></svg>
+      Sign in with TatvaOS
+    </a>
+  </div>
+
+  <h3>On a dark background</h3>
+  <div class="stage on-dark">
+    <a class="tos-btn tos-btn--dark" href="#">
+      <svg viewBox="0 0 48 48" aria-hidden="true"><defs><linearGradient id="m2" x1="6" y1="4" x2="42" y2="44" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#1E52D9"/><stop offset=".55" stop-color="#2A7BEE"/><stop offset="1" stop-color="#3BA9F7"/></linearGradient></defs><path fill="url(#m2)" d="M17.94 3.5 Q24 0 30.06 3.5 L38.72 8.5 Q44.78 12 44.78 19 L44.78 29 Q44.78 36 38.72 39.5 L30.06 44.5 Q24 48 17.94 44.5 L9.28 39.5 Q3.22 36 3.22 29 L3.22 19 Q3.22 12 9.28 8.5 Z"/><rect x="13" y="13" width="22" height="6.5" rx="2" fill="#fff"/><rect x="20.75" y="13" width="6.5" height="23" rx="2" fill="#fff"/></svg>
+      Sign in with TatvaOS
+    </a>
+  </div>
+
+  <h3>Icon only — for tight spaces, beside other providers</h3>
+  <div class="stage">
+    <a class="tos-btn tos-btn--icon" href="#" aria-label="Sign in with TatvaOS">
+      <svg viewBox="0 0 48 48" aria-hidden="true"><defs><linearGradient id="m3" x1="6" y1="4" x2="42" y2="44" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#1E52D9"/><stop offset=".55" stop-color="#2A7BEE"/><stop offset="1" stop-color="#3BA9F7"/></linearGradient></defs><path fill="url(#m3)" d="M17.94 3.5 Q24 0 30.06 3.5 L38.72 8.5 Q44.78 12 44.78 19 L44.78 29 Q44.78 36 38.72 39.5 L30.06 44.5 Q24 48 17.94 44.5 L9.28 39.5 Q3.22 36 3.22 29 L3.22 19 Q3.22 12 9.28 8.5 Z"/><rect x="13" y="13" width="22" height="6.5" rx="2" fill="#fff"/><rect x="20.75" y="13" width="6.5" height="23" rx="2" fill="#fff"/></svg>
+    </a>
+  </div>
+
+  <h2>Copy this</h2>
+  <p>Self-contained: no fonts to load, no images to host, no stylesheet to link. Point <code>href</code> at your own endpoint that starts the OpenID Connect flow.</p>
+
+<pre><code>&lt;style&gt;
+.tos-btn{display:inline-flex;align-items:center;gap:12px;height:44px;
+  padding:0 20px 0 16px;border-radius:8px;border:1px solid #D9DEE8;
+  background:#fff;color:#0B1B3F;text-decoration:none;cursor:pointer;
+  font:600 15px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,
+  Helvetica,Arial,sans-serif;letter-spacing:-.01em}
+.tos-btn:hover{background:#F4F7FC;border-color:#C3CBDA}
+.tos-btn:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(15,124,245,.35)}
+.tos-btn svg{flex:none;width:20px;height:20px}
+&lt;/style&gt;
+
+&lt;a class="tos-btn" href="/auth/tatvaos/start"&gt;
+  &lt;svg viewBox="0 0 48 48" aria-hidden="true"&gt;
+    &lt;defs&gt;&lt;linearGradient id="tosMark" x1="6" y1="4" x2="42" y2="44"
+      gradientUnits="userSpaceOnUse"&gt;
+      &lt;stop offset="0" stop-color="#1E52D9"/&gt;
+      &lt;stop offset=".55" stop-color="#2A7BEE"/&gt;
+      &lt;stop offset="1" stop-color="#3BA9F7"/&gt;
+    &lt;/linearGradient&gt;&lt;/defs&gt;
+    &lt;path fill="url(#tosMark)" d="M17.94 3.5 Q24 0 30.06 3.5 L38.72 8.5
+      Q44.78 12 44.78 19 L44.78 29 Q44.78 36 38.72 39.5 L30.06 44.5
+      Q24 48 17.94 44.5 L9.28 39.5 Q3.22 36 3.22 29 L3.22 19
+      Q3.22 12 9.28 8.5 Z"/&gt;
+    &lt;rect x="13" y="13" width="22" height="6.5" rx="2" fill="#fff"/&gt;
+    &lt;rect x="20.75" y="13" width="6.5" height="23" rx="2" fill="#fff"/&gt;
+  &lt;/svg&gt;
+  Sign in with TatvaOS
+&lt;/a&gt;</code></pre>
+
+  <h2>Colours</h2>
+  <p>
+    <span class="swatch"><span class="chip" style="background:#0B1B3F"></span>#0B1B3F navy — text, dark button</span>
+    <span class="swatch"><span class="chip" style="background:#0F7CF5"></span>#0F7CF5 azure — focus ring</span>
+    <span class="swatch"><span class="chip" style="background:linear-gradient(135deg,#1E52D9,#3BA9F7)"></span>mark gradient</span>
+  </p>
+
+  <h2>Rules for using this button</h2>
+  <p>These exist so that a person seeing the button knows what it does and can trust it. They apply to anyone putting TatvaOS sign-in on their own product.</p>
+  <ul>
+    <li><strong>Do not recolour the mark.</strong> The gradient hexagon is the only version. No solid fills, no inverted colours, no tinting to match your brand.</li>
+    <li><strong>Do not change the wording.</strong> It reads <em>Sign in with TatvaOS</em>. Not "Login with", not "Continue with", not "TatvaOS SSO".</li>
+    <li><strong>Keep the mark's proportions.</strong> Scale it, do not stretch it, and do not crop the hexagon.</li>
+    <li><strong>Leave clear space</strong> of at least the mark's own height on every side of the button.</li>
+    <li><strong>Minimum height 36px.</strong> Below that the mark stops being legible.</li>
+    <li><strong>Give it equal weight</strong> beside other sign-in providers. Do not make it smaller or quieter than the others on the same screen.</li>
+    <li class="rule-no"><strong>Never</strong> use the mark or the name to suggest TatvaOS endorses, built, owns or has reviewed your application. The button means people can sign in with a TatvaOS account. It means nothing else.</li>
+    <li class="rule-no"><strong>Never</strong> place the button on a page that collects a TatvaOS password. Sign-in happens on TatvaOS's own pages and nowhere else — an application that asks for a TatvaOS password is doing something wrong, whatever its intentions.</li>
+  </ul>
+
+  <h2>One thing to tell the people who click it</h2>
+  <p>Signing in with TatvaOS means their sign-in to your application depends on TatvaOS being reachable. If TatvaOS is down, they cannot sign in to you either. This is true of every identity provider and it is worth saying plainly in your own help pages rather than leaving people to discover it.</p>
+
+</div>
+</body>
+</html>

@@ -420,7 +420,9 @@ function HowToConnect({ origin }: { origin: string }) {
         Handing this to a developer? The{' '}
         <a href="/docs/sso-integration-guide.html" target="_blank" rel="noopener">integration guide</a>{' '}
         has every value, the flow request by request, the ID token&apos;s claims, and configuration
-        for ASP.NET Core, Node.js and Python.
+        for ASP.NET Core, Node.js and Python — including the{' '}
+        <a href="/docs/sign-in-with-tatvaos.html" target="_blank" rel="noopener">&quot;Sign in with TatvaOS&quot; button</a>{' '}
+        every application should use, so people recognise it.
       </p>
       <ol className="ps-4 mb-4">
         <li className="mb-3">
