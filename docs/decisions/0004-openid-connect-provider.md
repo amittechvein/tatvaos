@@ -116,6 +116,22 @@ authorize, and it presents as an intermittent sign-in bug.**
 Also `email`, `email_verified`, `name`, and `tid`, the organisation id, so
 an application can refuse people from organisations it does not serve.
 
+**What this provider will never offer — Amit, 18 Sept 2026, as a standing
+constraint on scopes, not a note about one screen.** An application signing
+people in with TatvaOS receives their user id, name, work email address and
+organisation id. It will never receive, and no future scope will offer:
+passwords, home or postal addresses, **Aadhaar or any government identifier**,
+dates of birth, personal (non-work) phone numbers, or any student
+information. Minimum required access is the rule; a new scope is a decision
+by Amit and the CTO, not a feature request an integration can win.
+
+**Aadhaar is named separately on purpose.** It is not merely sensitive like
+the rest of that list: handling it carries obligations in Indian law that
+the others do not, and an identity provider is exactly the kind of system
+someone would think to put it in. The answer is no, and it is written here
+rather than only in a screen, because a constraint written into a screen
+lasts until someone redesigns the screen.
+
 **Tokens.**
 
 | | Form | Lifetime | Revocable immediately |
