@@ -183,14 +183,32 @@ export function organisationNav(): NavSection[] {
         },
         { href: '/org/domains', label: 'Domains', icon: <Icon d={PATHS.globe} /> },
         { href: '/org/mailboxes', label: 'Shared mailboxes', icon: <Icon d={PATHS.mail} /> },
-        // The credential an organisation's own software sends with. Beside
-        // Shared mailboxes because that is where its sender addresses come
-        // from — the two screens link to each other.
-        { href: '/org/api-keys', label: 'API keys', icon: <Icon d={PATHS.key} /> },
-        // The other direction: the organisation's own software signing people
-        // in WITH TatvaOS (decision 0004). Beside API keys because both are
-        // "our software, their credential" screens for the same admin.
-        { href: '/org/applications', label: 'Applications', icon: <Icon d={PATHS.key} /> },
+        // ------------------------------------------------------------------
+        //  EVERY WAY A CUSTOMER'S OWN SOFTWARE TALKS TO TATVAOS, IN ONE PLACE
+        //  (Amit, 18 September 2026).
+        //
+        //  These were three siblings in this list and an administrator had to
+        //  already know the difference to find the right one. They are the
+        //  same question asked three ways — "how does our other software
+        //  connect?" — so they are one heading with three answers now, and
+        //  each label says what the thing is FOR rather than what it is.
+        //
+        //  They are deliberately still three screens and three credentials:
+        //  a mail key sends mail, a people key adds people, and an SSO
+        //  application signs people in. Grouping them in the menu must not be
+        //  read as merging them — a key that could do all three would be a
+        //  key nobody could safely hand out.
+        // ------------------------------------------------------------------
+        {
+          href: '/org/api-keys',
+          label: 'API keys',
+          icon: <Icon d={PATHS.key} />,
+          children: [
+            { href: '/org/api-keys', label: 'Mail API' },
+            { href: '/org/api-keys/people', label: 'People API' },
+            { href: '/org/applications', label: 'SSO applications' },
+          ],
+        },
         { href: '/org/storage', label: 'Storage', icon: <Icon d={PATHS.database} /> },
         // Org-wide policy over what leaves by link. One switch today (Space's
         // public links); Connect's recording-retention choice lands here next,
