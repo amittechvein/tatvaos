@@ -44,6 +44,10 @@ interface AppRow {
   secretPrefix: string | null;
   createdAt: string;
   revokedAt: string | null;
+  createdByName: string | null;
+  /** Kept to an hour's resolution on purpose — a write per sign-in otherwise. */
+  lastUsedAt: string | null;
+  status: 'active' | 'revoked' | string;
   /** What whoever registered it says about it. Checked by nobody. */
   declared: Declared;
   /** Our copy of the logo, or null. Never the application's own address. */
@@ -100,6 +104,22 @@ function logoSrc(path: string): string {
 
 function when(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+/**
+ * "Last used", in the words the question is actually asked in. The stored
+ * value has an hour's resolution, so this never pretends to more: the point
+ * is telling an integration nobody has touched in a year from one used this
+ * morning.
+ */
+function lastUsed(iso: string | null): { text: string; stale: boolean } {
+  if (!iso) return { text: 'Never', stale: true };
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+  if (days <= 0) return { text: 'Today', stale: false };
+  if (days === 1) return { text: 'Yesterday', stale: false };
+  if (days < 30) return { text: `${days} days ago`, stale: false };
+  if (days < 365) return { text: `${Math.floor(days / 30)} months ago`, stale: days > 180 };
+  return { text: 'Over a year ago', stale: true };
 }
 
 export default function ApplicationsPage() {
@@ -216,7 +236,13 @@ export default function ApplicationsPage() {
             action={<Button variant="primary" onClick={() => setCreating(true)}>New application</Button>}
           />
         ) : (
-          <Table head={['Application', 'Client id', 'Can receive', 'Secret', 'Returns to', 'Asks people', 'Since', '']}>
+          <>
+          {/* A TABLE, not cards. Cards read better for five applications and
+              fall apart at the hundreds this is meant to reach; a table with
+              a Last used column survives both (CTO, 18 Sept 2026). The
+              details each application carries now live behind Details rather
+              than widening this row further. */}
+          <Table head={['Application', 'Client id', 'Can receive', 'Secret', 'Returns to', 'Asks people', 'Last used', 'Added', '']}>
             {live.map((a) => (
               <tr key={a.id}>
                 <Td>
@@ -265,7 +291,17 @@ export default function ApplicationsPage() {
                     className="mb-0"
                   />
                 </Td>
-                <Td>{when(a.createdAt)}</Td>
+                <Td>
+                  {(() => { const u = lastUsed(a.lastUsedAt); return (
+                    <span className={u.stale ? 'text-[0.75rem] text-ink-muted' : 'text-[0.75rem]'}>{u.text}</span>
+                  ); })()}
+                </Td>
+                <Td>
+                  <span className="text-[0.75rem]">{when(a.createdAt)}</span>
+                  {a.createdByName && (
+                    <span className="block text-[0.6875rem] text-ink-muted">by {a.createdByName}</span>
+                  )}
+                </Td>
                 <Td>
                   <div className="flex justify-end gap-1">
                     <Button variant="ghost" onClick={() => setEditing(a)}>Details</Button>
@@ -277,16 +313,19 @@ export default function ApplicationsPage() {
               </tr>
             ))}
           </Table>
+          </>
         )}
       </Card>
 
       {revoked.length > 0 && (
         <Card title="Revoked" subtitle="Kept for the record. Nothing can sign in through these." padded={false} className="mb-4">
-          <Table head={['Application', 'Client id', 'Revoked']}>
+          <Table head={['Application', 'Client id', 'Added by', 'Last used', 'Revoked']}>
             {revoked.map((a) => (
               <tr key={a.id}>
                 <Td><span className="text-ink-muted">{a.name}</span></Td>
                 <Td><code className="text-[0.75rem] text-ink-muted">{a.clientId}</code></Td>
+                <Td><span className="text-[0.75rem] text-ink-muted">{a.createdByName ?? '—'}</span></Td>
+                <Td><span className="text-[0.75rem] text-ink-muted">{lastUsed(a.lastUsedAt).text}</span></Td>
                 <Td><Badge tone="neutral">{when(a.revokedAt!)}</Badge></Td>
               </tr>
             ))}
