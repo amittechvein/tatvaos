@@ -147,6 +147,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     // own module owns is additive and needs no ask (standing rule, 30 Aug).
     public DbSet<TatvaOS.Api.Modules.Mail.MailApiKey> MailApiKeys
         => Set<TatvaOS.Api.Modules.Mail.MailApiKey>();
+    // Added by 20260918-org-api-keys. An organisation's own key, for their
+    // software to admit people — core's, not Mail's, because it creates
+    // sign-in identities.
+    public DbSet<TatvaOS.Api.Modules.Admin.OrgApiKey> OrgApiKeys
+        => Set<TatvaOS.Api.Modules.Admin.OrgApiKey>();
     public DbSet<TatvaOS.Api.Modules.Mail.MailApiSend> MailApiSends
         => Set<TatvaOS.Api.Modules.Mail.MailApiSend>();
     public DbSet<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes> ConnectMeetingNotes
@@ -260,6 +265,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectCaptionLine>().ToTable("caption_lines", "connect");
         b.Entity<TatvaOS.Api.Modules.Mail.MailAppPassword>().ToTable("app_passwords", "mail");
         b.Entity<TatvaOS.Api.Modules.Mail.MailApiKey>().ToTable("api_keys", "mail");
+        b.Entity<TatvaOS.Api.Modules.Admin.OrgApiKey>().ToTable("api_keys", "core");
+        b.Entity<TatvaOS.Api.Modules.Admin.OrgApiKey>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<TatvaOS.Api.Modules.Mail.MailApiSend>().ToTable("api_sends", "mail");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>().ToTable("meeting_notes", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingChat>().ToTable("meeting_chat", "connect");
