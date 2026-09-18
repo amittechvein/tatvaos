@@ -23,7 +23,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 
-import { send, addressList, quoted, replySubject, forwardSubject, senderLabel } from '../lib/mail';
+import {
+  send, addressList, quoted, replySubject, forwardSubject, senderLabel,
+  suggestRecipients, typingTerm, withRecipient,
+} from '../lib/mail';
 import { brand, surface, text } from '../theme';
 
 const log = (line) => console.log(`[mail] ${line}`);
@@ -31,6 +34,35 @@ const log = (line) => console.log(`[mail] ${line}`);
 // The API refuses anything over 25 MB before encoding. Catching it here saves
 // a minute of uploading on a phone connection to earn a refusal.
 const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
+
+/**
+ * The suggestion list, drawn under whichever address box is being typed in.
+ *
+ * A colleague is marked, because "Ravi" in your own organisation and "Ravi"
+ * at a supplier are different people and the address alone does not say so
+ * at a glance on a narrow screen.
+ */
+function Suggestions({ show, hits, onPick }) {
+  if (!show || hits.length === 0) return null;
+  return (
+    <View style={s.suggest}>
+      {hits.map((h) => (
+        <Pressable key={`${h.id}-${h.email}`} style={s.suggestRow}
+                   onPress={() => onPick(h)}
+                   accessibilityLabel={`Use ${h.displayName || h.email}`}>
+          <Ionicons name={h.isColleague ? 'business-outline' : 'person-outline'}
+                    size={16} color={text.muted} />
+          <View style={{ flex: 1 }}>
+            <Text style={s.suggestName} numberOfLines={1}>{h.displayName || h.email}</Text>
+            {h.displayName && h.displayName !== h.email ? (
+              <Text style={s.suggestMail} numberOfLines={1}>{h.email}</Text>
+            ) : null}
+          </View>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
 
 export default function MailCompose({ session, draft, signature, onClose, onSent }) {
   const token = session?.accessToken;
@@ -69,6 +101,47 @@ export default function MailCompose({ session, draft, signature, onClose, onSent
   // null = nothing in flight or the size is unknown (an indeterminate bar);
   // 0..1 = how much of the body has gone up.
   const [progress, setProgress] = useState(null);
+
+  // ── SUGGESTING RECIPIENTS ───────────────────────────────────────────────
+  //  Amit, 18 Sept 2026: "auto name suggestion on to and cc". Typing an
+  //  address on a phone keyboard is the slowest part of writing an email.
+  //
+  //  `field` is which box is being typed in ('to' | 'cc' | null) — the list
+  //  belongs under THAT box, and two boxes must never both show one.
+  // ────────────────────────────────────────────────────────────────────────
+  const [field, setField] = useState(null);
+  const [hits, setHits] = useState([]);
+
+  useEffect(() => {
+    const term = typingTerm(field === 'to' ? to : field === 'cc' ? cc : '');
+    if (!field || !term) { setHits([]); return undefined; }
+
+    // Debounced: a lookup per keystroke is a request per keystroke, on a
+    // phone's connection, and the answers arrive out of order.
+    let live = true;
+    const t = setTimeout(async () => {
+      try {
+        const rows = await suggestRecipients(token, term);
+        // `live` guards the out-of-order case: a slow answer for "am" must not
+        // replace a fast one for "amit".
+        if (live) setHits(Array.isArray(rows) ? rows : []);
+      } catch {
+        // A lookup that fails is not an error the person needs to see; they
+        // can still type the address. Silence here, not a red banner.
+        if (live) setHits([]);
+      }
+    }, 220);
+
+    return () => { live = false; clearTimeout(t); };
+  }, [field, to, cc, token]);
+
+  function pick(row) {
+    if (field === 'cc') setCc(withRecipient(cc, row.email));
+    else setTo(withRecipient(to, row.email));
+    touched.current = true;
+    setHits([]);
+  }
+
   const [error, setError] = useState('');
   const touched = useRef(false);
 
@@ -185,21 +258,26 @@ export default function MailCompose({ session, draft, signature, onClose, onSent
                        placeholder="name@example.com, another@example.com"
                        placeholderTextColor={text.muted}
                        autoCapitalize="none" autoCorrect={false} keyboardType="email-address"
+                       onFocus={() => setField('to')}
                        editable={!sending} accessibilityLabel="To" />
           </Field>
+          <Suggestions show={field === 'to'} hits={hits} onPick={pick} />
 
           {showCc ? (
             <Field label="Cc">
               <TextInput style={s.input} value={cc}
                          onChangeText={(v) => { touched.current = true; setCc(v); }}
                          autoCapitalize="none" autoCorrect={false} keyboardType="email-address"
+                         onFocus={() => setField('cc')}
                          editable={!sending} accessibilityLabel="Cc" />
             </Field>
-          ) : (
+          ) : null}
+          <Suggestions show={field === 'cc'} hits={hits} onPick={pick} />
+          {!showCc ? (
             <Pressable onPress={() => setShowCc(true)} accessibilityLabel="Add Cc">
               <Text style={s.addCc}>Add Cc</Text>
             </Pressable>
-          )}
+          ) : null}
 
           <Field label="Subject">
             <TextInput style={s.input} value={subject}
@@ -269,6 +347,18 @@ const s = StyleSheet.create({
   progressFill: { height: 6, borderRadius: 3, backgroundColor: brand.base },
   // Tabular-width digits would jump about less, but the count is small and
   // the bar carries the meaning; the number is the confirmation.
+  suggest: {
+    marginTop: -4, marginBottom: 10, borderRadius: 8,
+    borderWidth: 1, borderColor: surface.border, backgroundColor: surface.card,
+    overflow: 'hidden',
+  },
+  suggestRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingHorizontal: 12, paddingVertical: 10,
+    borderBottomWidth: 1, borderBottomColor: surface.border,
+  },
+  suggestName: { fontSize: 14, color: text.primary },
+  suggestMail: { fontSize: 12, color: text.muted, marginTop: 1 },
   progressText: { fontSize: 12, color: text.muted, minWidth: 54, textAlign: 'right' },
   title: { fontSize: 17, fontWeight: '700', color: text.primary, marginLeft: 4 },
   body: { padding: 16, paddingBottom: 40 },

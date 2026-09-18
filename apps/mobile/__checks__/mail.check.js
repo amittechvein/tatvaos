@@ -5,6 +5,7 @@
 
 const {
   orderFolders, senderLabel, whenLabel, addressList, quoted, replySubject, forwardSubject,
+  typingTerm, withRecipient,
 } = require('../lib/mail');
 
 test('folders: Inbox first, then the known places, then the rest by name', () => {
@@ -106,5 +107,65 @@ describe('quoted, for an HTML-only message', () => {
   test('whitespace-only HTML counts as nothing, not as an empty quote', () => {
     expect(quoted({ from: { email: 'a@b.com' }, bodyHtml: '<div> </div><p></p>' }))
       .toMatch(/> \(no text content\)/);
+  });
+});
+
+// ── SUGGESTING RECIPIENTS ───────────────────────────────────────────────────
+//  Amit, 18 Sept 2026: "auto name suggestion on to and cc". The fiddly part is
+//  not the request, it is knowing WHICH address is being typed in a field that
+//  holds several, and putting the chosen one back without eating the others.
+describe('typingTerm', () => {
+  test('the fragment after the last comma is the query', () => {
+    expect(typingTerm('ravi@example.com, am')).toBe('am');
+  });
+
+  test('a single unfinished address is the query', () => {
+    expect(typingTerm('am')).toBe('am');
+  });
+
+  test('nothing typed yet is not a query', () => {
+    expect(typingTerm('')).toBe('');
+    expect(typingTerm(null)).toBe('');
+    expect(typingTerm(undefined)).toBe('');
+  });
+
+  test('a finished list stops asking — no query after a comma', () => {
+    // Otherwise the list hangs about under an address already chosen.
+    expect(typingTerm('ravi@example.com, ')).toBe('');
+    expect(typingTerm('ravi@example.com,')).toBe('');
+  });
+
+  test('a trailing space means done with that one', () => {
+    expect(typingTerm('ravi@example.com ')).toBe('');
+  });
+});
+
+describe('withRecipient', () => {
+  test('the half-typed address is replaced, the chosen ones kept', () => {
+    expect(withRecipient('ravi@example.com, am', 'amit@tatvaos.com'))
+      .toBe('ravi@example.com, amit@tatvaos.com, ');
+  });
+
+  test('the first pick on an empty field', () => {
+    expect(withRecipient('', 'amit@tatvaos.com')).toBe('amit@tatvaos.com, ');
+    expect(withRecipient('am', 'amit@tatvaos.com')).toBe('amit@tatvaos.com, ');
+  });
+
+  test('it ends ready for the next address', () => {
+    // The trailing ", " is what lets someone keep typing without punctuation.
+    expect(withRecipient('a', 'x@y.com').endsWith(', ')).toBe(true);
+  });
+
+  test('THE SAME ADDRESS IS NOT ADDED TWICE', () => {
+    // Some clients send twice; on screen it just looks like the tap failed.
+    expect(withRecipient('amit@tatvaos.com, am', 'amit@tatvaos.com'))
+      .toBe('amit@tatvaos.com, ');
+    expect(withRecipient('Amit@TatvaOS.com, am', 'amit@tatvaos.com'))
+      .toBe('Amit@TatvaOS.com, ');
+  });
+
+  test('stray whitespace and empty entries are tidied, not preserved', () => {
+    expect(withRecipient('  a@x.com ,, b@y.com , cc', 'c@z.com'))
+      .toBe('a@x.com, b@y.com, c@z.com, ');
   });
 });

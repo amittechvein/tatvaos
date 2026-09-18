@@ -340,3 +340,89 @@ test.each([
   const pkg = require('../package.json');
   expect(pkg.dependencies[name]).toBeTruthy();
 });
+
+// ── SUGGESTING RECIPIENTS ON THE PHONE ──────────────────────────────────────
+//  "auto name suggestion on to and cc" (Amit, 18 Sept 2026). The list must
+//  appear under the box being typed in, put the address where it belongs, and
+//  not fire a request per keystroke.
+describe('recipient suggestions', () => {
+  const rows = [
+    { id: 'u1', email: 'amit@tatvaos.com', displayName: 'Amit Desai', isColleague: true },
+    { id: 'c1', email: 'amit@supplier.com', displayName: 'Amit (Supplier)', isColleague: false },
+  ];
+
+  beforeEach(() => { mailApi.suggestRecipients = jest.fn(async () => rows); });
+
+  const compose = () => render(
+    <MailCompose session={session} kind="new" onClose={() => {}} onSent={() => {}} signature="" />,
+  );
+
+  test('typing in To offers the people it found', async () => {
+    const r = compose();
+    const to = r.getByLabelText('To');
+    fireEvent(to, 'focus');
+    fireEvent.changeText(to, 'am');
+    await waitFor(() => expect(r.getByLabelText('Use Amit Desai')).toBeTruthy());
+    expect(mailApi.suggestRecipients).toHaveBeenCalledWith('AT', 'am');
+    // A colleague and an outside contact are told apart on screen.
+    expect(r.getByText('Amit (Supplier)')).toBeTruthy();
+  });
+
+  test('tapping one fills the field and leaves room for the next', async () => {
+    const r = compose();
+    const to = r.getByLabelText('To');
+    fireEvent(to, 'focus');
+    fireEvent.changeText(to, 'am');
+    await waitFor(() => expect(r.getByLabelText('Use Amit Desai')).toBeTruthy());
+    await act(async () => { fireEvent.press(r.getByLabelText('Use Amit Desai')); });
+    expect(r.getByLabelText('To').props.value).toBe('amit@tatvaos.com, ');
+    // and the list goes away rather than sitting over the next field
+    expect(r.queryByLabelText('Use Amit Desai')).toBeNull();
+  });
+
+  test('ONE REQUEST PER PAUSE, not one per keystroke', async () => {
+    const r = compose();
+    const to = r.getByLabelText('To');
+    fireEvent(to, 'focus');
+    fireEvent.changeText(to, 'a');
+    fireEvent.changeText(to, 'am');
+    fireEvent.changeText(to, 'ami');
+    await waitFor(() => expect(mailApi.suggestRecipients).toHaveBeenCalled());
+    // Debounced: the three keystrokes above collapse to the last term only.
+    expect(mailApi.suggestRecipients).toHaveBeenCalledTimes(1);
+    expect(mailApi.suggestRecipients).toHaveBeenCalledWith('AT', 'ami');
+  });
+
+  test('a finished address stops the asking', async () => {
+    const r = compose();
+    const to = r.getByLabelText('To');
+    fireEvent(to, 'focus');
+    fireEvent.changeText(to, 'amit@tatvaos.com, ');
+    await act(async () => { await new Promise((res) => setTimeout(res, 300)); });
+    expect(mailApi.suggestRecipients).not.toHaveBeenCalled();
+  });
+
+  test('the list belongs to the box being typed in, never both', async () => {
+    const r = compose();
+    await act(async () => { fireEvent.press(r.getByLabelText('Add Cc')); });
+    const cc = r.getByLabelText('Cc');
+    fireEvent(cc, 'focus');
+    fireEvent.changeText(cc, 'am');
+    await waitFor(() => expect(r.getByLabelText('Use Amit Desai')).toBeTruthy());
+    await act(async () => { fireEvent.press(r.getByLabelText('Use Amit Desai')); });
+    // Cc got it; To must be untouched.
+    expect(r.getByLabelText('Cc').props.value).toBe('amit@tatvaos.com, ');
+    expect(r.getByLabelText('To').props.value).toBe('');
+  });
+
+  test('a lookup that fails is silent — the person can still type', async () => {
+    mailApi.suggestRecipients = jest.fn(async () => { throw new Error('offline'); });
+    const r = compose();
+    const to = r.getByLabelText('To');
+    fireEvent(to, 'focus');
+    fireEvent.changeText(to, 'am');
+    await waitFor(() => expect(mailApi.suggestRecipients).toHaveBeenCalled());
+    expect(r.queryByText(/offline/)).toBeNull();
+    expect(r.getByLabelText('To').props.value).toBe('am');
+  });
+});

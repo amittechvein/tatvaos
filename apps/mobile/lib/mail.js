@@ -300,6 +300,54 @@ export function quoted(message) {
     + body.split('\n').map((l) => `> ${l}`).join('\n');
 }
 
+// ── SUGGESTING RECIPIENTS ──────────────────────────────────────────────────
+//  Amit, 18 Sept 2026: "auto name suggestion on to and cc". Typing a full
+//  address on a phone keyboard is the slowest part of writing an email, and
+//  the addresses people actually use are already known to us.
+//
+//  The API is Family's, not Mail's: GET /api/family/contacts/autocomplete
+//  returns one row PER ADDRESS (somebody with two appears twice), colleagues
+//  from core.users first, then contacts. The web composer uses exactly this,
+//  so the phone offers the same people in the same order.
+// ───────────────────────────────────────────────────────────────────────────
+
+/** [{ id, email, displayName, isColleague }]. An empty term gives []. */
+export function suggestRecipients(token, q, limit = 8) {
+  const term = (q ?? '').trim();
+  if (!term) return Promise.resolve([]);
+  return request(
+    `/api/family/contacts/autocomplete?q=${encodeURIComponent(term)}&limit=${limit}`,
+    { method: 'GET', token },
+  );
+}
+
+/**
+ * The address being typed right now, from a "a@x.com, b@y." field.
+ *
+ * Only the fragment after the last comma is a query; everything before it is
+ * already chosen. Returns '' when the caret sits after a comma or a space, so
+ * a finished list does not keep asking the server about its last entry.
+ */
+export function typingTerm(value) {
+  const tail = (value ?? '').split(',').pop() ?? '';
+  // A trailing space means "done with that one" — the web composer treats a
+  // comma the same way, and without this the suggestion list hangs about
+  // under a completed address.
+  if (/\s$/.test(tail) || tail.trim() === '') return '';
+  return tail.trim();
+}
+
+/** The field's new value once a suggestion is picked, ready for the next one. */
+export function withRecipient(value, email) {
+  const parts = (value ?? '').split(',');
+  parts.pop();                                   // drop the half-typed one
+  const kept = parts.map((p) => p.trim()).filter(Boolean);
+  // Already there: adding it twice sends twice in some clients, and looks
+  // like the tap did nothing.
+  if (!kept.some((p) => p.toLowerCase() === email.toLowerCase())) kept.push(email);
+  return `${kept.join(', ')}, `;
+}
+
 /** Reply subject, without stacking "Re: Re: Re:". */
 export function replySubject(subject) {
   const s = (subject ?? '').trim();

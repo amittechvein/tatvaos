@@ -21,6 +21,7 @@ jest.mock('../lib/mail', () => {
     setFlag: (...a) => mailApi.setFlag(...a),
     deleteMessage: (...a) => mailApi.deleteMessage(...a),
     send: (...a) => mailApi.send(...a),
+    suggestRecipients: (...a) => mailApi.suggestRecipients(...a),
   };
 });
 
