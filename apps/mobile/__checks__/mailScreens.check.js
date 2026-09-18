@@ -254,9 +254,11 @@ test('a reply is addressed to the sender, subject Re:, and carries inReplyToId',
   expect(r.getByLabelText('Message').props.value).toContain('> Hello');
 
   await act(async () => { fireEvent.press(r.getByLabelText('Send this email')); });
+  // The third argument is the progress callback (18 Sept 2026): a send with an
+  // attachment reports how much has gone up, and the screen draws the bar.
   expect(mailApi.send).toHaveBeenCalledWith('AT', expect.objectContaining({
     to: 'ravi@example.com', inReplyToId: 'm1',
-  }));
+  }), expect.any(Function));
   expect(onSent).toHaveBeenCalled();
 });
 
@@ -298,7 +300,7 @@ test('an attached file is listed, removable, and sent with the message', async (
   await act(async () => { fireEvent.press(r.getByLabelText('Send this email')); });
   expect(mailApi.send).toHaveBeenCalledWith('AT', expect.objectContaining({
     files: [expect.objectContaining({ name: 'a.pdf' })],
-  }));
+  }), expect.any(Function));
 });
 
 test('closing a written-in email asks before throwing it away', async () => {
@@ -320,4 +322,21 @@ test('closing an untouched email just closes', () => {
   fireEvent.press(r.getByLabelText('Close'));
   expect(onClose).toHaveBeenCalled();
   expect(alerts.calls).toHaveLength(0);
+});
+
+// Several native modules are mocked VIRTUALLY (see mailMocks.js) because a
+// worktree sharing its node_modules with the deploy checkout does not always
+// have them on disk. A virtual mock resolves whether or not the package
+// exists, so nothing above would notice one being dropped from the app —
+// which on the phone means a blank message, a dead Attach button or a save
+// that never happens. This is the thing that would notice.
+test.each([
+  'react-native-webview',     // every message is rendered in it
+  'expo-document-picker',     // attaching a file
+  'expo-sharing',             // opening an attachment
+  'expo-file-system',         // saving one, and reading it back to send
+  'expo-secure-store',        // remembering the chosen save folder
+])('the app still depends on %s', (name) => {
+  const pkg = require('../package.json');
+  expect(pkg.dependencies[name]).toBeTruthy();
 });

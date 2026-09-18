@@ -8,7 +8,7 @@
 // equivalents are a WebView with JavaScript off (screens/MailMessage.js) and
 // the policy this file writes.
 
-const { strip, blockRemoteImages, textToHtml, buildDocument } = require('../lib/mailHtml');
+const { strip, blockRemoteImages, textToHtml, buildDocument, htmlToText } = require('../lib/mailHtml');
 
 test('scripts, frames and forms are removed, with their contents', () => {
   const nasty = '<p>hello</p>'
@@ -80,4 +80,85 @@ test('a plain-text email is escaped, not rendered as markup', () => {
 test('no HTML body: the text body is used instead of an empty screen', () => {
   const { document } = buildDocument({ html: '', text: 'plain words', showImages: false });
   expect(document).toContain('plain words');
+});
+
+// ── FITTING A DESIGNED EMAIL ONTO A PHONE ───────────────────────────────────
+//  Amit, 18 Sept 2026: "html designed mail scroll in right and not looking
+//  good". A newsletter is nested tables with width="600" and inline pixel
+//  widths, so the document was wider than the screen and slid sideways.
+//
+//  The fix is CSS only, because measuring the content needs JavaScript in the
+//  page and that is exactly what this document refuses to run.
+describe('a 600px newsletter on a 360px screen', () => {
+  const newsletter = '<table width="600" style="width:600px"><tr>'
+    + '<td style="width:600px;white-space:nowrap">Quarterly update</td></tr></table>';
+
+  test('a fixed table width is overridden, not merely capped', () => {
+    const { document } = buildDocument({ html: newsletter, showImages: false });
+    // max-width alone loses to width: the element stays 600px and overflows.
+    expect(document).toMatch(/table\{[^}]*width:auto !important/);
+    expect(document).toMatch(/table\{[^}]*max-width:100% !important/);
+  });
+
+  test('cells may wrap and are not held open by a minimum', () => {
+    const { document } = buildDocument({ html: newsletter, showImages: false });
+    expect(document).toMatch(/td,th\{[^}]*white-space:normal !important/);
+    expect(document).toMatch(/td,th\{[^}]*min-width:0 !important/);
+  });
+
+  test('anything still too wide scrolls inside the message, not the page', () => {
+    const { document } = buildDocument({ html: newsletter, showImages: false });
+    expect(document).toMatch(/\.tv-wrap\{[^}]*overflow-x:auto/);
+    expect(document).toMatch(/html,body\{overflow-x:hidden/);
+  });
+
+  test('images are capped but NOT forced to auto width', () => {
+    // width:auto would spring a 20px icon to its natural size — often huge.
+    const { document } = buildDocument({ html: '<img src="cid:x">', showImages: false });
+    expect(document).toMatch(/img\{max-width:100% !important;height:auto !important;\}/);
+    expect(document).not.toMatch(/img\{[^}]*width:auto/);
+  });
+
+  test('the viewport is the device width, so none of the above is undone', () => {
+    const { document } = buildDocument({ html: newsletter, showImages: false });
+    expect(document).toMatch(/name="viewport" content="width=device-width/);
+  });
+});
+
+// ── HTML FLATTENED FOR A REPLY QUOTE ────────────────────────────────────────
+//  "reply on html designed mail did not pick the content" — the quote read
+//  bodyText, which a designed email does not have.
+describe('htmlToText', () => {
+  test('keeps the words and drops the markup', () => {
+    expect(htmlToText('<p>Hello <b>Amit</b></p>')).toBe('Hello Amit');
+  });
+
+  test('blocks and <br> become line breaks', () => {
+    expect(htmlToText('<p>One</p><p>Two</p>')).toBe('One\nTwo');
+    expect(htmlToText('One<br>Two')).toBe('One\nTwo');
+  });
+
+  test('a script never contributes its source to the quote', () => {
+    const out = htmlToText('<p>Hi</p><script>var stolen = 1;</script>');
+    expect(out).toBe('Hi');
+    expect(out).not.toMatch(/stolen/);
+  });
+
+  test('entities are decoded AFTER tags, so &lt;script&gt; cannot become one', () => {
+    expect(htmlToText('<p>a &lt;script&gt; b</p>')).toBe('a <script> b');
+  });
+
+  test('list items are readable rather than run together', () => {
+    expect(htmlToText('<ul><li>One</li><li>Two</li></ul>')).toBe('• One\n• Two');
+  });
+
+  test('runs of blank lines collapse — a table layout is mostly empty cells', () => {
+    expect(htmlToText('<div>A</div><div></div><div></div><div>B</div>')).toBe('A\n\nB');
+  });
+
+  test('nothing in, nothing out', () => {
+    expect(htmlToText('')).toBe('');
+    expect(htmlToText(null)).toBe('');
+    expect(htmlToText(undefined)).toBe('');
+  });
 });

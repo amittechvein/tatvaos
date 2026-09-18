@@ -66,6 +66,36 @@ export function textToHtml(textBody) {
 }
 
 /**
+ * HTML as readable plain text.
+ *
+ * Amit, 18 Sept 2026: "reply on html designed mail did not pick the content".
+ * A reply quotes message.bodyText — and a message built in a design tool often
+ * carries NO text part at all, so the quote was the "On ... wrote:" line
+ * followed by nothing. The person could not see what they were answering.
+ *
+ * Not a renderer and not trying to be. Blocks become line breaks, everything
+ * else is dropped, entities are undone, and runs of blank lines collapse — the
+ * shape a quote needs. Layout tables become long lines rather than columns,
+ * which is the right trade in a quote nobody reads closely.
+ */
+export function htmlToText(html) {
+  if (!html) return '';
+  return strip(html)
+    // <br> and the end of a block are where a line ends.
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|li|h[1-6]|table|blockquote)\s*>/gi, '\n')
+    .replace(/<li\b[^>]*>/gi, '\u2022 ')
+    .replace(/<[^>]+>/g, '')
+    // Entities last: doing this first would invent tags out of &lt;script&gt;.
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"').replace(/&#39;|&apos;/gi, "'")
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
  * The document handed to the WebView.
  *
  * `showImages` widens the image policy to https: — and ONLY images. Nothing
@@ -122,8 +152,33 @@ export function buildDocument({ html, text, showImages, dark = false, header = n
   .tv-from{font-size:15px;font-weight:600;}
   .tv-meta{font-size:12px;color:${muted};margin-top:2px;}
   .tv-rule{height:1px;background:${dark ? '#2A2536' : '#EFEBFA'};margin:14px 16px 0 16px;}
+  /* ── A DESIGNED EMAIL IS BUILT FOR A 600px DESKTOP COLUMN. ────────────
+     Amit, 18 Sept 2026: "html designed mail scroll in right and not looking
+     good". Newsletters are nested tables with width="600" and inline pixel
+     widths, so the page was wider than the phone and slid sideways — the
+     text ran off the edge and had to be dragged back.
+
+     max-width alone did not fix it, because a fixed width beats it: the
+     element stays 600px and simply overflows. So width is forced back to
+     auto, which lets the table shrink and its text wrap. The HTML width
+     attribute is only a presentational hint and any rule here outranks it;
+     (no backticks in this comment — it lives inside a template literal, and
+     one would end the string.)
+     the inline style="width:600px" is what needs !important.
+
+     There is no measuring involved — measuring needs JavaScript in the
+     page, and JavaScript is what this document refuses to run.
+     ─────────────────────────────────────────────────────────────────── */
+  table{width:auto !important;max-width:100% !important;table-layout:auto !important;}
+  td,th{max-width:100% !important;min-width:0 !important;
+    white-space:normal !important;word-break:break-word;overflow-wrap:anywhere;}
+  div,p,span,section,article,center{max-width:100% !important;}
+  /* NOT width:auto — an icon sent as width="20" would spring to full size. */
   img{max-width:100% !important;height:auto !important;}
-  table{max-width:100% !important;}
+  /* Last resort. Something with a hard min-width still gets to be wide, but
+     it scrolls inside the message instead of dragging the page with it. */
+  .tv-wrap{overflow-x:auto;}
+  html,body{overflow-x:hidden;}
   a{color:#6C3CE9;}
   blockquote{margin:8px 0;padding-left:10px;border-left:3px solid ${muted};color:${muted};}
   pre{white-space:pre-wrap;}

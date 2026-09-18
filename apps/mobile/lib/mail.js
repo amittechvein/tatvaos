@@ -22,6 +22,7 @@
 import { File } from 'expo-file-system';
 
 import { request, API_BASE } from '../api';
+import { htmlToText } from './mailHtml';
 
 /** Mailbox, folders and signature in one call — what the app opens Mail with. */
 export async function bootstrap(token) {
@@ -97,7 +98,36 @@ export function deleteMessage(token, id) {
  */
 export async function send(token, {
   to, cc = '', subject = '', bodyText = '', bodyHtml = '', inReplyToId, draftId, files = [],
-}) {
+}, onProgress) {
+  // ── A BIG ATTACHMENT NEEDS TO SHOW ITS PROGRESS. ───────────────────────
+  //  Amit, 18 Sept 2026: "give progress bar that attachment that much % is
+  //  uploaded". A photo on a phone's uplink takes long enough that a still
+  //  spinner reads as a hang, and the person sends again.
+  //
+  //  fetch cannot report upload progress — no browser's can, and Expo's
+  //  replacement is no different. XMLHttpRequest can, through
+  //  upload.onprogress, and in React Native it is the NATIVE networking path
+  //  rather than Expo's JavaScript one. That is also why the part shape
+  //  differs below: { uri, name, type } is what RN's own uploader wants, and
+  //  it is the shape Expo's fetch refused.
+  //
+  //  Only when there are files to watch. A text-only send is one packet and
+  //  goes the proven way.
+  // ───────────────────────────────────────────────────────────────────────
+  if (files.length && typeof onProgress === 'function') {
+    try {
+      return await sendWithProgress(token, {
+        to, cc, subject, bodyText, bodyHtml, inReplyToId, draftId, files,
+      }, onProgress);
+    } catch (e) {
+      // The send itself failing must NOT be retried — it may have arrived,
+      // and sending twice is worse than no progress bar. Only a refusal to
+      // build the request at all falls through to the proven path.
+      if (!e?.beforeSend) throw e;
+      console.log(`[mail] upload with progress could not start (${e.message}); using the plain path`);
+    }
+  }
+
   const form = new FormData();
   form.append('to', to);
   if (cc) form.append('cc', cc);
@@ -130,6 +160,71 @@ export async function send(token, {
     form.append('files', new File(f.uri));
   }
   return request('/api/mail/send', { method: 'POST', token, form, timeoutMs: 120000 });
+}
+
+/**
+ * The same send, over XMLHttpRequest, reporting how much has gone up.
+ *
+ * `onProgress(fraction, sentBytes, totalBytes)` — fraction is 0..1, or null
+ * when the platform will not say how big the body is (it happens; the screen
+ * shows an indeterminate bar rather than a wrong number).
+ *
+ * Deliberately NOT routed through api.js request(): that one owns fetch, the
+ * timeout and the 401-renewal retry, and re-implementing those here would mean
+ * two copies of the session rules. A 401 is handed back to the caller instead —
+ * the compose screen is short-lived and the token was fresh when it opened.
+ */
+function sendWithProgress(token, fields, onProgress) {
+  const { files, ...text } = fields;
+  const form = new FormData();
+  for (const [k, v] of Object.entries(text)) {
+    // Same rule as the plain path: empty cc or a missing reply id are left
+    // out entirely, not sent as empty strings.
+    if (k === 'to' || k === 'subject' || k === 'bodyText' || v) form.append(k, String(v ?? ''));
+  }
+  for (const f of files) {
+    if (!f?.uri) {
+      const e = new Error(`Could not read ${f?.name ?? 'that file'}. Attach it again.`);
+      // Nothing was sent, so the caller may safely try the other path.
+      e.beforeSend = true;
+      throw e;
+    }
+    form.append('files', {
+      uri: f.uri,
+      name: f.name || 'attachment',
+      type: f.mimeType || 'application/octet-stream',
+    });
+  }
+
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${API_BASE}/api/mail/send`);
+    xhr.timeout = 120000;
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    // No Content-Type: the multipart boundary is the uploader's to set, and
+    // setting it by hand is how the boundary ends up missing.
+
+    xhr.upload.onprogress = (e) => {
+      const total = e.lengthComputable ? e.total : 0;
+      onProgress(total ? e.loaded / total : null, e.loaded, total);
+    };
+
+    xhr.onload = () => {
+      console.log(`[api] POST /api/mail/send -> ${xhr.status} ${Date.now() - started}ms (xhr)`);
+      let parsed = null;
+      try { parsed = xhr.responseText ? JSON.parse(xhr.responseText) : null; } catch { /* not json */ }
+      if (xhr.status >= 200 && xhr.status < 300) { onProgress(1, 1, 1); resolve(parsed ?? {}); return; }
+      // The API's own wording when it has one; it is written for the person.
+      reject(new Error(parsed?.error || parsed?.detail || `Send failed (${xhr.status}).`));
+    };
+    // A failed upload says nothing about why, by design of the API. These are
+    // the two states the person can act on, so they are named separately.
+    xhr.onerror = () => reject(new Error('Cannot reach TatvaOS. Check your connection and try again.'));
+    xhr.ontimeout = () => reject(new Error('That took too long to send. A smaller attachment may go through.'));
+
+    xhr.send(form);
+  });
 }
 
 /** Where an attachment can be downloaded from. Needs the bearer token. */
@@ -183,7 +278,24 @@ export function quoted(message) {
   const who = senderLabel(message);
   const when = message?.sentAt || message?.receivedAt;
   const on = when ? new Date(when).toLocaleString() : '';
-  const body = (message?.bodyText || '').trim();
+
+  // ── A DESIGNED EMAIL HAS NO TEXT PART. ────────────────────────────────
+  //  Amit, 18 Sept 2026: "reply on html designed mail did not pick the
+  //  content". Replying quoted bodyText, and anything built in a design tool
+  //  — every newsletter, every notification — carries only bodyHtml. So the
+  //  quote came out as the "On ... wrote:" line with nothing under it, and
+  //  the reply arrived showing no sign of what it answered.
+  //
+  //  Falling back to the HTML, flattened. A quote is read for its words, not
+  //  its layout, so losing the design costs nothing here.
+  // ──────────────────────────────────────────────────────────────────────
+  const body = ((message?.bodyText || '').trim()
+    || htmlToText(message?.bodyHtml)).trim();
+
+  // Nothing at all — an empty message, or one that is only an image. Say so,
+  // rather than leaving a bare "wrote:" that reads like the quote broke.
+  if (!body) return `\n\nOn ${on}, ${who} wrote:\n> (no text content)`;
+
   return `\n\nOn ${on}, ${who} wrote:\n`
     + body.split('\n').map((l) => `> ${l}`).join('\n');
 }

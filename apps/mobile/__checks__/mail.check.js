@@ -62,3 +62,49 @@ test('a reply quotes the original, every line marked', () => {
 test('quoting a message with no text body does not produce "undefined"', () => {
   expect(quoted({ from: { email: 'r@x.com' } })).not.toMatch(/undefined/);
 });
+
+// ── QUOTING A MESSAGE THAT HAS NO TEXT PART ─────────────────────────────────
+//  Amit, 18 Sept 2026: "reply on html designed mail did not pick the content".
+//  Every newsletter and every automated notification is HTML-only, so the
+//  quote was a "wrote:" line with nothing under it.
+describe('quoted, for an HTML-only message', () => {
+  const html = {
+    from: { email: 'news@example.com', name: 'The Times' },
+    sentAt: '2026-09-18T06:00:00Z',
+    bodyHtml: '<table width="600"><tr><td><p>Rates held at 6%.</p>'
+      + '<p>Full story inside.</p></td></tr></table>',
+  };
+
+  test('the words come from the HTML when there is no bodyText', () => {
+    const out = quoted(html);
+    expect(out).toMatch(/> Rates held at 6%\./);
+    expect(out).toMatch(/> Full story inside\./);
+  });
+
+  test('every line of the quote is marked as quoted', () => {
+    const body = quoted(html).split('\n').slice(3);        // past the blank lines + "wrote:"
+    expect(body.length).toBeGreaterThan(0);
+    for (const line of body) expect(line.startsWith('>')) .toBe(true);
+  });
+
+  test('no markup survives into the reply', () => {
+    expect(quoted(html)).not.toMatch(/<table|<p>|width="600"/);
+  });
+
+  test('bodyText still wins when it exists — it is what the sender wrote', () => {
+    const both = { ...html, bodyText: 'Rates held.' };
+    expect(quoted(both)).toMatch(/> Rates held\.$/);
+    expect(quoted(both)).not.toMatch(/Full story/);
+  });
+
+  test('a message with neither says so instead of trailing off', () => {
+    // A bare "wrote:" with nothing after it reads like the app broke.
+    expect(quoted({ from: { email: 'a@b.com' }, sentAt: '2026-09-18T06:00:00Z' }))
+      .toMatch(/> \(no text content\)/);
+  });
+
+  test('whitespace-only HTML counts as nothing, not as an empty quote', () => {
+    expect(quoted({ from: { email: 'a@b.com' }, bodyHtml: '<div> </div><p></p>' }))
+      .toMatch(/> \(no text content\)/);
+  });
+});

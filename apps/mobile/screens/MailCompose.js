@@ -66,6 +66,9 @@ export default function MailCompose({ session, draft, signature, onClose, onSent
   const [body, setBody] = useState(start.body);
   const [files, setFiles] = useState([]);
   const [sending, setSending] = useState(false);
+  // null = nothing in flight or the size is unknown (an indeterminate bar);
+  // 0..1 = how much of the body has gone up.
+  const [progress, setProgress] = useState(null);
   const [error, setError] = useState('');
   const touched = useRef(false);
 
@@ -110,6 +113,7 @@ export default function MailCompose({ session, draft, signature, onClose, onSent
   async function submit() {
     if (!to.trim()) { setError('Say who this is going to.'); return; }
     setSending(true);
+    setProgress(files.length ? 0 : null);
     setError('');
     try {
       const out = await send(token, {
@@ -119,7 +123,7 @@ export default function MailCompose({ session, draft, signature, onClose, onSent
         bodyText: body,
         inReplyToId: kind === 'reply' ? original?.id : undefined,
         files,
-      });
+      }, (fraction) => setProgress(fraction));
       // Never the addresses or the subject: this log is read over somebody's
       // shoulder as often as not.
       log(`sent (${files.length} attachment(s))${out?.warning ? ' with a warning' : ''}`);
@@ -128,6 +132,7 @@ export default function MailCompose({ session, draft, signature, onClose, onSent
       log(`send failed: ${e?.message ?? e}`);
       setError(e?.message || 'Could not send that email.');
       setSending(false);
+      setProgress(null);
     }
   }
 
@@ -149,6 +154,27 @@ export default function MailCompose({ session, draft, signature, onClose, onSent
                    : <Ionicons name="send" size={20} color={brand.base} />}
         </Pressable>
       </View>
+
+      {/* ── HOW FAR THE ATTACHMENT HAS GOT. ────────────────────────────────
+          Amit, 18 Sept 2026: "give progress bar that attachment that much %
+          is uploaded". A spinner on a slow uplink is indistinguishable from
+          a hang, and the answer to a hang is to press Send again.
+
+          When the platform will not say how big the body is, progress comes
+          back null and the bar fills completely with no number — honest
+          about not knowing, rather than inventing a percentage. */}
+      {sending && files.length > 0 ? (
+        <View style={s.progressRow} accessibilityLabel={
+          progress === null ? 'Sending' : `Sending, ${Math.round(progress * 100)} percent`
+        }>
+          <View style={s.progressTrack}>
+            <View style={[s.progressFill, { width: `${Math.round((progress ?? 1) * 100)}%` }]} />
+          </View>
+          <Text style={s.progressText}>
+            {progress === null ? 'Sending…' : `${Math.round(progress * 100)}%`}
+          </Text>
+        </View>
+      ) : null}
 
       <KeyboardAvoidingView style={{ flex: 1 }}
                             behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -231,6 +257,19 @@ const s = StyleSheet.create({
     paddingHorizontal: 16, paddingTop: 10, paddingBottom: 8,
     borderBottomWidth: 1, borderBottomColor: surface.border,
   },
+  progressRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingHorizontal: 16, paddingVertical: 8,
+    borderBottomWidth: 1, borderBottomColor: surface.border,
+  },
+  progressTrack: {
+    flex: 1, height: 6, borderRadius: 3, overflow: 'hidden',
+    backgroundColor: surface.border,
+  },
+  progressFill: { height: 6, borderRadius: 3, backgroundColor: brand.base },
+  // Tabular-width digits would jump about less, but the count is small and
+  // the bar carries the meaning; the number is the confirmation.
+  progressText: { fontSize: 12, color: text.muted, minWidth: 54, textAlign: 'right' },
   title: { fontSize: 17, fontWeight: '700', color: text.primary, marginLeft: 4 },
   body: { padding: 16, paddingBottom: 40 },
   field: { marginBottom: 12 },

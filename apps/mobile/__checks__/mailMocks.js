@@ -27,14 +27,21 @@ jest.mock('../lib/mail', () => {
 // The WebView renders nothing here; what matters in a check is the document it
 // was HANDED and the props it was given (JavaScript off, navigation intercepted).
 const webview = { lastProps: null };
+// virtual: the real package is a NATIVE module that cannot run under jest and
+// is replaced here in full, so resolving it on disk buys nothing — and it is
+// not always installed in a worktree whose node_modules is a junction shared
+// with the deploy checkout (18 Sept 2026: this suite could not run at all,
+// "Cannot find module 'react-native-webview'", while the app itself was fine).
+// mailScreens.check.js asserts package.json still declares it, so a dependency
+// genuinely dropped is still caught.
 jest.mock('react-native-webview', () => ({
   WebView: (props) => { webview.lastProps = props; return null; },
-}));
+}), { virtual: true });
 
 const picker = { next: { canceled: true } };
 jest.mock('expo-document-picker', () => ({
   getDocumentAsync: jest.fn(async () => picker.next),
-}));
+}), { virtual: true });
 
 const files = { downloads: [], written: [], created: [], grant: { granted: true, directoryUri: 'content://tree/downloads' } };
 // The path the SCREEN imports. Mocking 'expo-file-system' instead was how a
@@ -68,7 +75,7 @@ const sharing = { shared: [] };
 jest.mock('expo-sharing', () => ({
   isAvailableAsync: jest.fn(async () => true),
   shareAsync: jest.fn(async (uri) => { sharing.shared.push(uri); }),
-}));
+}), { virtual: true });
 
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 
