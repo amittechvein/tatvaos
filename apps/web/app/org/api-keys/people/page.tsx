@@ -91,7 +91,17 @@ export default function PeopleApiKeysPage() {
       scope="organisation"
       title="People API"
       subtitle="Let your own software add people to this organisation"
-      actions={<Button variant="primary" onClick={() => setCreating(true)}>New key</Button>}
+      actions={
+        <div className="flex gap-2">
+          {/* A real link, not a Button with href: Button renders a Next
+              <Link>, which routes instead of opening the static page. */}
+          <a href="/docs/people-api-guide.html" target="_blank" rel="noopener"
+             className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink no-underline transition-colors hover:bg-canvas">
+            Integration guide
+          </a>
+          <Button variant="primary" onClick={() => setCreating(true)}>New key</Button>
+        </div>
+      }
     >
       {error && <Alert tone="danger" onDismiss={() => setError(null)}>{error}</Alert>}
 
@@ -201,6 +211,12 @@ Content-Type: application/json
             </div>
           </li>
         </ol>
+        <p className="text-[0.8125rem] text-ink-muted mb-3">
+          Handing this to a developer? The{' '}
+          <a href="/docs/people-api-guide.html" target="_blank" rel="noopener">integration guide</a>{' '}
+          has every field, every answer, working examples in curl, Node.js and Python, and what a key
+          deliberately cannot do.
+        </p>
         <div className="text-[0.8125rem] text-ink-muted mb-0">
           Answers you may see: <code>401</code> the key is not valid or was revoked,
           <code className="ms-1">403</code> the key is real but not allowed to add people,
