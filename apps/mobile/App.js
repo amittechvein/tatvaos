@@ -40,6 +40,9 @@ import { login, verifyMfa, restore, signOut, me, onSessionChange } from './api';
 import Meetings from './screens/Meetings';
 import Meeting from './screens/Meeting';
 import ScheduleMeeting from './screens/ScheduleMeeting';
+import Mail from './screens/Mail';
+import MailMessage from './screens/MailMessage';
+import MailCompose from './screens/MailCompose';
 import NextMeetingCard from './components/NextMeetingCard';
 import { handoffUrl } from './lib/handoff';
 
@@ -134,7 +137,23 @@ function Root() {
   // who never opened it onto a screen they did not come from.
   const [meetingFrom, setMeetingFrom] = useState('meetings');
 
+  // ── MAIL, NATIVELY (Amit, 16 and 17 Sept 2026). ─────────────────────────
+  //  The Mail tile used to hand the browser a signed-in URL. It now opens
+  //  screens/Mail.js, the same way Connect does, against the same API the web
+  //  app uses. docs/decisions/0006-native-mail-on-the-phone.md records that
+  //  this supersedes MOBILE_LANE_BRIEF §3-4, and what it costs.
+  //
+  //  `mailReload` is a counter, not a flag: the list reloads when it CHANGES,
+  //  so two messages read in a row both refresh the list. A boolean would
+  //  need resetting and would miss the second one.
+  const [openMessage, setOpenMessage] = useState(null);
+  const [composing, setComposing] = useState(null);
+  const [mailReload, setMailReload] = useState(0);
+  const [mailNotice, setMailNotice] = useState(null);
+  const [mailSignature, setMailSignature] = useState('');
+
   const openConnect = useCallback(() => setView('meetings'), []);
+  const openMail = useCallback(() => { setOpenMessage(null); setComposing(null); setView('mail'); }, []);
   const joinMeeting = useCallback((m) => { setMeetingFrom('meetings'); setActiveMeeting(m); setView('meeting'); }, []);
   const joinFromHome = useCallback((m) => { setMeetingFrom('home'); setActiveMeeting(m); setView('meeting'); }, []);
   const leaveMeeting = useCallback(() => { setActiveMeeting(null); setView(meetingFrom); }, [meetingFrom]);
@@ -148,6 +167,52 @@ function Root() {
 
   if (phase === 'restoring') return <Splash />;
   if (phase === 'in') {
+    // Compose sits ON TOP of whatever is behind it — the list or a message —
+    // so closing it returns to where it was opened from rather than home.
+    if (view === 'mail' && composing) {
+      return (
+        <MailCompose
+          session={session}
+          draft={composing}
+          signature={mailSignature}
+          onClose={() => setComposing(null)}
+          onSent={(warning) => {
+            setComposing(null);
+            setOpenMessage(null);
+            setMailNotice(warning || 'Sent.');
+            setMailReload((n) => n + 1);
+          }}
+        />
+      );
+    }
+    if (view === 'mail' && openMessage) {
+      return (
+        <MailMessage
+          session={session}
+          messageId={openMessage}
+          onBack={(changed) => {
+            setOpenMessage(null);
+            if (changed) setMailReload((n) => n + 1);
+          }}
+          onReply={(draft) => setComposing(draft)}
+          onChanged={() => setMailReload((n) => n + 1)}
+        />
+      );
+    }
+    if (view === 'mail') {
+      return (
+        <Mail
+          session={session}
+          reloadKey={mailReload}
+          notice={mailNotice}
+          onNoticeSeen={() => setMailNotice(null)}
+          onBack={backHome}
+          onMailbox={({ signature }) => setMailSignature(signature ?? '')}
+          onOpen={(m) => setOpenMessage(m.id)}
+          onCompose={(draft) => setComposing(draft)}
+        />
+      );
+    }
     if (view === 'meeting' && activeMeeting) {
       return <Meeting session={session} meeting={activeMeeting} onLeave={leaveMeeting} />;
     }
@@ -176,6 +241,7 @@ function Root() {
         profile={profile}
         onSignOut={onSignOut}
         onOpenConnect={openConnect}
+        onOpenMail={openMail}
         onJoinMeeting={joinFromHome}
       />
     );
@@ -439,7 +505,7 @@ async function openProduct(p, token) {
   }
 }
 
-function Dashboard({ session, profile, onSignOut, onOpenConnect, onJoinMeeting }) {
+function Dashboard({ session, profile, onSignOut, onOpenConnect, onOpenMail, onJoinMeeting }) {
   const user = profile?.user ?? session?.user ?? {};
   // Falls back to the email while /me is in flight or if it failed. Showing
   // an address the person recognises beats showing a placeholder name.
@@ -506,12 +572,18 @@ function Dashboard({ session, profile, onSignOut, onOpenConnect, onJoinMeeting }
           {tiles.map((p) => {
             // Connect stays in the app. Every other tile leaves it, and the
             // tile says so - see the arrow below.
-            const native = p.key === 'connect';
+            // Two products now stay in the app. Everything else still opens
+            // the browser through the sign-in handoff.
+            const native = p.key === 'connect' || p.key === 'mail';
             return (
               <Pressable
                 key={p.key}
                 style={({ pressed }) => [s.tile, pressed && s.tilePressed]}
-                onPress={() => (native ? onOpenConnect() : openTile(p))}
+                onPress={() => {
+                  if (p.key === 'connect') return onOpenConnect();
+                  if (p.key === 'mail') return onOpenMail();
+                  return openTile(p);
+                }}
                 disabled={opening === p.key}
                 accessibilityRole={native ? 'button' : 'link'}
                 accessibilityLabel={native ? p.name : `${p.name}, opens in your browser`}
@@ -536,7 +608,7 @@ function Dashboard({ session, profile, onSignOut, onOpenConnect, onJoinMeeting }
         </View>
 
         <Text style={s.dashFoot}>
-          Connect runs in the app. Other products open in your browser for now;
+          Connect and Mail run in the app. Other products open in your browser for now;
           you may be asked to sign in there the first time.
         </Text>
       </ScrollView>

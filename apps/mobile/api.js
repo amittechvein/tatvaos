@@ -97,9 +97,25 @@ function announceSession(session) {
 // deleted. A renewal that failed for want of signal must not sign anybody out.
 let lastRestoreEndedSession = false;
 
-export async function request(path, { method = 'POST', body, token, retried = false } = {}) {
+/**
+ * `form` is a FormData instead of a JSON body — the one thing this door could
+ * not carry, and Mail's send endpoint (POST /api/mail/send) takes nothing else
+ * because it carries attachments. Two rules come with it:
+ *
+ *  • DO NOT set Content-Type. The boundary is generated with the body, and a
+ *    hand-written 'multipart/form-data' header without it produces a request
+ *    the server cannot parse — the failure looks like a rejected message
+ *    rather than a malformed one.
+ *  • A send is NOT safe to repeat blindly, so the 401-renew-and-retry below
+ *    still applies (the 401 is decided before the handler runs, so nothing was
+ *    sent), and nothing else here retries.
+ *
+ * `timeoutMs` exists for the same call: fifteen seconds is right for a list
+ * and wrong for a message with a 10 MB attachment on a train.
+ */
+export async function request(path, { method = 'POST', body, form, token, retried = false, timeoutMs = TIMEOUT_MS } = {}) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const started = Date.now();
 
   let res;
@@ -107,10 +123,10 @@ export async function request(path, { method = 'POST', body, token, retried = fa
     res = await fetch(`${API_BASE}${path}`, {
       method,
       headers: {
-        'Content-Type': 'application/json',
+        ...(form ? {} : { 'Content-Type': 'application/json' }),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: form ?? (body === undefined ? undefined : JSON.stringify(body)),
       // React Native keeps a native cookie jar, and /api/auth/refresh reads a
       // cookie BEFORE it reads the body. Left alone, a cookie the app never
       // asked for could quietly decide which session gets refreshed. This app
@@ -160,7 +176,7 @@ export async function request(path, { method = 'POST', body, token, retried = fa
       const renewed = await restore();
       if (renewed?.accessToken) {
         announceSession(renewed);
-        return request(path, { method, body, token: renewed.accessToken, retried: true });
+        return request(path, { method, body, form, token: renewed.accessToken, retried: true, timeoutMs });
       }
       // Only a server refusal ends the session in the app. No signal leaves
       // the person where they are, and this call fails with its own 401.
