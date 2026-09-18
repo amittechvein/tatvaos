@@ -53,12 +53,35 @@ public sealed class OrgApiKey
     /// </summary>
     public DateTimeOffset? LastUsedAt { get; set; }
 
-    /// <summary>The one scope that exists today: create people in this organisation.</summary>
+    /// <summary>Create people in this organisation.</summary>
     public const string ScopePeopleAdmit = "people:admit";
+
+    /// <summary>
+    /// Schedule meetings on behalf of a person in this organisation, and
+    /// change or cancel the ones it scheduled (Amit, 18 September 2026: a
+    /// school's ERP, so a teacher creates a class from the timetable they
+    /// already keep).
+    /// </summary>
+    public const string ScopeMeetingsSchedule = "meetings:schedule";
+
+    /// <summary>
+    /// Read a meeting and get the link to join it.
+    ///
+    /// SEPARATE FROM meetings:schedule, and that separation is the point. The
+    /// ERP half that shows a student their timetable needs to hand out join
+    /// links and nothing else; if reading came free with scheduling, the key
+    /// embedded in the student-facing half of the ERP could also create and
+    /// cancel every class in the school. Two scopes, two keys, two blast
+    /// radii — the same argument that made this table separate from
+    /// mail.api_keys.
+    /// </summary>
+    public const string ScopeMeetingsJoin = "meetings:join";
 
     /// <summary>Every scope a key may be given. An unknown scope is refused at creation.</summary>
     public static readonly (string Scope, string Label)[] Offerable =
     [
         (ScopePeopleAdmit, "Add people to this organisation"),
+        (ScopeMeetingsSchedule, "Schedule meetings for people in this organisation"),
+        (ScopeMeetingsJoin, "Read meetings and hand out join links"),
     ];
 }

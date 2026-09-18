@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TatvaOS Meetings API — Integration Guide</title>
+<meta name="description" content="Let your own software schedule TatvaOS Connect meetings and hand out join links. Teachers create classes from your ERP; students join from it.">
+<style>
+  :root {
+    --brand-600: 90 47 204; --brand-700: 74 41 168;
+    --canvas: 250 246 239; --surface: 255 255 255;
+    --ink: 21 20 27; --ink-muted: 107 104 128; --line: 236 231 221;
+    --warn: 180 83 9; --ok: 4 120 87; --bad: 185 28 28;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --canvas: 25 25 28; --surface: 35 35 39;
+      --ink: 230 231 236; --ink-muted: 152 156 166; --line: 50 50 56;
+      --warn: 251 191 36; --ok: 74 222 128; --bad: 248 113 113;
+    }
+  }
+  :root[data-theme="dark"] {
+    --canvas: 25 25 28; --surface: 35 35 39;
+    --ink: 230 231 236; --ink-muted: 152 156 166; --line: 50 50 56;
+    --warn: 251 191 36; --ok: 74 222 128; --bad: 248 113 113;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: rgb(var(--canvas)); color: rgb(var(--ink));
+    font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", Ubuntu, Cantarell, "Helvetica Neue", Arial, sans-serif;
+  }
+  main { max-width: 820px; margin: 0 auto; padding: 32px 16px 96px; }
+  header.top { border-bottom: 1px solid rgb(var(--line)); padding-bottom: 20px; margin-bottom: 24px; }
+  .eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: rgb(var(--ink-muted)); margin: 0 0 6px; }
+  h1 { font-size: 30px; line-height: 1.2; margin: 0 0 8px; font-weight: 650; }
+  h2 { font-size: 21px; margin: 40px 0 10px; font-weight: 650; }
+  h3 { font-size: 16px; margin: 22px 0 6px; font-weight: 650; }
+  p, li { max-width: 68ch; }
+  p.lead { font-size: 17px; color: rgb(var(--ink-muted)); margin: 0; }
+  a { color: rgb(var(--brand-600)); }
+  a:hover { color: rgb(var(--brand-700)); }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+  code { font-size: .92em; background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: 5px; padding: 1px 5px; overflow-wrap: anywhere; }
+  pre { background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: 10px; padding: 14px 16px; overflow-x: auto; font-size: 13px; line-height: 1.55; }
+  pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0 18px; font-size: 14.5px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid rgb(var(--line)); }
+  th { color: rgb(var(--ink-muted)); font-weight: 600; font-size: 13px; }
+  .card { background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: 12px; padding: 14px 18px; margin: 14px 0; }
+  .card.warn { border-color: rgb(var(--warn) / .6); }
+  .card.warn strong { color: rgb(var(--warn)); }
+  .ok { color: rgb(var(--ok)); font-weight: 650; }
+  .warnc { color: rgb(var(--warn)); font-weight: 650; }
+  .bad { color: rgb(var(--bad)); font-weight: 650; }
+  .toc { columns: 2; column-gap: 32px; padding-left: 18px; margin: 0 0 8px; font-size: 15px; }
+  .toc li { break-inside: avoid; }
+  ol.steps > li { margin-bottom: 12px; }
+  ul.tight li { margin-bottom: 5px; }
+  footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid rgb(var(--line)); color: rgb(var(--ink-muted)); font-size: 13px; }
+  @media (max-width: 640px) { .toc { columns: 1; } h1 { font-size: 26px; } table { display: block; overflow-x: auto; } }
+  @media print { body { background: #fff; color: #000; } pre { border-color: #ccc; } a { color: inherit; } }
+</style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <p class="eyebrow">TatvaOS · API keys · Meetings API</p>
+    <h1>Meetings API Integration Guide</h1>
+    <p class="lead">Let your own software schedule classes and hand students the link to join them — a timetable, a student information system, anything that already knows who teaches what and when. A meeting you schedule is hosted by the teacher you name and lands on their calendar.</p>
+  </header>
+
+  <ol class="toc">
+    <li><a href="#what">What this is</a></li>
+    <li><a href="#keys">Two keys, not one</a></li>
+    <li><a href="#schedule">Scheduling a class</a></li>
+    <li><a href="#fields">The fields</a></li>
+    <li><a href="#calendar">The calendar</a></li>
+    <li><a href="#join">Joining</a></li>
+    <li><a href="#list">The timetable</a></li>
+    <li><a href="#change">Changing and cancelling</a></li>
+    <li><a href="#responses">Responses</a></li>
+    <li><a href="#examples">Code examples</a></li>
+    <li><a href="#limits">What a key cannot do</a></li>
+    <li><a href="#security">Security checklist</a></li>
+    <li><a href="#notyet">What is not in this version</a></li>
+  </ol>
+
+  <h2 id="what">What this is</h2>
+  <p>Two halves of one job. Your staff software schedules a class; your student software shows a Join button. Both talk to the same organisation over HTTPS with an API key, and neither needs anybody to sign in to TatvaOS to do its work.</p>
+  <p>A meeting created this way is an ordinary TatvaOS Connect meeting. The teacher you name is its host: it appears in their Connect list and on their calendar, and they can edit it by hand exactly as if they had created it themselves.</p>
+
+  <h3>At a glance</h3>
+  <table>
+    <tr><td>Base</td><td><code>https://core.tatvaos.com/api/v1/org/meetings</code></td></tr>
+    <tr><td>Authentication</td><td><code>Authorization: Bearer tvk_…</code> — a Meetings API key</td></tr>
+    <tr><td>Schedule</td><td><code>POST /api/v1/org/meetings</code> — needs <code>meetings:schedule</code></td></tr>
+    <tr><td>Timetable</td><td><code>GET /api/v1/org/meetings</code> — needs <code>meetings:join</code></td></tr>
+    <tr><td>One meeting</td><td><code>GET /api/v1/org/meetings/{id}</code> — needs <code>meetings:join</code></td></tr>
+    <tr><td>Join link</td><td><code>POST /api/v1/org/meetings/{id}/join</code> — needs <code>meetings:join</code></td></tr>
+    <tr><td>Cancel</td><td><code>DELETE /api/v1/org/meetings/{id}</code> — needs <code>meetings:schedule</code></td></tr>
+    <tr><td>Rate limit</td><td>30 requests a minute, per calling address</td></tr>
+  </table>
+
+  <h2 id="keys">Two keys, not one</h2>
+  <p>A meetings key can be given either or both of two permissions. Create them in the console under <strong>Organisation → API keys → Meetings API</strong>. Each key is shown once, when you make it.</p>
+  <table>
+    <tr><th>Permission</th><th>What it allows</th></tr>
+    <tr><td><code>meetings:schedule</code></td><td>Create, reschedule and cancel meetings.</td></tr>
+    <tr><td><code>meetings:join</code></td><td>Read meetings and get join links. Changes nothing.</td></tr>
+  </table>
+  <div class="card warn">
+    <p style="margin:0"><strong>Use two separate keys.</strong> Give the staff half of your software a <code>meetings:schedule</code> key, and the student half a <code>meetings:join</code> key. If one key did both, the copy sitting in a student-facing portal could cancel every class in the school. Revoking one key never affects the other.</p>
+  </div>
+
+  <h2 id="schedule">Scheduling a class</h2>
+  <p>One request. <code>hostEmail</code> is the teacher, and must be the address of an active person in your organisation — add them first through the <a href="/docs/people-api-guide.html">People API</a> or the console.</p>
+<pre><code>POST https://core.tatvaos.com/api/v1/org/meetings
+Authorization: Bearer tvk_...
+Content-Type: application/json
+
+{
+  "hostEmail": "r.iyer@yourschool.edu",
+  "title":     "Physics — Class 10B",
+  "startsAt":  "2026-09-21T09:00:00+05:30",
+  "endsAt":    "2026-09-21T10:00:00+05:30",
+  "timezone":  "Asia/Kolkata"
+}</code></pre>
+  <p>The answer is <code>201</code> and the meeting:</p>
+<pre><code>{
+  "id":        "6f1b...",
+  "code":      "zQ6rH58JaxkJzRw4-uZg4g",
+  "joinUrl":   "https://connect.tatvaos.com/connect/room/zQ6rH58JaxkJzRw4-uZg4g",
+  "title":     "Physics — Class 10B",
+  "status":    "scheduled",
+  "startsAt":  "2026-09-21T03:30:00+00:00",
+  "endsAt":    "2026-09-21T04:30:00+00:00",
+  "timezone":  "Asia/Kolkata",
+  "host":      { "id": "d111...", "email": "r.iyer@yourschool.edu", "name": "R Iyer" },
+  "waitingRoom":    "guests",
+  "allowGuests":    true,
+  "needsPassword":  false,
+  "onCalendar":     true
+}</code></pre>
+  <p>Store the <code>id</code>. It is what you use to fetch, change or cancel the meeting later. <code>joinUrl</code> is the link students open, and it does not change for the life of the meeting.</p>
+  <div class="card">
+    <p style="margin:0"><strong>Times come back in UTC.</strong> Send whatever offset you like — <code>+05:30</code> is read correctly — and TatvaOS stores the instant. <code>timezone</code> is the zone the meeting is <em>held</em> in, which is what the calendar entry and the invitation display.</p>
+  </div>
+
+  <h2 id="fields">The fields</h2>
+  <table>
+    <tr><th>Field</th><th>Required</th><th>What it is</th></tr>
+    <tr><td><code>hostEmail</code></td><td class="bad">yes</td><td>The teacher. Must be an active person in this organisation.</td></tr>
+    <tr><td><code>startsAt</code></td><td class="bad">yes</td><td>ISO 8601 with an offset, e.g. <code>2026-09-21T09:00:00+05:30</code>.</td></tr>
+    <tr><td><code>endsAt</code></td><td>no</td><td>Defaults to an hour after the start. Must not be before it.</td></tr>
+    <tr><td><code>title</code></td><td>no</td><td>Up to 200 characters. Left out, it becomes "<em>Firstname</em>'s meeting".</td></tr>
+    <tr><td><code>timezone</code></td><td>no</td><td>IANA name. Defaults to <code>Asia/Kolkata</code>.</td></tr>
+    <tr><td><code>waitingRoom</code></td><td>no</td><td><code>guests</code> (default), <code>everyone</code>, or <code>off</code>. See below.</td></tr>
+    <tr><td><code>allowGuests</code></td><td>no</td><td><code>true</code> by default. <code>false</code> admits only people with a TatvaOS account.</td></tr>
+    <tr><td><code>password</code></td><td>no</td><td>4–100 characters. Everyone joining must type it.</td></tr>
+  </table>
+  <h3>Choosing a waiting room</h3>
+  <table>
+    <tr><th>Setting</th><th>Who waits to be let in</th><th>Good for</th></tr>
+    <tr><td><code>guests</code></td><td>Anyone without a TatvaOS account.</td><td>The default. Students who have accounts walk straight in.</td></tr>
+    <tr><td><code>everyone</code></td><td>Everyone, including colleagues.</td><td>Vivas, interviews, one-to-ones.</td></tr>
+    <tr><td><code>off</code></td><td>Nobody.</td><td>A large class where admitting forty people one by one is not realistic.</td></tr>
+  </table>
+
+  <h2 id="calendar">The calendar</h2>
+  <p>A scheduled meeting is put on the host teacher's own TatvaOS calendar as part of creating it, with the join link on the entry. There is nothing extra to call.</p>
+  <ul class="tight">
+    <li>Rescheduling <strong>moves</strong> the entry — it is never duplicated.</li>
+    <li>Cancelling <strong>removes</strong> it, so a cancelled class does not sit on anybody's Monday.</li>
+    <li><code>onCalendar</code> in the response tells you it happened.</li>
+  </ul>
+  <p>To put the class on <em>students'</em> calendars as well, invite them from Connect — that sends each person a proper calendar invitation by email. Inviting from this API is not in this version; see <a href="#notyet">what is not in this version</a>.</p>
+
+  <h2 id="join">Joining</h2>
+  <p>The join link is the meeting link, and you already have it from <code>joinUrl</code>. What the join call adds is the answer to <em>"will this student be recognised?"</em> — so your software can tell them what to expect before the class rather than after.</p>
+<pre><code>POST https://core.tatvaos.com/api/v1/org/meetings/6f1b.../join
+Authorization: Bearer tvk_...
+Content-Type: application/json
+
+{ "email": "asha.rao@yourschool.edu" }</code></pre>
+<pre><code>{
+  "joinUrl":         "https://connect.tatvaos.com/connect/room/zQ6rH...",
+  "meetingId":       "6f1b...",
+  "title":           "Physics — Class 10B",
+  "startsAt":        "2026-09-21T03:30:00+00:00",
+  "recognised":      true,
+  "willWaitInLobby": false,
+  "needsPassword":   false,
+  "guidance":        "Open the link and sign in to TatvaOS to join."
+}</code></pre>
+  <table>
+    <tr><th>Field</th><th>What to do with it</th></tr>
+    <tr><td><code>recognised</code></td><td><code>true</code> when that address is a person in your organisation. They sign in and join as themselves.</td></tr>
+    <tr><td><code>willWaitInLobby</code></td><td><code>true</code> when they will wait for the teacher to let them in. Say so on your Join button.</td></tr>
+    <tr><td><code>needsPassword</code></td><td>The meeting has a password. Show it, or tell them to expect one.</td></tr>
+    <tr><td><code>guidance</code></td><td>A ready-made sentence for the four combinations, if you would rather not write your own.</td></tr>
+  </table>
+  <p><code>email</code> is optional. Without it you still get the link, and <code>recognised</code> is <code>false</code>.</p>
+  <div class="card">
+    <p style="margin:0"><strong>Students who have TatvaOS accounts have the better experience.</strong> They join under their real name, skip the waiting room, and the teacher sees who is present. Adding students through the <a href="/docs/people-api-guide.html">People API</a> is what makes that true.</p>
+  </div>
+
+  <h2 id="list">The timetable</h2>
+  <p>What is on, for the whole organisation or for one teacher.</p>
+<pre><code>GET /api/v1/org/meetings
+GET /api/v1/org/meetings?hostEmail=r.iyer@yourschool.edu
+GET /api/v1/org/meetings?from=2026-09-21T00:00:00Z&amp;to=2026-09-28T00:00:00Z</code></pre>
+  <table>
+    <tr><th>Parameter</th><th>Default</th><th>What it does</th></tr>
+    <tr><td><code>from</code></td><td>12 hours ago</td><td>Earliest start time to include.</td></tr>
+    <tr><td><code>to</code></td><td>30 days after <code>from</code></td><td>Latest start time to include.</td></tr>
+    <tr><td><code>hostEmail</code></td><td>everyone</td><td>One teacher's classes. An address you do not have returns an empty list, not an error.</td></tr>
+  </table>
+  <p>Cancelled meetings are never listed. At most 500 come back in one response, so ask for a narrower window rather than a bigger page.</p>
+
+  <h2 id="change">Changing and cancelling</h2>
+  <p><strong>Cancelling</strong> needs <code>meetings:schedule</code>:</p>
+<pre><code>DELETE /api/v1/org/meetings/6f1b...
+Authorization: Bearer tvk_...
+
+→ 204 No Content</code></pre>
+  <p>It is safe to call twice: a meeting that is already cancelled answers <code>204</code> again. A meeting that is <em>running</em> answers <code>409</code> — ending a live class is a different act with different consequences for the people in it, and it is done from Connect.</p>
+  <p><strong>Rescheduling</strong> is not on this API in this version. To move a class, cancel it and schedule the new time — or have the teacher change it in Connect, which moves the calendar entry for them. Sending a new <code>startsAt</code> without a matching <code>endsAt</code> is the one mistake worth naming: if the new start falls after the old end, the change is refused with <em>"The meeting cannot end before it starts."</em></p>
+
+  <h2 id="responses">Responses</h2>
+  <table>
+    <tr><th>Code</th><th>Means</th><th>What to do</th></tr>
+    <tr><td><code>200</code> / <code>201</code></td><td>Done.</td><td>—</td></tr>
+    <tr><td><code>204</code></td><td>Cancelled.</td><td>—</td></tr>
+    <tr><td><code>400</code></td><td>Something in the request was wrong.</td><td>Read <code>error</code>; it is a sentence. Do not retry unchanged.</td></tr>
+    <tr><td><code>401</code></td><td>The key is missing, wrong or revoked.</td><td>Check the header. A revoked key and an unknown key answer alike.</td></tr>
+    <tr><td><code>403</code></td><td>The key is real but lacks the permission.</td><td>Tick the right box on a new key.</td></tr>
+    <tr><td><code>404</code></td><td>No such meeting in this organisation.</td><td>Check the id.</td></tr>
+    <tr><td><code>409</code></td><td>The meeting is over, or running.</td><td>Nothing to do.</td></tr>
+    <tr><td><code>429</code></td><td>Too many requests.</td><td>Back off and retry — see below.</td></tr>
+    <tr><td><code>503</code></td><td>Meetings are not switched on for this server.</td><td>Ask your administrator.</td></tr>
+  </table>
+  <p>Every failure body is <code>{ "error": "a sentence" }</code>. The sentence is meant to be shown to whoever is using your software.</p>
+  <h3>Retries</h3>
+  <p>Retry <code>429</code> and <code>5xx</code> with a growing wait — one second, then two, then four, a few times. Never retry <code>400</code>, <code>401</code>, <code>403</code> or <code>409</code>: the answer will not change.</p>
+
+  <h2 id="examples">Code examples</h2>
+  <p>In each of these, the key comes from the environment. It is never in the source.</p>
+
+  <h3>curl</h3>
+<pre><code>curl -sS -X POST https://core.tatvaos.com/api/v1/org/meetings \
+  -H "Authorization: Bearer $TATVAOS_MEETINGS_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{
+        "hostEmail": "r.iyer@yourschool.edu",
+        "title":     "Physics — Class 10B",
+        "startsAt":  "2026-09-21T09:00:00+05:30",
+        "endsAt":    "2026-09-21T10:00:00+05:30"
+      }'</code></pre>
+
+  <h3>Node.js (18+, built-in fetch)</h3>
+<pre><code>const BASE = 'https://core.tatvaos.com/api/v1/org/meetings';
+
+async function call(path, init = {}) {
+  const r = await fetch(BASE + path, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${process.env.TATVAOS_MEETINGS_KEY}`,
+      'Content-Type': 'application/json',
+      ...init.headers,
+    },
+  });
+  if (r.status === 204) return null;
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`);
+  return body;
+}
+
+// A teacher schedules a class.
+const meeting = await call('', {
+  method: 'POST',
+  body: JSON.stringify({
+    hostEmail: 'r.iyer@yourschool.edu',
+    title:     'Physics — Class 10B',
+    startsAt:  '2026-09-21T09:00:00+05:30',
+    endsAt:    '2026-09-21T10:00:00+05:30',
+  }),
+});
+
+// A student opens their timetable.
+const link = await call(`/${meeting.id}/join`, {
+  method: 'POST',
+  body: JSON.stringify({ email: 'asha.rao@yourschool.edu' }),
+});
+console.log(link.joinUrl, link.guidance);</code></pre>
+
+  <h3>Python (requests)</h3>
+<pre><code>import os, requests
+
+BASE = "https://core.tatvaos.com/api/v1/org/meetings"
+HEAD = {"Authorization": f"Bearer {os.environ['TATVAOS_MEETINGS_KEY']}"}
+
+def check(r):
+    if r.status_code == 204:
+        return None
+    body = r.json() if r.content else {}
+    if not r.ok:
+        raise RuntimeError(body.get("error", f"HTTP {r.status_code}"))
+    return body
+
+meeting = check(requests.post(BASE, headers=HEAD, json={
+    "hostEmail": "r.iyer@yourschool.edu",
+    "title":     "Physics — Class 10B",
+    "startsAt":  "2026-09-21T09:00:00+05:30",
+    "endsAt":    "2026-09-21T10:00:00+05:30",
+}))
+
+link = check(requests.post(f"{BASE}/{meeting['id']}/join",
+                           headers=HEAD, json={"email": "asha.rao@yourschool.edu"}))
+print(link["joinUrl"], link["guidance"])</code></pre>
+
+  <h3>A week's timetable, end to end</h3>
+  <p>The shape most ERPs need: publish next week's classes, then show each student their own list.</p>
+<pre><code># Staff side — a key with meetings:schedule
+for row in timetable_for_next_week():          # your data
+    try:
+        m = check(requests.post(BASE, headers=STAFF, json={
+            "hostEmail": row.teacher_email,
+            "title":     f"{row.subject} — {row.class_name}",
+            "startsAt":  row.starts_at.isoformat(),
+            "endsAt":    row.ends_at.isoformat(),
+            "waitingRoom": "off",              # a class of forty
+        }))
+        row.save_meeting_id(m["id"])           # keep it; you need it to cancel
+    except RuntimeError as e:
+        log.warning("could not schedule %s: %s", row, e)
+
+# Student side — a DIFFERENT key, meetings:join only
+for row in classes_for(student):
+    link = check(requests.post(f"{BASE}/{row.meeting_id}/join",
+                               headers=STUDENT, json={"email": student.email}))
+    show_join_button(row, link["joinUrl"], note=link["guidance"])</code></pre>
+
+  <h2 id="limits">What a key cannot do</h2>
+  <p>Deliberate limits. None of these are oversights, and none can be unlocked by ticking something.</p>
+  <ul class="tight">
+    <li><strong>It cannot host a meeting itself.</strong> Every meeting belongs to a named person, so a teacher can always edit their own class in TatvaOS.</li>
+    <li><strong>It cannot end a meeting that is running.</strong> A batch job must not be able to hang up on a class in progress.</li>
+    <li><strong>It cannot add people.</strong> That is the People API, and a separate key.</li>
+    <li><strong>It cannot make a meeting private or recorded.</strong> Whether a meeting can be recorded is chosen once, when it is created, and can never change afterwards — so it is not something an API caller sets.</li>
+    <li><strong>It cannot read what happened in a meeting.</strong> No recordings, no captions, no minutes, no chat.</li>
+    <li><strong>It cannot see another organisation.</strong> A key names exactly one, and that boundary is enforced by the database, not by the code that answers you.</li>
+  </ul>
+
+  <h2 id="security">Security checklist</h2>
+  <ul class="tight">
+    <li><span class="ok">Two keys.</span> Schedule on the staff side, join on the student side. Never one key for both.</li>
+    <li><span class="ok">Out of source control.</span> An environment variable or a secret store, never a commit.</li>
+    <li><span class="ok">Server-side only.</span> A key in a browser, a mobile app or a student portal's front end is a key anybody can read and reuse.</li>
+    <li><span class="ok">One key per program.</span> Named for what it does, so revoking one never takes down another.</li>
+    <li><span class="ok">Watch "Last used".</span> The console shows it. A key nobody uses is a key to revoke.</li>
+    <li><span class="warnc">Revoke immediately</span> if a key is ever pasted into a ticket, a log or a chat. Revoking is instant and creating a replacement takes a moment.</li>
+    <li><span class="ok">Do not log the key.</span> It appears nowhere in TatvaOS's own logs, and should appear nowhere in yours.</li>
+  </ul>
+
+  <h2 id="notyet">What is not in this version</h2>
+  <p>Named so you can plan around them rather than discover them.</p>
+  <ul class="tight">
+    <li><strong>Rescheduling.</strong> Cancel and re-create, or change it in Connect.</li>
+    <li><strong>Inviting students by email from the API.</strong> The calendar entry is created for the host only; emailed invitations are sent from Connect.</li>
+    <li><strong>Per-student join tokens.</strong> The join link is the meeting link, so anyone holding it can open the door — the waiting room and the meeting password are what control who gets in. If you need attendance to be attributable, give your students TatvaOS accounts and set <code>waitingRoom</code> to <code>guests</code>, so only named people walk straight in.</li>
+    <li><strong>Attendance reporting.</strong> Who joined and for how long is not on this API.</li>
+    <li><strong>Recurring meetings.</strong> Create each occurrence.</li>
+    <li><strong>Webhooks.</strong> Nothing is pushed to you; ask for the timetable when you need it.</li>
+  </ul>
+  <p>If one of these is blocking you, say so — the list is what has not been asked for yet, not what has been ruled out.</p>
+
+  <footer>
+    <p>TatvaOS Meetings API · Organisation API v1 · 18 September 2026.<br>
+    See also the <a href="/docs/people-api-guide.html">People API guide</a>, the <a href="/docs/mail-api-guide.html">Mail API guide</a> and the <a href="/docs/sso-integration-guide.html">SSO integration guide</a>.</p>
+  </footer>
+</main>
+</body>
+</html>
