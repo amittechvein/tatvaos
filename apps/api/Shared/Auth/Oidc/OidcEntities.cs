@@ -84,6 +84,14 @@ public sealed class OidcApplication : OpenIddictEntityFrameworkCoreApplication<G
     /// hotlinked from the application's server - see the migration for why.
     /// LogoContentType is the only type it is ever served as.
     /// </summary>
+    /// <summary>
+    /// When this application last exchanged a code or a refresh token.
+    /// WRITTEN AT MOST ONCE AN HOUR (OidcEndpoints.StampLastUsedAsync): it is
+    /// a row update on every sign-in otherwise, and nobody asks this question
+    /// to the second.
+    /// </summary>
+    public DateTimeOffset? LastUsedAt { get; set; }
+
     public byte[]? LogoBytes { get; set; }
     public string? LogoContentType { get; set; }
     public DateTimeOffset? LogoUpdatedAt { get; set; }

@@ -622,6 +622,48 @@ h=$(curl -s -o /dev/null -w '%{http_code}' "$API$LOGO")
 n=$(PG "SELECT count(*) FROM core.audit_logs WHERE action='oidc.application_logo_changed' AND target_id='$APP_B'")
 [ "${n:-0}" -ge 1 ] && pass "the logo change is in the audit log" || fail "no audit row for the logo"
 
+# ===========================================================================
+step "15. Last used: written once, then not again for an hour"
+# A fresh application so nothing else has stamped it.
+register_app "$OWNER_TOKEN" "Last used $RUN" || exit 1
+APP_D=$APP_ID; CID_D=$CLIENT_ID; SEC_D=$CLIENT_SECRET
+[ "$(PG "SELECT last_used_at IS NULL FROM core.oidc_applications WHERE id='$APP_D'")" = "t" ] && pass "a new application has never been used" || fail "last_used_at was set at registration"
+
+exchange_once() {
+    pkce; local v=$VERIFIER
+    local url; url=$(authorize_url "$CID_D" "$RP" "lu$1$RUN" "n$1$RUN" "$CHALLENGE")
+    authorize "$JAR_A" "$url"; [[ "$LOCATION" == */oauth/consent?* ]] && authorize "$JAR_A" "$url" allow
+    local c; c=$(code_from "$LOCATION"); remember "$c"
+    local r; r=$(token -d grant_type=authorization_code -d "code=$c" -d "redirect_uri=$RP" -d "client_id=$CID_D" -d "client_secret=$SEC_D" -d "code_verifier=$v")
+    remember "$(jq_ "$(body "$r")" "d.get('access_token','')")"; remember "$(jq_ "$(body "$r")" "d.get('refresh_token','')")"; remember "$(jq_ "$(body "$r")" "d.get('id_token','')")"
+    status "$r"
+}
+
+[ "$(exchange_once a)" = "200" ] && pass "signed in through it" || fail "first exchange failed"
+FIRST=$(PG "SELECT last_used_at FROM core.oidc_applications WHERE id='$APP_D'")
+[ -n "$FIRST" ] && pass "the first use is stamped" || fail "last_used_at is still empty after a sign-in"
+
+# THE POINT OF THE HOUR: a second exchange must NOT write again. Without the
+# cutoff this is a row update on every sign-in, on a box that also carries
+# live meetings (CTO, 18 Sept).
+[ "$(exchange_once b)" = "200" ] && pass "signed in again" || fail "second exchange failed"
+SECOND=$(PG "SELECT last_used_at FROM core.oidc_applications WHERE id='$APP_D'")
+[ "$SECOND" = "$FIRST" ] && pass "the second sign-in did NOT write again - at most once an hour" || fail "last_used_at moved from '$FIRST' to '$SECOND'"
+
+# And once the stamp is older than an hour, the next use writes it.
+PG "UPDATE core.oidc_applications SET last_used_at = now() - interval '2 hours' WHERE id='$APP_D'" >/dev/null
+AGED=$(PG "SELECT last_used_at FROM core.oidc_applications WHERE id='$APP_D'")
+[ "$(exchange_once c)" = "200" ] && pass "signed in once more" || fail "third exchange failed"
+THIRD=$(PG "SELECT last_used_at FROM core.oidc_applications WHERE id='$APP_D'")
+[ "$THIRD" != "$AGED" ] && pass "a stamp older than an hour IS refreshed" || fail "last_used_at stayed at '$AGED'"
+
+# The console reports it, with who added it and the status.
+r=$(curl -s "$API/api/org/applications" -H "Authorization: Bearer $OWNER_TOKEN")
+[ "$(jq_ "$r" "[a for a in d if a['id']=='$APP_D'][0]['lastUsedAt'] is not None")" = "True" ] && pass "the console shows a last-used time" || fail "lastUsedAt missing: $(brief "$r")"
+[ "$(jq_ "$r" "[a for a in d if a['id']=='$APP_D'][0]['createdByName']")" = "Amit Dadhich" ] && pass "and who added it, by name" || fail "createdByName: $(brief "$r")"
+[ "$(jq_ "$r" "[a for a in d if a['id']=='$APP_D'][0]['status']")" = "active" ] && pass "and its status" || fail "status missing"
+[ "$(jq_ "$r" "[a for a in d if a['id']=='$APP_A'][0]['status']")" = "revoked" ] && pass "a revoked application reads as revoked" || fail "revoked status wrong"
+
 printf '\n%s%s%s\n  %s%d passed%s, ' "$CYAN" "----------------------------------------" "$RST" "$GREEN" "$PASSED" "$RST"
 [ "$FAILED" -eq 0 ] && printf '%s0 failed%s\n\n' "$GREEN" "$RST" || printf '%s%d failed%s\n\n' "$RED" "$FAILED" "$RST"
 [ "$FAILED" -eq 0 ]

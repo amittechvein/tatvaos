@@ -270,6 +270,8 @@ public static class OidcEndpoints
         // Fresh claims, same scopes and same authorization: the private
         // claims (scopes, authorization id, presenters) come across with the
         // restored principal; the person's claims are rewritten from the row.
+        await StampLastUsedAsync(db, request.ClientId, ct);
+
         var identity = new ClaimsIdentity(restored.Claims,
             TokenValidationParameters.DefaultAuthenticationType, Claims.Name, Claims.Role);
         SetPersonClaims(identity, user);
@@ -277,6 +279,38 @@ public static class OidcEndpoints
 
         return Results.SignIn(new ClaimsPrincipal(identity),
             authenticationScheme: OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
+    }
+
+    /// <summary>
+    /// "Last used", at most once an hour per application.
+    ///
+    /// THE WRITE IS THE COST, not the read. Without the hour, this is a row
+    /// update on every code exchange and every refresh — a write per sign-in
+    /// on a four-core box that also carries live meetings, which is the shape
+    /// mail.api_keys' last_used_at already has (CTO, 18 Sept 2026). The
+    /// question people actually ask is "has anything used this in the last
+    /// year", so an hour's resolution answers it exactly as well.
+    ///
+    /// Written outside the tenant's own SaveChanges on purpose: it is
+    /// bookkeeping about the application, not part of issuing the token, and
+    /// it must never be able to fail the exchange. A lost stamp costs an hour
+    /// of resolution on a column nobody reads to the second.
+    /// </summary>
+    private static async Task StampLastUsedAsync(AppDbContext db, string? clientId, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(clientId)) return;
+        try
+        {
+            var cutoff = DateTimeOffset.UtcNow.AddHours(-1);
+            await db.OidcApplications
+                .Where(a => a.ClientId == clientId && (a.LastUsedAt == null || a.LastUsedAt < cutoff))
+                .ExecuteUpdateAsync(s => s.SetProperty(a => a.LastUsedAt, DateTimeOffset.UtcNow), ct);
+        }
+        catch
+        {
+            // Deliberately swallowed: see the summary. Nothing a person is
+            // waiting for should fail because a usage stamp did.
+        }
     }
 
     // ==================================================================

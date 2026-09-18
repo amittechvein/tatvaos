@@ -81,12 +81,20 @@ public static class OidcApplicationEndpoints
             .OrderBy(a => a.CreatedAt)
             .ToListAsync(ct);
 
+        // Who registered each one, by name. One query for the set rather than
+        // one per row; a person since deleted simply has no name to show.
+        var creatorIds = apps.Where(a => a.CreatedBy != null).Select(a => a.CreatedBy!.Value).Distinct().ToList();
+        var creators = await db.Users.AsNoTracking()
+            .Where(u => creatorIds.Contains(u.Id))
+            .ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
+
         var list = new List<object>(apps.Count);
         foreach (var a in apps)
         {
             var uris = await manager.GetRedirectUrisAsync(a, ct);
             var permissions = await manager.GetPermissionsAsync(a, ct);
-            list.Add(Describe(a, uris, permissions));
+            list.Add(Describe(a, uris, permissions,
+                a.CreatedBy is { } who && creators.TryGetValue(who, out var name) ? name : null));
         }
         return Results.Ok(list);
     }
@@ -469,7 +477,8 @@ public static class OidcApplicationEndpoints
 
     // ------------------------------------------------------------------
     private static object Describe(OidcApplication a, IReadOnlyCollection<string> redirectUris,
-                                  IReadOnlyCollection<string> permissions) => new
+                                  IReadOnlyCollection<string> permissions,
+                                  string? createdByName = null) => new
     {
         a.Id,
         a.ClientId,
@@ -498,6 +507,10 @@ public static class OidcApplicationEndpoints
         secretPrefix = a.ClientSecretPrefix,
         a.CreatedAt,
         a.RevokedAt,
+        createdByName,
+        // Resolution of one hour, on purpose — see OidcEntities.LastUsedAt.
+        a.LastUsedAt,
+        status = a.RevokedAt is not null ? "revoked" : "active",
     };
 
     /// <summary>
