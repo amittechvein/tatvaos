@@ -30,10 +30,39 @@ interface AppRow {
   name: string;
   clientType: 'confidential' | 'public' | string;
   redirectUris: string[];
+  scopes: string[];
   allowedForEveryone: boolean;
   secretPrefix: string | null;
   createdAt: string;
   revokedAt: string | null;
+}
+
+/**
+ * What an application may receive, in the words an administrator chooses
+ * between. The same three the API offers (OidcApplicationEndpoints.Offerable);
+ * `openid` is not here because signing in is the point, not an extra.
+ *
+ * THESE TICKS ARE REAL. An unticked scope is never written as a permission
+ * and the provider refuses a request that asks for it, so unticking "work
+ * email address" genuinely stops the application receiving it.
+ *
+ * offline_access is off by default and is described by what it does. It is
+ * the most powerful of the three and must not read as the mildest (CTO,
+ * 18 Sept 2026).
+ */
+const OFFERABLE: { scope: string; label: string; hint: string; defaultOn: boolean }[] = [
+  { scope: 'profile', label: 'View their name', hint: 'The display name on their TatvaOS account.', defaultOn: true },
+  { scope: 'email', label: 'View their work email address', hint: 'Their address in your organisation.', defaultOn: true },
+  {
+    scope: 'offline_access',
+    label: 'Access their information when they are not using the application',
+    hint: 'The application can reach their name, email and organisation for up to fourteen days at a time while they are elsewhere. Only tick this if it genuinely needs to work in the background.',
+    defaultOn: false,
+  },
+];
+
+function scopeLabel(scope: string): string {
+  return OFFERABLE.find((o) => o.scope === scope)?.label ?? scope;
 }
 
 interface Fresh {
@@ -43,6 +72,8 @@ interface Fresh {
   name: string;
   clientType: string;
   redirectUris: string[];
+  /** A regenerated secret has no new URIs to show, only the secret itself. */
+  secretOnly?: boolean;
 }
 
 const SCOPES = 'openid profile email offline_access';
@@ -59,6 +90,7 @@ export default function ApplicationsPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [revoking, setRevoking] = useState<AppRow | null>(null);
+  const [regenerating, setRegenerating] = useState<AppRow | null>(null);
   const [fresh, setFresh] = useState<Fresh | null>(null);
   const [origin, setOrigin] = useState('https://core.tatvaos.com');
 
@@ -92,6 +124,19 @@ export default function ApplicationsPage() {
         : `"${a.name}" asks each person the first time again.`);
       await load();
     } catch (e) { setError((e as Error).message); }
+  };
+
+  const regenerate = async (a: AppRow) => {
+    setError(null);
+    try {
+      const r = await authedFetch(`/org/applications/${a.id}/secret`, { method: 'POST' });
+      const b = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(b?.error ?? 'Could not make a new secret.');
+      setRegenerating(null);
+      setNotice(null);
+      setFresh({ ...b, name: a.name, clientType: a.clientType, redirectUris: a.redirectUris, secretOnly: true });
+      await load();
+    } catch (e) { setError((e as Error).message); setRegenerating(null); }
   };
 
   const revoke = async (a: AppRow) => {
@@ -150,15 +195,31 @@ export default function ApplicationsPage() {
             action={<Button variant="primary" onClick={() => setCreating(true)}>New application</Button>}
           />
         ) : (
-          <Table head={['Application', 'Client id', 'Type', 'Returns to', 'Asks people', 'Since', '']}>
+          <Table head={['Application', 'Client id', 'Can receive', 'Secret', 'Returns to', 'Asks people', 'Since', '']}>
             {live.map((a) => (
               <tr key={a.id}>
                 <Td><span className="font-semibold">{a.name}</span></Td>
                 <Td><code className="text-[0.75rem]">{a.clientId}</code></Td>
                 <Td>
-                  {a.clientType === 'confidential'
-                    ? <span title={a.secretPrefix ? `secret ${a.secretPrefix}` : undefined}>Server</span>
-                    : 'Phone or browser'}
+                  <ul className="m-0 list-none p-0 text-[0.75rem]">
+                    <li>Sign them in</li>
+                    {a.scopes.filter((s) => s !== 'openid').map((s) => <li key={s}>{scopeLabel(s)}</li>)}
+                  </ul>
+                </Td>
+                {/* Dots, never the value, and no Copy button: the secret is
+                    hashed on the row and cannot be read back by anyone,
+                    including us. A Copy button here would be a promise we
+                    could only keep by storing it in a recoverable form
+                    (CTO, 18 Sept 2026). */}
+                <Td>
+                  {a.clientType === 'confidential' ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[0.75rem] tracking-widest text-ink-muted" aria-label="hidden">•••••••••</span>
+                      <Button variant="ghost" onClick={() => setRegenerating(a)}>New secret</Button>
+                    </div>
+                  ) : (
+                    <span className="text-[0.75rem] text-ink-muted">None — uses PKCE</span>
+                  )}
                 </Td>
                 <Td>
                   <span className="text-[0.75rem]">{a.redirectUris.map((u) => hostOf(u)).join(', ')}</span>
@@ -214,6 +275,33 @@ export default function ApplicationsPage() {
         />
       )}
 
+      {regenerating && (
+        <Modal
+          title={`Make a new secret for "${regenerating.name}"?`}
+          onClose={() => setRegenerating(null)}
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setRegenerating(null)}>Keep the current secret</Button>
+              <Button variant="primary" onClick={() => void regenerate(regenerating)}>
+                Make a new secret
+              </Button>
+            </>
+          }
+        >
+          <p className="mb-2">
+            <strong>{regenerating.name} will stop working the moment you do this</strong>, and nobody
+            will be able to sign in to it until someone puts the new secret into its configuration.
+          </p>
+          <p className="mb-2">
+            Do this if the secret has been seen by someone who should not have it, or if it has been
+            lost. Have whoever looks after {regenerating.name} ready to paste the new one.
+          </p>
+          <p className="text-[0.75rem] text-ink-muted mb-0">
+            The new secret is shown once, here, and cannot be shown again.
+          </p>
+        </Modal>
+      )}
+
       {revoking && (
         <Modal
           title={`Revoke "${revoking.name}"?`}
@@ -265,7 +353,9 @@ function FreshCard({ fresh, origin, onDismiss }: { fresh: Fresh; origin: string;
     <Card className="mb-4 border-ok">
       <div className="flex items-start justify-between gap-4 mb-2">
         <div>
-          <div className="font-semibold">&quot;{fresh.name}&quot; is registered</div>
+          <div className="font-semibold">
+            {fresh.secretOnly ? <>A new secret for &quot;{fresh.name}&quot;</> : <>&quot;{fresh.name}&quot; is registered</>}
+          </div>
           {fresh.clientSecret ? (
             <div className="text-[0.75rem] text-danger font-semibold">
               The client secret is shown this once. Put it in the application&apos;s own
@@ -279,6 +369,13 @@ function FreshCard({ fresh, origin, onDismiss }: { fresh: Fresh; origin: string;
         </div>
         <IconButton label="Dismiss" className="h-8 w-8 border-0 bg-transparent" onClick={onDismiss}>✕</IconButton>
       </div>
+
+      {fresh.secretOnly && (
+        <p className="mb-3 text-[0.8125rem] text-danger">
+          The previous secret stopped working just now. {fresh.name} cannot sign anyone in until this
+          one is in its configuration.
+        </p>
+      )}
 
       <div className="text-[0.75rem] text-ink-muted mb-1">Client id</div>
       <div className="flex items-stretch mb-3">
@@ -368,6 +465,7 @@ function CreateDialog({ onClose, onCreated, onError }: {
   const [name, setName] = useState('');
   const [uris, setUris] = useState('');
   const [confidential, setConfidential] = useState(true);
+  const [scopes, setScopes] = useState<string[]>(OFFERABLE.filter((o) => o.defaultOn).map((o) => o.scope));
   const [busy, setBusy] = useState(false);
 
   const redirectUris = uris.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
@@ -378,7 +476,7 @@ function CreateDialog({ onClose, onCreated, onError }: {
     try {
       const r = await authedFetch('/org/applications', {
         method: 'POST',
-        body: JSON.stringify({ name: name.trim(), redirectUris, confidential }),
+        body: JSON.stringify({ name: name.trim(), redirectUris, confidential, scopes }),
       });
       const b = await r.json().catch(() => null);
       if (!r.ok) throw new Error(b?.error ?? 'Could not register the application.');
@@ -417,6 +515,23 @@ function CreateDialog({ onClose, onCreated, onError }: {
         checked={confidential}
         onChange={(e) => setConfidential(e.target.checked)}
       />
+
+      <div className="mt-4 rounded-lg border border-line bg-canvas p-3">
+        <p className="mb-1 text-sm font-semibold text-ink">What may this application receive?</p>
+        <p className="mb-3 text-[0.75rem] text-ink-muted">
+          Give it the least it needs. Anything unticked is refused, even if the application asks for it.
+        </p>
+        <p className="mb-2 text-[0.8125rem] text-ink">Sign them in <span className="text-ink-muted">— always</span></p>
+        {OFFERABLE.map((o) => (
+          <Checkbox
+            key={o.scope}
+            label={o.label}
+            hint={o.hint}
+            checked={scopes.includes(o.scope)}
+            onChange={(e) => setScopes((cur) => (e.target.checked ? [...cur, o.scope] : cur.filter((s) => s !== o.scope)))}
+          />
+        ))}
+      </div>
     </Modal>
   );
 }

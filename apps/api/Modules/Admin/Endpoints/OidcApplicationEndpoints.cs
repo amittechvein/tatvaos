@@ -35,11 +35,36 @@ public static class OidcApplicationEndpoints
         g.MapPost("/", CreateAsync);
         g.MapPost("/{id:guid}/consent", SetConsentAsync);
         g.MapPost("/{id:guid}/revoke", RevokeAsync);
+        g.MapPost("/{id:guid}/secret", RegenerateSecretAsync);
     }
 
-    // The four scopes v1 offers, and nothing else (0004). offline_access is
-    // granted through the refresh-token grant permission, openid needs no
-    // permission of its own.
+    // ------------------------------------------------------------------
+    //  WHAT AN APPLICATION MAY RECEIVE — the four scopes of v1 (0004), and
+    //  the words an administrator chooses between. Scope names mean nothing
+    //  to a school administrator; these labels are what the registration
+    //  screen shows, and the consent screen a person reads uses the matching
+    //  sentences in OidcEndpoints.ReceivesInWords.
+    //
+    //  THESE TICKS ARE REAL, which is the only reason they are ticks and not
+    //  a list (CTO, 18 Sept 2026: "a person who unticks a box and sees no
+    //  effect has been lied to by the interface"). An unticked scope is not
+    //  written as a permission, and OpenIddict refuses a request that asks
+    //  for it — permission enforcement is on, and Program.cs calls no
+    //  IgnoreScopePermissions. Step 13 of tests/oidc/stage3-flow.sh asks for
+    //  an unticked scope and expects the refusal.
+    //
+    //  offline_access is OFF by default and is NOT "keeps you signed in".
+    //  It hands the application a refresh token: it can reach the person's
+    //  information for fourteen days at a time, while they are elsewhere and
+    //  not using it. It is the most powerful item in the list, so it must not
+    //  read as the mildest (CTO, 18 Sept 2026).
+    // ------------------------------------------------------------------
+    public static readonly (string Scope, string Label, bool DefaultOn)[] Offerable =
+    [
+        ("profile", "View their name", true),
+        ("email", "View their work email address", true),
+        ("offline_access", "Access their information when they are not using the application", false),
+    ];
     private static readonly string[] Scopes = ["profile", "email"];
 
     // ------------------------------------------------------------------
@@ -57,7 +82,8 @@ public static class OidcApplicationEndpoints
         foreach (var a in apps)
         {
             var uris = await manager.GetRedirectUrisAsync(a, ct);
-            list.Add(Describe(a, uris));
+            var permissions = await manager.GetPermissionsAsync(a, ct);
+            list.Add(Describe(a, uris, permissions));
         }
         return Results.Ok(list);
     }
@@ -71,6 +97,16 @@ public static class OidcApplicationEndpoints
         var name = req.Name?.Trim() ?? "";
         if (name.Length is < 2 or > 100)
             return Results.BadRequest(new { error = "Give the application a name of 2 to 100 characters." });
+
+        // Which of the offerable scopes the administrator ticked. Absent
+        // means the defaults, so an older caller keeps working; an unknown
+        // name is refused rather than ignored, because silently dropping a
+        // scope an admin asked for is the same lie as a decorative tick.
+        var chosen = (req.Scopes ?? Offerable.Where(o => o.DefaultOn).Select(o => o.Scope).ToArray())
+            .Select(s => s.Trim()).Where(s => s.Length > 0).Distinct().ToArray();
+        foreach (var s in chosen)
+            if (!Offerable.Any(o => o.Scope == s))
+                return Results.BadRequest(new { error = $"'{s}' is not something an application can be given. Choose from: {string.Join(", ", Offerable.Select(o => o.Scope))}." });
 
         var uris = new List<Uri>();
         foreach (var raw in req.RedirectUris ?? [])
@@ -107,10 +143,13 @@ public static class OidcApplicationEndpoints
             Permissions.Endpoints.Revocation,
             Permissions.Endpoints.Introspection,
             Permissions.GrantTypes.AuthorizationCode,
-            Permissions.GrantTypes.RefreshToken,
             Permissions.ResponseTypes.Code,
         ]);
-        foreach (var s in Scopes) descriptor.Permissions.Add(Permissions.Prefixes.Scope + s);
+        // Only what was ticked. The refresh-token grant rides with
+        // offline_access: without the scope there is nothing to refresh, and
+        // leaving the grant on would let a client ask for one anyway.
+        foreach (var s in chosen) descriptor.Permissions.Add(Permissions.Prefixes.Scope + s);
+        if (chosen.Contains("offline_access")) descriptor.Permissions.Add(Permissions.GrantTypes.RefreshToken);
         // PKCE S256 for every client, confidential ones included (0004).
         descriptor.Requirements.Add(Requirements.Features.ProofKeyForCodeExchange);
 
@@ -137,7 +176,7 @@ public static class OidcApplicationEndpoints
         await manager.CreateAsync(entity, secret, ct);
 
         await audit.WriteAsync("oidc.application_created", "oidc_application", entity.Id.ToString(),
-            after: new { clientId, name, confidential = req.Confidential, redirectUris = uris.Select(u => u.ToString()) },
+            after: new { clientId, name, confidential = req.Confidential, scopes = chosen, redirectUris = uris.Select(u => u.ToString()) },
             ct: ct);
 
         return Results.Created($"/api/org/applications/{entity.Id}", new
@@ -150,6 +189,7 @@ public static class OidcApplicationEndpoints
             secretPrefix = entity.ClientSecretPrefix,
             name,
             clientType = req.Confidential ? "confidential" : "public",
+            scopes = chosen,
             redirectUris = uris.Select(u => u.ToString()),
             note = secret is null
                 ? "A public application has no secret. It proves itself with PKCE on every sign-in."
@@ -233,13 +273,63 @@ public static class OidcApplicationEndpoints
     }
 
     // ------------------------------------------------------------------
-    private static object Describe(OidcApplication a, IReadOnlyCollection<string> redirectUris) => new
+    /// <summary>
+    /// A new client secret, shown once, replacing the old one.
+    ///
+    /// THE OLD SECRET STOPS WORKING THE INSTANT THIS COMMITS, and that is an
+    /// outage for the customer's integration until someone updates it at the
+    /// other end (CTO, 18 Sept 2026). The console says so plainly before the
+    /// button is pressed. An overlap — two live secrets for a window, so an
+    /// integration can be moved across without downtime — is the better
+    /// answer and is the next piece of work on this endpoint; until it
+    /// exists, the warning is what stands between an admin and an outage.
+    ///
+    /// Not offered for a public application: it has no secret to replace.
+    /// </summary>
+    private static async Task<IResult> RegenerateSecretAsync(
+        Guid id, AppDbContext db, OpenIddictApplicationManager<OidcApplication> manager,
+        AuditWriter audit, CancellationToken ct)
+    {
+        var app = await db.OidcApplications.FirstOrDefaultAsync(a => a.Id == id, ct);
+        if (app is null) return Results.NotFound();
+        if (app.RevokedAt is not null)
+            return Results.BadRequest(new { error = "This application is revoked. Register it again instead." });
+        if (app.ClientType != ClientTypes.Confidential)
+            return Results.BadRequest(new { error = "A phone or browser application has no secret. It proves itself with PKCE on every sign-in." });
+
+        var secret = "toss_" + RandomToken(32);
+        app.ClientSecretPrefix = secret[..10] + "…";
+        // The manager hashes it and clears the old one in the same write.
+        await manager.UpdateAsync(app, secret, ct);
+
+        await audit.WriteAsync("oidc.application_secret_regenerated", "oidc_application", id.ToString(),
+            after: new { app.ClientId, secretPrefix = app.ClientSecretPrefix }, ct: ct);
+
+        return Results.Ok(new
+        {
+            app.Id,
+            app.ClientId,
+            clientSecret = secret,
+            secretPrefix = app.ClientSecretPrefix,
+            note = "This secret is shown once. The previous secret stopped working just now, so the application "
+                 + "cannot sign anyone in until this one is in its configuration.",
+        });
+    }
+
+    // ------------------------------------------------------------------
+    private static object Describe(OidcApplication a, IReadOnlyCollection<string> redirectUris,
+                                  IReadOnlyCollection<string> permissions) => new
     {
         a.Id,
         a.ClientId,
         name = a.DisplayName,
         clientType = a.ClientType,
         redirectUris,
+        // What it may receive, as scope names for the screen to label.
+        scopes = permissions
+            .Where(p => p.StartsWith(Permissions.Prefixes.Scope, StringComparison.Ordinal))
+            .Select(p => p[Permissions.Prefixes.Scope.Length..])
+            .ToArray(),
         a.AllowedForEveryone,
         secretPrefix = a.ClientSecretPrefix,
         a.CreatedAt,
@@ -271,5 +361,5 @@ public static class OidcApplicationEndpoints
             .TrimEnd('=').Replace('+', '-').Replace('/', '_');
 }
 
-public sealed record CreateApplicationRequest(string? Name, string[]? RedirectUris, bool Confidential = true);
+public sealed record CreateApplicationRequest(string? Name, string[]? RedirectUris, bool Confidential = true, string[]? Scopes = null);
 public sealed record SetApplicationConsentRequest(bool AllowedForEveryone);

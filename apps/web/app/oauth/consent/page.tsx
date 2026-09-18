@@ -143,7 +143,11 @@ export default function OAuthConsentPage() {
               {details.name} will receive
             </p>
             <ul className="mt-2 space-y-2 text-sm text-ink">
-              {[...details.receives, ...(details.staysSignedIn ? ['permission to keep you signed in without asking again'] : [])].map((item) => (
+              {/* Exactly what the API said, in its order. The offline_access
+                  sentence lives in OidcEndpoints.ReceivesInWords with the
+                  others, so this screen and the account page can never word
+                  the same grant differently (house rule 10). */}
+              {details.receives.map((item) => (
                 <li key={item} className="flex items-start gap-2">
                   <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-brand-100 text-brand-700"
                         aria-hidden="true">
