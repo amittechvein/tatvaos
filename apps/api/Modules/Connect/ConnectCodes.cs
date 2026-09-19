@@ -100,6 +100,41 @@ public static partial class ConnectCodes
     /// "Ravi", and a display name is not an identity.</summary>
     public static string IdentityForGuest(Guid participantId) => $"guest:{participantId}";
 
+    /// <summary>Is this connected identity somebody with no account? The prefix is
+    /// minted here and nowhere else, so this is the one place that may read it.</summary>
+    public static bool IsGuest(string? identity) =>
+        identity is not null && identity.StartsWith("guest:", StringComparison.Ordinal);
+
+    public const string MuteAllGuests = "guests";
+    public const string MuteAllEveryone = "everyone";
+
+    /// <summary>
+    /// Who a host's "mute all" reaches. Amit, 19 Sept 2026, hours before a
+    /// 300-person meeting: "give mute all button in meeting only guest".
+    ///
+    ///   guests    every connection with no account behind it
+    ///   everyone  guests AND colleagues - but never the people running the
+    ///             meeting. `spared` is the PERSON identity of the host, every
+    ///             cohost and whoever pressed the button: a host who silences
+    ///             the speaker along with the room has made the problem worse.
+    ///
+    /// A guest can never be in `spared` - only a signed-in person can hold a
+    /// role - so 'guests' does not consult it. Compared by PersonOf, so a
+    /// cohost is spared on every device they joined from.
+    /// </summary>
+    public static IReadOnlyList<string> MuteAllTargets(
+        IEnumerable<string?> connected, string who, IReadOnlySet<string> spared)
+    {
+        var targets = new List<string>();
+        foreach (var identity in connected)
+        {
+            if (string.IsNullOrEmpty(identity)) continue;
+            if (IsGuest(identity)) { targets.Add(identity); continue; }
+            if (who == MuteAllEveryone && !spared.Contains(PersonOf(identity))) targets.Add(identity);
+        }
+        return targets;
+    }
+
     /// <summary>The LiveKit room name. Never shown to a person, never in a URL.</summary>
     public static string RoomName(Guid meetingId) => $"m-{meetingId}";
 }
