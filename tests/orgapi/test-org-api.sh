@@ -38,8 +38,11 @@
 #      cancel and still joinable, an ended one is 409 to join, times come
 #      back in UTC, the 31st request in a minute is 429, a missing title
 #      becomes "<first name>'s meeting", a missing zone is Asia/Kolkata
-#      (CTO condition 3). The one claim NOT tested here is the 500-row cap
-#      on the timetable; it is one .Take(500) and the CTO has the line.
+#      (CTO condition 3)
+#  21. the timetable is paged: 505 classes inserted straight into the
+#      database, the first page is exactly 500 with a `next`, the second is
+#      the 5 with none, and the two pages are 505 DISTINCT classes (CTO,
+#      19 Sept: "a documented cap with no way past it is worse than no cap")
 #  20. a person made through the console has a calendar the moment they
 #      exist — where people are made, not where it was noticed (condition 2)
 #
@@ -65,6 +68,12 @@
 #    "and it is off the calendar". Note that "gone from the timetable"
 #    stayed green: the list reads connect.meetings, not the calendar, so it
 #    can never be evidence about calendar rows.
+#
+#  * PAGE BOUNDARY MADE INCLUSIVE (>= instead of > on the tiebreaker) ->
+#    exactly two assertions red: page two holds 6 not 5, and the union is
+#    "505 1" — the boundary class repeated. Nothing else moved. An offset
+#    instead of a keyset would fail the same two the moment a class is
+#    scheduled between two page requests.
 #
 # The first run of these steps also printed three FALSE greens: the meeting
 # had failed to be created, and `[ "" = "" ]` is true, so empty was being
@@ -488,6 +497,40 @@ step "20. A person has a calendar the moment they exist (CTO condition 2)"
 same "the person the people API admitted has a primary calendar" "$(PG "SELECT count(*) FROM calendar.calendars WHERE owner_user_id='$NEW_ID' AND is_primary AND deleted_at IS NULL")" "1"
 same "named as the migration's backfill names it, so a re-run adds nothing" "$(PG "SELECT name FROM calendar.calendars WHERE owner_user_id='$NEW_ID' AND is_primary")" "My calendar"
 same "in their own organisation" "$(PG "SELECT tenant_id::text FROM calendar.calendars WHERE owner_user_id='$NEW_ID' AND is_primary")" "$TECHVEIN"
+
+step "21. The timetable is paged, and page two is the rest"
+# Straight into the database, as the CTO suggested: 505 classes through the
+# API would take minutes and fight the limiter. Parked 400 days out so no
+# other step's window sees them; one second apart so the order is fixed.
+PG "INSERT INTO connect.meetings (tenant_id, code, title, kind, status, created_by_user_id, scheduled_start, scheduled_end, timezone)
+    SELECT '$TECHVEIN', 'bulk-$RUN-' || lpad(i::text, 4, '0'), 'Bulk $RUN ' || i, 'scheduled', 'scheduled', '$HOST_ID',
+           now() + interval '400 days' + (i || ' seconds')::interval,
+           now() + interval '400 days' + (i || ' seconds')::interval + interval '30 minutes', 'Asia/Kolkata'
+      FROM generate_series(1, 505) AS i" >/dev/null
+same "505 classes exist for the window" "$(PG "SELECT count(*) FROM connect.meetings WHERE code LIKE 'bulk-$RUN-%'")" "505"
+PFROM=$("$PY" -c "import datetime as d;print((d.datetime.now(d.timezone.utc)+d.timedelta(days=399)).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+PTO=$("$PY"   -c "import datetime as d;print((d.datetime.now(d.timezone.utc)+d.timedelta(days=401)).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+r=$(get_k "$API/api/v1/org/meetings?from=$PFROM&to=$PTO" "$SKEY")
+[ "$(status "$r")" = "200" ] && pass "page one answers (200)" || fail "page one: $(status "$r") $(brief "$(body "$r")")"
+same "and holds exactly 500 — the page size, not the total" "$(jq_ "$(body "$r")" "len(d['meetings'])")" "500"
+NEXT=$(jq_ "$(body "$r")" "d['next'] or ''")
+[ -n "$NEXT" ] && pass "with a \`next\` cursor, so the caller knows there is more" || fail "no next cursor on a full page"
+PAGE1=$(jq_ "$(body "$r")" "','.join(m['id'] for m in d['meetings'])")
+r=$(get_k "$API/api/v1/org/meetings?cursor=$NEXT" "$SKEY")
+[ "$(status "$r")" = "200" ] && pass "page two answers from the cursor alone" || fail "page two: $(status "$r") $(brief "$(body "$r")")"
+same "and holds the remaining 5" "$(jq_ "$(body "$r")" "len(d['meetings'])")" "5"
+same "with next = null: the last page says so" "$(jq_ "$(body "$r")" "'null' if d['next'] is None else 'not null'")" "null"
+PAGE2=$(jq_ "$(body "$r")" "','.join(m['id'] for m in d['meetings'])")
+# ── THE CLAIM THAT MATTERS: nothing skipped, nothing repeated ───────────────
+# 500 + 5 rows is easy to get with an offset that also duplicates the row at
+# the boundary or drops one. Distinct ids across both pages is what proves
+# the second page is the REST, not another page.
+same "the two pages are 505 DISTINCT classes — nothing skipped, nothing repeated" \
+    "$("$PY" -c "a='$PAGE1'.split(','); b='$PAGE2'.split(','); print(len(set(a)|set(b)), len(set(a)&set(b)))")" "505 0"
+[ "$(status "$(get_k "$API/api/v1/org/meetings?cursor=not-a-cursor" "$SKEY")")" = "400" ] \
+    && pass "a cursor this API did not issue is refused (400)" || fail "a forged cursor was accepted"
+PG "DELETE FROM connect.meetings WHERE code LIKE 'bulk-$RUN-%'" >/dev/null
+same "cleaned up" "$(PG "SELECT count(*) FROM connect.meetings WHERE code LIKE 'bulk-$RUN-%'")" "0"
 
 printf '\n%s%s%s\n  %s%d passed%s, ' "$CYAN" "----------------------------------------" "$RST" "$GREEN" "$PASSED" "$RST"
 [ "$FAILED" -eq 0 ] && printf '%s0 failed%s\n\n' "$GREEN" "$RST" || printf '%s%d failed%s\n\n' "$RED" "$FAILED" "$RST"

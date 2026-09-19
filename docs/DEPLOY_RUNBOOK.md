@@ -109,6 +109,15 @@ throughout. (8 Sept: seven silent minutes with the terminal's output lost.)
 
 ## 4. Afterwards
 
+> **The deploy deliberately trips a rate limiter.** `verify-live.sh` proves
+> the org-API limit holds through Caddy by sending 31 requests with spoofed
+> `X-Forwarded-For` and expecting the 31st to be refused (CTO, 19 Sept 2026).
+> So every deploy produces exactly one `429` on `/api/v1/org/people` from the
+> server's own address — twice, if the script is run again by hand. Harmless
+> today. The day anybody adds alerting on 429s, the deploy will set it off,
+> and the person on call will be chasing a check. Exclude the server's own
+> address from that alert, or expect one 429 per deploy.
+
 The deploy runs `verify-live.sh` itself and refuses to report success if it
 fails, so `production deployed` is a real verdict, not an inference.
 
