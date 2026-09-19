@@ -197,13 +197,29 @@ export default function ConnectHome() {
               <Table head={['Meeting', 'When', 'Code', 'Status', '']}>
                 {rest.map((m) => (
                   <tr key={m.id}>
-                    <Td>
+                    {/* THE TITLE CELL TAKES WHAT IS LEFT, AND NO MORE. .cx-name is
+                        built to end in an ellipsis (nowrap + max-width:100%),
+                        but in a table cell 100% of an auto-sized cell is
+                        "as wide as I like", so it never truncated: a long
+                        title made the whole table wider than its card
+                        (19 Sept 2026, 795px in a 763px card). w-full + max-w-0
+                        is the table idiom for "fill the leftover width and let
+                        the content be cut to it"; the floor keeps a title
+                        readable when the card is narrow. The full title is
+                        on the link for anyone it was cut for.
+
+                        sm: ONLY. Below 640px Table stacks each row into
+                        label/value lines, and there max-w-0 is not an idiom,
+                        it is a width of nothing: the first version of this
+                        fix made every meeting's name vanish on a phone. The
+                        phone check found it; the desktop one could not. */}
+                    <Td className="sm:w-full sm:min-w-[14rem] sm:max-w-0">
                       <div className="cx-who">
                         <span className={`cx-face ${toneOf(m.id)}`} aria-hidden="true">
                           {faceOf(m.title)}
                         </span>
                         <div>
-                          <Link href={`/connect/meetings/${m.id}`} className="cx-name">
+                          <Link href={`/connect/meetings/${m.id}`} className="cx-name" title={m.title}>
                             {m.title}
                           </Link>
                           {m.hasPassword && (
