@@ -1897,7 +1897,19 @@ public static class MailEndpoints
             .FirstOrDefaultAsync(x => x.Id == id && x.MailboxId == box.Id, ct);
         if (m is null) return Results.NotFound();
 
+        // Read BEFORE the parse, because the parse needs it: a picture the
+        // scanner refused as a download must not come back as an inline image.
+        var attachmentRows = await db.Attachments.AsNoTracking()
+            .Where(a => a.MessageId == m.Id)
+            .OrderBy(a => a.PartIndex)
+            .Select(a => new { a.Id, a.Filename, a.ContentType, a.SizeBytes, a.ScanStatus, a.PartIndex })
+            .ToListAsync(ct);
+        var infected = attachmentRows
+            .Where(a => a.ScanStatus == "infected" && a.PartIndex is not null)
+            .Select(a => a.PartIndex!.Value).ToHashSet();
+
         string? bodyHtml = null, bodyText = null;
+        List<MailInlineImages.Image> inline = [];
         if (!string.IsNullOrEmpty(m.RawBody))
         {
             try
@@ -1905,6 +1917,10 @@ public static class MailEndpoints
                 var mime = MailContent.Parse(m.RawBody);
                 bodyHtml = mime.HtmlBody;
                 bodyText = mime.TextBody;
+                // Its own try: a picture that will not decode costs the
+                // pictures, not the message. MailInlineImages says what this is.
+                try { inline = MailInlineImages.For(mime, bodyHtml, infected); }
+                catch { inline = []; }
             }
             catch
             {
@@ -1915,19 +1931,21 @@ public static class MailEndpoints
             }
         }
 
-        var attachments = await db.Attachments.AsNoTracking()
-            .Where(a => a.MessageId == m.Id)
-            .OrderBy(a => a.PartIndex)
-            .Select(a => new
-            {
-                id = a.Id,
-                filename = a.Filename,
-                contentType = a.ContentType ?? "application/octet-stream",
-                sizeBytes = a.SizeBytes,
-                isInline = false,
-                scanStatus = a.ScanStatus,
-            })
-            .ToListAsync(ct);
+        // isInline is TRUE only for an attachment that is being SHOWN in the
+        // body by `inlineImages` below (Gmail lists its inline pictures as
+        // attachments too). A picture over the size cap is not shown, so it
+        // stays an ordinary attachment - never missing from both places.
+        var shownInline = inline.Where(i => i.AttachmentIndex is not null)
+            .Select(i => i.AttachmentIndex!.Value).ToHashSet();
+        var attachments = attachmentRows.Select(a => new
+        {
+            id = a.Id,
+            filename = a.Filename,
+            contentType = a.ContentType ?? "application/octet-stream",
+            sizeBytes = a.SizeBytes,
+            isInline = a.PartIndex is int pi && shownInline.Contains(pi),
+            scanStatus = a.ScanStatus,
+        }).ToList();
 
         return Results.Ok(new
         {
@@ -1941,6 +1959,10 @@ public static class MailEndpoints
             snippet = m.Snippet ?? "",
             bodyHtml,
             bodyText,
+            // Pictures the HTML points at with cid:, as data: URIs. A separate
+            // field on purpose: substitute at DISPLAY time only, never into
+            // what a reply quotes (MailInlineImages).
+            inlineImages = inline.Select(x => new { cid = x.Cid, contentType = x.ContentType, dataUri = x.DataUri }).ToArray(),
             sentAt = m.SentAt ?? m.ReceivedAt,
             receivedAt = m.ReceivedAt,
             sizeBytes = m.SizeBytes,

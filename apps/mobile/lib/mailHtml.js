@@ -46,6 +46,50 @@ export function blockRemoteImages(html) {
   return { html: out, blocked };
 }
 
+/**
+ * Put the email's own pictures where its HTML points at them.
+ *
+ * <img src="cid:logo@corp"> names a picture that travels INSIDE the email. No
+ * WebView can fetch "cid:", so until 19 Sept 2026 every one drew as a broken
+ * icon with its alt text - seen on Amit's Samsung in a Gmail bounce, "Error
+ * Icon", with the same picture listed underneath as icon.png. The server now
+ * sends those pictures beside the message as { cid, dataUri }
+ * (MailInlineImages.cs) and this swaps them in.
+ *
+ * AT DISPLAY TIME ONLY. msg.bodyHtml is never touched: reply and forward quote
+ * it, and a quoted data: URI is megabytes of base64 in an outgoing email.
+ *
+ * Only a value that IS a raster data:image URI is ever written into the page.
+ * The server builds these itself, but this is the last door before a WebView,
+ * and a door checks. A cid with no picture is left exactly as it was.
+ */
+const SAFE_DATA_IMAGE = /^data:image\/(png|jpeg|gif|webp|bmp);base64,[A-Za-z0-9+/=]+$/;
+
+export function inlineCidImages(html, inlineImages) {
+  if (!html || !Array.isArray(inlineImages) || inlineImages.length === 0) return { html: html ?? '', inlined: 0 };
+  const byCid = new Map();
+  for (const im of inlineImages) {
+    if (im && typeof im.cid === 'string' && typeof im.dataUri === 'string' && SAFE_DATA_IMAGE.test(im.dataUri)) {
+      byCid.set(im.cid, im.dataUri);
+    }
+  }
+  if (byCid.size === 0) return { html, inlined: 0 };
+
+  let inlined = 0;
+  // Wherever the server looks for a reference, so does this: attribute values
+  // quoted either way, unquoted, and css url(). Same character class as
+  // MailInlineImages.CidRef, so the two cannot disagree about where a cid ends.
+  const out = html.replace(/cid:([^"'\s<>)]+)/gi, (whole, raw) => {
+    let cid = raw;
+    try { cid = decodeURIComponent(raw); } catch { /* not encoded; use as written */ }
+    const uri = byCid.get(cid);
+    if (!uri) return whole;
+    inlined += 1;
+    return uri;
+  });
+  return { html: out, inlined };
+}
+
 /** Strip what must never run, whatever the CSP does. */
 export function strip(html) {
   return (html ?? '')
@@ -103,8 +147,11 @@ export function htmlToText(html) {
  * this message talk to a server about who read it" any more than it has to.
  * (A remote image IS a read receipt; that is why it is off until asked.)
  */
-export function buildDocument({ html, text, showImages, dark = false, header = null }) {
-  const source = html && html.trim().length > 0 ? strip(html) : textToHtml(text);
+export function buildDocument({ html, text, showImages, dark = false, header = null, inlineImages = null }) {
+  // Stripped FIRST, pictures swapped in AFTER: the sanitiser never has to be
+  // trusted with a megabyte of base64, and nothing it removes can be put back.
+  const safe = html && html.trim().length > 0 ? strip(html) : textToHtml(text);
+  const source = inlineCidImages(safe, inlineImages).html;
   const { html: body, blocked } = showImages
     ? { html: source, blocked: 0 }
     : blockRemoteImages(source);

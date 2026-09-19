@@ -258,9 +258,16 @@ export default function MailMessage({ session, messageId, onBack, onReply, onCha
     );
   }
 
+  // A picture that is being SHOWN in the body is not also offered as a file
+  // underneath. The server says which those are (isInline is true only for a
+  // picture it actually sent in inlineImages), so one too large to inline is
+  // still listed here - never missing from both places.
+  const files = (msg.attachments ?? []).filter((a) => !a.isInline);
+
   const { document, blocked } = buildDocument({
     html: msg.bodyHtml,
     text: msg.bodyText,
+    inlineImages: msg.inlineImages,
     showImages,
     header: {
       subject: msg.subject,
@@ -325,12 +332,12 @@ export default function MailMessage({ session, messageId, onBack, onReply, onCha
           />
       </View>
 
-      {msg.attachments?.length ? (
+      {files.length ? (
         <ScrollView style={s.attach} contentContainerStyle={s.attachInner}>
           <Text style={s.attachTitle}>
-            {msg.attachments.length} attachment{msg.attachments.length === 1 ? '' : 's'}
+            {files.length} attachment{files.length === 1 ? '' : 's'}
           </Text>
-          {msg.attachments.map((a) => (
+          {files.map((a) => (
             <Pressable key={a.id} style={s.attachRow} onPress={() => openAttachment(a)}
                        accessibilityLabel={`Open ${a.filename}`}>
               <Ionicons name="document-outline" size={18} color={text.secondary} />

@@ -8,7 +8,7 @@
 // equivalents are a WebView with JavaScript off (screens/MailMessage.js) and
 // the policy this file writes.
 
-const { strip, blockRemoteImages, textToHtml, buildDocument, htmlToText } = require('../lib/mailHtml');
+const { strip, blockRemoteImages, textToHtml, buildDocument, htmlToText, inlineCidImages } = require('../lib/mailHtml');
 
 test('scripts, frames and forms are removed, with their contents', () => {
   const nasty = '<p>hello</p>'
@@ -161,4 +161,64 @@ describe('htmlToText', () => {
     expect(htmlToText(null)).toBe('');
     expect(htmlToText(undefined)).toBe('');
   });
+});
+
+// ── pictures inside the email (cid:) ───────────────────────────────────────
+// Seen on Amit's Samsung, 19 Sept 2026: a Gmail bounce drew "Error Icon" where
+// its picture should be. Nothing resolved cid: anywhere in the product.
+
+const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+
+test('a cid picture is swapped for the data URI the server sent, however it is written', () => {
+  const html = `<img src="cid:logo@corp"><img src='CID:a%40b'><td background=cid:bg> <div style="background:url(cid:bg)">`;
+  const { html: out, inlined } = inlineCidImages(html, [
+    { cid: 'logo@corp', dataUri: PNG }, { cid: 'a@b', dataUri: PNG }, { cid: 'bg', dataUri: PNG },
+  ]);
+  expect(inlined).toBe(4);
+  expect(out).not.toMatch(/cid:/i);
+  expect(out).toContain(`<img src="${PNG}">`);
+});
+
+test('a cid with no picture is left exactly as it was, not blanked', () => {
+  const html = '<img src="cid:known"><img src="cid:missing" alt="logo">';
+  const { html: out, inlined } = inlineCidImages(html, [{ cid: 'known', dataUri: PNG }]);
+  expect(inlined).toBe(1);
+  expect(out).toContain('<img src="cid:missing" alt="logo">');
+});
+
+test('only a raster data:image URI is ever written into the page', () => {
+  const html = '<img src="cid:x">';
+  for (const bad of [
+    'https://track.example/p.gif',                    // would be a read receipt behind the block
+    'javascript:alert(1)',
+    'data:text/html;base64,PHNjcmlwdD4=',
+    'data:image/svg+xml;base64,PHN2Zz4=',             // a document, not a raster
+    'data:image/png;base64,AAA" onerror="x',          // breaking out of the attribute
+  ]) {
+    expect(inlineCidImages(html, [{ cid: 'x', dataUri: bad }])).toEqual({ html, inlined: 0 });
+  }
+  expect(inlineCidImages(html, null)).toEqual({ html, inlined: 0 });
+  expect(inlineCidImages(html, [null, {}, { cid: 5, dataUri: PNG }])).toEqual({ html, inlined: 0 });
+});
+
+test('in the document: the picture shows WITHOUT "Show images", and is not counted as blocked', () => {
+  const doc = buildDocument({
+    html: '<img src="cid:icon.png" alt="Error Icon"><img src="https://track.example/o.gif">',
+    inlineImages: [{ cid: 'icon.png', dataUri: PNG }],
+    showImages: false,
+  });
+  expect(doc.document).toContain(`src="${PNG}"`);
+  expect(doc.blocked).toBe(1);                         // the tracker, and only the tracker
+  expect(doc.document).toContain('data-blocked-src="https://track.example/o.gif"');
+});
+
+test('a script smuggled beside a cid picture is still stripped - pictures go in AFTER the sanitiser', () => {
+  const doc = buildDocument({
+    html: '<script>steal()</script><img src="cid:p" onerror="steal()">',
+    inlineImages: [{ cid: 'p', dataUri: PNG }],
+    showImages: false,
+  });
+  const page = doc.document;
+  expect(page).not.toContain('steal()');
+  expect(page).toContain(PNG);
 });
