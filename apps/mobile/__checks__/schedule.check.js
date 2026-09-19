@@ -183,3 +183,27 @@ test('a time earlier today is said to have passed at once, and refused if presse
   await waitFor(() => expect(r.getByText(/That time has passed/)).toBeTruthy());
   expect(api.create).not.toHaveBeenCalled();
 });
+
+test('every week of the calendar is seven cells, and a date sits in its weekday’s column', () => {
+  // Seen on the Samsung, 19 Sept 2026: one wrapping row of percentage-wide
+  // cells gave six columns, and Saturday the 19th sat under Wednesday. jest has
+  // no layout, so this holds the structure that makes wrapping impossible.
+  const r = render(<ScheduleMeeting session={session} onCreated={() => {}} onBack={() => {}} />);
+  fireEvent.press(r.getByLabelText('Date'));
+  const today = new Date();
+  const label = today.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  const cell = r.getByLabelText(label);
+
+  let weeks = 0;
+  let found = false;
+  for (let w = 0; w < 6; w++) {
+    const row = r.queryByTestId(`week-${w}`);
+    if (!row) break;
+    weeks++;
+    expect(row.children.length).toBe(7);
+    const at = row.children.findIndex((c) => c === cell || c.findAll?.((n) => n === cell).length > 0);
+    if (at >= 0) { found = true; expect(at).toBe(today.getDay()); } // Sunday-first columns
+  }
+  expect(weeks).toBeGreaterThanOrEqual(4);
+  expect(found).toBe(true);
+});

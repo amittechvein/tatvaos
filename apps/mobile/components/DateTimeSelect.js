@@ -88,7 +88,16 @@ export function DateSelect({ value, min, label, onChange, disabled }) {
     const count = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
     for (let d = 1; d <= count; d++) out.push(new Date(month.getFullYear(), month.getMonth(), d));
     while (out.length % 7 !== 0) out.push(null);
-    return out;
+    // WEEKS, each its own row of seven equal cells. The first version was one
+    // wrapping row of cells `100/7 %` wide: seven of those round to a hair
+    // over 100% on a 1080-pixel screen, so the seventh wrapped, every week had
+    // six columns, and Saturday the 19th sat under "W". Every check passed -
+    // jest has no layout. Seen on Amit's Samsung, 19 Sept 2026. What a check CAN
+    // hold is the structure: seven cells a row, a date at its weekday's index
+    // (schedule.check.js). A row of seven `flex: 1` cells cannot wrap.
+    const weeks = [];
+    for (let i = 0; i < out.length; i += 7) weeks.push(out.slice(i, i + 7));
+    return weeks;
   }, [month]);
 
   const monthTitle = month.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
@@ -108,9 +117,12 @@ export function DateSelect({ value, min, label, onChange, disabled }) {
             <Ionicons name="chevron-forward" size={22} color={text.primary} />
           </Pressable>
         </View>
-        <View style={s.grid}>
-          {WEEKDAYS.map((w, i) => <Text key={`w${i}`} style={[s.cell, s.weekday]}>{w}</Text>)}
-          {cells.map((d, i) => {
+        <View style={s.week}>
+          {WEEKDAYS.map((w, i) => <Text key={`w${i}`} style={s.weekday}>{w}</Text>)}
+        </View>
+        {cells.map((week, w) => (
+          <View key={`week${w}`} style={s.week} testID={`week-${w}`}>
+          {week.map((d, i) => {
             if (!d) return <View key={`e${i}`} style={s.cell} />;
             const past = d < first;
             const on = sameDay(d, value);
@@ -126,7 +138,8 @@ export function DateSelect({ value, min, label, onChange, disabled }) {
               </Pressable>
             );
           })}
-        </View>
+          </View>
+        ))}
       </Sheet>
     </>
   );
@@ -230,9 +243,9 @@ const s = StyleSheet.create({
 
   monthRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
   monthTitle: { fontSize: 16, fontWeight: '600', color: text.primary },
-  grid: { flexDirection: 'row', flexWrap: 'wrap' },
-  cell: { width: `${100 / 7}%`, height: 44, alignItems: 'center', justifyContent: 'center', textAlign: 'center' },
-  weekday: { height: 28, lineHeight: 28, fontSize: 12, fontWeight: '700', color: text.muted },
+  week: { flexDirection: 'row' },
+  cell: { flex: 1, height: 44, alignItems: 'center', justifyContent: 'center' },
+  weekday: { flex: 1, height: 28, lineHeight: 28, fontSize: 12, fontWeight: '700', color: text.muted, textAlign: 'center' },
   day: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
   dayToday: { borderWidth: 1, borderColor: brand.base },
   dayOn: { backgroundColor: brand.base },
