@@ -25,6 +25,9 @@ public static class SettingKeys
     public const string CountryPrefix = "sms.country_prefix";
     public const string ShowOtpOnScreen = "sms.show_otp_on_screen";
 
+    // Connect
+    public const string ConnectGuestPhoneOtp = "connect.guest_phone_otp";
+
     // SSO
     public const string GoogleClientId = "sso.google.client_id";
     public const string GoogleClientSecret = "sso.google.client_secret";
@@ -65,6 +68,12 @@ public static class SettingKeys
             + "the message under this registration; without it carriers may drop silently."),
         new(ShowOtpOnScreen, "sms", "Show OTP on screen (testing mode)", false,
             "ON shows signup codes in the browser so the flow works before SMS is configured. Turn OFF before going live — with it on, the phone check proves nothing."),
+
+        new(ConnectGuestPhoneOtp, "connect", "Guests verify a mobile number to join a meeting", false,
+            "ON: anyone joining a meeting without an account proves an Indian mobile number by a texted code, "
+            + "and the same number coming back is the same person, counted once. Takes effect on the next join, no restart. "
+            + "Turn OFF if texts stop arriving - with it on and SMS down, no guest can join any meeting. "
+            + "Guests abroad cannot verify, and the mobile app's guest door does not ask for a number yet."),
 
         new(GoogleClientId, "sso", "Google OAuth client ID", false,
             "From console.cloud.google.com → Credentials. The sign-in flow itself ships next; the credentials are stored and ready."),

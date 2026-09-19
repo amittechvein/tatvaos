@@ -494,6 +494,25 @@ builder.Services.AddRateLimiter(o =>
     // well-formed RANDOM token does get its own bucket; each such probe costs
     // one indexed hash lookup answering the one failure sentence, against a
     // 128-bit token space. Bounded by the shape check, that is accepted.)
+    // Asking for a TEXT MESSAGE from an anonymous door (19 Sept 2026). Far
+    // tighter than connect-guest: each permit costs money and lands on a
+    // stranger's phone. Six in ten minutes per address is a family behind one
+    // router, not a scanner. Rightmost X-Forwarded-For, as every limiter here.
+    o.AddPolicy("connect-guest-otp", httpContext =>
+    {
+        var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();
+        var client = string.IsNullOrEmpty(xff)
+            ? httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"
+            : xff.Split(',')[^1].Trim();
+        return RateLimitPartition.GetFixedWindowLimiter($"connect-otp:{client}",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 6,
+                Window = TimeSpan.FromMinutes(10),
+                QueueLimit = 0,
+            });
+    });
+
     o.AddPolicy("connect-wait", httpContext =>
     {
         var token = httpContext.GetRouteValue("waitToken")?.ToString();

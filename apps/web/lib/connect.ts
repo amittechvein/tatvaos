@@ -161,12 +161,16 @@ export interface Seat {
   /** Present ONLY for a private meeting. It rides this one response and dies
    *  with the tab: never store it, never log it, never put it in a URL. */
   roomKey?: string | null;
+  /** A guest who proved a mobile number gets this. Coming back with it is
+   *  direct entry, on the same participant row. See guestPass below. */
+  guestPass?: string | null;
 }
 
 /** Parked in the waiting room; poll `waitToken` until admitted or denied. */
 export interface Waiting {
   status: 'waiting';
   waitToken: string;
+  guestPass?: string | null;
 }
 
 export type JoinResult = Seat | Waiting;
@@ -195,6 +199,11 @@ export interface Doorstep {
    * anything" — silence, not a false reassurance.
    */
   minutesLive?: boolean;
+  /**
+   * The platform asks guests to prove a mobile number (19 Sept 2026). Told at
+   * the door so the page asks up front. Absent on an older server = not asked.
+   */
+  phoneRequired?: boolean;
 }
 
 export interface CreateMeeting {
@@ -241,6 +250,42 @@ export const GUEST_FAILURE = 'This meeting link does not work.';
 export class WrongPasswordError extends Error {
   constructor(message = 'That password is not right.') { super(message); }
 }
+
+/** Thrown when a guest must prove a mobile number first - including when a
+ *  stored rejoin pass was not accepted, which is how the page knows to stop
+ *  offering "welcome back" and ask for the number instead. */
+export class PhoneRequiredError extends Error {
+  constructor(message = 'Verify your mobile number to join this meeting.') { super(message); }
+}
+
+/**
+ * The rejoin pass, kept in THIS browser for THIS meeting code. It is not a
+ * secret the way a room key is: it opens one guest's own seat in one meeting
+ * for a day, and the server signed it. localStorage can throw or come back
+ * empty (private windows, blocked storage), so every touch is wrapped and the
+ * door works without it - the person simply proves the number again.
+ */
+export const guestPass = {
+  key: (code: string) => `cx.guestpass.${code}`,
+  read(code: string): { pass: string; name: string } | null {
+    try {
+      const raw = window.localStorage.getItem(guestPass.key(code));
+      if (!raw) return null;
+      const v: unknown = JSON.parse(raw);
+      if (typeof v === 'object' && v !== null && 'pass' in v && typeof (v as { pass: unknown }).pass === 'string') {
+        const name = (v as { name?: unknown }).name;
+        return { pass: (v as { pass: string }).pass, name: typeof name === 'string' ? name : '' };
+      }
+      return null;
+    } catch { return null; }
+  },
+  write(code: string, pass: string, name: string) {
+    try { window.localStorage.setItem(guestPass.key(code), JSON.stringify({ pass, name })); } catch { /* the door works without it */ }
+  },
+  clear(code: string) {
+    try { window.localStorage.removeItem(guestPass.key(code)); } catch { /* nothing to clear */ }
+  },
+};
 
 /** Thrown when the door itself refuses — always the same sentence. */
 export class DoorClosedError extends Error {
@@ -1009,6 +1054,8 @@ async function guestJson<T>(res: Response): Promise<T> {
   if (res.status === 403) throw new WrongPasswordError();
   if (!res.ok) {
     const body: unknown = await res.json().catch(() => ({}));
+    if (res.status === 400 && typeof body === 'object' && body !== null
+        && (body as { phoneRequired?: unknown }).phoneRequired === true) throw new PhoneRequiredError();
     const msg = typeof body === 'object' && body !== null && 'error' in body
       ? String((body as { error?: unknown }).error ?? GUEST_FAILURE)
       : GUEST_FAILURE;
@@ -1022,11 +1069,27 @@ export const guestApi = {
     fetch(`${API}/connect/g/${encodeURIComponent(code)}`)
       .then((r) => guestJson<Doorstep>(r)),
 
-  join: async (code: string, displayName: string, password?: string): Promise<JoinResult> => {
+  /** "Text me a code." `sentTo` is four digits of the number, never more.
+   *  `devCode` exists only in the operator's testing mode. */
+  requestCode: async (code: string, phone: string): Promise<{ sentTo: string; devCode: string | null }> => {
+    const res = await fetch(`${API}/connect/g/${encodeURIComponent(code)}/otp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone }),
+    });
+    const out = await guestJson<{ sentTo?: string; devCode?: string | null }>(res);
+    return { sentTo: out.sentTo ?? 'your number', devCode: out.devCode ?? null };
+  },
+
+  join: async (code: string, displayName: string, password?: string,
+               proof?: { phone?: string; otp?: string; pass?: string }): Promise<JoinResult> => {
     const res = await fetch(`${API}/connect/g/${encodeURIComponent(code)}/join`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ displayName, password: password ?? null }),
+      body: JSON.stringify({
+        displayName, password: password ?? null,
+        phone: proof?.phone ?? null, otp: proof?.otp ?? null, pass: proof?.pass ?? null,
+      }),
     });
     const out = await guestJson<JoinResult>(res);
     if (out.status !== 'waiting') out.wsUrl = assertOrigin(out.wsUrl);

@@ -6,6 +6,7 @@ import { use, useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import {
   connectApi, guestApi, e2eeSupported, DoorClosedError, WrongPasswordError, GUEST_FAILURE,
+  PhoneRequiredError, guestPass,
   type Doorstep, type JoinResult, type Meeting, type Seat,
 } from '@/lib/connect';
 import { Centre, Spinner } from './RoomChrome';
@@ -307,6 +308,53 @@ function Door({ code, door, meeting, signedInName, onSeat, onGone }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // ── A guest proves a mobile number (Amit, 19 Sept 2026). ─────────────────
+  //  Only for a guest (meeting === null) and only when the door said so.
+  //  Two ways through: a PASS this browser was handed last time - direct
+  //  entry, nothing to type - or the number and the code texted to it. The
+  //  pass is tried first and, if the server will not have it, forgotten: the
+  //  page then asks for the number, and says why, instead of failing twice.
+  const needsPhone = meeting === null && door.phoneRequired === true;
+  const [pass, setPass] = useState<string | null>(null);
+  const [phone, setPhone] = useState('');
+  const [otp, setOtp] = useState('');
+  const [sentTo, setSentTo] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const [resendIn, setResendIn] = useState(0);
+
+  useEffect(() => {
+    if (!needsPhone) return;
+    const kept = guestPass.read(code);
+    if (kept) {
+      setPass(kept.pass);
+      if (kept.name) setName((n) => (n.length > 0 ? n : kept.name));
+    }
+  }, [needsPhone, code]);
+
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const t = setTimeout(() => setResendIn((n) => n - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendIn]);
+
+  async function sendCode() {
+    setError(null);
+    if (phone.replace(/\D/g, '').length < 10) { setError('Give your 10-digit mobile number.'); return; }
+    setSending(true);
+    try {
+      const out = await guestApi.requestCode(code, phone);
+      setSentTo(out.sentTo);
+      setResendIn(45);
+      // The operator's testing mode only: the code comes back instead of a text.
+      if (out.devCode) setOtp(out.devCode);
+    } catch (err) {
+      if (err instanceof DoorClosedError) { onGone(GUEST_FAILURE); return; }
+      setError(err instanceof Error ? err.message : 'The code could not be sent.');
+    } finally {
+      setSending(false);
+    }
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -314,13 +362,30 @@ function Door({ code, door, meeting, signedInName, onSeat, onGone }: {
       setError('Tell people who you are.');
       return;
     }
+    if (needsPhone && pass === null && (sentTo === null || otp.trim().length === 0)) {
+      setError(sentTo === null ? 'Verify your mobile number first: send yourself a code.' : 'Type the code from the text message.');
+      return;
+    }
     setBusy(true);
     try {
       const res = meeting
         ? await connectApi.join(authedFetch, meeting.id, password || undefined)
-        : await guestApi.join(code, name.trim(), password || undefined);
+        : await guestApi.join(code, name.trim(), password || undefined,
+            needsPhone ? (pass !== null ? { pass } : { phone, otp: otp.trim() }) : undefined);
+      // Kept for coming back. Refreshed on every entry so it cannot run out
+      // in the middle of a long meeting.
+      if (meeting === null && res.guestPass) guestPass.write(code, res.guestPass, name.trim());
       onSeat(res, meeting);
     } catch (err) {
+      // The pass was not accepted (expired, or this browser's storage is from
+      // another time). Forget it and ask for the number - once, in words.
+      if (err instanceof PhoneRequiredError) {
+        guestPass.clear(code);
+        setPass(null);
+        setError('Please verify your mobile number to come back in.');
+        setBusy(false);
+        return;
+      }
       // A wrong password after a VALID code answers 403 and says so: the
       // code-holder already knows the meeting exists, so a distinct answer
       // leaks nothing and lets a typo be corrected. Everything else collapses
@@ -399,6 +464,50 @@ function Door({ code, door, meeting, signedInName, onSeat, onGone }: {
               <div className="cx-sub" style={{ marginTop: 6 }}>
                 Everyone in the meeting will see this.
               </div>
+            </div>
+          )}
+
+          {needsPhone && pass !== null && (
+            <div className="cx-sub" style={{ marginBottom: 14 }}>
+              Welcome back. Your number is already verified for this meeting on this device.{' '}
+              <button type="button" onClick={() => { guestPass.clear(code); setPass(null); }}
+                      style={{ background: 'none', border: 'none', padding: 0, color: '#8fe6f6',
+                               cursor: 'pointer', textDecoration: 'underline', font: 'inherit' }}>
+                Not you?
+              </button>
+            </div>
+          )}
+
+          {needsPhone && pass === null && (
+            <div style={{ marginBottom: 14 }}>
+              <label className="cx-label" htmlFor="cx-phone">Your mobile number</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input id="cx-phone" className="cx-field" value={phone} inputMode="tel"
+                       autoComplete="tel" placeholder="98765 43210" maxLength={20}
+                       onChange={(e) => { setPhone(e.target.value); setSentTo(null); setOtp(''); }} />
+                <button type="button" className="cx-pill" style={{ whiteSpace: 'nowrap' }}
+                        disabled={sending || resendIn > 0 || door.locked || door.state === 'ended'}
+                        onClick={() => void sendCode()}>
+                  {sending ? 'Sending…' : resendIn > 0 ? `Resend in ${resendIn}s` : sentTo ? 'Resend code' : 'Send code'}
+                </button>
+              </div>
+              <div className="cx-sub" style={{ marginTop: 6 }}>
+                An Indian mobile number. We text it a code so you are counted once,
+                however often you rejoin. The number itself is not kept and nobody
+                in the meeting sees it.
+              </div>
+
+              {sentTo !== null && (
+                <div style={{ marginTop: 12 }}>
+                  <label className="cx-label" htmlFor="cx-otp">Code from the text message</label>
+                  <input id="cx-otp" className="cx-field" value={otp} inputMode="numeric"
+                         autoComplete="one-time-code" maxLength={6} placeholder="6 digits"
+                         onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} />
+                  <div className="cx-sub" style={{ marginTop: 6 }}>
+                    Sent to {sentTo}. It works once, for ten minutes.
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

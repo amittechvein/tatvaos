@@ -26,6 +26,7 @@ internal static class Program
         ActingOnAPerson(t);
         TheBugThisPrevents(t);
         WhoAMuteAllReaches(t);
+        AGuestProvesANumber(t);
 
         return t.Report();
     }
@@ -75,6 +76,62 @@ internal static class Program
 
         t.Ok("an empty room is nobody, not a crash",
             ConnectCodes.MuteAllTargets(Array.Empty<string?>(), ConnectCodes.MuteAllEveryone, spared).Count == 0);
+    }
+
+    /// <summary>
+    /// Amit, 19 Sept 2026: a guest verifies a mobile number, and the same number
+    /// coming back is the same person, counted once. These are the rules that
+    /// need no database: what a number is, what is stored instead of it, and
+    /// what a rejoin pass will and will not open.
+    /// </summary>
+    private static void AGuestProvesANumber(Harness t)
+    {
+        t.Section("ConnectGuestPhone — a number, its hash, a code, a pass");
+
+        foreach (var typed in new[] { "9876543210", "+91 98765 43210", "919876543210", "09876543210", "(+91) 98765-43210", " 98765.43210 " })
+            t.Ok($"'{typed}' is +919876543210", ConnectGuestPhone.Normalise(typed) == "+919876543210");
+        foreach (var typed in new[] { "", "   ", "12345", "5876543210", "98765432101", "+1 415 555 0100", "+44 7700 900123", "98765abc10", "+9198765432" })
+            t.Ok($"'{typed}' is refused", ConnectGuestPhone.Normalise(typed) is null);
+        t.Ok("null is refused, not a crash", ConnectGuestPhone.Normalise(null) is null);
+
+        var secret = ConnectGuestPhone.DeriveSecret("dev-only-key-at-least-32-characters-long");
+        var other = ConnectGuestPhone.DeriveSecret("another-key-at-least-32-characters-long!");
+        var m1 = Guid.NewGuid();
+        var m2 = Guid.NewGuid();
+        var h = ConnectGuestPhone.Hash(secret, m1, "+919876543210");
+        t.Ok("the same number in the same meeting is the same value", h == ConnectGuestPhone.Hash(secret, m1, "+919876543210"));
+        t.Ok("…in ANOTHER meeting it is unrelated: nobody can be followed", h != ConnectGuestPhone.Hash(secret, m2, "+919876543210"));
+        t.Ok("…and without the server's key it cannot be recomputed", h != ConnectGuestPhone.Hash(other, m1, "+919876543210"));
+        t.Ok("the stored value does not contain the number", !h.Contains("9876543210"));
+        t.Ok("a neighbouring number is a different value", h != ConnectGuestPhone.Hash(secret, m1, "+919876543211"));
+
+        var code = ConnectGuestPhone.NewCode();
+        t.Ok("a code is six digits", code.Length == 6 && code.All(char.IsAsciiDigit));
+        var oh = ConnectGuestPhone.OtpHash(secret, m1, h, "123456");
+        t.Ok("the right code matches", ConnectGuestPhone.SameHash(oh, ConnectGuestPhone.OtpHash(secret, m1, h, "123456")));
+        t.Ok("a wrong code does not", !ConnectGuestPhone.SameHash(oh, ConnectGuestPhone.OtpHash(secret, m1, h, "123457")));
+        t.Ok("the right code for ANOTHER number does not",
+            !ConnectGuestPhone.SameHash(oh, ConnectGuestPhone.OtpHash(secret, m1, ConnectGuestPhone.Hash(secret, m1, "+919876543211"), "123456")));
+        t.Ok("the mask shows four digits and no more", ConnectGuestPhone.Mask("+919876543210") == "the number ending 3210");
+
+        var who = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        var pass = ConnectGuestPhone.MintPass(secret, m1, who, now.AddHours(1));
+        t.Ok("a pass opens for the person it names", ConnectGuestPhone.ReadPass(secret, m1, pass, now) == who);
+        t.Ok("…not for another meeting", ConnectGuestPhone.ReadPass(secret, m2, pass, now) is null);
+        t.Ok("…not once it has run out", ConnectGuestPhone.ReadPass(secret, m1, pass, now.AddHours(2)) is null);
+        t.Ok("…not under another server's key", ConnectGuestPhone.ReadPass(other, m1, pass, now) is null);
+        var forged = (pass[0] == 'A' ? 'B' : 'A') + pass[1..];
+        t.Ok("…and not with one character changed (it would name somebody else)", ConnectGuestPhone.ReadPass(secret, m1, forged, now) is null);
+        foreach (var junk in new string?[] { null, "", "   ", "not-a-pass", "####", new string('A', 500) })
+            t.Ok($"junk pass '{(junk is null ? "null" : junk.Length > 12 ? junk[..12] + "…" : junk)}' is a plain no", ConnectGuestPhone.ReadPass(secret, m1, junk, now) is null);
+
+        var pid = Guid.NewGuid();
+        var d1 = ConnectCodes.IdentityForGuestDevice(pid);
+        var d2 = ConnectCodes.IdentityForGuestDevice(pid);
+        t.Ok("a proved guest's two devices are two connections", d1 != d2);
+        t.Ok("…and both are the one row", ConnectCodes.PersonOf(d1) == ConnectCodes.IdentityForGuest(pid) && ConnectCodes.PersonOf(d2) == ConnectCodes.IdentityForGuest(pid));
+        t.Ok("…and still a guest to Mute all guests", ConnectCodes.IsGuest(d1));
     }
 
     private static void EveryJoinIsItsOwnConnection(Harness t)

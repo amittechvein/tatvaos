@@ -259,6 +259,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeeting>().ToTable("meetings", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectParticipant>().ToTable("participants", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectLobbyRequest>().ToTable("lobby_requests", "connect");
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectGuestOtp>().ToTable("guest_otps", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingEvent>().ToTable("meeting_events", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecording>().ToTable("recordings", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectTranscript>().ToTable("transcripts", "connect");
