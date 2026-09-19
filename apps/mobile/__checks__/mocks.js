@@ -104,7 +104,7 @@ jest.mock('expo-keep-awake', () => ({ useKeepAwake: () => {} }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 
 // The API: steerable per test.
-const mockApi = { join: null, wait: null, list: null, create: null, lobby: null, admit: null, deny: null };
+const mockApi = { join: null, wait: null, list: null, create: null, lobby: null, admit: null, deny: null, invite: null, byCode: null };
 jest.mock('../lib/connect', () => {
   const real = jest.requireActual('../lib/connect');
   return {
@@ -116,6 +116,8 @@ jest.mock('../lib/connect', () => {
     getLobby: (...a) => (mockApi.lobby ? mockApi.lobby(...a) : Promise.resolve([])),
     admitFromLobby: (...a) => mockApi.admit(...a),
     denyFromLobby: (...a) => mockApi.deny(...a),
+    inviteToMeeting: (...a) => mockApi.invite(...a),
+    getMeetingByCode: (...a) => mockApi.byCode(...a),
   };
 });
 
