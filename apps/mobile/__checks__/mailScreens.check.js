@@ -50,6 +50,63 @@ beforeEach(() => {
 });
 
 // ── the list ───────────────────────────────────────────────────────────────
+
+// ── sorting (Amit, 19 Sept 2026: "sorting option on mail") ──────────────────
+
+test('the list opens newest first, and asks the server for nothing unusual', async () => {
+  const r = render(<Mail session={session} onBack={() => {}} onOpen={() => {}} onCompose={() => {}} />);
+  await waitFor(() => expect(r.getByText('Invoice for August')).toBeTruthy());
+  expect(mailApi.listMessages).toHaveBeenLastCalledWith('AT', 'f1', expect.objectContaining({ sort: 'newest' }));
+  expect(r.getByLabelText('Sort messages').props.accessibilityValue).toEqual({ text: 'Newest first' });
+  expect(r.queryByLabelText(/^Sorted by /)).toBeNull();
+});
+
+test('choosing an order asks the SERVER for it, from the first row, and says so on the list', async () => {
+  mailApi.listMessages = jest.fn(async (_t, _f, o) => ({ total: 1, messages: [row()], sorted: o.sort }));
+  const r = render(<Mail session={session} onBack={() => {}} onOpen={() => {}} onCompose={() => {}} />);
+  await waitFor(() => expect(r.getByText('Invoice for August')).toBeTruthy());
+
+  fireEvent.press(r.getByLabelText('Sort messages'));
+  fireEvent.press(r.getByLabelText('Sort by Oldest first'));
+
+  await waitFor(() => expect(mailApi.listMessages).toHaveBeenLastCalledWith(
+    'AT', 'f1', expect.objectContaining({ sort: 'oldest', skip: 0 })));
+  await waitFor(() => expect(r.getByLabelText('Sorted by Oldest first. Tap for newest first')).toBeTruthy());
+
+  // One tap on that line is the way back.
+  fireEvent.press(r.getByLabelText('Sorted by Oldest first. Tap for newest first'));
+  await waitFor(() => expect(mailApi.listMessages).toHaveBeenLastCalledWith(
+    'AT', 'f1', expect.objectContaining({ sort: 'newest' })));
+  await waitFor(() => expect(r.queryByLabelText(/^Sorted by /)).toBeNull());
+});
+
+test('a server that answers 200 but did NOT sort is said so, and the list is not mislabelled', async () => {
+  // What a server older than the `sort` parameter does: ignores it, newest
+  // first, no `sort` in the reply. A 200 is not proof.
+  mailApi.listMessages = jest.fn(async () => ({ total: 1, messages: [row()], sorted: null }));
+  const r = render(<Mail session={session} onBack={() => {}} onOpen={() => {}} onCompose={() => {}} />);
+  await waitFor(() => expect(r.getByText('Invoice for August')).toBeTruthy());
+
+  fireEvent.press(r.getByLabelText('Sort messages'));
+  fireEvent.press(r.getByLabelText('Sort by Unread first'));
+
+  await waitFor(() => expect(r.getByText(/Sorting is not available on this server yet/)).toBeTruthy());
+  expect(r.queryByLabelText(/^Sorted by /)).toBeNull();
+  expect(r.getByLabelText('Sort messages').props.accessibilityValue).toEqual({ text: 'Newest first' });
+});
+
+test('Load more keeps the chosen order and continues after the rows already shown', async () => {
+  const many = Array.from({ length: 30 }, (_, i) => row({ id: `m${i}`, subject: `Mail ${i}` }));
+  mailApi.listMessages = jest.fn(async (_t, _f, o) => ({ total: 45, messages: o.skip === 0 ? many : [row({ id: 'late', subject: 'The 31st' })], sorted: o.sort }));
+  const r = render(<Mail session={session} onBack={() => {}} onOpen={() => {}} onCompose={() => {}} />);
+  await waitFor(() => expect(r.getByText('Mail 0')).toBeTruthy());
+  fireEvent.press(r.getByLabelText('Sort messages'));
+  fireEvent.press(r.getByLabelText('Sort by Sender, A to Z'));
+  await waitFor(() => expect(mailApi.listMessages).toHaveBeenLastCalledWith('AT', 'f1', expect.objectContaining({ sort: 'sender', skip: 0 })));
+
+  fireEvent.press(await waitFor(() => r.getByLabelText('Load more messages')));
+  await waitFor(() => expect(mailApi.listMessages).toHaveBeenLastCalledWith('AT', 'f1', expect.objectContaining({ sort: 'sender', skip: 30 })));
+});
 test('opens on Inbox even when the server lists another folder first', async () => {
   const r = render(<Mail session={session} onBack={() => {}} onOpen={() => {}} onCompose={() => {}} />);
   // The list arrives after the folders; waiting for the header alone raced it.

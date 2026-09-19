@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    THE MAIL LIST ORDER TESTS. Same shape as tests/connect-order, for the same
+    reason: an order is a rule that reads as right and can only be shown to BE
+    right by running it.
+
+    MailListSort.cs is LINKED, not copied: this compiles the file production
+    runs. No test framework and no packages, so `dotnet run` works on a box
+    with no network. The rule is driven as LINQ-to-objects, which proves the
+    ORDER and the stable tie-break. It does NOT prove Npgsql translates the
+    expressions to SQL - a real request against Postgres does that, and the PR
+    that added this says which requests were made.
+
+    NOT RUN BY CI as of 19 September 2026. A step in ci.yml's backend job beside
+    the four Connect checks would cost seconds; CI workflow changes go to the
+    CTO, so it is asked for in the PR rather than added by it.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TatvaOS.Tests.MailSort</RootNamespace>
+    <AssemblyName>mail-sort-test</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The production file itself. Not a copy. -->
+    <Compile Include="../../apps/api/Modules/Mail/MailListSort.cs" Link="MailListSort.cs" />
+  </ItemGroup>
+
+</Project>

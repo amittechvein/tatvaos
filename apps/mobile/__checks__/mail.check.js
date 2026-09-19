@@ -206,3 +206,15 @@ describe('signatureFor', () => {
     expect(signatureFor(null)).toBe('');
   });
 });
+
+test('a weekday name never means a week ago: last Saturday evening, seen on Saturday, is a date', () => {
+  // Seen on the Samsung, 19 Sept 2026: 6.8 days is "under a week", so a message
+  // from Sat 12 Sept read "Sat" on Sat 19 Sept, above "Fri" rows that meant yesterday.
+  const now = new Date('2026-09-19T14:00:00');
+  expect(whenLabel(new Date('2026-09-12T19:30:00').toISOString(), now)).toMatch(/12/);
+  expect(whenLabel(new Date('2026-09-12T19:30:00').toISOString(), now)).not.toMatch(/^[A-Z][a-z]{2}$/);
+  // Six calendar days back is still a weekday, and it is not today's.
+  expect(whenLabel(new Date('2026-09-13T23:50:00').toISOString(), now)).toMatch(/^[A-Z][a-z]{2}$/);
+  // Yesterday late, under 24 hours ago, is a weekday and not a time.
+  expect(whenLabel(new Date('2026-09-18T23:50:00').toISOString(), now)).toMatch(/^[A-Z][a-z]{2}$/);
+});

@@ -1696,8 +1696,14 @@ public static class MailEndpoints
     // ------------------------------------------------------------------
     private static async Task<IResult> ListMessagesAsync(
         Guid folderId, Guid? mailboxId, AppDbContext db, TenantContext tenant,
-        string? q, int? skip, int? take, CancellationToken ct)
+        string? q, int? skip, int? take, string? sort, CancellationToken ct)
     {
+        // Refused before any query, and said which values exist: a client that
+        // sends a sort this server does not know must not get a newest-first
+        // list back under a header that says something else (MailListSort).
+        if (!MailListSort.TryParse(sort, out var sortKey))
+            return Results.BadRequest(new { error = $"Unknown sort. Use one of: {string.Join(", ", MailListSort.All)}." });
+
         var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Read, ct);
         if (box is null) return Results.NotFound();
 
@@ -1716,8 +1722,13 @@ public static class MailEndpoints
         // Columns first, shaping second. The nested Select over to_addrs is
         // deliberately done in memory — asking EF to translate it invites a
         // runtime translation failure on a query that compiles fine.
-        var rows = await query
-            .OrderByDescending(m => m.ReceivedAt)
+        // The default keeps the expression it has always had, on purpose; only
+        // an asked-for order goes through MailListSort (which says why).
+        var ordered = sortKey == MailListSort.Newest
+            ? query.OrderByDescending(m => m.ReceivedAt)
+            : MailListSort.Apply(query, sortKey);
+
+        var rows = await ordered
             .Skip(Math.Max(0, skip ?? 0))
             .Take(Math.Clamp(take ?? 50, 1, 100))
             .Select(m => new
@@ -1766,7 +1777,11 @@ public static class MailEndpoints
             }).ToArray(),
         });
 
-        return Results.Ok(new { total, messages });
+        // `sort` is ECHOED so a client can tell a server that sorted from one
+        // that predates the parameter and ignored it: that server answers 200,
+        // newest first, with no `sort` field - and the app says so rather than
+        // showing "Oldest first" over a list that is not.
+        return Results.Ok(new { total, sort = sortKey, messages });
     }
 
     // ------------------------------------------------------------------

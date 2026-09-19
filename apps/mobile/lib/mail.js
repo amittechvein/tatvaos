@@ -72,12 +72,41 @@ export async function listFolders(token) {
  * One page of a folder, newest first. Offset paging — the API takes skip/take
  * and clamps take to 100; there is no cursor.
  */
-export async function listMessages(token, folderId, { skip = 0, take = 30 } = {}) {
+/**
+ * The orders a folder can be listed in: [key the server knows, words on screen].
+ * The keys are MailListSort's (apps/api/Modules/Mail/MailListSort.cs); a key
+ * that is not there is a 400, by design, not a quietly newest-first list.
+ *
+ * Sorting happens on the SERVER because the list is paged: thirty rows of a
+ * folder of thousands. "Oldest first" sorted on the phone would be the oldest
+ * of the newest thirty - right-looking, and wrong.
+ */
+export const SORTS = [
+  ['newest', 'Newest first'],
+  ['oldest', 'Oldest first'],
+  ['unread', 'Unread first'],
+  ['starred', 'Starred first'],
+  ['sender', 'Sender, A to Z'],
+  ['largest', 'Largest first'],
+];
+export const DEFAULT_SORT = 'newest';
+export const sortLabel = (key) => SORTS.find((row) => row[0] === key)?.[1] ?? 'Newest first';
+
+/**
+ * `sorted` in the answer is the order the server SAYS it used, or null when it
+ * said nothing - which is what a server older than the `sort` parameter does:
+ * it ignores the parameter, answers 200, newest first. The caller compares
+ * `sorted` with what it asked for instead of trusting the 200.
+ */
+export async function listMessages(token, folderId, { skip = 0, take = 30, sort = DEFAULT_SORT } = {}) {
+  // The default is sent as nothing at all, so the commonest request is
+  // byte-for-byte the one every deployed server already answers.
+  const order = sort && sort !== DEFAULT_SORT ? `&sort=${encodeURIComponent(sort)}` : '';
   const data = await request(
-    `/api/mail/folders/${folderId}/messages?skip=${skip}&take=${take}`,
+    `/api/mail/folders/${folderId}/messages?skip=${skip}&take=${take}${order}`,
     { method: 'GET', token },
   );
-  return { total: data?.total ?? 0, messages: data?.messages ?? [] };
+  return { total: data?.total ?? 0, messages: data?.messages ?? [], sorted: data?.sort ?? null };
 }
 
 /** Search the whole mailbox. An empty query answers empty, not everything. */
@@ -290,8 +319,14 @@ export function whenLabel(iso, now = new Date()) {
   if (Number.isNaN(d.getTime())) return '';
   const sameDay = d.toDateString() === now.toDateString();
   if (sameDay) return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
-  const days = (now - d) / 86400000;
-  if (days >= 0 && days < 7) return d.toLocaleDateString(undefined, { weekday: 'short' });
+  // CALENDAR days, not elapsed time. Measured in hours, a message from last
+  // Saturday evening is 6.8 days old on Saturday afternoon, "under a week", and
+  // was labelled "Sat" - on a Saturday, above rows that said "Fri" and meant
+  // yesterday. Seen on Amit's Samsung, 19 Sept 2026. Counted in whole days a
+  // weekday name can only ever mean one of the last six days, never today's.
+  const dayOf = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate());
+  const days = Math.round((dayOf(now) - dayOf(d)) / 86400000);
+  if (days >= 1 && days <= 6) return d.toLocaleDateString(undefined, { weekday: 'short' });
   if (d.getFullYear() === now.getFullYear()) return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
   return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
