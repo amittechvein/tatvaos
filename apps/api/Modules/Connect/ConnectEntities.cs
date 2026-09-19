@@ -136,6 +136,28 @@ public sealed class ConnectParticipant
     public DateTimeOffset? FirstJoinedAt { get; set; }
     public DateTimeOffset? LastSeenAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>
+    /// HMAC of a guest's verified mobile number, bound to this meeting - never
+    /// the number (ConnectGuestPhone.Hash). What makes a returning guest the
+    /// SAME row. Null for colleagues and for guests who joined while the
+    /// connect.guest_phone_otp switch was off. Unique per meeting in the database.
+    /// </summary>
+    public string? GuestPhoneHash { get; set; }
+}
+
+/// <summary>The code a guest was texted at a meeting's door. Hashes only; one
+/// row per number per meeting (20260919-b-connect-guest-phone.sql).</summary>
+public sealed class ConnectGuestOtp
+{
+    public Guid Id { get; set; }
+    public Guid MeetingId { get; set; }
+    public string PhoneHash { get; set; } = "";
+    public string? OtpHash { get; set; }
+    public DateTimeOffset SentAt { get; set; }
+    public int Attempts { get; set; }
+    public int Sends { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
 }
 
 public sealed class ConnectLobbyRequest

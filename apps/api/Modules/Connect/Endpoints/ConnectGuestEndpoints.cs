@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using TatvaOS.Api.Shared.Auth;
 using TatvaOS.Api.Shared.Data;
+using TatvaOS.Api.Shared.Notify;
+using TatvaOS.Api.Shared.Settings;
 using TatvaOS.Api.Shared.Tenancy;
 
 namespace TatvaOS.Api.Modules.Connect.Endpoints;
@@ -41,8 +43,25 @@ public static class ConnectGuestEndpoints
     /// meeting on this deployment and far below "unbounded"; refusals say the
     /// one sentence, because a ceiling that answers differently is an oracle
     /// for how full a meeting is.
+    ///
+    /// 200 -> 2000, 19 Sept 2026, AND WHAT 200 COST. "Far above any real
+    /// meeting" stopped being true the day Amit held a company-wide meeting.
+    /// The count is of ROWS, and every guest join writes one - a reload, a
+    /// dropped connection, a second device, each is a new row, because a guest
+    /// has no identity to recognise them by. So a few dozen people reach 200
+    /// well before 200 people do. From then on everybody new was told "This
+    /// meeting link does not work" while the meeting was live, the door
+    /// (GET /g/{code}) answered 200, and NOTHING anywhere said why: the host saw
+    /// a working meeting and a stream of people who could not get in. It was
+    /// found by reading this file, mid-meeting. The refusal keeps its one
+    /// sentence for the stranger; it now also writes a WARNING for us, because a
+    /// limit that fires silently is indistinguishable from a broken link.
+    ///
+    /// Still a ceiling, still blunt: the rate limiter caps the rate, this caps
+    /// the total. Counting people rather than rows needs a guest identity that
+    /// survives a reload, which does not exist yet.
     /// </summary>
-    private const int PerMeetingGuestCeiling = 200;
+    private const int PerMeetingGuestCeiling = 2000;
 
     public static void MapConnectGuestEndpoints(this IEndpointRouteBuilder app)
     {
@@ -52,6 +71,10 @@ public static class ConnectGuestEndpoints
 
         g.MapGet("/{code}", DoorstepAsync).AllowAnonymous();
         g.MapPost("/{code}/join", GuestJoinAsync).AllowAnonymous();
+        // Its OWN, much tighter policy: this one sends a text message.
+        g.MapPost("/{code}/otp", GuestOtpAsync)
+            .RequireRateLimiting("connect-guest-otp")
+            .AllowAnonymous();
         // Its OWN rate-limit policy, overriding the group's per-IP one (an
         // endpoint-level RequireRateLimiting takes precedence over its
         // group's). Review finding F1: this route polls every ~2 seconds per
@@ -63,7 +86,19 @@ public static class ConnectGuestEndpoints
             .AllowAnonymous();
     }
 
-    public sealed record GuestJoinRequest(string? DisplayName, string? Password);
+    /// <summary>Phone + Otp, or Pass, matter only while connect.guest_phone_otp is
+    /// on. Optional so a client that has never heard of them (the mobile app's
+    /// guest door, today) still binds - and is then told what is missing.</summary>
+    public sealed record GuestJoinRequest(
+        string? DisplayName, string? Password,
+        string? Phone = null, string? Otp = null, string? Pass = null);
+
+    public sealed record GuestOtpRequest(string? Phone);
+
+    private static byte[] GuestSecret(IConfiguration config) =>
+        ConnectGuestPhone.DeriveSecret(config["Jwt:SigningKey"]
+            ?? Environment.GetEnvironmentVariable("JWT_SIGNING_KEY")
+            ?? throw new InvalidOperationException("JWT signing key is not configured."));
 
     // Column aliases in the SQL below match these property names exactly, so
     // the mapping does not depend on a naming convention.
@@ -103,10 +138,15 @@ public static class ConnectGuestEndpoints
     //  The doorstep. Costs nothing, counts nothing, changes nothing.
     // ==================================================================
     private static async Task<IResult> DoorstepAsync(
-        string code, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        string code, AppDbContext db, TenantContext tenant, SettingsReader settings, CancellationToken ct)
     {
         var row = await ResolveAsync(db, code, ct);
         if (row is null) return Gone();
+
+        // Read BEFORE the tenant scope changes: platform settings are not a
+        // tenant's. Told at the door so the page asks for the number up front
+        // rather than refusing a name and then asking.
+        var phoneRequired = await settings.FlagAsync(SettingKeys.ConnectGuestPhoneOtp, false, ct);
 
         // The MODE, so the browser can refuse an encrypted meeting it cannot
         // decode BEFORE anybody mints a token — a sentence at the door beats a
@@ -154,6 +194,101 @@ public static class ConnectGuestEndpoints
             },
             passwordRequired = row.HasPassword,
             row.Locked,
+            phoneRequired,
+        });
+    }
+
+    // ==================================================================
+    //  "Text me a code." Anonymous, so everything about it is a limit.
+    //
+    //  Always the same answer for a well-formed number, whether or not a text
+    //  went: this route must not be a way to learn anything about a number.
+    //  The one exception is "could not send", which the person needs in order
+    //  to stop waiting for a text that is not coming.
+    // ==================================================================
+    private static async Task<IResult> GuestOtpAsync(
+        string code, GuestOtpRequest req, AppDbContext db, TenantContext tenant,
+        SettingsReader settings, ISmsSender sms, IConfiguration config,
+        ILoggerFactory logs, CancellationToken ct)
+    {
+        var row = await ResolveAsync(db, code, ct);
+        if (row is null) return Gone();
+        if (!await settings.FlagAsync(SettingKeys.ConnectGuestPhoneOtp, false, ct)) return Gone();
+        if (row.Status == "ended") return Results.Conflict(new { error = "That meeting is over." });
+        if (row.Locked) return Results.Conflict(new { error = "This meeting is locked." });
+
+        var e164 = ConnectGuestPhone.Normalise(req.Phone);
+        if (e164 is null)
+            return Results.BadRequest(new { error = "Give a 10-digit Indian mobile number." });
+
+        var showOtp = await settings.FlagAsync(SettingKeys.ShowOtpOnScreen, false, ct);
+
+        tenant.EnterAnonymousScope(row.TenantId, "guest");
+        await db.SyncTenantAsync(ct);
+
+        var secret = GuestSecret(config);
+        var phoneHash = ConnectGuestPhone.Hash(secret, row.MeetingId, e164);
+        var now = DateTimeOffset.UtcNow;
+        var log = logs.CreateLogger("Connect.Guests");
+
+        var otp = await db.Set<ConnectGuestOtp>()
+            .FirstOrDefaultAsync(o => o.MeetingId == row.MeetingId && o.PhoneHash == phoneHash, ct);
+
+        if (otp is null)
+        {
+            // A NEW number for this meeting. The same ceiling as guest rows, for
+            // the same reason: the rate limit caps the rate, this caps the total
+            // texts one meeting link can ever cause.
+            var numbers = await db.Set<ConnectGuestOtp>().CountAsync(o => o.MeetingId == row.MeetingId, ct);
+            if (numbers >= PerMeetingGuestCeiling)
+            {
+                log.LogWarning("Meeting {Meeting}: code REFUSED, {Numbers} numbers have already asked (ceiling {Ceiling}). Guests are being told the link does not work.",
+                    row.MeetingId, numbers, PerMeetingGuestCeiling);
+                return Gone();
+            }
+            otp = new ConnectGuestOtp
+            {
+                Id = Guid.NewGuid(), MeetingId = row.MeetingId, PhoneHash = phoneHash,
+                Sends = 0, CreatedAt = now,
+            };
+            db.Add(otp);
+        }
+        else
+        {
+            if (now - otp.SentAt < ConnectGuestPhone.ResendAfter)
+                return Results.Json(new { error = "A code was just sent. Wait a moment before asking again." }, statusCode: 429);
+            if (otp.Sends >= ConnectGuestPhone.MaxSendsPerNumber)
+                return Results.Json(new { error = "Too many codes have been sent to this number for this meeting." }, statusCode: 429);
+        }
+
+        var fresh = ConnectGuestPhone.NewCode();
+        otp.OtpHash = ConnectGuestPhone.OtpHash(secret, row.MeetingId, phoneHash, fresh);
+        otp.SentAt = now;
+        otp.Attempts = 0;
+        otp.Sends++;
+        // Saved BEFORE sending: a send counted and not sent costs the person
+        // one of five; a send sent and not counted is an unbounded bill.
+        await db.SaveChangesAsync(ct);
+
+        var result = await sms.SendOtpAsync(e164, fresh, ct);
+        if (!result.Sent && !showOtp)
+        {
+            // Never the number in the log. The provider's reason is ours to read.
+            log.LogWarning("Meeting {Meeting}: a guest's code could not be texted ({Provider}: {Detail})",
+                row.MeetingId, result.Provider, result.Detail);
+            // Results.Json with `error`, NOT Results.Problem: the guest client
+            // reads `error` only, and a sentence in `detail` would reach the
+            // person as "This meeting link does not work."
+            return Results.Json(new { error = "The code could not be sent. Try again in a minute." }, statusCode: 502);
+        }
+
+        return Results.Ok(new
+        {
+            sent = true,
+            sentTo = ConnectGuestPhone.Mask(e164),
+            // Testing mode only, exactly as sign-in does it: the code on screen
+            // when no text could go and the operator has said that is allowed.
+            devCode = showOtp && !result.Sent ? fresh : null,
         });
     }
 
@@ -163,7 +298,7 @@ public static class ConnectGuestEndpoints
     private static async Task<IResult> GuestJoinAsync(
         string code, GuestJoinRequest req, AppDbContext db, TenantContext tenant,
         IPasswordHasher hasher, LiveKitTokenService tokens, ConnectRoomKey roomKeys,
-        CancellationToken ct)
+        ILoggerFactory logs, SettingsReader settings, IConfiguration config, CancellationToken ct)
     {
         if (!tokens.IsConfigured)
             return Results.Problem("Connect is not configured on this server.", statusCode: 503);
@@ -178,6 +313,9 @@ public static class ConnectGuestEndpoints
             return Results.Conflict(new { error = "That meeting is over." });
         if (row.Locked)
             return Results.Conflict(new { error = "This meeting is locked." });
+
+        // Platform settings are read BEFORE the tenant scope changes.
+        var phoneOn = await settings.FlagAsync(SettingKeys.ConnectGuestPhoneOtp, false, ct);
 
         // From here on the request has a tenant, so ordinary RLS applies again
         // and everything below is scoped exactly as a signed-in request would
@@ -214,9 +352,87 @@ public static class ConnectGuestEndpoints
         // ordinary RLS now that the tenant is entered: how many guest rows
         // this meeting already has, and how many people are actually waiting.
         // Either at the ceiling answers the one failure sentence.
-        var guestRows = await db.ConnectParticipants.AsNoTracking()
+        // ── Who is this, if the switch is on. ────────────────────────────────
+        //  Either a PASS this server signed for this meeting (somebody coming
+        //  back in the same browser: no text, no typing), or a number and the
+        //  code texted to it. Both end at the same place: `returning` is their
+        //  existing row, or null and `phoneHash` is what a new row will carry.
+        ConnectParticipant? returning = null;
+        string? phoneHash = null;
+        byte[]? secret = null;
+        if (phoneOn)
+        {
+            secret = GuestSecret(config);
+            var now = DateTimeOffset.UtcNow;
+
+            if (ConnectGuestPhone.ReadPass(secret, row.MeetingId, req.Pass, now) is Guid passFor)
+                returning = await db.ConnectParticipants
+                    .FirstOrDefaultAsync(p => p.Id == passFor && p.MeetingId == row.MeetingId
+                                           && p.IsGuest && p.GuestPhoneHash != null, ct);
+
+            if (returning is null)
+            {
+                var e164 = ConnectGuestPhone.Normalise(req.Phone);
+                var typed = (req.Otp ?? "").Trim();
+                if (e164 is null || typed.Length == 0)
+                    return Results.BadRequest(new
+                    {
+                        error = "Verify your mobile number to join this meeting.",
+                        phoneRequired = true,
+                    });
+
+                phoneHash = ConnectGuestPhone.Hash(secret, row.MeetingId, e164);
+                var otp = await db.Set<ConnectGuestOtp>()
+                    .FirstOrDefaultAsync(o => o.MeetingId == row.MeetingId && o.PhoneHash == phoneHash, ct);
+
+                var good = otp is { OtpHash: not null }
+                    && otp.Attempts < ConnectGuestPhone.MaxAttempts
+                    && now - otp.SentAt <= ConnectGuestPhone.OtpLifetime
+                    && ConnectGuestPhone.SameHash(
+                        ConnectGuestPhone.OtpHash(secret, row.MeetingId, phoneHash, typed), otp.OtpHash);
+                if (!good)
+                {
+                    if (otp is not null)
+                    {
+                        otp.Attempts++;
+                        // Guessed at too often: the code dies, a new one must be asked for.
+                        if (otp.Attempts >= ConnectGuestPhone.MaxAttempts) otp.OtpHash = null;
+                        await db.SaveChangesAsync(ct);
+                    }
+                    // One sentence for wrong, expired, used and never-sent alike.
+                    return Results.BadRequest(new { error = "That code is not right, or it has expired. Ask for a new one." });
+                }
+                otp!.OtpHash = null;   // single use
+
+                returning = await db.ConnectParticipants
+                    .FirstOrDefaultAsync(p => p.MeetingId == row.MeetingId && p.GuestPhoneHash == phoneHash, ct);
+            }
+
+            // Remove now survives a rejoin for a guest too. It could not before:
+            // a removed guest came back as a brand-new row with a brand-new
+            // identity, and with the waiting room off walked straight in.
+            if (returning is not null && await db.ConnectMeetingBlocks.AsNoTracking()
+                    .AnyAsync(x => x.MeetingId == row.MeetingId && x.Identity == returning.Identity, ct))
+            {
+                await db.SaveChangesAsync(ct);
+                return Results.Conflict(new { error = "You were removed from this meeting and cannot rejoin." });
+            }
+        }
+
+        // The ceiling guards NEW rows. Somebody coming back adds none, so they
+        // are never the person it turns away.
+        var guestRows = returning is not null ? 0 : await db.ConnectParticipants.AsNoTracking()
             .CountAsync(p => p.MeetingId == row.MeetingId && p.IsGuest, ct);
-        if (guestRows >= PerMeetingGuestCeiling) return Gone();
+        if (guestRows >= PerMeetingGuestCeiling)
+        {
+            // Said HERE because it is said nowhere else: the guest is told only
+            // that the link does not work. No name, no address - the meeting id
+            // and the two numbers are the whole story.
+            logs.CreateLogger("Connect.Guests").LogWarning(
+                "Meeting {Meeting}: guest join REFUSED by the per-meeting ceiling ({Rows} guest rows, ceiling {Ceiling}). Guests are being told the link does not work.",
+                row.MeetingId, guestRows, PerMeetingGuestCeiling);
+            return Gone();
+        }
 
         if (row.WaitingRoom is "guests" or "everyone")
         {
@@ -224,25 +440,63 @@ public static class ConnectGuestEndpoints
             var waitingRows = await db.ConnectLobbyRequests.AsNoTracking()
                 .CountAsync(r => r.MeetingId == row.MeetingId
                               && r.Status == "waiting" && r.CreatedAt > cutoff, ct);
-            if (waitingRows >= PerMeetingGuestCeiling) return Gone();
+            if (waitingRows >= PerMeetingGuestCeiling)
+            {
+                logs.CreateLogger("Connect.Guests").LogWarning(
+                    "Meeting {Meeting}: guest join REFUSED, the waiting room is full ({Rows} waiting, ceiling {Ceiling}). Guests are being told the link does not work.",
+                    row.MeetingId, waitingRows, PerMeetingGuestCeiling);
+                return Gone();
+            }
         }
 
-        var participant = new ConnectParticipant
+        ConnectParticipant participant;
+        if (returning is not null)
         {
-            Id = Guid.NewGuid(),
-            MeetingId = row.MeetingId,
-            UserId = null,
-            DisplayName = name,
-            Role = "participant",
-            IsGuest = true,
-            Identity = "",
-            CreatedAt = DateTimeOffset.UtcNow,
-        };
-        // Keyed to the participant row, not to the name: two people may both
-        // be "Ravi", and a display name is not an identity.
-        participant.Identity = ConnectCodes.IdentityForGuest(participant.Id);
-        db.ConnectParticipants.Add(participant);
-        await db.SaveChangesAsync(ct);
+            // The same person, counted once. Their name may have changed; the
+            // row, its identity and whatever the host decided about them do not.
+            participant = returning;
+            participant.DisplayName = name;
+            await db.SaveChangesAsync(ct);
+        }
+        else
+        {
+            participant = new ConnectParticipant
+            {
+                Id = Guid.NewGuid(),
+                MeetingId = row.MeetingId,
+                UserId = null,
+                DisplayName = name,
+                Role = "participant",
+                IsGuest = true,
+                Identity = "",
+                CreatedAt = DateTimeOffset.UtcNow,
+                GuestPhoneHash = phoneHash,
+            };
+            // Keyed to the participant row, not to the name: two people may both
+            // be "Ravi", and a display name is not an identity.
+            participant.Identity = ConnectCodes.IdentityForGuest(participant.Id);
+            db.ConnectParticipants.Add(participant);
+            try
+            {
+                await db.SaveChangesAsync(ct);
+            }
+            catch (DbUpdateException) when (phoneHash is not null)
+            {
+                // Two tabs proved the same number in the same second and the
+                // unique index let one through. This is the other one: take the
+                // row that won rather than fail somebody who did nothing wrong.
+                db.Entry(participant).State = EntityState.Detached;
+                var winner = await db.ConnectParticipants
+                    .FirstOrDefaultAsync(p => p.MeetingId == row.MeetingId && p.GuestPhoneHash == phoneHash, ct);
+                if (winner is null) throw;
+                participant = winner;
+            }
+        }
+
+        // Handed over once the number is proved, and again on every return so it
+        // never runs out mid-meeting. See ConnectGuestPhone for what it is not.
+        var guestPass = secret is null ? null : ConnectGuestPhone.MintPass(
+            secret, row.MeetingId, participant.Id, DateTimeOffset.UtcNow + ConnectGuestPhone.PassLifetime);
 
         // Guests wait unless the host has explicitly turned the waiting room
         // off. Defaulting the other way would mean a leaked link is a seat.
@@ -250,14 +504,22 @@ public static class ConnectGuestEndpoints
         {
             var (waitToken, _) = await ConnectEndpoints.ParkAsync(
                 db, row.MeetingId, null, name, ct);
-            return Results.Ok(new { status = "waiting", waitToken });
+            return Results.Ok(new { status = "waiting", waitToken, guestPass });
         }
+
+        // A proved guest keeps ONE row across devices, so each connection gets
+        // its own identity (IdentityForGuestDevice). An unproved one does not
+        // need it: their row is this door only.
+        var connection = participant.GuestPhoneHash is null
+            ? participant.Identity
+            : ConnectCodes.IdentityForGuestDevice(participant.Id);
 
         return Results.Ok(new
         {
             status = "joined",
+            guestPass,
             token = tokens.MintJoinToken(new LiveKitGrantOptions(
-                ConnectCodes.RoomName(row.MeetingId), participant.Identity, name,
+                ConnectCodes.RoomName(row.MeetingId), connection, name,
                 // A guest is a 'participant' for the share policy — the same
                 // rule a signed-in participant gets, read from the same column.
                 CanPublishSources: ConnectShare.SourcesFor(meeting.SharePolicy, "participant"))),
@@ -274,7 +536,7 @@ public static class ConnectGuestEndpoints
             // meeting, and never logged. See ConnectRoomKey.
             roomKey = meeting.Mode == ConnectModes.Private ? roomKeys.For(row.MeetingId) : null,
             wsUrl = tokens.PublicUrl,
-            identity = participant.Identity,
+            identity = connection,
         });
     }
 

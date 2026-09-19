@@ -35,6 +35,8 @@
     <!-- The production file itself. Not a copy. -->
     <Compile Include="../../apps/api/Modules/Connect/ConnectCodes.cs"
              Link="ConnectCodes.cs" />
+    <Compile Include="../../apps/api/Modules/Connect/ConnectGuestPhone.cs"
+             Link="ConnectGuestPhone.cs" />
   </ItemGroup>
 
 </Project>

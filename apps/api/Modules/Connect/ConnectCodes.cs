@@ -100,6 +100,18 @@ public static partial class ConnectCodes
     /// "Ravi", and a display name is not an identity.</summary>
     public static string IdentityForGuest(Guid participantId) => $"guest:{participantId}";
 
+    /// <summary>
+    /// One connection of a guest who PROVED A NUMBER (19 Sept 2026). Such a guest
+    /// keeps one participant row across reloads and devices, so - exactly like a
+    /// colleague - each connection needs its own LiveKit identity or the second
+    /// device throws the first out of the room. PersonOf gives back
+    /// <see cref="IdentityForGuest"/>, which is what the row holds. A guest who
+    /// joined without a number still gets the bare identity: their row is
+    /// already one door's worth.
+    /// </summary>
+    public static string IdentityForGuestDevice(Guid participantId) =>
+        $"{IdentityForGuest(participantId)}{DeviceSeparator}{Convert.ToHexString(RandomNumberGenerator.GetBytes(4)).ToLowerInvariant()}";
+
     /// <summary>Is this connected identity somebody with no account? The prefix is
     /// minted here and nowhere else, so this is the one place that may read it.</summary>
     public static bool IsGuest(string? identity) =>
