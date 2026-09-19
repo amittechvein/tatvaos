@@ -95,8 +95,8 @@
     <tr><td>Base</td><td><code>https://core.tatvaos.com/api/v1/org/meetings</code></td></tr>
     <tr><td>Authentication</td><td><code>Authorization: Bearer tvk_…</code> — a Meetings API key</td></tr>
     <tr><td>Schedule</td><td><code>POST /api/v1/org/meetings</code> — needs <code>meetings:schedule</code></td></tr>
-    <tr><td>Timetable</td><td><code>GET /api/v1/org/meetings</code> — needs <code>meetings:join</code></td></tr>
-    <tr><td>One meeting</td><td><code>GET /api/v1/org/meetings/{id}</code> — needs <code>meetings:join</code></td></tr>
+    <tr><td>Timetable</td><td><code>GET /api/v1/org/meetings</code> — needs <code>meetings:schedule</code></td></tr>
+    <tr><td>One meeting</td><td><code>GET /api/v1/org/meetings/{id}</code> — either key</td></tr>
     <tr><td>Join link</td><td><code>POST /api/v1/org/meetings/{id}/join</code> — needs <code>meetings:join</code></td></tr>
     <tr><td>Cancel</td><td><code>DELETE /api/v1/org/meetings/{id}</code> — needs <code>meetings:schedule</code></td></tr>
     <tr><td>Rate limit</td><td>30 requests a minute, per calling address</td></tr>
@@ -107,10 +107,11 @@
   <table>
     <tr><th>Permission</th><th>What it allows</th></tr>
     <tr><td><code>meetings:schedule</code></td><td>Create, reschedule and cancel meetings.</td></tr>
-    <tr><td><code>meetings:join</code></td><td>Read meetings and get join links. Changes nothing.</td></tr>
+    <tr><td><code>meetings:join</code></td><td>Read a meeting it holds the id of, and get its join link. Changes nothing, cannot list the timetable, and never sees an email address or account id.</td></tr>
   </table>
   <div class="card warn">
     <p style="margin:0"><strong>Use two separate keys.</strong> Give the staff half of your software a <code>meetings:schedule</code> key, and the student half a <code>meetings:join</code> key. If one key did both, the copy sitting in a student-facing portal could cancel every class in the school. Revoking one key never affects the other.</p>
+    <p style="margin:10px 0 0"><strong>The student key is designed to be the one that leaks.</strong> It lives in whatever your student portal runs on. So it is built to be worth little if it does: it cannot list the organisation's meetings, it cannot ask whether an address belongs to your organisation, and nothing it reads names a teacher by anything but their display name.</p>
   </div>
 
   <h2 id="schedule">Scheduling a class</h2>
@@ -177,36 +178,35 @@ Content-Type: application/json
   <p>To put the class on <em>students'</em> calendars as well, invite them from Connect — that sends each person a proper calendar invitation by email. Inviting from this API is not in this version; see <a href="#notyet">what is not in this version</a>.</p>
 
   <h2 id="join">Joining</h2>
-  <p>The join link is the meeting link, and you already have it from <code>joinUrl</code>. What the join call adds is the answer to <em>"will this student be recognised?"</em> — so your software can tell them what to expect before the class rather than after.</p>
+  <p>The join link is the meeting link, and you already have it from <code>joinUrl</code>. What the join call adds is what to <em>tell</em> the student — whether this meeting holds people at the door — so your software can say so before the class rather than after. It takes nothing but the meeting id.</p>
 <pre><code>POST https://core.tatvaos.com/api/v1/org/meetings/6f1b.../join
-Authorization: Bearer tvk_...
-Content-Type: application/json
-
-{ "email": "asha.rao@yourschool.edu" }</code></pre>
+Authorization: Bearer tvk_...</code></pre>
 <pre><code>{
-  "joinUrl":         "https://connect.tatvaos.com/connect/room/zQ6rH...",
-  "meetingId":       "6f1b...",
-  "title":           "Physics — Class 10B",
-  "startsAt":        "2026-09-21T03:30:00+00:00",
-  "recognised":      true,
-  "willWaitInLobby": false,
-  "needsPassword":   false,
-  "guidance":        "Open the link and sign in to TatvaOS to join."
+  "joinUrl":       "https://connect.tatvaos.com/connect/room/zQ6rH...",
+  "meetingId":     "6f1b...",
+  "title":         "Physics — Class 10B",
+  "startsAt":      "2026-09-21T03:30:00+00:00",
+  "endsAt":        "2026-09-21T04:30:00+00:00",
+  "hostName":      "R Iyer",
+  "waitingRoom":   "guests",
+  "allowGuests":   true,
+  "needsPassword": false,
+  "guidance":      "Open the link. Sign in to TatvaOS to go straight in; otherwise give your name and the host will let you in."
 }</code></pre>
   <table>
     <tr><th>Field</th><th>What to do with it</th></tr>
-    <tr><td><code>recognised</code></td><td><code>true</code> when that address is a person in your organisation. They sign in and join as themselves.</td></tr>
-    <tr><td><code>willWaitInLobby</code></td><td><code>true</code> when they will wait for the teacher to let them in. Say so on your Join button.</td></tr>
+    <tr><td><code>waitingRoom</code></td><td><code>guests</code>: students with a TatvaOS account walk in, anyone else waits. <code>everyone</code>: all wait. <code>off</code>: nobody waits.</td></tr>
+    <tr><td><code>allowGuests</code></td><td><code>false</code> means only people with a TatvaOS account can enter at all.</td></tr>
     <tr><td><code>needsPassword</code></td><td>The meeting has a password. Show it, or tell them to expect one.</td></tr>
-    <tr><td><code>guidance</code></td><td>A ready-made sentence for the four combinations, if you would rather not write your own.</td></tr>
+    <tr><td><code>guidance</code></td><td>A ready-made sentence for the combination above, if you would rather not write your own.</td></tr>
   </table>
-  <p><code>email</code> is optional. Without it you still get the link, and <code>recognised</code> is <code>false</code>.</p>
+  <p><strong>The call does not take a student's email, on purpose.</strong> Your software knows whether a student has a TatvaOS account — it is the thing that created it through the <a href="/docs/people-api-guide.html">People API</a> — and combining that with <code>waitingRoom</code> tells you exactly what they will see. An endpoint that confirmed whether an address belongs to your organisation would let anyone holding a leaked portal key enumerate your school.</p>
   <div class="card">
     <p style="margin:0"><strong>Students who have TatvaOS accounts have the better experience.</strong> They join under their real name, skip the waiting room, and the teacher sees who is present. Adding students through the <a href="/docs/people-api-guide.html">People API</a> is what makes that true.</p>
   </div>
 
   <h2 id="list">The timetable</h2>
-  <p>What is on, for the whole organisation or for one teacher.</p>
+  <p>What is on, for the whole organisation or for one teacher. <strong>This is the staff view and needs <code>meetings:schedule</code></strong> — it names every teacher and every class, which is not something a student portal should be able to pull. The student side does not need it: it holds the ids of the classes your staff side scheduled.</p>
 <pre><code>GET /api/v1/org/meetings
 GET /api/v1/org/meetings?hostEmail=r.iyer@yourschool.edu
 GET /api/v1/org/meetings?from=2026-09-21T00:00:00Z&amp;to=2026-09-28T00:00:00Z</code></pre>
@@ -234,11 +234,10 @@ Authorization: Bearer tvk_...
     <tr><td><code>204</code></td><td>Cancelled.</td><td>—</td></tr>
     <tr><td><code>400</code></td><td>Something in the request was wrong.</td><td>Read <code>error</code>; it is a sentence. Do not retry unchanged.</td></tr>
     <tr><td><code>401</code></td><td>The key is missing, wrong or revoked.</td><td>Check the header. A revoked key and an unknown key answer alike.</td></tr>
-    <tr><td><code>403</code></td><td>The key is real but lacks the permission.</td><td>Tick the right box on a new key.</td></tr>
+    <tr><td><code>403</code></td><td>The key is real but lacks the permission — including a join key asking for the timetable.</td><td>Use the staff key, or tick the right box on a new one.</td></tr>
     <tr><td><code>404</code></td><td>No such meeting in this organisation.</td><td>Check the id.</td></tr>
     <tr><td><code>409</code></td><td>The meeting is over, or running.</td><td>Nothing to do.</td></tr>
-    <tr><td><code>429</code></td><td>Too many requests.</td><td>Back off and retry — see below.</td></tr>
-    <tr><td><code>503</code></td><td>Meetings are not switched on for this server.</td><td>Ask your administrator.</td></tr>
+    <tr><td><code>429</code></td><td>More than 30 requests in a minute from one address.</td><td>Back off and retry — see below.</td></tr>
   </table>
   <p>Every failure body is <code>{ "error": "a sentence" }</code>. The sentence is meant to be shown to whoever is using your software.</p>
   <h3>Retries</h3>
@@ -287,11 +286,9 @@ const meeting = await call('', {
   }),
 });
 
-// A student opens their timetable.
-const link = await call(`/${meeting.id}/join`, {
-  method: 'POST',
-  body: JSON.stringify({ email: 'asha.rao@yourschool.edu' }),
-});
+// A student opens their timetable. (In your real code this runs with the
+// student-side key, not the staff one.)
+const link = await call(`/${meeting.id}/join`, { method: 'POST' });
 console.log(link.joinUrl, link.guidance);</code></pre>
 
   <h3>Python (requests)</h3>
@@ -315,8 +312,7 @@ meeting = check(requests.post(BASE, headers=HEAD, json={
     "endsAt":    "2026-09-21T10:00:00+05:30",
 }))
 
-link = check(requests.post(f"{BASE}/{meeting['id']}/join",
-                           headers=HEAD, json={"email": "asha.rao@yourschool.edu"}))
+link = check(requests.post(f"{BASE}/{meeting['id']}/join", headers=HEAD))
 print(link["joinUrl"], link["guidance"])</code></pre>
 
   <h3>A week's timetable, end to end</h3>
@@ -337,8 +333,7 @@ for row in timetable_for_next_week():          # your data
 
 # Student side — a DIFFERENT key, meetings:join only
 for row in classes_for(student):
-    link = check(requests.post(f"{BASE}/{row.meeting_id}/join",
-                               headers=STUDENT, json={"email": student.email}))
+    link = check(requests.post(f"{BASE}/{row.meeting_id}/join", headers=STUDENT))
     show_join_button(row, link["joinUrl"], note=link["guidance"])</code></pre>
 
   <h2 id="limits">What a key cannot do</h2>
@@ -349,6 +344,7 @@ for row in classes_for(student):
     <li><strong>It cannot add people.</strong> That is the People API, and a separate key.</li>
     <li><strong>It cannot make a meeting private or recorded.</strong> Whether a meeting can be recorded is chosen once, when it is created, and can never change afterwards — so it is not something an API caller sets.</li>
     <li><strong>It cannot read what happened in a meeting.</strong> No recordings, no captions, no minutes, no chat.</li>
+    <li><strong>A join key cannot see who is in your organisation.</strong> It cannot list meetings, cannot look up an address, and is never shown an email or account id.</li>
     <li><strong>It cannot see another organisation.</strong> A key names exactly one, and that boundary is enforced by the database, not by the code that answers you.</li>
   </ul>
 
@@ -368,12 +364,12 @@ for row in classes_for(student):
   <ul class="tight">
     <li><strong>Rescheduling.</strong> Cancel and re-create, or change it in Connect.</li>
     <li><strong>Inviting students by email from the API.</strong> The calendar entry is created for the host only; emailed invitations are sent from Connect.</li>
-    <li><strong>Per-student join tokens.</strong> The join link is the meeting link, so anyone holding it can open the door — the waiting room and the meeting password are what control who gets in. If you need attendance to be attributable, give your students TatvaOS accounts and set <code>waitingRoom</code> to <code>guests</code>, so only named people walk straight in.</li>
+    <li><strong>Per-student join links.</strong> The join link is the meeting link, so anyone holding it can open the door — the waiting room and the meeting password are what control who gets in. If you need attendance to be attributable, give your students TatvaOS accounts and set <code>waitingRoom</code> to <code>guests</code>, so only named people walk straight in.</li>
     <li><strong>Attendance reporting.</strong> Who joined and for how long is not on this API.</li>
     <li><strong>Recurring meetings.</strong> Create each occurrence.</li>
     <li><strong>Webhooks.</strong> Nothing is pushed to you; ask for the timetable when you need it.</li>
   </ul>
-  <p>If one of these is blocking you, say so — the list is what has not been asked for yet, not what has been ruled out.</p>
+  <p>This is what has not been built, named so you can plan around it.</p>
 
   <footer>
     <p>TatvaOS Meetings API · Organisation API v1 · 18 September 2026.<br>

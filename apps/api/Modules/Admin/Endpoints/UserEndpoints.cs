@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using TatvaOS.Api.Shared;
 using TatvaOS.Api.Shared.Auth;
+using TatvaOS.Api.Modules.Calendar;
 using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Notify;
 using TatvaOS.Api.Shared.Tenancy;
@@ -415,6 +416,10 @@ public static class UserEndpoints
             tenant.TenantId, req.DepartmentId, req.QuotaBytes, "mail", ct);
 
         db.Users.Add(user);
+        // Their calendar, in the same transaction. Nothing made one before
+        // 18 Sept 2026; the migration's backfill was catching up on every
+        // deploy and hiding it. See CalendarProvisioning.
+        db.Calendars.Add(CalendarProvisioning.PrimaryFor(tenant.TenantId, user.Id));
 
         foreach (var code in products.Distinct())
             db.ProductAccess.Add(new ProductAccess
@@ -892,6 +897,10 @@ public static class UserEndpoints
             var inviteToken = inviteChannel is null ? null : Invitations.Issue(user, inviteChannel);
             if (inviteToken is not null) invites.Add((user.Id, inviteToken));
             db.Users.Add(user);
+            // Same as the single path, and for the same reason the quota line
+            // above exists: two paths that must agree, with this being the
+            // thing that checks they do.
+            db.Calendars.Add(CalendarProvisioning.PrimaryFor(tenant.TenantId, user.Id));
             foreach (var code in products.Distinct())
                 db.ProductAccess.Add(new ProductAccess
                 {

@@ -57,9 +57,27 @@ namespace TatvaOS.Api.Modules.Admin.Endpoints;
 ///  after somebody has asked for it, not before. The join endpoint below is
 ///  shaped so that adding one later changes its RESPONSE and not its callers.
 ///
-///  What the join endpoint adds over printing the link yourself is the answer
-///  to "will this student be recognised" — so an ERP can tell a student they
-///  will be waiting in a lobby BEFORE the class starts, rather than after.
+///  What the join endpoint adds over printing the link yourself is what to
+///  tell the student — whether this meeting holds guests at the door — so an
+///  ERP can say so BEFORE the class starts, rather than after.
+///
+/// ── WHAT THE STUDENT KEY MAY LEARN (CTO review, 18 Sept 2026) ────────────
+///
+///  The key in a student portal is the most exposed credential in this
+///  design: it sits in whatever the ERP vendor built. So what it can read is
+///  a decision, not a consequence of which endpoints were convenient:
+///
+///   * it cannot list the organisation's meetings at all. The timetable is
+///     the staff half's view and needs meetings:schedule; the student half
+///     already holds the ids of the classes it scheduled;
+///   * a meeting it reads names the teacher by DISPLAY NAME only — that is
+///     what a class shows a student — never by email or id;
+///   * the join call takes NO email. The first version accepted one and
+///     answered "recognised: true/false", which made a compromised portal
+///     key an oracle for whether any address belongs to the school. Removed.
+///     The ERP knows whether a student has an account, because it is the
+///     thing that created it (people API), and the waiting-room setting
+///     tells it the rest.
 /// </summary>
 public static class OrgMeetingApiEndpoints
 {
@@ -157,7 +175,7 @@ public static class OrgMeetingApiEndpoints
                 from = OrgApiAuth.ClientAddress(http),
             }, ct: ct);
 
-        return Results.Created($"{MeetingsPath}/{meeting.Id}", Shape(meeting, host, onCalendar: true));
+        return Results.Created($"{MeetingsPath}/{meeting.Id}", Shape(meeting, host, full: true));
     }
 
     // ==================================================================
@@ -167,8 +185,12 @@ public static class OrgMeetingApiEndpoints
         HttpContext http, AppDbContext db, TenantContext tenant,
         DateTimeOffset? from, DateTimeOffset? to, string? hostEmail, CancellationToken ct)
     {
+        // meetings:schedule, not meetings:join. The whole organisation's
+        // timetable — every class, every teacher, every time — is the staff
+        // half's view. A student portal that could read it would be a way to
+        // enumerate a school's staff from a compromised key.
         var auth = await OrgApiAuth.AuthenticateAsync(
-            http, db, tenant, OrgApiKey.ScopeMeetingsJoin, ReadRefusal, ct);
+            http, db, tenant, OrgApiKey.ScopeMeetingsSchedule, ScheduleRefusal, ct);
         if (auth.Caller is null) return auth.Refusal!;
 
         // Defaults chosen for the question an ERP asks: "what is on". Not
@@ -212,16 +234,18 @@ public static class OrgMeetingApiEndpoints
             meetings = rows.Select(m => Shape(
                 m,
                 m.CreatedByUserId is Guid h ? hosts.GetValueOrDefault(h) : null,
-                onCalendar: true)).ToList(),
+                full: true)).ToList(),
         });
     }
 
     private static async Task<IResult> GetAsync(
         Guid id, HttpContext http, AppDbContext db, TenantContext tenant, CancellationToken ct)
     {
+        // Either key may read one meeting: the one that scheduled it holds
+        // its id, and so does the one that hands out its link.
         var auth = await OrgApiAuth.AuthenticateAsync(
-            http, db, tenant, OrgApiKey.ScopeMeetingsJoin, ReadRefusal, ct);
-        if (auth.Caller is null) return auth.Refusal!;
+            http, db, tenant, [OrgApiKey.ScopeMeetingsJoin, OrgApiKey.ScopeMeetingsSchedule], ReadRefusal, ct);
+        if (auth.Caller is not { } caller) return auth.Refusal!;
 
         var meeting = await db.ConnectMeetings.AsNoTracking().FirstOrDefaultAsync(m => m.Id == id, ct);
         if (meeting is null) return NotFound();
@@ -230,15 +254,16 @@ public static class OrgMeetingApiEndpoints
             ? await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == h, ct)
             : null;
 
-        return Results.Ok(Shape(meeting, host, onCalendar: true));
+        // A key that may schedule sees the host as a person; a key that may
+        // only join sees a teacher's name on a class.
+        return Results.Ok(Shape(meeting, host, full: caller.Scopes.Contains(OrgApiKey.ScopeMeetingsSchedule)));
     }
 
     // ==================================================================
     //  Join
     // ==================================================================
     private static async Task<IResult> JoinAsync(
-        Guid id, JoinLinkRequest? req, HttpContext http, AppDbContext db, TenantContext tenant,
-        CancellationToken ct)
+        Guid id, HttpContext http, AppDbContext db, TenantContext tenant, CancellationToken ct)
     {
         var auth = await OrgApiAuth.AuthenticateAsync(
             http, db, tenant, OrgApiKey.ScopeMeetingsJoin, ReadRefusal, ct);
@@ -253,28 +278,23 @@ public static class OrgMeetingApiEndpoints
         if (meeting.Status is "ended" or "cancelled")
             return Results.Conflict(new { error = "That meeting is over." });
 
-        // Is this person one of ours? The answer changes what the student is
-        // about to experience, and an ERP can say so in advance.
-        var person = string.IsNullOrWhiteSpace(req?.Email)
-            ? null
-            : await FindPersonAsync(db, req!.Email, ct);
+        var hostName = meeting.CreatedByUserId is Guid h
+            ? await db.Users.AsNoTracking().Where(u => u.Id == h).Select(u => u.DisplayName).FirstOrDefaultAsync(ct)
+            : null;
 
-        var recognised = person is not null;
-        // The waiting room holds guests by default; a colleague who is signed
-        // in is not a guest. 'everyone' holds them too, and 'off' holds nobody.
-        var willWait = meeting.WaitingRoom switch
+        // What the ERP should tell the student, from the meeting alone. The
+        // waiting room holds guests by default; a colleague who is signed in
+        // is not a guest. 'everyone' holds them too, and 'off' holds nobody.
+        // Whether THIS student is a guest is the ERP's knowledge, not ours to
+        // confirm — see the header.
+        var guidance = meeting.WaitingRoom switch
         {
-            "off" => false,
-            "everyone" => true,
-            _ => !recognised,
+            "off" => "Open the link to join.",
+            "everyone" => "Open the link, then sign in or give your name. The host will let you in.",
+            _ => meeting.AllowGuests
+                ? "Open the link. Sign in to TatvaOS to go straight in; otherwise give your name and the host will let you in."
+                : "Open the link and sign in to TatvaOS to join. This meeting does not admit guests.",
         };
-
-        if (!recognised && !meeting.AllowGuests)
-            return Results.Json(new
-            {
-                error = "This meeting does not admit guests, and that address is not a person in this organisation. "
-                      + "Add them through the people API, or allow guests on the meeting.",
-            }, statusCode: 403);
 
         return Results.Ok(new
         {
@@ -285,18 +305,11 @@ public static class OrgMeetingApiEndpoints
             startsAt = meeting.ScheduledStart,
             endsAt = meeting.ScheduledEnd,
             meeting.Timezone,
-            // What the ERP should tell the student, without having to know
-            // Connect's waiting-room vocabulary.
-            recognised,
-            willWaitInLobby = willWait,
+            hostName,
+            meeting.WaitingRoom,
+            meeting.AllowGuests,
             needsPassword = meeting.PasswordHash != null,
-            guidance = recognised
-                ? (willWait
-                    ? "Open the link and sign in to TatvaOS. The host will let you in."
-                    : "Open the link and sign in to TatvaOS to join.")
-                : (willWait
-                    ? "Open the link and give your name. The host will let you in."
-                    : "Open the link and give your name to join."),
+            guidance,
         });
     }
 
@@ -368,7 +381,7 @@ public static class OrgMeetingApiEndpoints
     /// minutes or modes to put a class on a timetable, and every field
     /// published here is one that can never quietly change meaning.
     /// </summary>
-    private static object Shape(ConnectMeeting m, User? host, bool onCalendar) => new
+    private static object Shape(ConnectMeeting m, User? host, bool full) => new
     {
         id = m.Id,
         m.Code,
@@ -378,7 +391,12 @@ public static class OrgMeetingApiEndpoints
         startsAt = m.ScheduledStart,
         endsAt = m.ScheduledEnd,
         m.Timezone,
-        host = host is null ? null : new { host.Id, email = host.Email, name = host.DisplayName },
+        // `full` is the schedule scope. The join scope gets the teacher's
+        // name, which is what a class shows a student, and nothing that
+        // identifies an account.
+        host = host is null ? null
+             : full ? (object)new { host.Id, email = host.Email, name = host.DisplayName }
+             : new { name = host.DisplayName },
         m.WaitingRoom,
         m.AllowGuests,
         needsPassword = m.PasswordHash != null,
@@ -386,7 +404,7 @@ public static class OrgMeetingApiEndpoints
         // on the host's calendar as part of creating it. Reported rather than
         // assumed by the caller, so that if it ever stops being true the
         // response says so instead of the ERP believing it.
-        onCalendar = onCalendar && m.ScheduledStart != null,
+        onCalendar = m.ScheduledStart != null,
     };
 
     private static IResult NotFound() =>
@@ -411,6 +429,3 @@ public sealed record ScheduleMeetingRequest(
     bool? AllowGuests,
     string? Password);
 
-/// <summary>Who the join link is for. The address is optional: without it the
-/// link still comes back, and `recognised` is simply false.</summary>
-public sealed record JoinLinkRequest(string? Email);

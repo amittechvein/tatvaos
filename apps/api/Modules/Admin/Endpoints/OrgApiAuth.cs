@@ -53,9 +53,20 @@ public static class OrgApiAuth
     /// for a signed-in request — except that the actor is a key, so UserId
     /// stays null and audit rows say so.
     /// </summary>
-    public static async Task<Outcome> AuthenticateAsync(
+    public static Task<Outcome> AuthenticateAsync(
         HttpContext http, AppDbContext db, TenantContext tenant,
         string requiredScope, string scopeRefusal, CancellationToken ct)
+        => AuthenticateAsync(http, db, tenant, [requiredScope], scopeRefusal, ct);
+
+    /// <summary>
+    /// The same, for an endpoint either of two scopes may reach — reading one
+    /// meeting is open to the key that scheduled it and to the key that hands
+    /// out its link. What each may SEE is the endpoint's business, decided
+    /// from the Caller's scopes; this only decides whether it gets in.
+    /// </summary>
+    public static async Task<Outcome> AuthenticateAsync(
+        HttpContext http, AppDbContext db, TenantContext tenant,
+        string[] anyOfScopes, string scopeRefusal, CancellationToken ct)
     {
         var header = http.Request.Headers.Authorization.ToString();
         if (!header.StartsWith("Bearer ", StringComparison.Ordinal))
@@ -98,7 +109,7 @@ public static class OrgApiAuth
         }
         if (wasRevoked) return Outcome.No(Unauthorized("That API key is not valid."));
 
-        if (!scopes.Contains(requiredScope))
+        if (!anyOfScopes.Any(scopes.Contains))
             return Outcome.No(Results.Json(new { error = scopeRefusal }, statusCode: 403));
 
         tenant.EnterAnonymousScope(keyTenantId, "org_api");

@@ -592,6 +592,17 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             .HasOne<Tenant>().WithMany()
             .HasForeignKey(p => p.TenantId).OnDelete(DeleteBehavior.Cascade);
 
+        // The same coin toss, found the same way (18 Sept 2026): the person's
+        // calendar is now added beside the person, and without this line EF
+        // batched the calendar first and every admission through the people
+        // API died on calendars_owner_user_id_fkey.
+        b.Entity<CalendarCalendar>()
+            .HasOne<User>().WithMany()
+            .HasForeignKey(c => c.OwnerUserId).OnDelete(DeleteBehavior.SetNull);
+        b.Entity<CalendarCalendar>()
+            .HasOne<Tenant>().WithMany()
+            .HasForeignKey(c => c.TenantId).OnDelete(DeleteBehavior.Cascade);
+
         b.Entity<StoragePool>()
             .HasOne<Tenant>().WithMany()
             .HasForeignKey(s => s.TenantId).OnDelete(DeleteBehavior.Cascade);

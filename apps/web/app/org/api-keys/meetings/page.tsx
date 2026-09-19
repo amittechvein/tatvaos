@@ -51,7 +51,7 @@ const MEETING_SCOPES: { scope: string; label: string; hint: string }[] = [
   {
     scope: 'meetings:join',
     label: 'Read meetings and hand out join links',
-    hint: 'For the half of your software students use. It can read the timetable and give out links. It cannot create, change or cancel anything.',
+    hint: 'For the half of your software students use. It can give out the join link for a class it holds the id of. It cannot list the timetable, cannot create, change or cancel anything, and never sees an email address.',
   },
 ];
 const MEETING_SCOPE_SET = new Set(MEETING_SCOPES.map((s) => s.scope));
@@ -223,7 +223,8 @@ Content-Type: application/json
             <div className="font-semibold">A student opens the link</div>
             <div className="text-[0.8125rem] text-ink-muted">
               A student who has a TatvaOS account signs in and walks in. Anyone else gives their name
-              at the door. The join call tells you which it will be, so your software can say so first.
+              at the door. The join call tells you whether the door holds guests, so your software can
+              say so first.
             </div>
           </li>
           <li className="mb-0">

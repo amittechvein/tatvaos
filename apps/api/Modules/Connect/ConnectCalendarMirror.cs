@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using TatvaOS.Api.Modules.Calendar;
 using TatvaOS.Api.Shared.Data;
 
 namespace TatvaOS.Api.Modules.Connect;
@@ -109,13 +110,15 @@ public static class ConnectCalendarMirror
             return existing.Id;
         }
 
-        var calendarId = await PrimaryCalendarIdAsync(db, meeting.TenantId, hostUserId, ct);
-        if (calendarId is null) return null;
+        // Belt and braces: every creation path now makes a calendar
+        // (CalendarProvisioning), and this still copes with a person made
+        // before that was true.
+        var calendarId = await CalendarProvisioning.EnsurePrimaryAsync(db, meeting.TenantId, hostUserId, ct);
 
         var ev = new CalendarEvent
         {
             TenantId = meeting.TenantId,
-            CalendarId = calendarId.Value,
+            CalendarId = calendarId,
             Uid = uid,
             Sequence = meeting.InviteSequence,
             CreatedByUserId = hostUserId,
@@ -153,43 +156,4 @@ public static class ConnectCalendarMirror
                 .SetProperty(e => e.UpdatedAt, now), ct);
     }
 
-    /// <summary>
-    /// The host's own calendar, created if they have none.
-    ///
-    /// ── WHY THIS CREATES ONE ─────────────────────────────────────────────
-    ///
-    ///  20260816-calendar.sql backfills "My calendar" for every user, and its
-    ///  comment says the API creates one for anybody made after that. IT DOES
-    ///  NOT — nothing in apps/api has ever created a primary calendar (checked
-    ///  18 Sept 2026). The gap is hidden because every file in
-    ///  local/postgres/init/ re-runs on every deploy, so the backfill catches
-    ///  up each time and production showed 0 users without one.
-    ///
-    ///  A person added between two deploys therefore has no calendar until the
-    ///  next one. That is exactly the person this feature is for: a teacher
-    ///  admitted through the people API this morning, scheduling a class this
-    ///  afternoon. So this creates the calendar rather than skipping the
-    ///  meeting, and matches the backfill's name and kind so the next deploy's
-    ///  re-run finds it and inserts nothing.
-    /// </summary>
-    private static async Task<Guid?> PrimaryCalendarIdAsync(
-        AppDbContext db, Guid tenantId, Guid userId, CancellationToken ct)
-    {
-        var existing = await db.Calendars
-            .Where(c => c.OwnerUserId == userId && c.IsPrimary && c.DeletedAt == null)
-            .Select(c => (Guid?)c.Id)
-            .FirstOrDefaultAsync(ct);
-        if (existing is not null) return existing;
-
-        var cal = new CalendarCalendar
-        {
-            TenantId = tenantId,
-            OwnerUserId = userId,
-            Name = "My calendar",
-            Kind = "personal",
-            IsPrimary = true,
-        };
-        db.Calendars.Add(cal);
-        return cal.Id;
-    }
 }

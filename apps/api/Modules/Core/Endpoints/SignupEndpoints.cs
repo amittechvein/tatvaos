@@ -294,6 +294,7 @@ public static class SignupEndpoints
             MustChangePassword = false,
         };
         db.Users.Add(owner);
+        db.Calendars.Add(TatvaOS.Api.Modules.Calendar.CalendarProvisioning.PrimaryFor(org.Id, owner.Id));
 
         db.ProductAccess.Add(new ProductAccess { TenantId = org.Id, UserId = owner.Id, ProductCode = "mail" });
         db.StoragePools.Add(new StoragePool
