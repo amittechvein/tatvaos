@@ -24,11 +24,12 @@ import {
   View, Text, FlatList, Pressable, TextInput, ActivityIndicator,
   RefreshControl, StyleSheet, BackHandler, Modal,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
 import {
   bootstrap, listMessages, searchMessages, orderFolders, senderLabel, whenLabel,
+  SORTS, DEFAULT_SORT, sortLabel,
 } from '../lib/mail';
 import { brand, surface, text, radius, space, type, shadow, tone } from '../theme';
 
@@ -49,6 +50,14 @@ export default function Mail({ session, onBack, onOpen, onCompose, onMailbox, no
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [pickFolder, setPickFolder] = useState(false);
+  // The order of the folder list. Amit on his own phone, 19 Sept 2026:
+  // "sorting option on mail". Kept across folders - somebody who wants unread
+  // first wants it in every folder - and not kept across launches, so the app
+  // always opens the way every mail app does.
+  const [sort, setSort] = useState(DEFAULT_SORT);
+  const [pickSort, setPickSort] = useState(false);
+  const [sortNotice, setSortNotice] = useState('');
+  const insets = useSafeAreaInsets();
   const gone = useRef(false);
 
   useEffect(() => {
@@ -92,8 +101,20 @@ export default function Mail({ session, onBack, onOpen, onCompose, onMailbox, no
       const skip = append ? rows.length : 0;
       const page = q
         ? await searchMessages(token, q, { skip, take: PAGE })
-        : await listMessages(token, folder.id, { skip, take: PAGE });
+        : await listMessages(token, folder.id, { skip, take: PAGE, sort });
       if (gone.current) return;
+      // A 200 IS NOT PROOF IT SORTED. A server older than the `sort` parameter
+      // ignores it and answers newest first with no `sort` in the reply. Said,
+      // and the control put back to what the list really is - never a header
+      // reading "Oldest first" over a list that is not.
+      if (!q && sort !== DEFAULT_SORT && page.sorted !== sort) {
+        log(`asked for ${sort}, server answered ${page.sorted ?? 'no sort field'}: showing newest first`);
+        setSortNotice('Sorting is not available on this server yet. Showing newest first.');
+        setSort(DEFAULT_SORT);
+      }
+      // NOT cleared here. Putting the control back reloads the list in the
+      // default order, and clearing on that reload wiped this sentence the
+      // moment it appeared. It goes when the person next chooses an order.
       setRows(append ? [...rows, ...page.messages] : page.messages);
       setTotal(page.total);
     } catch (e) {
@@ -103,7 +124,7 @@ export default function Mail({ session, onBack, onOpen, onCompose, onMailbox, no
     } finally {
       if (!gone.current) { setBusy(false); setMore(false); }
     }
-  }, [folder, rows, token]);
+  }, [folder, rows, token, sort]);
 
   // The folder changes, or the screen is asked to reload (a message was read,
   // deleted or sent). Not `load` in the deps: it changes with every row list.
@@ -113,7 +134,7 @@ export default function Mail({ session, onBack, onOpen, onCompose, onMailbox, no
     setQuery('');
     load({});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [folder?.id, reloadKey]);
+  }, [folder?.id, reloadKey, sort]);
 
   async function runSearch() {
     const q = query.trim();
@@ -155,10 +176,17 @@ export default function Mail({ session, onBack, onOpen, onCompose, onMailbox, no
         subtitle={mailbox?.address}
         onBack={onBack}
         right={(
-          <Pressable onPress={() => setPickFolder(true)} hitSlop={8}
-                     accessibilityLabel="Choose folder">
-            <Ionicons name="folder-open-outline" size={22} color={text.primary} />
-          </Pressable>
+          <View style={s.headerActions}>
+            <Pressable onPress={() => setPickSort(true)} hitSlop={8}
+                       accessibilityLabel="Sort messages" accessibilityValue={{ text: sortLabel(sort) }}>
+              <Ionicons name="swap-vertical" size={22}
+                        color={sort === DEFAULT_SORT ? text.primary : brand.base} />
+            </Pressable>
+            <Pressable onPress={() => setPickFolder(true)} hitSlop={8}
+                       accessibilityLabel="Choose folder">
+              <Ionicons name="folder-open-outline" size={22} color={text.primary} />
+            </Pressable>
+          </View>
         )}
       />
 
@@ -182,6 +210,16 @@ export default function Mail({ session, onBack, onOpen, onCompose, onMailbox, no
           </Pressable>
         ) : null}
       </View>
+
+      {!searching && sort !== DEFAULT_SORT ? (
+        <Pressable style={s.sortLine} onPress={() => setSort(DEFAULT_SORT)}
+                   accessibilityRole="button" accessibilityLabel={`Sorted by ${sortLabel(sort)}. Tap for newest first`}>
+          <Ionicons name="swap-vertical" size={14} color={brand.base} />
+          <Text style={s.sortLineText}>{sortLabel(sort)}</Text>
+          <Ionicons name="close" size={14} color={brand.base} />
+        </Pressable>
+      ) : null}
+      {sortNotice ? <Text style={s.sortNoticeText}>{sortNotice}</Text> : null}
 
       {notice ? (
         <Pressable style={s.notice} onPress={onNoticeSeen} accessibilityLabel="Dismiss">
@@ -215,10 +253,32 @@ export default function Mail({ session, onBack, onOpen, onCompose, onMailbox, no
         ) : null}
       />
 
-      <Pressable style={s.fab} onPress={() => onCompose({ kind: 'new' })}
+      {/* Lifted by the navigation bar's height. `bottom` on an absolute child is
+          measured from the parent's EDGE, not from inside its safe-area padding,
+          so at a fixed 28 the button sat half under Android's three buttons -
+          seen on Amit's Samsung, 19 Sept 2026. */}
+      <Pressable style={[s.fab, { bottom: 28 + insets.bottom }]} onPress={() => onCompose({ kind: 'new' })}
                  accessibilityLabel="Write a new email">
         <Ionicons name="create-outline" size={22} color={brand.onBase} />
       </Pressable>
+
+      <Modal visible={pickSort} transparent animationType="fade"
+             onRequestClose={() => setPickSort(false)}>
+        <Pressable style={s.backdrop} onPress={() => setPickSort(false)}>
+          <View style={[s.sheet, { paddingBottom: 16 + insets.bottom }]}>
+            <Text style={s.sheetTitle}>SORT BY</Text>
+            {SORTS.map(([key, label]) => (
+              <Pressable key={key} style={s.folderRow}
+                         onPress={() => { setPickSort(false); setSortNotice(''); setSort(key); }}
+                         accessibilityRole="button" accessibilityState={{ selected: key === sort }}
+                         accessibilityLabel={`Sort by ${label}`}>
+                <Text style={[s.folderName, key === sort && s.folderOn]}>{label}</Text>
+                {key === sort ? <Ionicons name="checkmark" size={18} color={brand.base} /> : null}
+              </Pressable>
+            ))}
+          </View>
+        </Pressable>
+      </Modal>
 
       <Modal visible={pickFolder} transparent animationType="fade"
              onRequestClose={() => setPickFolder(false)}>
@@ -342,6 +402,13 @@ const s = StyleSheet.create({
     position: 'absolute', right: 20, bottom: 28, width: 60, height: 60, borderRadius: 30,
     backgroundColor: brand.base, alignItems: 'center', justifyContent: 'center', ...shadow.glow,
   },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 18 },
+  sortLine: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 20, paddingTop: 4, paddingBottom: 8,
+  },
+  sortLineText: { fontSize: 13, color: brand.base, fontWeight: '600' },
+  sortNoticeText: { fontSize: 13, lineHeight: 19, color: text.secondary, paddingHorizontal: 20, paddingBottom: 8 },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },
   sheet: {
     backgroundColor: surface.card, borderTopLeftRadius: 16, borderTopRightRadius: 16,
