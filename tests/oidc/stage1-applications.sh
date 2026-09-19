@@ -76,7 +76,10 @@ printf '%s' "$row" | grep -q "|t$" && pass "row: secret stored hashed, not in th
 
 step "2. The list carries the prefix, never the secret"
 r=$(get "$API/api/org/applications" "$TOKEN")
-printf '%s' "$(body "$r")" | grep -q "$SECRET" && fail "the list contains the secret" || pass "secret absent from the list"
+# -F -- : the secret is a literal, and a value grep cannot parse must never
+# be able to turn this into a pass. In this shape (found && fail || pass) a
+# grep that ERRORS reads as "absent" — green with the secret sitting in the list.
+printf '%s' "$(body "$r")" | grep -qF -- "$SECRET" && fail "the list contains the secret" || pass "secret absent from the list"
 [ "$(jq_ "$(body "$r")" "[a for a in d if a['id']=='$APP'][0]['secretPrefix']")" = "${SECRET:0:10}…" ] && pass "prefix present in the list" || fail "prefix missing from the list"
 [ "$(jq_ "$(body "$r")" "[a for a in d if a['id']=='$APP'][0]['redirectUris'][0]")" = "https://payroll.example.test/callback" ] && pass "redirect URI read back through OpenIddict's manager" || fail "redirect uris: $(body "$r")"
 
@@ -132,7 +135,7 @@ step "8. The full secret is in no log"
 # visible prefix DO appear there; the secret itself must not, and in
 # production EF prints '?' for every value. The grep is for the whole secret.
 if [ -n "${TATVAOS_API_LOG:-}" ] && [ -f "$TATVAOS_API_LOG" ]; then
-    n=$(grep -c -F "$SECRET" "$TATVAOS_API_LOG")
+    n=$(grep -c -F -- "$SECRET" "$TATVAOS_API_LOG")
     [ "$n" -eq 0 ] && pass "the full client secret appears nowhere in the API log" || fail "the client secret appears $n time(s) in the API log"
 else
     printf '  - API log not given (TATVAOS_API_LOG); secret-in-log check skipped\n'
