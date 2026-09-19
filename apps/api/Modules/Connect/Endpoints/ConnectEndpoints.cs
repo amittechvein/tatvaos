@@ -480,8 +480,20 @@ public static class ConnectEndpoints
             Title = title,
             CreatedByUserId = uid,
             Kind = kind,
-            ScheduledStart = req.ScheduledStart,
-            ScheduledEnd = req.ScheduledEnd,
+            // TO UTC, HERE, for every caller. Postgres `timestamptz` through
+            // Npgsql takes offset 0 only; a DateTimeOffset of +05:30 is not
+            // converted for you, it THROWS, and the caller gets a 500.
+            //
+            // 19 Sept 2026: the Meetings API guide's every example sends
+            // "+05:30" and promises it "is read correctly". It answered 500,
+            // to an ERP developer who had already started. Nobody had seen it
+            // because a browser's toISOString() always ends in Z, and so did
+            // every time the org-api suite sent. Converting at THIS seam rather
+            // than in the API's own file means the console, the phone and the
+            // API cannot differ about it: they all make meetings here.
+            // The instant is unchanged; only its spelling is.
+            ScheduledStart = req.ScheduledStart?.ToUniversalTime(),
+            ScheduledEnd = req.ScheduledEnd?.ToUniversalTime(),
             Timezone = string.IsNullOrWhiteSpace(req.Timezone) ? "Asia/Kolkata" : req.Timezone.Trim(),
             Status = "scheduled",
             PasswordHash = string.IsNullOrEmpty(req.Password) ? null : hasher.Hash(req.Password),
@@ -609,8 +621,10 @@ public static class ConnectEndpoints
                 return Results.BadRequest(new { error = "Give the meeting a title of up to 200 characters." });
             meeting.Title = title;
         }
-        if (req.ScheduledStart is not null) meeting.ScheduledStart = req.ScheduledStart;
-        if (req.ScheduledEnd is not null) meeting.ScheduledEnd = req.ScheduledEnd;
+        // To UTC, as at creation and for the same reason (see CreateMeetingForAsync):
+        // an offset other than zero reaching Npgsql is a 500, not a conversion.
+        if (req.ScheduledStart is not null) meeting.ScheduledStart = req.ScheduledStart.Value.ToUniversalTime();
+        if (req.ScheduledEnd is not null) meeting.ScheduledEnd = req.ScheduledEnd.Value.ToUniversalTime();
         if (meeting.ScheduledStart is DateTimeOffset ss && meeting.ScheduledEnd is DateTimeOffset ee && ee < ss)
             return Results.BadRequest(new { error = "The meeting cannot end before it starts." });
 
