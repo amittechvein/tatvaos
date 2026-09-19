@@ -66,7 +66,9 @@ export function Card({
           {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
         </div>
       )}
-      {padded ? <div className="px-5 py-4">{children}</div> : children}
+      {/* tv-card-pad is a MARKER, not a style: Table reads it to know whether
+          there is padding for its wrapper to bleed into. See Table. */}
+      {padded ? <div className="tv-card-pad px-5 py-4">{children}</div> : children}
     </div>
   );
 }
@@ -287,6 +289,11 @@ export function Table({ head, children }: { head: React.ReactNode[]; children: R
     // every cell carries its own label from ::before at this width.
     + `.${cls} thead{display:none}`
     + `.${cls} tbody tr{display:block;padding:.75rem 0}`
+    // In an UNPADDED card there is nothing between a stacked row and the
+    // card's border, so the labels sat flush against it (seen 19 Sept 2026
+    // beside the bleed above; same cause - this component assumed the card's
+    // padding). Inside a padded card the card already supplies the gutter.
+    + `.${cls}-w:not(.tv-card-pad .${cls}-w) tbody tr{padding-left:1rem;padding-right:1rem}`
     + `.${cls} tbody td{display:flex;align-items:center;justify-content:space-between;`
     + `gap:.75rem;padding:.25rem 0;text-align:right;min-width:0;`
     // overflow-wrap:anywhere is NOT belt-and-braces, it is the difference
@@ -300,8 +307,23 @@ export function Table({ head, children }: { head: React.ReactNode[]; children: R
     + cellRules
     + `}`;
 
+  //  THE BLEED IS ONLY FOR A PADDED CARD. `-mx-5 px-5` lets a wide table run to
+  //  the edges of a card whose body has 20px of padding, and scroll there. Most
+  //  tables in the product sit in <Card padded={false}> instead - and there is
+  //  no padding to bleed into, so the wrapper simply stuck out of the card by
+  //  20px on each side.
+  //
+  //  Nobody saw it while the table FIT, because the part sticking out was
+  //  empty. Amit saw it on Connect's Meetings list, 19 Sept 2026: a long title
+  //  made the table 32px wider than the card, the wrapper scrolled, and the
+  //  rows slid into the strip outside the card's left edge - avatars sliced,
+  //  the heading reading "EETING". Measured at 1300px: card x=104 w=763,
+  //  wrapper x=85 w=802, table w=795.
+  //
+  //  So the bleed is conditional on the marker Card puts on its padded body.
+  //  Outside one, the wrapper is exactly as wide as whatever holds it.
   return (
-    <div className={`${cls}-w -mx-5 overflow-x-auto px-5`}>
+    <div className={`${cls}-w overflow-x-auto [.tv-card-pad_&]:-mx-5 [.tv-card-pad_&]:px-5`}>
       {/* A STRING CHILD, not dangerouslySetInnerHTML. React 19 supports style
           tags with their CSS as children, so there is no need to reach for the
           escape hatch — and `react/no-danger` is an error in this repo's lint,
