@@ -51,7 +51,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, Pressable, ScrollView, ActivityIndicator,
-  StyleSheet, BackHandler, PermissionsAndroid, Platform, Share,
+  StyleSheet, BackHandler, PermissionsAndroid, Platform, Share, StatusBar,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context'; // see App.js
 import { Ionicons } from '@expo/vector-icons';
@@ -65,6 +65,7 @@ import { joinMeeting, pollWait, getLobby, admitFromLobby, denyFromLobby } from '
 import { isRefusal, describeError } from '../lib/refusal';
 import { watchEngines, reapEngines } from '../lib/engineReaper';
 import { brand, radius, type, tone } from '../theme';
+import PreJoin from './PreJoin';
 
 registerGlobals();
 
@@ -148,16 +149,37 @@ function dropSentence(reason) {
  */
 export default function Meeting(props) {
   const [attempt, setAttempt] = useState(0);
+
+  // What the person chose to walk in with: { mic, cam, speaker }. Null until
+  // they have been asked (screens/PreJoin.js says why they are asked at all).
+  // Held HERE, above the key'd session, so a Rejoin after a drop comes back
+  // the way the person chose the first time and does not ask again. A caller
+  // that already knows - the checks - passes `joinPrefs` and is not asked.
+  const [prefs, setPrefs] = useState(props.joinPrefs ?? null);
+  if (!prefs) {
+    return (
+      <PreJoin
+        meeting={props.meeting}
+        onCancel={props.onLeave}
+        onJoin={(chosen) => {
+          log(`joining with mic ${chosen.mic ? 'on' : 'off'}, camera ${chosen.cam ? 'on' : 'off'}, ${chosen.speaker ? 'loudspeaker' : 'earpiece'}`);
+          setPrefs(chosen);
+        }}
+      />
+    );
+  }
+
   return (
     <MeetingSession
       key={attempt}
       {...props}
+      prefs={prefs}
       onRejoin={() => { log(`rejoining (attempt ${attempt + 2})`); setAttempt((n) => n + 1); }}
     />
   );
 }
 
-function MeetingSession({ session, meeting, onLeave, onRejoin }) {
+function MeetingSession({ session, meeting, onLeave, onRejoin, prefs }) {
   useKeepAwake();
 
   // ── THE TOKEN IS READ FRESH; THE SESSION IS NOT A REASON TO RECONNECT. ──
@@ -198,7 +220,7 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
   // cannot work. A server that predates the setting sends nothing, and what it
   // did was 'multiple'.
   const [shareMode, setShareMode] = useState(meeting?.shareMode === 'single' ? 'single' : 'multiple');
-  const [speaker, setSpeaker] = useState(true);
+  const [speaker, setSpeaker] = useState(prefs?.speaker !== false);
   const [recording, setRecording] = useState(false);
   const [role, setRole] = useState(null); // host | cohost | participant, once admitted
   const [lobby, setLobby] = useState([]); // people waiting, host/cohost only
@@ -270,15 +292,35 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
     setRole(admitted.role);
     setStatus('in');
 
-    try {
-      await room.localParticipant.setMicrophoneEnabled(true);
-      setMic(true);
-    } catch (e) {
-      // Joining without a mic is recoverable; not knowing why is not.
-      log(`microphone did not start: ${describeError(e)}`);
-      setNotice(isRefusal(e)
-        ? 'Your microphone is off: the app was not given permission.'
-        : 'Your microphone is off. Tap the mic to try again.');
+    // The microphone and camera start the way the person CHOSE on the pre-join
+    // screen. Before 19 Sept 2026 the mic was switched on here unconditionally.
+    // Logged either way: "I joined muted and they still heard me" has to be
+    // answerable from the log, and so does its opposite.
+    if (prefs?.mic !== false) {
+      try {
+        await room.localParticipant.setMicrophoneEnabled(true);
+        setMic(true);
+      } catch (e) {
+        // Joining without a mic is recoverable; not knowing why is not.
+        log(`microphone did not start: ${describeError(e)}`);
+        setNotice(isRefusal(e)
+          ? 'Your microphone is off: the app was not given permission.'
+          : 'Your microphone is off. Tap the mic to try again.');
+      }
+    } else {
+      log('joined muted, as chosen');
+    }
+
+    if (prefs?.cam) {
+      try {
+        await room.localParticipant.setCameraEnabled(true, { facingMode: facing });
+        setCam(true);
+      } catch (e) {
+        log(`camera did not start: ${describeError(e)}`);
+        setNotice(isRefusal(e)
+          ? 'Your camera is off: the app was not given permission.'
+          : 'Your camera is off. Tap the camera to try again.');
+      }
     }
 
     // The speaker button starts in the "on" position. Make that true rather
@@ -287,8 +329,12 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
     try {
       const outputs = await AudioSession.getAudioOutputs();
       log(`audio outputs: ${outputs.join(', ') || 'none reported'}`);
-      if (outputs.includes('speaker')) await AudioSession.selectAudioOutput('speaker');
-      else setSpeaker(false);
+      // The output the person chose; the loudspeaker unless they said earpiece.
+      const want = prefs?.speaker === false ? 'earpiece' : 'speaker';
+      if (outputs.includes(want)) await AudioSession.selectAudioOutput(want);
+      // The button must never claim an output the phone does not have: no
+      // loudspeaker means it is NOT on; no earpiece (a tablet) means it IS.
+      else setSpeaker(want !== 'speaker');
     } catch (e) {
       log(`could not select the speaker: ${describeError(e)}`);
       setSpeaker(false);
@@ -689,6 +735,7 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
 
   return (
     <SafeAreaView style={s.screen}>
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
       <View style={s.header}>
         <View style={{ flex: 1 }}>
           <Text style={s.title} numberOfLines={1}>{title}</Text>

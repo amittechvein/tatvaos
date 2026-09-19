@@ -28,7 +28,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, TextInput, Pressable, ScrollView, ActivityIndicator,
-  StyleSheet, Platform, StatusBar, Keyboard, Linking, KeyboardAvoidingView,
+  StyleSheet, Platform, StatusBar, Keyboard, Linking, KeyboardAvoidingView, Alert,
 } from 'react-native';
 // Not React Native's SafeAreaView: that one is a no-op on Android, and with
 // targetSdk 36 the app draws edge-to-edge, so the title sat under the clock
@@ -45,10 +45,17 @@ import MailMessage from './screens/MailMessage';
 import MailCompose from './screens/MailCompose';
 import NextMeetingCard from './components/NextMeetingCard';
 import { handoffUrl } from './lib/handoff';
+import { hosts } from './lib/hosts';
 
 export default function App() {
   return (
     <SafeAreaProvider>
+      {/* DARK icons, said out loud. Nothing set this before 19 Sept 2026, so
+          Android drew its default white clock and battery on a cream page and
+          they could not be read - seen on Amit's Samsung on the dashboard, the
+          inbox and a message. The two dark screens (the login hero and the
+          meeting room) mount their own light-content bar over this one. */}
+      <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
       <Root />
     </SafeAreaProvider>
   );
@@ -124,12 +131,30 @@ function Root() {
 
   const onSignedIn = useCallback((s) => { setSession(s); setChallenge(null); setPhase('in'); }, []);
 
-  const onSignOut = useCallback(async () => {
+  const signOutNow = useCallback(async () => {
     const token = session?.accessToken;
     setSession(null); setProfile(null); setPhase('login');
     setView('home'); setActiveMeeting(null);
     await signOut(token);
   }, [session]);
+
+  // ASKED FIRST. The only sign-out control is the round initials at the top of
+  // the dashboard, which looks like a profile picture, and until 19 Sept 2026
+  // one touch of it signed the person out with no question and no word after.
+  // Amit on his own phone: "there is not notification of logout in one click
+  // auto logout". Signing back in costs a password and an authenticator code,
+  // so the tap that spends that has to be one the person meant.
+  const onSignOut = useCallback(() => {
+    Alert.alert(
+      'Sign out?',
+      'You will need your password to sign in again on this phone.',
+      [
+        { text: 'Stay signed in', style: 'cancel' },
+        { text: 'Sign out', style: 'destructive', onPress: () => { signOutNow(); } },
+      ],
+      { cancelable: true },
+    );
+  }, [signOutNow]);
 
   // Leaving a meeting goes back to wherever it was joined from. Joined from the
   // dashboard's next-meeting card, back to the dashboard; joined from Connect's
@@ -282,6 +307,20 @@ function Login({ onSignedIn, onChallenge }) {
   const [show, setShow] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [forgotNote, setForgotNote] = useState('');
+
+  const openForgotPassword = async () => {
+    const target = `${hosts.core}/forgot-password`;
+    try {
+      console.log('[app] opening password recovery in the browser');
+      await Linking.openURL(target);
+      setForgotNote('');
+    } catch (e) {
+      // A link that fails silently is the bug this replaced. Say where to go.
+      console.log(`[app] could not open password recovery: ${e?.message ?? e}`);
+      setForgotNote(`Could not open the browser. Go to ${target.replace('https://', '')} to reset it.`);
+    }
+  };
 
   const submit = async () => {
     // Validate before acting. An empty form that silently does nothing is the
@@ -325,6 +364,7 @@ function Login({ onSignedIn, onChallenge }) {
   // hero. The hero pads for the status bar itself; the root keeps the bottom.
   return (
     <SafeAreaView style={[s.screen, s.loginRoot]} edges={['left', 'right', 'bottom']}>
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
       <KeyboardAvoidingView style={{ flex: 1 }}
                             behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={s.hero}>
@@ -385,7 +425,18 @@ function Login({ onSignedIn, onChallenge }) {
             : <Text style={s.primaryText}>Sign in</Text>}
         </Pressable>
 
-        <Pressable hitSlop={8}><Text style={s.quiet}>Forgot password</Text></Pressable>
+        {/* Until 19 Sept 2026 this was a Pressable with no onPress: it looked
+            like a link, dimmed like a link when touched, and did nothing at
+            all - for the one person who cannot get in any other way. It opens
+            the web's recovery page rather than growing a second copy of it
+            here: recovery email, mobile OTP and the mailbox link all finish in
+            a browser anyway (the link in the email opens one), and password
+            recovery is not a flow to have two implementations of. */}
+        <Pressable hitSlop={8} onPress={openForgotPassword}
+                   accessibilityRole="link" accessibilityLabel="Forgot password">
+          <Text style={s.quiet}>Forgot password</Text>
+        </Pressable>
+        {forgotNote ? <Text style={s.quietNote}>{forgotNote}</Text> : null}
       </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -716,6 +767,7 @@ const s = StyleSheet.create({
   primaryBusy: { opacity: 0.7 },
   primaryText: { color: brand.onBase, fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
   quiet: { ...type.strong, color: tone.ink, textAlign: 'center', marginTop: space.lg },
+  quietNote: { color: text.secondary, textAlign: 'center', marginTop: space.sm, fontSize: 13, lineHeight: 19 },
 
   // ── dashboard ────────────────────────────────────────────────────────
   dashBody: { paddingHorizontal: space.lg, paddingBottom: space.xxl },

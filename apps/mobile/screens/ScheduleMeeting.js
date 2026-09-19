@@ -25,13 +25,13 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View, Text, TextInput, Pressable, ScrollView, ActivityIndicator,
+  Alert, View, Text, TextInput, Pressable, ScrollView, ActivityIndicator,
   StyleSheet, Keyboard, BackHandler,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
-import { createMeeting } from '../lib/connect';
+import { createMeeting, inviteToMeeting } from '../lib/connect';
 import { brand, surface, text } from '../theme';
 
 const log = (line) => console.log(`[schedule] ${line}`);
@@ -105,6 +105,21 @@ export default function ScheduleMeeting({ session, onCreated, onBack }) {
   const [title, setTitle] = useState('');
   const [length, setLength] = useState(30);
   const [chosen, setChosen] = useState(null);
+  // Every setting the web's new-meeting page offers, with the same defaults
+  // and the same words (apps/web/app/connect/(shell)/new/page.tsx). Amit on the
+  // phone, 19 Sept 2026: "connect schedule for later give all option" - until
+  // then a meeting scheduled here could only ever have the defaults, and
+  // changing one meant finding a laptop.
+  const [mode, setMode] = useState('recorded');
+  const [waitingRoom, setWaitingRoom] = useState('guests');
+  const [allowGuests, setAllowGuests] = useState(true);
+  const [chatPolicy, setChatPolicy] = useState('everyone');
+  const [sharePolicy, setSharePolicy] = useState('everyone');
+  const [shareMode, setShareMode] = useState('multiple');
+  const [autoRecord, setAutoRecord] = useState(false);
+  const [password, setPassword] = useState('');
+  const [invitees, setInvitees] = useState('');
+  const [showOptions, setShowOptions] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -140,9 +155,49 @@ export default function ScheduleMeeting({ session, onCreated, onBack }) {
         scheduledStart: chosen.toISOString(),
         scheduledEnd: end.toISOString(),
         timezone: deviceTimeZone(),
+        mode,
+        waitingRoom,
+        allowGuests,
+        chatPolicy,
+        sharePolicy,
+        shareMode,
+        // A private meeting cannot auto-record and the server refuses the pair.
+        // Sent as false rather than trusting a toggle that is no longer shown.
+        autoRecord: mode === 'private' ? false : autoRecord,
+        password: password.length > 0 ? password : null,
       });
       // Never the title: people put customer names in them.
       log(`created ${meeting?.id ?? 'a meeting'} for ${chosen.toISOString()} (${length}m)`);
+
+      // Invitations AFTER the meeting exists, as a second call: the meeting is
+      // the thing that must not be lost. A 200 here is not "everyone was
+      // mailed", so what did not go is SAID before the person is moved on to a
+      // list that would otherwise look like success.
+      if (invitees.trim().length > 0 && meeting?.id) {
+        let problem = '';
+        try {
+          const out = await inviteToMeeting(session.accessToken, meeting.id, invitees);
+          // Counts only, never the addresses.
+          log(`invited: added ${out?.added ?? 0}, sent ${out?.sent ?? 0}, failed ${out?.failed ?? 0}, invalid ${out?.invalid?.length ?? 0}`);
+          const parts = [];
+          if (out?.invalid?.length) parts.push(`Not an email address: ${out.invalid.join(', ')}.`);
+          if (out?.note) parts.push(out.note);
+          if (out?.warning) parts.push(out.warning);
+          problem = parts.join(' ');
+        } catch (e) {
+          log(`invite failed: ${e?.message ?? e}`);
+          problem = e?.message || 'The invitations could not be sent.';
+        }
+        if (problem) {
+          Alert.alert(
+            'Meeting scheduled',
+            `${problem}\n\nThe meeting itself is saved. You can invite people again from its page on the web.`,
+            [{ text: 'OK', onPress: () => onCreated(meeting) }],
+            { cancelable: false },
+          );
+          return;
+        }
+      }
       onCreated(meeting);
     } catch (e) {
       // The server's sentence when it sent one — it names the actual objection
@@ -152,7 +207,8 @@ export default function ScheduleMeeting({ session, onCreated, onBack }) {
     } finally {
       setBusy(false);
     }
-  }, [chosen, length, title, session, onCreated]);
+  }, [chosen, length, title, session, onCreated, mode, waitingRoom, allowGuests,
+    chatPolicy, sharePolicy, shareMode, autoRecord, password, invitees]);
 
   return (
     <SafeAreaView style={s.screen}>
@@ -237,6 +293,86 @@ export default function ScheduleMeeting({ session, onCreated, onBack }) {
           })}
         </View>
 
+        <Text style={s.label}>Invite by email</Text>
+        <TextInput
+          style={[s.input, s.inputTall]}
+          value={invitees}
+          onChangeText={(v) => { setInvitees(v); setError(''); }}
+          placeholder="ravi@example.com, meera@example.com"
+          placeholderTextColor={text.muted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="email-address"
+          multiline
+          editable={!busy}
+          accessibilityLabel="Invite by email"
+        />
+        <Text style={s.hint}>
+          Optional. Each person gets their own email with the link and a calendar invitation, sent from your mailbox.
+        </Text>
+
+        <Pressable
+          style={s.optionsToggle}
+          onPress={() => setShowOptions((v) => !v)}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: showOptions }}
+          accessibilityLabel="Meeting options"
+        >
+          <Text style={s.optionsToggleText}>Meeting options</Text>
+          <Ionicons name={showOptions ? 'chevron-up' : 'chevron-down'} size={18} color={brand.base} />
+        </Pressable>
+        {/* What the meeting will be, said even while the options are folded
+            away - a default nobody saw is still a decision somebody made. */}
+        {!showOptions ? (
+          <Text style={s.hint} accessibilityLabel="Meeting options summary">
+            {mode === 'private' ? 'Private' : 'Recorded'} · {WAITING[waitingRoom]} · {allowGuests ? 'Anyone with the link' : 'Colleagues only'}
+            {password ? ' · Password set' : ''}
+          </Text>
+        ) : (
+          <View>
+            <Group label="Meeting type" hint="This cannot be changed once the meeting is created."
+                   value={mode} onPick={setMode} disabled={busy}
+                   options={[['recorded', 'Recorded', 'Can be recorded, transcribed and summarised. Everyone is told when recording starts.'],
+                             ['private', 'Private', 'Audio and video are encrypted. It cannot be recorded.']]} />
+            <Group label="Waiting room" value={waitingRoom} onPick={setWaitingRoom} disabled={busy}
+                   options={[['off', 'Off', 'Anyone with the link walks straight in.'],
+                             ['guests', 'Guests wait', 'You let people from outside in.'],
+                             ['everyone', 'Everyone waits', 'Colleagues knock too.']]} />
+            <Group label="Who can get in" value={allowGuests ? 'yes' : 'no'}
+                   onPick={(v) => setAllowGuests(v === 'yes')} disabled={busy}
+                   options={[['yes', 'Anyone with the link', 'Including people with no TatvaOS account.'],
+                             ['no', 'Colleagues only', 'Signed-in accounts, and nobody else.']]} />
+            <Group label="Who can send chat messages"
+                   hint="Everyone can read, whichever you choose. Changeable during the meeting."
+                   value={chatPolicy} onPick={setChatPolicy} disabled={busy}
+                   options={[['everyone', 'Everyone'], ['cohost', 'Host and co-hosts'], ['off', 'Nobody']]} />
+            <Group label="Who can share their screen" hint="Changeable during the meeting."
+                   value={sharePolicy} onPick={setSharePolicy} disabled={busy}
+                   options={[['everyone', 'Everyone'], ['cohost', 'Host and co-hosts'], ['host', 'Host only']]} />
+            <Group label="Screens at once" value={shareMode} onPick={setShareMode} disabled={busy}
+                   options={[['multiple', 'Several at once'], ['single', 'One at a time']]} />
+            {mode === 'recorded' ? (
+              <Group label="Recording"
+                     hint="Audio only, started when the first person joins. If recording is off for your organisation the meeting simply runs unrecorded."
+                     value={autoRecord ? 'yes' : 'no'} onPick={(v) => setAutoRecord(v === 'yes')} disabled={busy}
+                     options={[['no', 'I will start it myself'], ['yes', 'Start it automatically']]} />
+            ) : null}
+            <Text style={s.label}>Password</Text>
+            <TextInput
+              style={s.input}
+              value={password}
+              onChangeText={setPassword}
+              placeholder="Optional. Most meetings do not need one."
+              placeholderTextColor={text.muted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              maxLength={64}
+              editable={!busy}
+              accessibilityLabel="Meeting password"
+            />
+          </View>
+        )}
+
         {error ? <Text style={s.error}>{error}</Text> : null}
 
         {/* Says what is about to happen, in the words the list will use. A
@@ -262,6 +398,42 @@ export default function ScheduleMeeting({ session, onCreated, onBack }) {
   );
 }
 
+const WAITING = { off: 'No waiting room', guests: 'Guests wait', everyone: 'Everyone waits' };
+
+/**
+ * One setting: a label, and its choices as chips. `options` rows are
+ * [value, title, note?]; the chosen one's note is shown underneath, so the
+ * consequence is read at the moment of choosing and not on every row at once.
+ */
+function Group({ label, hint, value, onPick, options, disabled }) {
+  const note = options.find((o) => o[0] === value)?.[2];
+  return (
+    <View>
+      <Text style={s.label}>{label}</Text>
+      <View style={s.wrap}>
+        {options.map(([v, title]) => {
+          const on = v === value;
+          return (
+            <Pressable
+              key={v}
+              onPress={() => onPick(v)}
+              disabled={disabled}
+              style={[s.chip, on && s.chipOn]}
+              accessibilityRole="button"
+              accessibilityState={{ selected: on }}
+              accessibilityLabel={`${label}: ${title}`}
+            >
+              <Text style={[s.chipText, on && s.chipTextOn]}>{title}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      {note ? <Text style={s.hint}>{note}</Text> : null}
+      {hint ? <Text style={s.hint}>{hint}</Text> : null}
+    </View>
+  );
+}
+
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: surface.page, paddingHorizontal: 20, paddingTop: 12 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
@@ -272,6 +444,13 @@ const s = StyleSheet.create({
     height: 46, borderWidth: 1, borderColor: surface.border, borderRadius: 8,
     backgroundColor: surface.card, paddingHorizontal: 12, fontSize: 15, color: text.primary,
   },
+  inputTall: { height: undefined, minHeight: 46, paddingVertical: 10, textAlignVertical: 'top' },
+  hint: { marginTop: 8, fontSize: 13, lineHeight: 19, color: text.secondary },
+  optionsToggle: {
+    marginTop: 22, paddingVertical: 12, flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: surface.border,
+  },
+  optionsToggleText: { fontSize: 15, fontWeight: '600', color: brand.base },
   row: { gap: 8, paddingRight: 8 },
   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {

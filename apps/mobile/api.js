@@ -55,7 +55,18 @@ export class ApiError extends Error {
  * a log file that gets pasted into a chat window.
  */
 function logLine(method, path, status, ms, note) {
-  console.log(`[api] ${method} ${path} -> ${status} ${ms}ms${note ? ' ' + note : ''}`);
+  console.log(`[api] ${method} ${loggable(path)} -> ${status} ${ms}ms${note ? ' ' + note : ''}`);
+}
+
+/**
+ * The path, with anything that IS a credential taken out of it. A meeting's
+ * join code is a bearer token for the room (CONNECT_API.md) and, since join by
+ * code (19 Sept 2026), it travels in a path: /meetings/by-code/<code>. Printed
+ * whole, the promise in the comment above would have been false from the first
+ * pasted link. Exported for the check that holds it to that.
+ */
+export function loggable(path) {
+  return String(path).replace(/(\/by-code\/)[^/?#]+/, '$1<code>');
 }
 
 /**
