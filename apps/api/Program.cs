@@ -807,6 +807,11 @@ app.MapConnectCaptionEndpoints();
 // (connect.tenant_settings) and is enforced in the database, not here.
 app.MapConnectShareEndpoints();
 
+// The operator's per-organisation caps on email invitations (19 Sept 2026).
+// SuperAdmin only, under /api/admin/organisations/{id}; the organisation itself
+// has no route to these numbers.
+app.MapConnectInvitationCapEndpoints();
+
 // Operational: does the AI actually answer? SuperAdmin only, real round trip.
 app.MapAiStatusEndpoints();
 

@@ -36,6 +36,43 @@ public static class ConnectInvitations
     /// else on this platform (MailSendApiEndpoints says so), so this is the cap.</summary>
     public const int MaxPerMeeting = 500;
 
+    /// <summary>The most an organisation can be GIVEN, of either. The two constants
+    /// above are only the default, for an organisation nobody has given a number
+    /// (connect.tenant_settings, 20260919). The ceiling is here because the mails
+    /// go out one by one inside one web request and nobody has measured a request
+    /// that long; the same 2000 is the CHECK in the migration.</summary>
+    public const int CapCeiling = 2000;
+
+    /// <summary>The two caps as they apply to one organisation.</summary>
+    public sealed record Caps(int PerRequest, int PerMeeting);
+
+    /// <summary>
+    /// What an organisation's stored numbers MEAN. Null is "the default", and a
+    /// missing settings row is two nulls. One Send can never carry more than the
+    /// meeting may hold, so PerRequest is brought down to PerMeeting: an operator
+    /// who sets only "100 per meeting" has not left a Send of 500 that is always
+    /// refused by the second check with a message about the wrong number.
+    /// </summary>
+    public static Caps EffectiveCaps(int? perRequest, int? perMeeting)
+    {
+        var meeting = perMeeting ?? MaxPerMeeting;
+        var request = Math.Min(perRequest ?? MaxPerRequest, meeting);
+        return new Caps(request, meeting);
+    }
+
+    /// <summary>Why these two numbers cannot be stored, in words for the operator;
+    /// null when they can. Null inputs are always fine: they mean "the default".</summary>
+    public static string? CapProblem(int? perRequest, int? perMeeting)
+    {
+        if (perRequest is int r && (r < 1 || r > CapCeiling))
+            return $"Per send must be between 1 and {CapCeiling}, or empty for the default ({MaxPerRequest}).";
+        if (perMeeting is int m && (m < 1 || m > CapCeiling))
+            return $"Per meeting must be between 1 and {CapCeiling}, or empty for the default ({MaxPerMeeting}).";
+        if (perRequest is int r2 && r2 > (perMeeting ?? MaxPerMeeting))
+            return $"Per send ({r2}) cannot be more than per meeting ({perMeeting ?? MaxPerMeeting}).";
+        return null;
+    }
+
     public sealed record Parsed(IReadOnlyList<string> Valid, IReadOnlyList<string> Invalid);
 
     /// <summary>
