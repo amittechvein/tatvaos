@@ -316,11 +316,15 @@ function Login({ onSignedIn, onChallenge }) {
   //  The two `wash` circles behind the hero are the gradient this app does
   //  not have a library for.
   // ────────────────────────────────────────────────────────────────────────
+  // Root stays cream and the hero owns the violet, status bar included: with
+  // the root violet, the strip under the gesture bar came out violet beneath
+  // a cream sheet (emulator, 19 Sept 2026). This note was a JSX comment
+  // before the root element for one commit, which is a syntax error.
+  // edges: this SafeAreaView (safe-area-context) pads the top NATIVELY, so a
+  // paddingTop:0 in the style did nothing and a cream strip sat above the
+  // hero. The hero pads for the status bar itself; the root keeps the bottom.
   return (
-    {/* Root stays cream and the hero owns the violet, status bar included:
-        with the root violet, the strip under the gesture bar came out violet
-        beneath a cream sheet (emulator, 19 Sept 2026). */}
-    <SafeAreaView style={[s.screen, s.loginRoot]}>
+    <SafeAreaView style={[s.screen, s.loginRoot]} edges={['left', 'right', 'bottom']}>
       <KeyboardAvoidingView style={{ flex: 1 }}
                             behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={s.hero}>
