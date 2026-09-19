@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    THE INLINE-IMAGE TESTS. MailInlineImages.cs and MailContent.cs are LINKED,
+    not copied: this compiles the files production runs (tests/connect-order
+    says why that matters). MimeKit is the one package, pinned to the version
+    the API pins, as tests/calendar-imip and tests/connect-invitations do.
+
+    The messages are BUILT here with MimeKit, written to text, and parsed back
+    through MailContent.Parse - the same door a stored message comes through.
+
+    NOT RUN BY CI as of 19 September 2026. A step in ci.yml's backend job is a
+    CI workflow change, which goes to the CTO; it is asked for in the PR.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TatvaOS.Tests.MailInline</RootNamespace>
+    <AssemblyName>mail-inline-test</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MimeKit" Version="4.17.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="../../apps/api/Modules/Mail/MailInlineImages.cs" Link="MailInlineImages.cs" />
+    <Compile Include="../../apps/api/Modules/Mail/MailContent.cs" Link="MailContent.cs" />
+  </ItemGroup>
+
+</Project>

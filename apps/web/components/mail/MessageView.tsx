@@ -252,7 +252,8 @@ export function MessageView({
       {message.bodyHtml ? (
         // Keyed by message: allow-images is per MESSAGE, not per pane — without
         // the key, one "Show images" click would carry to every mail after it.
-        <SafeHtml key={message.id} html={message.bodyHtml} allowRemoteInitially={autoLoadImages} />
+        <SafeHtml key={message.id} html={message.bodyHtml} inlineImages={message.inlineImages}
+                  allowRemoteInitially={autoLoadImages} />
       ) : bodyLoading ? (
         <p className="text-sm text-ink-faint">Loading…</p>
       ) : (
@@ -284,19 +285,23 @@ export function MessageView({
     }
   }
 
-  const attachments = message.attachments && message.attachments.length > 0 ? (
+  // A picture being SHOWN in the body is not also offered as a file. isInline
+  // is true only for one the API actually sent in inlineImages, so a picture
+  // too large to inline is still listed - never missing from both places.
+  const files = (message.attachments ?? []).filter((a) => !a.isInline);
+  const attachments = files.length > 0 ? (
     <div className="mt-6 border-t border-line pt-4">
       <div className="mb-3 flex items-center gap-1.5 text-sm font-medium text-ink">
         <Icon name="attach" className="h-4 w-4 text-ink-muted" />
-        {message.attachments.length} attachment
-        {message.attachments.length === 1 ? '' : 's'}
+        {files.length} attachment
+        {files.length === 1 ? '' : 's'}
       </div>
       {/* A CARD, NOT A CHIP. The chip was one big button, so the only thing an
           attachment could do was download — and "Save to Space" had nowhere to
           live. Two actions cannot nest inside one button, so the card is a
           container and the actions are its own controls. */}
       <div className="flex flex-wrap gap-3">
-        {message.attachments.map((a) => (
+        {files.map((a) => (
           <div
             key={a.id}
             className="w-60 rounded-xl border border-line p-3 transition hover:border-brand-400"

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import DOMPurify from 'dompurify';
+import type { InlineImage } from '@tatvaos/types';
 
 /**
  * Renders untrusted HTML email.
@@ -92,8 +93,43 @@ function estimateHeight(html: string): number {
   return Math.min(4000, Math.max(180, (wrapped + blocks) * 22 + images * 180 + 48));
 }
 
+/** The one shape a picture may have on its way into the frame. */
+const SAFE_DATA_IMAGE = /^data:image\/(png|jpeg|gif|webp|bmp);base64,[A-Za-z0-9+/=]+$/;
+
+/**
+ * Put the email's own pictures where its HTML points at them with cid:.
+ *
+ * No browser can fetch "cid:", so until 19 Sept 2026 every such picture drew
+ * as a broken icon with its alt text, here and on the phone. The API now sends
+ * them beside the message (MailInlineImages.cs); this swaps them in.
+ *
+ * AFTER DOMPurify, on purpose. The sanitiser's URI rule refuses data: outright
+ * ("data: and javascript: URLs are how sanitiser bypasses usually land") and
+ * that rule stays exactly as strict as it was: nothing the SENDER wrote can be
+ * a data: URI. The only data: URIs in the frame are the ones put here, and
+ * only when they are raster images in the exact shape above. Same character
+ * class as the server's and the phone's, so the three agree where a cid ends.
+ */
+export function inlineCidImages(html: string, images?: InlineImage[] | null): string {
+  if (!html || !images || images.length === 0) return html;
+  const byCid = new Map<string, string>();
+  for (const im of images) {
+    if (im && typeof im.cid === 'string' && typeof im.dataUri === 'string' && SAFE_DATA_IMAGE.test(im.dataUri)) {
+      byCid.set(im.cid, im.dataUri);
+    }
+  }
+  if (byCid.size === 0) return html;
+  return html.replace(/cid:([^"'\s<>)]+)/gi, (whole: string, raw: string) => {
+    let cid = raw;
+    try { cid = decodeURIComponent(raw); } catch { /* not encoded; use as written */ }
+    return byCid.get(cid) ?? whole;
+  });
+}
+
 interface SafeHtmlProps {
   html: string;
+  /** Pictures the HTML points at with cid:, from the message's `inlineImages`. */
+  inlineImages?: InlineImage[] | null;
   /** Show remote images immediately. Defaults to false, deliberately. */
   allowRemoteInitially?: boolean;
 }
@@ -118,7 +154,7 @@ function restoreRemoteContent(html: string): string {
   return html.replace(/\sdata-blocked-src\s*=/gi, ' src=');
 }
 
-export function SafeHtml({ html, allowRemoteInitially = false }: SafeHtmlProps) {
+export function SafeHtml({ html, inlineImages = null, allowRemoteInitially = false }: SafeHtmlProps) {
   const [allowRemote, setAllowRemote] = useState(allowRemoteInitially);
   const [height, setHeight] = useState(240);
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -141,9 +177,12 @@ export function SafeHtml({ html, allowRemoteInitially = false }: SafeHtmlProps) 
       ALLOWED_URI_REGEXP: /^(?:https?|mailto|cid):/i,
     });
 
+    // Remote content is blocked BEFORE the email's own pictures go in, so the
+    // blocker never has to read a megabyte of base64 and its count stays a
+    // count of remote things.
     const blocked = blockRemoteContent(clean);
-    return { sanitized: blocked.html, blockedCount: blocked.blockedCount };
-  }, [html]);
+    return { sanitized: inlineCidImages(blocked.html, inlineImages), blockedCount: blocked.blockedCount };
+  }, [html, inlineImages]);
 
   const body = allowRemote ? restoreRemoteContent(sanitized) : sanitized;
 

@@ -158,6 +158,41 @@ const full = (over = {}) => ({
   bodyText: 'Hello', attachments: [], cc: [], ...over,
 });
 
+test('a picture inside the email is shown in the body and NOT offered again as a file', async () => {
+  // The Gmail bounce from 19 Sept 2026: icon.png is "an attachment" AND the
+  // picture the body points at. report.pdf is a real attachment beside it.
+  const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+  mailApi.getMessage = jest.fn(async () => full({
+    bodyHtml: '<img src="cid:icon.png" alt="Error Icon"><p>Address not found</p>',
+    inlineImages: [{ cid: 'icon.png', contentType: 'image/png', dataUri: PNG }],
+    attachments: [
+      { id: 'a1', filename: 'icon.png', sizeBytes: 900, contentType: 'image/png', scanStatus: 'clean', isInline: true },
+      { id: 'a2', filename: 'report.pdf', sizeBytes: 2048, contentType: 'application/pdf', scanStatus: 'clean', isInline: false },
+    ],
+  }));
+  const r = render(<MailMessage session={session} messageId="m1" onBack={() => {}} onReply={() => {}} />);
+  await waitFor(() => expect(r.getByLabelText('Reply')).toBeTruthy());
+
+  expect(webview.lastProps.source.html).toContain(`src="${PNG}"`);
+  expect(webview.lastProps.source.html).not.toContain('cid:icon.png');
+  expect(r.getByText('1 attachment')).toBeTruthy();
+  expect(r.getByLabelText('Open report.pdf')).toBeTruthy();
+  expect(r.queryByLabelText('Open icon.png')).toBeNull();
+});
+
+test('a server that sends no inlineImages changes nothing: the file is still listed', async () => {
+  // An older server: no inlineImages, isInline always false. The picture stays
+  // broken in the body, and stays downloadable - never missing from both.
+  mailApi.getMessage = jest.fn(async () => full({
+    bodyHtml: '<img src="cid:icon.png">',
+    attachments: [{ id: 'a1', filename: 'icon.png', sizeBytes: 900, contentType: 'image/png', scanStatus: 'clean', isInline: false }],
+  }));
+  const r = render(<MailMessage session={session} messageId="m1" onBack={() => {}} onReply={() => {}} />);
+  await waitFor(() => expect(r.getByLabelText('Reply')).toBeTruthy());
+  expect(webview.lastProps.source.html).toContain('cid:icon.png');
+  expect(r.getByLabelText('Open icon.png')).toBeTruthy();
+});
+
 test('the body reaches the WebView with JavaScript OFF and remote images blocked', async () => {
   mailApi.getMessage = jest.fn(async () => full());
   const r = render(<MailMessage session={session} messageId="m1" onBack={() => {}} onReply={() => {}} />);

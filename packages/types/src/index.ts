@@ -77,6 +77,20 @@ export interface Attachment {
   isInline: boolean;
 }
 
+/**
+ * A picture the email carries inside itself and points at with <img src="cid:...">.
+ * The API sends these BESIDE bodyHtml, never inside it: reply and forward quote
+ * bodyHtml, and a quoted data: URI is megabytes of base64 in an outgoing email.
+ * Substitute at display time only (apps/api/Modules/Mail/MailInlineImages.cs).
+ */
+export interface InlineImage {
+  /** The Content-ID without angle brackets: what follows "cid:" in the HTML. */
+  cid: string;
+  contentType: string;
+  /** data:image/(png|jpeg|gif|webp|bmp);base64,... - raster only, size-capped. */
+  dataUri: string;
+}
+
 export interface Message {
   id: Uuid;
   folderId: Uuid;
@@ -97,6 +111,8 @@ export interface Message {
   isFlagged: boolean;
   hasAttachments: boolean;
   attachments?: Attachment[];
+  /** Absent from a list row and from an API older than 19 Sept 2026. */
+  inlineImages?: InlineImage[];
 }
 
 export interface Thread {
