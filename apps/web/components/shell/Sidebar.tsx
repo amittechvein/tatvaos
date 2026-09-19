@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
+import { BrandMark, BrandName } from '@/components/ui/Brand';
 
 // ============================================================================
 //  Sidebar — the rail, in Tailwind and the tokens
@@ -131,16 +132,23 @@ export function Sidebar({ sections, brand, scope, footer, header, rail, onPeek, 
             off, since reading mid-transition returns the old width. */}
         <style>{`#sidebar{width:${RAIL_WIDTH}}@media (min-width:1024px){#sidebar{width:${RAIL_WIDTH_ICONS}}#sidebar[data-wide]{width:${RAIL_WIDTH}}}`}</style>
 
-        {/* Brand — the product logo lockup. The mark is a self-contained badge;
-            the wordmark is dark artwork and needs a light ground, which the
-            rail is. The collapsed icon rail shows only the mark. */}
+        {/* Brand — the product logo lockup. The collapsed icon rail shows only
+            the mark.
+
+            This comment used to say "the wordmark is dark artwork and needs a
+            light ground, which the rail is". In dark mode the rail is not, and
+            both images were white boxes on it (Amit, 19 Sept 2026). They now
+            come from /brand/ui through components/ui/Brand, which says why the
+            originals are still there. The wordmark's two images sit in ONE
+            wrapper that carries `labels`: `lg:block` on the images themselves
+            would have un-hidden the theme's hidden half. */}
         <div className="flex shrink-0 items-center justify-center border-b border-line px-4"
              style={{ height: TOPBAR_HEIGHT }}>
           <Link href="/" className="flex items-center gap-2 no-underline" aria-label={brand}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img className="h-8 w-auto" src={`/brand/${logo}-logo.png`} alt="" />
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img className={`h-[30px] w-auto ${labels}`} src={`/brand/${logo}-name.png`} alt="" />
+            <BrandMark product={logo} className="h-8 w-auto" />
+            <span className={labels}>
+              <BrandName product={logo} className="h-[30px] w-auto" />
+            </span>
           </Link>
         </div>
 
