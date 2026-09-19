@@ -255,12 +255,16 @@ public static class OrgMeetingApiEndpoints
             after = PageCursor.Decode(cursor);
             if (after is null)
                 return Results.BadRequest(new { error = "That cursor is not one this API issued. Pass `next` back exactly as it came." });
-            start = after.S; end = after.E; hostId = after.H;
+            // To UTC: a cursor we issued already is, but these become query
+            // parameters and Npgsql refuses any other offset with an exception.
+            start = after.S.ToUniversalTime(); end = after.E.ToUniversalTime(); hostId = after.H;
         }
         else
         {
-            start = from ?? DateTimeOffset.UtcNow.AddHours(-12);
-            end = to ?? start.AddDays(30);
+            // To UTC (19 Sept 2026): `from=...+05:30` is what the guide tells an
+            // Indian ERP to send, and it was a 500. The instant is unchanged.
+            start = (from ?? DateTimeOffset.UtcNow.AddHours(-12)).ToUniversalTime();
+            end = (to ?? start.AddDays(30)).ToUniversalTime();
             if (end <= start)
                 return Results.BadRequest(new { error = "`to` must be after `from`." });
 
@@ -284,7 +288,7 @@ public static class OrgMeetingApiEndpoints
                         && (hostId == null || m.CreatedByUserId == hostId));
         if (after is not null)
         {
-            var ls = after.LS; var lc = after.LC;
+            var ls = after.LS.ToUniversalTime(); var lc = after.LC;
             query = query.Where(m => m.ScheduledStart > ls
                                      || (m.ScheduledStart == ls && m.Code.CompareTo(lc) > 0));
         }

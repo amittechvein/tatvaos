@@ -532,6 +532,42 @@ same "the two pages are 505 DISTINCT classes — nothing skipped, nothing repeat
 PG "DELETE FROM connect.meetings WHERE code LIKE 'bulk-$RUN-%'" >/dev/null
 same "cleaned up" "$(PG "SELECT count(*) FROM connect.meetings WHERE code LIKE 'bulk-$RUN-%'")" "0"
 
+step "22. The guide's own example: times with an Indian offset (+05:30)"
+# INCIDENT, 19 Sept 2026. Every example in the guide - curl, Node, Python - sends
+# "startsAt": "...+05:30", and the guide says "Send whatever offset you like -
+# +05:30 is read correctly". It was not read at all: Postgres takes UTC only,
+# nothing converted, and the API answered 500 to the guide's first example, to
+# `from`/`to` with an offset, and to a cursor carrying one. The ERP developer had
+# already started. It was invisible because every time THIS suite sent ended in
+# Z, the console's browser always sends Z, and "times come back in UTC" (step 19)
+# is true of a time that went in as UTC. A check whose input cannot be wrong is
+# not a check of the claim. So this step sends what the guide tells people to send.
+IST_START='2031-04-07T09:00:00+05:30'; IST_END='2031-04-07T10:00:00+05:30'
+UTC_START='2031-04-07T03:30:00'                       # the same instant
+r=$(post "$API/api/v1/org/meetings" "$SKEY" "{\"hostEmail\":\"$HOST_EMAIL\",\"title\":\"IST class $RUN\",\"startsAt\":\"$IST_START\",\"endsAt\":\"$IST_END\"}")
+same "the guide's example is accepted" "$(status "$r")" "201"
+IST_ID=$(jq_ "$(body "$r")" "d.get('id') or ''")
+has  "it comes back as the same INSTANT, in UTC" "$(jq_ "$(body "$r")" "d.get('startsAt') or ''")" "$UTC_START"
+same "and that instant is what is stored" \
+    "$(PG "SELECT to_char(scheduled_start AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS') FROM connect.meetings WHERE id='${IST_ID:-00000000-0000-0000-0000-000000000000}'")" "$UTC_START"
+same "the end too" \
+    "$(PG "SELECT to_char(scheduled_end AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS') FROM connect.meetings WHERE id='${IST_ID:-00000000-0000-0000-0000-000000000000}'")" "2031-04-07T04:30:00"
+# The calendar entry is written from the same values: a class at 09:00 IST that
+# sat on the teacher's calendar at 09:00 UTC would be a worse bug than a 500.
+same "the teacher's calendar holds the same instant" \
+    "$(PG "SELECT to_char(e.starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS') FROM calendar.events e WHERE e.uid LIKE '%${IST_ID:-none}%'")" "$UTC_START"
+# %2B is a '+' in a query string. A bare '+' is a SPACE, which is a caller's
+# mistake and answers 400; the guide should say so, and that is a docs matter.
+r=$(get_k "$API/api/v1/org/meetings?from=2031-04-07T00:00:00%2B05:30&to=2031-04-08T00:00:00%2B05:30" "$SKEY")
+same "the timetable accepts an Indian-offset window" "$(status "$r")" "200"
+has  "…and the class is in it" "$(body "$r")" "${IST_ID:-nothing-was-created}"
+r=$(get_k "$API/api/v1/org/meetings?from=2031-04-07T10:00:00%2B05:30&to=2031-04-08T00:00:00%2B05:30" "$SKEY")
+hasnt "a window opening at 10:00 IST does NOT hold a 09:00 IST class: the offset was honoured, not dropped" "$(body "$r")" "${IST_ID:-nothing-was-created}"
+IST_CURSOR=$("$PY" -c "import base64,json;print(base64.urlsafe_b64encode(json.dumps({'S':'2031-04-07T00:00:00+05:30','E':'2031-04-08T00:00:00+05:30','H':None,'LS':'2031-04-07T00:00:00+05:30','LC':''}).encode()).decode().rstrip('='))")
+r=$(get_k "$API/api/v1/org/meetings?cursor=$IST_CURSOR" "$SKEY")
+same "a cursor carrying an offset is an answer, not a 500" "$(status "$r")" "200"
+[ -n "$IST_ID" ] && PG "DELETE FROM connect.meetings WHERE id='$IST_ID'" >/dev/null
+
 printf '\n%s%s%s\n  %s%d passed%s, ' "$CYAN" "----------------------------------------" "$RST" "$GREEN" "$PASSED" "$RST"
 [ "$FAILED" -eq 0 ] && printf '%s0 failed%s\n\n' "$GREEN" "$RST" || printf '%s%d failed%s\n\n' "$RED" "$FAILED" "$RST"
 [ "$FAILED" -eq 0 ]
