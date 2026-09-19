@@ -470,6 +470,20 @@ export const connectApi = {
       method: 'POST', body: JSON.stringify({ kind }),
     }).then((r) => { if (!r.ok) throw new Error('Could not mute them. They are still unmuted.'); }),
 
+  /**
+   * One press, many microphones (Amit, 19 Sept 2026). 'guests' is everybody
+   * with no account; 'everyone' adds colleagues but never the host, a co-host
+   * or whoever pressed it - the server decides that, not this file. Answers
+   * how many it reached, because "Muted" with nobody muted is this codebase's
+   * signature bug. It does NOT stop anybody unmuting again.
+   */
+  muteAll: (f: AuthedFetch, id: string, who: 'guests' | 'everyone') =>
+    f(`/connect/meetings/${id}/mute-all`, { method: 'POST', body: JSON.stringify({ who }) })
+      .then(async (r) => {
+        if (!r.ok) throw new Error('Could not mute them. Nobody was muted.');
+        return (await r.json()) as { who: string; targeted: number; failed: number };
+      }),
+
   remove: (f: AuthedFetch, id: string, identity: string) =>
     f(`/connect/meetings/${id}/participants/${encodeURIComponent(identity)}`, { method: 'DELETE' })
       .then((r) => { if (!r.ok) throw new Error('Could not remove them. They are still in the meeting.'); }),

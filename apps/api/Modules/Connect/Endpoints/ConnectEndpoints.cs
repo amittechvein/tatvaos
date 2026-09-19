@@ -54,6 +54,7 @@ public static class ConnectEndpoints
         g.MapPost("/meetings/{id:guid}/lobby/{requestId:guid}/deny", DenyAsync);
 
         g.MapPost("/meetings/{id:guid}/participants/{identity}/mute", MuteAsync);
+        g.MapPost("/meetings/{id:guid}/mute-all", MuteAllAsync);
         g.MapDelete("/meetings/{id:guid}/participants/{identity}", RemoveAsync);
         g.MapPut("/meetings/{id:guid}/participants/{identity}/role", SetRoleAsync);
         // Handing the meeting itself to somebody else — distinct from /role,
@@ -108,6 +109,7 @@ public static class ConnectEndpoints
 
     public sealed record JoinRequest(string? Password);
     public sealed record MuteRequest(string? Kind);
+    public sealed record MuteAllRequest(string? Who);
     public sealed record RoleRequest(string? Role);
     public sealed record TransferHostRequest(string? Identity);
 
@@ -1058,6 +1060,51 @@ public static class ConnectEndpoints
         await audit.WriteAsync("connect.participant.muted", "connect.meeting", id.ToString(),
             after: new { identity, kind }, ct: ct, productCode: "connect");
         return Results.NoContent();
+    }
+
+    /// <summary>
+    /// Mute every guest's microphone, or everyone's, in one press.
+    ///
+    /// Amit, 19 Sept 2026, before a 300-person meeting. Microphones only: a
+    /// camera left on disturbs nobody, and "mute" has never meant video here.
+    ///
+    /// WHAT THIS IS NOT. It does not stop anybody unmuting again - LiveKit mutes
+    /// a track, and the person's own button still works, exactly as with the
+    /// single Mute. Keeping a room silent is a different control (taking away
+    /// the microphone grant, SetPublishSourcesAsync) and a product decision
+    /// nobody has made; this comment is here so the next reader does not
+    /// assume it was made by accident.
+    /// </summary>
+    private static async Task<IResult> MuteAllAsync(
+        Guid id, MuteAllRequest? req, AppDbContext db, TenantContext tenant,
+        LiveKitRoomClient rooms, AuditWriter audit, CancellationToken ct)
+    {
+        if (tenant.UserId is not Guid uid) return Results.Unauthorized();
+        if (await FindAsync(db, id, ct) is null) return NotFound();
+        if (await RoleOfAsync(db, id, uid, ct) is not ("host" or "cohost")) return Forbidden();
+
+        var who = (req?.Who ?? ConnectCodes.MuteAllGuests).Trim().ToLowerInvariant();
+        if (who is not (ConnectCodes.MuteAllGuests or ConnectCodes.MuteAllEveryone))
+            return Results.BadRequest(new { error = "Mute the guests, or everyone." });
+
+        // The people running the meeting, by PERSON identity, plus whoever
+        // pressed the button. Read from our rows, never from the client.
+        var spared = (await db.ConnectParticipants.AsNoTracking()
+                .Where(p => p.MeetingId == id && (p.Role == "host" || p.Role == "cohost" || p.UserId == uid))
+                .Select(p => p.Identity)
+                .ToListAsync(ct))
+            .ToHashSet(StringComparer.Ordinal);
+
+        var outcome = await rooms.MuteAllAsync(id,
+            connected => ConnectCodes.MuteAllTargets(connected, who, spared), ct);
+        if (outcome is null)
+            return Results.Problem("The media server did not answer, so nobody was muted.", statusCode: 502);
+
+        // Counts only: one row for the press, not three hundred.
+        await audit.WriteAsync("connect.participants.muted_all", "connect.meeting", id.ToString(),
+            after: new { who, outcome.Targeted, outcome.Failed }, ct: ct, productCode: "connect");
+
+        return Results.Ok(new { who, targeted = outcome.Targeted, failed = outcome.Failed });
     }
 
     private static async Task<IResult> RemoveAsync(

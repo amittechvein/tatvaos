@@ -110,6 +110,36 @@ public sealed class LiveKitRoomClient(
         return allAccepted;
     }
 
+    /// <summary>What a mute-all did. A null outcome means the room could not be
+    /// read at all, which is not the same as "nobody to mute".</summary>
+    public sealed record MuteAllOutcome(int Targeted, int Failed);
+
+    /// <summary>
+    /// Mute the microphone of every connection `choose` picks, in ONE listing of
+    /// the room. Not a loop over MuteAsync: that lists the room once per person,
+    /// which for 300 people is 300 listings of 300 participants.
+    ///
+    /// Null when LiveKit would not list the room - TryListParticipantsAsync's
+    /// distinction, kept: a host told "0 muted" while the media server is down
+    /// would believe the room was already quiet.
+    /// </summary>
+    public async Task<MuteAllOutcome?> MuteAllAsync(
+        Guid meetingId, Func<IReadOnlyList<string>, IReadOnlyList<string>> choose, CancellationToken ct)
+    {
+        var present = await TryListParticipantsAsync(meetingId, ct);
+        if (present is null) return null;
+
+        var chosen = choose(present.Select(p => p.Identity ?? "").ToList()).ToHashSet(StringComparer.Ordinal);
+        int targeted = 0, failed = 0;
+        foreach (var person in present)
+        {
+            if (person.Identity is null || !chosen.Contains(person.Identity)) continue;
+            targeted++;
+            if (!await MuteDeviceAsync(meetingId, person, "audio", ct)) failed++;
+        }
+        return new MuteAllOutcome(targeted, failed);
+    }
+
     private async Task<bool> MuteDeviceAsync(Guid meetingId, LkParticipant person, string kind, CancellationToken ct)
     {
 

@@ -25,8 +25,56 @@ internal static class Program
         EveryDeviceIsStillThePerson(t);
         ActingOnAPerson(t);
         TheBugThisPrevents(t);
+        WhoAMuteAllReaches(t);
 
         return t.Report();
+    }
+
+    /// <summary>
+    /// Amit, 19 Sept 2026: "give mute all button in meeting only guest". What is
+    /// proved here is WHO the press reaches; that LiveKit then mutes them is the
+    /// single Mute's own path (MuteDeviceAsync), unchanged.
+    /// </summary>
+    private static void WhoAMuteAllReaches(Harness t)
+    {
+        t.Section("MuteAllTargets — who one press reaches");
+
+        var host = ConnectCodes.IdentityForUser(Amit);
+        var hostPhone = ConnectCodes.IdentityForUserDevice(Amit);
+        var hostLaptop = ConnectCodes.IdentityForUserDevice(Amit);
+        var colleague = ConnectCodes.IdentityForUserDevice(Ravi);
+        var guestA = ConnectCodes.IdentityForGuest(Guid.NewGuid());
+        var guestB = ConnectCodes.IdentityForGuest(Guid.NewGuid());
+        var room = new string?[] { hostPhone, hostLaptop, colleague, guestA, guestB, null, "" };
+        var spared = new HashSet<string>(StringComparer.Ordinal) { host };
+
+        t.Ok("IsGuest knows a guest", ConnectCodes.IsGuest(guestA));
+        t.Ok("IsGuest: a colleague, a device, null and empty are not guests",
+            !ConnectCodes.IsGuest(host) && !ConnectCodes.IsGuest(colleague)
+            && !ConnectCodes.IsGuest(null) && !ConnectCodes.IsGuest(""));
+        t.Ok("IsGuest reads the PREFIX: a name containing 'guest:' is not one",
+            !ConnectCodes.IsGuest("user:guest:123"));
+
+        var guests = ConnectCodes.MuteAllTargets(room, ConnectCodes.MuteAllGuests, spared);
+        t.Ok("'guests' reaches both guests and nobody else",
+            guests.Count == 2 && guests.Contains(guestA) && guests.Contains(guestB));
+
+        var everyone = ConnectCodes.MuteAllTargets(room, ConnectCodes.MuteAllEveryone, spared);
+        t.Ok("'everyone' reaches the guests and the colleague",
+            everyone.Count == 3 && everyone.Contains(colleague) && everyone.Contains(guestA) && everyone.Contains(guestB));
+        t.Ok("'everyone' spares the host on BOTH devices",
+            !everyone.Contains(hostPhone) && !everyone.Contains(hostLaptop));
+
+        var nobodySpared = ConnectCodes.MuteAllTargets(room, ConnectCodes.MuteAllEveryone, new HashSet<string>());
+        t.Ok("…and it is the spared set doing that: empty it and the host is reached",
+            nobodySpared.Count == 5 && nobodySpared.Contains(hostPhone) && nobodySpared.Contains(hostLaptop));
+
+        var unknown = ConnectCodes.MuteAllTargets(room, "colleagues", spared);
+        t.Ok("an unknown 'who' falls to the narrow reading, guests only, never wider",
+            unknown.Count == 2 && !unknown.Contains(colleague));
+
+        t.Ok("an empty room is nobody, not a crash",
+            ConnectCodes.MuteAllTargets(Array.Empty<string?>(), ConnectCodes.MuteAllEveryone, spared).Count == 0);
     }
 
     private static void EveryJoinIsItsOwnConnection(Harness t)
