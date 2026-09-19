@@ -136,13 +136,13 @@ same() {
 # everything, so it is refused rather than searched for.
 has() {
     if [ -z "$3" ]; then fail "$1 — nothing to look for"
-    elif printf '%s' "$2" | grep -qF "$3"; then pass "$1"
+    elif printf '%s' "$2" | grep -qF -- "$3"; then pass "$1"
     else fail "$1 — not found"; fi
 }
 # hasnt <label> <haystack> <needle> — the same guard, opposite expectation.
 hasnt() {
     if [ -z "$3" ]; then fail "$1 — nothing to look for"
-    elif printf '%s' "$2" | grep -qF "$3"; then fail "$1 — it is still there"
+    elif printf '%s' "$2" | grep -qF -- "$3"; then fail "$1 — it is still there"
     else pass "$1"; fi
 }
 body()   { printf '%s' "$1" | sed '$d'; }
@@ -201,7 +201,7 @@ KEY=$(jq_ "$(body "$r")" "d['key']"); KEY_ID=$(jq_ "$(body "$r")" "d['id']")
 [ "${KEY:0:4}" = "tvk_" ] && pass "the key has the tvk_ prefix" || fail "key prefix: ${KEY:0:4}"
 [ "$(jq_ "$(body "$r")" "d['keyPrefix']")" = "${KEY:0:12}" ] && pass "the visible prefix is the first 12 characters" || fail "keyPrefix wrong"
 r=$(curl -s "$API/api/org/keys" -H "Authorization: Bearer $TOKEN")
-printf '%s' "$r" | grep -q "$KEY" && fail "the list carries the key itself" || pass "the list never carries the key"
+printf '%s' "$r" | grep -qF -- "$KEY" && fail "the list carries the key itself" || pass "the list never carries the key"
 [ "$(PG "SELECT key_hash <> '$KEY' FROM core.api_keys WHERE id='$KEY_ID'")" = "t" ] && pass "stored hashed, not in the clear" || fail "the key is stored in the clear"
 r=$(post "$API/api/org/keys" "$TOKEN" "{\"label\":\"Bad $RUN\",\"scopes\":[\"people:everything\"]}")
 [ "$(status "$r")" = "400" ] && pass "an unknown scope is refused, not ignored" || fail "unknown scope answered $(status "$r")"
@@ -271,10 +271,10 @@ n=$(PG "SELECT count(*) FROM core.audit_logs WHERE action='org.api_person_admitt
 [ "${n:-0}" -ge 1 ] && pass "the admission is recorded against the key" || fail "no audit row naming the key"
 n=$(PG "SELECT count(*) FROM core.audit_logs WHERE action='org.api_key_created' AND target_id='$KEY_ID'")
 [ "${n:-0}" -ge 1 ] && pass "so is the key's creation" || fail "no audit row for the key"
-printf '%s' "$(PG "SELECT coalesce(string_agg(after_state::text,' '),'') FROM core.audit_logs WHERE action LIKE 'org.api%'")" | grep -q "$KEY" && fail "the key itself is in the audit trail" || pass "and the key itself appears nowhere in it"
+printf '%s' "$(PG "SELECT coalesce(string_agg(after_state::text,' '),'') FROM core.audit_logs WHERE action LIKE 'org.api%'")" | grep -qF -- "$KEY" && fail "the key itself is in the audit trail" || pass "and the key itself appears nowhere in it"
 
 step "9. Nothing secret in the API log"
-n=$(grep -c -F "$KEY" "$LOG"); [ "$n" -eq 0 ] && pass "the key appears nowhere in the API log" || fail "the key appears $n time(s) in the log"
+n=$(grep -c -F -- "$KEY" "$LOG"); [ "$n" -eq 0 ] && pass "the key appears nowhere in the API log" || fail "the key appears $n time(s) in the log"
 
 step "10. RLS: the school sees none of it"
 n=$(PGAPP "SET app.tenant_id='$SCHOOL'; SELECT count(*) FROM core.api_keys")
@@ -415,7 +415,7 @@ step "17. The audit trail, and RLS"
     && pass "the scheduling is recorded against the key" || fail "no audit row for the scheduled meeting"
 [ "$(PG "SELECT count(*) FROM core.audit_logs WHERE action='org.api_meeting_cancelled' AND target_id='$SKEY_ID'")" -ge 1 ] \
     && pass "so is the cancellation" || fail "no audit row for the cancellation"
-n=$(grep -c -F "$SKEY" "$LOG"); [ "$n" -eq 0 ] && pass "the meetings key appears nowhere in the API log" || fail "the key appears $n time(s) in the log"
+n=$(grep -c -F -- "$SKEY" "$LOG"); [ "$n" -eq 0 ] && pass "the meetings key appears nowhere in the API log" || fail "the key appears $n time(s) in the log"
 # A key belonging to another organisation must not see this meeting at all.
 n=$(PGAPP "SET app.tenant_id='$SCHOOL'; SELECT count(*) FROM connect.meetings WHERE id='$MID'")
 [ "${n:-1}" -eq 0 ] && pass "ABC School cannot see Techvein's class" || fail "LEAK: the school sees ${n:-?} Techvein meeting(s)"
