@@ -97,8 +97,17 @@ public static class ConnectInvitationEndpoints
                     : "Type at least one email address.",
                 invalid = parsed.Invalid,
             });
-        if (parsed.Valid.Count > ConnectInvitations.MaxPerRequest)
-            return Results.BadRequest(new { error = $"Invite at most {ConnectInvitations.MaxPerRequest} people at a time." });
+        // This organisation's caps, or the platform default when nobody has given
+        // it numbers of its own. Read under the caller's tenant, so row-level
+        // security hands back this organisation's row or none.
+        var capRow = await db.Set<ConnectTenantSettings>().AsNoTracking()
+            .Where(s => s.TenantId == meeting!.TenantId)
+            .Select(s => new { s.InviteMaxPerRequest, s.InviteMaxPerMeeting })
+            .FirstOrDefaultAsync(ct);
+        var caps = ConnectInvitations.EffectiveCaps(capRow?.InviteMaxPerRequest, capRow?.InviteMaxPerMeeting);
+
+        if (parsed.Valid.Count > caps.PerRequest)
+            return Results.BadRequest(new { error = $"Invite at most {caps.PerRequest} people at a time." });
 
         var existing = await AllOfAsync(db, id, ct);
         var byEmail = existing.ToDictionary(e => e.Email.ToLowerInvariant(), StringComparer.Ordinal);
@@ -116,8 +125,8 @@ public static class ConnectInvitationEndpoints
         var fresh = parsed.Valid.Where(e => !byEmail.ContainsKey(e)).ToList();
 
         var standing = existing.Count(e => e.Status != ConnectInvitations.StatusWithdrawn);
-        if (standing + fresh.Count + reinvited.Count > ConnectInvitations.MaxPerMeeting)
-            return Results.BadRequest(new { error = $"A meeting can have at most {ConnectInvitations.MaxPerMeeting} email invitations." });
+        if (standing + fresh.Count + reinvited.Count > caps.PerMeeting)
+            return Results.BadRequest(new { error = $"A meeting can have at most {caps.PerMeeting} email invitations." });
 
         var now = DateTimeOffset.UtcNow;
         var added = fresh.Select(email => new ConnectMeetingInvitation

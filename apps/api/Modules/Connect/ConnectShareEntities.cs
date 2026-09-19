@@ -219,5 +219,15 @@ public sealed class ConnectTenantSettings
     /// </summary>
     public bool AllowPublicRecordingLinks { get; set; }
 
+    /// <summary>
+    /// Email-invitation caps for this organisation; null is the platform default
+    /// (ConnectInvitations.EffectiveCaps). Amit, 19 Sept 2026: set by the platform
+    /// operator ONLY, through ConnectInvitationCapEndpoints. The organisation's
+    /// own settings endpoint (ConnectShareEndpoints.PutSettingsAsync) must never
+    /// write these - they are the only guard on outbound invitation mail.
+    /// </summary>
+    public int? InviteMaxPerRequest { get; set; }
+    public int? InviteMaxPerMeeting { get; set; }
+
     public DateTimeOffset UpdatedAt { get; set; }
 }

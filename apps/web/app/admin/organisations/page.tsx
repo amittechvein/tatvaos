@@ -399,6 +399,123 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
         growth. Storage already provisioned is untouched — shrinking a live
         organisation&apos;s storage is a separate, deliberate action.
       </Alert>
+
+      <hr className="my-6" />
+
+      <InvitationCaps orgId={org.id} />
     </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+//  Connect: how many people this organisation may invite to a meeting by email.
+//
+//  Amit, 19 Sept 2026 — a 300-person meeting met "Invite at most 50 people at a
+//  time". The caps are now per organisation, and the dial is HERE ONLY: they are
+//  the one guard on outbound invitation mail, so the organisation's own console
+//  has no such field. Empty means "the platform default", stored as null, so a
+//  later change to the default reaches everyone never given their own number.
+//
+//  Its own section with its own Save, like Details: the modal's footer button is
+//  the plan's. The defaults and the ceiling come from the API's answer rather
+//  than being typed here a second time.
+// ---------------------------------------------------------------------------
+type CapsAnswer = {
+  perRequest: number | null;
+  perMeeting: number | null;
+  effectivePerRequest: number;
+  effectivePerMeeting: number;
+  defaultPerRequest: number;
+  defaultPerMeeting: number;
+  ceiling: number;
+};
+
+function InvitationCaps({ orgId }: { orgId: string }) {
+  const { authedFetch } = useAuth();
+  const [answer, setAnswer] = useState<CapsAnswer | null>(null);
+  const [perRequest, setPerRequest] = useState('');
+  const [perMeeting, setPerMeeting] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const path = `/admin/organisations/${orgId}/connect-invitation-caps`;
+
+  const take = useCallback((a: CapsAnswer) => {
+    setAnswer(a);
+    setPerRequest(a.perRequest === null ? '' : String(a.perRequest));
+    setPerMeeting(a.perMeeting === null ? '' : String(a.perMeeting));
+  }, []);
+
+  useEffect(() => {
+    let gone = false;
+    authedFetch(path)
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error ?? 'Could not load the invitation limits.');
+        if (!gone) take(body as CapsAnswer);
+      })
+      .catch((e) => { if (!gone) setError(e instanceof Error ? e.message : 'Could not load the invitation limits.'); });
+    return () => { gone = true; };
+  }, [authedFetch, path, take]);
+
+  async function save() {
+    setBusy(true); setError(null); setSaved(false);
+    try {
+      const res = await authedFetch(path, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          perRequest: perRequest === '' ? null : Number(perRequest),
+          perMeeting: perMeeting === '' ? null : Number(perMeeting),
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? 'Could not save the invitation limits.');
+      take(body as CapsAnswer);
+      setSaved(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save the invitation limits.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const dirty = answer !== null && (
+    perRequest !== (answer.perRequest === null ? '' : String(answer.perRequest)) ||
+    perMeeting !== (answer.perMeeting === null ? '' : String(answer.perMeeting)));
+
+  return (
+    <>
+      <h6 className="font-semibold mb-2">Connect — email invitations</h6>
+      <p className="text-[0.75rem] text-ink-muted mb-4">
+        How many people this organisation may invite to one meeting by email. Only
+        you can change this; the organisation cannot.
+        {answer && <> In force now: {answer.effectivePerRequest} per send, {answer.effectivePerMeeting} per meeting.</>}
+      </p>
+
+      {error && <Alert tone="danger">{error}</Alert>}
+      {saved && !dirty && <Alert tone="ok">Saved. It applies to the next invitation sent.</Alert>}
+
+      <Field label="Per send"
+             hint={answer ? `Leave empty for the default (${answer.defaultPerRequest}). At most ${answer.ceiling}.` : undefined}>
+        <Input value={perRequest} inputMode="numeric" disabled={answer === null}
+               placeholder={answer ? String(answer.defaultPerRequest) : ''}
+               onChange={(e) => { setSaved(false); setPerRequest(e.target.value.replace(/\D/g, '')); }} />
+      </Field>
+
+      <Field label="Per meeting"
+             hint={answer ? `Leave empty for the default (${answer.defaultPerMeeting}). At most ${answer.ceiling}.` : undefined}>
+        <Input value={perMeeting} inputMode="numeric" disabled={answer === null}
+               placeholder={answer ? String(answer.defaultPerMeeting) : ''}
+               onChange={(e) => { setSaved(false); setPerMeeting(e.target.value.replace(/\D/g, '')); }} />
+      </Field>
+
+      <div className="flex justify-end">
+        <Button variant="primary" onClick={save} disabled={busy || !dirty}>
+          {busy ? 'Saving…' : 'Save limits'}
+        </Button>
+      </div>
+    </>
   );
 }
