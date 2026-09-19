@@ -18,7 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { listMeetings, createMeeting } from '../lib/connect';
 import { describeWhen } from '../lib/nextMeeting';
-import { brand, surface, text } from '../theme';
+import { brand, surface, text, radius, space, type, shadow, tone } from '../theme';
 
 const log = (line) => console.log(`[meetings] ${line}`);
 
@@ -146,35 +146,36 @@ export default function Meetings({ session, onJoin, onBack, onSchedule }) {
   );
 }
 
+// 18 Sept 2026, "modern ui for Gen-Z": the two actions are the page. Start
+// now is a tall pill that glows; Schedule is its quiet twin beneath. Upcoming
+// meetings are cards with room to breathe rather than bordered rows.
 const s = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: surface.page, paddingHorizontal: 20, paddingTop: 12 },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 18 },
-  title: { fontSize: 24, fontWeight: '700', color: text.primary },
+  screen: { flex: 1, backgroundColor: surface.page, paddingHorizontal: space.lg, paddingTop: 12 },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: space.lg },
+  title: { ...type.title, color: text.primary },
   primary: {
-    height: 48, borderRadius: 8, backgroundColor: brand.base,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    height: 58, borderRadius: 29, backgroundColor: brand.base,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
+    ...shadow.glow,
   },
   primaryBusy: { opacity: 0.7 },
-  primaryText: { color: brand.onBase, fontSize: 16, fontWeight: '500' },
+  primaryText: { color: brand.onBase, fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
   secondary: {
-    height: 44, borderRadius: 8, borderWidth: 1, borderColor: surface.border,
-    backgroundColor: surface.card, marginTop: 10,
+    height: 52, borderRadius: radius.pill, backgroundColor: tone.wash, marginTop: space.md,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
   },
-  secondaryText: { color: brand.base, fontSize: 15, fontWeight: '600' },
+  secondaryText: { color: tone.ink, fontSize: 15, fontWeight: '700' },
   error: { color: '#993556', marginTop: 12, fontSize: 14 },
-  section: {
-    fontSize: 11, fontWeight: '700', letterSpacing: 1, color: text.muted,
-    marginTop: 26, marginBottom: 8,
-  },
-  empty: { color: text.secondary, fontSize: 15, lineHeight: 22, marginTop: 8 },
-  list: { gap: 8, paddingBottom: 24, flexGrow: 1 },
+  section: { ...type.eyebrow, color: text.muted, marginTop: space.xl, marginBottom: space.md },
+  empty: { ...type.body, color: text.secondary, marginTop: 8 },
+  list: { gap: space.md, paddingBottom: 24, flexGrow: 1 },
   row: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    backgroundColor: surface.card, borderWidth: 1, borderColor: surface.border,
-    borderRadius: 10, paddingVertical: 14, paddingHorizontal: 14,
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: surface.card, borderRadius: radius.lg,
+    paddingVertical: space.lg, paddingHorizontal: space.lg,
+    ...shadow.card,
   },
-  rowPressed: { opacity: 0.85 },
-  rowTitle: { fontSize: 16, fontWeight: '600', color: text.primary },
-  rowWhen: { fontSize: 13, color: text.secondary, marginTop: 2 },
+  rowPressed: { opacity: 0.85, transform: [{ scale: 0.99 }] },
+  rowTitle: { ...type.heading, color: text.primary },
+  rowWhen: { ...type.caption, fontWeight: '400', fontSize: 13, color: text.secondary, marginTop: 4 },
 });

@@ -30,7 +30,7 @@ import { Ionicons } from '@expo/vector-icons';
 import {
   bootstrap, listMessages, searchMessages, orderFolders, senderLabel, whenLabel,
 } from '../lib/mail';
-import { brand, surface, text } from '../theme';
+import { brand, surface, text, radius, space, type, shadow, tone } from '../theme';
 
 const log = (line) => console.log(`[mail] ${line}`);
 const PAGE = 30;
@@ -262,7 +262,13 @@ function Row({ m, onPress }) {
   return (
     <Pressable style={s.row} onPress={onPress}
                accessibilityLabel={`${unread ? 'Unread. ' : ''}${senderLabel(m)}. ${m.subject || 'No subject'}`}>
-      <View style={s.dotCol}>
+      {/* An initial in a circle, not a bare dot: the eye finds a sender by
+          the coloured letter long before it reads the name. Unread keeps the
+          dot, small, on the circle's shoulder. */}
+      <View style={[s.avatar, unread && s.avatarUnread]}>
+        <Text style={[s.avatarText, unread && s.avatarTextUnread]}>
+          {(senderLabel(m) || '?').trim().charAt(0).toUpperCase()}
+        </Text>
         {unread ? <View style={s.dot} /> : null}
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -289,25 +295,35 @@ const s = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 8,
     paddingHorizontal: 16, paddingTop: 10, paddingBottom: 8,
   },
-  title: { fontSize: 20, fontWeight: '700', color: text.primary },
-  subtitle: { fontSize: 12, color: text.muted, marginTop: 1 },
+  title: { ...type.title, color: text.primary },
+  subtitle: { ...type.caption, color: text.muted, marginTop: 2 },
+  // A pill, filled, no outline — the shape a search box has had on every
+  // phone since about 2019.
   searchRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    marginHorizontal: 16, marginBottom: 8, paddingHorizontal: 12, height: 40,
-    borderRadius: 10, backgroundColor: surface.card, borderWidth: 1, borderColor: surface.border,
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    marginHorizontal: 16, marginBottom: space.md, paddingHorizontal: 16, height: 46,
+    borderRadius: 23, backgroundColor: surface.card, ...shadow.card,
   },
   search: { flex: 1, fontSize: 15, color: text.primary, padding: 0 },
   row: {
-    flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 12,
-    borderBottomWidth: 1, borderBottomColor: surface.border,
+    flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingVertical: 12,
   },
-  dotCol: { width: 10, paddingTop: 6 },
-  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: brand.base },
+  avatar: {
+    width: 44, height: 44, borderRadius: radius.pill, backgroundColor: tone.wash,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  avatarUnread: { backgroundColor: brand.base },
+  avatarText: { fontSize: 17, fontWeight: '700', color: tone.ink },
+  avatarTextUnread: { color: brand.onBase },
+  dot: {
+    position: 'absolute', top: -1, right: -1, width: 12, height: 12, borderRadius: 6,
+    backgroundColor: '#FF6B4A', borderWidth: 2, borderColor: surface.page,
+  },
   rowTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   from: { flex: 1, fontSize: 15, color: text.primary },
-  when: { fontSize: 12, color: text.muted },
-  subject: { fontSize: 14, color: text.primary, marginTop: 1 },
-  rowBottom: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 },
+  when: { ...type.caption, color: text.muted },
+  subject: { fontSize: 15, color: text.primary, marginTop: 2 },
+  rowBottom: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 },
   snippet: { flex: 1, fontSize: 13, color: text.secondary },
   strong: { fontWeight: '700' },
   centre: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, padding: 32 },
@@ -323,8 +339,8 @@ const s = StyleSheet.create({
   moreBtn: { padding: 16, alignItems: 'center' },
   moreText: { color: brand.base, fontSize: 14, fontWeight: '600' },
   fab: {
-    position: 'absolute', right: 20, bottom: 28, width: 56, height: 56, borderRadius: 28,
-    backgroundColor: brand.base, alignItems: 'center', justifyContent: 'center', elevation: 4,
+    position: 'absolute', right: 20, bottom: 28, width: 60, height: 60, borderRadius: 30,
+    backgroundColor: brand.base, alignItems: 'center', justifyContent: 'center', ...shadow.glow,
   },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },
   sheet: {

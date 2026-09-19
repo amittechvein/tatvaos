@@ -64,7 +64,7 @@ import {
 import { joinMeeting, pollWait, getLobby, admitFromLobby, denyFromLobby } from '../lib/connect';
 import { isRefusal, describeError } from '../lib/refusal';
 import { watchEngines, reapEngines } from '../lib/engineReaper';
-import { brand } from '../theme';
+import { brand, radius, type, tone } from '../theme';
 
 registerGlobals();
 
@@ -913,11 +913,14 @@ function Control({ icon, label, on, danger, disabled, onPress, onLongPress }) {
 }
 
 const s = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#15141B' },
+  // The room is the brand hue at night (tone.deeper), not a neutral black:
+  // the same violet as the login hero, so the app reads as one thing from
+  // sign-in to call. 18 Sept 2026.
+  screen: { flex: 1, backgroundColor: tone.deeper },
   header: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 18, paddingTop: 12, paddingBottom: 8 },
   invite: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: '#2A2536',
+    paddingHorizontal: 14, paddingVertical: 9, borderRadius: radius.pill, backgroundColor: 'rgba(255,255,255,0.10)',
   },
   inviteText: { color: '#EAE6F3', fontSize: 13, fontWeight: '600' },
   lobby: { marginHorizontal: 18, marginBottom: 8, padding: 10, borderRadius: 8, backgroundColor: '#2A2536', gap: 8 },
@@ -928,7 +931,7 @@ const s = StyleSheet.create({
   lobbyAdmitText: { color: brand.onBase, fontSize: 13, fontWeight: '600' },
   lobbyDeny: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, backgroundColor: '#3A3548' },
   lobbyDenyText: { color: '#EAE6F3', fontSize: 13, fontWeight: '600' },
-  title: { fontSize: 18, fontWeight: '700', color: '#FFFFFF' },
+  title: { ...type.heading, fontSize: 20, color: '#FFFFFF' },
   count: { fontSize: 13, color: '#9C99AB' },
   countRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
   rec: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#B3261E', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 1 },
@@ -960,7 +963,7 @@ const s = StyleSheet.create({
   tileFull: { flex: 1, height: undefined, margin: 8, borderRadius: 12 },
   focusHint: { color: '#9C99AB', fontSize: 13, textAlign: 'center', paddingBottom: 6 },
   tile: {
-    height: 220, borderRadius: 12, overflow: 'hidden', backgroundColor: '#242030',
+    height: 220, borderRadius: radius.lg, overflow: 'hidden', backgroundColor: '#241C48',
     borderWidth: 2, borderColor: 'transparent', justifyContent: 'center', alignItems: 'center',
   },
   tileSpeaking: { borderColor: brand.soft },
@@ -976,11 +979,17 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.45)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6,
   },
   tileName: { color: '#FFFFFF', fontSize: 13, flexShrink: 1 },
-  bar: { borderTopWidth: 1, borderTopColor: '#2A2536', backgroundColor: '#1B1824' },
-  controls: { flexDirection: 'row', paddingVertical: 12, paddingHorizontal: 8, gap: 6 },
-  control: { flex: 1, alignItems: 'center', gap: 4, paddingVertical: 8, borderRadius: 10, backgroundColor: '#2A2536' },
+  // The bar floats: a rounded dock lifted off the bottom edge with a
+  // translucent fill, so the video runs behind it rather than stopping at a
+  // ruled line. Controls are pills inside it.
+  bar: {
+    marginHorizontal: 12, marginBottom: 14, borderRadius: radius.xl,
+    backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)',
+  },
+  controls: { flexDirection: 'row', paddingVertical: 10, paddingHorizontal: 8, gap: 6 },
+  control: { flex: 1, alignItems: 'center', gap: 5, paddingVertical: 10, borderRadius: radius.md, backgroundColor: 'rgba(255,255,255,0.08)' },
   controlOn: { backgroundColor: brand.base },
-  controlDanger: { backgroundColor: '#B3261E' },
+  controlDanger: { backgroundColor: '#E5484D' },
   controlDisabled: { opacity: 0.4 },
   controlLabel: { fontSize: 11 },
   hint: { color: '#7C7890', fontSize: 11, textAlign: 'center', paddingTop: 8 },

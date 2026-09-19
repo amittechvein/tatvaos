@@ -5,7 +5,7 @@
 
 const {
   orderFolders, senderLabel, whenLabel, addressList, quoted, replySubject, forwardSubject,
-  typingTerm, withRecipient,
+  typingTerm, withRecipient, signatureFor,
 } = require('../lib/mail');
 
 test('folders: Inbox first, then the known places, then the rest by name', () => {
@@ -167,5 +167,42 @@ describe('withRecipient', () => {
   test('stray whitespace and empty entries are tidied, not preserved', () => {
     expect(withRecipient('  a@x.com ,, b@y.com , cc', 'c@z.com'))
       .toBe('a@x.com, b@y.com, c@z.com, ');
+  });
+});
+
+// ── THE SIGNATURE IS AN OBJECT, NOT A STRING ────────────────────────────────
+//  19 Sept 2026: an email Amit sent from the phone began "[object Object]".
+//  Bootstrap returns { bodyHtml, bodyText, enabled, includeOnReply } and the
+//  compose screen pasted it as text. These use the API's REAL shape.
+describe('signatureFor', () => {
+  const api = { bodyHtml: '<p>— Amit</p>', bodyText: '— Amit', enabled: true, includeOnReply: true };
+
+  test('the API shape becomes its text', () => {
+    expect(signatureFor(api)).toBe('— Amit');
+    expect(signatureFor(api, 'reply')).toBe('— Amit');
+  });
+
+  test('NEVER "[object Object]", whatever is passed', () => {
+    for (const v of [api, { enabled: true }, {}, { bodyText: 42 }, [], 7, true]) {
+      expect(signatureFor(v)).not.toMatch(/object/i);
+      expect(signatureFor(v, 'reply')).not.toMatch(/object/i);
+    }
+  });
+
+  test('a disabled signature is no signature', () => {
+    expect(signatureFor({ ...api, enabled: false })).toBe('');
+  });
+
+  test('includeOnReply=false keeps it off replies and forwards, not new mail', () => {
+    const s = { ...api, includeOnReply: false };
+    expect(signatureFor(s, 'new')).toBe('— Amit');
+    expect(signatureFor(s, 'reply')).toBe('');
+    expect(signatureFor(s, 'forward')).toBe('');
+  });
+
+  test('a plain string still works, trimmed', () => {
+    expect(signatureFor('  — Amit \n')).toBe('— Amit');
+    expect(signatureFor('')).toBe('');
+    expect(signatureFor(null)).toBe('');
   });
 });

@@ -24,6 +24,34 @@ import { File } from 'expo-file-system';
 import { request, API_BASE } from '../api';
 import { htmlToText } from './mailHtml';
 
+/**
+ * The signature as text to put under a new message, or '' for none.
+ *
+ * ── "[object Object]" WENT OUT IN A REAL EMAIL. ─────────────────────────
+ *  19 Sept 2026, seen in the Inbox on the emulator: a reply Amit sent from
+ *  the phone the day before began "[object Object]". The API's bootstrap
+ *  returns the signature as { bodyHtml, bodyText, enabled, includeOnReply }
+ *  (MailEndpoints.ShapeSignature), and the compose screen dropped it into a
+ *  template string as if it were text. Every check passed, because the
+ *  screen checks fake the signature as the string '— Amit' — a fake in the
+ *  wrong shape proves the fake.
+ *
+ *  So the shape is decided HERE, once, and honours the two flags the web
+ *  honours: a disabled signature is no signature, and includeOnReply=false
+ *  keeps it off replies and forwards. A plain string is still accepted, for
+ *  the checks and for any older caller.
+ * ───────────────────────────────────────────────────────────────────────
+ */
+export function signatureFor(signature, kind = 'new') {
+  if (!signature) return '';
+  if (typeof signature === 'string') return signature.trim();
+  if (typeof signature !== 'object') return '';
+  if (signature.enabled === false) return '';
+  if (kind !== 'new' && signature.includeOnReply === false) return '';
+  const t = signature.bodyText ?? signature.text ?? '';
+  return typeof t === 'string' ? t.trim() : '';
+}
+
 /** Mailbox, folders and signature in one call — what the app opens Mail with. */
 export async function bootstrap(token) {
   const data = await request('/api/mail/bootstrap', { method: 'GET', token });

@@ -25,8 +25,9 @@ import * as DocumentPicker from 'expo-document-picker';
 
 import {
   send, addressList, quoted, replySubject, forwardSubject, senderLabel,
-  suggestRecipients, typingTerm, withRecipient,
+  suggestRecipients, typingTerm, withRecipient, signatureFor,
 } from '../lib/mail';
+import { htmlToText } from '../lib/mailHtml';
 import { brand, surface, text } from '../theme';
 
 const log = (line) => console.log(`[mail] ${line}`);
@@ -70,25 +71,28 @@ export default function MailCompose({ session, draft, signature, onClose, onSent
   const kind = draft?.kind ?? 'new';
 
   const start = useMemo(() => {
+    // The API's signature is an OBJECT; see signatureFor in lib/mail.js for
+    // the email that went out reading "[object Object]".
+    const sig = signatureFor(signature, kind);
     if (kind === 'reply' && original) {
       return {
         to: original.from?.email ?? '',
         subject: replySubject(original.subject),
-        body: `\n${signature ? `\n${signature}\n` : ''}${quoted(original)}`,
+        body: `\n${sig ? `\n${sig}\n` : ''}${quoted(original)}`,
       };
     }
     if (kind === 'forward' && original) {
       return {
         to: '',
         subject: forwardSubject(original.subject),
-        body: `\n${signature ? `\n${signature}\n` : ''}\n---------- Forwarded message ----------\n`
+        body: `\n${sig ? `\n${sig}\n` : ''}\n---------- Forwarded message ----------\n`
           + `From: ${senderLabel(original)}\n`
           + `To: ${addressList(original.to)}\n`
           + `Subject: ${original.subject ?? ''}\n\n`
-          + (original.bodyText || ''),
+          + (original.bodyText || htmlToText(original.bodyHtml) || ''),
       };
     }
-    return { to: '', subject: '', body: signature ? `\n\n${signature}` : '' };
+    return { to: '', subject: '', body: sig ? `\n\n${sig}` : '' };
   }, [kind, original, signature]);
 
   const [to, setTo] = useState(start.to);

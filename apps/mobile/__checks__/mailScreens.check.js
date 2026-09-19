@@ -426,3 +426,28 @@ describe('recipient suggestions', () => {
     expect(r.getByLabelText('To').props.value).toBe('am');
   });
 });
+
+// The compose screen handed the signature in the shape the API ACTUALLY sends.
+// The other compose checks pass a string, which is how "[object Object]" got
+// into a real email on 18 Sept 2026 without a single check going red.
+describe('compose with the API-shaped signature', () => {
+  const sig = { bodyHtml: '<p>— Amit</p>', bodyText: '— Amit', enabled: true, includeOnReply: true };
+
+  test('a new email carries the signature text, never "[object Object]"', () => {
+    const r = render(<MailCompose session={session} draft={{ kind: 'new' }} signature={sig}
+                                  onClose={() => {}} onSent={() => {}} />);
+    const body = r.getByLabelText('Message').props.value;
+    expect(body).toContain('— Amit');
+    expect(body).not.toMatch(/object Object/);
+  });
+
+  test('a reply honours includeOnReply=false', () => {
+    const r = render(<MailCompose session={session} draft={{ kind: 'reply', message: full() }}
+                                  signature={{ ...sig, includeOnReply: false }}
+                                  onClose={() => {}} onSent={() => {}} />);
+    const body = r.getByLabelText('Message').props.value;
+    expect(body).not.toContain('— Amit');
+    expect(body).not.toMatch(/object Object/);
+    expect(body).toMatch(/wrote:/);
+  });
+});
