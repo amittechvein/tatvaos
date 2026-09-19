@@ -35,7 +35,11 @@
 #  18. the backfill migration writes the row the mirror would have — every
 #      field compared — and a second run changes nothing (CTO condition 1)
 #  19. the guide's claims: cancel twice is 204, a running class is 409 to
-#      cancel and still joinable, times come back in UTC (CTO condition 3)
+#      cancel and still joinable, an ended one is 409 to join, times come
+#      back in UTC, the 31st request in a minute is 429, a missing title
+#      becomes "<first name>'s meeting", a missing zone is Asia/Kolkata
+#      (CTO condition 3). The one claim NOT tested here is the 500-row cap
+#      on the timetable; it is one .Take(500) and the CTO has the line.
 #  20. a person made through the console has a calendar the moment they
 #      exist — where people are made, not where it was noticed (condition 2)
 #
@@ -469,6 +473,13 @@ done
 [ "$thirtieth" != "429" ] && [ "$last" = "429" ] \
     && pass "the 31st request in a minute from one address is refused (429); the 30th was not ($thirtieth)" \
     || fail "rate limit: 30th answered $thirtieth, 31st answered $last"
+# 'Left out, it becomes "Firstname's meeting"' and 'Defaults to Asia/Kolkata':
+# one class with neither a title nor a zone.
+r=$(post "$API/api/v1/org/meetings" "$SKEY" "{\"hostEmail\":\"$HOST_EMAIL\",\"startsAt\":\"$START\"}")
+FIRST=$(PG "SELECT split_part(btrim(display_name), ' ', 1) FROM core.users WHERE id='$HOST_ID'")
+same "a class with no title is named after its teacher's first name" "$(jq_ "$(body "$r")" "d['title']")" "$FIRST's meeting"
+same "and with no zone it is held in Asia/Kolkata" "$(jq_ "$(body "$r")" "d['timezone']")" "Asia/Kolkata"
+MID3=$(jq_ "$(body "$r")" "d['id']"); [ -n "$MID3" ] && del_k "$API/api/v1/org/meetings/$MID3" "$SKEY" >/dev/null
 
 step "20. A person has a calendar the moment they exist (CTO condition 2)"
 # NEW_ID was made in step 4 through the console's own method, by the people

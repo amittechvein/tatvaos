@@ -78,6 +78,15 @@ namespace TatvaOS.Api.Modules.Admin.Endpoints;
 ///     The ERP knows whether a student has an account, because it is the
 ///     thing that created it (people API), and the waiting-room setting
 ///     tells it the rest.
+///
+///  WHAT WENT WITH IT, so nobody is surprised later (CTO, 19 Sept 2026):
+///  the capability first described — telling the ERP whether a GIVEN
+///  student will be admitted or will wait — is gone along with the risk.
+///  The join link alone does what was asked for. If that warning is ever
+///  wanted, it belongs behind meetings:schedule, where the ERP is asking
+///  about people it already obtained from us and confirming an identity we
+///  supplied leaks nothing new. On the student side there is no safe
+///  version of that question.
 /// </summary>
 public static class OrgMeetingApiEndpoints
 {
