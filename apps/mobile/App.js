@@ -28,24 +28,34 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, TextInput, Pressable, ScrollView, ActivityIndicator,
-  StyleSheet, Platform, StatusBar, Keyboard, Linking,
+  StyleSheet, Platform, StatusBar, Keyboard, Linking, KeyboardAvoidingView, Alert,
 } from 'react-native';
 // Not React Native's SafeAreaView: that one is a no-op on Android, and with
 // targetSdk 36 the app draws edge-to-edge, so the title sat under the clock
 // and the bottom row under the navigation bar. Seen on a Samsung, 10 Sept.
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { brand, text, surface, visibleProducts } from './theme';
+import { brand, text, surface, visibleProducts, radius, space, type, shadow, tone } from './theme';
 import { login, verifyMfa, restore, signOut, me, onSessionChange } from './api';
 import Meetings from './screens/Meetings';
 import Meeting from './screens/Meeting';
 import ScheduleMeeting from './screens/ScheduleMeeting';
+import Mail from './screens/Mail';
+import MailMessage from './screens/MailMessage';
+import MailCompose from './screens/MailCompose';
 import NextMeetingCard from './components/NextMeetingCard';
 import { handoffUrl } from './lib/handoff';
+import { hosts } from './lib/hosts';
 
 export default function App() {
   return (
     <SafeAreaProvider>
+      {/* DARK icons, said out loud. Nothing set this before 19 Sept 2026, so
+          Android drew its default white clock and battery on a cream page and
+          they could not be read - seen on Amit's Samsung on the dashboard, the
+          inbox and a message. The two dark screens (the login hero and the
+          meeting room) mount their own light-content bar over this one. */}
+      <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
       <Root />
     </SafeAreaProvider>
   );
@@ -121,12 +131,30 @@ function Root() {
 
   const onSignedIn = useCallback((s) => { setSession(s); setChallenge(null); setPhase('in'); }, []);
 
-  const onSignOut = useCallback(async () => {
+  const signOutNow = useCallback(async () => {
     const token = session?.accessToken;
     setSession(null); setProfile(null); setPhase('login');
     setView('home'); setActiveMeeting(null);
     await signOut(token);
   }, [session]);
+
+  // ASKED FIRST. The only sign-out control is the round initials at the top of
+  // the dashboard, which looks like a profile picture, and until 19 Sept 2026
+  // one touch of it signed the person out with no question and no word after.
+  // Amit on his own phone: "there is not notification of logout in one click
+  // auto logout". Signing back in costs a password and an authenticator code,
+  // so the tap that spends that has to be one the person meant.
+  const onSignOut = useCallback(() => {
+    Alert.alert(
+      'Sign out?',
+      'You will need your password to sign in again on this phone.',
+      [
+        { text: 'Stay signed in', style: 'cancel' },
+        { text: 'Sign out', style: 'destructive', onPress: () => { signOutNow(); } },
+      ],
+      { cancelable: true },
+    );
+  }, [signOutNow]);
 
   // Leaving a meeting goes back to wherever it was joined from. Joined from the
   // dashboard's next-meeting card, back to the dashboard; joined from Connect's
@@ -134,7 +162,23 @@ function Root() {
   // who never opened it onto a screen they did not come from.
   const [meetingFrom, setMeetingFrom] = useState('meetings');
 
+  // ── MAIL, NATIVELY (Amit, 16 and 17 Sept 2026). ─────────────────────────
+  //  The Mail tile used to hand the browser a signed-in URL. It now opens
+  //  screens/Mail.js, the same way Connect does, against the same API the web
+  //  app uses. docs/decisions/0006-native-mail-on-the-phone.md records that
+  //  this supersedes MOBILE_LANE_BRIEF §3-4, and what it costs.
+  //
+  //  `mailReload` is a counter, not a flag: the list reloads when it CHANGES,
+  //  so two messages read in a row both refresh the list. A boolean would
+  //  need resetting and would miss the second one.
+  const [openMessage, setOpenMessage] = useState(null);
+  const [composing, setComposing] = useState(null);
+  const [mailReload, setMailReload] = useState(0);
+  const [mailNotice, setMailNotice] = useState(null);
+  const [mailSignature, setMailSignature] = useState('');
+
   const openConnect = useCallback(() => setView('meetings'), []);
+  const openMail = useCallback(() => { setOpenMessage(null); setComposing(null); setView('mail'); }, []);
   const joinMeeting = useCallback((m) => { setMeetingFrom('meetings'); setActiveMeeting(m); setView('meeting'); }, []);
   const joinFromHome = useCallback((m) => { setMeetingFrom('home'); setActiveMeeting(m); setView('meeting'); }, []);
   const leaveMeeting = useCallback(() => { setActiveMeeting(null); setView(meetingFrom); }, [meetingFrom]);
@@ -148,6 +192,52 @@ function Root() {
 
   if (phase === 'restoring') return <Splash />;
   if (phase === 'in') {
+    // Compose sits ON TOP of whatever is behind it — the list or a message —
+    // so closing it returns to where it was opened from rather than home.
+    if (view === 'mail' && composing) {
+      return (
+        <MailCompose
+          session={session}
+          draft={composing}
+          signature={mailSignature}
+          onClose={() => setComposing(null)}
+          onSent={(warning) => {
+            setComposing(null);
+            setOpenMessage(null);
+            setMailNotice(warning || 'Sent.');
+            setMailReload((n) => n + 1);
+          }}
+        />
+      );
+    }
+    if (view === 'mail' && openMessage) {
+      return (
+        <MailMessage
+          session={session}
+          messageId={openMessage}
+          onBack={(changed) => {
+            setOpenMessage(null);
+            if (changed) setMailReload((n) => n + 1);
+          }}
+          onReply={(draft) => setComposing(draft)}
+          onChanged={() => setMailReload((n) => n + 1)}
+        />
+      );
+    }
+    if (view === 'mail') {
+      return (
+        <Mail
+          session={session}
+          reloadKey={mailReload}
+          notice={mailNotice}
+          onNoticeSeen={() => setMailNotice(null)}
+          onBack={backHome}
+          onMailbox={({ signature }) => setMailSignature(signature ?? '')}
+          onOpen={(m) => setOpenMessage(m.id)}
+          onCompose={(draft) => setComposing(draft)}
+        />
+      );
+    }
     if (view === 'meeting' && activeMeeting) {
       return <Meeting session={session} meeting={activeMeeting} onLeave={leaveMeeting} />;
     }
@@ -176,6 +266,7 @@ function Root() {
         profile={profile}
         onSignOut={onSignOut}
         onOpenConnect={openConnect}
+        onOpenMail={openMail}
         onJoinMeeting={joinFromHome}
       />
     );
@@ -216,6 +307,20 @@ function Login({ onSignedIn, onChallenge }) {
   const [show, setShow] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [forgotNote, setForgotNote] = useState('');
+
+  const openForgotPassword = async () => {
+    const target = `${hosts.core}/forgot-password`;
+    try {
+      console.log('[app] opening password recovery in the browser');
+      await Linking.openURL(target);
+      setForgotNote('');
+    } catch (e) {
+      // A link that fails silently is the bug this replaced. Say where to go.
+      console.log(`[app] could not open password recovery: ${e?.message ?? e}`);
+      setForgotNote(`Could not open the browser. Go to ${target.replace('https://', '')} to reset it.`);
+    }
+  };
 
   const submit = async () => {
     // Validate before acting. An empty form that silently does nothing is the
@@ -242,14 +347,36 @@ function Login({ onSignedIn, onChallenge }) {
     }
   };
 
+  // ── THE SHAPE OF THE LOGIN, 18 SEPT 2026. ─────────────────────────────
+  //  Amit: "modern ui for Gen-Z". A violet hero on top with the mark and a
+  //  big welcome, and a white sheet rising over it that holds the form —
+  //  the shape every current consumer app uses, because it puts the brand
+  //  where the eye lands first and the inputs where the thumb lands first.
+  //  The two `wash` circles behind the hero are the gradient this app does
+  //  not have a library for.
+  // ────────────────────────────────────────────────────────────────────────
+  // Root stays cream and the hero owns the violet, status bar included: with
+  // the root violet, the strip under the gesture bar came out violet beneath
+  // a cream sheet (emulator, 19 Sept 2026). This note was a JSX comment
+  // before the root element for one commit, which is a syntax error.
+  // edges: this SafeAreaView (safe-area-context) pads the top NATIVELY, so a
+  // paddingTop:0 in the style did nothing and a cream strip sat above the
+  // hero. The hero pads for the status bar itself; the root keeps the bottom.
   return (
-    <SafeAreaView style={s.screen}>
-      <View style={s.loginBody}>
+    <SafeAreaView style={[s.screen, s.loginRoot]} edges={['left', 'right', 'bottom']}>
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      <KeyboardAvoidingView style={{ flex: 1 }}
+                            behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <View style={s.hero}>
+        <View style={[s.washCircle, s.washCircleA]} />
+        <View style={[s.washCircle, s.washCircleB]} />
         <View style={s.logo}><Text style={s.logoLetter}>T</Text></View>
+        <Text style={s.heroEyebrow}>TatvaOS</Text>
+        <Text style={s.heroTitle}>Welcome{'\n'}back.</Text>
+        <Text style={s.heroSub}>Your organisation's workspace</Text>
+      </View>
 
-        <Text style={s.h1}>Sign in</Text>
-        <Text style={s.sub}>Your organisation's workspace</Text>
-
+      <View style={s.sheet}>
         <Text style={s.label}>Email</Text>
         <TextInput
           style={s.input}
@@ -298,8 +425,20 @@ function Login({ onSignedIn, onChallenge }) {
             : <Text style={s.primaryText}>Sign in</Text>}
         </Pressable>
 
-        <Pressable hitSlop={8}><Text style={s.quiet}>Forgot password</Text></Pressable>
+        {/* Until 19 Sept 2026 this was a Pressable with no onPress: it looked
+            like a link, dimmed like a link when touched, and did nothing at
+            all - for the one person who cannot get in any other way. It opens
+            the web's recovery page rather than growing a second copy of it
+            here: recovery email, mobile OTP and the mailbox link all finish in
+            a browser anyway (the link in the email opens one), and password
+            recovery is not a flow to have two implementations of. */}
+        <Pressable hitSlop={8} onPress={openForgotPassword}
+                   accessibilityRole="link" accessibilityLabel="Forgot password">
+          <Text style={s.quiet}>Forgot password</Text>
+        </Pressable>
+        {forgotNote ? <Text style={s.quietNote}>{forgotNote}</Text> : null}
       </View>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -439,7 +578,7 @@ async function openProduct(p, token) {
   }
 }
 
-function Dashboard({ session, profile, onSignOut, onOpenConnect, onJoinMeeting }) {
+function Dashboard({ session, profile, onSignOut, onOpenConnect, onOpenMail, onJoinMeeting }) {
   const user = profile?.user ?? session?.user ?? {};
   // Falls back to the email while /me is in flight or if it failed. Showing
   // an address the person recognises beats showing a placeholder name.
@@ -472,10 +611,15 @@ function Dashboard({ session, profile, onSignOut, onOpenConnect, onJoinMeeting }
   return (
     <SafeAreaView style={s.screen}>
       <ScrollView contentContainerStyle={s.dashBody}>
+        {/* The greeting is the page's headline now, not a caption above the
+            tiles: one big line with the name, the organisation as the small
+            print beneath. */}
         <View style={s.header}>
           <View style={{ flex: 1, paddingRight: 12 }}>
-            <Text style={s.h2} numberOfLines={1}>{greeting()}, {name.split(' ')[0]}</Text>
-            <Text style={s.sub} numberOfLines={1}>{org}</Text>
+            <Text style={s.eyebrow} numberOfLines={1}>{org}</Text>
+            <Text style={s.dashTitle} numberOfLines={2}>
+              {greeting()},{'\n'}{name.split(' ')[0]}
+            </Text>
           </View>
           <Pressable style={s.avatar} onPress={onSignOut} accessibilityLabel="Sign out">
             <Text style={s.avatarText}>{initials(user.displayName, user.email)}</Text>
@@ -506,29 +650,38 @@ function Dashboard({ session, profile, onSignOut, onOpenConnect, onJoinMeeting }
           {tiles.map((p) => {
             // Connect stays in the app. Every other tile leaves it, and the
             // tile says so - see the arrow below.
-            const native = p.key === 'connect';
+            // Two products now stay in the app. Everything else still opens
+            // the browser through the sign-in handoff.
+            const native = p.key === 'connect' || p.key === 'mail';
             return (
               <Pressable
                 key={p.key}
                 style={({ pressed }) => [s.tile, pressed && s.tilePressed]}
-                onPress={() => (native ? onOpenConnect() : openTile(p))}
+                onPress={() => {
+                  if (p.key === 'connect') return onOpenConnect();
+                  if (p.key === 'mail') return onOpenMail();
+                  return openTile(p);
+                }}
                 disabled={opening === p.key}
                 accessibilityRole={native ? 'button' : 'link'}
                 accessibilityLabel={native ? p.name : `${p.name}, opens in your browser`}
                 accessibilityState={{ busy: opening === p.key }}
               >
+                <View style={s.tileCard}>
                 <View style={[s.tileIcon, { backgroundColor: p.tint }]}>
                   {opening === p.key
                     ? <ActivityIndicator color={p.ink} />
-                    : <Ionicons name={p.icon} size={24} color={p.ink} />}
+                    : <Ionicons name={p.icon} size={26} color={p.ink} />}
                 </View>
+                <Text style={s.tileLabel}>{p.name}</Text>
+                {/* The arrow is not decoration. This leaves the app, and a
+                    control that silently sends you elsewhere is the same
+                    dishonesty as a tile that looks tappable and is not. A
+                    native tile gets no arrow for the same reason: it stays. */}
                 <View style={s.tileLabelRow}>
-                  <Text style={s.tileLabel}>{p.name}</Text>
-                  {/* The arrow is not decoration. This leaves the app, and a
-                      control that silently sends you elsewhere is the same
-                      dishonesty as a tile that looks tappable and is not. A
-                      native tile gets no arrow for the same reason: it stays. */}
+                  <Text style={s.tileHint}>{native ? 'In the app' : 'Opens in browser'}</Text>
                   {native ? null : <Ionicons name="open-outline" size={12} color={text.muted} />}
+                </View>
                 </View>
               </Pressable>
             );
@@ -536,7 +689,7 @@ function Dashboard({ session, profile, onSignOut, onOpenConnect, onJoinMeeting }
         </View>
 
         <Text style={s.dashFoot}>
-          Connect runs in the app. Other products open in your browser for now;
+          Connect and Mail run in the app. Other products open in your browser for now;
           you may be asked to sign in there the first time.
         </Text>
       </ScrollView>
@@ -552,50 +705,89 @@ const s = StyleSheet.create({
   },
   centre: { alignItems: 'center', justifyContent: 'center' },
 
-  loginBody: { flex: 1, justifyContent: 'center', paddingHorizontal: 28 },
+  // ── login ────────────────────────────────────────────────────────────
+  loginRoot: { backgroundColor: surface.page, paddingTop: 0 },
+  hero: {
+    backgroundColor: tone.deep,
+    paddingHorizontal: space.xl,
+    paddingTop: (Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : 0) + space.xxl,
+    paddingBottom: space.xxl + 12,
+    overflow: 'hidden',
+  },
+  washCircle: { position: 'absolute', borderRadius: radius.pill },
+  washCircleA: { width: 320, height: 320, right: -120, top: -140, backgroundColor: tone.washA },
+  washCircleB: { width: 240, height: 240, left: -90, bottom: -60, backgroundColor: tone.washB },
   logo: {
-    width: 52, height: 52, borderRadius: 13, backgroundColor: brand.base,
-    alignItems: 'center', justifyContent: 'center', marginBottom: 24,
+    width: 56, height: 56, borderRadius: radius.md, backgroundColor: surface.card,
+    alignItems: 'center', justifyContent: 'center', marginBottom: space.lg,
+    ...shadow.float,
   },
-  logoLetter: { color: brand.onBase, fontSize: 22, fontWeight: '500' },
+  logoLetter: { color: brand.base, fontSize: 26, fontWeight: '800' },
+  heroEyebrow: { ...type.eyebrow, color: tone.onDeepMuted, marginBottom: space.sm },
+  heroTitle: { ...type.display, color: tone.onDeep },
+  heroSub: { ...type.body, color: tone.onDeepMuted, marginTop: space.sm },
 
-  h1: { fontSize: 24, fontWeight: '500', color: text.primary, marginBottom: 4 },
-  h2: { fontSize: 19, fontWeight: '500', color: text.primary },
-  sub: { fontSize: 14, color: text.secondary, marginBottom: 24 },
+  // The sheet rises over the hero: big top corners, a lift, and its own
+  // shadow so it reads as a sheet and not a page change.
+  sheet: {
+    flex: 1, backgroundColor: surface.page,
+    borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl,
+    marginTop: -radius.lg, paddingHorizontal: space.xl, paddingTop: space.xl + 4,
+    ...shadow.float,
+  },
+  loginBody: { flex: 1, justifyContent: 'center', paddingHorizontal: 28 },
 
-  label: { fontSize: 13, color: text.secondary, marginBottom: 6 },
+  h1: { ...type.title, color: text.primary, marginBottom: 4 },
+  h2: { ...type.heading, color: text.primary },
+  sub: { ...type.body, color: text.secondary, marginBottom: space.lg },
+
+  label: { ...type.caption, color: text.secondary, marginBottom: 6, marginLeft: 4 },
+  // Inputs are soft fills, not outlined boxes: a filled field on a cream page
+  // has an edge you can see without a line drawn round it.
   input: {
-    height: 46, borderWidth: 1, borderColor: surface.border, borderRadius: 8,
-    backgroundColor: surface.card, paddingHorizontal: 12, fontSize: 15,
-    color: text.primary, marginBottom: 16,
+    height: 52, borderRadius: radius.md, backgroundColor: surface.card,
+    borderWidth: 1, borderColor: surface.border,
+    paddingHorizontal: space.md + 2, fontSize: 16, color: text.primary, marginBottom: space.md,
   },
-  code: { fontSize: 22, letterSpacing: 8, textAlign: 'center', height: 54 },
+  code: { fontSize: 24, letterSpacing: 10, textAlign: 'center', height: 58, fontWeight: '700' },
   inputRow: {
-    height: 46, borderWidth: 1, borderColor: surface.border, borderRadius: 8,
-    backgroundColor: surface.card, paddingHorizontal: 12, marginBottom: 16,
+    height: 52, borderRadius: radius.md, backgroundColor: surface.card,
+    borderWidth: 1, borderColor: surface.border,
+    paddingHorizontal: space.md + 2, marginBottom: space.md,
     flexDirection: 'row', alignItems: 'center',
   },
-  inputBare: { flex: 1, fontSize: 15, color: text.primary },
-  error: { fontSize: 13, color: '#A32D2D', marginBottom: 12 },
+  inputBare: { flex: 1, fontSize: 16, color: text.primary },
+  error: { ...type.caption, color: '#A32D2D', marginBottom: 12, marginLeft: 4 },
 
   primary: {
-    height: 48, borderRadius: 8, backgroundColor: brand.base,
-    alignItems: 'center', justifyContent: 'center', marginTop: 4,
+    height: 54, borderRadius: 27, backgroundColor: brand.base,
+    alignItems: 'center', justifyContent: 'center', marginTop: space.sm,
+    ...shadow.glow,
   },
   primaryBusy: { opacity: 0.7 },
-  primaryText: { color: brand.onBase, fontSize: 16, fontWeight: '500' },
-  quiet: { fontSize: 14, color: text.secondary, textAlign: 'center', marginTop: 18 },
+  primaryText: { color: brand.onBase, fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
+  quiet: { ...type.strong, color: tone.ink, textAlign: 'center', marginTop: space.lg },
+  quietNote: { color: text.secondary, textAlign: 'center', marginTop: space.sm, fontSize: 13, lineHeight: 19 },
 
-  dashBody: { paddingHorizontal: 20, paddingBottom: 32 },
+  // ── dashboard ────────────────────────────────────────────────────────
+  dashBody: { paddingHorizontal: space.lg, paddingBottom: space.xxl },
   header: {
-    flexDirection: 'row', alignItems: 'center',
-    justifyContent: 'space-between', paddingVertical: 18,
+    flexDirection: 'row', alignItems: 'flex-start',
+    justifyContent: 'space-between', paddingTop: space.lg, paddingBottom: space.xl,
   },
+  eyebrow: { ...type.eyebrow, color: text.muted, marginBottom: space.sm },
+  dashTitle: { ...type.display, color: text.primary },
+  // If a hard grey SQUARE appears behind this circle on the emulator, it is
+  // Android's focus highlight on the first focusable view, not a style: any
+  // adb keyevent or `monkey` launch takes the device out of touch mode. One
+  // real tap anywhere clears it. Half a morning went on that, 19 Sept 2026,
+  // before a pixel sample showed the square was not this view's colour.
   avatar: {
-    width: 38, height: 38, borderRadius: 19, backgroundColor: '#E6F1FB',
-    alignItems: 'center', justifyContent: 'center',
+    width: 46, height: 46, borderRadius: 23, backgroundColor: brand.base,
+    alignItems: 'center', justifyContent: 'center', marginTop: space.md,
+    ...shadow.glow,
   },
-  avatarText: { fontSize: 13, fontWeight: '500', color: '#185FA5' },
+  avatarText: { fontSize: 15, fontWeight: '700', color: brand.onBase },
 
   notice: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
@@ -604,18 +796,28 @@ const s = StyleSheet.create({
   },
   noticeText: { flex: 1, fontSize: 13, color: '#7A5100', lineHeight: 18 },
 
+  // Two across, not three. Three 66px squares in a row is a settings page;
+  // two cards with room for a name and a line under it is a product.
   grid: { flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -6 },
-  tile: { width: '33.33%', paddingHorizontal: 6, marginBottom: 14, alignItems: 'center' },
+  tile: {
+    width: '50%', paddingHorizontal: 6, marginBottom: 12,
+  },
+  tileCard: {
+    backgroundColor: surface.card, borderRadius: radius.lg, padding: space.md + 2,
+    minHeight: 150, ...shadow.card,
+  },
   tileIcon: {
-    width: '100%', height: 66, borderRadius: 16,
-    alignItems: 'center', justifyContent: 'center',
+    width: 54, height: 54, borderRadius: radius.md,
+    alignItems: 'center', justifyContent: 'center', marginBottom: space.md,
   },
   // Pressed state exists because a tap with no feedback reads as a dead
   // control - which is precisely what these were until tonight.
-  tilePressed: { opacity: 0.55 },
-  tileLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 7 },
-  tileLabel: { fontSize: 13, color: text.primary },
+  tilePressed: { opacity: 0.6, transform: [{ scale: 0.98 }] },
+  tileLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
+  tileLabel: { ...type.heading, color: text.primary },
+  tileHint: { ...type.caption, color: text.muted },
   dashFoot: {
-    fontSize: 12, color: text.muted, marginTop: 6, paddingHorizontal: 6, lineHeight: 17,
+    ...type.caption, fontWeight: '400', color: text.muted, marginTop: space.md,
+    paddingHorizontal: 6, lineHeight: 17,
   },
 });

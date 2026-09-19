@@ -336,6 +336,8 @@ export default function Stage({ seat, meeting, prefs }: {
   // rather than reusing `error`, because a promotion rendered in the red
   // failure banner reads as a problem.
   const [notice, setNotice] = useState<string | null>(null);
+  // Which mute-all is in flight, so neither button can be pressed twice.
+  const [mutingAll, setMutingAll] = useState<'guests' | 'everyone' | null>(null);
   // A role change announced in the room after this browser joined. The meeting
   // row is only ever read once, at join, so without this being made a co-host
   // did nothing until the page was reloaded.
@@ -2056,6 +2058,26 @@ export default function Stage({ seat, meeting, prefs }: {
       });
     }
   }
+  async function muteAll(who: 'guests' | 'everyone') {
+    if (!meeting || mutingAll !== null) return;
+    setMutingAll(who);
+    try {
+      const out = await connectApi.muteAll(authedFetch, meeting.id, who);
+      const whom = who === 'guests' ? 'guest' : 'person';
+      const plural = who === 'guests' ? 'guests' : 'people';
+      if (out.targeted === 0) {
+        setNotice(who === 'guests' ? 'There were no guests to mute.' : 'There was nobody to mute.');
+      } else if (out.failed > 0) {
+        setNotice(`Muted ${out.targeted - out.failed} of ${out.targeted} ${plural}. ${out.failed} could not be muted; try again.`);
+      } else {
+        setNotice(out.targeted === 1 ? `The one ${whom} here is muted now. They can unmute themselves.` : `All ${out.targeted} ${plural} are muted now. They can unmute themselves.`);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not mute them. Nobody was muted.');
+    } finally {
+      setMutingAll(null);
+    }
+  }
   async function hostAction(fn: () => Promise<void>) {
     try { await fn(); } catch (e) { setError(e instanceof Error ? e.message : 'That did not work.'); }
   }
@@ -3179,6 +3201,32 @@ export default function Stage({ seat, meeting, prefs }: {
                 ))}
                 <div className="cx-sub" style={{ margin: '16px 0 6px' }}>IN THE MEETING</div>
               </>
+            )}
+            {/* Mute many at once. Amit, 19 Sept 2026, before a 300-person
+                meeting: "give mute all button in meeting only guest". The
+                guests button shows only while a guest is here; the second is
+                for a room of colleagues. What came back is SAID, with the
+                number, and said differently when it reached nobody. Neither
+                stops a person unmuting again; the note says so, because a host
+                who believes the room is locked will not watch it. */}
+            {isHost && meeting && participants.length > 1 && (
+              <div style={{ margin: '0 0 12px' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {guestsHere > 0 && (
+                    <button type="button" className="cx-pill cx-pill--on" disabled={mutingAll !== null}
+                            onClick={() => void muteAll('guests')}>
+                      {mutingAll === 'guests' ? 'Muting…' : `Mute all guests (${guestsHere})`}
+                    </button>
+                  )}
+                  <button type="button" className="cx-pill" disabled={mutingAll !== null}
+                          onClick={() => void muteAll('everyone')}>
+                    {mutingAll === 'everyone' ? 'Muting…' : 'Mute everyone'}
+                  </button>
+                </div>
+                <div className="cx-sub" style={{ marginTop: 6 }}>
+                  Hosts and co-hosts stay unmuted. People can unmute themselves again.
+                </div>
+              </div>
             )}
             {participants.length > 6 && (
               <input className="cx-field" style={{ marginBottom: 10 }} value={find}

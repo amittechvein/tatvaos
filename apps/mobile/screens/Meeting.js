@@ -51,7 +51,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, Pressable, ScrollView, ActivityIndicator,
-  StyleSheet, BackHandler, PermissionsAndroid, Platform, Share,
+  StyleSheet, BackHandler, PermissionsAndroid, Platform, Share, StatusBar,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context'; // see App.js
 import { Ionicons } from '@expo/vector-icons';
@@ -64,7 +64,8 @@ import {
 import { joinMeeting, pollWait, getLobby, admitFromLobby, denyFromLobby } from '../lib/connect';
 import { isRefusal, describeError } from '../lib/refusal';
 import { watchEngines, reapEngines } from '../lib/engineReaper';
-import { brand } from '../theme';
+import { brand, radius, type, tone } from '../theme';
+import PreJoin from './PreJoin';
 
 registerGlobals();
 
@@ -148,16 +149,37 @@ function dropSentence(reason) {
  */
 export default function Meeting(props) {
   const [attempt, setAttempt] = useState(0);
+
+  // What the person chose to walk in with: { mic, cam, speaker }. Null until
+  // they have been asked (screens/PreJoin.js says why they are asked at all).
+  // Held HERE, above the key'd session, so a Rejoin after a drop comes back
+  // the way the person chose the first time and does not ask again. A caller
+  // that already knows - the checks - passes `joinPrefs` and is not asked.
+  const [prefs, setPrefs] = useState(props.joinPrefs ?? null);
+  if (!prefs) {
+    return (
+      <PreJoin
+        meeting={props.meeting}
+        onCancel={props.onLeave}
+        onJoin={(chosen) => {
+          log(`joining with mic ${chosen.mic ? 'on' : 'off'}, camera ${chosen.cam ? 'on' : 'off'}, ${chosen.speaker ? 'loudspeaker' : 'earpiece'}`);
+          setPrefs(chosen);
+        }}
+      />
+    );
+  }
+
   return (
     <MeetingSession
       key={attempt}
       {...props}
+      prefs={prefs}
       onRejoin={() => { log(`rejoining (attempt ${attempt + 2})`); setAttempt((n) => n + 1); }}
     />
   );
 }
 
-function MeetingSession({ session, meeting, onLeave, onRejoin }) {
+function MeetingSession({ session, meeting, onLeave, onRejoin, prefs }) {
   useKeepAwake();
 
   // ── THE TOKEN IS READ FRESH; THE SESSION IS NOT A REASON TO RECONNECT. ──
@@ -198,7 +220,7 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
   // cannot work. A server that predates the setting sends nothing, and what it
   // did was 'multiple'.
   const [shareMode, setShareMode] = useState(meeting?.shareMode === 'single' ? 'single' : 'multiple');
-  const [speaker, setSpeaker] = useState(true);
+  const [speaker, setSpeaker] = useState(prefs?.speaker !== false);
   const [recording, setRecording] = useState(false);
   const [role, setRole] = useState(null); // host | cohost | participant, once admitted
   const [lobby, setLobby] = useState([]); // people waiting, host/cohost only
@@ -270,15 +292,35 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
     setRole(admitted.role);
     setStatus('in');
 
-    try {
-      await room.localParticipant.setMicrophoneEnabled(true);
-      setMic(true);
-    } catch (e) {
-      // Joining without a mic is recoverable; not knowing why is not.
-      log(`microphone did not start: ${describeError(e)}`);
-      setNotice(isRefusal(e)
-        ? 'Your microphone is off: the app was not given permission.'
-        : 'Your microphone is off. Tap the mic to try again.');
+    // The microphone and camera start the way the person CHOSE on the pre-join
+    // screen. Before 19 Sept 2026 the mic was switched on here unconditionally.
+    // Logged either way: "I joined muted and they still heard me" has to be
+    // answerable from the log, and so does its opposite.
+    if (prefs?.mic !== false) {
+      try {
+        await room.localParticipant.setMicrophoneEnabled(true);
+        setMic(true);
+      } catch (e) {
+        // Joining without a mic is recoverable; not knowing why is not.
+        log(`microphone did not start: ${describeError(e)}`);
+        setNotice(isRefusal(e)
+          ? 'Your microphone is off: the app was not given permission.'
+          : 'Your microphone is off. Tap the mic to try again.');
+      }
+    } else {
+      log('joined muted, as chosen');
+    }
+
+    if (prefs?.cam) {
+      try {
+        await room.localParticipant.setCameraEnabled(true, { facingMode: facing });
+        setCam(true);
+      } catch (e) {
+        log(`camera did not start: ${describeError(e)}`);
+        setNotice(isRefusal(e)
+          ? 'Your camera is off: the app was not given permission.'
+          : 'Your camera is off. Tap the camera to try again.');
+      }
     }
 
     // The speaker button starts in the "on" position. Make that true rather
@@ -287,8 +329,12 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
     try {
       const outputs = await AudioSession.getAudioOutputs();
       log(`audio outputs: ${outputs.join(', ') || 'none reported'}`);
-      if (outputs.includes('speaker')) await AudioSession.selectAudioOutput('speaker');
-      else setSpeaker(false);
+      // The output the person chose; the loudspeaker unless they said earpiece.
+      const want = prefs?.speaker === false ? 'earpiece' : 'speaker';
+      if (outputs.includes(want)) await AudioSession.selectAudioOutput(want);
+      // The button must never claim an output the phone does not have: no
+      // loudspeaker means it is NOT on; no earpiece (a tablet) means it IS.
+      else setSpeaker(want !== 'speaker');
     } catch (e) {
       log(`could not select the speaker: ${describeError(e)}`);
       setSpeaker(false);
@@ -689,6 +735,7 @@ function MeetingSession({ session, meeting, onLeave, onRejoin }) {
 
   return (
     <SafeAreaView style={s.screen}>
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
       <View style={s.header}>
         <View style={{ flex: 1 }}>
           <Text style={s.title} numberOfLines={1}>{title}</Text>
@@ -913,11 +960,14 @@ function Control({ icon, label, on, danger, disabled, onPress, onLongPress }) {
 }
 
 const s = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#15141B' },
+  // The room is the brand hue at night (tone.deeper), not a neutral black:
+  // the same violet as the login hero, so the app reads as one thing from
+  // sign-in to call. 18 Sept 2026.
+  screen: { flex: 1, backgroundColor: tone.deeper },
   header: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 18, paddingTop: 12, paddingBottom: 8 },
   invite: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: '#2A2536',
+    paddingHorizontal: 14, paddingVertical: 9, borderRadius: radius.pill, backgroundColor: 'rgba(255,255,255,0.10)',
   },
   inviteText: { color: '#EAE6F3', fontSize: 13, fontWeight: '600' },
   lobby: { marginHorizontal: 18, marginBottom: 8, padding: 10, borderRadius: 8, backgroundColor: '#2A2536', gap: 8 },
@@ -928,7 +978,7 @@ const s = StyleSheet.create({
   lobbyAdmitText: { color: brand.onBase, fontSize: 13, fontWeight: '600' },
   lobbyDeny: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, backgroundColor: '#3A3548' },
   lobbyDenyText: { color: '#EAE6F3', fontSize: 13, fontWeight: '600' },
-  title: { fontSize: 18, fontWeight: '700', color: '#FFFFFF' },
+  title: { ...type.heading, fontSize: 20, color: '#FFFFFF' },
   count: { fontSize: 13, color: '#9C99AB' },
   countRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
   rec: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#B3261E', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 1 },
@@ -960,7 +1010,7 @@ const s = StyleSheet.create({
   tileFull: { flex: 1, height: undefined, margin: 8, borderRadius: 12 },
   focusHint: { color: '#9C99AB', fontSize: 13, textAlign: 'center', paddingBottom: 6 },
   tile: {
-    height: 220, borderRadius: 12, overflow: 'hidden', backgroundColor: '#242030',
+    height: 220, borderRadius: radius.lg, overflow: 'hidden', backgroundColor: '#241C48',
     borderWidth: 2, borderColor: 'transparent', justifyContent: 'center', alignItems: 'center',
   },
   tileSpeaking: { borderColor: brand.soft },
@@ -976,11 +1026,17 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.45)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6,
   },
   tileName: { color: '#FFFFFF', fontSize: 13, flexShrink: 1 },
-  bar: { borderTopWidth: 1, borderTopColor: '#2A2536', backgroundColor: '#1B1824' },
-  controls: { flexDirection: 'row', paddingVertical: 12, paddingHorizontal: 8, gap: 6 },
-  control: { flex: 1, alignItems: 'center', gap: 4, paddingVertical: 8, borderRadius: 10, backgroundColor: '#2A2536' },
+  // The bar floats: a rounded dock lifted off the bottom edge with a
+  // translucent fill, so the video runs behind it rather than stopping at a
+  // ruled line. Controls are pills inside it.
+  bar: {
+    marginHorizontal: 12, marginBottom: 14, borderRadius: radius.xl,
+    backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)',
+  },
+  controls: { flexDirection: 'row', paddingVertical: 10, paddingHorizontal: 8, gap: 6 },
+  control: { flex: 1, alignItems: 'center', gap: 5, paddingVertical: 10, borderRadius: radius.md, backgroundColor: 'rgba(255,255,255,0.08)' },
   controlOn: { backgroundColor: brand.base },
-  controlDanger: { backgroundColor: '#B3261E' },
+  controlDanger: { backgroundColor: '#E5484D' },
   controlDisabled: { opacity: 0.4 },
   controlLabel: { fontSize: 11 },
   hint: { color: '#7C7890', fontSize: 11, textAlign: 'center', paddingTop: 8 },

@@ -5,6 +5,7 @@ const { steer, api, room } = require('./mocks');
 const React = require('react');
 const { render, fireEvent, waitFor, act } = require('@testing-library/react-native');
 const Meeting = require('../screens/Meeting').default;
+const { DEFAULT_JOIN_PREFS } = require('../screens/PreJoin');
 
 const session = { accessToken: 'AT' };
 const meeting = { id: 'm1', title: 'Standup' };
@@ -15,7 +16,7 @@ beforeEach(() => { steer.share = 'started'; steer.mic = 'ok'; api.wait = null; j
 test('direct join: connects with the minted token, mic on, speaker selected', async () => {
   api.join = jest.fn(async () => joined);
   const onLeave = jest.fn();
-  const r = render(<Meeting session={session} meeting={meeting} onLeave={onLeave} />);
+  const r = render(<Meeting joinPrefs={DEFAULT_JOIN_PREFS} session={session} meeting={meeting} onLeave={onLeave} />);
   await waitFor(() => expect(r.getByText('Only you so far')).toBeTruthy());
   expect(room().connectCalls).toEqual([{ url: 'wss://x', token: 'LK' }]);
   expect(api.join).toHaveBeenCalledWith('AT', 'm1', undefined);
@@ -30,11 +31,11 @@ test('a renewed session mid-call does NOT reconnect — the cleanup would end th
   // and its cleanup disconnects the room: a renewal at minute fifteen would
   // have dropped the call. Rerendering with a new session must change nothing.
   api.join = jest.fn(async () => joined);
-  const r = render(<Meeting session={session} meeting={meeting} onLeave={() => {}} />);
+  const r = render(<Meeting joinPrefs={DEFAULT_JOIN_PREFS} session={session} meeting={meeting} onLeave={() => {}} />);
   await waitFor(() => expect(r.getByText('Only you so far')).toBeTruthy());
   expect(room().connectCalls).toHaveLength(1);
 
-  r.rerender(<Meeting session={{ accessToken: 'AT-RENEWED' }} meeting={meeting} onLeave={() => {}} />);
+  r.rerender(<Meeting joinPrefs={DEFAULT_JOIN_PREFS} session={{ accessToken: 'AT-RENEWED' }} meeting={meeting} onLeave={() => {}} />);
   await new Promise((done) => setTimeout(done, 50));
 
   expect(room().connectCalls).toHaveLength(1);
@@ -51,7 +52,7 @@ const ravi = () => ({
 
 async function joinWithRaviSharing(m) {
   api.join = jest.fn(async () => joined);
-  const r = render(<Meeting session={session} meeting={m} onLeave={() => {}} />);
+  const r = render(<Meeting joinPrefs={DEFAULT_JOIN_PREFS} session={session} meeting={m} onLeave={() => {}} />);
   await waitFor(() => expect(r.getByText('Only you so far')).toBeTruthy());
   const p = ravi();
   await act(async () => {
@@ -94,7 +95,7 @@ test('waiting room: polls, then enters with the token the POLL returned (one-sho
   api.join = jest.fn(async () => ({ kind: 'waiting', waitToken: 'W', message: 'You are in the waiting room. Someone has to let you in.' }));
   let polls = 0;
   api.wait = jest.fn(async () => (++polls < 2 ? { kind: 'waiting' } : { ...joined, token: 'LK-FROM-POLL' }));
-  const r = render(<Meeting session={session} meeting={meeting} onLeave={() => {}} />);
+  const r = render(<Meeting joinPrefs={DEFAULT_JOIN_PREFS} session={session} meeting={meeting} onLeave={() => {}} />);
   await waitFor(() => expect(r.getByText('In the waiting room')).toBeTruthy());
   await waitFor(() => expect(r.getByText('Only you so far')).toBeTruthy(), { timeout: 6000 });
   expect(api.wait).toHaveBeenCalledWith('AT', 'W');
@@ -104,7 +105,7 @@ test('waiting room: polls, then enters with the token the POLL returned (one-sho
 test('waiting room: denied is terminal and named', async () => {
   api.join = jest.fn(async () => ({ kind: 'waiting', waitToken: 'W', message: 'wait' }));
   api.wait = jest.fn(async () => ({ kind: 'denied', message: 'The host did not let you in.' }));
-  const r = render(<Meeting session={session} meeting={meeting} onLeave={() => {}} />);
+  const r = render(<Meeting joinPrefs={DEFAULT_JOIN_PREFS} session={session} meeting={meeting} onLeave={() => {}} />);
   await waitFor(() => expect(r.getAllByText('The host did not let you in.').length).toBeGreaterThan(0), { timeout: 6000 });
   expect(room().connectCalls).toEqual([]);
 }, 10000);
@@ -112,7 +113,7 @@ test('waiting room: denied is terminal and named', async () => {
 test('password: 403 asks, retry sends it, then connects', async () => {
   const err = Object.assign(new Error('Password required'), { status: 403 });
   api.join = jest.fn(async (t, id, pw) => { if (pw === 'hunter2') return joined; throw err; });
-  const r = render(<Meeting session={session} meeting={meeting} onLeave={() => {}} />);
+  const r = render(<Meeting joinPrefs={DEFAULT_JOIN_PREFS} session={session} meeting={meeting} onLeave={() => {}} />);
   await waitFor(() => expect(r.getByText('Password needed')).toBeTruthy());
   expect(room().connectCalls).toEqual([]);
   fireEvent.changeText(r.getByLabelText('Meeting password'), 'wrong');
@@ -126,7 +127,7 @@ test('password: 403 asks, retry sends it, then connects', async () => {
 
 test('409 locked: the server sentence is shown, nothing connects', async () => {
   api.join = jest.fn(async () => { throw Object.assign(new Error('This meeting is locked.'), { status: 409 }); });
-  const r = render(<Meeting session={session} meeting={meeting} onLeave={() => {}} />);
+  const r = render(<Meeting joinPrefs={DEFAULT_JOIN_PREFS} session={session} meeting={meeting} onLeave={() => {}} />);
   await waitFor(() => expect(r.getAllByText('Could not join: This meeting is locked.').length).toBeGreaterThan(0));
   expect(room().connectCalls).toEqual([]);
 });
@@ -134,7 +135,7 @@ test('409 locked: the server sentence is shown, nothing connects', async () => {
 async function inCall() {
   api.join = jest.fn(async () => joined);
   const onLeave = jest.fn();
-  const r = render(<Meeting session={session} meeting={meeting} onLeave={onLeave} />);
+  const r = render(<Meeting joinPrefs={DEFAULT_JOIN_PREFS} session={session} meeting={meeting} onLeave={onLeave} />);
   await waitFor(() => expect(r.getByText('Only you so far')).toBeTruthy());
   return { r, onLeave };
 }
@@ -267,7 +268,7 @@ test('asks Android for microphone, camera and notifications BEFORE the first joi
   perms.asked.length = 0;
   const order = [];
   api.join = jest.fn(async () => { order.push('join'); return joined; });
-  const r = render(<Meeting session={session} meeting={meeting} onLeave={() => {}} />);
+  const r = render(<Meeting joinPrefs={DEFAULT_JOIN_PREFS} session={session} meeting={meeting} onLeave={() => {}} />);
   await waitFor(() => expect(r.getByText('Only you so far')).toBeTruthy());
   expect(perms.asked).toEqual(expect.arrayContaining([
     'android.permission.RECORD_AUDIO', 'android.permission.CAMERA', 'android.permission.POST_NOTIFICATIONS',
@@ -281,7 +282,7 @@ test('host: a waiting guest is shown, Admit calls the API with the request id, t
   api.join = jest.fn(async () => hostJoined);
   api.lobby = jest.fn(async () => [{ requestId: 'r1', displayName: 'Ravi', isGuest: true, requestedAt: 'now' }]);
   api.admit = jest.fn(async () => null);
-  const r = render(<Meeting session={session} meeting={meeting} onLeave={() => {}} />);
+  const r = render(<Meeting joinPrefs={DEFAULT_JOIN_PREFS} session={session} meeting={meeting} onLeave={() => {}} />);
   await waitFor(() => expect(r.getByText('Ravi (guest)')).toBeTruthy());
   expect(api.lobby).toHaveBeenCalledWith('AT', 'm1');
   fireEvent.press(r.getByLabelText('Admit Ravi'));
@@ -294,7 +295,7 @@ test('host: Deny calls the deny endpoint, not admit', async () => {
   api.lobby = jest.fn(async () => [{ requestId: 'r2', displayName: 'Vendor', isGuest: true }]);
   api.admit = jest.fn(async () => null);
   api.deny = jest.fn(async () => null);
-  const r = render(<Meeting session={session} meeting={meeting} onLeave={() => {}} />);
+  const r = render(<Meeting joinPrefs={DEFAULT_JOIN_PREFS} session={session} meeting={meeting} onLeave={() => {}} />);
   await waitFor(() => expect(r.getByText('Vendor (guest)')).toBeTruthy());
   fireEvent.press(r.getByLabelText('Turn away Vendor'));
   await waitFor(() => expect(api.deny).toHaveBeenCalledWith('AT', 'm1', 'r2'));
@@ -304,7 +305,7 @@ test('host: Deny calls the deny endpoint, not admit', async () => {
 test('participant: the lobby is never asked for', async () => {
   api.join = jest.fn(async () => joined); // role: participant
   api.lobby = jest.fn(async () => []);
-  const r = render(<Meeting session={session} meeting={meeting} onLeave={() => {}} />);
+  const r = render(<Meeting joinPrefs={DEFAULT_JOIN_PREFS} session={session} meeting={meeting} onLeave={() => {}} />);
   await waitFor(() => expect(r.getByText('Only you so far')).toBeTruthy());
   await new Promise((res) => setTimeout(res, 300));
   expect(api.lobby).not.toHaveBeenCalled();
@@ -313,7 +314,7 @@ test('participant: the lobby is never asked for', async () => {
 test('host: a 403 from the lobby stops the polling instead of retrying forever', async () => {
   api.join = jest.fn(async () => hostJoined);
   api.lobby = jest.fn(async () => { throw Object.assign(new Error('Forbidden'), { status: 403 }); });
-  const r = render(<Meeting session={session} meeting={meeting} onLeave={() => {}} />);
+  const r = render(<Meeting joinPrefs={DEFAULT_JOIN_PREFS} session={session} meeting={meeting} onLeave={() => {}} />);
   await waitFor(() => expect(r.getByText('Only you so far')).toBeTruthy());
   await waitFor(() => expect(api.lobby).toHaveBeenCalledTimes(1));
   await new Promise((res) => setTimeout(res, 3500));
@@ -325,7 +326,7 @@ test('invite: hands the meeting joinUrl to the share sheet', async () => {
   const spy = jest.spyOn(Share, 'share').mockResolvedValue({ action: 'sharedAction' });
   api.join = jest.fn(async () => joined);
   const withLink = { ...meeting, joinUrl: 'https://connect.tatvaos.com/connect/room/abc' };
-  const r = render(<Meeting session={session} meeting={withLink} onLeave={() => {}} />);
+  const r = render(<Meeting joinPrefs={DEFAULT_JOIN_PREFS} session={session} meeting={withLink} onLeave={() => {}} />);
   await waitFor(() => expect(r.getByText('Only you so far')).toBeTruthy());
   fireEvent.press(r.getByLabelText('Invite'));
   await waitFor(() => expect(spy).toHaveBeenCalled());
@@ -335,7 +336,7 @@ test('invite: hands the meeting joinUrl to the share sheet', async () => {
 
 test('invite: no joinUrl, no button', async () => {
   api.join = jest.fn(async () => joined);
-  const r = render(<Meeting session={session} meeting={meeting} onLeave={() => {}} />);
+  const r = render(<Meeting joinPrefs={DEFAULT_JOIN_PREFS} session={session} meeting={meeting} onLeave={() => {}} />);
   await waitFor(() => expect(r.getByText('Only you so far')).toBeTruthy());
   expect(r.queryByLabelText('Invite')).toBeNull();
 });

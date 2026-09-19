@@ -174,3 +174,44 @@ export function admitFromLobby(token, meetingId, requestId) {
 export function denyFromLobby(token, meetingId, requestId) {
   return request(`/api/connect/meetings/${meetingId}/lobby/${requestId}/deny`, { method: 'POST', token });
 }
+
+/**
+ * Invite people to a meeting by email. `emails` is whatever the person typed:
+ * the server parses commas, spaces, new lines and "Name <a@b>" itself, so this
+ * sends ONE string in a list, exactly as the web's new-meeting page does, and
+ * there is one parser on the platform rather than two that drift.
+ *
+ * Answers { added, sent, failed, invalid, alreadyInvited, note, warning }.
+ * A 200 is not "everybody was mailed": read `failed`, `invalid` and `note`.
+ */
+export function inviteToMeeting(token, meetingId, emails) {
+  return request(`/api/connect/meetings/${meetingId}/invitations`, {
+    method: 'POST',
+    token,
+    body: { emails: [emails] },
+  });
+}
+
+/**
+ * What somebody pastes when they were sent a meeting: the whole link, or just
+ * the code at its end. Null when there is nothing usable in it, so the caller
+ * can say so without asking the server about an empty string.
+ *
+ *   https://connect.tatvaos.com/connect/room/<22 characters>?x=1  ->  the 22 characters
+ *   <22 characters>                                               ->  the same
+ */
+export function codeFrom(pasted) {
+  const raw = String(pasted ?? '').trim();
+  if (!raw) return null;
+  const inLink = raw.match(/\/room\/([^/?#\s]+)/i);
+  const code = (inLink ? inLink[1] : raw).trim();
+  // The server's own shape (ConnectCodes.Shape): 22 characters of base64url.
+  // Checked here so a mistyped code is answered at once, in plain words,
+  // instead of costing a round trip that comes back as a bare 404.
+  return /^[A-Za-z0-9_-]{22}$/.test(code) ? code : null;
+}
+
+/** The meeting a code belongs to. 404 when there is none, in the server's words. */
+export function getMeetingByCode(token, code) {
+  return request(`/api/connect/meetings/by-code/${encodeURIComponent(code)}`, { token });
+}

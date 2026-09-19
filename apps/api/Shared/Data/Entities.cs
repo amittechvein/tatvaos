@@ -753,7 +753,7 @@ public class Folder
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
-public class Message
+public class Message : TatvaOS.Api.Modules.Mail.IMailSortable
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }

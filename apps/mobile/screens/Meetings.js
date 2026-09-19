@@ -12,13 +12,14 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, Pressable, ScrollView, ActivityIndicator, StyleSheet,
   RefreshControl, BackHandler,
+  TextInput, Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context'; // see App.js
 import { Ionicons } from '@expo/vector-icons';
 
-import { listMeetings, createMeeting } from '../lib/connect';
+import { listMeetings, createMeeting, codeFrom, getMeetingByCode } from '../lib/connect';
 import { describeWhen } from '../lib/nextMeeting';
-import { brand, surface, text } from '../theme';
+import { brand, surface, text, radius, space, type, shadow, tone } from '../theme';
 
 const log = (line) => console.log(`[meetings] ${line}`);
 
@@ -27,6 +28,13 @@ export default function Meetings({ session, onJoin, onBack, onSchedule }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Joining a meeting somebody ELSE made. Until 19 Sept 2026 this screen could
+  // only open meetings already on your own list, so a link received on
+  // WhatsApp had no way into the app at all - it opened the phone's browser.
+  const [joining, setJoining] = useState(false);   // the box is open
+  const [pasted, setPasted] = useState('');
+  const [finding, setFinding] = useState(false);
 
   const load = useCallback(async () => {
     setError('');
@@ -57,6 +65,35 @@ export default function Meetings({ session, onJoin, onBack, onSchedule }) {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => { onBack(); return true; });
     return () => sub.remove();
   }, [onBack]);
+
+  async function joinByCode() {
+    const code = codeFrom(pasted);
+    if (!code) {
+      setError('That does not look like a meeting link or code. Paste the whole link you were sent.');
+      return;
+    }
+    Keyboard.dismiss();
+    setFinding(true);
+    setError('');
+    try {
+      const m = await getMeetingByCode(session.accessToken, code);
+      // Never the code: it is a bearer token for the room.
+      log(`found ${m?.id ?? 'a meeting'} by code (${m?.status})`);
+      if (m?.status === 'ended' || m?.status === 'cancelled') {
+        setError(m.status === 'ended' ? 'That meeting has ended.' : 'That meeting was cancelled.');
+        return;
+      }
+      setPasted(''); setJoining(false);
+      onJoin(m);
+    } catch (e) {
+      log(`join by code failed: ${e?.message ?? e}`);
+      setError(e?.status === 404 || /not found/i.test(e?.message ?? '')
+        ? 'No meeting was found for that link. Check it with the person who sent it.'
+        : (e?.message || 'Could not look that meeting up.'));
+    } finally {
+      setFinding(false);
+    }
+  }
 
   async function startNow() {
     setBusy(true);
@@ -112,6 +149,45 @@ export default function Meetings({ session, onJoin, onBack, onSchedule }) {
         <Text style={s.secondaryText}>Schedule for later</Text>
       </Pressable>
 
+      <Pressable
+        style={s.secondary}
+        onPress={() => { setJoining((v) => !v); setError(''); }}
+        disabled={busy}
+        accessibilityLabel="Join with a code or link"
+        accessibilityState={{ expanded: joining }}
+      >
+        <Ionicons name="enter-outline" size={18} color={brand.base} />
+        <Text style={s.secondaryText}>Join with a code or link</Text>
+      </Pressable>
+
+      {joining ? (
+        <View style={s.joinBox}>
+          <TextInput
+            style={s.joinInput}
+            value={pasted}
+            onChangeText={(v) => { setPasted(v); setError(''); }}
+            placeholder="Paste the meeting link"
+            placeholderTextColor={text.muted}
+            autoCapitalize="none"
+            autoCorrect={false}
+            editable={!finding}
+            returnKeyType="go"
+            onSubmitEditing={joinByCode}
+            accessibilityLabel="Meeting link or code"
+          />
+          <Pressable
+            style={[s.joinGo, (finding || !pasted.trim()) && s.primaryBusy]}
+            onPress={joinByCode}
+            disabled={finding || !pasted.trim()}
+            accessibilityLabel="Find this meeting"
+          >
+            {finding
+              ? <ActivityIndicator color={brand.onBase} />
+              : <Text style={s.joinGoText}>Join</Text>}
+          </Pressable>
+        </View>
+      ) : null}
+
       {error ? <Text style={s.error}>{error}</Text> : null}
 
       <Text style={s.section}>UPCOMING</Text>
@@ -146,35 +222,46 @@ export default function Meetings({ session, onJoin, onBack, onSchedule }) {
   );
 }
 
+// 18 Sept 2026, "modern ui for Gen-Z": the two actions are the page. Start
+// now is a tall pill that glows; Schedule is its quiet twin beneath. Upcoming
+// meetings are cards with room to breathe rather than bordered rows.
 const s = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: surface.page, paddingHorizontal: 20, paddingTop: 12 },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 18 },
-  title: { fontSize: 24, fontWeight: '700', color: text.primary },
+  joinBox: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  joinInput: {
+    flex: 1, height: 48, borderWidth: 1, borderColor: surface.border, borderRadius: radius.md,
+    backgroundColor: surface.card, paddingHorizontal: 14, fontSize: 15, color: text.primary,
+  },
+  joinGo: {
+    height: 48, paddingHorizontal: 22, borderRadius: radius.md, backgroundColor: brand.base,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  joinGoText: { color: brand.onBase, fontSize: 15, fontWeight: '700' },
+  screen: { flex: 1, backgroundColor: surface.page, paddingHorizontal: space.lg, paddingTop: 12 },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: space.lg },
+  title: { ...type.title, color: text.primary },
   primary: {
-    height: 48, borderRadius: 8, backgroundColor: brand.base,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    height: 58, borderRadius: 29, backgroundColor: brand.base,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
+    ...shadow.glow,
   },
   primaryBusy: { opacity: 0.7 },
-  primaryText: { color: brand.onBase, fontSize: 16, fontWeight: '500' },
+  primaryText: { color: brand.onBase, fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
   secondary: {
-    height: 44, borderRadius: 8, borderWidth: 1, borderColor: surface.border,
-    backgroundColor: surface.card, marginTop: 10,
+    height: 52, borderRadius: radius.pill, backgroundColor: tone.wash, marginTop: space.md,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
   },
-  secondaryText: { color: brand.base, fontSize: 15, fontWeight: '600' },
+  secondaryText: { color: tone.ink, fontSize: 15, fontWeight: '700' },
   error: { color: '#993556', marginTop: 12, fontSize: 14 },
-  section: {
-    fontSize: 11, fontWeight: '700', letterSpacing: 1, color: text.muted,
-    marginTop: 26, marginBottom: 8,
-  },
-  empty: { color: text.secondary, fontSize: 15, lineHeight: 22, marginTop: 8 },
-  list: { gap: 8, paddingBottom: 24, flexGrow: 1 },
+  section: { ...type.eyebrow, color: text.muted, marginTop: space.xl, marginBottom: space.md },
+  empty: { ...type.body, color: text.secondary, marginTop: 8 },
+  list: { gap: space.md, paddingBottom: 24, flexGrow: 1 },
   row: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    backgroundColor: surface.card, borderWidth: 1, borderColor: surface.border,
-    borderRadius: 10, paddingVertical: 14, paddingHorizontal: 14,
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: surface.card, borderRadius: radius.lg,
+    paddingVertical: space.lg, paddingHorizontal: space.lg,
+    ...shadow.card,
   },
-  rowPressed: { opacity: 0.85 },
-  rowTitle: { fontSize: 16, fontWeight: '600', color: text.primary },
-  rowWhen: { fontSize: 13, color: text.secondary, marginTop: 2 },
+  rowPressed: { opacity: 0.85, transform: [{ scale: 0.99 }] },
+  rowTitle: { ...type.heading, color: text.primary },
+  rowWhen: { ...type.caption, fontWeight: '400', fontSize: 13, color: text.secondary, marginTop: 4 },
 });

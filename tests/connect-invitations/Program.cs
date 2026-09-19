@@ -27,6 +27,7 @@ internal static class Program
         TheEmailText(t);
         TheDesignedEmail(t);
         TheUpdateSaysWhatChanged(t);
+        TheCapsPerOrganisation(t);
 
         // A look, not a test: INVITE_PREVIEW_DIR=<dir> writes the three emails
         // as .html so a person can see them before anyone receives one. Asserts
@@ -63,6 +64,48 @@ internal static class Program
         Timezone = "Asia/Kolkata",
         AllowGuests = true,
     };
+
+    /// <summary>
+    /// 19 Sept 2026: the caps differ by organisation, set by the operator. What is
+    /// proved here is what the stored numbers MEAN and which ones are refused;
+    /// that the endpoint reads them is proved by running it, not here.
+    /// </summary>
+    private static void TheCapsPerOrganisation(Harness t)
+    {
+        Console.WriteLine();
+        Console.WriteLine("  The caps, per organisation");
+
+        var none = ConnectInvitations.EffectiveCaps(null, null);
+        t.Ok("an organisation given no numbers gets the defaults",
+            none.PerRequest == ConnectInvitations.MaxPerRequest && none.PerMeeting == ConnectInvitations.MaxPerMeeting);
+
+        var own = ConnectInvitations.EffectiveCaps(20, 1000);
+        t.Ok("its own numbers win, below the default and above it", own.PerRequest == 20 && own.PerMeeting == 1000);
+
+        var onlyMeeting = ConnectInvitations.EffectiveCaps(null, 100);
+        t.Ok("only 'per meeting' set low: one send is brought down to it, not left at the default",
+            onlyMeeting.PerRequest == 100 && onlyMeeting.PerMeeting == 100);
+
+        var onlyRequest = ConnectInvitations.EffectiveCaps(50, null);
+        t.Ok("only 'per send' set: per meeting stays the default",
+            onlyRequest.PerRequest == 50 && onlyRequest.PerMeeting == ConnectInvitations.MaxPerMeeting);
+
+        t.Ok("two empties are storable", ConnectInvitations.CapProblem(null, null) is null);
+        t.Ok("the ceiling itself is storable",
+            ConnectInvitations.CapProblem(ConnectInvitations.CapCeiling, ConnectInvitations.CapCeiling) is null);
+        t.Ok("zero per send is refused", ConnectInvitations.CapProblem(0, null) is not null);
+        t.Ok("a negative per meeting is refused", ConnectInvitations.CapProblem(null, -5) is not null);
+        t.Ok("one over the ceiling is refused, either number",
+            ConnectInvitations.CapProblem(ConnectInvitations.CapCeiling + 1, null) is not null
+            && ConnectInvitations.CapProblem(null, ConnectInvitations.CapCeiling + 1) is not null);
+        t.Ok("per send above per meeting is refused, and says both numbers",
+            ConnectInvitations.CapProblem(300, 200) is string both && both.Contains("300") && both.Contains("200"));
+        t.Ok("per send above the DEFAULT per meeting is refused when per meeting is empty",
+            ConnectInvitations.CapProblem(ConnectInvitations.MaxPerMeeting + 1, null) is not null);
+        t.Ok("the ceiling is not below the defaults",
+            ConnectInvitations.CapCeiling >= ConnectInvitations.MaxPerMeeting
+            && ConnectInvitations.MaxPerMeeting >= ConnectInvitations.MaxPerRequest);
+    }
 
     private static void WhatCountsAsAnAddress(Harness t)
     {

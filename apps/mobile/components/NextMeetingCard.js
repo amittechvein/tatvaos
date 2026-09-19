@@ -20,7 +20,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { useNextMeeting } from '../hooks/useNextMeeting';
 import { describeWhen } from '../lib/nextMeeting';
-import { brand, surface, text, products } from '../theme';
+import { brand, surface, text, products, radius, space, type, shadow, tone } from '../theme';
 
 // Connect's own tile colours, so the card reads as Connect at a glance.
 const connect = products.find((p) => p.key === 'connect');
@@ -34,7 +34,8 @@ export default function NextMeetingCard({ session, onJoin, onOpenConnect }) {
       <View style={s.textCol}>
         <Text style={s.eyebrow}>NEXT MEETING</Text>
         <View style={s.inline}>
-          <ActivityIndicator size="small" color={brand.base} />
+          {/* Light on the violet card; brand.base would vanish into it. */}
+          <ActivityIndicator size="small" color={tone.onDeep} />
           <Text style={s.quietLine}>Checking your meetings…</Text>
         </View>
       </View>
@@ -98,28 +99,37 @@ export default function NextMeetingCard({ session, onJoin, onOpenConnect }) {
 const s = StyleSheet.create({
   // Fixed minimum height: the four states swap in place, and a card that
   // changes size as it loads shoves the tiles under the person's thumb.
+  // ── THE HERO OF THE DASHBOARD, 18 SEPT 2026. ─────────────────────────
+  //  The one card the brief says everyone opens the app for is now the one
+  //  thing on the page in the brand's own colour: deep violet, big corners,
+  //  a lift, and a white Join pill that is the brightest object on screen.
+  //  Everything else on the dashboard is cream and white, so this is where
+  //  the eye goes first — which is the argument the brief made for putting
+  //  it above the tiles in the first place.
   card: {
-    flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 84,
-    backgroundColor: surface.card, borderWidth: 1, borderColor: surface.border,
-    borderRadius: 14, paddingVertical: 14, paddingHorizontal: 14, marginBottom: 20,
+    flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 96,
+    backgroundColor: tone.deep,
+    borderRadius: radius.xl, paddingVertical: space.lg, paddingHorizontal: space.lg,
+    marginBottom: space.xl, ...shadow.float,
   },
-  icon: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  icon: { width: 48, height: 48, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' },
   textCol: { flex: 1, minWidth: 0 },
-  eyebrow: { fontSize: 11, fontWeight: '700', letterSpacing: 1, color: text.muted, marginBottom: 3 },
-  eyebrowLive: { color: brand.base },
-  title: { fontSize: 16, fontWeight: '600', color: text.primary },
-  when: { fontSize: 13, color: text.secondary, marginTop: 2 },
+  eyebrow: { ...type.eyebrow, color: tone.onDeepMuted, marginBottom: 4 },
+  eyebrowLive: { color: '#7CE8B5' },   // a live meeting is green, everywhere in Connect
+  title: { ...type.heading, color: tone.onDeep },
+  when: { ...type.caption, fontWeight: '400', fontSize: 13, color: tone.onDeepMuted, marginTop: 3 },
   inline: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  quietLine: { fontSize: 14, color: text.secondary },
+  quietLine: { ...type.body, color: tone.onDeepMuted },
   join: {
-    height: 40, paddingHorizontal: 20, borderRadius: 8, backgroundColor: brand.base,
+    height: 44, paddingHorizontal: 22, borderRadius: radius.pill, backgroundColor: surface.card,
     alignItems: 'center', justifyContent: 'center',
   },
-  joinPressed: { opacity: 0.8 },
-  joinText: { color: brand.onBase, fontSize: 15, fontWeight: '600' },
+  joinPressed: { opacity: 0.85, transform: [{ scale: 0.97 }] },
+  joinText: { color: tone.ink, fontSize: 15, fontWeight: '800' },
   secondary: {
-    height: 36, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: surface.border,
+    height: 38, paddingHorizontal: 14, borderRadius: radius.pill,
+    backgroundColor: 'rgba(255,255,255,0.14)',
     alignItems: 'center', justifyContent: 'center',
   },
-  secondaryText: { color: text.primary, fontSize: 14, fontWeight: '500' },
+  secondaryText: { color: tone.onDeep, fontSize: 14, fontWeight: '600' },
 });

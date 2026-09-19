@@ -134,3 +134,72 @@ export function visibleProducts(entitled, role) {
   return products.filter((p) =>
     p.roles ? p.roles.includes(role) : entitled.includes(p.product));
 }
+
+// ---------------------------------------------------------------------------
+//  THE SHAPE OF THINGS, AS DISTINCT FROM THEIR COLOUR.
+//
+//  Amit, 18 September 2026: "designing part and decoration for modern ui for
+//  Gen-Z" — the login, the dashboard, Mail, the meeting, and the join
+//  options. The colours above are the web's and stay the web's (the note at
+//  the top of this file says why). What was dated was not the palette but
+//  the SHAPE: 8px corners, flat cards, 14px type, thin borders doing all the
+//  work. So this is a second layer — corners, spacing, type, depth, and a
+//  handful of tones DERIVED from the brand violet rather than added beside
+//  it — and the screens read from it the way they read from `brand`.
+//
+//  No gradient library. A native module means a rebuild on every laptop
+//  that has ever fought this one, and the effect can be had from layered
+//  translucent views, which is what `wash` is for.
+// ---------------------------------------------------------------------------
+
+// pill is for views WITHOUT elevation. On Android an elevated view with a
+// radius larger than half its size draws its shadow as a SQUARE — seen on the
+// dashboard avatar, 19 Sept 2026. Give an elevated pill half its height instead.
+export const radius = { sm: 12, md: 18, lg: 24, xl: 32, pill: 999 };
+
+export const space = { xs: 4, sm: 8, md: 14, lg: 20, xl: 28, xxl: 40 };
+
+// Sizes are the system's; weights lean heavier than before because bold
+// display type on a calm page is most of what "modern" turns out to be.
+export const type = {
+  display: { fontSize: 34, fontWeight: '800', letterSpacing: -0.8, lineHeight: 40 },
+  title:   { fontSize: 24, fontWeight: '700', letterSpacing: -0.4, lineHeight: 30 },
+  heading: { fontSize: 18, fontWeight: '700', letterSpacing: -0.2, lineHeight: 24 },
+  body:    { fontSize: 15, fontWeight: '400', lineHeight: 22 },
+  strong:  { fontSize: 15, fontWeight: '600', lineHeight: 22 },
+  caption: { fontSize: 12, fontWeight: '500', lineHeight: 16 },
+  // A label that reads as a tag: small, uppercase, spaced out.
+  eyebrow: { fontSize: 11, fontWeight: '700', letterSpacing: 1.2, textTransform: 'uppercase' },
+};
+
+// Elevation on Android, the equivalent shadow on iOS. Soft and violet-tinted
+// so a card lifts off the cream rather than sitting in a grey smudge.
+export const shadow = {
+  card: {
+    shadowColor: '#3B2A7A', shadowOpacity: 0.08, shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 }, elevation: 3,
+  },
+  float: {
+    shadowColor: '#3B2A7A', shadowOpacity: 0.18, shadowRadius: 24,
+    shadowOffset: { width: 0, height: 12 }, elevation: 8,
+  },
+  glow: {
+    shadowColor: brand.base, shadowOpacity: 0.35, shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 }, elevation: 6,
+  },
+};
+
+// Derived from brand.base (#6C3CE9), not chosen beside it: the same hue,
+// pushed darker for an immersive header and lighter for a tinted surface.
+export const tone = {
+  deep:   '#2A1B5E', // the brand hue at night — hero backgrounds, the meeting
+  deeper: '#1B1240',
+  wash:   '#EFE9FD', // the brand hue as a tint — chips, selected rows
+  ink:    '#4B2BB8', // the brand hue as text on a light surface
+  // Translucent layers over `deep`. Stacked at an offset they read as a
+  // gradient without a gradient.
+  washA:  'rgba(179,155,242,0.22)', // brand.soft
+  washB:  'rgba(108,60,233,0.35)',  // brand.base
+  onDeep: '#F5F1FE',
+  onDeepMuted: 'rgba(245,241,254,0.66)',
+};

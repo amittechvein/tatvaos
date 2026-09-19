@@ -119,14 +119,20 @@ jwks=$(curl -s "$API/api/oauth/jwks")
 KID1=$(printf '%s' "$jwks" | j "d['keys'][0]['kid']")
 [ "${#KID1}" = "16" ] && pass "key set: 16-character kid" || fail "kid: '$KID1'"
 printf '%s' "$jwks" | j "'d' in d['keys'][0] or 'p' in d['keys'][0]" | grep -q "False" && pass "key set: public parameters only" || fail "PRIVATE parameters in the published key set"
-grep -q "signing with $KID1" "$LOG" && pass "the API says it signs with $KID1" || fail "the API's startup line does not name $KID1"
+grep -qF -- "signing with $KID1" "$LOG" && pass "the API says it signs with $KID1" || fail "the API's startup line does not name $KID1"
 stop_api
 
 # ---------------------------------------------------------------------------
 step "Rotate — the runbook's one step, against the same directory"
 out=$(dotnet run --no-build -c Release --project "$PROJ" -- --oidc-rotate 2>&1)
 printf '%s\n' "$out" | grep -q "new signing key" && pass "rotate reports a new active key" || fail "rotate output: $out"
-printf '%s\n' "$out" | grep -q "$KID1 retired" && pass "rotate names $KID1 as retired" || fail "rotate did not retire $KID1: $out"
+# A kid is random base64url and CAN BEGIN WITH '-', and here it begins the
+# pattern. "--" stops grep reading it as options; -F because it is a literal.
+# Without them (CI run 35440205300, 19 Sept 2026, kid -aOPhKn-EgyXptRJ) grep
+# died with "unknown option", which this line shape reports as a plain FAIL:
+# "rotate did not retire <kid>", printed beside output saying it had. One run
+# in 64, and a re-run passes, so it reads as flakiness rather than as a bug.
+printf '%s\n' "$out" | grep -qF -- "$KID1 retired" && pass "rotate names $KID1 as retired" || fail "rotate did not retire $KID1: $out"
 printf '%s\n' "$out" | grep -q "PRIVATE KEY" && fail "rotate printed private material" || pass "rotate printed nothing private"
 [ "$(ls "$KEYDIR_BASH" | grep -c '^sig-[0-9]*\.pem$')" = "1" ] && pass "one active signing key file" || fail "active files: $(ls "$KEYDIR_BASH")"
 [ "$(ls "$KEYDIR_BASH" | grep -c '^sig-[0-9]*\.retired-[0-9]*\.pem$')" = "1" ] && pass "one retired signing key file" || fail "retired files: $(ls "$KEYDIR_BASH")"
@@ -138,7 +144,7 @@ jwks=$(curl -s "$API/api/oauth/jwks")
 KID2=$(printf '%s' "$jwks" | j "d['keys'][0]['kid']")
 [ "$KID2" != "$KID1" ] && pass "first key is the new one ($KID2)" || fail "first key is still $KID1"
 [ "$(printf '%s' "$jwks" | j "d['keys'][1]['kid']")" = "$KID1" ] && pass "retired $KID1 still published" || fail "retired key missing from the set"
-grep -q "signing with $KID2" "$LOG" && pass "the API signs with the new key" || fail "the API does not say it signs with $KID2"
+grep -qF -- "signing with $KID2" "$LOG" && pass "the API signs with the new key" || fail "the API does not say it signs with $KID2"
 stop_api
 
 # ---------------------------------------------------------------------------
