@@ -41,8 +41,25 @@ public static class ConnectGuestEndpoints
     /// meeting on this deployment and far below "unbounded"; refusals say the
     /// one sentence, because a ceiling that answers differently is an oracle
     /// for how full a meeting is.
+    ///
+    /// 200 -> 2000, 19 Sept 2026, AND WHAT 200 COST. "Far above any real
+    /// meeting" stopped being true the day Amit held a company-wide meeting.
+    /// The count is of ROWS, and every guest join writes one - a reload, a
+    /// dropped connection, a second device, each is a new row, because a guest
+    /// has no identity to recognise them by. So a few dozen people reach 200
+    /// well before 200 people do. From then on everybody new was told "This
+    /// meeting link does not work" while the meeting was live, the door
+    /// (GET /g/{code}) answered 200, and NOTHING anywhere said why: the host saw
+    /// a working meeting and a stream of people who could not get in. It was
+    /// found by reading this file, mid-meeting. The refusal keeps its one
+    /// sentence for the stranger; it now also writes a WARNING for us, because a
+    /// limit that fires silently is indistinguishable from a broken link.
+    ///
+    /// Still a ceiling, still blunt: the rate limiter caps the rate, this caps
+    /// the total. Counting people rather than rows needs a guest identity that
+    /// survives a reload, which does not exist yet.
     /// </summary>
-    private const int PerMeetingGuestCeiling = 200;
+    private const int PerMeetingGuestCeiling = 2000;
 
     public static void MapConnectGuestEndpoints(this IEndpointRouteBuilder app)
     {
@@ -163,7 +180,7 @@ public static class ConnectGuestEndpoints
     private static async Task<IResult> GuestJoinAsync(
         string code, GuestJoinRequest req, AppDbContext db, TenantContext tenant,
         IPasswordHasher hasher, LiveKitTokenService tokens, ConnectRoomKey roomKeys,
-        CancellationToken ct)
+        ILoggerFactory logs, CancellationToken ct)
     {
         if (!tokens.IsConfigured)
             return Results.Problem("Connect is not configured on this server.", statusCode: 503);
@@ -216,7 +233,16 @@ public static class ConnectGuestEndpoints
         // Either at the ceiling answers the one failure sentence.
         var guestRows = await db.ConnectParticipants.AsNoTracking()
             .CountAsync(p => p.MeetingId == row.MeetingId && p.IsGuest, ct);
-        if (guestRows >= PerMeetingGuestCeiling) return Gone();
+        if (guestRows >= PerMeetingGuestCeiling)
+        {
+            // Said HERE because it is said nowhere else: the guest is told only
+            // that the link does not work. No name, no address - the meeting id
+            // and the two numbers are the whole story.
+            logs.CreateLogger("Connect.Guests").LogWarning(
+                "Meeting {Meeting}: guest join REFUSED by the per-meeting ceiling ({Rows} guest rows, ceiling {Ceiling}). Guests are being told the link does not work.",
+                row.MeetingId, guestRows, PerMeetingGuestCeiling);
+            return Gone();
+        }
 
         if (row.WaitingRoom is "guests" or "everyone")
         {
@@ -224,7 +250,13 @@ public static class ConnectGuestEndpoints
             var waitingRows = await db.ConnectLobbyRequests.AsNoTracking()
                 .CountAsync(r => r.MeetingId == row.MeetingId
                               && r.Status == "waiting" && r.CreatedAt > cutoff, ct);
-            if (waitingRows >= PerMeetingGuestCeiling) return Gone();
+            if (waitingRows >= PerMeetingGuestCeiling)
+            {
+                logs.CreateLogger("Connect.Guests").LogWarning(
+                    "Meeting {Meeting}: guest join REFUSED, the waiting room is full ({Rows} waiting, ceiling {Ceiling}). Guests are being told the link does not work.",
+                    row.MeetingId, waitingRows, PerMeetingGuestCeiling);
+                return Gone();
+            }
         }
 
         var participant = new ConnectParticipant
