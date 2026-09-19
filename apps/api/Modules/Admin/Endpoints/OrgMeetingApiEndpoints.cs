@@ -190,9 +190,46 @@ public static class OrgMeetingApiEndpoints
     // ==================================================================
     //  Read
     // ==================================================================
+    /// <summary>
+    /// A page of the timetable is 500 classes. Fixed, not a parameter: a
+    /// knob would be the first thing an integrator turns up, and the second
+    /// page is cheaper than a response nobody can hold.
+    /// </summary>
+    private const int PageSize = 500;
+
+    /// <summary>
+    /// Where the next page starts. Everything the query needs is inside it,
+    /// so a caller passes it back and nothing else: the window and the host
+    /// filter cannot drift between pages, which is how page two of a
+    /// different question gets stitched onto page one.
+    ///
+    /// Keyset on (start, code), never an offset: an offset skips or repeats
+    /// a row whenever a class is scheduled between two page requests, and a
+    /// timetable that is being written to is the normal case. The code is
+    /// the tiebreaker because it is unique and a string — EF translates
+    /// string.CompareTo, and two classes at the same minute are ordinary.
+    /// </summary>
+    private sealed record PageCursor(DateTimeOffset S, DateTimeOffset E, Guid? H, DateTimeOffset LS, string LC)
+    {
+        public string Encode() =>
+            Microsoft.AspNetCore.WebUtilities.WebEncoders.Base64UrlEncode(
+                System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(this));
+
+        public static PageCursor? Decode(string text)
+        {
+            try
+            {
+                var bytes = Microsoft.AspNetCore.WebUtilities.WebEncoders.Base64UrlDecode(text);
+                return System.Text.Json.JsonSerializer.Deserialize<PageCursor>(bytes);
+            }
+            catch { return null; }
+        }
+    }
+
     private static async Task<IResult> ListAsync(
         HttpContext http, AppDbContext db, TenantContext tenant,
-        DateTimeOffset? from, DateTimeOffset? to, string? hostEmail, CancellationToken ct)
+        DateTimeOffset? from, DateTimeOffset? to, string? hostEmail, string? cursor,
+        CancellationToken ct)
     {
         // meetings:schedule, not meetings:join. The whole organisation's
         // timetable — every class, every teacher, every time — is the staff
@@ -206,32 +243,65 @@ public static class OrgMeetingApiEndpoints
         // everything ever scheduled — a school with three years of history
         // would get a response nobody can page through, and the caller who
         // wanted history can say so with from/to.
-        var start = from ?? DateTimeOffset.UtcNow.AddHours(-12);
-        var end = to ?? start.AddDays(30);
-        if (end <= start)
-            return Results.BadRequest(new { error = "`to` must be after `from`." });
-
+        DateTimeOffset start, end;
         Guid? hostId = null;
-        if (!string.IsNullOrWhiteSpace(hostEmail))
+        PageCursor? after = null;
+
+        if (!string.IsNullOrWhiteSpace(cursor))
         {
-            var host = await FindPersonAsync(db, hostEmail, ct);
-            // An unknown teacher is an empty timetable, not an error: an ERP
-            // asking for somebody who left should show "no classes", not fail
-            // the page.
-            if (host is null) return Results.Ok(new { meetings = Array.Empty<object>() });
-            hostId = host.Id;
+            // A cursor IS the question. from/to/hostEmail beside it are
+            // ignored rather than merged, so that page two can never be a
+            // different query from page one.
+            after = PageCursor.Decode(cursor);
+            if (after is null)
+                return Results.BadRequest(new { error = "That cursor is not one this API issued. Pass `next` back exactly as it came." });
+            start = after.S; end = after.E; hostId = after.H;
+        }
+        else
+        {
+            start = from ?? DateTimeOffset.UtcNow.AddHours(-12);
+            end = to ?? start.AddDays(30);
+            if (end <= start)
+                return Results.BadRequest(new { error = "`to` must be after `from`." });
+
+            if (!string.IsNullOrWhiteSpace(hostEmail))
+            {
+                var host = await FindPersonAsync(db, hostEmail, ct);
+                // An unknown teacher is an empty timetable, not an error: an
+                // ERP asking for somebody who left should show "no classes",
+                // not fail the page.
+                if (host is null) return Results.Ok(new { meetings = Array.Empty<object>(), next = (string?)null });
+                hostId = host.Id;
+            }
         }
 
-        var rows = await db.ConnectMeetings.AsNoTracking()
+        var query = db.ConnectMeetings.AsNoTracking()
             .Where(m => m.Kind == "scheduled"
                         && m.Status != "cancelled"
                         && m.ScheduledStart != null
                         && m.ScheduledStart >= start
                         && m.ScheduledStart < end
-                        && (hostId == null || m.CreatedByUserId == hostId))
-            .OrderBy(m => m.ScheduledStart)
-            .Take(500)
+                        && (hostId == null || m.CreatedByUserId == hostId));
+        if (after is not null)
+        {
+            var ls = after.LS; var lc = after.LC;
+            query = query.Where(m => m.ScheduledStart > ls
+                                     || (m.ScheduledStart == ls && m.Code.CompareTo(lc) > 0));
+        }
+
+        // One more than a page: the 501st row is never returned, it only
+        // says whether there is a next page. Cheaper and truer than a count.
+        var rows = await query
+            .OrderBy(m => m.ScheduledStart).ThenBy(m => m.Code)
+            .Take(PageSize + 1)
             .ToListAsync(ct);
+        string? next = null;
+        if (rows.Count > PageSize)
+        {
+            rows.RemoveAt(PageSize);
+            var last = rows[^1];
+            next = new PageCursor(start, end, hostId, last.ScheduledStart!.Value, last.Code).Encode();
+        }
 
         var hostIds = rows.Select(m => m.CreatedByUserId).Where(x => x != null).Select(x => x!.Value).Distinct().ToList();
         var hosts = await db.Users.AsNoTracking()
@@ -244,6 +314,10 @@ public static class OrgMeetingApiEndpoints
                 m,
                 m.CreatedByUserId is Guid h ? hosts.GetValueOrDefault(h) : null,
                 full: true)).ToList(),
+            // Null on the last page. Never absent: an integrator who checks
+            // for the field's presence and one who checks its value must
+            // both stop at the same place.
+            next,
         });
     }
 

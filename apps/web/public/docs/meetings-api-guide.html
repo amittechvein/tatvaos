@@ -215,8 +215,22 @@ GET /api/v1/org/meetings?from=2026-09-21T00:00:00Z&amp;to=2026-09-28T00:00:00Z</
     <tr><td><code>from</code></td><td>12 hours ago</td><td>Earliest start time to include.</td></tr>
     <tr><td><code>to</code></td><td>30 days after <code>from</code></td><td>Latest start time to include.</td></tr>
     <tr><td><code>hostEmail</code></td><td>everyone</td><td>One teacher's classes. An address you do not have returns an empty list, not an error.</td></tr>
+    <tr><td><code>cursor</code></td><td>—</td><td>The <code>next</code> value from the previous page. On its own: the window and teacher are remembered inside it.</td></tr>
   </table>
-  <p>Cancelled meetings are never listed. At most 500 come back in one response, so ask for a narrower window rather than a bigger page.</p>
+  <p>Cancelled meetings are never listed. The response is a <strong>page of up to 500</strong>, in start order, and carries <code>next</code>:</p>
+<pre><code>{
+  "meetings": [ ...500 classes... ],
+  "next": "eyJTIjoiMjAyNi0..."     ← pass this back as ?cursor= to get the rest
+}
+
+{
+  "meetings": [ ...the remaining 37... ],
+  "next": null                     ← the last page says so
+}</code></pre>
+  <div class="card warn">
+    <p style="margin:0"><strong>Always follow <code>next</code> until it is <code>null</code>.</strong> A school with 600 classes in the window gets 500 on the first page, and a timetable that stops reading there looks complete while missing a hundred classes — which will be discovered by a parent, not by you. <code>next</code> is always present in the response: <code>null</code> on the last page, never absent.</p>
+  </div>
+  <p>The cursor is the whole question — window, teacher and position — so pass it back alone and exactly as it came. A cursor this API did not issue is refused with <code>400</code>. Pages are stable while classes are being scheduled: a class added between two page requests is neither skipped nor repeated.</p>
 
   <h2 id="change">Changing and cancelling</h2>
   <p><strong>Cancelling</strong> needs <code>meetings:schedule</code>:</p>
