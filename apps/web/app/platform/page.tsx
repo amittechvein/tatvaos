@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { BrandMark, BrandName } from '@/components/ui/Brand';
 
 // ============================================================================
 //  The Platform page — core.tatvaos.com/platform. The developer console:
@@ -29,11 +30,9 @@ export default function DeveloperConsolePage() {
           rather than next/image: two small static PNGs on a static page need
           no optimisation pipeline, and this page must stay dependency-free. */}
       <div className="flex items-center gap-3">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/brand/platform-logo.png" alt="" width={44} height={44} />
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/brand/platform-name.png" alt="TatvaOS Platform" width={132} height={66}
-             className="h-11 w-auto" />
+        <BrandMark product="platform" width={44} height={44} />
+        <BrandName product="platform" alt="TatvaOS Platform" width={132} height={66}
+                   className="h-11 w-auto" />
       </div>
       <h1 className="mt-6 text-3xl font-bold tracking-tight text-ink">
         Connect your software to TatvaOS
