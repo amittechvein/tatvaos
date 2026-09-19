@@ -766,6 +766,7 @@ app.MapMailApiKeyEndpoints();
 // An organisation's own key, and the public call it authenticates.
 app.MapOrgApiKeyEndpoints();
 app.MapOrgApiEndpoints();
+app.MapOrgMeetingApiEndpoints();
 app.MapMailSendApiEndpoints();
 // "How much room do I have left?" — one answer for every product's meter.
 app.MapMyStorageEndpoints();

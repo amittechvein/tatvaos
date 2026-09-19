@@ -307,9 +307,13 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA calendar
 -- ----------------------------------------------------------------------------
 --  Everyone gets a primary calendar.
 --
---  Backfilled for people who already exist, and created by the API for people
---  made after this. Idempotent: the partial unique index above means a second
---  run inserts nothing.
+--  Backfilled here for anybody who has none. The API creates one wherever a
+--  person is created (CalendarProvisioning, from 18 Sept 2026) — and NOT
+--  before then, although an earlier version of this comment said it did.
+--  Because this file re-runs on every deploy, that gap was invisible: the
+--  backfill caught up each time, and production never showed a user without
+--  one. Anybody created between two deploys had none until the next. This
+--  block stays as the net. Idempotent: a second run inserts nothing.
 -- ----------------------------------------------------------------------------
 INSERT INTO calendar.calendars (tenant_id, owner_user_id, name, kind, is_primary)
 SELECT u.tenant_id, u.id, 'My calendar', 'personal', true

@@ -18,6 +18,58 @@
 #   9. it is all in the audit trail, naming the key
 #  10. RLS: the key's tenant is the only one touched
 #
+# Meetings, added 18 September 2026 for a school's ERP:
+#
+#  11. meetings:schedule and meetings:join are separate from each other
+#      and from people:admit — no key may do another's job
+#  12. a class is scheduled with a TEACHER as host, never the key
+#  13. it appears on that teacher's own primary CALENDAR, with the join
+#      link on it. Nothing put a meeting on a calendar before this
+#  14. rescheduling moves the calendar entry rather than adding one
+#  15. the join half returns the link and what to tell the student. It
+#      cannot cancel, cannot list the timetable, takes no email and never
+#      answers with one (CTO review: a student-portal key must not be a way
+#      to enumerate a school)
+#  16. cancelling takes the class off the calendar and the timetable
+#  17. it is audited against the key, and invisible to another tenant
+#  18. the backfill migration writes the row the mirror would have — every
+#      field compared — and a second run changes nothing (CTO condition 1)
+#  19. the guide's claims: cancel twice is 204, a running class is 409 to
+#      cancel and still joinable, an ended one is 409 to join, times come
+#      back in UTC, the 31st request in a minute is 429, a missing title
+#      becomes "<first name>'s meeting", a missing zone is Asia/Kolkata
+#      (CTO condition 3). The one claim NOT tested here is the 500-row cap
+#      on the timetable; it is one .Take(500) and the CTO has the line.
+#  20. a person made through the console has a calendar the moment they
+#      exist — where people are made, not where it was noticed (condition 2)
+#
+# ── CALIBRATION, 18 September 2026 (house rule 6) ──────────────────────────
+#
+# Each claim below was broken on purpose and the suite re-run, to find out
+# which assertion actually carries it. Three findings worth keeping:
+#
+#  * MIRROR REMOVED FROM MEETING CREATION -> step 13 goes fully red (7), and
+#    step 14 STAYED GREEN. The upsert on the update path had simply created
+#    the row itself, so "the calendar follows a rename" was true for the
+#    wrong reason. Step 14 now compares the row's ID to the one step 13 saw;
+#    that single assertion is the only thing separating "the entry moved"
+#    from "an entry appeared".
+#
+#  * SCHEDULING MADE TO ACCEPT A meetings:join KEY -> only
+#    "a meetings:join key cannot schedule one either" goes red. The
+#    people:admit check stays green because that key holds NEITHER meeting
+#    scope, so it is not evidence about the schedule scope at all. It is
+#    kept because it is evidence about the people scope.
+#
+#  * CALENDAR REMOVAL DROPPED FROM CANCEL -> exactly one assertion goes red,
+#    "and it is off the calendar". Note that "gone from the timetable"
+#    stayed green: the list reads connect.meetings, not the calendar, so it
+#    can never be evidence about calendar rows.
+#
+# The first run of these steps also printed three FALSE greens: the meeting
+# had failed to be created, and `[ "" = "" ]` is true, so empty was being
+# compared to empty. That is what `same`, `has` and `hasnt` below exist for.
+#
 # Starts its own API, like tests/oidc/stage3-flow.sh, and takes the same
 # TATVAOS_PSQL / TATVAOS_PSQL_APP / TATVAOS_PG_HOST variables.
 # ---------------------------------------------------------------------------
@@ -51,6 +103,16 @@ if [ -z "${TATVAOS_PSQL:-}" ]; then
     fi
 fi
 PG()    { $TATVAOS_PSQL "$1" 2>/dev/null | grep -v "^wsl:" | tail -n1; }
+# Run a whole SQL FILE, on stdin, with the same psql PG uses minus its -Atc.
+# stdin rather than -f because a /c/... path handed to wsl is mangled by Git
+# Bash, and docker exec needs -i to forward stdin at all.
+PGFILE() {
+    local base="${TATVAOS_PSQL% -Atc}"
+    base="${base/docker exec /docker exec -i }"
+    # NOTICE lines carry a "psql:<file>:<line>: " prefix with -f and none on
+    # stdin; both shapes are noise here. Anything else printed is a failure.
+    $base -v ON_ERROR_STOP=1 -q < "$1" 2>&1 | grep -v "^wsl:" | grep -vE "^(psql:[^ ]*: )?NOTICE:" | grep -v "^$"
+}
 PGAPP() { $TATVAOS_PSQL_APP "$1" 2>/dev/null | grep -v "^wsl:" | tail -n1; }
 
 PASSED=0; FAILED=0
@@ -62,10 +124,39 @@ step() { printf '\n%s>> %s%s\n' "$CYAN" "$1" "$RST"; }
 j() { "$PY" -c "import sys,json; d=json.load(sys.stdin); print($1)" 2>/dev/null; }
 jq_() { printf '%s' "$1" | j "$2"; }
 status() { printf '%s' "$1" | tail -n1; }
+# same <label> <got> <want> — an empty operand is a FAILURE, never a match.
+# Without this, a step whose subject was never created compares "" with ""
+# and reports success (found on the first run of steps 12-16).
+same() {
+    if [ -z "$2" ] || [ -z "$3" ]; then fail "$1 — nothing to compare (got '$2', wanted '$3')"
+    elif [ "$2" = "$3" ]; then pass "$1"
+    else fail "$1 — got '$2', wanted '$3'"; fi
+}
+# has <label> <haystack> <needle> — likewise: an empty needle matches
+# everything, so it is refused rather than searched for.
+has() {
+    if [ -z "$3" ]; then fail "$1 — nothing to look for"
+    elif printf '%s' "$2" | grep -qF "$3"; then pass "$1"
+    else fail "$1 — not found"; fi
+}
+# hasnt <label> <haystack> <needle> — the same guard, opposite expectation.
+hasnt() {
+    if [ -z "$3" ]; then fail "$1 — nothing to look for"
+    elif printf '%s' "$2" | grep -qF "$3"; then fail "$1 — it is still there"
+    else pass "$1"; fi
+}
 body()   { printf '%s' "$1" | sed '$d'; }
 brief()  { printf '%s' "$1" | head -c 220 | tr '\n' ' '; }
-post()   { curl -s -w '\n%{http_code}' -X POST "$1" -H 'Content-Type: application/json' -H "Authorization: Bearer $2" -d "$3"; }
-admit()  { curl -s -w '\n%{http_code}' -X POST "$API/api/v1/org/people" -H 'Content-Type: application/json' ${1:+-H "Authorization: Bearer $1"} -d "$2"; }
+# ── EVERY ORG-API REQUEST ARRIVES FROM A DIFFERENT ADDRESS ──────────────────
+# The org-api limiter allows 30 a minute per calling address, keyed on the
+# last X-Forwarded-For entry. This suite fires well over 30 in a minute, and
+# when step 19 was added the very last join came back 429 while its check
+# said "join handed out a link to an ended class" — a limiter doing its job,
+# read as a bug in something else. So each request claims its own address,
+# and step 19 sends 31 from ONE fixed address to prove the limit is real.
+xff()    { printf '10.9.%d.%d' $((RANDOM % 250 + 1)) $((RANDOM % 250 + 1)); }
+post()   { curl -s -w '\n%{http_code}' -X POST "$1" -H 'Content-Type: application/json' -H "X-Forwarded-For: $(xff)" -H "Authorization: Bearer $2" -d "$3"; }
+admit()  { curl -s -w '\n%{http_code}' -X POST "$API/api/v1/org/people" -H 'Content-Type: application/json' -H "X-Forwarded-For: $(xff)" ${1:+-H "Authorization: Bearer $1"} -d "$2"; }
 
 export JWT_SIGNING_KEY='dev-only-key-at-least-32-characters-long'
 export ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS="$API"
@@ -192,6 +283,211 @@ n=$(PGAPP "SELECT count(*) FROM core.api_keys")
 [ "${n:-1}" -eq 0 ] && pass "no tenant context sees nothing" || fail "DANGEROUS: ${n:-?} key(s) with no tenant"
 [ "$(PGAPP "SELECT tenant_id::text FROM core.resolve_api_key((SELECT key_hash FROM core.api_keys WHERE id='$KEY_ID'))" 2>/dev/null)" = "" ] \
     && pass "the app role cannot read a hash it was not given" || printf '  - resolver spot-check skipped (needs the hash, which only the caller holds)\n'
+
+# ===========================================================================
+#  MEETINGS — a school's ERP scheduling classes and handing out join links
+#  (Amit, 18 September 2026). The claim that needed proving most is that a
+#  scheduled meeting reaches a CALENDAR, because until this change nothing
+#  put it on one.
+# ===========================================================================
+get_k()  { curl -s -w '\n%{http_code}' "$1" -H "X-Forwarded-For: $(xff)" -H "Authorization: Bearer $2"; }
+del_k()  { curl -s -w '\n%{http_code}' -X DELETE "$1" -H "X-Forwarded-For: $(xff)" -H "Authorization: Bearer $2"; }
+START=$("$PY" -c "import datetime as d;print((d.datetime.now(d.timezone.utc)+d.timedelta(days=2)).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+END=$("$PY"   -c "import datetime as d;print((d.datetime.now(d.timezone.utc)+d.timedelta(days=2,hours=1)).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+HOST_EMAIL='amit@techvein.local'
+HOST_ID=$(PG "SELECT id FROM core.users WHERE email='$HOST_EMAIL'")
+
+step "11. The meeting scopes are separate from the people scope"
+r=$(post "$API/api/org/keys" "$TOKEN" "{\"label\":\"ERP staff $RUN\",\"scopes\":[\"meetings:schedule\"]}")
+[ "$(status "$r")" = "201" ] && pass "a meetings:schedule key can be created" || fail "create: $(status "$r") $(brief "$(body "$r")")"
+SKEY=$(jq_ "$(body "$r")" "d['key']"); SKEY_ID=$(jq_ "$(body "$r")" "d['id']")
+r=$(post "$API/api/org/keys" "$TOKEN" "{\"label\":\"ERP students $RUN\",\"scopes\":[\"meetings:join\"]}")
+JKEY=$(jq_ "$(body "$r")" "d['key']")
+[ -n "$JKEY" ] && pass "so can a meetings:join key" || fail "could not create a join key"
+
+MEETING="{\"hostEmail\":\"$HOST_EMAIL\",\"title\":\"Physics $RUN\",\"startsAt\":\"$START\",\"endsAt\":\"$END\"}"
+# The whole point of two scopes: neither key may do the other's job, and the
+# people key may do neither.
+[ "$(status "$(post "$API/api/v1/org/meetings" "$KEY" "$MEETING")")" = "403" ] \
+    && pass "a people:admit key cannot schedule a meeting" || fail "LEAK: the people key scheduled a meeting"
+[ "$(status "$(post "$API/api/v1/org/meetings" "$JKEY" "$MEETING")")" = "403" ] \
+    && pass "a meetings:join key cannot schedule one either" || fail "LEAK: the student key scheduled a meeting"
+[ "$(status "$(admit "$SKEY" "{\"localPart\":\"x-$RUN\",\"displayName\":\"X\",\"recoveryEmail\":\"x@example.test\"}")")" = "403" ] \
+    && pass "and a meetings key cannot admit people" || fail "LEAK: a meetings key created a person"
+[ "$(status "$(post "$API/api/v1/org/meetings" "" "$MEETING")")" = "401" ] && pass "no key at all: 401" || fail "no key was not refused"
+
+step "12. Scheduling, as a named teacher rather than as the key"
+r=$(post "$API/api/v1/org/meetings" "$SKEY" "$MEETING")
+[ "$(status "$r")" = "201" ] && pass "scheduled (201)" || fail "schedule: $(status "$r") $(brief "$(body "$r")")"
+MID=$(jq_ "$(body "$r")" "d['id']")
+JOIN_URL=$(jq_ "$(body "$r")" "d['joinUrl']")
+[ -n "$MID" ] && pass "it has an id" || fail "no meeting id came back"
+same "the HOST is the teacher, not the key" "$(PG "SELECT created_by_user_id::text FROM connect.meetings WHERE id='$MID'")" "$HOST_ID"
+same "in the key's organisation" "$(PG "SELECT tenant_id::text FROM connect.meetings WHERE id='$MID'")" "$TECHVEIN"
+same "and it is a scheduled meeting" "$(PG "SELECT kind FROM connect.meetings WHERE id='$MID'")" "scheduled"
+has "the join link carries the meeting's own code" "$JOIN_URL" "$(PG "SELECT code FROM connect.meetings WHERE id='$MID'")"
+# The teacher is a participant from the start, so it shows in THEIR Connect
+# list — the same thing the console's own path guarantees.
+same "the teacher is the host participant" "$(PG "SELECT role FROM connect.participants WHERE meeting_id='$MID' AND user_id='$HOST_ID'")" "host"
+# An unknown teacher is refused rather than silently hosted by nobody.
+[ "$(status "$(post "$API/api/v1/org/meetings" "$SKEY" "{\"hostEmail\":\"nobody-$RUN@techvein.local\",\"startsAt\":\"$START\"}")")" = "400" ] \
+    && pass "an unknown hostEmail is refused" || fail "an unknown host was accepted"
+[ "$(status "$(post "$API/api/v1/org/meetings" "$SKEY" "{\"hostEmail\":\"$HOST_EMAIL\"}")")" = "400" ] \
+    && pass "a meeting with no start time is refused" || fail "a meeting with no time was accepted"
+
+step "13. It is on the teacher's CALENDAR — the thing that did not happen before"
+EVID=$(PG "SELECT id FROM calendar.events WHERE uid='connect-$MID@tatvaos.com' AND deleted_at IS NULL")
+[ -n "$EVID" ] && pass "a calendar event exists for the meeting" || fail "NO calendar event was created"
+same "carrying the join link, so the entry is clickable" "$(PG "SELECT meeting_url FROM calendar.events WHERE id='$EVID'")" "$JOIN_URL"
+same "organised by the teacher" "$(PG "SELECT organiser_user_id::text FROM calendar.events WHERE id='$EVID'")" "$HOST_ID"
+same "and it sits on the TEACHER'S own calendar" "$(PG "SELECT c.owner_user_id::text FROM calendar.events e JOIN calendar.calendars c ON c.id=e.calendar_id WHERE e.id='$EVID'")" "$HOST_ID"
+same "their primary one, which is the one the app opens on" "$(PG "SELECT c.is_primary FROM calendar.events e JOIN calendar.calendars c ON c.id=e.calendar_id WHERE e.id='$EVID'")" "t"
+same "with the meeting's title" "$(PG "SELECT title FROM calendar.events WHERE id='$EVID'")" "Physics $RUN"
+same "exactly one row, not one per call" "$(PG "SELECT count(*) FROM calendar.events WHERE uid='connect-$MID@tatvaos.com'")" "1"
+
+step "14. Rescheduling MOVES the calendar entry rather than replacing it"
+NEWSTART=$("$PY" -c "import datetime as d;print((d.datetime.now(d.timezone.utc)+d.timedelta(days=3)).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+# The END moves with it. Moving only the start pushed it past the old end, and
+# Connect refused the whole PATCH with "the meeting cannot end before it
+# starts" — correctly. That refusal is what the first version of this step was
+# actually measuring while claiming to measure the calendar.
+NEWEND=$("$PY" -c "import datetime as d;print((d.datetime.now(d.timezone.utc)+d.timedelta(days=3,hours=1)).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+# The reschedule itself is ASSERTED, not assumed. On the first run the two
+# calendar checks below went red and looked like a broken mirror; the PATCH
+# had been thrown away with -o /dev/null, so nothing said whether the
+# meeting had been rescheduled at all. A check whose subject may not have
+# happened does not test what its label claims.
+r=$(curl -s -w '\n%{http_code}' -X PATCH "$API/api/connect/meetings/$MID" -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer $TOKEN" -d "{\"title\":\"Physics moved $RUN\",\"scheduledStart\":\"$NEWSTART\",\"scheduledEnd\":\"$NEWEND\"}")
+case "$(status "$r")" in
+  200|204) pass "the teacher rescheduled it ($(status "$r"))" ;;
+  *) fail "the reschedule itself was refused: $(status "$r") $(brief "$(body "$r")")" ;;
+esac
+same "the calendar entry follows a rename" "$(PG "SELECT title FROM calendar.events WHERE uid='connect-$MID@tatvaos.com' AND deleted_at IS NULL")" "Physics moved $RUN"
+same "and follows a reschedule — nobody is left at the old slot" "$(PG "SELECT date_trunc('minute',starts_at) = date_trunc('minute','$NEWSTART'::timestamptz) FROM calendar.events WHERE uid='connect-$MID@tatvaos.com' AND deleted_at IS NULL")" "t"
+same "still one row after the change" "$(PG "SELECT count(*) FROM calendar.events WHERE uid='connect-$MID@tatvaos.com' AND deleted_at IS NULL")" "1"
+# ── WHAT THIS ONE ASSERTION CARRIES, from calibrating the step ──────────────
+# With the mirror removed from meeting CREATION, steps 13 went fully red and
+# step 14 stayed green: the upsert on the update path simply made the row
+# itself, so "the calendar follows a rename" was true for the wrong reason.
+# Comparing the row's IDENTITY to the one step 13 saw is what separates
+# "the entry moved" from "an entry appeared", and it is the only assertion
+# here that can tell the difference.
+same "and it is the SAME row, not a replacement" "$(PG "SELECT id FROM calendar.events WHERE uid='connect-$MID@tatvaos.com' AND deleted_at IS NULL")" "$EVID"
+
+step "15. The join half, which is all a student's ERP may do — and may learn"
+r=$(post "$API/api/v1/org/meetings/$MID/join" "$JKEY" "")
+[ "$(status "$r")" = "200" ] && pass "a join key gets a link (200), sending nothing but the id" || fail "join: $(status "$r") $(brief "$(body "$r")")"
+same "the same link the meeting carries" "$(jq_ "$(body "$r")" "d['joinUrl']")" "$JOIN_URL"
+same "and what to tell the student, from the waiting-room setting" "$(jq_ "$(body "$r")" "'yes' if d.get('guidance') else ''")" "yes"
+same "the teacher's name is on the class" "$(jq_ "$(body "$r")" "d['hostName']")" "$(PG "SELECT display_name FROM core.users WHERE id='$HOST_ID'")"
+# ── WHAT A STUDENT-PORTAL KEY MUST NEVER LEARN (CTO review, 18 Sept 2026) ──
+# The first version took an email and answered "recognised", which made a
+# stolen portal key an oracle for whether any address belongs to the school.
+# No '@' anywhere in the join response is the blunt form of the rule, and it
+# holds for the teacher's email, the host id, and anything added later.
+hasnt "and no email address anywhere in it" "$(body "$r")" "@"
+hasnt "nor the teacher's account id" "$(body "$r")" "$HOST_ID"
+r=$(get_k "$API/api/v1/org/meetings/$MID" "$JKEY")
+[ "$(status "$r")" = "200" ] && pass "a join key can read a class it holds the id of" || fail "get: $(status "$r")"
+hasnt "and sees the teacher's name, never their email" "$(body "$r")" "$HOST_EMAIL"
+r=$(get_k "$API/api/v1/org/meetings/$MID" "$SKEY")
+has "the schedule key, by contrast, sees the host as a person" "$(body "$r")" "$HOST_EMAIL"
+# Reading is reading: the join key must not be able to cancel.
+[ "$(status "$(del_k "$API/api/v1/org/meetings/$MID" "$JKEY")")" = "403" ] \
+    && pass "a join key cannot cancel the class" || fail "LEAK: a student key cancelled a meeting"
+# And the whole timetable — every class, every teacher — is the staff view.
+[ "$(status "$(get_k "$API/api/v1/org/meetings?from=$START" "$JKEY")")" = "403" ] \
+    && pass "a join key cannot read the organisation's timetable" || fail "LEAK: a student key listed every class"
+r=$(get_k "$API/api/v1/org/meetings?from=$START" "$SKEY")
+[ "$(status "$r")" = "200" ] && pass "the schedule key can" || fail "list: $(status "$r")"
+has "and the class is on it" "$(body "$r")" "$MID"
+
+step "16. Cancelling takes it off the calendar too"
+[ "$(status "$(del_k "$API/api/v1/org/meetings/$MID" "$SKEY")")" = "204" ] && pass "cancelled (204)" || fail "cancel refused"
+same "the meeting says cancelled" "$(PG "SELECT status FROM connect.meetings WHERE id='$MID'")" "cancelled"
+same "and it is off the calendar — no cancelled class left sitting on Monday" "$(PG "SELECT count(*) FROM calendar.events WHERE uid='connect-$MID@tatvaos.com' AND deleted_at IS NULL")" "0"
+r=$(get_k "$API/api/v1/org/meetings?from=$START" "$SKEY")
+hasnt "and gone from the timetable" "$(body "$r")" "$MID"
+
+step "17. The audit trail, and RLS"
+[ "$(PG "SELECT count(*) FROM core.audit_logs WHERE action='org.api_meeting_scheduled' AND target_id='$SKEY_ID'")" -ge 1 ] \
+    && pass "the scheduling is recorded against the key" || fail "no audit row for the scheduled meeting"
+[ "$(PG "SELECT count(*) FROM core.audit_logs WHERE action='org.api_meeting_cancelled' AND target_id='$SKEY_ID'")" -ge 1 ] \
+    && pass "so is the cancellation" || fail "no audit row for the cancellation"
+n=$(grep -c -F "$SKEY" "$LOG"); [ "$n" -eq 0 ] && pass "the meetings key appears nowhere in the API log" || fail "the key appears $n time(s) in the log"
+# A key belonging to another organisation must not see this meeting at all.
+n=$(PGAPP "SET app.tenant_id='$SCHOOL'; SELECT count(*) FROM connect.meetings WHERE id='$MID'")
+[ "${n:-1}" -eq 0 ] && pass "ABC School cannot see Techvein's class" || fail "LEAK: the school sees ${n:-?} Techvein meeting(s)"
+n=$(PGAPP "SET app.tenant_id='$SCHOOL'; SELECT count(*) FROM calendar.events WHERE uid='connect-$MID@tatvaos.com'")
+[ "${n:-1}" -eq 0 ] && pass "nor its calendar entry" || fail "LEAK: the school sees the calendar row"
+
+step "18. The backfill writes the row the mirror would have (CTO condition 1)"
+r=$(post "$API/api/v1/org/meetings" "$SKEY" "{\"hostEmail\":\"$HOST_EMAIL\",\"title\":\"Chemistry $RUN\",\"startsAt\":\"$START\",\"endsAt\":\"$END\"}")
+[ "$(status "$r")" = "201" ] && pass "a second class scheduled" || fail "schedule: $(status "$r") $(brief "$(body "$r")")"
+MID2=$(jq_ "$(body "$r")" "d['id']"); CREATE2="$(body "$r")"
+UID2="connect-$MID2@tatvaos.com"
+# Every field the mirror wrote, as one string, BEFORE the row is removed.
+FIELDS="calendar_id::text||'|'||title||'|'||starts_at::text||'|'||ends_at::text||'|'||timezone||'|'||meeting_url||'|'||coalesce(description,'')||'|'||sequence::text||'|'||organiser_user_id::text||'|'||created_by_user_id::text||'|'||status||'|'||transparency"
+MIRRORED=$(PG "SELECT $FIELDS FROM calendar.events WHERE uid='$UID2' AND deleted_at IS NULL")
+[ -n "$MIRRORED" ] && pass "its calendar row is there (the mirror)" || fail "no mirrored row to compare against"
+PG "DELETE FROM calendar.events WHERE uid='$UID2'" >/dev/null
+same "removed, to stand in for a meeting that predates the mirror" "$(PG "SELECT count(*) FROM calendar.events WHERE uid='$UID2'")" "0"
+out=$(PGFILE "$ROOT/local/postgres/init/20260918-connect-meetings-on-calendar.sql")
+[ -z "$out" ] && pass "the migration file ran clean" || fail "the migration printed: $(printf '%s' "$out" | head -c 300)"
+BACKFILLED=$(PG "SELECT $FIELDS FROM calendar.events WHERE uid='$UID2' AND deleted_at IS NULL")
+same "and wrote a row that matches the mirror's, field for field" "$BACKFILLED" "$MIRRORED"
+# ── THE CLAIM THIS CARRIES ──────────────────────────────────────────────────
+# ConnectCalendarMirror and the SQL file are two implementations of one
+# row. The comparison above is the only thing that notices when one of them
+# changes and the other does not — title fallback, the one-hour default end,
+# the zone fallback, the description sentence, the join URL's base.
+BEFORE=$(PG "SELECT count(*) FROM calendar.events WHERE uid LIKE 'connect-%'")
+PGFILE "$ROOT/local/postgres/init/20260918-connect-meetings-on-calendar.sql" >/dev/null
+same "a second run inserts nothing" "$(PG "SELECT count(*) FROM calendar.events WHERE uid LIKE 'connect-%'")" "$BEFORE"
+same "and the row is still exactly one" "$(PG "SELECT count(*) FROM calendar.events WHERE uid='$UID2' AND deleted_at IS NULL")" "1"
+
+step "19. What the guide promises (CTO condition 3)"
+[ "$(status "$(del_k "$API/api/v1/org/meetings/$MID" "$SKEY")")" = "204" ] \
+    && pass "cancelling an already-cancelled class answers 204 again" || fail "a second cancel was not 204"
+same "times come back in UTC" "$(jq_ "$CREATE2" "'utc' if d['startsAt'].endswith('+00:00') or d['startsAt'].endswith('Z') else d['startsAt']")" "utc"
+PG "UPDATE connect.meetings SET status='active' WHERE id='$MID2'" >/dev/null
+[ "$(status "$(del_k "$API/api/v1/org/meetings/$MID2" "$SKEY")")" = "409" ] \
+    && pass "a RUNNING class cannot be cancelled from the API (409)" || fail "a running class was cancelled by a batch job"
+same "and it was not touched" "$(PG "SELECT status FROM connect.meetings WHERE id='$MID2'")" "active"
+[ "$(status "$(post "$API/api/v1/org/meetings/$MID2/join" "$JKEY" "")")" = "200" ] \
+    && pass "but is still joinable — a class in progress is exactly when the link matters" || fail "join refused a running class"
+PG "UPDATE connect.meetings SET status='ended' WHERE id='$MID2'" >/dev/null
+[ "$(status "$(post "$API/api/v1/org/meetings/$MID2/join" "$JKEY" "")")" = "409" ] \
+    && pass "and an ended one answers 409, not a link to an empty room" || fail "join handed out a link to an ended class"
+# "30 requests a minute, per calling address" — from one address, the 31st
+# is refused and the 30th was not. A key is used so the refusal is the
+# limiter's and not a 401 from an unauthenticated call.
+ONE_ADDR="10.9.251.$((RANDOM % 250 + 1))"
+last=""; thirtieth=""
+for i in $(seq 1 31); do
+    last=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/api/v1/org/meetings/$MID2/join" \
+           -H "X-Forwarded-For: $ONE_ADDR" -H "Authorization: Bearer $JKEY" -H 'Content-Type: application/json' -d "")
+    [ "$i" -eq 30 ] && thirtieth="$last"
+done
+[ "$thirtieth" != "429" ] && [ "$last" = "429" ] \
+    && pass "the 31st request in a minute from one address is refused (429); the 30th was not ($thirtieth)" \
+    || fail "rate limit: 30th answered $thirtieth, 31st answered $last"
+# 'Left out, it becomes "Firstname's meeting"' and 'Defaults to Asia/Kolkata':
+# one class with neither a title nor a zone.
+r=$(post "$API/api/v1/org/meetings" "$SKEY" "{\"hostEmail\":\"$HOST_EMAIL\",\"startsAt\":\"$START\"}")
+FIRST=$(PG "SELECT split_part(btrim(display_name), ' ', 1) FROM core.users WHERE id='$HOST_ID'")
+same "a class with no title is named after its teacher's first name" "$(jq_ "$(body "$r")" "d['title']")" "$FIRST's meeting"
+same "and with no zone it is held in Asia/Kolkata" "$(jq_ "$(body "$r")" "d['timezone']")" "Asia/Kolkata"
+MID3=$(jq_ "$(body "$r")" "d['id']"); [ -n "$MID3" ] && del_k "$API/api/v1/org/meetings/$MID3" "$SKEY" >/dev/null
+
+step "20. A person has a calendar the moment they exist (CTO condition 2)"
+# NEW_ID was made in step 4 through the console's own method, by the people
+# API. Before this change the migration's backfill would have given them one
+# on the NEXT deploy; now it is in the same transaction as the person.
+same "the person the people API admitted has a primary calendar" "$(PG "SELECT count(*) FROM calendar.calendars WHERE owner_user_id='$NEW_ID' AND is_primary AND deleted_at IS NULL")" "1"
+same "named as the migration's backfill names it, so a re-run adds nothing" "$(PG "SELECT name FROM calendar.calendars WHERE owner_user_id='$NEW_ID' AND is_primary")" "My calendar"
+same "in their own organisation" "$(PG "SELECT tenant_id::text FROM calendar.calendars WHERE owner_user_id='$NEW_ID' AND is_primary")" "$TECHVEIN"
 
 printf '\n%s%s%s\n  %s%d passed%s, ' "$CYAN" "----------------------------------------" "$RST" "$GREEN" "$PASSED" "$RST"
 [ "$FAILED" -eq 0 ] && printf '%s0 failed%s\n\n' "$GREEN" "$RST" || printf '%s%d failed%s\n\n' "$RED" "$FAILED" "$RST"

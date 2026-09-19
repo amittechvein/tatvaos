@@ -347,17 +347,91 @@ if [ -z "$MAIL_HOST" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+#  5. The rate limit holds THROUGH the proxy.       (CTO, 19 Sept 2026)
+#
+#  Every limiter in the API keys on the LAST X-Forwarded-For entry — the one
+#  Caddy appends — so a client that sends its own X-Forwarded-For gains
+#  nothing. That is a property of the API and Caddy TOGETHER: the API alone
+#  would be fooled by a spoofed header (tests/orgapi does exactly that to
+#  get past its own limit), and Caddy alone limits nothing. Testing the
+#  limiter directly proves the limiter; this proves the system.
+#
+#  So: 31 requests to a live, unauthenticated, rate-limited endpoint, each
+#  with a DIFFERENT fake X-Forwarded-For. If the limit is keyed on what
+#  Caddy appended, the 31st is refused. If it is keyed on what the client
+#  sent, all 31 get through — and every limit on the platform (OIDC token,
+#  handoff minting, the organisation API) is decorative.
+#
+#  The window is a fixed minute per address, and this script may be run
+#  twice within one (a deploy retried, or an operator re-checking). If the
+#  FIRST request is already refused, this run's quota was spent by the last
+#  run, so it waits for the window to turn and tries once more rather than
+#  reporting the previous run's leftovers as a verdict on this one.
+#
+#  What would prove this wrong: a 30th request answered 429 (the limit is
+#  tighter than documented, or the window did not reset), or a 31st answered
+#  anything else (spoofing works, or there is no limit).
+# ---------------------------------------------------------------------------
+check_rate_limit() {
+    step "Rate limit through the proxy"
+
+    local domain="${VERIFY_DOMAIN:-$(grep '^SITE_DOMAIN=' infra/docker/.env 2>/dev/null | cut -d= -f2)}"
+    if [ -z "$domain" ]; then
+        bad "SITE_DOMAIN is not set in infra/docker/.env — cannot reach the API through Caddy."
+        return 1
+    fi
+    if ! command -v curl >/dev/null 2>&1; then
+        bad "curl is not installed on this host; the limit cannot be probed."
+        return 1
+    fi
+
+    local url="https://${domain}/api/v1/org/people"
+    local attempt codes thirtieth last first
+    for attempt in 1 2; do
+        codes=""
+        local i
+        for i in $(seq 1 31); do
+            codes="$codes $(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X POST "$url" \
+                -H "X-Forwarded-For: 203.0.113.$i" -H 'Content-Type: application/json' -d '{}')"
+        done
+        set -- $codes
+        first=$1; thirtieth=${30}; last=${31}
+        if [ "$first" = "429" ] && [ "$attempt" -eq 1 ]; then
+            note "already refused on the first request — an earlier run spent this minute's quota; waiting 61s for the window"
+            sleep 61
+            continue
+        fi
+        break
+    done
+
+    if [ "$thirtieth" != "429" ] && [ "$last" = "429" ]; then
+        ok "31 requests with 31 different spoofed X-Forwarded-For: 30th answered ${thirtieth}, 31st refused (429)"
+        note "the limit is keyed on the address Caddy appends, not on what the client claims"
+        return 0
+    fi
+    bad "spoofed X-Forwarded-For through Caddy: 1st ${first}, 30th ${thirtieth}, 31st ${last}"
+    if [ "$last" != "429" ]; then
+        note "the 31st request was NOT refused: either the limiter reads the client's own header, or there is no limit"
+    else
+        note "the 30th request was refused: the window did not reset, or the limit is tighter than 30"
+    fi
+    note "codes: ${codes}"
+    return 1
+}
+
+# ---------------------------------------------------------------------------
 #  Run everything. No check aborts the script: a dead IMAP must not hide a
 #  stuck queue — the operator gets the whole picture, then one verdict.
 # ---------------------------------------------------------------------------
-check_services || true
-check_imap     || true
-check_smtp     || true
-check_queue    || true
+check_services   || true
+check_imap       || true
+check_smtp       || true
+check_queue      || true
+check_rate_limit || true
 
 step "Verdict"
 if [ "$FAILURES" -gt 0 ]; then
     printf '\n   %s%sNOT verified — %d check(s) failed.%s\n\n' "$B" "$R" "$FAILURES" "$X"
     exit 1
 fi
-printf '\n   %sproduction verified — services, IMAP, SMTP, queue all answer.%s\n\n' "$G" "$X"
+printf '\n   %sproduction verified — services, IMAP, SMTP, queue all answer; the rate limit holds through the proxy.%s\n\n' "$G" "$X"

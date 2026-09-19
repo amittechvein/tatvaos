@@ -86,7 +86,7 @@ public static class BootstrapAdmin
             tenant.EnterPlatformScope(org.Id, Guid.Empty);
             await db.SyncTenantAsync();
 
-            db.Users.Add(new User
+            var admin = new User
             {
                 TenantId = org.Id,
                 Email = email,
@@ -97,7 +97,9 @@ public static class BootstrapAdmin
                 // They chose this password from an environment variable, which
                 // tends to mean it is in a shell history and a deploy log.
                 MustChangePassword = true,
-            });
+            };
+            db.Users.Add(admin);
+            db.Calendars.Add(TatvaOS.Api.Modules.Calendar.CalendarProvisioning.PrimaryFor(org.Id, admin.Id));
 
             await db.SaveChangesAsync();
 

@@ -265,9 +265,11 @@ jobs:
       - name: "OIDC stage 3: the ten-step flow"
         run: bash tests/oidc/stage3-flow.sh
 
-      # The organisation API: a key that creates people, so its refusals are
-      # the thing worth running on every push, not only the happy path.
-      - name: "Organisation API: admitting people with a key"
+      # The organisation API: keys that create people and schedule meetings,
+      # so its refusals are the thing worth running on every push, not only
+      # the happy path. Also the only check that a scheduled meeting reaches
+      # a calendar at all.
+      - name: "Organisation API: people, meetings and the calendar"
         run: bash tests/orgapi/test-org-api.sh
 
       - name: Install the web app's TypeScript (for the PiP check)

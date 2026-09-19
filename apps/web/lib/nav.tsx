@@ -206,6 +206,7 @@ export function organisationNav(): NavSection[] {
           children: [
             { href: '/org/api-keys', label: 'Mail API' },
             { href: '/org/api-keys/people', label: 'People API' },
+            { href: '/org/api-keys/meetings', label: 'Meetings API' },
             { href: '/org/applications', label: 'SSO applications' },
           ],
         },

@@ -1,14 +1,20 @@
 'use client';
 
 /**
- * People API keys — a customer's own software adding their people
- * (Amit, 18 September 2026).
+ * Meetings API keys — a school's ERP scheduling classes and handing students
+ * the link to join them (Amit, 18 September 2026).
  *
- * ITS OWN PAGE, not a section on the mail-key screen. The two credentials
- * look alike and are not alike: a mail key sends mail, and this one creates
- * sign-in identities. Sharing a screen invited an administrator to think of
- * them as one thing with two settings, which is exactly the thought that ends
- * with one key that can do both.
+ * ITS OWN PAGE, for the reason the People API has one: these credentials look
+ * alike and are not alike. A mail key sends mail, a people key creates
+ * sign-in identities, and these two put classes on teachers' calendars. One
+ * screen with three sets of tick-boxes invites an administrator to think of
+ * them as one thing with settings, which is the thought that ends in a single
+ * key that can do everything.
+ *
+ * TWO SCOPES ON PURPOSE, and the page says why in the words an administrator
+ * reads: the staff half of an ERP schedules, the student half only reads and
+ * hands out links. A student portal carrying a key that could cancel every
+ * class in the school is the failure this separation exists to prevent.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -32,38 +38,43 @@ interface OrgKeyRow {
 }
 
 /**
- * The one thing a key can be given today, in the words an administrator reads.
- * The hint says what it CANNOT do, because that is the question a careful
- * person asks about a credential that creates accounts.
+ * The two things a meetings key can be given. The hint on each says what it
+ * CANNOT do, because that is the question a careful person asks about a
+ * credential they are about to paste into somebody else's software.
  */
-const ORG_SCOPES: { scope: string; label: string; hint: string }[] = [
+const MEETING_SCOPES: { scope: string; label: string; hint: string }[] = [
   {
-    scope: 'people:admit',
-    label: 'Add people to this organisation',
-    hint: 'Creates the person and sends them an invitation. It cannot make anyone an administrator, and it cannot set anyone a password.',
+    scope: 'meetings:schedule',
+    label: 'Schedule meetings for people in this organisation',
+    hint: 'Create, reschedule and cancel classes, each one hosted by a named teacher. It cannot add people, and it cannot end a meeting that is running.',
+  },
+  {
+    scope: 'meetings:join',
+    label: 'Read meetings and hand out join links',
+    hint: 'For the half of your software students use. It can give out the join link for a class it holds the id of. It cannot list the timetable, cannot create, change or cancel anything, and never sees an email address.',
   },
 ];
-const PEOPLE_SCOPE_SET = new Set(ORG_SCOPES.map((s) => s.scope));
+const MEETING_SCOPE_SET = new Set(MEETING_SCOPES.map((s) => s.scope));
 
 function scopeLabel(scope: string): string {
-  return ORG_SCOPES.find((s) => s.scope === scope)?.label ?? scope;
+  return MEETING_SCOPES.find((s) => s.scope === scope)?.label ?? scope;
 }
 
 function when(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-export default function PeopleApiKeysPage() {
+export default function MeetingsApiKeysPage() {
   const { authedFetch } = useAuth();
   const [rows, setRows] = useState<OrgKeyRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [fresh, setFresh] = useState<{ key: string; label: string } | null>(null);
   const [copied, setCopied] = useState(false);
-  const [endpoint, setEndpoint] = useState('https://core.tatvaos.com/api/v1/org/people');
+  const [endpoint, setEndpoint] = useState('https://core.tatvaos.com/api/v1/org/meetings');
 
   useEffect(() => {
-    if (typeof window !== 'undefined') setEndpoint(`${window.location.origin}/api/v1/org/people`);
+    if (typeof window !== 'undefined') setEndpoint(`${window.location.origin}/api/v1/org/meetings`);
   }, []);
 
   const load = useCallback(async () => {
@@ -72,10 +83,9 @@ export default function PeopleApiKeysPage() {
       if (!r.ok) throw new Error('Could not load the keys.');
       const all = (await r.json()) as OrgKeyRow[];
       // Only this page's keys. /org/keys returns every organisation key there
-      // is, and once meetings keys existed (18 Sept 2026) an unfiltered list
-      // showed them here under "May do" with their raw scope name, on a screen
-      // whose every other sentence is about creating people.
-      setRows(all.filter((k) => k.scopes.some((x) => PEOPLE_SCOPE_SET.has(x))));
+      // is, and a people key listed here — or a meetings key listed on the
+      // People screen — would be described by the wrong page's words.
+      setRows(all.filter((k) => k.scopes.some((s) => MEETING_SCOPE_SET.has(s))));
     } catch (e) { setError((e as Error).message); setRows([]); }
   }, [authedFetch]);
   useEffect(() => { void load(); }, [load]);
@@ -96,13 +106,13 @@ export default function PeopleApiKeysPage() {
   return (
     <AdminShell
       scope="organisation"
-      title="People API"
-      subtitle="Let your own software add people to this organisation"
+      title="Meetings API"
+      subtitle="Let your own software schedule classes and hand out join links"
       actions={
         <div className="flex gap-2">
           {/* A real link, not a Button with href: Button renders a Next
               <Link>, which routes instead of opening the static page. */}
-          <a href="/docs/people-api-guide.html" target="_blank" rel="noopener"
+          <a href="/docs/meetings-api-guide.html" target="_blank" rel="noopener"
              className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink no-underline transition-colors hover:bg-canvas">
             Integration guide
           </a>
@@ -113,10 +123,10 @@ export default function PeopleApiKeysPage() {
       {error && <Alert tone="danger" onDismiss={() => setError(null)}>{error}</Alert>}
 
       <p className="mb-4 text-[0.75rem] text-ink-muted">
-        For a student information system, an HR package, or anything else of yours that knows who
-        joins. Each person added this way gets an invitation to set their own password, exactly as if
-        you had added them here. <strong>A key can add ordinary people. It cannot make anyone an
-        administrator, and it never sets anyone&apos;s password.</strong>
+        For a student information system, a timetable, or anything else of yours that already knows
+        who teaches what and when. A meeting scheduled this way is hosted by the teacher you name,
+        appears on <strong>their calendar</strong>, and can be edited in Connect exactly like one they
+        created themselves.
       </p>
 
       {fresh && (
@@ -134,16 +144,17 @@ export default function PeopleApiKeysPage() {
               {copied ? 'Copied' : 'Copy key'}
             </Button>
           </div>
-          <div className="mb-1 text-[0.75rem] text-ink-muted">Adding one person, from your own software:</div>
+          <div className="mb-1 text-[0.75rem] text-ink-muted">Scheduling one class, from your own software:</div>
           <pre className="mb-0 rounded bg-canvas p-4 text-[0.75rem]" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
 {`POST ${endpoint}
 Authorization: Bearer ${fresh.key}
 Content-Type: application/json
 
 {
-  "localPart":     "asha.rao",
-  "displayName":   "Asha Rao",
-  "recoveryEmail": "asha@example.com"
+  "hostEmail": "teacher@yourschool.edu",
+  "title":     "Physics — Class 10B",
+  "startsAt":  "2026-09-21T09:00:00+05:30",
+  "endsAt":    "2026-09-21T10:00:00+05:30"
 }`}
           </pre>
         </Card>
@@ -155,7 +166,7 @@ Content-Type: application/json
         ) : live.length === 0 ? (
           <Empty
             title="No keys yet"
-            hint="Create one per program that adds people. Revoking one never affects another."
+            hint="Create one for the half of your software that schedules, and a separate one for the half students use."
             action={<Button variant="primary" onClick={() => setCreating(true)}>New key</Button>}
           />
         ) : (
@@ -194,40 +205,46 @@ Content-Type: application/json
         </Card>
       )}
 
-      <Card title="How your software adds a person" subtitle="One request. The person does the rest.">
+      <Card title="Two keys, not one" subtitle="The half that schedules and the half students use are different things.">
+        <p className="text-[0.8125rem] text-ink-muted mb-3">
+          Give the staff side of your software a key that may <strong>schedule</strong>, and the student
+          side a separate key that may only <strong>read and hand out links</strong>. If one key did
+          both, the copy sitting in a student portal could cancel every class in the school.
+        </p>
         <ol className="ps-4 mb-4">
           <li className="mb-3">
-            <div className="font-semibold">Create a key here</div>
+            <div className="font-semibold">A teacher creates a class</div>
             <div className="text-[0.8125rem] text-ink-muted">
-              One per program, named for what it does. It is shown once.
+              One request naming the teacher by their address. It lands on that teacher&apos;s own
+              calendar with the join link on it, and in their Connect list.
             </div>
           </li>
           <li className="mb-3">
-            <div className="font-semibold">Send one request per person</div>
+            <div className="font-semibold">A student opens the link</div>
             <div className="text-[0.8125rem] text-ink-muted">
-              <code>localPart</code> becomes their address on your verified domain.
-              <code className="ms-1">recoveryEmail</code> or <code>recoveryPhone</code> is where their
-              invitation goes — one of the two is required, because an account nobody can enter is
-              worse than no account.
+              A student who has a TatvaOS account signs in and walks in. Anyone else gives their name
+              at the door. The join call tells you whether the door holds guests, so your software can
+              say so first.
             </div>
           </li>
           <li className="mb-0">
-            <div className="font-semibold">They set their own password</div>
+            <div className="font-semibold">Changes follow</div>
             <div className="text-[0.8125rem] text-ink-muted">
-              From the invitation. Your software never handles it, and neither do you.
+              Rescheduling moves the calendar entry; cancelling takes it off. Nobody is left holding
+              the old time.
             </div>
           </li>
         </ol>
         <p className="text-[0.8125rem] text-ink-muted mb-3">
           Handing this to a developer? The{' '}
-          <a href="/docs/people-api-guide.html" target="_blank" rel="noopener">integration guide</a>{' '}
-          has every field, every answer, working examples in curl, Node.js and Python, and what a key
-          deliberately cannot do.
+          <a href="/docs/meetings-api-guide.html" target="_blank" rel="noopener">integration guide</a>{' '}
+          has every field, working examples in curl, Node.js and Python, and what a key deliberately
+          cannot do.
         </p>
         <div className="text-[0.8125rem] text-ink-muted mb-0">
           Answers you may see: <code>401</code> the key is not valid or was revoked,
-          <code className="ms-1">403</code> the key is real but not allowed to add people,
-          <code className="ms-1">409</code> that address already exists,
+          <code className="ms-1">403</code> the key is real but not allowed to do that,
+          <code className="ms-1">409</code> the meeting is over or running,
           <code className="ms-1">400</code> with a sentence saying what was wrong.
         </div>
       </Card>
@@ -250,7 +267,9 @@ function NewKeyDialog({ onClose, onCreated, onError }: {
 }) {
   const { authedFetch } = useAuth();
   const [label, setLabel] = useState('');
-  const [scopes, setScopes] = useState<string[]>(['people:admit']);
+  // Nothing ticked by default. A meetings key is two quite different powers,
+  // and the one that is pre-selected is the one nobody reads.
+  const [scopes, setScopes] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
   async function create() {
@@ -268,7 +287,7 @@ function NewKeyDialog({ onClose, onCreated, onError }: {
 
   return (
     <Modal
-      title="New People API key"
+      title="New Meetings API key"
       onClose={onClose}
       busy={busy}
       footer={
@@ -283,12 +302,12 @@ function NewKeyDialog({ onClose, onCreated, onError }: {
     >
       <Field label="What is this key for?" required
              hint="The program that will use it. You will see this name when deciding what to revoke.">
-        <Input value={label} placeholder="Student information system" maxLength={100} autoFocus
+        <Input value={label} placeholder="Timetable — staff" maxLength={100} autoFocus
                onChange={(e) => setLabel(e.target.value)} />
       </Field>
       <div className="mt-3 rounded-lg border border-line bg-canvas p-3">
         <p className="mb-2 text-sm font-semibold text-ink">What may this key do?</p>
-        {ORG_SCOPES.map((o) => (
+        {MEETING_SCOPES.map((o) => (
           <Checkbox
             key={o.scope}
             label={o.label}
@@ -297,6 +316,10 @@ function NewKeyDialog({ onClose, onCreated, onError }: {
             onChange={(e) => setScopes((cur) => (e.target.checked ? [...cur, o.scope] : cur.filter((x) => x !== o.scope)))}
           />
         ))}
+        <p className="mt-2 mb-0 text-[0.75rem] text-ink-muted">
+          Ticking both makes one key that can do everything. Prefer two keys — one per half of your
+          software — so the student-facing one cannot change anything.
+        </p>
       </div>
     </Modal>
   );
