@@ -84,20 +84,102 @@ test('the server’s own sentence is shown when it refuses, and nothing is hande
   expect(onCreated).not.toHaveBeenCalled();
 });
 
-test('late at night the screen opens on tomorrow — and today still says why it is empty', () => {
+test('late at night the screen opens on tomorrow morning, ready to schedule', async () => {
   const at2330 = new Date();
   at2330.setHours(23, 30, 0, 0);
   jest.useFakeTimers({ now: at2330.getTime(), doNotFake: REAL_TIMERS });
   try {
     const r = render(<ScheduleMeeting session={session} onCreated={() => {}} onBack={() => {}} />);
-    // Opened on tomorrow with a time already chosen, so Schedule works at once.
-    expect(r.queryByText(/No times left today/)).toBeNull();
-    expect(r.getByText(/^Tomorrow, /)).toBeTruthy();
-    expect(r.getByLabelText('Schedule this meeting')).not.toBeDisabled();
-    // Choosing today explains itself rather than rendering a gap.
-    fireEvent.press(r.getByLabelText('Today'));
-    expect(r.getByText(/No times left today/)).toBeTruthy();
+    // Not 11.30 tonight and not midnight: a time somebody would actually pick.
+    expect(r.getByText('Tomorrow, 9:00 am · 30 minutes')).toBeTruthy();
+    expect(r.queryByText(/already passed/)).toBeNull();
+    fireEvent.press(r.getByLabelText('Schedule this meeting'));
+    await waitFor(() => expect(api.create).toHaveBeenCalled());
+    const start = new Date(api.create.mock.calls[0][2].scheduledStart);
+    expect(start.getHours()).toBe(9);
+    expect(start.getDate()).toBe(new Date(at2330.getTime() + 86400000).getDate());
   } finally {
     jest.useRealTimers();
   }
+});
+
+// ── date and time are SELECTED, not read off a list (Amit, 19 Sept 2026) ────
+
+test('at ten in the morning it opens on today at 10:30 — the next half hour, ten minutes clear', () => {
+  const r = render(<ScheduleMeeting session={session} onCreated={() => {}} onBack={() => {}} />);
+  expect(r.getByText('Today, 10:30 am · 30 minutes')).toBeTruthy();
+  expect(r.getByLabelText('Time').props.accessibilityValue).toEqual({ text: '10:30 am' });
+  expect(r.getByLabelText('Date').props.accessibilityValue.text).toMatch(/^Today · /);
+});
+
+test('the time sheet sets any five minutes of the day, and only on Done', async () => {
+  const r = render(<ScheduleMeeting session={session} onCreated={() => {}} onBack={() => {}} />);
+  fireEvent.press(r.getByLabelText('Time'));
+  fireEvent.press(r.getByLabelText('Hour 4'));
+  fireEvent.press(r.getByLabelText('Minute 15'));
+  fireEvent.press(r.getByLabelText('PM'));
+  // Chosen in the sheet, not yet in the field: closing without Done must change nothing.
+  expect(r.getByText('Today, 10:30 am · 30 minutes')).toBeTruthy();
+  fireEvent.press(r.getByLabelText('Use this time'));
+  expect(r.getByText('Today, 4:15 pm · 30 minutes')).toBeTruthy();
+
+  fireEvent.press(r.getByLabelText('Schedule this meeting'));
+  await waitFor(() => expect(api.create).toHaveBeenCalled());
+  const start = new Date(api.create.mock.calls[0][2].scheduledStart);
+  expect([start.getHours(), start.getMinutes()]).toEqual([16, 15]);
+});
+
+test('12 am is midnight and 12 pm is noon — the hour everybody gets wrong', async () => {
+  const r = render(<ScheduleMeeting session={session} onCreated={() => {}} onBack={() => {}} />);
+  fireEvent.press(r.getByLabelText('Time'));
+  fireEvent.press(r.getByLabelText('Hour 12'));
+  fireEvent.press(r.getByLabelText('Minute 00'));
+  fireEvent.press(r.getByLabelText('PM'));
+  fireEvent.press(r.getByLabelText('Use this time'));
+  expect(r.getByText('Today, 12:00 pm · 30 minutes')).toBeTruthy();
+  fireEvent.press(r.getByLabelText('Schedule this meeting'));
+  await waitFor(() => expect(api.create).toHaveBeenCalled());
+  expect(new Date(api.create.mock.calls[0][2].scheduledStart).getHours()).toBe(12);
+});
+
+test('the calendar reaches next month, and the day picked is the day sent', async () => {
+  const r = render(<ScheduleMeeting session={session} onCreated={() => {}} onBack={() => {}} />);
+  const target = new Date(); target.setDate(1); target.setMonth(target.getMonth() + 1); target.setDate(12);
+  const label = target.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+
+  fireEvent.press(r.getByLabelText('Date'));
+  fireEvent.press(r.getByLabelText('Next month'));
+  fireEvent.press(r.getByLabelText(label));
+
+  fireEvent.press(r.getByLabelText('Schedule this meeting'));
+  await waitFor(() => expect(api.create).toHaveBeenCalled());
+  const start = new Date(api.create.mock.calls[0][2].scheduledStart);
+  expect([start.getFullYear(), start.getMonth(), start.getDate()])
+    .toEqual([target.getFullYear(), target.getMonth(), target.getDate()]);
+  expect([start.getHours(), start.getMinutes()]).toEqual([10, 30]); // the time was not disturbed
+});
+
+test('yesterday cannot be picked, and the calendar does not go back past this month', () => {
+  const r = render(<ScheduleMeeting session={session} onCreated={() => {}} onBack={() => {}} />);
+  fireEvent.press(r.getByLabelText('Date'));
+  expect(r.getByLabelText('Previous month')).toBeDisabled();
+  const y = new Date(); y.setDate(y.getDate() - 1);
+  // On the 1st, yesterday is in a month the calendar will not show at all.
+  if (y.getMonth() === new Date().getMonth()) {
+    const label = y.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    expect(r.getByLabelText(label)).toBeDisabled();
+  }
+});
+
+test('a time earlier today is said to have passed at once, and refused if pressed anyway', async () => {
+  const r = render(<ScheduleMeeting session={session} onCreated={() => {}} onBack={() => {}} />);
+  fireEvent.press(r.getByLabelText('Time'));
+  fireEvent.press(r.getByLabelText('Hour 8'));
+  fireEvent.press(r.getByLabelText('AM'));
+  fireEvent.press(r.getByLabelText('Use this time'));
+  expect(r.getByText(/already passed today/)).toBeTruthy();
+
+  fireEvent.press(r.getByLabelText('Schedule this meeting'));
+  await waitFor(() => expect(r.getByText(/That time has passed/)).toBeTruthy());
+  expect(api.create).not.toHaveBeenCalled();
 });
