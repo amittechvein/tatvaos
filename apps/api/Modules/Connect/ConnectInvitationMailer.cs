@@ -32,6 +32,9 @@ namespace TatvaOS.Api.Modules.Connect;
 /// </summary>
 public static class ConnectInvitationMailer
 {
+    /// <summary>How many sends between saves of what each one answered.</summary>
+    private const int SaveEvery = 25;
+
     public sealed record Outcome(int Sent, int Failed, string? Note);
 
     public static async Task<Outcome> SendAsync(
@@ -69,8 +72,28 @@ public static class ConnectInvitationMailer
         int sent = 0, failed = 0;
         string? lastError = null;
 
+        // Progress is SAVED AS IT GOES, and never with the request's token. Up to
+        // 500 mails go out one by one inside one web request (19 Sept 2026, caps
+        // raised from 50/200). Saved only at the end, a host who closed the tab at
+        // mail 200 would cancel that one save, and 200 people who HAD been mailed
+        // would read 'pending' - so a resend mails them twice. What it looks like
+        // from outside when this is missing: invitations received, page says pending.
+        var sinceSave = 0;
         foreach (var t in targets)
         {
+            // The host went away. Stop sending; what is left stays 'pending',
+            // which is true, and each row has its own Resend.
+            if (ct.IsCancellationRequested)
+            {
+                log.LogWarning("Meeting {Meeting}: {Method} invitations stopped early, request cancelled after {Sent} sent, {Failed} failed of {Total}",
+                    meeting.Id, method, sent, failed, targets.Count);
+                break;
+            }
+            if (++sinceSave > SaveEvery)
+            {
+                await db.SaveChangesAsync(CancellationToken.None);
+                sinceSave = 1;
+            }
             try
             {
                 var sequence = ConnectInvitations.SequenceFor(meeting, t.SequenceSent);
@@ -111,6 +134,10 @@ public static class ConnectInvitationMailer
                         meeting.Id, t.Id, method, result.Outcome, result.Error);
                 }
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // Not a failed send: the request went away mid-send. Left 'pending'.
+            }
             catch (Exception ex)
             {
                 t.Status = ConnectInvitations.StatusFailed;
@@ -121,7 +148,7 @@ public static class ConnectInvitationMailer
             }
         }
 
-        await db.SaveChangesAsync(ct);
+        await db.SaveChangesAsync(CancellationToken.None);
         log.LogInformation("Meeting {Meeting}: {Method} invitations sent {Sent}, failed {Failed}",
             meeting.Id, method, sent, failed);
 

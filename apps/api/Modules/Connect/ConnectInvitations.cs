@@ -25,12 +25,16 @@ public static class ConnectInvitations
     public const string StatusWithdrawn = "withdrawn";
 
     /// <summary>Per request. A host inviting a whole department pastes a list;
-    /// a script pasting ten thousand addresses is refused before any mail moves.</summary>
-    public const int MaxPerRequest = 50;
+    /// a script pasting ten thousand addresses is refused before any mail moves.
+    /// Amit, 19 Sept 2026: 50 -> 500, for a 300-person meeting that evening. The
+    /// mails go out one by one INSIDE the request, so 500 is a request measured
+    /// in minutes; ConnectInvitationMailer saves its progress as it goes for
+    /// exactly that reason. A per-organisation setting replaces this constant next.</summary>
+    public const int MaxPerRequest = 500;
 
     /// <summary>Per meeting, over its life. Outbound mail has no quota anywhere
     /// else on this platform (MailSendApiEndpoints says so), so this is the cap.</summary>
-    public const int MaxPerMeeting = 200;
+    public const int MaxPerMeeting = 500;
 
     public sealed record Parsed(IReadOnlyList<string> Valid, IReadOnlyList<string> Invalid);
 
