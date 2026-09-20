@@ -254,7 +254,7 @@ public static class OrgMeetingApiEndpoints
             // different query from page one.
             after = PageCursor.Decode(cursor);
             if (after is null)
-                return Results.BadRequest(new { error = "That cursor is not one this API issued. Pass `next` back exactly as it came." });
+                return Results.BadRequest(new { error = "That cursor cannot be read. Pass `next` back exactly as it came." });
             // To UTC: a cursor we issued already is, but these become query
             // parameters and Npgsql refuses any other offset with an exception.
             start = after.S.ToUniversalTime(); end = after.E.ToUniversalTime(); hostId = after.H;

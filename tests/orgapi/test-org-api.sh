@@ -528,7 +528,7 @@ PAGE2=$(jq_ "$(body "$r")" "','.join(m['id'] for m in d['meetings'])")
 same "the two pages are 505 DISTINCT classes — nothing skipped, nothing repeated" \
     "$("$PY" -c "a='$PAGE1'.split(','); b='$PAGE2'.split(','); print(len(set(a)|set(b)), len(set(a)&set(b)))")" "505 0"
 [ "$(status "$(get_k "$API/api/v1/org/meetings?cursor=not-a-cursor" "$SKEY")")" = "400" ] \
-    && pass "a cursor this API did not issue is refused (400)" || fail "a forged cursor was accepted"
+    && pass "a cursor that cannot be read is refused (400) - a FORMAT check: a well-formed hand-made one is accepted, and the guide says so" || fail "an unreadable cursor was accepted"
 PG "DELETE FROM connect.meetings WHERE code LIKE 'bulk-$RUN-%'" >/dev/null
 same "cleaned up" "$(PG "SELECT count(*) FROM connect.meetings WHERE code LIKE 'bulk-$RUN-%'")" "0"
 
