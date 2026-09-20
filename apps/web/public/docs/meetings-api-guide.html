@@ -215,7 +215,7 @@ GET /api/v1/org/meetings?from=2026-09-21T00:00:00Z&amp;to=2026-09-28T00:00:00Z</
     <tr><td><code>from</code></td><td>12 hours ago</td><td>Earliest start time to include.</td></tr>
     <tr><td><code>to</code></td><td>30 days after <code>from</code></td><td>Latest start time to include.</td></tr>
     <tr><td><code>hostEmail</code></td><td>everyone</td><td>One teacher's classes. An address you do not have returns an empty list, not an error.</td></tr>
-    <tr><td><code>cursor</code></td><td>—</td><td>The <code>next</code> value from the previous page. On its own: the window and teacher are remembered inside it.</td></tr>
+    <tr><td><code>cursor</code></td><td>—</td><td>The <code>next</code> value from the previous page. The window and teacher are remembered inside it, so <code>from</code>, <code>to</code> and <code>hostEmail</code> are ignored when it is present.</td></tr>
   </table>
   <p>Cancelled meetings are never listed. The response is a <strong>page of up to 500</strong>, in start order, and carries <code>next</code>:</p>
 <pre><code>{
@@ -230,7 +230,8 @@ GET /api/v1/org/meetings?from=2026-09-21T00:00:00Z&amp;to=2026-09-28T00:00:00Z</
   <div class="card warn">
     <p style="margin:0"><strong>Always follow <code>next</code> until it is <code>null</code>.</strong> A school with 600 classes in the window gets 500 on the first page, and a timetable that stops reading there looks complete while missing a hundred classes — which will be discovered by a parent, not by you. <code>next</code> is always present in the response: <code>null</code> on the last page, never absent.</p>
   </div>
-  <p>The cursor is the whole question — window, teacher and position — so pass it back alone and exactly as it came. A cursor this API did not issue is refused with <code>400</code>. Pages are stable while classes are being scheduled: a class added between two page requests is neither skipped nor repeated.</p>
+  <p><strong>Treat <code>next</code> as opaque.</strong> Pass it back alone and exactly as it came; do not build, edit or keep cursors. When <code>cursor</code> is supplied, <code>from</code>, <code>to</code> and <code>hostEmail</code> are <strong>ignored</strong>: the cursor already carries the window, the teacher and the position, so page two can never be a different question from page one. A cursor that cannot be read is refused with <code>400</code>. That is a check of its format, not of where it came from: a hand-made cursor that happens to be well-formed is accepted and answered as the query it describes, within your own organisation only. So a cursor your code has altered does not fail loudly — it quietly answers a different question.</p>
+  <p><strong>Paging is not a frozen list.</strong> Reading page by page never skips or repeats a class that stays where it was while you read. But the timetable can change between two page requests: a class scheduled at, or moved to, a time <em>earlier</em> than the point you have reached does not appear in that read, and a class moved <em>later</em> can appear twice. Match classes by <code>id</code>, and re-read the timetable on your usual schedule rather than treating one read as final.</p>
 
   <h2 id="change">Changing and cancelling</h2>
   <p><strong>Cancelling</strong> needs <code>meetings:schedule</code>:</p>
