@@ -785,8 +785,11 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
   // who they are, what they can do, what they are using, and — separated
   // below a visible line — the actions that end things.
   const sectionTitle = (t: string) => (
-    <div className="text-[0.8125rem] font-semibold uppercase text-ink-muted mb-2" style={{ letterSpacing: '0.04em' }}>{t}</div>
+    <div className="text-[0.75rem] font-semibold uppercase text-ink-muted mb-3" style={{ letterSpacing: '0.06em' }}>{t}</div>
   );
+  // Each section sits in its own panel so the columns read as groups rather
+  // than one run of loose text (Amit, 21 Sept 2026: "fix the ui of this popup").
+  const panel = 'rounded-lg border border-line bg-surface p-4';
 
   return (
     <Modal
@@ -813,8 +816,9 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
           so everything is visible at once — a section hidden behind a
           scrollbar may as well not exist, and this dialog will keep
           growing as products are added. */}
-      <div className="grid gap-6 md:grid-cols-2">
-      <div>
+      <div className="grid gap-4 md:grid-cols-2 items-start">
+      <div className="grid gap-4">
+      <div className={panel}>
       {/* ---- Profile -------------------------------------------------- */}
       {sectionTitle('Profile')}
       <div className="mb-4">
@@ -844,9 +848,59 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
           ))}
         </Select>
       </Field>
-
       </div>
-      <div>
+
+      <div className={panel}>
+      {/* ---- Mail & storage ------------------------------------------- */}
+      {sectionTitle('Mail & storage')}
+      <div className="mb-2">
+        <div className="text-[0.75rem] text-ink-muted">Mailbox</div>
+        {person.mailboxAddress
+          ? <span className="text-[0.8125rem] font-mono">{person.mailboxAddress}</span>
+          : <span className="text-[0.8125rem] text-ink-muted">None — this person has no email</span>}
+      </div>
+
+      {/* The other reset. "Reset password" above changes how they SIGN IN;
+          this one changes what their mail apps authenticate with. They are
+          separate credentials on purpose — and until this button existed,
+          the only reset an admin could reach was the wrong one for mail. */}
+      {person.mailboxAddress && !targetLocked && person.status !== 'deleted' && (
+        <Button variant="secondary" size="sm" className="mb-4" disabled={busy}
+                onClick={() => void act('/reset-mailbox-password', 'POST',
+                  (body) => { setTempPassword({ password: String(body.temporaryPassword), mailbox: true }); setBusy(false); })}>
+          Reset mailbox password
+        </Button>
+      )}
+
+      {/* ONE allowance, spent across every product. It used to be the
+          mailbox's quota, which is why "you have 30 GB" was only ever true of
+          email — their files were counted somewhere else entirely. */}
+      <div className="mb-4" style={{ maxWidth: 320 }}>
+        <Meter used={person.usedBytes} total={person.quotaBytes} />
+        <div className="text-[0.75rem] text-ink-muted mt-1">
+          Using {fmt(person.usedBytes)} of {fmt(person.quotaBytes)} across all products
+        </div>
+      </div>
+
+      <Field
+        label="Storage allowance"
+        hint="Their total for mail, files and everything else. It will not shrink
+              below what they already use. Shared mailboxes and organisation
+              files are not counted against a person."
+      >
+        <InputSuffix
+          suffix="GB"
+          type="number"
+          min={1}
+          max={5000}
+          value={quotaGb}
+          style={{ maxWidth: 200 }}
+          onChange={(e) => setQuotaGb(Math.max(1, Number(e.target.value)))}
+        />
+      </Field>
+      </div>
+      </div>
+      <div className={panel}>
       {/* ---- Access --------------------------------------------------- */}
       {sectionTitle('Access')}
       {/* The facts an admin opens this dialog to check, previously not
@@ -908,14 +962,14 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
       {!editingSelf && !targetLocked && person.status !== 'deleted' && (
         person.invitation ? (
           <div className="flex gap-2 flex-wrap">
-            <Button variant="ghost" disabled={busy}
+            <Button variant="secondary" size="sm" disabled={busy}
                     onClick={() => void act('/invitation/resend', 'POST', (body) => {
                       if (body.sent) onSaved(String(body.note ?? 'Invitation sent.'));
                       else { onError(String(body.note ?? 'The invitation could not be sent.')); setBusy(false); }
                     })}>
               Resend invitation
             </Button>
-            <Button variant="ghost" disabled={busy}
+            <Button variant="secondary" size="sm" disabled={busy}
                     onClick={() => void act('/reset-password', 'POST',
                       (body) => { setTempPassword({ password: String(body.temporaryPassword), mailbox: false }); setBusy(false); })}>
               Set a password instead
@@ -937,7 +991,7 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
                 // Mr. Singh, 21 Sept 2026: 169 accounts that have never signed
                 // in. For them the link is the wrong tool; an invitation is the
                 // right one, and it is the same one-use link, 72 hours.
-                <Button variant="ghost" disabled={busy || noRecovery}
+                <Button variant="secondary" size="sm" disabled={busy || noRecovery}
                         title={noRecovery ? 'There is no recovery email on file, so an invitation has nowhere to go.' : undefined}
                         onClick={() => void act('/invitation/resend', 'POST', (body) => {
                           if (body.sent) onSaved(`${person.email}: ${String(body.note ?? 'Invitation sent.')}`);
@@ -946,7 +1000,7 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
                   Send invitation
                 </Button>
               ) : (
-                <Button variant="ghost" disabled={busy || linkBlocked !== null}
+                <Button variant="secondary" size="sm" disabled={busy || linkBlocked !== null}
                         title={linkBlocked ?? undefined}
                         onClick={() => void act('/signin-link', 'POST', (body) => {
                           if (body.sent) onSaved(`${person.email}: ${String(body.note ?? 'Link sent.')}`);
@@ -955,7 +1009,7 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
                   Send sign-in link
                 </Button>
               )}
-              <Button variant="ghost" disabled={busy}
+              <Button variant="secondary" size="sm" disabled={busy}
                       onClick={() => void act('/reset-password', 'POST',
                         (body) => { setTempPassword({ password: String(body.temporaryPassword), mailbox: false }); setBusy(false); })}>
                 Reset password
@@ -991,55 +1045,6 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
         )
       )}
 
-      <hr className="my-6" />
-
-      {/* ---- Mail & storage ------------------------------------------- */}
-      {sectionTitle('Mail & storage')}
-      <div className="mb-2">
-        <div className="text-[0.75rem] text-ink-muted">Mailbox</div>
-        {person.mailboxAddress
-          ? <span className="text-[0.8125rem] font-mono">{person.mailboxAddress}</span>
-          : <span className="text-[0.8125rem] text-ink-muted">None — this person has no email</span>}
-      </div>
-
-      {/* The other reset. "Reset password" above changes how they SIGN IN;
-          this one changes what their mail apps authenticate with. They are
-          separate credentials on purpose — and until this button existed,
-          the only reset an admin could reach was the wrong one for mail. */}
-      {person.mailboxAddress && !targetLocked && person.status !== 'deleted' && (
-        <Button variant="ghost" disabled={busy}
-                onClick={() => void act('/reset-mailbox-password', 'POST',
-                  (body) => { setTempPassword({ password: String(body.temporaryPassword), mailbox: true }); setBusy(false); })}>
-          Reset mailbox password
-        </Button>
-      )}
-
-      {/* ONE allowance, spent across every product. It used to be the
-          mailbox's quota, which is why "you have 30 GB" was only ever true of
-          email — their files were counted somewhere else entirely. */}
-      <div className="mb-2" style={{ maxWidth: 320 }}>
-        <Meter used={person.usedBytes} total={person.quotaBytes} />
-        <div className="text-[0.75rem] text-ink-muted mt-1">
-          Using {fmt(person.usedBytes)} of {fmt(person.quotaBytes)} across all products
-        </div>
-      </div>
-
-      <Field
-        label="Storage allowance"
-        hint="Their total for mail, files and everything else. It will not shrink
-              below what they already use. Shared mailboxes and organisation
-              files are not counted against a person."
-      >
-        <InputSuffix
-          suffix="GB"
-          type="number"
-          min={1}
-          max={5000}
-          value={quotaGb}
-          style={{ maxWidth: 200 }}
-          onChange={(e) => setQuotaGb(Math.max(1, Number(e.target.value)))}
-        />
-      </Field>
       </div>
       </div>
 
@@ -1048,8 +1053,7 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
           you are signed in with is a support ticket in the making, and the
           server refuses it anyway. */}
       {!editingSelf && !targetLocked && (
-        <>
-          <hr className="my-6" />
+        <div className="mt-4 rounded-lg border border-danger/30 bg-danger/[0.03] p-4">
           {sectionTitle('Leaving and removal')}
           {person.status === 'suspended' && (
             <p className="text-[0.75rem] text-ink-muted mb-4">
@@ -1065,13 +1069,13 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
           {person.status !== 'deleted' && (
           <div className="flex gap-2 flex-wrap">
             {person.status === 'suspended' ? (
-              <Button variant="ghost" disabled={busy}
+              <Button variant="secondary" size="sm" disabled={busy}
                       onClick={() => void act('/reactivate', 'POST',
                         () => onSaved(`${person.displayName} is active again.`))}>
                 Reactivate
               </Button>
             ) : (
-              <Button variant="ghost" disabled={busy}
+              <Button variant="secondary" size="sm" disabled={busy}
                       onClick={() => void act('/suspend', 'POST',
                         () => onSaved(`${person.displayName} deactivated. Their mail is retained.`))}>
                 Deactivate
@@ -1079,7 +1083,7 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
             )}
 
             {!offboarding && (
-              <Button variant="ghost" disabled={busy} onClick={() => setOffboarding(true)}>
+              <Button variant="secondary" size="sm" disabled={busy} onClick={() => setOffboarding(true)}>
                 Offboard&hellip;
               </Button>
             )}
@@ -1087,15 +1091,14 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
             {/* Two clicks, both on the same button, second one labelled in
                 plain words. A nested confirm dialog gets clicked through;
                 a button that changes its mind out loud does not. */}
-            <Button variant="ghost" disabled={busy}
+            <Button variant={armDelete ? 'danger' : 'secondary'} size="sm" disabled={busy}
+                    className={armDelete ? '' : 'text-danger border-danger/40 hover:bg-danger/5'}
                     onClick={() => {
                       if (!armDelete) { setArmDelete(true); return; }
                       void act('', 'DELETE',
                         () => onSaved(`${person.email} deleted. Sign-in and mail are closed; stored mail is retained.`));
                     }}>
-              <span className="text-danger" style={{ fontWeight: armDelete ? 700 : 500 }}>
-                {armDelete ? 'Click again — this deletes their account' : 'Delete person'}
-              </span>
+              {armDelete ? 'Click again — this deletes their account' : 'Delete person'}
             </Button>
           </div>
           )}
@@ -1107,7 +1110,7 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
               mail from ANYONE to their address, colleagues or customers,
               is delivered to the successor from the moment this runs. */}
           {offboarding && person.status !== 'deleted' && (
-            <div className="border rounded p-4 mt-4">
+            <div className="border border-line rounded-lg bg-surface p-4 mt-4">
               <div className="text-[0.875rem] font-semibold mb-1">Offboard {person.displayName}</div>
               <p className="text-[0.75rem] text-ink-muted mb-2">
                 Closes sign-in and all access, and deactivates their mailbox.
@@ -1134,7 +1137,7 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
               </div>
             </div>
           )}
-        </>
+        </div>
       )}
     </Modal>
   );
