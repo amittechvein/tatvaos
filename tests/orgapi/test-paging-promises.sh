@@ -99,7 +99,21 @@ step "0. Start the API, make a key, schedule three classes, plant one in another
 for _ in $(seq 1 30); do [ -n "$(PG "SELECT 1")" ] && break; sleep 1; done
 [ -n "$(PG "SELECT 1")" ] || { fail "psql does not answer"; exit 1; }
 export JWT_SIGNING_KEY="dev-only-key-at-least-32-characters-long" ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS="$API"
-export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
+# CALIBRATION OF CHECK 3 (Mr. Singh, 21 Sept 2026: "never falsified" is the weakest
+# thing in the pack). connect.meetings has NO tenant filter in the application -
+# no EF query filter on the entity, no tenant condition in the timetable query.
+# Row-level security in Postgres is the ONLY layer. So the mutation that can make
+# check 3 go red is not a code change: run the API as a role that BYPASSES RLS.
+#   MUTATE_BYPASS_RLS=1 TATVAOS_SUPER_PW=<local postgres password> bash <this file>
+# Expected: check 3 red, the other organisation's class in the answer. Local only;
+# production's API role is tatvaos_app, which is neither superuser nor BYPASSRLS.
+DB_USER="tatvaos_app"; DB_PW="dev_app_pw"
+if [ "${MUTATE_BYPASS_RLS:-0}" = "1" ]; then
+    DB_USER="postgres"; DB_PW="${TATVAOS_SUPER_PW:?set TATVAOS_SUPER_PW to the LOCAL postgres password}"
+    printf "  *** MUTATION: the API runs as a role that BYPASSES row-level security. Check 3 SHOULD FAIL. ***
+"
+fi
+export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=$DB_USER;Password=$DB_PW;Pooling=true"
 export Smtp__Host=localhost Smtp__Port=5870
 if command -v cygpath >/dev/null 2>&1; then export Oidc__KeyDirectory="$(cygpath -w "$SCRATCH")\\keys"; else export Oidc__KeyDirectory="$SCRATCH/keys"; fi
 dotnet run --no-build -c Release --project "$PROJ" > "$LOG" 2>&1 &
