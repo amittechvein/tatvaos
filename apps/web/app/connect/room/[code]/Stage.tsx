@@ -196,7 +196,9 @@ function screenShareGranted(me: LKParticipant): boolean {
   return sources.some((s) =>
     s === 3 || String(s).toLowerCase().includes('screen'));
 }
-type PanelKind = 'people' | 'chat' | 'devices' | 'view' | null;
+// 'host' is the host's Advanced settings: the five meeting-wide rules that used
+// to sit on top of the People list and push the people off the screen.
+type PanelKind = 'people' | 'chat' | 'devices' | 'view' | 'host' | null;
 
 // ---------------------------------------------------------------------------
 //  HOW THIS ROOM IS ARRANGED — the person's choice, remembered.
@@ -2611,9 +2613,20 @@ export default function Stage({ seat, meeting, prefs }: {
       {/* Hidden entirely when this server has no egress, rather than shown
           and refusing. A control that is always there and never works is
           read as a broken product, not as an unconfigured one. */}
-      {isHost && meeting && !recOff && !isPrivate && (
+      {isHost && meeting && (
         <>
           <div className="cx-more-head">Host</div>
+          <button type="button" className={`cx-btn ${panel === 'host' ? 'is-on' : ''}`}
+                  onClick={() => { setMore(false); openPanel('host'); }}
+                  title="Who can share, screens at once, minutes, chat, waiting room">
+            <i className="ri-equalizer-line" />
+            Advanced settings
+          </button>
+        </>
+      )}
+      {/* Recording. The long comment above this Host section is about THIS button. */}
+      {isHost && meeting && !recOff && !isPrivate && (
+        <>
           <button type="button" className={`cx-btn cx-btn--rec ${recording ? 'is-rec' : ''}`}
                   onClick={() => {
                     setMore(false);
@@ -3096,91 +3109,30 @@ export default function Stage({ seat, meeting, prefs }: {
                 "guests cannot be minuted", which now reads as policy rather
                 than as the temporary state it is, and a host who believes it
                 is policy will stop expecting it to change. */}
+            {/* One line here (Amit, 21 Sept 2026: "too much text in people
+                section, give it in advance setting"). The why is in Advanced
+                settings, one tap away; the fact itself stays in view. */}
             {minutesLive && guestsHere > 0 && (
-              <div className="cx-warn" style={{ marginBottom: 12 }}>
+              <button type="button" className="cx-warn"
+                      style={{ marginBottom: 12, width: '100%', textAlign: 'left', cursor: 'pointer', font: 'inherit', color: 'inherit' }}
+                      onClick={() => openPanel('host')}>
                 <strong>
-                  {guestsHere === 1 ? 'One guest is' : `${guestsHere} guests are`} here,
-                  and {guestsHere === 1 ? 'is' : 'are'} not in the minutes yet.
+                  {guestsHere === 1 ? '1 guest is' : `${guestsHere} guests are`} not in the minutes yet
                 </strong>
-                <span>
-                  Minutes come from each person&rsquo;s own browser, and guest
-                  browsers cannot send them in yet. Until that is finished,
-                  their half of the conversation will be missing from a record
-                  that reads as complete.
-                </span>
-              </div>
+                <span className="cx-sub">Why — Advanced settings</span>
+              </button>
             )}
+            {/* The five meeting-wide rules lived HERE until 20 Sept 2026, above the
+                list. Amit: "remove too many options in people screen give these in
+                any other place called as advance setting". On a phone they filled
+                the whole panel and the people - the thing the panel is named for -
+                started below the fold. They are in the Advanced settings panel now,
+                unchanged; this is the way to it from where a host used to look. */}
             {isHost && meeting && (
-              <div style={{ marginBottom: 14 }}>
-                <label className="cx-label" htmlFor="cx-share-policy">Who can share their screen</label>
-                <select id="cx-share-policy" className="cx-field" value={sharePolicy}
-                        onChange={(e) => void changeSharePolicy(e.target.value as SharePolicy)}>
-                  <option value="everyone">Everyone</option>
-                  <option value="cohost">Only the host and co-hosts</option>
-                  <option value="host">Only the host</option>
-                </select>
-                <div className="cx-sub" style={{ marginTop: 4 }}>
-                  Applies to everyone already here, immediately.
-                </div>
-
-                <label className="cx-label" htmlFor="cx-share-mode" style={{ marginTop: 12 }}>Screens at once</label>
-                <select id="cx-share-mode" className="cx-field" value={shareMode}
-                        onChange={(e) => void changeShareMode(e.target.value as ShareMode)}>
-                  <option value="multiple">Several people can share at once</option>
-                  <option value="single">One person at a time</option>
-                </select>
-                <div className="cx-sub" style={{ marginTop: 4 }}>
-                  One at a time stops anyone else starting while somebody presents. It does not cut off a share already running.
-                </div>
-
-                {/* THE SENTENCE LIVES HERE NOW. Participants are no longer
-                    asked, so the person who decides for all of them is the
-                    one who has to see what it costs — and it is beside the
-                    switch rather than behind a link, because a disclosure
-                    nobody passes is a disclosure nobody reads. */}
-                <label className="cx-label" htmlFor="cx-minutes"
-                       style={{ marginTop: 14, display: 'block' }}>Minutes of this meeting</label>
-                <div className="cx-choice2" style={{ marginBottom: 6 }}>
-                  <input id="cx-minutes" type="checkbox" checked={minutesLive}
-                         onChange={(e) => void changeMinutes(e.target.checked)} />
-                  <span>Write minutes from what is said</span>
-                </div>
-                <div className="cx-warn cx-warn--tight">
-                  <strong>Each browser sends its microphone audio to Google.</strong>
-                  <span>
-                    That is how Chrome turns speech into text. Nobody in the
-                    meeting is asked first, and the room shows a &ldquo;Minutes
-                    on&rdquo; badge while it runs. Chrome and Edge only; guests
-                    cannot take part yet. Each browser hears only its own
-                    microphone, so the minutes cover only the people on Chrome
-                    or Edge who are signed in &mdash; a partial record, by
-                    construction.
-                  </span>
-                </div>
-
-                <label className="cx-label" htmlFor="cx-chat-policy"
-                       style={{ marginTop: 14, display: 'block' }}>Who can send chat messages</label>
-                <select id="cx-chat-policy" className="cx-field" value={chatPolicy}
-                        onChange={(e) => void changeChatPolicy(e.target.value as ChatPolicy)}>
-                  <option value="everyone">Everyone</option>
-                  <option value="cohost">Only the host and co-hosts</option>
-                  <option value="off">Nobody — chat is closed</option>
-                </select>
-                <div className="cx-sub" style={{ marginTop: 4 }}>
-                  Everyone can still read what was sent, whichever you choose.
-                </div>
-
-                <label className="cx-label" htmlFor="cx-waiting-room"
-                       style={{ marginTop: 14, display: 'block' }}>Waiting room</label>
-                <select id="cx-waiting-room" className="cx-field" value={waitingRoom}
-                        onChange={(e) => void changeWaitingRoom(e.target.value as WaitingRoom)}>
-                  <option value="off">Off — anyone with the link joins straight in</option>
-                  <option value="guests">Guests wait to be let in</option>
-                  <option value="everyone">Everyone waits to be let in</option>
-                </select>
-                <div className="cx-sub" style={{ marginTop: 4 }}>
-                  Opening the door also lets in the people already waiting.
-                </div>
+              <div style={{ margin: '0 0 12px', display: 'flex', justifyContent: 'flex-end' }}>
+                <button type="button" className="cx-mini" onClick={() => openPanel('host')}>
+                  <i className="ri-equalizer-line" style={{ marginRight: 6 }} />Advanced settings
+                </button>
               </div>
             )}
             {isHost && knocking.length > 0 && (
@@ -3360,6 +3312,104 @@ export default function Stage({ seat, meeting, prefs }: {
             })}
             {listed.length === 0 && (
               <div className="cx-sub">Nobody here matches “{find}”.</div>
+            )}
+          </Panel>
+        )}
+
+        {/* ADVANCED SETTINGS - the host's meeting-wide rules. Moved here whole from the
+            top of People (20 Sept 2026): same controls, same handlers, same words.
+            Only a host or co-host can open it; the block itself still checks. */}
+        {panel === 'host' && (
+          <Panel title="Advanced settings" onClose={() => setPanel(null)}>
+            {minutesLive && guestsHere > 0 && (
+              <div className="cx-warn" style={{ marginBottom: 12 }}>
+                <strong>
+                  {guestsHere === 1 ? 'One guest is' : `${guestsHere} guests are`} here,
+                  and {guestsHere === 1 ? 'is' : 'are'} not in the minutes yet.
+                </strong>
+                <span>
+                  Minutes come from each person&rsquo;s own browser, and guest
+                  browsers cannot send them in yet. Until that is finished,
+                  their half of the conversation will be missing from a record
+                  that reads as complete.
+                </span>
+              </div>
+            )}
+            {!(isHost && meeting) && (
+              <div className="cx-sub">Only the host or a co-host can change these.</div>
+            )}
+            {isHost && meeting && (
+              <div style={{ marginBottom: 14 }}>
+                <label className="cx-label" htmlFor="cx-share-policy">Who can share their screen</label>
+                <select id="cx-share-policy" className="cx-field" value={sharePolicy}
+                        onChange={(e) => void changeSharePolicy(e.target.value as SharePolicy)}>
+                  <option value="everyone">Everyone</option>
+                  <option value="cohost">Only the host and co-hosts</option>
+                  <option value="host">Only the host</option>
+                </select>
+                <div className="cx-sub" style={{ marginTop: 4 }}>
+                  Applies to everyone already here, immediately.
+                </div>
+
+                <label className="cx-label" htmlFor="cx-share-mode" style={{ marginTop: 12 }}>Screens at once</label>
+                <select id="cx-share-mode" className="cx-field" value={shareMode}
+                        onChange={(e) => void changeShareMode(e.target.value as ShareMode)}>
+                  <option value="multiple">Several people can share at once</option>
+                  <option value="single">One person at a time</option>
+                </select>
+                <div className="cx-sub" style={{ marginTop: 4 }}>
+                  One at a time stops anyone else starting while somebody presents. It does not cut off a share already running.
+                </div>
+
+                {/* THE SENTENCE LIVES HERE NOW. Participants are no longer
+                    asked, so the person who decides for all of them is the
+                    one who has to see what it costs — and it is beside the
+                    switch rather than behind a link, because a disclosure
+                    nobody passes is a disclosure nobody reads. */}
+                <label className="cx-label" htmlFor="cx-minutes"
+                       style={{ marginTop: 14, display: 'block' }}>Minutes of this meeting</label>
+                <div className="cx-choice2" style={{ marginBottom: 6 }}>
+                  <input id="cx-minutes" type="checkbox" checked={minutesLive}
+                         onChange={(e) => void changeMinutes(e.target.checked)} />
+                  <span>Write minutes from what is said</span>
+                </div>
+                <div className="cx-warn cx-warn--tight">
+                  <strong>Each browser sends its microphone audio to Google.</strong>
+                  <span>
+                    That is how Chrome turns speech into text. Nobody in the
+                    meeting is asked first, and the room shows a &ldquo;Minutes
+                    on&rdquo; badge while it runs. Chrome and Edge only; guests
+                    cannot take part yet. Each browser hears only its own
+                    microphone, so the minutes cover only the people on Chrome
+                    or Edge who are signed in &mdash; a partial record, by
+                    construction.
+                  </span>
+                </div>
+
+                <label className="cx-label" htmlFor="cx-chat-policy"
+                       style={{ marginTop: 14, display: 'block' }}>Who can send chat messages</label>
+                <select id="cx-chat-policy" className="cx-field" value={chatPolicy}
+                        onChange={(e) => void changeChatPolicy(e.target.value as ChatPolicy)}>
+                  <option value="everyone">Everyone</option>
+                  <option value="cohost">Only the host and co-hosts</option>
+                  <option value="off">Nobody — chat is closed</option>
+                </select>
+                <div className="cx-sub" style={{ marginTop: 4 }}>
+                  Everyone can still read what was sent, whichever you choose.
+                </div>
+
+                <label className="cx-label" htmlFor="cx-waiting-room"
+                       style={{ marginTop: 14, display: 'block' }}>Waiting room</label>
+                <select id="cx-waiting-room" className="cx-field" value={waitingRoom}
+                        onChange={(e) => void changeWaitingRoom(e.target.value as WaitingRoom)}>
+                  <option value="off">Off — anyone with the link joins straight in</option>
+                  <option value="guests">Guests wait to be let in</option>
+                  <option value="everyone">Everyone waits to be let in</option>
+                </select>
+                <div className="cx-sub" style={{ marginTop: 4 }}>
+                  Opening the door also lets in the people already waiting.
+                </div>
+              </div>
             )}
           </Panel>
         )}
