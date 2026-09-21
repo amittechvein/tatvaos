@@ -77,6 +77,77 @@ The rollback point is taken from the **workflow's own history of successful
 deploys**, not from the running container. `deploy.sh`'s current printed line
 reads the container and has been wrong twice.
 
+## The override path in full
+
+Mr. Singh, 21 September: "six fields is right, but I want to know who can invoke
+it and what happens afterwards, because an override nobody reviews is a gate
+that isn't there."
+
+### A fact found while writing this: the second approver does not exist today
+
+`deploy-production.yml` says, above the deploy job: *"Requires a reviewer in
+GitHub -> Settings -> Environments -> production. A typed string is a speed
+bump; an approval is a second person."* Asked of GitHub on 21 September:
+
+```
+gh api repos/amittechvein/tatvaos/environments/production
+{"name":"production","protection_rules":[]}
+```
+
+**No protection rules. No required reviewer.** Every deploy so far went out on
+one person's dispatch and a typed word. The comment describes a control that is
+not configured — the codebase's signature failure, a check that looks applied
+and is not. Only Amit can fix it: GitHub, signed in as him, Settings →
+Environments → production → Required reviewers. The override design below
+depends on it.
+
+### Who can invoke an override
+
+| Layer | Who | Enforced by |
+|---|---|---|
+| Dispatch the workflow | anyone with write access to the repository | GitHub |
+| Approve the production job | the required reviewers: **Amit and Mr. Singh** | GitHub environment protection — **once Amit turns it on** |
+| Be named as authorizer | only a name on a list in the repository, `infra/deploy-override-authorizers` (Amit, Mr. Singh). Anything else refuses | the guard |
+| Be the live-check owner | anyone, but it must be filled, and it cannot be the dispatcher's own GitHub name unless the authorizer is also that person | the guard |
+
+**The honest limit.** `override_authorizer` is typed text; the guard can only
+check that it names someone on the list. What makes it true is the environment
+approval: GitHub records which named reviewer pressed Approve, and the guard
+copies that name into the record next to the typed one. If the two differ, the
+record says so in its first line.
+
+### What happens afterwards — so it is reviewed, and cannot be forgotten
+
+1. **The record.** One row in `ops.deploy_overrides`: run id, dispatcher
+   (`github.actor`), approving reviewer, typed authorizer, reason, live-check
+   owner, what the guard saw (hold text, live-meeting count and largest room),
+   deployed version and rollback point (both full SHAs), and the verdict line.
+   Append-only: `UPDATE` and `DELETE` revoked from the application role, as for
+   the other append-only tables.
+2. **A review item is opened by the same run.** A GitHub issue labelled
+   `deploy-override`, assigned to Mr. Singh, holding the record. The workflow
+   gains `issues: write` for that one step.
+3. **The review.** Mr. Singh reads it and closes the issue with a one-line
+   verdict: *accepted*, or *not acceptable — reason*. A second override
+   referencing an unreviewed one says so.
+4. **The next deploy refuses while any `deploy-override` issue older than 72
+   hours is still open.** Checked in the workflow, on the runner, before SSH —
+   the runner can ask GitHub; the server cannot. That refusal can itself only be
+   overridden with the same three fields, which opens a second issue. So an
+   unreviewed override blocks the pipeline within three days instead of
+   disappearing into a log.
+5. **Monthly**, the list of closed override issues is part of the CTO's review.
+   If overrides are routine, the guard is wrong, and this record is reopened.
+
+### Added to "what would prove it works"
+
+| Case | Expected |
+|---|---|
+| Override with an authorizer not on the list | refuses |
+| Override approved in GitHub by someone other than the typed authorizer | proceeds; the record's first line says the two names differ |
+| An override issue open for 73 hours, then a normal deploy | refuses before SSH, naming the issue |
+| The same, with the issue closed | proceeds |
+
 ## House rules this has to keep
 
 - **Rule 12: `[ok]` only after a check.** The guard prints `[ok] no live meetings`
@@ -135,6 +206,10 @@ production's.
 3. Six hours as the staleness bound?
 4. Is the `ops` schema right for the override record, or should it live in
    `core.audit_logs` under a platform action?
+5. Is 72 hours right for an unreviewed override to start blocking deploys?
+6. **Not a question for you but a blocker:** Amit turns on Required reviewers for
+   the `production` environment (Amit and Mr. Singh). Until then, nothing in
+   this record has a second person behind it.
 
 ## Revisit when
 
