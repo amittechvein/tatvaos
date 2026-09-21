@@ -731,7 +731,7 @@ export function Composer({
           {/* Title bar. While minimised the whole bar restores the draft — the
               collapsed strip is the only target left, so all of it should work. */}
           <header
-            className={`flex items-center justify-between bg-rail px-4 py-3 text-white ${minimised ? 'cursor-pointer' : ''}`}
+            className={`flex items-center justify-between bg-rail px-4 py-3 text-ink ${minimised ? 'cursor-pointer' : ''}`}
             onClick={minimised ? () => setPane('docked') : undefined}
           >
             <span className="truncate text-sm font-semibold tracking-tight">
@@ -750,7 +750,7 @@ export function Composer({
                 }}
                 aria-label={minimised ? 'Restore' : 'Minimise'}
                 title={minimised ? 'Restore' : 'Minimise'}
-                className="rounded p-1 text-rail-text hover:text-white"
+                className="rounded p-1 text-ink-muted hover:bg-line/60 hover:text-ink"
               >
                 <Icon name={minimised ? 'expand' : 'minimise'} className="h-4 w-4" />
               </button>
@@ -763,7 +763,7 @@ export function Composer({
                   onClick={(e) => { e.stopPropagation(); setPane(pane === 'full' ? 'docked' : 'full'); }}
                   aria-label={pane === 'full' ? 'Exit full screen' : 'Full screen'}
                   title={pane === 'full' ? 'Exit full screen' : 'Full screen'}
-                  className="rounded p-1 text-rail-text hover:text-white"
+                  className="rounded p-1 text-ink-muted hover:bg-line/60 hover:text-ink"
                 >
                   <Icon name={pane === 'full' ? 'collapse' : 'expand'} className="h-4 w-4" />
                 </button>
@@ -772,7 +772,7 @@ export function Composer({
                 type="button"
                 onClick={(e) => { e.stopPropagation(); onClose(); }}
                 aria-label="Close"
-                className="rounded p-1 text-rail-text hover:text-white"
+                className="rounded p-1 text-ink-muted hover:bg-line/60 hover:text-ink"
               >
                 <Icon name="close" className="h-4 w-4" />
               </button>
@@ -1187,10 +1187,10 @@ export function Composer({
             <ToolBtn label="Emoji" onClick={() => setEmoji((v) => !v)}><Icon name="emoji" className="h-4 w-4" /></ToolBtn>
           </span>
 
-          {/* Not yet backed by a product — disabled, with the reason on hover. */}
-          <ToolBtn label="Insert from Drive — needs the Drive product" disabled><Icon name="drive" className="h-4 w-4" /></ToolBtn>
-          <ToolBtn label="Schedule send — needs a server-side queue" disabled><Icon name="clock" className="h-4 w-4" /></ToolBtn>
-          <ToolBtn label="Confidential mode — needs expiry/passcode support" disabled><Icon name="lock" className="h-4 w-4" /></ToolBtn>
+          {/* Drive, Schedule send and Confidential are not backed by a product
+              yet. They sat here as three greyed icons until 21 Sept 2026, when
+              they pushed Discard onto a second line at the composer's normal
+              560px width (Amit: "fix the ui"). They are in More, marked soon. */}
 
           <div className="relative ml-auto" ref={moreRef}>
             <ToolBtn label="More options" onClick={() => setMore((v) => !v)}><Icon name="more" className="h-4.5 w-4.5" /></ToolBtn>
@@ -1201,6 +1201,9 @@ export function Composer({
                 <MenuItem icon="print" label="Print" onClick={() => { window.print(); setMore(false); }} />
                 <MenuItem icon="spellcheck" label="Spell check" trailing={spell ? 'on' : 'off'} onClick={() => { setSpell((v) => !v); setMore(false); }} />
                 <div className="my-1 border-t border-line" />
+                <MenuItem icon="drive" label="Insert from Drive" soon />
+                <MenuItem icon="clock" label="Schedule send" soon />
+                <MenuItem icon="lock" label="Confidential mode" soon />
                 <MenuItem icon="envelope" label="Request read receipt" soon />
                 <MenuItem icon="bookmark" label="Label" soon />
                 <MenuItem icon="draft" label="Templates" soon />
