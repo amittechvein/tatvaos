@@ -138,6 +138,31 @@ It put the question to Mr. Singh, who answered with the withdrawal above.
    real gate. That is Amit's decision. Whatever the answer is, record it here.
    Do not let "we can't" drift into "we don't".
 
+### 22 September: the repository is never made public to get Actions minutes back
+
+**Root cause of the public windows, from Amit's GitHub security log.** The
+repository was created private on 4 August. It was made public twice, both
+times when the private-plan Actions quota ran out: on 16 September from 11:04
+to 11:59 UTC, and from 16 September 18:07 to 21 September 11:38 UTC. The second
+window lasted 4 days 17½ hours. On 16 September this looked like "Actions
+billing came back the same afternoon". It was the visibility switch.
+
+What the inventory of 22 September found in that window: no provider keys or
+private keys in any commit or pull request text. It found four development and
+CI values. A same/different check on production showed that none of them is
+live, and Postgres itself refuses both development passwords. All 295 workflow
+runs during the windows came from Amit's account in this repository. No workflow
+has ever used `pull_request_target`. The one `workflow_run` trigger was deleted
+on 12 August. Whether anyone cloned the code is **not** known. GitHub's Traffic
+view would show it for 14 days, but on this plan it is locked.
+
+**The rule, set by Mr. Singh on 22 September:** this repository is never made
+public to restore GitHub Actions minutes, for any length of time. If the quota
+is the problem, the answer is the plan or a wait, never the visibility switch.
+The same plan limit has now blocked required reviewers, Actions minutes, and the
+Traffic evidence. Decide the plan on purpose (item 3 above) instead of working
+around it each time.
+
 The *Who can invoke an override* table below assumes the environment approval
 exists. Until item 3 is decided, that row does not apply. The typed
 `override_authorizer` is checked against the list and nothing else.
