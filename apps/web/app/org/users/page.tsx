@@ -905,11 +905,33 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
             </Button>
           </div>
         ) : (
-          <Button variant="ghost" disabled={busy}
-                  onClick={() => void act('/reset-password', 'POST',
-                    (body) => { setTempPassword({ password: String(body.temporaryPassword), mailbox: false }); setBusy(false); })}>
-            Reset password
-          </Button>
+          // Two ways to help somebody who cannot get in (Amit, 19 Sept 2026: "send
+          // invitation of login with one use there they just add new password and
+          // get it login"). The link is the kind one: nobody sees a password, and
+          // their current one keeps working until they use it. Reset password is
+          // the hard one, for an account that may be in the wrong hands: it ends
+          // the password and every session now, and you hand over a new one.
+          <div>
+            <div className="flex gap-2 flex-wrap">
+              <Button variant="ghost" disabled={busy}
+                      onClick={() => void act('/signin-link', 'POST', (body) => {
+                        if (body.sent) onSaved(String(body.note ?? 'Link sent.'));
+                        else { onError(String(body.note ?? 'The link could not be sent.')); setBusy(false); }
+                      })}>
+                Send sign-in link
+              </Button>
+              <Button variant="ghost" disabled={busy}
+                      onClick={() => void act('/reset-password', 'POST',
+                        (body) => { setTempPassword({ password: String(body.temporaryPassword), mailbox: false }); setBusy(false); })}>
+                Reset password
+              </Button>
+            </div>
+            <p className="mt-1.5 text-xs text-ink-muted">
+              <strong>Send sign-in link</strong> emails a one-use link to their recovery address; they choose a
+              new password and are signed in. <strong>Reset password</strong> signs them out everywhere at once —
+              use it if the account may be in the wrong hands.
+            </p>
+          </div>
         )
       )}
 

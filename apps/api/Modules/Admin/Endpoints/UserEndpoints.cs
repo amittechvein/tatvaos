@@ -51,6 +51,7 @@ public static class UserEndpoints
         users.MapPost("/{id:guid}/reactivate", ReactivateAsync);
         users.MapPost("/{id:guid}/reset-password", ResetPasswordAsync);
         users.MapPost("/{id:guid}/invitation/resend", ResendInvitationAsync);
+        users.MapPost("/{id:guid}/signin-link", SendSignInLinkAsync);
         users.MapPost("/{id:guid}/reset-mailbox-password", ResetMailboxPasswordAsync);
         users.MapDelete("/{id:guid}", DeleteAsync);
         users.MapPost("/{id:guid}/offboard", OffboardAsync);
@@ -1021,6 +1022,61 @@ public static class UserEndpoints
                     log.LogWarning(ex, "Invitation for user {UserId} could not be processed", userId);
                 }
             }
+        });
+    }
+
+    /// <summary>
+    /// A one-use link for somebody who ALREADY has a password, so they can choose
+    /// a new one themselves (Invitations has the why). The administrator never
+    /// sees a password, which is the whole difference from Reset password.
+    ///
+    /// The same guards as Reset password, because it is the same power reached
+    /// more slowly: not yourself, and only down the hierarchy (GuardActOn). It
+    /// goes to the RECOVERY email only - never to the account's own mailbox,
+    /// which is the thing they cannot open.
+    /// </summary>
+    private static async Task<IResult> SendSignInLinkAsync(
+        Guid id, AppDbContext db, TenantContext tenant, AuditWriter audit,
+        SystemMailer mailer, IConfiguration config, CancellationToken ct)
+    {
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id, ct);
+        if (user is null) return Results.NotFound();
+        if (user.Id == tenant.UserId)
+            return Results.BadRequest(new { error = "Change your own password from your account page." });
+        if (GuardActOn(tenant, user) is IResult denied) return denied;
+        if (user.Status is "deleted" or "suspended")
+            return Results.BadRequest(new { error = "This account is closed. Reactivate it first." });
+        // Somebody who has never got in has no password to replace: that is an
+        // invitation, and Resend invitation is the button for it.
+        if (user.PasswordHash is null)
+            return Results.BadRequest(new { error = "This person has not set a password yet. Use Resend invitation." });
+        if (string.IsNullOrWhiteSpace(user.RecoveryEmail))
+            return Results.BadRequest(new { error = Invitations.NoRecoveryEmail });
+
+        var token = Invitations.Issue(user, Invitations.ChannelSignInLink);
+        await db.SaveChangesAsync(ct);
+
+        var (orgName, baseUrl) = await OrgNameAndBaseUrlAsync(db, tenant, config, ct);
+        var delivered = await Invitations.SendAsync(mailer, user, orgName, baseUrl, token, ct);
+        user.InviteDelivered = delivered;
+        if (!delivered)
+        {
+            // A link nobody received must not sit there live for a day.
+            user.InviteTokenHash = null;
+        }
+        await db.SaveChangesAsync(ct);
+
+        // Audited for the reason a reset is: it is a step in taking an account over.
+        await audit.WriteAsync("user.signin_link_sent", "user", user.Id.ToString(),
+            after: new { sentTo = Mask.Email(user.RecoveryEmail), delivered }, ct: ct);
+
+        return Results.Ok(new
+        {
+            sent = delivered,
+            sentTo = Mask.Email(user.RecoveryEmail),
+            note = delivered
+                ? $"A link has been sent to {Mask.Email(user.RecoveryEmail)}. It works once, for {(int)Invitations.SignInLinkLifetime.TotalHours} hours. Their current password keeps working until they use it."
+                : "The link could not be sent. Check the recovery address, or use Reset password.",
         });
     }
 

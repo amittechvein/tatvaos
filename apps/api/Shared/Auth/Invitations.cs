@@ -31,6 +31,47 @@ public static class Invitations
     /// </summary>
     public static readonly TimeSpan Lifetime = TimeSpan.FromHours(72);
 
+    // ── A SIGN-IN LINK FOR SOMEBODY WHO IS ALREADY IN ───────────────────────
+    //  Amit, 19 Sept 2026, on the People page: "give option here send invitation
+    //  of login with one use there they just add new password and get it login".
+    //
+    //  Until then an administrator helping somebody who had forgotten their
+    //  password had one tool, Reset password: a generated password the admin
+    //  SEES and has to hand over, the opposite of what decision 0005 wanted for
+    //  new people. This is the same link a new person gets, sent to somebody
+    //  who already has a password.
+    //
+    //  It rides the SAME token columns and the SAME accept endpoint on purpose:
+    //  one single-use token per person, so sending this replaces any pending
+    //  invitation and the reverse. What differs is the channel value, and three
+    //  things hang on it:
+    //    - a SHORTER life. An account with data in it is worth more to whoever
+    //      finds the mail than an empty new one; a day, not a weekend.
+    //    - the mail says why it came ("your administrator sent you this"), not
+    //      "welcome".
+    //    - on acceptance every existing session ENDS, as every other password
+    //      reset here does. A new person has none to end.
+    //
+    //  THE OLD PASSWORD KEEPS WORKING until the link is used. Sending it is an
+    //  offer, not a lockout: an administrator's mis-click must not shut somebody
+    //  out until they next read their personal mail. For an account that may be
+    //  in the wrong hands, Reset password is the tool - it kills the password
+    //  and the sessions at once - and the People page says so beside the button.
+    // ─────────────────────────────────────────────────────────────────────────
+    public const string ChannelEmail = "email";
+    public const string ChannelSignInLink = "email-signin";
+    public static readonly TimeSpan SignInLinkLifetime = TimeSpan.FromHours(24);
+
+    public static bool IsEmailChannel(string? channel) =>
+        channel is ChannelEmail or ChannelSignInLink;
+
+    public static TimeSpan LifetimeFor(string? channel) =>
+        channel == ChannelSignInLink ? SignInLinkLifetime : Lifetime;
+
+    /// <summary>The refusal when there is nowhere to send a sign-in link.</summary>
+    public const string NoRecoveryEmail =
+        "This person has no recovery email, so there is nowhere to send a link. Add one, or use Reset password.";
+
     /// <summary>
     /// Flip when the SMS provider has approved a template that carries a
     /// link. Until then a phone-only person gets no invitation and the admin
@@ -89,7 +130,7 @@ public static class Invitations
         $"{baseUrl.TrimEnd('/')}/welcome#t={Uri.EscapeDataString(token)}";
 
     public static bool IsExpired(User user) =>
-        user.InviteSentAt is null || DateTimeOffset.UtcNow - user.InviteSentAt > Lifetime;
+        user.InviteSentAt is null || DateTimeOffset.UtcNow - user.InviteSentAt > LifetimeFor(user.InviteChannel);
 
     /// <summary>
     /// What the people list says about this person's invitation, from the
@@ -120,11 +161,12 @@ public static class Invitations
     {
         var to = user.RecoveryEmail
                  ?? throw new InvalidOperationException("An email invitation needs a recovery email.");
+        var signInLink = user.InviteChannel == ChannelSignInLink;
         return mailer.SendHtmlAsync(
             to,
-            InviteEmail.Subject(orgName),
+            InviteEmail.Subject(orgName, signInLink),
             InviteEmail.Html(user.DisplayName, orgName, baseUrl, user.Email,
-                             Link(baseUrl, token), (int)Lifetime.TotalHours),
+                             Link(baseUrl, token), (int)LifetimeFor(user.InviteChannel).TotalHours, signInLink),
             from: "no_reply@tatvaos.com",
             ct: ct);
     }

@@ -30,16 +30,28 @@ public static class InviteEmail
     private const string Canvas = "#f2f4f9";
     private const string Border = "#e6e9ee";
 
-    public static string Subject(string orgName) =>
-        $"Set your password for {orgName} on TatvaOS";
+    public static string Subject(string orgName, bool signInLink = false) =>
+        signInLink
+            ? $"A link to choose a new password for {orgName} on TatvaOS"
+            : $"Set your password for {orgName} on TatvaOS";
 
     /// <param name="baseUrl">The console origin, e.g. https://core.tatvaos.com.</param>
     /// <param name="address">The person's new sign-in address.</param>
     /// <param name="inviteUrl">The one-time link, token in the fragment.</param>
     /// <param name="hours">How long the link stays valid, for the copy.</param>
     public static string Html(
-        string displayName, string orgName, string baseUrl, string address, string inviteUrl, int hours)
+        string displayName, string orgName, string baseUrl, string address, string inviteUrl, int hours,
+        bool signInLink = false)
     {
+        // The same mail, two openings. Somebody who has used this account for a
+        // year must not be told "Welcome" and "has created your account": it reads
+        // as phishing, and a careful person would be right to ignore it.
+        var headline = signInLink ? "Choose a new password" : "Welcome";
+        var opening = signInLink
+            ? "Your administrator at <strong style=\"color:#0a0a0a;\">" + WebUtility.HtmlEncode(orgName) + "</strong> sent you this link so you can choose a new password and get back in. "
+              + "Your current password keeps working until you use it. If you did not expect this, ignore it and tell your administrator."
+            : "<strong style=\"color:#0a0a0a;\">" + WebUtility.HtmlEncode(orgName) + "</strong> has created your TatvaOS account. "
+              + "Choose your own password to start using it — nobody else has one for you.";
         var name = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(displayName) ? "there" : displayName.Split(' ')[0]);
         var org = WebUtility.HtmlEncode(orgName);
         var addr = WebUtility.HtmlEncode(address);
@@ -83,11 +95,10 @@ public static class InviteEmail
           <tr>
             <td style=""padding:36px 32px 8px;"">
               <h1 style=""margin:0 0 10px;font-size:24px;line-height:1.25;font-weight:800;color:{Ink};"">
-                Welcome, {name}.
+                {headline}, {name}.
               </h1>
               <p style=""margin:0;font-size:15px;line-height:1.6;color:#4d5875;"">
-                <strong style=""color:{Ink};"">{org}</strong> has created your TatvaOS account.
-                Choose your own password to start using it — nobody else has one for you.
+                {opening}
               </p>
             </td>
           </tr>
