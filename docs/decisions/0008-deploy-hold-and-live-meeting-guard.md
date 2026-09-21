@@ -94,6 +94,16 @@ gh api repos/amittechvein/tatvaos/environments/production
 {"name":"production","protection_rules":[]}
 ```
 
+**For the record, as Mr. Singh ruled on 21 September:** the claim entered the
+repository on **4 August 2026**, in commit `9963094` ("TatvaOS Core schema, cloud
+environments, CI/CD"), the commit that created this workflow. On **21 September**
+GitHub showed no protection rules. Between those dates **45 production deploys
+succeeded** (the first on 6 August). Whether a reviewer was ever configured and
+later removed cannot be told from the repository; GitHub's settings keep no
+history visible here. Either way, the documented gate was not there on the day
+it was checked, and every one of those deploys should be read as having had one
+person behind it.
+
 **No protection rules. No required reviewer.** Every deploy so far went out on
 one person's dispatch and a typed word. The comment describes a control that is
 not configured — the codebase's signature failure, a check that looks applied
@@ -131,7 +141,11 @@ record says so in its first line.
    verdict: *accepted*, or *not acceptable — reason*. A second override
    referencing an unreviewed one says so.
 4. **The next deploy refuses while any `deploy-override` issue older than 72
-   hours is still open.** Checked in the workflow, on the runner, before SSH —
+   hours is still open.** A review item can be closed by **Mr. Singh or the named
+   deputy** — both are on the `infra/deploy-override-authorizers` list, marked as
+   reviewers. Mr. Singh, 21 September: a gate that only one person can clear is
+   "an outage waiting for a holiday". **The deputy is not named yet**; this record
+   is not accepted until a name is written here: `DEPUTY: ________`. Checked in the workflow, on the runner, before SSH —
    the runner can ask GitHub; the server cannot. That refusal can itself only be
    overridden with the same three fields, which opens a second issue. So an
    unreviewed override blocks the pipeline within three days instead of
@@ -207,6 +221,7 @@ production's.
 4. Is the `ops` schema right for the override record, or should it live in
    `core.audit_logs` under a platform action?
 5. Is 72 hours right for an unreviewed override to start blocking deploys?
+7. Who is the deputy who may clear an override review when Mr. Singh is away?
 6. **Not a question for you but a blocker:** Amit turns on Required reviewers for
    the `production` environment (Amit and Mr. Singh). Until then, nothing in
    this record has a second person behind it.
