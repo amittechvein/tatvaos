@@ -37,6 +37,7 @@ local.properties
 # identity again, and anyone who has it can publish as us. It belongs in a
 # password manager and in EAS, nowhere else.
 keystore.properties
+upload-password.txt
 
 # Firebase config. Not a secret - it ships inside the app - but it is
 # per-environment, and a committed one is how a debug build ends up reporting

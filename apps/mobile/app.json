@@ -4,6 +4,7 @@
     "slug": "tatvaos",
     "version": "0.1.0",
     "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
     "userInterfaceStyle": "light",
     "scheme": "tatvaos",
     "ios": {
@@ -15,8 +16,10 @@
     },
     "android": {
       "package": "com.techvein.tatvaos",
+      "versionCode": 1,
       "adaptiveIcon": {
-        "backgroundColor": "#6C3CE9"
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#FFFFFF"
       },
       "permissions": [
         "android.permission.CAMERA",
@@ -50,7 +53,8 @@
           }
         }
       ],
-      "./plugins/withShortNativeObjectPaths"
+      "./plugins/withShortNativeObjectPaths",
+      "./plugins/withUploadSigning"
     ],
     "extra": {
       "hosts": {
