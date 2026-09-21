@@ -103,6 +103,26 @@ internal static class Program
         Ok("no meeting link, no Join button", !many.Contains("Join the meeting"));
         Ok("a javascript: Where or link NEVER becomes a link", !hostile.Contains("href=\"javascript") && !hostile.Contains("Join the meeting"));
 
+        Console.WriteLine();
+        Console.WriteLine("  One message per guest (Amit, 22 Sept): each copy names only its guest");
+        var all = new List<CalendarAttendee>
+        {
+            new() { Email = "Amit@Techvein.com", DisplayName = "Amit" },          // the organiser's own row
+            new() { Email = "parent1@example.com", DisplayName = "Parent One" },
+            new() { Email = "parent2@example.com", DisplayName = "Parent Two" },
+            new() { Email = "parent3@example.com" },
+        };
+        var copy = Imip.AttendeesForCopy(all, "amit@techvein.com", "PARENT2@example.com");
+        Ok("copy names exactly two: the organiser and that guest", copy.Count == 2
+            && copy.Any(a => a.Email == "parent2@example.com") && copy.Any(a => a.Email == "Amit@Techvein.com"));
+        var ics = Imip.Build(ev, copy, "amit@techvein.com", "Amit", Imip.MethodRequest);
+        Ok("its calendar part: parent2 is an ATTENDEE", ics.Contains("mailto:parent2@example.com"));
+        Ok("its calendar part: NO other parent's address", !ics.Contains("parent1@") && !ics.Contains("parent3@"));
+        Ok("its calendar part: the organiser is still ORGANIZER", ics.Contains("ORGANIZER") && ics.Contains("mailto:amit@techvein.com"));
+        Ok("same UID as everyone else's copy, so one event in every calendar", ics.Contains("UID:u-1"));
+        var copy1 = Imip.AttendeesForCopy(all, "amit@techvein.com", "parent1@example.com");
+        Ok("a different guest's copy does not name parent2", !Imip.Build(ev, copy1, "amit@techvein.com", "Amit", Imip.MethodRequest).Contains("parent2@"));
+
         if (Environment.GetEnvironmentVariable("CAL_PREVIEW_DIR") is { Length: > 0 } dir)
         {
             Directory.CreateDirectory(dir);

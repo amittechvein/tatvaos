@@ -78,8 +78,6 @@ public static class CalendarInvitationMailer
         if (recipients.Count == 0)
             return new Outcome(0, null);   // a meeting with yourself needs no post
 
-        var ical = Imip.Build(ev, attendees, box.Address, organiser.DisplayName, method);
-
         // The HUMAN half of the alternative. Deliberately plain text and
         // deliberately bilingual-safe: no templating, just the facts in the
         // order a person scans them. Clients that understand text/calendar
@@ -109,47 +107,87 @@ public static class CalendarInvitationMailer
             + (string.IsNullOrWhiteSpace(ev.Description) ? "" : "\n" + ev.Description + "\n")
             + "\nOrganised by " + (organiser.DisplayName ?? box.Address);
 
-        var submission = new MailSubmission(
-            To: recipients.Select(r => new MailboxAddress(r.DisplayName ?? "", r.Email)).ToList(),
-            Cc: [],
-            Subject: (method == Imip.MethodCancel ? "Cancelled: " : "Invitation: ") + ev.Title,
-            BodyText: text,
-            // Amit, 21 Sept 2026: "need good design of invitation". The HTML
-            // sits between the text and the calendar part; the calendar part
-            // stays last, so the answer buttons are unaffected.
-            BodyHtml: CalendarInviteEmail.Html(
-                ev, localStart, localEnd, organiser.DisplayName ?? box.Address, recipients,
-                cancelled: method == Imip.MethodCancel,
-                baseUrl: config["Oidc:WebBaseUrl"] ?? "https://core.tatvaos.com"),
-            Attachments: [],
-            ICalendar: ical,
-            ICalendarMethod: method);
+        // Amit, 21 Sept 2026: "need good design of invitation". The HTML sits
+        // between the text and the calendar part; the calendar part stays last,
+        // so the answer buttons are unaffected. The same for every copy.
+        var html = CalendarInviteEmail.Html(
+            ev, localStart, localEnd, organiser.DisplayName ?? box.Address, recipients,
+            cancelled: method == Imip.MethodCancel,
+            baseUrl: config["Oidc:WebBaseUrl"] ?? "https://core.tatvaos.com");
+        var subject = (method == Imip.MethodCancel ? "Cancelled: " : "Invitation: ") + ev.Title;
+        var everyone = recipients.Select(r => new MailboxAddress(r.DisplayName ?? "", r.Email)).ToList();
 
-        try
+        // ── ONE MESSAGE PER GUEST ────────────────────────────────────────────
+        //
+        //  Until 22 Sept 2026 this was ONE message To: every guest, with an
+        //  ATTENDEE line for every guest in the calendar part, so each guest
+        //  saw every other guest's address, in To and in Gmail's guest list.
+        //  Mr. Singh found it reviewing PR 201: invitations go to schools, and
+        //  to parents. Amit chose separate emails ("separate invitation emails
+        //  yes").
+        //
+        //  Each copy carries only the organiser and that guest (Imip.AttendeesForCopy),
+        //  with the SAME UID and SEQUENCE, so every calendar files the same event
+        //  and a REPLY still names the replier. The organiser's own event keeps the
+        //  full list. ONE Sent copy names everyone (the send API's pattern): not
+        //  300 entries in Sent for a 300-guest event.
+        int sent = 0, failed = 0;
+        string? lastError = null;
+        var filed = false;
+        foreach (var r in recipients)
         {
-            var result = await MailSender.SubmitAsync(
-                box, submission, db, tenant, config, log, autoSave, audit, ct);
-
-            if (result.Outcome != SendOutcome.Sent)
+            // The organiser went away mid-send. Stop; the event is saved.
+            if (ct.IsCancellationRequested) break;
+            try
             {
-                log.LogWarning(
-                    "Invitation mail for event {Event} was not sent: {Error}",
-                    ev.Id, result.Error);
-                return new Outcome(0,
-                    "The event is saved, but the invitation email could not be sent: "
-                    + (result.Error ?? "unknown reason"));
-            }
+                var ical = Imip.Build(ev, Imip.AttendeesForCopy(attendees, box.Address, r.Email),
+                                      box.Address, organiser.DisplayName, method);
+                var result = await MailSender.SubmitAsync(box, new MailSubmission(
+                    To: [new MailboxAddress(r.DisplayName ?? "", r.Email)],
+                    Cc: [],
+                    Subject: subject,
+                    BodyText: text,
+                    BodyHtml: html,
+                    Attachments: [],
+                    ICalendar: ical,
+                    ICalendarMethod: method,
+                    FileSentCopy: !filed,
+                    SentCopyRecipients: everyone), db, tenant, config, log, autoSave, audit, ct);
 
-            return new Outcome(recipients.Count, null);
+                if (result.Outcome is SendOutcome.Sent or SendOutcome.SentButNotFiled)
+                {
+                    sent++;
+                    filed = true;
+                }
+                else
+                {
+                    failed++;
+                    lastError = result.Error;
+                    // Never the address in the log: it is somebody's personal data.
+                    log.LogWarning("Invitation mail for event {Event}, attendee {Attendee}, was not sent: {Error}",
+                        ev.Id, r.Id, result.Error);
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                // The event is already saved and must stay saved; one guest's
+                // failure must not stop the next guest's invitation.
+                failed++;
+                lastError = "sending failed unexpectedly";
+                log.LogError(ex, "Invitation mail for event {Event}, attendee {Attendee}, threw", ev.Id, r.Id);
+            }
         }
-        catch (Exception ex)
-        {
-            // The event is already saved and must stay saved. This catch is
-            // the guarantee; the log line is so the failure is a fact
-            // somewhere instead of a shrug.
-            log.LogError(ex, "Invitation mail for event {Event} threw", ev.Id);
-            return new Outcome(0,
-                "The event is saved, but sending the invitation email failed unexpectedly.");
-        }
+
+        if (sent == recipients.Count) return new Outcome(sent, null);
+        if (sent == 0)
+            return new Outcome(0, "The event is saved, but the invitation email could not be sent: "
+                                  + (lastError ?? "the request ended before sending"));
+        return new Outcome(sent,
+            $"The event is saved. Invitations went to {sent} of {recipients.Count} guests; "
+            + (failed > 0 ? $"{failed} could not be sent ({lastError ?? "unknown reason"})." : "the rest were not sent because the request ended."));
     }
 }

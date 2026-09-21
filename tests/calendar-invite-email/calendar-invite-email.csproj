@@ -35,6 +35,7 @@
     <!-- The production file itself. Not a copy. -->
     <Compile Include="../../apps/api/Modules/Calendar/CalendarInviteEmail.cs" Link="CalendarInviteEmail.cs" />
     <Compile Include="../../apps/api/Shared/Data/CalendarEntities.cs" Link="CalendarEntities.cs" />
+    <Compile Include="../../apps/api/Modules/Calendar/Imip.cs" Link="Imip.cs" />
   </ItemGroup>
 
 </Project>

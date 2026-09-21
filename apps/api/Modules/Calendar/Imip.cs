@@ -57,6 +57,18 @@ public static class Imip
     /// SEQUENCE treats the message as a duplicate and ignores it, which is
     /// exactly right for a resend and exactly wrong for an update.
     /// </summary>
+    /// <summary>
+    /// The attendees ONE guest's copy of an invitation names: the organiser's
+    /// own attendee row (if they have one) and that guest. Nobody else, so one
+    /// parent's invitation does not carry every other parent's address
+    /// (Mr. Singh and Amit, 22 Sept 2026). Matched case-insensitively.
+    /// </summary>
+    public static List<CalendarAttendee> AttendeesForCopy(
+        IEnumerable<CalendarAttendee> attendees, string organiserEmail, string guestEmail) =>
+        attendees.Where(a => string.Equals(a.Email, organiserEmail, StringComparison.OrdinalIgnoreCase)
+                          || string.Equals(a.Email, guestEmail, StringComparison.OrdinalIgnoreCase))
+                 .ToList();
+
     public static string Build(
         CalendarEvent ev,
         IEnumerable<CalendarAttendee> attendees,
