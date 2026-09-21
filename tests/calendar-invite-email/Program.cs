@@ -55,6 +55,11 @@ internal static class Program
         var cancel = TatvaOS.Api.Modules.Calendar.CalendarInviteEmail.Html(ev, s, e, "Amit Dadhich", Guests(3), cancelled: true, Base);
         var many = TatvaOS.Api.Modules.Calendar.CalendarInviteEmail.Html(Event("Town hall", "https://meet.example.com/x", null, null),
                                             s, e, "Amit", Guests(12), cancelled: false, Base);
+        var nameless = TatvaOS.Api.Modules.Calendar.CalendarInviteEmail.Html(Event("n", null, null, null), s, e, "Amit",
+            Enumerable.Range(1, 3).Select(i => new CalendarAttendee { Email = $"p{i}@example.com" }).ToList(), cancelled: false, Base);
+        var tenNamed = TatvaOS.Api.Modules.Calendar.CalendarInviteEmail.Html(Event("t", null, null, null), s, e, "Amit",
+            Enumerable.Range(1, 10).Select(i => new CalendarAttendee { Email = $"p{i}@example.com", DisplayName = $"Person {i}" }).ToList(), cancelled: false, Base);
+        var lookalike = TatvaOS.Api.Modules.Calendar.CalendarInviteEmail.Html(Event("l", null, "https://гoogle.com/meet", null), s, e, "Amit", Guests(1), cancelled: false, Base);
         var hostile = TatvaOS.Api.Modules.Calendar.CalendarInviteEmail.Html(Event("x", "javascript:alert(1)", "javascript:alert(2)", null),
                                                s, e, "Amit", Guests(1), cancelled: false, Base);
 
@@ -74,7 +79,9 @@ internal static class Program
         Ok("where", invite.Contains("Board room, 3rd floor"));
         Ok("a Join button to the meeting link", invite.Contains("href=\"https://connect.tatvaos.com/m/abc-def\"") && invite.Contains("Join the meeting"));
         Ok("description kept, line breaks kept", invite.Contains("Agenda:<br>Numbers<br>Hiring"));
-        Ok("guests named, display name first", invite.Contains("Ravi Kumar, guest2@example.com, guest3@example.com"));
+        Ok("guests: names only, unnamed guests COUNTED (Mr. Singh, 22 Sept)", invite.Contains("Ravi Kumar and 2 others"));
+        Ok("NO guest address anywhere in the body", !invite.Contains("@example.com") && !cancel.Contains("@example.com"));
+        Ok("the Join destination is shown as a host", invite.Contains("Opens <strong") && invite.Contains(">connect.tatvaos.com</strong>"));
         Ok("says how to answer, and that no link here answers", invite.Contains("Yes, No or Maybe buttons"));
         Ok("no unfilled template hole", !invite.Contains("{") && !cancel.Contains("{"));
 
@@ -88,7 +95,10 @@ internal static class Program
 
         Console.WriteLine();
         Console.WriteLine("  Edges");
-        Ok("twelve guests: eight named, then 'and 4 more'", many.Contains("guest8@example.com and 4 more") && !many.Contains("guest9@"));
+        Ok("twelve guests, one named: 'Ravi Kumar and 11 others', no addresses", many.Contains("Ravi Kumar and 11 others") && !many.Contains("@example.com"));
+        Ok("no named guests at all: just a count", nameless.Contains(">3 guests</td>"));
+        Ok("eight names shown, the rest counted", tenNamed.Contains("Person 8 and 2 others") && !tenNamed.Contains("Person 9"));
+        Ok("a look-alike Unicode host is shown in its xn-- form", lookalike.Contains(">xn--"));
         Ok("a web address in Where becomes a link", many.Contains("href=\"https://meet.example.com/x\""));
         Ok("no meeting link, no Join button", !many.Contains("Join the meeting"));
         Ok("a javascript: Where or link NEVER becomes a link", !hostile.Contains("href=\"javascript") && !hostile.Contains("Join the meeting"));

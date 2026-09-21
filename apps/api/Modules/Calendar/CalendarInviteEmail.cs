@@ -81,14 +81,23 @@ public static class CalendarInviteEmail
         if (!string.IsNullOrWhiteSpace(ev.Location))
             rows += Row("Where", LinkOrText(ev.Location!));
         rows += Row("Organiser", organiser);
-        var guests = attendees
-            .Select(a => string.IsNullOrWhiteSpace(a.DisplayName) ? a.Email : a.DisplayName!)
+        // NAMES ONLY, never addresses. Mr. Singh, 22 Sept 2026: these go to
+        // schools, and to parents; a body listing every other parent's address
+        // is a privacy complaint that reaches a principal. A guest with no name
+        // is counted, not shown by address.
+        var names = attendees
+            .Where(a => !string.IsNullOrWhiteSpace(a.DisplayName))
+            .Select(a => a.DisplayName!.Trim())
             .ToList();
-        if (guests.Count > 0)
+        var unnamed = attendees.Count - names.Count;
+        if (attendees.Count > 0)
         {
-            var named = string.Join(", ", guests.Take(GuestsShown).Select(Enc));
-            var more = guests.Count > GuestsShown ? $" and {guests.Count - GuestsShown} more" : "";
-            rows += Row("Guests", named + more);
+            var shown = names.Take(GuestsShown).Select(Enc).ToList();
+            var others = names.Count - shown.Count + unnamed;
+            var guestLine = shown.Count == 0
+                ? $"{attendees.Count} guest{(attendees.Count == 1 ? "" : "s")}"
+                : string.Join(", ", shown) + (others > 0 ? $" and {others} other{(others == 1 ? "" : "s")}" : "");
+            rows += Row("Guests", guestLine);
         }
 
         // Join button: only while the event is on, and only for a real link.
@@ -103,7 +112,8 @@ public static class CalendarInviteEmail
                   </a>
                 </td>
               </tr></table>
-              <p style=""margin:10px 0 0;font-size:12px;color:{Muted};word-break:break-all;"">{Enc(ev.MeetingUrl!)}</p>
+              <p style=""margin:10px 0 0;font-size:13px;color:{Body};"">Opens <strong style=""color:{Ink};"">{Enc(HostOf(ev.MeetingUrl!))}</strong></p>
+              <p style=""margin:4px 0 0;font-size:12px;color:{Muted};word-break:break-all;"">{Enc(ev.MeetingUrl!)}</p>
             </td>
           </tr>"
             : "";
@@ -232,6 +242,16 @@ public static class CalendarInviteEmail
     private static bool IsWebLink(string? value) =>
         Uri.TryCreate(value?.Trim(), UriKind.Absolute, out var u)
         && (u.Scheme == Uri.UriSchemeHttps || u.Scheme == Uri.UriSchemeHttp);
+
+    /// <summary>
+    /// Where the Join button goes, shown beside it. Mr. Singh, 22 Sept 2026: the
+    /// link is typed by a user and may point anywhere (it must, for Zoom and
+    /// Meet), so a branded mail from a school's own domain must not hide the
+    /// destination behind a button. IdnHost shows a look-alike Unicode domain in
+    /// its xn-- form instead of disguising it.
+    /// </summary>
+    private static string HostOf(string url) =>
+        Uri.TryCreate(url.Trim(), UriKind.Absolute, out var u) ? u.IdnHost : url;
 
     private static string Enc(string value) => WebUtility.HtmlEncode(value);
 }
