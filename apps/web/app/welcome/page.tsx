@@ -20,12 +20,14 @@
  */
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+
+import { useAuth, LinkDeadError } from '@/lib/auth';
+import { homeFor } from '@/components/RequireAuth';
 
 import { AuthCard, AUTH_INPUT, AUTH_BUTTON } from '@/components/ui/AuthCard';
 import { MIN_PASSWORD, PASSWORD_HINT, PasswordStrength } from '@/components/ui/PasswordStrength';
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? '/api';
 
 // The server's sentence for expired, used, tampered and unknown alike.
 const EXPIRED = 'This invitation has expired. Ask your administrator to send a new one.';
@@ -38,7 +40,16 @@ export default function WelcomePage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dead, setDead] = useState(false);
-  const [done, setDone] = useState<{ email: string } | null>(null);
+  const [done, setDone] = useState<{ email: string; note: string } | null>(null);
+  const [mfa, setMfa] = useState(false);
+  const { acceptLink, user } = useAuth();
+  const router = useRouter();
+
+  // Signed in by the link itself (Amit, 19 Sept 2026: "add new password and get
+  // it login"). Straight to where a sign-in would have gone.
+  useEffect(() => {
+    if (user) router.replace(homeFor(user.role));
+  }, [user, router]);
 
   useEffect(() => {
     const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : '';
@@ -58,20 +69,14 @@ export default function WelcomePage() {
 
     setBusy(true);
     try {
-      const res = await fetch(`${API}/auth/invite/accept`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, newPassword: next }),
-      });
-      const body = await res.json().catch(() => ({}));
-
-      // 401 is the server saying the token is no longer a credential; 429 is
-      // the per-address limit. Neither is something this form can fix.
-      if (res.status === 401) { setDead(true); return undefined; }
-      if (!res.ok || !body.accepted) throw new Error(body.error ?? 'Could not set the password.');
-
-      setDone({ email: String(body.email ?? '') });
+      const out = await acceptLink(token ?? '', next);
+      // Signed in: the effect above moves on as soon as the user arrives.
+      if (out.kind === 'mfa') setMfa(true);
+      if (out.kind === 'set') setDone({ email: out.email, note: out.note });
     } catch (err) {
+      // 401 is the server saying the token is no longer a credential. Not
+      // something this form can fix.
+      if (err instanceof LinkDeadError) { setDead(true); return undefined; }
       setError(err instanceof Error ? err.message : 'Could not set the password.');
     } finally {
       setBusy(false);
@@ -106,13 +111,30 @@ export default function WelcomePage() {
   }
 
   // ---- done ---------------------------------------------------------------
+  // The password is set, and the account has an authenticator app. The link is
+  // never a way round it: finishing sign-in means the code, on the sign-in page.
+  if (mfa) {
+    return (
+      <AuthCard>
+        <h1 className="mb-2 text-xl font-semibold text-ink">Your password is set</h1>
+        <p className="text-sm leading-relaxed text-ink-muted">
+          Your account also uses an authenticator app. Sign in with your new password,
+          then enter the code from the app.
+        </p>
+        <Link href="/login" className={`${AUTH_BUTTON} mt-7 block text-center no-underline`}>
+          Sign in
+        </Link>
+      </AuthCard>
+    );
+  }
+
   if (done) {
     return (
       <AuthCard>
         <h1 className="mb-2 text-xl font-semibold text-ink">Your password is set</h1>
         <p className="text-sm leading-relaxed text-ink-muted">
-          Sign in as <strong className="text-ink">{done.email}</strong> with the password you just chose.
-          Nobody else has it — not your administrator, not us.
+          {done.note || <>Sign in as <strong className="text-ink">{done.email}</strong> with the password you just chose.</>}
+          {' '}Nobody else has it — not your administrator, not us.
         </p>
         <Link href="/login" className={`${AUTH_BUTTON} mt-7 block text-center no-underline`}>
           Sign in
@@ -126,7 +148,7 @@ export default function WelcomePage() {
     <AuthCard>
       <h1 className="mb-1 text-xl font-semibold text-ink">Choose your password</h1>
       <p className="mb-5 text-sm leading-relaxed text-ink-muted">
-        Your organisation has created your TatvaOS account. Set the password you will sign in with.
+        Set the password you will sign in with. You will be signed in as soon as it is set.
       </p>
 
       <form onSubmit={submit} noValidate>
@@ -159,7 +181,7 @@ export default function WelcomePage() {
         <p className="mt-1 text-xs leading-relaxed text-ink-muted">{PASSWORD_HINT}</p>
 
         <button type="submit" className={`${AUTH_BUTTON} mt-6`} disabled={busy || !next || !confirm}>
-          {busy ? 'Setting…' : 'Set password'}
+          {busy ? 'Setting…' : 'Set password and sign in'}
         </button>
       </form>
     </AuthCard>

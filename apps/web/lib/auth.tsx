@@ -83,6 +83,17 @@ interface AuthState {
   signInWithOtp: (phone: string, code: string) => Promise<MfaChallenge | null>;
   /** Completes a challenged sign-in with a TOTP code or a recovery code. */
   verifyMfa: (challenge: string, code: string) => Promise<void>;
+  /**
+   * An invitation or sign-in link: sets the password AND signs in, through the
+   * server's ordinary sign-in tail. 'mfa' when the account has an authenticator
+   * (the link is never a way round it); 'set' when the password was set but no
+   * session could be given (a suspended organisation). Throws LinkDeadError for
+   * a used, expired or unknown link.
+   */
+  acceptLink: (token: string, newPassword: string) => Promise<
+    | { kind: 'signedIn' }
+    | { kind: 'mfa'; challenge: string; note?: string }
+    | { kind: 'set'; email: string; note: string }>;
   /** Signs out of the CURRENT account only; the others stay signed in. */
   signOut: (all?: boolean) => Promise<void>;
   /** Move to another account already signed in here. No password. */
@@ -321,6 +332,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return null;
   }, [applyAuth]);
 
+  const acceptLink = useCallback(async (token: string, newPassword: string) => {
+    const res = await fetch(`${API}/auth/invite/accept`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // The session arrives as the same HttpOnly cookie any sign-in sets.
+      credentials: 'include',
+      body: JSON.stringify({ token, newPassword }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401) throw new LinkDeadError();
+    if (!res.ok) throw new Error(body.error ?? 'Could not set the password.');
+    if (body.mfaRequired) return { kind: 'mfa' as const, challenge: String(body.challenge), note: body.note };
+    if (body.accessToken) { applyAuth(body); return { kind: 'signedIn' as const }; }
+    return { kind: 'set' as const, email: String(body.email ?? ''), note: String(body.note ?? '') };
+  }, [applyAuth]);
+
   const verifyMfa = useCallback(async (challenge: string, code: string) => {
     const res = await fetch(`${API}/auth/mfa/verify`, {
       method: 'POST',
@@ -453,13 +480,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<AuthState>(() => ({
     user, mustChangePassword, loading, accounts,
-    signIn, requestOtp, signInWithOtp, verifyMfa,
+    signIn, requestOtp, signInWithOtp, verifyMfa, acceptLink,
     signOut, switchTo, forget, refreshAccounts, changePassword, authedFetch, authedUpload,
   }), [user, mustChangePassword, loading, accounts,
-       signIn, requestOtp, signInWithOtp, verifyMfa,
+       signIn, requestOtp, signInWithOtp, verifyMfa, acceptLink,
        signOut, switchTo, forget, refreshAccounts, changePassword, authedFetch, authedUpload]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+/** The link was used, has expired, or was never one. The server does not
+ *  say which, on purpose; neither does anything that catches this. */
+export class LinkDeadError extends Error {
+  constructor() { super('This link has expired or has already been used.'); }
 }
 
 export function useAuth(): AuthState {

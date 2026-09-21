@@ -2314,7 +2314,9 @@ public static class AuthEndpoints
 
     private static async Task<IResult> AcceptInvitationAsync(
         AcceptInvitationRequest req, AppDbContext db, IPasswordHasher hasher,
-        TenantContext tenant, AuditWriter audit, CancellationToken ct)
+        TenantContext tenant, AuditWriter audit,
+        TokenIssuer tokens, HttpContext http, IServiceScopeFactory scopeFactory,
+        IConfiguration config, TotpService totp, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(req.Token) || string.IsNullOrEmpty(req.NewPassword))
             return Results.BadRequest(new { error = "An invitation token and a new password are required." });
@@ -2335,6 +2337,12 @@ public static class AuthEndpoints
         tenant.Set(user.TenantId, user.Id, user.Role);
         await db.SyncTenantAsync(ct);
 
+        // Read BEFORE it is overwritten. A person who already had a password is
+        // being RESET through a link an administrator sent (Invitations,
+        // ChannelSignInLink), and every reset here ends every session: whoever
+        // held the old password may hold one. A new person has none to end.
+        var hadPassword = user.PasswordHash is not null;
+
         user.PasswordHash = hasher.Hash(req.NewPassword);
         user.PasswordChangedAt = DateTimeOffset.UtcNow;
         // Their own choice, not a handover credential — nothing to force.
@@ -2346,7 +2354,7 @@ public static class AuthEndpoints
         user.InviteAcceptedAt = DateTimeOffset.UtcNow;
 
         // An emailed link that was followed proves the address is readable.
-        if (user.InviteChannel == "email")
+        if (Invitations.IsEmailChannel(user.InviteChannel))
             user.RecoveryEmailVerifiedAt ??= DateTimeOffset.UtcNow;
 
         // A lockout collected by someone guessing at an account that had no
@@ -2362,16 +2370,47 @@ public static class AuthEndpoints
             .FirstOrDefaultAsync(m => m.UserId == user.Id && m.ImapPasswordHash == null, ct);
         if (box is not null) box.ImapPasswordHash = hasher.Hash(req.NewPassword);
 
-        await db.SaveChangesAsync(ct);
-        await audit.WriteAsync("user.invitation_accepted", "user", user.Id.ToString(),
-            after: new { channel = user.InviteChannel }, ct: ct);
-
-        return Results.Ok(new
+        if (hadPassword)
         {
-            accepted = true,
-            email = user.Email,
-            note = "Your password is set. Sign in with it.",
-        });
+            await db.RefreshTokens
+                .Where(t => t.UserId == user.Id && t.RevokedAt == null)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(t => t.RevokedAt, (DateTimeOffset?)DateTimeOffset.UtcNow)
+                    .SetProperty(t => t.RevokeReason, (string?)"password chosen through a sign-in link"), ct);
+        }
+
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync(hadPassword ? "user.signin_link_used" : "user.invitation_accepted",
+            "user", user.Id.ToString(),
+            after: new { channel = user.InviteChannel, sessionsEnded = hadPassword }, ct: ct);
+
+        // ── AND THEY ARE IN. ─────────────────────────────────────────────────
+        //  Amit, 19 Sept 2026: "they just add new password and get it login".
+        //  Until then this answered "Your password is set. Sign in with it." and
+        //  sent the person to type, a second time, the password they had just
+        //  typed twice. Nothing is proved by that second typing: holding the
+        //  link was already enough to set the password.
+        //
+        //  Through the SAME tail as every other sign-in (CompleteSignInAsync), so
+        //  this path cannot skip what the others do. In particular the SECOND
+        //  FACTOR: totp is passed, so a person with an authenticator app gets a
+        //  challenge here, not a session. A link in somebody's personal mail must
+        //  not be a way round their MFA.
+        //
+        //  The organisation is checked as sign-in checks it. A suspended
+        //  organisation gets the password set and no session, and says so.
+        var org = await db.Tenants.FirstOrDefaultAsync(t => t.Id == user.TenantId, ct);
+        if (org?.Status is "suspended" or "deleted")
+        {
+            return Results.Ok(new
+            {
+                accepted = true,
+                email = user.Email,
+                note = "Your password is set. Your organisation's account is not active, so you cannot sign in yet.",
+            });
+        }
+
+        return await CompleteSignInAsync(user, org, db, tokens, http, scopeFactory, config, ct, totp);
     }
 
     /// <summary>

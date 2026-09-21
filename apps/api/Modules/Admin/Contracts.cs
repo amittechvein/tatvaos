@@ -158,7 +158,14 @@ public sealed record UserResponse(
     // rows that have one.
     bool HasAvatar = false,
     // Null when there is nothing to say: never invited, or already in.
-    InvitationInfo? Invitation = null);
+    InvitationInfo? Invitation = null,
+    // What "Send sign-in link" needs, as FACTS, never the address itself
+    // (Mr. Singh, 21 Sept 2026: a button that looks available and refuses on
+    // every row is worse than one that says why it cannot be pressed). Null on
+    // a server that predates them; the dialog then leaves the button enabled
+    // and lets the server's refusal speak.
+    bool? HasPassword = null,
+    bool? HasRecoveryEmail = null);
 
 /// <summary>
 /// What the people list shows about a pending invitation (decision 0005).

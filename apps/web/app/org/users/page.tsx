@@ -35,6 +35,9 @@ interface Person {
   hasAvatar?: boolean;
   /** Decision 0005. Null when there is nothing to say: never invited, or in. */
   invitation?: { state: InviteState; sentAt: string | null; sentTo: string | null } | null;
+  /** What "Send sign-in link" needs. Undefined on an older server. */
+  hasPassword?: boolean | null;
+  hasRecoveryEmail?: boolean | null;
 }
 
 type InviteState = 'pending' | 'expired' | 'undelivered';
@@ -659,6 +662,16 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
   // The server refuses an admin acting on an owner; don't offer the buttons.
   const targetLocked = person.role === 'org_owner' && !canMakeOwner;
 
+  // Why "Send sign-in link" cannot be used for this person, or null when it can.
+  // Both facts come from the list; the server refuses the same two cases.
+  const noRecovery = person.hasRecoveryEmail === false;
+  const linkBlocked: string | null = noRecovery
+    ? 'there is no recovery email on file, so a link has nowhere to go. Use Reset password.'
+    : null;
+  // Somebody who has never chosen a password has nothing for a sign-in link to
+  // replace. What they need is an invitation, so that is what is offered.
+  const neverIn = person.hasPassword === false;
+
   /** Suspend / reactivate / delete / reset — small POSTs sharing one shape. */
   async function act(path: string, method: string, done: (body: Record<string, unknown>) => void) {
     setBusy(true);
@@ -778,7 +791,11 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
   return (
     <Modal
       title={`Edit ${person.displayName}`}
-      subtitle={person.email}
+      // The ADDRESS, prominently, not the name (Mr. Singh, 21 Sept 2026). Two
+      // people in one organisation can share a display name, and this dialog
+      // resets passwords and ends sessions: the administrator must be able to
+      // see, before pressing anything, exactly whose account this is.
+      subtitle={<span className="text-sm font-semibold text-ink break-all">{person.email}</span>}
       onClose={onClose}
       busy={busy}
       size="xl"
@@ -905,11 +922,72 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
             </Button>
           </div>
         ) : (
-          <Button variant="ghost" disabled={busy}
-                  onClick={() => void act('/reset-password', 'POST',
-                    (body) => { setTempPassword({ password: String(body.temporaryPassword), mailbox: false }); setBusy(false); })}>
-            Reset password
-          </Button>
+          // Two ways to help somebody who cannot get in (Amit, 19 Sept 2026: "send
+          // invitation of login with one use there they just add new password and
+          // get it login"). The link is the kind one: nobody sees a password, and
+          // their current one keeps working until they use it. Reset password is
+          // the hard one, for an account that may be in the wrong hands: it ends
+          // the password and every session now, and you hand over a new one.
+          <div>
+            <p className="mb-2 text-xs text-ink-muted">
+              These act on <strong className="text-ink break-all">{person.email}</strong>.
+            </p>
+            <div className="flex gap-2 flex-wrap">
+              {neverIn ? (
+                // Mr. Singh, 21 Sept 2026: 169 accounts that have never signed
+                // in. For them the link is the wrong tool; an invitation is the
+                // right one, and it is the same one-use link, 72 hours.
+                <Button variant="ghost" disabled={busy || noRecovery}
+                        title={noRecovery ? 'There is no recovery email on file, so an invitation has nowhere to go.' : undefined}
+                        onClick={() => void act('/invitation/resend', 'POST', (body) => {
+                          if (body.sent) onSaved(`${person.email}: ${String(body.note ?? 'Invitation sent.')}`);
+                          else { onError(String(body.note ?? 'The invitation could not be sent.')); setBusy(false); }
+                        })}>
+                  Send invitation
+                </Button>
+              ) : (
+                <Button variant="ghost" disabled={busy || linkBlocked !== null}
+                        title={linkBlocked ?? undefined}
+                        onClick={() => void act('/signin-link', 'POST', (body) => {
+                          if (body.sent) onSaved(`${person.email}: ${String(body.note ?? 'Link sent.')}`);
+                          else { onError(String(body.note ?? 'The link could not be sent.')); setBusy(false); }
+                        })}>
+                  Send sign-in link
+                </Button>
+              )}
+              <Button variant="ghost" disabled={busy}
+                      onClick={() => void act('/reset-password', 'POST',
+                        (body) => { setTempPassword({ password: String(body.temporaryPassword), mailbox: false }); setBusy(false); })}>
+                Reset password
+              </Button>
+            </div>
+            {/* Why the link cannot be sent, SAID, instead of a button that looks
+                available and refuses when pressed. The server refuses the same
+                cases anyway; this only stops the administrator finding out by
+                trying. */}
+            {noRecovery && (
+              <p className="mt-1.5 text-xs text-warn">
+                <strong>{neverIn ? 'Send invitation' : 'Send sign-in link'}</strong> is not available: there is
+                no recovery email on file, so a link has nowhere to go. Use <strong>Reset password</strong> and
+                hand them the password yourself.
+              </p>
+            )}
+            <p className="mt-1.5 text-xs text-ink-muted">
+              {neverIn ? (
+                <>
+                  They have never chosen a password. <strong>Send invitation</strong> emails a one-use link to
+                  their recovery address; they choose one and are signed in.
+                </>
+              ) : (
+                <>
+                  <strong>Send sign-in link</strong> emails a one-use link to their recovery address; they choose a
+                  new password and are signed in.
+                </>
+              )}{' '}
+              <strong>Reset password</strong> signs them out everywhere at once — use it if the account may be
+              in the wrong hands.
+            </p>
+          </div>
         )
       )}
 
