@@ -35,6 +35,9 @@ interface Person {
   hasAvatar?: boolean;
   /** Decision 0005. Null when there is nothing to say: never invited, or in. */
   invitation?: { state: InviteState; sentAt: string | null; sentTo: string | null } | null;
+  /** What "Send sign-in link" needs. Undefined on an older server. */
+  hasPassword?: boolean | null;
+  hasRecoveryEmail?: boolean | null;
 }
 
 type InviteState = 'pending' | 'expired' | 'undelivered';
@@ -659,6 +662,15 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
   // The server refuses an admin acting on an owner; don't offer the buttons.
   const targetLocked = person.role === 'org_owner' && !canMakeOwner;
 
+  // Why "Send sign-in link" cannot be used for this person, or null when it can.
+  // Both facts come from the list; the server refuses the same two cases.
+  const linkBlocked: string | null =
+    person.hasPassword === false
+      ? 'they have not chosen a password yet, so there is nothing to replace. Use Resend invitation, or Reset password to give them one.'
+      : person.hasRecoveryEmail === false
+        ? 'there is no recovery email on file, so a link has nowhere to go. Use Reset password.'
+        : null;
+
   /** Suspend / reactivate / delete / reset — small POSTs sharing one shape. */
   async function act(path: string, method: string, done: (body: Record<string, unknown>) => void) {
     setBusy(true);
@@ -778,7 +790,11 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
   return (
     <Modal
       title={`Edit ${person.displayName}`}
-      subtitle={person.email}
+      // The ADDRESS, prominently, not the name (Mr. Singh, 21 Sept 2026). Two
+      // people in one organisation can share a display name, and this dialog
+      // resets passwords and ends sessions: the administrator must be able to
+      // see, before pressing anything, exactly whose account this is.
+      subtitle={<span className="text-sm font-semibold text-ink break-all">{person.email}</span>}
       onClose={onClose}
       busy={busy}
       size="xl"
@@ -912,10 +928,14 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
           // the hard one, for an account that may be in the wrong hands: it ends
           // the password and every session now, and you hand over a new one.
           <div>
+            <p className="mb-2 text-xs text-ink-muted">
+              These act on <strong className="text-ink break-all">{person.email}</strong>.
+            </p>
             <div className="flex gap-2 flex-wrap">
-              <Button variant="ghost" disabled={busy}
+              <Button variant="ghost" disabled={busy || linkBlocked !== null}
+                      title={linkBlocked ?? undefined}
                       onClick={() => void act('/signin-link', 'POST', (body) => {
-                        if (body.sent) onSaved(String(body.note ?? 'Link sent.'));
+                        if (body.sent) onSaved(`${person.email}: ${String(body.note ?? 'Link sent.')}`);
                         else { onError(String(body.note ?? 'The link could not be sent.')); setBusy(false); }
                       })}>
                 Send sign-in link
@@ -926,6 +946,15 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
                 Reset password
               </Button>
             </div>
+            {/* Why the link cannot be sent, SAID, instead of a button that looks
+                available and refuses when pressed. The server refuses the same
+                cases anyway; this only stops the administrator finding out by
+                trying. */}
+            {linkBlocked && (
+              <p className="mt-1.5 text-xs text-warn">
+                <strong>Send sign-in link</strong> is not available: {linkBlocked}
+              </p>
+            )}
             <p className="mt-1.5 text-xs text-ink-muted">
               <strong>Send sign-in link</strong> emails a one-use link to their recovery address; they choose a
               new password and are signed in. <strong>Reset password</strong> signs them out everywhere at once —

@@ -239,7 +239,9 @@ public static class UserEndpoints
                 withAvatar.Contains(r.Id),
                 inviteState is null
                     ? null
-                    : new InvitationInfo(inviteState, r.InviteSentAt, Mask.Email(r.RecoveryEmail)));
+                    : new InvitationInfo(inviteState, r.InviteSentAt, Mask.Email(r.RecoveryEmail)),
+                r.HasPassword,
+                !string.IsNullOrWhiteSpace(r.RecoveryEmail));
         }).ToList();
 
         return Results.Ok(list);
@@ -1052,6 +1054,8 @@ public static class UserEndpoints
             return Results.BadRequest(new { error = "This person has not set a password yet. Use Resend invitation." });
         if (string.IsNullOrWhiteSpace(user.RecoveryEmail))
             return Results.BadRequest(new { error = Invitations.NoRecoveryEmail });
+        // (There is no screen yet for adding a recovery email to an existing
+        // person, so the refusal does not tell the administrator to add one.)
 
         var token = Invitations.Issue(user, Invitations.ChannelSignInLink);
         await db.SaveChangesAsync(ct);

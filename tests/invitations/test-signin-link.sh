@@ -214,6 +214,18 @@ else
     same "OLD: not signed in" "$(body "$r" | j "bool(d.get('accessToken'))")" "False"
 fi
 
+step "12. The People list says whether a link could be sent - as yes or no, never the address"
+if [ "$EXPECT" = "new" ]; then
+    PG "UPDATE core.users SET password_hash=NULL WHERE id='$HR_ID'" >/dev/null   # step 10 left a password; make it plain
+    L=$(curl -s "$API/api/org/users" -H "Authorization: Bearer $OWNER" -H "X-Forwarded-For: $(xff)")
+    row() { printf '%s' "$L" | j "next((str(x.get('$2')) for x in d if x['email']=='$1'), 'MISSING')"; }
+    NOPW=$(printf '%s' "$L" | j "next((x['email'] for x in d if x.get('hasPassword') is False and x['email']!='$HR'), '')")
+    same "a person with a recovery email: hasRecoveryEmail" "$(row "$HR" hasRecoveryEmail)" "True"
+    same "the owner, who has none: hasRecoveryEmail" "$(row amit@techvein.local hasRecoveryEmail)" "False"
+    [ -n "$NOPW" ] && pass "somebody in the list has no password yet ($NOPW), and says so" || fail "no row reports hasPassword false"
+    same "the list NEVER carries the recovery address itself" "$(printf '%s' "$L" | grep -cF "hr.personal-$RUN@example.com")" "0"
+fi
+
 step "11. Audited"
 if [ "$EXPECT" = "new" ]; then
     same "using a sign-in link is recorded as such" "$(PG "SELECT count(*) FROM core.audit_logs WHERE action='user.signin_link_used' AND target_id='$HR_ID' AND occurred_at >= '$T0'" | grep -c '^[1-9]')" "1"

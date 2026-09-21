@@ -70,7 +70,7 @@ public static class Invitations
 
     /// <summary>The refusal when there is nowhere to send a sign-in link.</summary>
     public const string NoRecoveryEmail =
-        "This person has no recovery email, so there is nowhere to send a link. Add one, or use Reset password.";
+        "This person has no recovery email on file, so a link has nowhere to go. Use Reset password.";
 
     /// <summary>
     /// Flip when the SMS provider has approved a template that carries a
