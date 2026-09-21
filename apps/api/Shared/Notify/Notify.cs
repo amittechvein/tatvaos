@@ -129,7 +129,13 @@ public sealed class SmsSender(
 
         // No provider configured. Logged, not pretended — the endpoint decides
         // whether to surface the code on screen instead.
-        log.LogWarning("SMS not configured; OTP for {Phone} not sent", to);
+        // NEVER the number. Until 21 Sept 2026 every failure path in this class
+        // logged it in full. The only numbers reaching it then were our own
+        // signed-in users'; the guest door (PR 184) would have sent strangers'
+        // through it while telling them "the number itself is not kept". Found
+        // while writing an evidence pack, not by a test - tests/notify is the
+        // test now. Four digits find the event and identify nobody.
+        log.LogWarning("SMS not configured; OTP for {Phone} not sent", Mask.PhoneForLog(to));
         return new SmsResult(false, "none", "No SMS provider is configured.");
     }
 
@@ -165,13 +171,22 @@ public sealed class SmsSender(
             // template mismatch, out of credit. Surfacing it verbatim on the
             // test button is the difference between fixing it in a minute and
             // guessing for an hour.
-            log.LogWarning("Infobip rejected send to {To}: {Status} {Body}", to, (int)res.StatusCode, body);
+            // The body is kept - it is the whole point - but the provider echoes
+            // the recipient in it, so the number is taken out of it first. The
+            // same scrubbed text is what goes back to the caller as Detail:
+            // callers log it and one shows it on a screen.
+            body = Mask.ScrubPhone(body, to);
+            log.LogWarning("Infobip rejected send to {To}: {Status} {Body}", Mask.PhoneForLog(to), (int)res.StatusCode, body);
             return new SmsResult(false, "infobip", $"Infobip returned {(int)res.StatusCode}: {Truncate(body)}");
         }
         catch (Exception ex)
         {
-            log.LogWarning(ex, "Infobip send to {To} failed", to);
-            return new SmsResult(false, "infobip", ex.Message);
+            // Not `ex` as the first argument: that prints the exception's own
+            // message and inner messages, which we did not write and cannot vouch
+            // for. The type and a scrubbed message are enough to act on.
+            var why = Mask.ScrubPhone(ex.Message, to);
+            log.LogWarning("Infobip send to {To} failed: {Type} {Why}", Mask.PhoneForLog(to), ex.GetType().Name, why);
+            return new SmsResult(false, "infobip", why);
         }
     }
 
@@ -218,13 +233,19 @@ public sealed class SmsSender(
                 body.Contains("\"type\":\"success\"", StringComparison.OrdinalIgnoreCase))
                 return new SmsResult(true, "msg91");
 
-            log.LogWarning("MSG91 rejected send to {To}: {Status} {Body}", to, (int)res.StatusCode, body);
+            body = Mask.ScrubPhone(body, to);
+            log.LogWarning("MSG91 rejected send to {To}: {Status} {Body}", Mask.PhoneForLog(to), (int)res.StatusCode, body);
             return new SmsResult(false, "msg91", $"MSG91 returned {(int)res.StatusCode}: {Truncate(body)}");
         }
         catch (Exception ex)
         {
-            log.LogWarning(ex, "MSG91 send to {To} failed", to);
-            return new SmsResult(false, "msg91", ex.Message);
+            // As for Infobip, and with more at stake: this request is a GET whose
+            // address carries the auth key, the number AND the code. An exception
+            // that quotes the address would put all three in the log.
+            var why = Mask.ScrubPhone(ex.Message, to);
+            if (why.Contains("authkey", StringComparison.OrdinalIgnoreCase)) why = "request failed (address withheld)";
+            log.LogWarning("MSG91 send to {To} failed: {Type} {Why}", Mask.PhoneForLog(to), ex.GetType().Name, why);
+            return new SmsResult(false, "msg91", why);
         }
     }
 
