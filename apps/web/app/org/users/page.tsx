@@ -664,12 +664,13 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
 
   // Why "Send sign-in link" cannot be used for this person, or null when it can.
   // Both facts come from the list; the server refuses the same two cases.
-  const linkBlocked: string | null =
-    person.hasPassword === false
-      ? 'they have not chosen a password yet, so there is nothing to replace. Use Resend invitation, or Reset password to give them one.'
-      : person.hasRecoveryEmail === false
-        ? 'there is no recovery email on file, so a link has nowhere to go. Use Reset password.'
-        : null;
+  const noRecovery = person.hasRecoveryEmail === false;
+  const linkBlocked: string | null = noRecovery
+    ? 'there is no recovery email on file, so a link has nowhere to go. Use Reset password.'
+    : null;
+  // Somebody who has never chosen a password has nothing for a sign-in link to
+  // replace. What they need is an invitation, so that is what is offered.
+  const neverIn = person.hasPassword === false;
 
   /** Suspend / reactivate / delete / reset — small POSTs sharing one shape. */
   async function act(path: string, method: string, done: (body: Record<string, unknown>) => void) {
@@ -932,14 +933,28 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
               These act on <strong className="text-ink break-all">{person.email}</strong>.
             </p>
             <div className="flex gap-2 flex-wrap">
-              <Button variant="ghost" disabled={busy || linkBlocked !== null}
-                      title={linkBlocked ?? undefined}
-                      onClick={() => void act('/signin-link', 'POST', (body) => {
-                        if (body.sent) onSaved(`${person.email}: ${String(body.note ?? 'Link sent.')}`);
-                        else { onError(String(body.note ?? 'The link could not be sent.')); setBusy(false); }
-                      })}>
-                Send sign-in link
-              </Button>
+              {neverIn ? (
+                // Mr. Singh, 21 Sept 2026: 169 accounts that have never signed
+                // in. For them the link is the wrong tool; an invitation is the
+                // right one, and it is the same one-use link, 72 hours.
+                <Button variant="ghost" disabled={busy || noRecovery}
+                        title={noRecovery ? 'There is no recovery email on file, so an invitation has nowhere to go.' : undefined}
+                        onClick={() => void act('/invitation/resend', 'POST', (body) => {
+                          if (body.sent) onSaved(`${person.email}: ${String(body.note ?? 'Invitation sent.')}`);
+                          else { onError(String(body.note ?? 'The invitation could not be sent.')); setBusy(false); }
+                        })}>
+                  Send invitation
+                </Button>
+              ) : (
+                <Button variant="ghost" disabled={busy || linkBlocked !== null}
+                        title={linkBlocked ?? undefined}
+                        onClick={() => void act('/signin-link', 'POST', (body) => {
+                          if (body.sent) onSaved(`${person.email}: ${String(body.note ?? 'Link sent.')}`);
+                          else { onError(String(body.note ?? 'The link could not be sent.')); setBusy(false); }
+                        })}>
+                  Send sign-in link
+                </Button>
+              )}
               <Button variant="ghost" disabled={busy}
                       onClick={() => void act('/reset-password', 'POST',
                         (body) => { setTempPassword({ password: String(body.temporaryPassword), mailbox: false }); setBusy(false); })}>
@@ -950,15 +965,27 @@ function EditPerson({ person, people, departments, onClose, onSaved, onError }: 
                 available and refuses when pressed. The server refuses the same
                 cases anyway; this only stops the administrator finding out by
                 trying. */}
-            {linkBlocked && (
+            {noRecovery && (
               <p className="mt-1.5 text-xs text-warn">
-                <strong>Send sign-in link</strong> is not available: {linkBlocked}
+                <strong>{neverIn ? 'Send invitation' : 'Send sign-in link'}</strong> is not available: there is
+                no recovery email on file, so a link has nowhere to go. Use <strong>Reset password</strong> and
+                hand them the password yourself.
               </p>
             )}
             <p className="mt-1.5 text-xs text-ink-muted">
-              <strong>Send sign-in link</strong> emails a one-use link to their recovery address; they choose a
-              new password and are signed in. <strong>Reset password</strong> signs them out everywhere at once —
-              use it if the account may be in the wrong hands.
+              {neverIn ? (
+                <>
+                  They have never chosen a password. <strong>Send invitation</strong> emails a one-use link to
+                  their recovery address; they choose one and are signed in.
+                </>
+              ) : (
+                <>
+                  <strong>Send sign-in link</strong> emails a one-use link to their recovery address; they choose a
+                  new password and are signed in.
+                </>
+              )}{' '}
+              <strong>Reset password</strong> signs them out everywhere at once — use it if the account may be
+              in the wrong hands.
             </p>
           </div>
         )
