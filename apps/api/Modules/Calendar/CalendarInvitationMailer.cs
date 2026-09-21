@@ -114,7 +114,13 @@ public static class CalendarInvitationMailer
             Cc: [],
             Subject: (method == Imip.MethodCancel ? "Cancelled: " : "Invitation: ") + ev.Title,
             BodyText: text,
-            BodyHtml: "",
+            // Amit, 21 Sept 2026: "need good design of invitation". The HTML
+            // sits between the text and the calendar part; the calendar part
+            // stays last, so the answer buttons are unaffected.
+            BodyHtml: CalendarInviteEmail.Html(
+                ev, localStart, localEnd, organiser.DisplayName ?? box.Address, recipients,
+                cancelled: method == Imip.MethodCancel,
+                baseUrl: config["Oidc:WebBaseUrl"] ?? "https://core.tatvaos.com"),
             Attachments: [],
             ICalendar: ical,
             ICalendarMethod: method);
