@@ -121,7 +121,7 @@ are green in both modes, because the old and the new guide agree on them.
 |---|---|
 | 1 | **Neither.** Never red. It would be if the API stopped validating cursors |
 | 2 | **Red first** under the old wording (wanted 400, got 200), green under the new |
-| 3 | **Neither**, and that matters: it is the security claim, and the only way to see it fail is a tenant-isolation bug. It is stronger than my first probe, which used a made-up host id. This one uses a real teacher and a real class in a second organisation, and proves the class is there to be leaked |
+| 3 | **Broken after, 21 Sept** (see the addendum). Before that: **Neither**, and that mattered: it is the security claim, and the only way to see it fail is a tenant-isolation bug. It is stronger than my first probe, which used a made-up host id. This one uses a real teacher and a real class in a second organisation, and proves the class is there to be leaked |
 | 4 | **Neither.** Falsifiable (the 2099 window would return nothing) but never seen red |
 | 5 | **Red first** under the old wording, three times, green under the new |
 
@@ -141,3 +141,69 @@ are green in both modes, because the old and the new guide agree on them.
 Amit confirms no live customer meeting, in writing, at that moment (a confirmation ages). The deploy ships
 PR 189 (a docs file production does not serve) and PR 190: **no migrations, no infrastructure**. Afterwards the
 record must hold the verdict lines and the rollback point `5f2f461bd96828f590fc3f81b85bcf97e4e04320`.
+
+---
+
+## Addendum, 21 September 2026 — check 3 calibrated, and what it uncovered
+
+Mr. Singh's condition on approving this pack: check 3, the tenant-isolation claim, had never been
+seen red. "Temporarily strip the organisation filter in a throwaway branch and confirm check 3 does go red."
+
+**What I found when I went to strip it: there is no organisation filter in the application to strip.**
+
+- `ConnectMeeting` has **no EF global query filter**. `AppDbContext.cs` declares `HasQueryFilter` for
+  Domain, User, Department, Subscription, AuditLog, OrgApiKey and others. Not for `ConnectMeeting`.
+- The timetable query in `OrgMeetingApiEndpoints.ListAsync` has **no tenant condition**. It filters on
+  kind, status, the window and the host.
+- What keeps organisations apart on this route is **Postgres row-level security alone**:
+  `connect.meetings` has RLS enabled and forced, and the API's role `tatvaos_app` is neither superuser
+  nor `BYPASSRLS` (checked locally: `rls=true forced=true`; `tatvaos_app super=false bypassrls=false`).
+
+The note from the session that wrote PR 177 said isolation here was "RLS plus an EF tenant filter".
+For this table that was not true, and my first evidence pack repeated the conclusion without checking
+the mechanism.
+
+**So the mutation is not a code change.** It is running the API as a database role that bypasses RLS.
+The script now has that as a documented mode:
+
+```
+MUTATE_BYPASS_RLS=1 TATVAOS_SUPER_PW=<local postgres password> PROMISES=new bash tests/orgapi/test-paging-promises.sh
+```
+
+Version: `d7d19809dd7d0cd8f68672641ae8aadfffc3db7a` (main after PR 191). Local only.
+
+**Result: 9 of 20 red.** Check 3 fails exactly as it should, and the other organisation's class
+appears in every later answer too, including an ordinary read with no cursor at all:
+
+```
+  tree under test: d7d19809dd7d0cd8f68672641ae8aadfffc3db7a
+  *** MUTATION: the API runs as a role that BYPASSES row-level security. Check 3 SHOULD FAIL. ***
+  ok    a School class exists at 09:30 in the same window, hosted by the School's principal
+  FAIL  ...and answers the query it describes - got [SCHOOL,B,C], wanted [B,C]
+>> 3. ...but only ever inside the caller's own organisation
+  ok    hand-made cursor naming the School's principal as host, with a Techvein key  [got 200]
+  FAIL  ...returns no classes at all - got [SCHOOL], wanted [(none)]
+  FAIL  hand-made cursor over the whole window, no host: Techvein's three only - got [A,SCHOOL,B,C], wanted [A,B,C]
+  FAIL  ...and the School's class id is not among them - got [1], wanted [0]
+  ok    (the School class really is there to be leaked: the database holds it)  [got 1]
+  FAIL  cursor + a 2099 window + an unknown teacher: the CURSOR's question is answered - got [SCHOOL,B,C], wanted [B,C]
+  FAIL  class E added at 08:00, BEHIND the position: absent from this read - got [SCHOOL,B,C], wanted [B,C]
+  FAIL  class C MOVED EARLIER, 11:00 -> 08:30: gone from this read, never on page one either - got [SCHOOL,B], wanted [B]
+  FAIL  class A (already read on page one) MOVED LATER, 09:00 -> 12:00: it comes back - got [SCHOOL,B,A], wanted [B,A]
+  FAIL  a fresh full read is complete and in order - got [E,C,SCHOOL,B,A], wanted [E,C,B,A]
+  FAIL  9 of 20 checks (new wording)
+```
+
+**What this proves.** Check 3 can fail, so its green is worth something: it would catch a loss of isolation.
+
+**What it also shows, and this is for Mr. Singh's gate.** Isolation on the Meetings API is one layer deep.
+House style elsewhere is two: RLS and an EF query filter. If RLS on `connect.meetings` were ever dropped
+by a migration, or the API were ever pointed at a role with `BYPASSRLS`, **every organisation's timetable
+would be readable with any organisation's key**, by an ordinary `GET` — no hand-made cursor needed.
+Nothing is wrong in production today: RLS is forced and the role cannot bypass it.
+
+**Proposed, not built (tenancy is a gated area):** add `HasQueryFilter(e => e.TenantId == tenant.TenantId)`
+for `ConnectMeeting`, as the other tenant-owned entities have. It needs care, because the guest door and
+the webhook path read meetings without a tenant and rely on `SECURITY DEFINER` functions and
+`EnterAnonymousScope`; a blanket filter could break them. The proof it works would be this same mutation
+run going **green** with RLS bypassed.
