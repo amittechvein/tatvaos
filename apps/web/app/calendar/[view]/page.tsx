@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { use, useCallback, useEffect, useMemo, useState } from 'react';
+import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import {
   calendarApi, addDays, hhmm, repeatOptions, sameDay, startOfDay, startOfMonthGrid, startOfWeek,
@@ -9,6 +9,7 @@ import {
 } from '@/lib/calendar';
 import { Icon } from '@/components/ui/Icon';
 import { Spinner } from '@/components/ui/Kit';
+import { ContactPicker } from '@/components/family/ContactPicker';
 
 // ============================================================================
 //  TatvaOS Calendar
@@ -588,10 +589,17 @@ function EventDialog({ start, end, calendars, onClose, onSaved }: {
   const [guests, setGuests] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Amit, 21 Sept 2026: filled every box, Save stayed grey, no error. The title
+  // was empty (its placeholder reads like a label once other boxes are full).
+  // Save now stays clickable and SAYS what is missing instead of greying out.
+  const titleRef = useRef<HTMLInputElement>(null);
+  const [triedSave, setTriedSave] = useState(false);
+  const titleMissing = title.trim().length === 0;
 
   const options = repeatOptions(new Date(startsAt));
 
   async function save() {
+    if (titleMissing) { setTriedSave(true); titleRef.current?.focus(); return; }
     setBusy(true); setErr(null);
     try {
       await calendarApi.create(authedFetch, {
@@ -626,10 +634,17 @@ function EventDialog({ start, end, calendars, onClose, onSaved }: {
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
+            ref={titleRef}
             placeholder="Add a title"
+            aria-label="Title"
+            aria-invalid={triedSave && titleMissing}
             autoFocus
-            className="mb-4 w-full border-0 border-b border-line bg-transparent pb-2 text-lg text-ink outline-none placeholder:text-ink-faint focus:border-brand-600"
+            className={`w-full border-0 border-b bg-transparent pb-2 text-lg text-ink outline-none placeholder:text-ink-faint ${
+              triedSave && titleMissing ? 'mb-1 border-danger' : 'mb-4 border-line focus:border-brand-600'}`}
           />
+          {triedSave && titleMissing && (
+            <p className="mb-3 text-sm text-danger">Add a title to save this event.</p>
+          )}
 
           {err && <p className="mb-2 text-sm text-danger">{err}</p>}
 
@@ -652,9 +667,21 @@ function EventDialog({ start, end, calendars, onClose, onSaved }: {
             ))}
           </select>
 
-          <input value={guests} onChange={(e) => setGuests(e.target.value)}
-                 placeholder="Guests — email addresses, separated by commas"
-                 className="mb-3 w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-faint" />
+          {/* Amit, 21 Sept 2026: "guest name suggestion also needs". The same
+              picker as Mail's To line (colleagues and saved contacts, matched as
+              you type); this input still owns the value, so a Family outage
+              leaves typing addresses by hand working. */}
+          <div className="mb-3 w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm">
+            <ContactPicker value={guests} onPick={setGuests}>
+              {(pickerRef, onPickerKeyDown) => (
+                <input ref={pickerRef} value={guests} onChange={(e) => setGuests(e.target.value)}
+                       onKeyDown={onPickerKeyDown}
+                       aria-label="Guests"
+                       placeholder="Guests — type a name or an email address"
+                       className="w-full border-0 bg-transparent p-0 text-ink outline-none placeholder:text-ink-faint" />
+              )}
+            </ContactPicker>
+          </div>
 
           <input value={location} onChange={(e) => setLocation(e.target.value)}
                  placeholder="Location or meeting link"
@@ -700,12 +727,15 @@ function EventDialog({ start, end, calendars, onClose, onSaved }: {
           )}
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-line px-5 py-3">
+        <div className="flex items-center justify-end gap-2 border-t border-line px-5 py-3">
+          {titleMissing && !triedSave && (
+            <span className="mr-auto text-xs text-ink-muted">Add a title to save</span>
+          )}
           <button type="button" onClick={onClose}
                   className="rounded-lg border border-line px-4 py-1.5 text-sm text-ink-muted hover:bg-canvas hover:text-ink">
             Cancel
           </button>
-          <button type="button" onClick={() => void save()} disabled={busy || title.trim().length === 0}
+          <button type="button" onClick={() => void save()} disabled={busy}
                   className="rounded-full bg-brand-600 px-6 py-1.5 text-sm font-semibold text-white disabled:opacity-50">
             {busy ? 'Saving…' : 'Save'}
           </button>
