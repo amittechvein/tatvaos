@@ -111,6 +111,37 @@ and is not. Only Amit can fix it: GitHub, signed in as him, Settings →
 Environments → production → Required reviewers. The override design below
 depends on it.
 
+### 21 September, later: the hold withdrawn, and what replaces it
+
+**Mr. Singh withdrew his hold** ("nothing ships until Required reviewers is on")
+the same day. Their words: the setting isn't off, it no longer exists to turn on.
+The repository went **private** on 21 September. GitHub then removed the whole
+*Deployment protection rules* section from the `production` environment page,
+because those rules are not available for private repositories on this plan.
+They said a hold whose condition cannot be met is a bad rule. They said the rule
+was theirs, and they withdrew it rather than have it routed around.
+
+**The override is recorded, not absorbed.** Before the withdrawal, Amit told the
+deploying session to deploy without a reviewer. That session did not deploy.
+It put the question to Mr. Singh, who answered with the withdrawal above.
+
+**What replaces it, effective 21 September:**
+
+1. **The false claim is gone.** `deploy-production.yml` no longer says that a
+   reviewer gates production; both places now say none does. This change is in
+   this pull request.
+2. **Second reader, in the pull request.** Before a production deploy, a named
+   person who is not the deployer writes in each pull request being shipped that
+   they have looked at what is shipping. PR 195: Mr. Singh, on record. PR 198:
+   Amit, one line, owed.
+3. **GitHub Team, to be decided on purpose.** Paying for GitHub Team restores the
+   real gate. That is Amit's decision. Whatever the answer is, record it here.
+   Do not let "we can't" drift into "we don't".
+
+The *Who can invoke an override* table below assumes the environment approval
+exists. Until item 3 is decided, that row does not apply. The typed
+`override_authorizer` is checked against the list and nothing else.
+
 ### Who can invoke an override
 
 | Layer | Who | Enforced by |

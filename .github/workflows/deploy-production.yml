@@ -5,8 +5,13 @@
 #
 #  Production is the only environment where outbound mail reaches real
 #  inboxes and where the data belongs to paying customers. A deploy here is a
-#  decision, not a consequence of merging — so it requires a human to start it
-#  and a GitHub environment approval to proceed.
+#  decision, not a consequence of merging — so it requires a human to start it.
+#
+#  It does NOT require a second approver, and cannot: GitHub removed
+#  environment protection rules when the repository went private on
+#  21 Sept 2026 (not available on this plan). This header said otherwise from
+#  4 Aug to 21 Sept 2026 and was never true when checked. The second person is
+#  now a line in the pull request — docs/decisions/0008, "second reader".
 # ============================================================================
 
 name: Deploy production
@@ -135,8 +140,11 @@ jobs:
     name: Deploy to production
     needs: [guard, ci-green]
     runs-on: ubuntu-latest
-    # Requires a reviewer in GitHub -> Settings -> Environments -> production.
-    # A typed string is a speed bump; an approval is a second person.
+    # NO reviewer gates this job. The `production` environment has no
+    # protection rules and, on this plan with a private repository, cannot
+    # have any. Do not restore the claim that it does without first seeing
+    # `protection_rules` non-empty in
+    #   gh api repos/amittechvein/tatvaos/environments/production
     environment:
       name: production
       url: https://core.tatvaos.com
