@@ -5,7 +5,7 @@
  * client rule that drifts from the server's shows a green bar and then a
  * rejection, which reads as the form being broken.
  */
-export const MIN_PASSWORD = 12;
+export const MIN_PASSWORD = 8;
 
 /**
  * Length only — deliberately not a character-class score.
@@ -40,5 +40,5 @@ export function PasswordStrength({ value }: { value: string }) {
 
 /** The wording every password field shares. */
 export const PASSWORD_HINT =
-  'At least 12 characters. Length matters far more than symbols — a short phrase '
+  `At least ${MIN_PASSWORD} characters. Length matters far more than symbols — a short phrase `
   + 'you will actually remember beats something unmemorable with a punctuation mark in it.';

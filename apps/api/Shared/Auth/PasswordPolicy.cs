@@ -21,7 +21,11 @@ namespace TatvaOS.Api.Shared.Auth;
 /// </summary>
 public static class PasswordPolicy
 {
-    public const int MinimumLength = 12;
+    // 12 until 21 Sept 2026. Amit (founder) lowered it to 8 on seeing the sign-in
+    // screen's "At least 12 characters". Existing passwords are unaffected; this
+    // only changes what a NEW password must be. BootstrapAdmin keeps its own 12:
+    // the first super admin is set by an operator, not typed by a customer.
+    public const int MinimumLength = 8;
 
     /// <summary>The sentence every caller shows, so they all say it the same
     /// way and the number cannot drift out of the wording.</summary>
