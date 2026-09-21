@@ -3109,19 +3109,18 @@ export default function Stage({ seat, meeting, prefs }: {
                 "guests cannot be minuted", which now reads as policy rather
                 than as the temporary state it is, and a host who believes it
                 is policy will stop expecting it to change. */}
+            {/* One line here (Amit, 21 Sept 2026: "too much text in people
+                section, give it in advance setting"). The why is in Advanced
+                settings, one tap away; the fact itself stays in view. */}
             {minutesLive && guestsHere > 0 && (
-              <div className="cx-warn" style={{ marginBottom: 12 }}>
+              <button type="button" className="cx-warn"
+                      style={{ marginBottom: 12, width: '100%', textAlign: 'left', cursor: 'pointer', font: 'inherit', color: 'inherit' }}
+                      onClick={() => openPanel('host')}>
                 <strong>
-                  {guestsHere === 1 ? 'One guest is' : `${guestsHere} guests are`} here,
-                  and {guestsHere === 1 ? 'is' : 'are'} not in the minutes yet.
+                  {guestsHere === 1 ? '1 guest is' : `${guestsHere} guests are`} not in the minutes yet
                 </strong>
-                <span>
-                  Minutes come from each person&rsquo;s own browser, and guest
-                  browsers cannot send them in yet. Until that is finished,
-                  their half of the conversation will be missing from a record
-                  that reads as complete.
-                </span>
-              </div>
+                <span className="cx-sub">Why — Advanced settings</span>
+              </button>
             )}
             {/* The five meeting-wide rules lived HERE until 20 Sept 2026, above the
                 list. Amit: "remove too many options in people screen give these in
@@ -3322,6 +3321,20 @@ export default function Stage({ seat, meeting, prefs }: {
             Only a host or co-host can open it; the block itself still checks. */}
         {panel === 'host' && (
           <Panel title="Advanced settings" onClose={() => setPanel(null)}>
+            {minutesLive && guestsHere > 0 && (
+              <div className="cx-warn" style={{ marginBottom: 12 }}>
+                <strong>
+                  {guestsHere === 1 ? 'One guest is' : `${guestsHere} guests are`} here,
+                  and {guestsHere === 1 ? 'is' : 'are'} not in the minutes yet.
+                </strong>
+                <span>
+                  Minutes come from each person&rsquo;s own browser, and guest
+                  browsers cannot send them in yet. Until that is finished,
+                  their half of the conversation will be missing from a record
+                  that reads as complete.
+                </span>
+              </div>
+            )}
             {!(isHost && meeting) && (
               <div className="cx-sub">Only the host or a co-host can change these.</div>
             )}
