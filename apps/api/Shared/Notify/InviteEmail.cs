@@ -46,7 +46,15 @@ public static class InviteEmail
         // The same mail, two openings. Somebody who has used this account for a
         // year must not be told "Welcome" and "has created your account": it reads
         // as phishing, and a careful person would be right to ignore it.
-        var headline = signInLink ? "Choose a new password" : "Welcome";
+        // Amit, 21 Sept 2026, on the first real sign-in link in his inbox:
+        // "in starting give welcome note". A welcome in BOTH, worded for who is
+        // reading: a new person is welcomed to TatvaOS, somebody who already
+        // uses it is welcomed back. The reason the mail came follows at once,
+        // because a welcome with no reason reads as marketing, or as phishing.
+        var headline = signInLink ? "Welcome back" : "Welcome to TatvaOS";
+        var welcome = signInLink
+            ? "Good to see you again. TatvaOS keeps your organisation's mail, meetings, calendar and files together under one sign-in."
+            : "TatvaOS is your organisation's mail, meetings, calendar and files, together under one sign-in. We are glad to have you.";
         var opening = signInLink
             ? "Your administrator at <strong style=\"color:#0a0a0a;\">" + WebUtility.HtmlEncode(orgName) + "</strong> sent you this link so you can choose a new password and get back in. "
               + "Your current password keeps working until you use it. If you did not expect this, ignore it and tell your administrator."
@@ -60,6 +68,11 @@ public static class InviteEmail
         var window = hours % 24 == 0 && hours >= 24
             ? $"{hours / 24} day{(hours / 24 == 1 ? "" : "s")}"
             : $"{hours} hours";
+
+        var apps = AppTile(b, "mail", "Mail", "Your work email")
+                 + AppTile(b, "connect", "Connect", "Video meetings")
+                 + AppTile(b, "calendar", "Calendar", "Your schedule")
+                 + AppTile(b, "space", "Space", "Files and sharing");
 
         return $@"<!DOCTYPE html>
 <html lang=""en"">
@@ -97,6 +110,9 @@ public static class InviteEmail
               <h1 style=""margin:0 0 10px;font-size:24px;line-height:1.25;font-weight:800;color:{Ink};"">
                 {headline}, {name}.
               </h1>
+              <p style=""margin:0 0 12px;font-size:15px;line-height:1.6;color:#4d5875;"">
+                {welcome}
+              </p>
               <p style=""margin:0;font-size:15px;line-height:1.6;color:#4d5875;"">
                 {opening}
               </p>
@@ -131,6 +147,29 @@ public static class InviteEmail
               <p style=""margin:14px 0 0;font-size:12px;color:{Muted};"">
                 This link works once and expires in {window}. After that, ask your administrator to send a new one.
               </p>
+            </td>
+          </tr>
+
+          <!-- The apps. Amit, 21 Sept 2026, asked for the branding of all
+               TatvaOS applications below the button: Mail, Connect, Calendar, Space.
+               Logos are the ORIGINAL opaque marks under /brand, kept for email
+               exactly because mail clients draw no transparency against a
+               dark mode they control (see ui brand notes). Four columns in one
+               table row: every client, including Outlook, renders that; a
+               flex or grid layout would collapse in half of them. Names are
+               TEXT, not images, so they survive images being blocked. -->
+          <tr>
+            <td style=""padding:28px 32px 4px;"">
+              <div style=""font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:{Muted};text-align:center;"">One sign-in, every app</div>
+            </td>
+          </tr>
+          <tr>
+            <td style=""padding:12px 20px 8px;"">
+              <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0"">
+                <tr>
+                  {apps}
+                </tr>
+              </table>
             </td>
           </tr>
 
@@ -173,4 +212,15 @@ public static class InviteEmail
 </body>
 </html>";
     }
+
+    /// <summary>One app in the row below the button: its logo, its name, one line.
+    /// A quarter of the row each; the logo has a fixed size so a slow or blocked
+    /// image does not reflow the mail, and alt text names the app.</summary>
+    private static string AppTile(string baseUrl, string slug, string name, string line) =>
+        $@"<td width=""25%"" align=""center"" valign=""top"" style=""width:25%;padding:8px 4px;"">
+                    <img src=""{baseUrl}/brand/{slug}-logo.png"" width=""44"" height=""44"" alt=""{name}""
+                         style=""display:block;margin:0 auto;border:0;border-radius:10px;"">
+                    <div style=""margin-top:8px;font-size:14px;font-weight:700;color:{Ink};"">{name}</div>
+                    <div style=""margin-top:2px;font-size:12px;line-height:1.4;color:{Muted};"">{line}</div>
+                  </td>";
 }
