@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from 'next';
 import { Plus_Jakarta_Sans } from 'next/font/google';
 import { AuthProvider } from '@/lib/auth';
 import { ThemeProvider } from '@/lib/theme';
-import { BuildBadge } from '@/components/BuildBadge';
 import { RecoveryReminder } from '@/components/RecoveryReminder';
 // ONE stylesheet. Until 16 Sept 2026 three more loaded after it — Bootstrap,
 // YZEN's licensed theme, and an overrides file patching the collisions
@@ -83,9 +82,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeProvider>
           <AuthProvider><RecoveryReminder />{children}</AuthProvider>
         </ThemeProvider>
-        {/* Outside the providers on purpose: the version must still render
-            even if a provider below it throws. */}
-        <BuildBadge />
+        {/* THE BUILD STAMP IS NOT HERE ANY MORE — 23 September 2026.
+            It sat on every page of every app, so a customer in Mail or a
+            guest in a Connect room read a commit id in the corner of their
+            screen. Amit asked for it gone from all pages and kept on the
+            consoles, which is where somebody asks "did my deploy land?".
+            It is rendered by app/admin/layout.tsx and app/org/layout.tsx.
+
+            The machine-readable <meta name="x-build"> in the head above
+            STAYS on every page: deploy.sh and verify-live.sh read it, and
+            it is invisible to the person using the screen. */}
       </body>
     </html>
   );

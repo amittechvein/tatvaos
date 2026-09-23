@@ -1,5 +1,12 @@
 /**
- * Build stamp shown on every page.
+ * Build stamp, shown on the two consoles only (app/admin and app/org).
+ *
+ * It was on every page of every app until 23 September 2026, which meant a
+ * customer reading their mail and a guest in a Connect room both had a commit
+ * id in the corner of the screen. Amit asked for it kept where it is useful
+ * and gone everywhere else. The <meta name="x-build"> tag in app/layout.tsx
+ * is the one that still ships on EVERY page — that is what deploy.sh and
+ * verify-live.sh read, and nobody sees it.
  *
  * Exists because "is what I'm looking at actually the build I just deployed?"
  * was unanswerable from the browser — a deploy that silently failed server-side

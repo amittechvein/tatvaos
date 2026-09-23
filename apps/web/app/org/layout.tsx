@@ -1,3 +1,4 @@
+import { BuildBadge } from '@/components/BuildBadge';
 import { RequireAuth } from '@/components/RequireAuth';
 
 /**
@@ -12,6 +13,8 @@ export default function OrgLayout({ children }: { children: React.ReactNode }) {
   return (
     <RequireAuth roles={['super_admin', 'org_owner', 'org_admin']}>
       {children}
+      {/* The build stamp lives on the consoles only — see app/layout.tsx. */}
+      <BuildBadge />
     </RequireAuth>
   );
 }
