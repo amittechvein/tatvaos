@@ -98,9 +98,12 @@ export function SearchBox({
                 aria-label="Advanced search" aria-expanded={advanced}
                 title="Advanced search"
                 className="text-ink-faint transition hover:text-ink">▾</button>
+        {/* Hidden on a phone: in the top bar this sits next to the app
+            launcher and the two collided at 375px. The caret beside it opens
+            the advanced form, which is the same discovery by other means. */}
         <button type="button" onClick={() => { setHelp((v) => !v); setOpen(false); setAdvanced(false); }}
                 aria-label="Search options" title="What you can search for"
-                className="text-ink-faint transition hover:text-ink">?</button>
+                className="hidden text-ink-faint transition hover:text-ink sm:block">?</button>
       </div>
 
       {advanced && (

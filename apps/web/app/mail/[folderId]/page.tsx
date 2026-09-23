@@ -15,8 +15,8 @@ import { MessageList } from '@/components/mail/MessageList';
 import { MessageView } from '@/components/mail/MessageView';
 import { Composer, type ComposeMode } from '@/components/mail/Composer';
 import { useMailbox } from '@/components/mail/MailboxSwitcher';
-import { SearchBox } from '@/components/mail/SearchBox';
 import { SearchChips } from '@/components/mail/SearchChips';
+import { useMailSearch, useMailSearchHost } from '@/components/mail/MailSearchContext';
 import { Icon } from '@/components/ui/Icon';
 
 // ---------------------------------------------------------------------------
@@ -118,8 +118,18 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   // either, which is the honest state.
   const [thread, setThread] = useState<SearchHit[] | null>(null);
   const [threadTotal, setThreadTotal] = useState(0);
-  const [query, setQuery] = useState('');
-  const searchRef = useRef<HTMLInputElement>(null);
+  // The search box is in the TOP BAR, not on this page (MailSearchContext
+  // says why). This claims it, hands it the mailbox's real folders for the
+  // advanced form's "Search in", and gets back the query the person typed.
+  const searchFolders = useMemo(
+    () => (boot?.folders ?? [])
+      .filter((f) => f.slug !== null)
+      .map((f) => ({ label: f.name, value: f.slug! })),
+    [boot],
+  );
+  const { query, setQuery } = useMailSearchHost(searchFolders);
+  // "/" focuses the header's box; the ref is shared through the context.
+  const { inputRef: searchRef } = useMailSearch();
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [searchHits, setSearchHits] = useState<SearchHit[] | null>(null);
   const [searchTotal, setSearchTotal] = useState(0);
@@ -713,7 +723,10 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
 
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, showShortcuts]);
+    // searchRef is listed because it now comes from the context rather than a
+    // useRef here; it is the same stable object every render, so it never
+    // re-binds the listener.
+  }, [open, showShortcuts, searchRef]);
 
   /**
    * Keep a received attachment in the person's own Space.
@@ -803,16 +816,6 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
             {folder?.name ?? 'Mail'}
           </h1>
 
-          <SearchBox
-            value={query}
-            onChange={setQuery}
-            inputRef={searchRef}
-            // The folders this mailbox actually has, so "Search in" offers
-            // real places rather than Gmail's list.
-            folders={(boot?.folders ?? [])
-              .filter((f) => f.slug !== null)
-              .map((f) => ({ label: f.name, value: f.slug! }))}
-          />
           {/* Layout switcher — the same four choices as Mail settings, one
               tap away. The backdrop button closes the menu on any outside
               click without a global listener. */}

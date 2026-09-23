@@ -7,6 +7,8 @@ import { AppLauncher } from './AppLauncher';
 import { RAIL_WIDTH, RAIL_WIDTH_ICONS, TOPBAR_HEIGHT } from './Sidebar';
 import { useTheme as useAppearance } from '@/lib/theme';
 import { useSelfPhoto } from '@/components/ui/UserPhoto';
+import { useMailSearch } from '@/components/mail/MailSearchContext';
+import { SearchBox } from '@/components/mail/SearchBox';
 
 // ============================================================================
 //  Header — a white bar with the rail toggle and search on the left and an
@@ -19,6 +21,20 @@ import { useSelfPhoto } from '@/components/ui/UserPhoto';
 export const HEADER_LINK =
   'grid h-10 w-10 place-items-center rounded-lg text-ink-muted transition-colors '
   + 'hover:bg-canvas hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40';
+
+/**
+ * The header's search — present only while a page is listening for the
+ * query. See MailSearchContext for why that condition exists.
+ */
+function MailSearchSlot() {
+  const { query, setQuery, folders, hosted, inputRef } = useMailSearch();
+  if (!hosted) return null;
+  return (
+    <div className="min-w-0 flex-1 md:flex-none">
+      <SearchBox value={query} onChange={setQuery} folders={folders} inputRef={inputRef} />
+    </div>
+  );
+}
 
 export function Topbar({ scope, pinned, onToggle }: {
   scope: 'platform' | 'organisation' | 'mail' | 'family' | 'space' | 'calendar' | 'connect';
@@ -48,16 +64,21 @@ export function Topbar({ scope, pinned, onToggle }: {
           <i className="ri-menu-2-line text-[20px]" />
         </button>
 
-        <div className="relative hidden md:block">
-          <input
-            type="text"
-            placeholder="Search"
-            spellCheck={false}
-            autoComplete="off"
-            className="h-9 w-56 rounded-lg border border-line bg-canvas pl-3 pr-9 text-sm text-ink placeholder:text-ink-faint focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/25"
-          />
-          <i className="ri-search-line pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-ink-muted" />
-        </div>
+        {/* ── THE SEARCH, AND WHY IT IS SOMETIMES ABSENT ──────────────────
+            What stood here until 23 September 2026 was a bare <input> with
+            no value, no handler and nothing anywhere listening to it --
+            shipped in 594824d, whose message calls it a "ghost search". It
+            came with the purchased template. Typing in it did nothing, on
+            every page, while the Inbox carried a real search box of its
+            own two rows below. Amit saw the two together and asked for the
+            lower one to move up here.
+
+            So this is the real mail search now -- chips, suggestions, the
+            advanced form -- and it is rendered ONLY when a page has
+            claimed it (MailSearchContext). No host, no box: a header that
+            draws nothing is honest, and a header that draws an input which
+            swallows typing is the bug being fixed. ─────────────────────── */}
+        <MailSearchSlot />
 
         {scope === 'platform' && (
           <span className="ml-2 hidden rounded-full bg-warn/10 px-2.5 py-0.5 text-xs font-semibold text-warn lg:inline-flex">

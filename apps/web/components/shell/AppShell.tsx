@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { MailSearchProvider } from '@/components/mail/MailSearchContext';
 import { usePathname } from 'next/navigation';
 
 import { PageHeader } from '@/components/ui/Page';
@@ -98,6 +99,11 @@ export function AppShell({
   const pageLeft = rail.pinned ? RAIL_WIDTH : RAIL_WIDTH_ICONS;
 
   return (
+    // The mail search box lives in the Topbar and its results live in the
+    // page, so the query is held above both. Provided for every scope
+    // because the provider is where the query lives, not where it is shown
+    // -- the header draws a box only when a page has claimed it.
+    <MailSearchProvider>
     <div className="min-h-dvh bg-canvas">
       <Topbar scope={scope} pinned={rail.pinned} onToggle={toggle} />
       <Sidebar sections={sections} brand={brand} scope={scope} footer={railFooter} header={railHeader}
@@ -120,5 +126,6 @@ export function AppShell({
         {children}
       </div>
     </div>
+    </MailSearchProvider>
   );
 }
