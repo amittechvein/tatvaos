@@ -4,25 +4,24 @@ import { useEffect, useRef, useState } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import { AdvancedSearch } from './AdvancedSearch';
 import {
-  SEARCH_OPERATORS, completeWith, currentFragment, tokenise, withoutToken,
+  SEARCH_OPERATORS, completeWith, currentFragment,
 } from '@/lib/mailSearchTokens';
 
 /**
- * The mail search box: what was typed, what it was understood as, and what
- * else can be asked.
+ * The mail search box: what was typed, and what else can be asked.
  *
- * ── THE POINT OF THE CHIPS ──────────────────────────────────────────────
+ * ── THE CHIPS LIVE IN SearchChips, NOT HERE ─────────────────────────────
  *
- *  A query language is only useful if you can see that it was understood.
- *  `from:priya is:unread newer_than:7d` is three conditions, and until the
- *  box says so the only way to find out you fat-fingered `form:priya` is
- *  that the results look thin — which is indistinguishable from there being
- *  no such mail. A chip that reads "from priya" is the product agreeing with
- *  you out loud.
+ *  A query language is only useful if you can see that it was understood,
+ *  so the conditions read back as chips — but they used to hang off this
+ *  box as an `absolute` overlay and covered the message list (Amit's
+ *  screenshot, 23 September 2026). They are content, not a popover, so they
+ *  moved into the page's flow under the header. SearchChips carries that
+ *  reasoning and the rule about which tokens earn a chip at all.
  *
- *  Unrecognised words show as plain "contains" chips rather than being
- *  hidden, because the server treats them as text and the screen must not
- *  disagree with the server.
+ *  What stays here is transient and SHOULD float: the operator suggestions
+ *  while typing, the help list, and the advanced form. Those close on an
+ *  outside click; a chip persists for as long as the search does.
  */
 export function SearchBox({
   value, onChange, inputRef, folders = [],
@@ -59,8 +58,6 @@ export function SearchBox({
     document.addEventListener('mousedown', away);
     return () => document.removeEventListener('mousedown', away);
   }, [open, help, advanced]);
-
-  const tokens = tokenise(value);
 
   const choose = (op: string) => {
     onChange(completeWith(value, op));
@@ -113,27 +110,6 @@ export function SearchBox({
           onSearch={(q) => onChange(q)}
           onClose={() => setAdvanced(false)}
         />
-      )}
-
-      {/* What the query was understood as. */}
-      {tokens.length > 0 && (
-        <div className="absolute left-0 right-0 top-full z-20 mt-1 flex flex-wrap gap-1">
-          {tokens.map((t, i) => (
-            <button
-              key={`${t.raw}-${i}`}
-              type="button"
-              onClick={() => onChange(withoutToken(value, i))}
-              title="Remove this condition"
-              className="flex items-center gap-1 rounded-full border border-line bg-surface px-2.5 py-1 text-[11px] text-ink shadow-card transition hover:bg-canvas"
-            >
-              <span className="text-ink-muted">
-                {t.negated ? 'not ' : ''}{t.field ? `${t.field} ` : 'contains '}
-              </span>
-              <span className="font-medium">{t.value || '—'}</span>
-              <span className="text-ink-faint">×</span>
-            </button>
-          ))}
-        </div>
       )}
 
       {/* Operator suggestions while typing. */}

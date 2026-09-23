@@ -16,6 +16,7 @@ import { MessageView } from '@/components/mail/MessageView';
 import { Composer, type ComposeMode } from '@/components/mail/Composer';
 import { useMailbox } from '@/components/mail/MailboxSwitcher';
 import { SearchBox } from '@/components/mail/SearchBox';
+import { SearchChips } from '@/components/mail/SearchChips';
 import { Icon } from '@/components/ui/Icon';
 
 // ---------------------------------------------------------------------------
@@ -877,6 +878,11 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
             <Icon name="refresh" className="h-4.5 w-4.5" />
           </button>
         </header>
+
+        {/* What the search was understood as. In the flow, under the header,
+            so it moves the list down instead of covering it — and absent
+            entirely for a search that is only words. */}
+        <SearchChips value={query} onChange={setQuery} />
 
         {/* Sub-bar: bulk actions or paging */}
         <div className="flex items-center gap-1 px-4 py-1 text-xs text-ink-muted">
