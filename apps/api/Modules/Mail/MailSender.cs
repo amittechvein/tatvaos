@@ -207,16 +207,84 @@ public static class MailSender
             mime.Body = builder.ToMessageBody();
         }
 
-        // Threading headers, so replies land in the same conversation in
-        // every client that receives them — including ours, later.
+        // ── THREADING HEADERS ────────────────────────────────────────────
+        //
+        //  Without these a reply is a NEW conversation to everyone who
+        //  receives it. Amit, 23 September 2026, with a courier's support
+        //  desk: "our reply mails going as new mail and not connecting trail
+        //  mail and because of that it creating multiple tickets on 1
+        //  shipment." Their system opened a fresh ticket for each reply we
+        //  sent about one shipment, because each arrived unthreaded.
+        //
+        //  Two faults, both silent, both fixed here:
+        //
+        //   1. THE PARENT WAS LOOKED UP IN THE SENDING MAILBOX ONLY
+        //      (x.MailboxId == box.Id). Answer a shared queue from your own
+        //      address — the ordinary case for a support desk — and the
+        //      parent is not found, so NO headers were written at all. The
+        //      send succeeded, which is why nobody noticed. It is still
+        //      bounded: the parent must live in a mailbox this person may
+        //      READ, or a message id from anywhere could be echoed into
+        //      somebody's outgoing mail.
+        //
+        //   2. References CARRIED ONE ID. RFC 5322 wants the ancestry: the
+        //      parent's References plus the parent's own Message-ID. Systems
+        //      that thread on References — ticketing desks especially — lose
+        //      the trail after one hop with a single id. We do not store the
+        //      parent's References header, so the chain is rebuilt from the
+        //      thread, which is the same information from the side we do keep.
         if (s.InReplyToMessageId is Guid replyId)
         {
             var original = await db.Messages.AsNoTracking()
-                .FirstOrDefaultAsync(x => x.Id == replyId && x.MailboxId == box.Id, ct);
-            if (original?.MessageIdHeader is string origId && origId.Length > 0)
+                .FirstOrDefaultAsync(x => x.Id == replyId, ct);
+
+            if (original is not null && original.MailboxId != box.Id
+                && await MailboxAccess.ResolveAsync(
+                       db, tenant, original.MailboxId, MailboxAccess.Read, ct) is null)
             {
-                mime.InReplyTo = origId.Trim('<', '>');
-                mime.References.Add(origId.Trim('<', '>'));
+                original = null;
+            }
+
+            if (original is not null)
+            {
+                // Everything in the conversation up to and including the
+                // parent, oldest first — that IS the References chain.
+                // Capped: a long thread would otherwise grow the header
+                // without adding anything a receiver uses.
+                var chain = await db.Messages.AsNoTracking()
+                    .Where(x => x.MailboxId == original.MailboxId
+                                && x.ThreadId != null && x.ThreadId == original.ThreadId
+                                && x.MessageIdHeader != null && x.MessageIdHeader != ""
+                                && x.ReceivedAt <= original.ReceivedAt)
+                    .OrderBy(x => x.ReceivedAt).ThenBy(x => x.Id)
+                    .Select(x => x.MessageIdHeader!)
+                    .Take(MailThreadHeaders.MaxReferences)
+                    .ToListAsync(ct);
+
+                var headers = MailThreadHeaders.Build(chain, original.MessageIdHeader);
+
+                if (headers.CanThread)
+                {
+                    mime.InReplyTo = headers.InReplyTo;
+                    foreach (var id in headers.References) mime.References.Add(id);
+                }
+                else
+                {
+                    // Nothing to thread on. Said out loud rather than sent as
+                    // a silent orphan — this is the state that produced the
+                    // duplicate tickets, and next time it should be findable.
+                    log.LogWarning(
+                        "Reply to message {MessageId} carries no threading headers: "
+                        + "neither it nor its thread has a stored Message-ID. "
+                        + "The recipient will see a new conversation.", replyId);
+                }
+            }
+            else
+            {
+                log.LogWarning(
+                    "Reply to message {MessageId} could not be threaded: the message "
+                    + "was not found, or mailbox {MailboxId} may not read it.",
+                    replyId, box.Id);
             }
         }
 
