@@ -7,7 +7,8 @@
 #  redeployed, and it must never be a way into a signed-in product. The
 #  product doors live on their own hosts; this one links to them.
 #
-#  The files come from apps/website/, mounted read-only at /srv/website by
+#  The files come from apps/website/public/ — ONLY public/, because file_server
+#  serves everything under its root — mounted read-only at /srv/website by
 #  docker-compose.base.yml. deploy.sh's `git reset --hard` replaces them in
 #  place; file_server reads by name, so a replaced file is the new file — the
 #  same reason the Caddyfile itself is mounted as a directory.

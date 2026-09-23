@@ -8,12 +8,12 @@ still answers.
 |---|---|
 | Served at | `https://tatvaos.com` (`www.` redirects here, 308) |
 | Served by | `infra/docker/caddy/conf.d/website.caddy`, `file_server` on `/srv/website` |
-| Mounted by | `docker-compose.base.yml`, caddy service, `../../apps/website:/srv/website:ro` |
+| Mounted by | `docker-compose.base.yml`, caddy service, `../../apps/website/public:/srv/website:ro` — **only `public/`**; `file_server` serves every file under its root, which is why this README lives beside it and not in it |
 | Variable | `WEBSITE_DOMAIN=tatvaos.com` — in the caddy env list **and** in the server's `.env` before this deploys |
 
 ## Editing
 
-`index.html` here is **generated**. The source is the review copy the founder
+`public/index.html` is **generated**. The source is the review copy the founder
 and CTO see (an artifact page with no `<html>`/`<head>`/`<body>` of its own);
 a small script wraps it into a full document with the `<head>` metadata and
 copies `shots/` and `brand/` alongside. Edit the source, run the script, commit

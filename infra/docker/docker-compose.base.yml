@@ -468,9 +468,10 @@ services:
       # and the conf.d fragments — and nothing else does, because the parent
       # directory holds .env and this mount must never reach it.
       - ./caddy:/etc/caddy:ro
-      # The public website (conf.d/website.caddy). Static files only, its own
-      # mount so this one never widens to the parent directory either.
-      - ../../apps/website:/srv/website:ro
+      # The public website (conf.d/website.caddy). ONLY its public/ folder:
+      # file_server serves every file under the root, so the README beside it
+      # must not be under the root. Its own mount, never the parent directory.
+      - ../../apps/website/public:/srv/website:ro
       - caddydata:/data
       - caddyconfig:/config
     networks: [mailnet]
