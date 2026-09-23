@@ -488,13 +488,29 @@ public static class ContactEndpoints
                 false))
             .ToListAsync(ct);
 
-        // A colleague who is ALSO saved as a contact would otherwise appear
-        // twice. The colleague row wins — it is the authoritative record of
-        // that person, and a stale copy in someone's address book should not
-        // shadow it.
-        var seen = colleagues.Select(c => c.Email.ToLowerInvariant()).ToHashSet();
+        // ONE ROW PER ADDRESS, ACROSS BOTH SOURCES AND WITHIN EACH.
+        //
+        // A colleague who is ALSO saved as a contact must appear once, and the
+        // colleague row wins: it is the authoritative record of that person,
+        // and a stale copy in somebody's address book should not shadow it.
+        //
+        // The same address saved on SEVERAL contact rows must also appear
+        // once, and until 23 September 2026 it did not — this filtered
+        // contacts against colleagues only, never against each other.
+        // Amit's screen recording of a reply to a courier showed the picker
+        // offering "Franchisesupport — franchisesupport@delhivery.com" FIVE
+        // times over the Cc and Subject rows. A list where every row does the
+        // same thing reads as the product being broken, and it hides the one
+        // different row underneath it.
+        //
+        // The picker is a list of ADDRESSES to send to, so the address is the
+        // identity here. Why one address ends up on several contact rows is a
+        // separate question about the address book, and not one the composer
+        // should be answering at the moment somebody is typing.
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var merged = colleagues
-            .Concat(contacts.Where(c => !seen.Contains(c.Email.ToLowerInvariant())))
+            .Concat(contacts)
+            .Where(c => seen.Add(c.Email))
             .Take(limit)
             .ToList();
 
