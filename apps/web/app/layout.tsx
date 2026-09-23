@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { Plus_Jakarta_Sans } from 'next/font/google';
 import { AuthProvider } from '@/lib/auth';
 import { ThemeProvider } from '@/lib/theme';
+import { DesktopAlerts } from '@/components/DesktopAlerts';
 import { RecoveryReminder } from '@/components/RecoveryReminder';
 // ONE stylesheet. Until 16 Sept 2026 three more loaded after it — Bootstrap,
 // YZEN's licensed theme, and an overrides file patching the collisions
@@ -80,7 +81,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       */}
       <body className={`h-full ${inter.variable} ${inter.className}`}>
         <ThemeProvider>
-          <AuthProvider><RecoveryReminder />{children}</AuthProvider>
+          {/* DesktopAlerts renders nothing. It is here rather than on the
+              mail page so that alerts work wherever the person is — alerts
+              that only run while you are looking at your inbox would be
+              telling you what you can already see. */}
+          <AuthProvider><RecoveryReminder /><DesktopAlerts />{children}</AuthProvider>
         </ThemeProvider>
         {/* THE BUILD STAMP IS NOT HERE ANY MORE — 23 September 2026.
             It sat on every page of every app, so a customer in Mail or a

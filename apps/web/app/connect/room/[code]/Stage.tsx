@@ -14,6 +14,7 @@ import {
   type LobbyEntry, type Meeting, type Recording, type RecordingMode, type Seat,
   type ChatPolicy, type ShareMode, type SharePolicy, type WaitingRoom, personOf } from '@/lib/connect';
 import { nextCamera, switchLabel } from '@/lib/cameras';
+import { loadAlertPrefs, showAlert } from '@/lib/desktopAlerts';
 import { meetingInvitation } from '@/lib/meetingInvitation';
 import { captionsSupported, useCaptions } from '@/lib/useCaptions';
 import type { JoinPrefs } from './PreJoin';
@@ -1217,7 +1218,23 @@ export default function Stage({ seat, meeting, prefs }: {
         const ids = new Set(r.waiting.map((k) => k.requestId));
         knownKnocksRef.current = ids;
         if (seen === null) return;
-        if (r.waiting.some((k) => !seen.has(k.requestId))) chime('knock');
+        const arrived = r.waiting.filter((k) => !seen.has(k.requestId));
+        if (arrived.length > 0) {
+          chime('knock');
+          // A desktop alert ONLY when this tab is in the background. In front
+          // of the host the panel and the tone already say it, and a system
+          // alert for something visible on screen is the kind of noise that
+          // gets notifications switched off for good.
+          if (document.hidden && loadAlertPrefs().room) {
+            showAlert({
+              title: arrived.length === 1
+                ? `${arrived[0]!.displayName} is waiting to join`
+                : `${arrived.length} people are waiting to join`,
+              body: meeting?.title ?? 'Your meeting',
+              tag: `knock-${meeting?.id ?? 'room'}`,
+            });
+          }
+        }
       } catch {
         // A failed poll is not worth a banner — the next is three seconds away,
         // and an error that clears itself teaches people to ignore errors.

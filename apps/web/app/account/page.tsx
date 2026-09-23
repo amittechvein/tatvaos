@@ -40,6 +40,7 @@ import { AccountMenu } from '@/components/shell/AccountMenu';
 import { Badge, Button, Card, Spinner } from '@/components/ui/Kit';
 import { Alert } from '@/components/ui/Page';
 import { RecoveryCard } from '@/components/account/RecoveryCard';
+import { DesktopAlertsCard } from '@/components/account/DesktopAlertsCard';
 import { useAuth } from '@/lib/auth';
 import { fetchMyStorage, formatBytes, meterColour, type MyStorage } from '@/lib/myStorage';
 import { Input } from '@/components/ui/Form';
@@ -412,6 +413,8 @@ function AccountHub() {
             )}
 
             {section === 'personal' && (
+              <div className="flex flex-col gap-4">
+              <DesktopAlertsCard />
               <Card>
                 {loading ? <Spinner /> : (
                   <>
@@ -433,6 +436,7 @@ function AccountHub() {
                   </>
                 )}
               </Card>
+              </div>
             )}
 
             {section === 'security' && (
