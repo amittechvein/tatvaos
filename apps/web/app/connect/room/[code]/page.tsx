@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic';
 import { use, useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import {
-  connectApi, guestApi, e2eeSupported, DoorClosedError, WrongPasswordError, GUEST_FAILURE,
+  connectApi, guestApi, e2eeSupported, DoorClosedError, HttpError, WrongPasswordError, GUEST_FAILURE,
   type Doorstep, type JoinResult, type Meeting, type Seat,
 } from '@/lib/connect';
 import { Centre, Spinner } from './RoomChrome';
@@ -60,7 +60,11 @@ const Stage = dynamic(() => import('./Stage'), {
 
 type Phase =
   | { kind: 'resolving' }
-  | { kind: 'door'; door: Doorstep; meeting: Meeting | null }
+  // `asVisitor` means: you are signed in, but this meeting belongs to another
+  // organisation, so the only way in is the guest door. Said out loud on the
+  // door rather than silently — somebody who is signed in and lands in a
+  // meeting under a typed name deserves to know why.
+  | { kind: 'door'; door: Doorstep; meeting: Meeting | null; asVisitor?: boolean }
   | { kind: 'waiting'; waitToken: string }
   // The seat is already minted — it is a ten-minute join WINDOW, so the time
   // spent checking a camera here costs nothing. The room does not know about
@@ -115,7 +119,43 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
           // authenticated route mints — carrying their real identity and role.
           // Routing a colleague through the guest door would make them a guest
           // in their own organisation's meeting.
-          const meeting = await connectApi.byCode(authedFetch, code);
+          //
+          // ── A MEETING RUN BY ANOTHER ORGANISATION (Amit, 23 Sept 2026) ────
+          //
+          //  by-code is scoped to the caller's own organisation on purpose:
+          //  another tenant's code is invisible and answers 404, so the route
+          //  cannot be used to discover whether a code exists elsewhere.
+          //
+          //  The cost of that, unnoticed until a customer sent Amit a link:
+          //  being SIGNED IN was strictly worse than being signed out. The
+          //  page took the 404 as "this link does not work" and stopped,
+          //  while the very same link opened fine in a private window. He
+          //  had to sign out of his own product to attend a meeting.
+          //
+          //  So a 404 here is not the end: it means "not in YOUR organisation",
+          //  and the guest door is the honest next question. That door is
+          //  anonymous, cross-tenant and rate-limited already, and it applies
+          //  the guest predicate this route deliberately does not (allow_guests,
+          //  the org kill-switch, tenant status). Nothing is disclosed that a
+          //  private window could not already ask for, so the oracle the
+          //  server comment guards against is not opened by this.
+          //
+          //  ONLY on 404. A 500 must not quietly demote a colleague to a guest
+          //  in their own organisation's meeting — hence HttpError.status.
+          let meeting: Meeting;
+          try {
+            meeting = await connectApi.byCode(authedFetch, code);
+          } catch (e) {
+            if (!(e instanceof HttpError) || e.status !== 404) throw e;
+            const visitorDoor = await guestApi.doorstep(code);
+            if (!alive) return;
+            if (visitorDoor.mode === 'private' && !e2eeSupported()) {
+              setPhase({ kind: 'cannotEncrypt' });
+              return;
+            }
+            setPhase({ kind: 'door', door: visitorDoor, meeting: null, asVisitor: true });
+            return;
+          }
           // BEFORE the token. A private meeting on a browser without the
           // media-transform APIs would join, publish nothing anyone can
           // decode, and look broken.
@@ -163,6 +203,21 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
         setPhase({ kind: 'door', door, meeting: null });
       } catch (e) {
         if (!alive) return;
+        // ── SAY WHICH REFUSAL IT WAS, TO THE CONSOLE. ────────────────────
+        //
+        //  The screen deliberately shows one sentence for every guest-side
+        //  refusal, so that it cannot become an oracle. The cost is that a
+        //  report of "the link does not work" cannot be told apart from a
+        //  wrong code, guests switched off, a 503, or a rate limit — and on
+        //  23 Sept a real one arrived that still has no explanation, because
+        //  by the time it was reported the evidence was a screenshot of that
+        //  one sentence. This line changes nothing a stranger can see and
+        //  leaves the next occurrence something to read.
+        console.warn('[connect] the room could not be opened:', {
+          signedIn: userId !== null,
+          status: e instanceof HttpError ? e.status : null,
+          reason: e instanceof Error ? e.message : String(e),
+        });
         if (e instanceof DoorClosedError) { setPhase({ kind: 'gone', message: GUEST_FAILURE }); return; }
         setPhase({ kind: 'gone', message: e instanceof Error ? e.message : GUEST_FAILURE });
       }
@@ -265,6 +320,7 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
         door={phase.door}
         meeting={phase.meeting}
         signedInName={user?.displayName ?? null}
+        asVisitor={phase.asVisitor === true}
         onSeat={(res, meeting) => {
           setPhase(res.status === 'waiting'
             ? { kind: 'waiting', waitToken: res.waitToken }
@@ -293,11 +349,13 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
 // ===========================================================================
 //  The door
 // ===========================================================================
-function Door({ code, door, meeting, signedInName, onSeat, onGone }: {
+function Door({ code, door, meeting, signedInName, asVisitor = false, onSeat, onGone }: {
   code: string;
   door: Doorstep;
   meeting: Meeting | null;
   signedInName: string | null;
+  /** Signed in, but this meeting belongs to another organisation. */
+  asVisitor?: boolean;
   onSeat: (res: JoinResult, meeting: Meeting | null) => void;
   onGone: (message: string) => void;
 }) {
@@ -350,6 +408,16 @@ function Door({ code, door, meeting, signedInName, onSeat, onGone }: {
                 : 'Not started yet'}
           </div>
         </div>
+
+        {/* Why the name box is here for somebody who is already signed in.
+            Without this line it reads as the product forgetting who you are. */}
+        {asVisitor && (
+          <div className="cx-banner" style={{ borderRadius: 10, marginBottom: 14 }}>
+            This meeting is run by another organisation, so you join it as a
+            visitor. Your TatvaOS account is not shared with them — check the
+            name you want them to see.
+          </div>
+        )}
 
         {door.locked && (
           <div className="cx-banner cx-banner--warn" style={{ borderRadius: 10, marginBottom: 14 }}>

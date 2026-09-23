@@ -248,6 +248,20 @@ export class DoorClosedError extends Error {
 }
 
 /**
+ * A refusal that still knows which refusal it was.
+ *
+ * `json` used to throw a bare Error, so the status was gone by the time
+ * anything could act on it and every failure looked the same. The room page
+ * now has to tell "this code is not in YOUR organisation" (404, which has an
+ * answer: the guest door) from "the server broke" (500, which does not) —
+ * and treating the second as the first would quietly demote a colleague to a
+ * guest in their own organisation's meeting on any transient error.
+ */
+export class HttpError extends Error {
+  constructor(message: string, readonly status: number) { super(message); }
+}
+
+/**
  * The server's sentence, or ours.
  *
  * ── IT READS `detail` TOO, AND THAT IS NOT COSMETIC. ────────────────────
@@ -296,7 +310,7 @@ async function json<T>(res: Response, fallback: string): Promise<T> {
       : null;
     const said = bag?.error ?? bag?.detail;
     const msg = typeof said === 'string' && said.trim().length > 0 ? said : fallback;
-    throw new Error(msg);
+    throw new HttpError(msg, res.status);
   }
   return res.json() as Promise<T>;
 }
