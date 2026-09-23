@@ -65,7 +65,7 @@ function Suggestions({ show, hits, onPick }) {
   );
 }
 
-export default function MailCompose({ session, draft, signature, onClose, onSent }) {
+export default function MailCompose({ session, draft, signature, mailboxId = null, onClose, onSent }) {
   const token = session?.accessToken;
   const original = draft?.message ?? null;
   const kind = draft?.kind ?? 'new';
@@ -200,6 +200,9 @@ export default function MailCompose({ session, draft, signature, onClose, onSent
         bodyText: body,
         inReplyToId: kind === 'reply' ? original?.id : undefined,
         files,
+        // From a shared mailbox the server sends AS that address; the reply
+        // stays in the conversation the person was reading. null = my own.
+        mailboxId,
       }, (fraction) => setProgress(fraction));
       // Never the addresses or the subject: this log is read over somebody's
       // shoulder as often as not.

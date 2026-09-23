@@ -52,9 +52,55 @@ export function signatureFor(signature, kind = 'new') {
   return typeof t === 'string' ? t.trim() : '';
 }
 
+// ── SHARED MAILBOXES ───────────────────────────────────────────────────────
+//  Amit, 23 Sept 2026: "able to access shared mailbox". A mailbox such as
+//  support@ that several people read, granted per person as read, send_as or
+//  full. Nothing new on the server: every read route already takes
+//  ?mailboxId=, and send takes it as a form field. The app simply never
+//  passed one, so it only ever saw the person's own mailbox.
+//
+//  null (or undefined) means "my own mailbox" and sends NO parameter — so the
+//  commonest request stays byte-for-byte what every deployed server answers,
+//  and a person with no shared mailbox notices nothing at all.
+// ───────────────────────────────────────────────────────────────────────────
+
+/** ?mailboxId= or &mailboxId=, or nothing, appended to a path. */
+export function withMailbox(path, mailboxId) {
+  if (!mailboxId) return path;
+  return `${path}${path.includes('?') ? '&' : '?'}mailboxId=${encodeURIComponent(mailboxId)}`;
+}
+
+/**
+ * Every mailbox this person may open: their own first, then the shared ones
+ * by address. One row per mailbox:
+ *   { id, address, label, isOwn, permissions, canRead, canSend, canAdminister }
+ *
+ * The label is the local part ("support") for a shared mailbox — the server
+ * does not return a display name here, and the web uses the same word.
+ * canSend needs send_as or full; a read-only delegate can look but not write.
+ */
+export async function listMailboxes(token) {
+  const data = await request('/api/mail/mailboxes', { method: 'GET', token });
+  const rows = Array.isArray(data?.mailboxes) ? data.mailboxes : [];
+  return rows.map((m) => {
+    const perms = Array.isArray(m.permissions) ? m.permissions : [];
+    const full = perms.includes('full');
+    return {
+      id: m.id,
+      address: m.address ?? '',
+      label: m.isOwn ? 'My mailbox' : (m.localPart || m.address || 'Shared mailbox'),
+      isOwn: m.isOwn === true,
+      permissions: perms,
+      canRead: m.isOwn === true || full || perms.includes('read'),
+      canSend: m.isOwn === true || full || perms.includes('send_as'),
+      canAdminister: m.isOwn === true || full,
+    };
+  });
+}
+
 /** Mailbox, folders and signature in one call — what the app opens Mail with. */
-export async function bootstrap(token) {
-  const data = await request('/api/mail/bootstrap', { method: 'GET', token });
+export async function bootstrap(token, mailboxId = null) {
+  const data = await request(withMailbox('/api/mail/bootstrap', mailboxId), { method: 'GET', token });
   return {
     mailbox: data?.mailbox ?? null,
     folders: data?.folders ?? [],
@@ -63,8 +109,8 @@ export async function bootstrap(token) {
 }
 
 /** Folders with their unread counts. Cheaper than bootstrap for a refresh. */
-export async function listFolders(token) {
-  const data = await request('/api/mail/folders', { method: 'GET', token });
+export async function listFolders(token, mailboxId = null) {
+  const data = await request(withMailbox('/api/mail/folders', mailboxId), { method: 'GET', token });
   return data?.folders ?? [];
 }
 
@@ -98,38 +144,38 @@ export const sortLabel = (key) => SORTS.find((row) => row[0] === key)?.[1] ?? 'N
  * it ignores the parameter, answers 200, newest first. The caller compares
  * `sorted` with what it asked for instead of trusting the 200.
  */
-export async function listMessages(token, folderId, { skip = 0, take = 30, sort = DEFAULT_SORT } = {}) {
+export async function listMessages(token, folderId, { skip = 0, take = 30, sort = DEFAULT_SORT, mailboxId = null } = {}) {
   // The default is sent as nothing at all, so the commonest request is
   // byte-for-byte the one every deployed server already answers.
   const order = sort && sort !== DEFAULT_SORT ? `&sort=${encodeURIComponent(sort)}` : '';
   const data = await request(
-    `/api/mail/folders/${folderId}/messages?skip=${skip}&take=${take}${order}`,
+    withMailbox(`/api/mail/folders/${folderId}/messages?skip=${skip}&take=${take}${order}`, mailboxId),
     { method: 'GET', token },
   );
   return { total: data?.total ?? 0, messages: data?.messages ?? [], sorted: data?.sort ?? null };
 }
 
 /** Search the whole mailbox. An empty query answers empty, not everything. */
-export async function searchMessages(token, q, { skip = 0, take = 30 } = {}) {
+export async function searchMessages(token, q, { skip = 0, take = 30, mailboxId = null } = {}) {
   if (!q?.trim()) return { total: 0, messages: [] };
   const data = await request(
-    `/api/mail/search?q=${encodeURIComponent(q.trim())}&skip=${skip}&take=${take}`,
+    withMailbox(`/api/mail/search?q=${encodeURIComponent(q.trim())}&skip=${skip}&take=${take}`, mailboxId),
     { method: 'GET', token },
   );
   return { total: data?.total ?? 0, messages: data?.messages ?? [] };
 }
 
 /** One message, with bodyHtml, bodyText and attachment metadata. */
-export function getMessage(token, id) {
-  return request(`/api/mail/messages/${id}`, { method: 'GET', token });
+export function getMessage(token, id, mailboxId = null) {
+  return request(withMailbox(`/api/mail/messages/${id}`, mailboxId), { method: 'GET', token });
 }
 
-export function setRead(token, id, isRead) {
-  return request(`/api/mail/messages/${id}/read`, { token, body: { isRead } });
+export function setRead(token, id, isRead, mailboxId = null) {
+  return request(withMailbox(`/api/mail/messages/${id}/read`, mailboxId), { token, body: { isRead } });
 }
 
-export function setFlag(token, id, isFlagged) {
-  return request(`/api/mail/messages/${id}/flag`, { token, body: { isFlagged } });
+export function setFlag(token, id, isFlagged, mailboxId = null) {
+  return request(withMailbox(`/api/mail/messages/${id}/flag`, mailboxId), { token, body: { isFlagged } });
 }
 
 /**
@@ -138,8 +184,10 @@ export function setFlag(token, id, isFlagged) {
  * answers { deleted: true }. The screen says which happened, because "Deleted"
  * over a message that is still in Trash is a promise the app did not keep.
  */
-export function deleteMessage(token, id) {
-  return request(`/api/mail/messages/${id}`, { method: 'DELETE', token });
+export function deleteMessage(token, id, mailboxId = null) {
+  // From a shared mailbox, the second delete (for good, out of Trash) needs
+  // full access; the server says so in its own sentence, which is shown.
+  return request(withMailbox(`/api/mail/messages/${id}`, mailboxId), { method: 'DELETE', token });
 }
 
 /**
@@ -155,6 +203,7 @@ export function deleteMessage(token, id) {
  */
 export async function send(token, {
   to, cc = '', subject = '', bodyText = '', bodyHtml = '', inReplyToId, draftId, files = [],
+  mailboxId = null,
 }, onProgress) {
   // ── A BIG ATTACHMENT NEEDS TO SHOW ITS PROGRESS. ───────────────────────
   //  Amit, 18 Sept 2026: "give progress bar that attachment that much % is
@@ -174,7 +223,7 @@ export async function send(token, {
   if (files.length && typeof onProgress === 'function') {
     try {
       return await sendWithProgress(token, {
-        to, cc, subject, bodyText, bodyHtml, inReplyToId, draftId, files,
+        to, cc, subject, bodyText, bodyHtml, inReplyToId, draftId, files, mailboxId,
       }, onProgress);
     } catch (e) {
       // The send itself failing must NOT be retried — it may have arrived,
@@ -193,6 +242,9 @@ export async function send(token, {
   if (bodyHtml) form.append('bodyHtml', bodyHtml);
   if (inReplyToId) form.append('inReplyToId', inReplyToId);
   if (draftId) form.append('draftId', draftId);
+  // A shared mailbox is a form field here, not a query parameter: the server
+  // reads it from the multipart body (MailEndpoints.SendAsync). Absent = own.
+  if (mailboxId) form.append('mailboxId', mailboxId);
   // ── ATTACHMENTS GO UP AS FILE OBJECTS, NOT { uri, name, type }. ─────────
   //  Every React Native example says to append { uri, name, type }, and it is
   //  what RN's own networking understands. Expo SDK 54+ replaces global fetch
@@ -285,8 +337,10 @@ function sendWithProgress(token, fields, onProgress) {
 }
 
 /** Where an attachment can be downloaded from. Needs the bearer token. */
-export function attachmentUrl(messageId, attachmentId) {
-  return `${API_BASE}/api/mail/messages/${messageId}/attachments/${attachmentId}`;
+export function attachmentUrl(messageId, attachmentId, mailboxId = null) {
+  // A shared mailbox's attachment answers 404 without the parameter — the
+  // server has no other way to know which mailbox the message belongs to.
+  return withMailbox(`${API_BASE}/api/mail/messages/${messageId}/attachments/${attachmentId}`, mailboxId);
 }
 
 /** The special folder slugs the app treats as known places. */

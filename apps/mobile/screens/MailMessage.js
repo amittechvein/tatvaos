@@ -40,7 +40,7 @@ import { brand, surface, text } from '../theme';
 
 const log = (line) => console.log(`[mail] ${line}`);
 
-export default function MailMessage({ session, messageId, onBack, onReply, onChanged }) {
+export default function MailMessage({ session, messageId, mailboxId = null, onBack, onReply, onChanged }) {
   const token = session?.accessToken;
 
   const [msg, setMsg] = useState(null);
@@ -62,14 +62,14 @@ export default function MailMessage({ session, messageId, onBack, onReply, onCha
     gone.current = false;
     (async () => {
       try {
-        const m = await getMessage(token, messageId);
+        const m = await getMessage(token, messageId, mailboxId);
         if (gone.current) return;
         setMsg(m);
         // Read AFTER it is on the screen, and only if it was not already read:
         // a list that marks on tap marks messages nobody saw.
         if (m?.isRead === false) {
           try {
-            await setRead(token, messageId, true);
+            await setRead(token, messageId, true, mailboxId);
             changed.current = true;
             log(`marked read ${messageId}`);
           } catch (e) { log(`could not mark read: ${e?.message ?? e}`); }
@@ -90,7 +90,7 @@ export default function MailMessage({ session, messageId, onBack, onReply, onCha
     const next = !msg.isFlagged;
     setMsg({ ...msg, isFlagged: next });
     try {
-      await setFlag(token, msg.id, next);
+      await setFlag(token, msg.id, next, mailboxId);
       changed.current = true;
     } catch (e) {
       setMsg({ ...msg, isFlagged: !next });
@@ -101,7 +101,7 @@ export default function MailMessage({ session, messageId, onBack, onReply, onCha
   async function unread() {
     if (!msg) return;
     try {
-      await setRead(token, msg.id, false);
+      await setRead(token, msg.id, false, mailboxId);
       changed.current = true;
       onChanged?.();
       back();
@@ -119,7 +119,7 @@ export default function MailMessage({ session, messageId, onBack, onReply, onCha
           style: 'destructive',
           onPress: async () => {
             try {
-              const out = await deleteMessage(token, msg.id);
+              const out = await deleteMessage(token, msg.id, mailboxId);
               changed.current = true;
               log(out?.deleted ? 'deleted for good' : 'moved to Trash');
               back();
@@ -157,7 +157,7 @@ export default function MailMessage({ session, messageId, onBack, onReply, onCha
   async function downloadToCache(a) {
     const safe = (a.filename || 'attachment').replace(/[^\w.\- ]+/g, '_');
     const target = `${FileSystem.cacheDirectory}${Date.now()}-${safe}`;
-    const res = await FileSystem.downloadAsync(attachmentUrl(msg.id, a.id), target, {
+    const res = await FileSystem.downloadAsync(attachmentUrl(msg.id, a.id, mailboxId), target, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (res.status !== 200) throw new Error(`The server answered ${res.status}.`);

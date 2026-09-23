@@ -47,6 +47,11 @@ beforeEach(() => {
   mailApi.setFlag = jest.fn(async () => ({}));
   mailApi.deleteMessage = jest.fn(async () => ({ deleted: false, movedTo: 'f3' }));
   mailApi.send = jest.fn(async () => ({ id: 'sent1' }));
+  // One mailbox by default: the picker must not exist for a person who has
+  // only their own. The shared-mailbox tests replace this.
+  mailApi.listMailboxes = jest.fn(async () => [
+    { id: 'mb1', address: 'amit@tatvaos.com', label: 'My mailbox', isOwn: true, permissions: ['full'], canRead: true, canSend: true, canAdminister: true },
+  ]);
 });
 
 // ── the list ───────────────────────────────────────────────────────────────
@@ -231,7 +236,7 @@ test('Show images widens the policy for that message only', async () => {
 test('an unread message is marked read AFTER it is shown; a read one is left alone', async () => {
   mailApi.getMessage = jest.fn(async () => full({ isRead: false }));
   const r = render(<MailMessage session={session} messageId="m1" onBack={() => {}} onReply={() => {}} />);
-  await waitFor(() => expect(mailApi.setRead).toHaveBeenCalledWith('AT', 'm1', true));
+  await waitFor(() => expect(mailApi.setRead).toHaveBeenCalledWith('AT', 'm1', true, null));
   expect(webview.lastProps.source.html).toContain('Invoice for August');
 
   mailApi.setRead.mockClear();
@@ -259,7 +264,7 @@ test('delete asks first, and says Trash rather than gone', async () => {
   expect(alerts.calls[0].message).toMatch(/moves to Trash/);
   expect(mailApi.deleteMessage).not.toHaveBeenCalled();
   await act(async () => { await pressAlertButton('Delete'); });
-  expect(mailApi.deleteMessage).toHaveBeenCalledWith('AT', 'm1');
+  expect(mailApi.deleteMessage).toHaveBeenCalledWith('AT', 'm1', null);
   expect(onBack).toHaveBeenCalledWith(true);
 });
 
@@ -541,5 +546,80 @@ describe('compose with the API-shaped signature', () => {
     expect(body).not.toContain('— Amit');
     expect(body).not.toMatch(/object Object/);
     expect(body).toMatch(/wrote:/);
+  });
+});
+
+// ── SHARED MAILBOXES ON THE PHONE ───────────────────────────────────────────
+//  Amit, 23 Sept 2026: "able to access shared mailbox". The picker exists only
+//  when there is something to pick; a shared mailbox is named on screen while
+//  it is open; a read-only delegate is not offered a compose button they
+//  would be refused on; and every list call names the mailbox.
+describe('shared mailboxes', () => {
+  const own = { id: 'mb1', address: 'amit@tatvaos.com', label: 'My mailbox', isOwn: true, permissions: ['full'], canRead: true, canSend: true, canAdminister: true };
+  const support = { id: 'mb2', address: 'support@tatvaos.com', label: 'support', isOwn: false, permissions: ['read', 'send_as'], canRead: true, canSend: true, canAdminister: false };
+  const billing = { id: 'mb3', address: 'billing@tatvaos.com', label: 'billing', isOwn: false, permissions: ['read'], canRead: true, canSend: false, canAdminister: false };
+
+  const mount = (props = {}) => render(
+    <Mail session={session} onBack={() => {}} onOpen={() => {}} onCompose={() => {}} {...props} />,
+  );
+
+  test('with only my own mailbox there is NO mailbox control at all', async () => {
+    const r = mount();
+    await waitFor(() => expect(r.getByText('Invoice for August')).toBeTruthy());
+    expect(r.queryByLabelText('Choose mailbox')).toBeNull();
+    expect(r.queryByText(/You are reading/)).toBeNull();
+  });
+
+  test('with a shared mailbox the picker appears and names both', async () => {
+    mailApi.listMailboxes = jest.fn(async () => [own, support]);
+    const onSwitchMailbox = jest.fn();
+    const r = mount({ onSwitchMailbox });
+    await waitFor(() => expect(r.getByLabelText('Choose mailbox')).toBeTruthy());
+    fireEvent.press(r.getByLabelText('Choose mailbox'));
+    expect(r.getByLabelText('Open My mailbox')).toBeTruthy();
+    expect(r.getByLabelText('Open support')).toBeTruthy();
+    expect(r.getByText(/support@tatvaos.com · can send/)).toBeTruthy();
+    fireEvent.press(r.getByLabelText('Open support'));
+    expect(onSwitchMailbox).toHaveBeenCalledWith('mb2');
+  });
+
+  test('choosing my own mailbox hands up null, so no parameter is ever sent for it', async () => {
+    mailApi.listMailboxes = jest.fn(async () => [own, support]);
+    const onSwitchMailbox = jest.fn();
+    const r = mount({ onSwitchMailbox, mailboxId: 'mb2' });
+    await waitFor(() => expect(r.getByLabelText('Choose mailbox')).toBeTruthy());
+    fireEvent.press(r.getByLabelText('Choose mailbox'));
+    fireEvent.press(r.getByLabelText('Open My mailbox'));
+    expect(onSwitchMailbox).toHaveBeenCalledWith(null);
+  });
+
+  test('a shared mailbox is named on screen, and every list call names it too', async () => {
+    mailApi.listMailboxes = jest.fn(async () => [own, support]);
+    const r = mount({ mailboxId: 'mb2' });
+    await waitFor(() => expect(r.getByText(/You are reading/)).toBeTruthy());
+    expect(r.getByText('support@tatvaos.com')).toBeTruthy();
+    expect(r.getByText(/replies go out as this mailbox/)).toBeTruthy();
+    expect(mailApi.bootstrap).toHaveBeenCalledWith('AT', 'mb2');
+    await waitFor(() => expect(mailApi.listMessages).toHaveBeenCalled());
+    expect(mailApi.listMessages).toHaveBeenCalledWith('AT', 'f1', expect.objectContaining({ mailboxId: 'mb2' }));
+    // Still allowed to write: send_as.
+    expect(r.getByLabelText('Write a new email')).toBeTruthy();
+  });
+
+  test('A READ-ONLY DELEGATE GETS NO COMPOSE BUTTON, and is told so', async () => {
+    // Otherwise they write the whole email and the server refuses it with
+    // "You have no mailbox to send from."
+    mailApi.listMailboxes = jest.fn(async () => [own, billing]);
+    const r = mount({ mailboxId: 'mb3' });
+    await waitFor(() => expect(r.getByText(/read only/)).toBeTruthy());
+    expect(r.queryByLabelText('Write a new email')).toBeNull();
+  });
+
+  test('switching mailbox re-bootstraps on the new one', async () => {
+    mailApi.listMailboxes = jest.fn(async () => [own, support]);
+    const r = mount({ mailboxId: null });
+    await waitFor(() => expect(mailApi.bootstrap).toHaveBeenCalledWith('AT', null));
+    r.rerender(<Mail session={session} onBack={() => {}} onOpen={() => {}} onCompose={() => {}} mailboxId="mb2" />);
+    await waitFor(() => expect(mailApi.bootstrap).toHaveBeenCalledWith('AT', 'mb2'));
   });
 });

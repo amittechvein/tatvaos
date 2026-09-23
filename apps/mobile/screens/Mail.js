@@ -28,15 +28,17 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons';
 
 import {
-  bootstrap, listMessages, searchMessages, orderFolders, senderLabel, whenLabel,
-  SORTS, DEFAULT_SORT, sortLabel,
+  bootstrap, listMessages, searchMessages, orderFolders, senderLabel, whenLabel, SORTS, DEFAULT_SORT, sortLabel, listMailboxes,
 } from '../lib/mail';
 import { brand, surface, text, radius, space, type, shadow, tone } from '../theme';
 
 const log = (line) => console.log(`[mail] ${line}`);
 const PAGE = 30;
 
-export default function Mail({ session, onBack, onOpen, onCompose, onMailbox, notice, onNoticeSeen, reloadKey = 0 }) {
+export default function Mail({
+  session, onBack, onOpen, onCompose, onMailbox, notice, onNoticeSeen, reloadKey = 0,
+  mailboxId = null, onSwitchMailbox,
+}) {
   const token = session?.accessToken;
 
   const [mailbox, setMailbox] = useState(undefined); // undefined = still asking
@@ -50,6 +52,16 @@ export default function Mail({ session, onBack, onOpen, onCompose, onMailbox, no
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [pickFolder, setPickFolder] = useState(false);
+  // ── SHARED MAILBOXES. ──────────────────────────────────────────────────
+  //  Amit, 23 Sept 2026. `mailboxes` is every mailbox this person may open,
+  //  own first; the picker only exists when there is more than one, so a
+  //  person with only their own mailbox never sees a control that does
+  //  nothing. `current` is the row for `mailboxId`, which App.js owns.
+  // ─────────────────────────────────────────────────────────────────────
+  const [mailboxes, setMailboxes] = useState([]);
+  const [pickMailbox, setPickMailbox] = useState(false);
+  const current = mailboxes.find((m) => (mailboxId ? m.id === mailboxId : m.isOwn)) ?? null;
+  const readOnly = !!mailboxId && current ? !current.canSend : false;
   // The order of the folder list. Amit on his own phone, 19 Sept 2026:
   // "sorting option on mail". Kept across folders - somebody who wants unread
   // first wants it in every folder - and not kept across launches, so the app
@@ -68,9 +80,20 @@ export default function Mail({ session, onBack, onOpen, onCompose, onMailbox, no
   // Mailbox and folders once per mount; the message list follows the folder.
   useEffect(() => {
     gone.current = false;
+    // Once per token, not per mailbox: the grants do not change by switching.
+    listMailboxes(token)
+      .then((rows) => { if (!gone.current) setMailboxes(rows); })
+      .catch((e) => log(`mailboxes list failed: ${e?.message ?? e}`));
+    return () => { gone.current = true; };
+  }, [token]);
+
+  useEffect(() => {
+    gone.current = false;
+    setFolder(null);
+    setBusy(true);
     (async () => {
       try {
-        const b = await bootstrap(token);
+        const b = await bootstrap(token, mailboxId);
         if (gone.current) return;
         setMailbox(b.mailbox);
         const ordered = orderFolders(b.folders);
@@ -79,7 +102,7 @@ export default function Mail({ session, onBack, onOpen, onCompose, onMailbox, no
         // The signature belongs to the mailbox, not the profile, and only
         // /bootstrap knows it. Compose is opened from App.js, so it goes up.
         onMailbox?.({ mailbox: b.mailbox, signature: b.signature });
-        log(`mailbox ${b.mailbox ? 'ready' : 'none'}, ${ordered.length} folder(s)`);
+        log(`mailbox ${b.mailbox ? 'ready' : 'none'}${mailboxId ? ' (shared)' : ''}, ${ordered.length} folder(s)`);
       } catch (e) {
         if (gone.current) return;
         log(`bootstrap failed: ${e?.message ?? e}`);
@@ -90,7 +113,7 @@ export default function Mail({ session, onBack, onOpen, onCompose, onMailbox, no
       }
     })();
     return () => { gone.current = true; };
-  }, [token]);
+  }, [token, mailboxId]);
 
   const load = useCallback(async (opts = {}) => {
     const { append = false, q = null } = opts;
@@ -100,8 +123,8 @@ export default function Mail({ session, onBack, onOpen, onCompose, onMailbox, no
     try {
       const skip = append ? rows.length : 0;
       const page = q
-        ? await searchMessages(token, q, { skip, take: PAGE })
-        : await listMessages(token, folder.id, { skip, take: PAGE, sort });
+        ? await searchMessages(token, q, { skip, take: PAGE, mailboxId })
+        : await listMessages(token, folder.id, { skip, take: PAGE, sort, mailboxId });
       if (gone.current) return;
       // A 200 IS NOT PROOF IT SORTED. A server older than the `sort` parameter
       // ignores it and answers newest first with no `sort` in the reply. Said,
@@ -177,6 +200,14 @@ export default function Mail({ session, onBack, onOpen, onCompose, onMailbox, no
         onBack={onBack}
         right={(
           <View style={s.headerActions}>
+            {mailboxes.length > 1 ? (
+              <Pressable onPress={() => setPickMailbox(true)} hitSlop={8}
+                         accessibilityLabel="Choose mailbox"
+                         accessibilityValue={{ text: current?.label ?? 'My mailbox' }}>
+                <Ionicons name={mailboxId ? 'people' : 'people-outline'} size={22}
+                          color={mailboxId ? brand.base : text.primary} />
+              </Pressable>
+            ) : null}
             <Pressable onPress={() => setPickSort(true)} hitSlop={8}
                        accessibilityLabel="Sort messages" accessibilityValue={{ text: sortLabel(sort) }}>
               <Ionicons name="swap-vertical" size={22}
@@ -189,6 +220,17 @@ export default function Mail({ session, onBack, onOpen, onCompose, onMailbox, no
           </View>
         )}
       />
+
+      {mailboxId && current ? (
+        <View style={s.shared} accessibilityRole="text"
+              accessibilityLabel={`Reading ${current.address}. ${readOnly ? 'Read only.' : 'Replies go out as this mailbox.'}`}>
+          <Ionicons name="people" size={15} color="#7A5100" />
+          <Text style={s.sharedText} numberOfLines={2}>
+            You are reading <Text style={s.sharedStrong}>{current.address}</Text>
+            {readOnly ? ' — read only' : ' — replies go out as this mailbox'}
+          </Text>
+        </View>
+      ) : null}
 
       <View style={s.searchRow}>
         <Ionicons name="search" size={16} color={text.muted} />
@@ -257,10 +299,15 @@ export default function Mail({ session, onBack, onOpen, onCompose, onMailbox, no
           measured from the parent's EDGE, not from inside its safe-area padding,
           so at a fixed 28 the button sat half under Android's three buttons -
           seen on Amit's Samsung, 19 Sept 2026. */}
-      <Pressable style={[s.fab, { bottom: 28 + insets.bottom }]} onPress={() => onCompose({ kind: 'new' })}
-                 accessibilityLabel="Write a new email">
-        <Ionicons name="create-outline" size={22} color={brand.onBase} />
-      </Pressable>
+      {/* A read-only delegate gets no compose button: the server would
+          refuse the send with "no mailbox to send from", after they had
+          written the whole email. */}
+      {readOnly ? null : (
+        <Pressable style={[s.fab, { bottom: 28 + insets.bottom }]} onPress={() => onCompose({ kind: 'new' })}
+                   accessibilityLabel="Write a new email">
+          <Ionicons name="create-outline" size={22} color={brand.onBase} />
+        </Pressable>
+      )}
 
       <Modal visible={pickSort} transparent animationType="fade"
              onRequestClose={() => setPickSort(false)}>
@@ -276,6 +323,34 @@ export default function Mail({ session, onBack, onOpen, onCompose, onMailbox, no
                 {key === sort ? <Ionicons name="checkmark" size={18} color={brand.base} /> : null}
               </Pressable>
             ))}
+          </View>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={pickMailbox} transparent animationType="fade"
+             onRequestClose={() => setPickMailbox(false)}>
+        <Pressable style={s.backdrop} onPress={() => setPickMailbox(false)}>
+          <View style={[s.sheet, { paddingBottom: 16 + insets.bottom }]}>
+            <Text style={s.sheetTitle}>MAILBOX</Text>
+            {mailboxes.map((m) => {
+              const on = mailboxId ? m.id === mailboxId : m.isOwn;
+              return (
+                <Pressable key={m.id} style={s.folderRow}
+                           onPress={() => { setPickMailbox(false); onSwitchMailbox?.(m.isOwn ? null : m.id); }}
+                           accessibilityLabel={`Open ${m.label}`}
+                           accessibilityState={{ selected: on }}>
+                  <Ionicons name={m.isOwn ? 'person-outline' : 'people-outline'} size={18}
+                            color={on ? brand.base : text.muted} />
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={[s.folderName, on && s.folderOn]} numberOfLines={1}>{m.label}</Text>
+                    <Text style={s.mailboxMeta} numberOfLines={1}>
+                      {m.address}{m.isOwn ? '' : ` · ${m.canSend ? 'can send' : 'read only'}`}
+                    </Text>
+                  </View>
+                  {on ? <Ionicons name="checkmark" size={18} color={brand.base} /> : null}
+                </Pressable>
+              );
+            })}
           </View>
         </Pressable>
       </Modal>
@@ -422,4 +497,14 @@ const s = StyleSheet.create({
   folderName: { flex: 1, fontSize: 16, color: text.primary },
   folderOn: { color: brand.base, fontWeight: '700' },
   folderCount: { fontSize: 13, color: text.muted },
+  mailboxMeta: { fontSize: 12, color: text.muted, marginTop: 1 },
+  // Amber, like the web's banner: a state the person should keep noticing
+  // while it lasts, not an error and not a notice they can dismiss.
+  shared: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    marginHorizontal: 16, marginBottom: 8, padding: 10, borderRadius: 10,
+    backgroundColor: '#FDF4E3', borderWidth: 1, borderColor: '#F0DDB8',
+  },
+  sharedText: { flex: 1, fontSize: 13, lineHeight: 18, color: '#7A5100' },
+  sharedStrong: { fontWeight: '700' },
 });
