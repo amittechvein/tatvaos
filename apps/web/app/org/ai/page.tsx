@@ -74,8 +74,8 @@ export default function OrgAiPage() {
   return (
     <AdminShell
       scope="organisation"
-      title="AI"
-      subtitle="Whether this organisation's content may be processed by an AI provider"
+      title="TatvaOS AI"
+      subtitle="Whether TatvaOS AI may process this organisation's content"
     >
       {error && (
         <Alert tone="danger" action={<Button variant="ghost" onClick={load}>Try again</Button>}>
@@ -84,7 +84,7 @@ export default function OrgAiPage() {
       )}
 
       <Card
-        title="AI features"
+        title="TatvaOS AI"
         subtitle="Meeting minutes today; mail summaries and drafting later"
         actions={
           !state ? undefined : !state.platformConfigured ? undefined : state.enabled ? (
@@ -103,7 +103,7 @@ export default function OrgAiPage() {
         {state && !state.platformConfigured && (
           <p className="mb-0">
             <Badge tone="neutral">Unavailable</Badge>{' '}
-            AI is not configured on this platform, so there is nothing to switch —
+            TatvaOS AI is not configured on this platform, so there is nothing to switch —
             no content leaves regardless of this setting.
           </p>
         )}
@@ -112,10 +112,9 @@ export default function OrgAiPage() {
           <>
             <p className="mb-2">
               <Badge tone="ok">On</Badge>{' '}
-              AI features are active for this organisation
-              {state.model ? <> (model: <code>{state.model}</code>)</> : null}.
-              Meeting minutes are written by the model; every call is metered
-              and attributed to this organisation.
+              TatvaOS AI is on for this organisation. Meeting minutes are
+              written by it; every call is metered and attributed to this
+              organisation.
             </p>
             <p className="text-ink-muted text-[0.75rem] mb-0">{state.disclosure}</p>
           </>
@@ -125,8 +124,8 @@ export default function OrgAiPage() {
           <>
             <p className="mb-2">
               <Badge tone="neutral">Off</Badge>{' '}
-              Nothing from this organisation is sent to any AI provider.
-              Features that would use AI fall back to their non-AI form —
+              Nothing from this organisation is sent to TatvaOS AI.
+              Features that would use it fall back to their non-AI form —
               meeting minutes become a mechanical digest, clearly labelled.
             </p>
             <p className="text-ink-muted text-[0.75rem] mb-0">
@@ -140,7 +139,7 @@ export default function OrgAiPage() {
       {confirmOn && state && (
         <Modal
           onClose={() => !saving && setConfirmOn(false)}
-          title="Turn on AI for this organisation?"
+          title="Turn on TatvaOS AI for this organisation?"
           busy={saving}
         >
           <p>{state.disclosure}</p>

@@ -218,7 +218,7 @@ export function organisationNav(): NavSection[] {
         // The organisation's AI consent switch (allow_ai). Beside Sharing on
         // purpose: the same person deciding the same kind of question —
         // whether something may leave the organisation.
-        { href: '/org/ai', label: 'AI', icon: <Icon d={PATHS.gear} /> },
+        { href: '/org/ai', label: 'TatvaOS AI', icon: <Icon d={PATHS.gear} /> },
         { href: '/org/audit', label: 'Audit trail', icon: <Icon d={PATHS.audit} /> },
         { href: '/org/billing', label: 'Billing', icon: <Icon d={PATHS.card} /> },
       ],

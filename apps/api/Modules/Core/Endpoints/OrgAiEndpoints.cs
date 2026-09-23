@@ -63,9 +63,9 @@ public static class OrgAiEndpoints
             // consent screen can never soften it. Update when the provider
             // moves to Azure India; that is the point of it being a string.
             disclosure = "When enabled, meeting transcripts and (in future) mail "
-                       + "content from this organisation are sent to OpenAI in the "
-                       + "United States to be processed. Nothing is sent while this "
-                       + "is off.",
+                       + "content from this organisation are processed by TatvaOS AI "
+                       + "on a third-party service in the United States. Nothing is "
+                       + "sent while this is off.",
         });
     }
 
