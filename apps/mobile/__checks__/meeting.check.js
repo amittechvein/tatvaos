@@ -440,3 +440,86 @@ test('joining a meeting that is already recording shows REC at once', async () =
     expect(r.getByLabelText('This meeting is being recorded')).toBeTruthy();
   } finally { steer.recordingAtJoin = false; }
 });
+
+// ── THE DATA CHANNEL, IN UTF-8 ──────────────────────────────────────────────
+//  Amit, 23 Sept 2026: "more option … chat, people". Hands, chat and
+//  reactions are data messages between the phones, and the web sends them
+//  as UTF-8 JSON. The old decode here garbled every emoji and every Hindi
+//  word; these use the exact bytes a browser's TextEncoder would produce.
+const utf8 = (obj) => Uint8Array.from(Buffer.from(JSON.stringify(obj), 'utf8'));
+const raviOnWeb = { identity: 'user:u2#web', name: 'Ravi' };
+
+test('a reaction and a Hindi chat line arrive intact, and count on the More button', async () => {
+  api.join = jest.fn(async () => joined);
+  const r = render(<Meeting joinPrefs={DEFAULT_JOIN_PREFS} session={session} meeting={meeting} onLeave={() => {}} />);
+  await waitFor(() => expect(r.getByText('Only you so far')).toBeTruthy());
+
+  await act(async () => { room().emit('dataReceived', utf8({ react: '👍' }), raviOnWeb); });
+  expect(r.getByLabelText('Ravi reacted 👍')).toBeTruthy();
+
+  await act(async () => { room().emit('dataReceived', utf8({ text: 'नमस्ते सब', cid: 'c1', at: '2026-09-23T11:00:00Z' }), raviOnWeb); });
+  // One unread, on the More button.
+  expect(r.getByText('1')).toBeTruthy();
+
+  fireEvent.press(r.getByLabelText('More'));
+  fireEvent.press(r.getByLabelText('Chat'));
+  expect(r.getByLabelText('Ravi: नमस्ते सब')).toBeTruthy();
+});
+
+test('the same line twice (a reconnect replay) is shown once', async () => {
+  api.join = jest.fn(async () => joined);
+  const r = render(<Meeting joinPrefs={DEFAULT_JOIN_PREFS} session={session} meeting={meeting} onLeave={() => {}} />);
+  await waitFor(() => expect(r.getByText('Only you so far')).toBeTruthy());
+  await act(async () => {
+    room().emit('dataReceived', utf8({ text: 'once', cid: 'same' }), raviOnWeb);
+    room().emit('dataReceived', utf8({ text: 'once', cid: 'same' }), raviOnWeb);
+  });
+  fireEvent.press(r.getByLabelText('More'));
+  fireEvent.press(r.getByLabelText('Chat'));
+  expect(r.getAllByLabelText('Ravi: once')).toHaveLength(1);
+});
+
+test('raising a hand PUBLISHES {hand:true} as UTF-8, and a lowerHand from the host lowers it', async () => {
+  api.join = jest.fn(async () => joined);
+  const r = render(<Meeting joinPrefs={DEFAULT_JOIN_PREFS} session={session} meeting={meeting} onLeave={() => {}} />);
+  await waitFor(() => expect(r.getByText('Only you so far')).toBeTruthy());
+
+  fireEvent.press(r.getByLabelText('More'));
+  await act(async () => { fireEvent.press(r.getByLabelText('Raise hand')); });
+  const last = room().localParticipant.published.at(-1);
+  expect(JSON.parse(Buffer.from(last.bytes).toString('utf8'))).toEqual({ hand: true });
+  expect(last.opts.reliable).toBe(true);
+  expect(r.getByLabelText('Lower hand')).toBeTruthy();
+
+  await act(async () => { room().emit('dataReceived', utf8({ lowerHand: 'user:me' }), raviOnWeb); });
+  expect(r.getByLabelText('Raise hand')).toBeTruthy();
+});
+
+test('a chat line sent from the phone goes out as UTF-8 with a GUID, and is kept for the minutes', async () => {
+  api.join = jest.fn(async () => joined);
+  api.storeChatLine = jest.fn(async () => ({}));
+  const r = render(<Meeting joinPrefs={DEFAULT_JOIN_PREFS} session={session} meeting={meeting} onLeave={() => {}} />);
+  await waitFor(() => expect(r.getByText('Only you so far')).toBeTruthy());
+  fireEvent.press(r.getByLabelText('More'));
+  fireEvent.press(r.getByLabelText('Chat'));
+  fireEvent.changeText(r.getByLabelText('Message'), 'ठीक है 👍');
+  await act(async () => { fireEvent.press(r.getByLabelText('Send message')); });
+
+  const last = room().localParticipant.published.at(-1);
+  const sent = JSON.parse(Buffer.from(last.bytes).toString('utf8'));
+  expect(sent.text).toBe('ठीक है 👍');
+  expect(sent.cid).toMatch(/^[0-9a-f-]{36}$/);
+  expect(api.storeChatLine).toHaveBeenCalledWith('AT', 'm1', expect.objectContaining({ clientId: sent.cid, body: 'ठीक है 👍' }));
+  expect(r.getByLabelText('You: ठीक है 👍')).toBeTruthy();
+});
+
+test('a {role} message about me switches me to co-host and says so', async () => {
+  api.join = jest.fn(async () => joined);
+  const r = render(<Meeting joinPrefs={DEFAULT_JOIN_PREFS} session={session} meeting={meeting} onLeave={() => {}} />);
+  await waitFor(() => expect(r.getByText('Only you so far')).toBeTruthy());
+  await act(async () => { room().emit('dataReceived', utf8({ role: { identity: 'user:me#phone', to: 'cohost' } }), raviOnWeb); });
+  expect(r.getByText('You are now a co-host.')).toBeTruthy();
+  fireEvent.press(r.getByLabelText('More'));
+  // Settings is host/co-host only, so its appearance proves the role changed.
+  expect(r.getByLabelText('Settings')).toBeTruthy();
+});

@@ -327,3 +327,94 @@ export function codeFrom(pasted) {
 export function getMeetingByCode(token, code) {
   return request(`/api/connect/meetings/by-code/${encodeURIComponent(code)}`, { token });
 }
+
+// ── IN THE ROOM: WHAT "MORE" NEEDS ─────────────────────────────────────────
+//  Amit, 23 Sept 2026: "mobile app give more option by using more option
+//  able to check chat, people, recording on/off, advance setting". Every
+//  route below already exists for the web room (ConnectEndpoints.cs,
+//  ConnectRecordingEndpoints.cs, ConnectMinutesEndpoints.cs). Nothing new
+//  on the server. Host/cohost-only routes answer 403 to anyone else, in the
+//  server's own words, which the screen shows rather than second-guesses.
+//
+//  Chat, raised hands and reactions do NOT go through here: they are
+//  LiveKit data messages between the phones (screens/Meeting.js). Only the
+//  copy of a chat line kept for the minutes is a request.
+// ───────────────────────────────────────────────────────────────────────────
+
+/** Everyone the server knows in this meeting, with roles. Host/cohost only. */
+export async function listParticipants(token, meetingId) {
+  const d = await request(`/api/connect/meetings/${meetingId}/participants`, { method: 'GET', token });
+  return Array.isArray(d?.participants) ? d.participants : [];
+}
+
+/** Mute somebody's mic, camera or screen share. kind: audio | video | screen. */
+export function muteParticipant(token, meetingId, identity, kind = 'audio') {
+  return request(`/api/connect/meetings/${meetingId}/participants/${encodeURIComponent(identity)}/mute`,
+    { token, body: { kind } });
+}
+
+/** Remove somebody. A signed-in person is also kept from rejoining. */
+export function removeParticipant(token, meetingId, identity) {
+  return request(`/api/connect/meetings/${meetingId}/participants/${encodeURIComponent(identity)}`,
+    { method: 'DELETE', token });
+}
+
+/** Host only. role: cohost | participant. Guests are refused by the server. */
+export function setParticipantRole(token, meetingId, identity, role) {
+  return request(`/api/connect/meetings/${meetingId}/participants/${encodeURIComponent(identity)}/role`,
+    { method: 'PUT', token, body: { role } });
+}
+
+/** who: guests | everyone. Hosts, cohosts and the caller are never muted. */
+export function muteAll(token, meetingId, who = 'everyone') {
+  return request(`/api/connect/meetings/${meetingId}/mute-all`, { token, body: { who } });
+}
+
+/** End the meeting for everyone in it. Host/cohost. */
+export function endMeeting(token, meetingId) {
+  return request(`/api/connect/meetings/${meetingId}/end`, { token, body: {} });
+}
+
+/**
+ * Recordings. `enabled` false means the organisation cannot record at all —
+ * the control is hidden, not shown and refused. The live row, if any, is the
+ * one whose status is starting or recording; that is what Stop needs.
+ */
+export async function listRecordings(token, meetingId) {
+  const d = await request(`/api/connect/meetings/${meetingId}/recordings`, { method: 'GET', token });
+  const items = Array.isArray(d?.items) ? d.items : [];
+  const live = items.map((i) => i?.recording).find((r) => r && (r.status === 'starting' || r.status === 'recording')) ?? null;
+  return { enabled: d?.enabled !== false, live };
+}
+
+/** Everyone in the room is told; it cannot be paused. mode: audio | video. */
+export function startRecording(token, meetingId, mode = 'video') {
+  return request(`/api/connect/meetings/${meetingId}/recordings`, { token, body: { mode, transcribe: false } });
+}
+
+export function stopRecording(token, meetingId, recordingId) {
+  return request(`/api/connect/meetings/${meetingId}/recordings/${recordingId}/stop`, { token, body: {} });
+}
+
+/**
+ * Advanced settings, host/cohost. Any subset of:
+ *   { sharePolicy, shareMode, minutesLive, chatPolicy, waitingRoom, locked }
+ * The server applies what it can and answers the meeting as it now is.
+ */
+export function patchMeeting(token, meetingId, patch) {
+  return request(`/api/connect/meetings/${meetingId}`, { method: 'PATCH', token, body: patch });
+}
+
+/**
+ * Keep a copy of a chat line for the minutes. Fire-and-forget on the web too.
+ * clientId MUST be a GUID or the server refuses it; duplicates are ignored.
+ */
+export function storeChatLine(token, meetingId, { clientId, identity, body, sentAt }) {
+  return request(`/api/connect/meetings/${meetingId}/chat`, { token, body: { clientId, identity, body, sentAt } });
+}
+
+/** A history of the chat, up to 500 lines. Anyone in the meeting may read it. */
+export async function loadChat(token, meetingId) {
+  const d = await request(`/api/connect/meetings/${meetingId}/chat`, { method: 'GET', token });
+  return Array.isArray(d?.lines) ? d.lines : [];
+}
