@@ -448,6 +448,7 @@ services:
       CALENDAR_DOMAIN: ${CALENDAR_DOMAIN:?CALENDAR_DOMAIN must be set}
       CONNECT_DOMAIN: ${CONNECT_DOMAIN:?CONNECT_DOMAIN must be set}
       PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:?PLATFORM_DOMAIN must be set}
+      WEBSITE_DOMAIN: ${WEBSITE_DOMAIN:?WEBSITE_DOMAIN must be set}
     ports:
       - "80:80"
       - "443:443"
@@ -467,6 +468,9 @@ services:
       # and the conf.d fragments — and nothing else does, because the parent
       # directory holds .env and this mount must never reach it.
       - ./caddy:/etc/caddy:ro
+      # The public website (conf.d/website.caddy). Static files only, its own
+      # mount so this one never widens to the parent directory either.
+      - ../../apps/website:/srv/website:ro
       - caddydata:/data
       - caddyconfig:/config
     networks: [mailnet]
