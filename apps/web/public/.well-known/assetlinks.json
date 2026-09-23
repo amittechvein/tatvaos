@@ -1,0 +1,13 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.techvein.tatvaos",
+      "sha256_cert_fingerprints": [
+        "08:CC:99:C0:B2:8D:D1:F6:E6:84:6A:09:8D:38:82:5D:FB:1F:44:07:98:67:CB:60:92:71:9A:42:0F:A8:B4:37",
+        "B4:9F:B0:4B:98:83:24:EF:0A:F7:9F:5A:7B:85:9A:9D:E7:DB:3A:D2:41:BB:6F:BA:BC:A0:A8:A2:CD:1D:15:0A"
+      ]
+    }
+  }
+]
