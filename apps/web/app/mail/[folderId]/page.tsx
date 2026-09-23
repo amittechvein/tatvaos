@@ -1133,6 +1133,10 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
                   mode={c.mode}
                   selfAddress={mailbox.address}
                   fromAddress={mailbox.address}
+                  // Without this the signature is saved, shown in settings,
+                  // and never appears in a message — see the note at the
+                  // docked composer below.
+                  signature={boot?.signature ?? null}
                   onClose={() => setComposers((prev) => prev.filter((x) => x.key !== c.key))}
                   onSend={async (draft) => {
                     await mailApi.send(authedFetch, {
@@ -1170,6 +1174,18 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
           mode={c.mode}
           selfAddress={mailbox.address}
           fromAddress={mailbox.address}
+          // ── THE SIGNATURE HAD NOWHERE TO COME FROM (Amit, 23 Sept 2026:
+          //    "signature did not show on mail body").
+          //
+          //  The Composer has always known how to seed one — enabled vs
+          //  includeOnReply, text and HTML halves, placed ABOVE the quoted
+          //  reply. The bootstrap has always returned it. Nothing ever
+          //  handed the prop over, so the whole feature was a settings page
+          //  that wrote to a column nobody read back.
+          //
+          //  Both composers get it: a signature that appears on a new
+          //  message and not on a reply would read as a different bug.
+          signature={boot?.signature ?? null}
           onClose={() => setComposers((prev) => prev.filter((x) => x.key !== c.key))}
           onSend={async (draft) => {
             await mailApi.send(authedFetch, {
