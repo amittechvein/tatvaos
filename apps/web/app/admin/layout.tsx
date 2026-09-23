@@ -1,3 +1,4 @@
+import { BuildBadge } from '@/components/BuildBadge';
 import { RequireAuth } from '@/components/RequireAuth';
 
 /**
@@ -8,5 +9,11 @@ import { RequireAuth } from '@/components/RequireAuth';
  * browser thinks.
  */
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  return <RequireAuth roles={['super_admin']}>{children}</RequireAuth>;
+  // The build stamp lives on the consoles only — see app/layout.tsx.
+  return (
+    <RequireAuth roles={['super_admin']}>
+      {children}
+      <BuildBadge />
+    </RequireAuth>
+  );
 }
