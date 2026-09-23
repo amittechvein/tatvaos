@@ -6,6 +6,10 @@
 // clients before anyone noticed. One door, from the start.
 
 import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
+// The version in app.json is the one Play shows; it names this build in the
+// User-Agent so a support thread can say which app version signed in.
+const APP_VERSION = require('./app.json').expo.version;
 
 import { hosts, isProduction } from './lib/hosts';
 
@@ -135,6 +139,11 @@ export async function request(path, { method = 'POST', body, form, token, retrie
       method,
       headers: {
         ...(form ? {} : { 'Content-Type': 'application/json' }),
+        // Named, so the "new device signed in" email the server sends can say
+        // "the TatvaOS app on Android" rather than "an unrecognised device"
+        // (Shared/DeviceFingerprint.cs reads it). React Native's default
+        // User-Agent carries neither word. 23 Sept 2026.
+        'User-Agent': `TatvaOS/${APP_VERSION} (${Platform.OS === 'ios' ? 'iPhone' : 'Android'}; ReactNative)`,
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: form ?? (body === undefined ? undefined : JSON.stringify(body)),
@@ -226,6 +235,55 @@ export async function login(email, password) {
     return { kind: 'mfa', challenge: data.challenge, note: data.note };
   }
   console.log('[api] login -> session issued');
+  return { kind: 'session', session: await keep(data) };
+}
+
+// ── SIGNING IN WITH A MOBILE NUMBER ────────────────────────────────────────
+//  Amit, 23 Sept 2026: "give option to login with mobile no via otp". The web
+//  has had it since the start (the Mobile OTP tab on /login); this is the
+//  same two calls. Nothing new on the server.
+//
+//  What the server does NOT tell a client, and this file therefore cannot:
+//   - whether the number is registered. An unknown number, a resend inside
+//     60 s and a locked account all get the same 200 "if this number is
+//     registered, a code has been sent". Deliberate: a sign-in form must not
+//     be a way to check who has an account.
+//   - whether a rejected code was wrong or expired. Every failure is 401
+//     with one sentence. A code lasts 5 minutes and 5 attempts.
+//  So the screen counts the 60 s itself, and shows the server's own words.
+//
+//  The number is matched EXACTLY as stored, after spaces, dashes and
+//  brackets are removed. +91 is not assumed on lookup. So the app sends what
+//  the person typed and lets the server say if the shape is wrong (400 with
+//  the example format), rather than guessing a country code and silently
+//  looking up the wrong account.
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * Ask for a code. Resolves to { sent: true, message, devCode } — devCode is
+ * present only when the platform is set to show codes on screen AND the SMS
+ * did not go out (a test setting, off in production).
+ */
+export async function requestOtp(phone) {
+  const data = await request('/api/auth/otp/request', { body: { phone: String(phone ?? '').trim() } });
+  console.log(`[api] otp requested${data?.devCode ? ' (code shown on screen: SMS did not go out)' : ''}`);
+  return { sent: true, message: data?.message ?? '', devCode: data?.devCode ?? null };
+}
+
+/**
+ * Sign in with the code. Same two answers as login(): a session, or an MFA
+ * challenge — the OTP is only the FIRST factor, and an account with two-step
+ * on still has to do the second.
+ */
+export async function loginWithOtp(phone, code) {
+  const data = await request('/api/auth/otp/verify', {
+    body: { phone: String(phone ?? '').trim(), code: String(code ?? '').trim() },
+  });
+  if (data?.mfaRequired) {
+    console.log('[api] otp -> two-step verification required');
+    return { kind: 'mfa', challenge: data.challenge, note: data.note };
+  }
+  console.log('[api] otp -> session issued');
   return { kind: 'session', session: await keep(data) };
 }
 

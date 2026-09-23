@@ -25,7 +25,7 @@
 //   - scheduling a meeting from the phone. Meetings.js lists and starts;
 //     planning one is still the web.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, Pressable, ScrollView, ActivityIndicator,
   StyleSheet, Platform, StatusBar, Keyboard, Linking, KeyboardAvoidingView, Alert,
@@ -36,7 +36,7 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { brand, text, surface, visibleProducts, radius, space, type, shadow, tone } from './theme';
-import { login, verifyMfa, restore, signOut, me, onSessionChange } from './api';
+import { login, verifyMfa, restore, signOut, me, onSessionChange, requestOtp, loginWithOtp } from './api';
 import Meetings from './screens/Meetings';
 import GuestJoin from './screens/GuestJoin';
 import Meeting from './screens/Meeting';
@@ -370,13 +370,84 @@ function Splash() {
 
 // ---------------------------------------------------------------------------
 
-function Login({ onSignedIn, onChallenge, onGuest }) {
+// Exported for __checks__/loginScreen.check.js only; App.js renders it itself.
+export function Login({ onSignedIn, onChallenge, onGuest }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [show, setShow] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [forgotNote, setForgotNote] = useState('');
+
+  // ── OR WITH A MOBILE NUMBER. ──────────────────────────────────────────
+  //  Amit, 23 Sept 2026: "give option to login with mobile no via otp". The
+  //  same two calls the web's Mobile OTP tab makes (api.js says what the
+  //  server will and will not tell us). The 60-second resend countdown is
+  //  counted HERE, because the server answers a too-early resend with the
+  //  same 200 as a real one and the person would never learn why no second
+  //  SMS came.
+  // ─────────────────────────────────────────────────────────────────────
+  const [method, setMethod] = useState('email');   // 'email' | 'otp'
+  const [phone, setPhone] = useState('');
+  const [code, setCode] = useState('');
+  const [sent, setSent] = useState(false);
+  const [devCode, setDevCode] = useState(null);
+  const [resendIn, setResendIn] = useState(0);
+  const tick = useRef(null);
+
+  useEffect(() => () => { if (tick.current) clearInterval(tick.current); }, []);
+
+  const startCountdown = () => {
+    if (tick.current) clearInterval(tick.current);
+    setResendIn(60);
+    tick.current = setInterval(() => {
+      setResendIn((n) => {
+        if (n <= 1) { clearInterval(tick.current); tick.current = null; return 0; }
+        return n - 1;
+      });
+    }, 1000);
+  };
+
+  const sendCode = async () => {
+    if (phone.trim().length < 8) { setError('Enter the mobile number with its country code, like +91 98765 43210.'); return; }
+    Keyboard.dismiss();
+    setError('');
+    setBusy(true);
+    try {
+      const r = await requestOtp(phone);
+      setSent(true);
+      setDevCode(r.devCode);
+      setCode('');
+      startCountdown();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitOtp = async () => {
+    if (code.length !== 6) { setError('Enter the 6-digit code.'); return; }
+    Keyboard.dismiss();
+    setError('');
+    setBusy(true);
+    try {
+      const result = await loginWithOtp(phone, code);
+      if (result.kind === 'mfa') onChallenge(result.challenge);
+      else onSignedIn(result.session);
+    } catch (e) {
+      // The server's one sentence for every refusal. It mentions a password,
+      // which is wrong here, so it is reworded ONLY for this exact string —
+      // anything else (a lockout, a suspended organisation) is shown as sent.
+      setError(/password combination/i.test(e.message)
+        ? 'That code was not accepted. It may have expired — request a new one.'
+        : e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const switchTo = (m) => { setMethod(m); setError(''); };
 
   const openForgotPassword = async () => {
     const target = `${hosts.core}/forgot-password`;
@@ -446,6 +517,91 @@ function Login({ onSignedIn, onChallenge, onGuest }) {
       </View>
 
       <View style={s.sheet}>
+        <View style={s.tabRow} accessibilityRole="tablist">
+          <Pressable style={[s.tab, method === 'email' && s.tabOn]} onPress={() => switchTo('email')}
+                     accessibilityRole="tab" accessibilityState={{ selected: method === 'email' }}
+                     accessibilityLabel="Sign in with email">
+            <Text style={[s.tabText, method === 'email' && s.tabTextOn]}>Email</Text>
+          </Pressable>
+          <Pressable style={[s.tab, method === 'otp' && s.tabOn]} onPress={() => switchTo('otp')}
+                     accessibilityRole="tab" accessibilityState={{ selected: method === 'otp' }}
+                     accessibilityLabel="Sign in with mobile OTP">
+            <Text style={[s.tabText, method === 'otp' && s.tabTextOn]}>Mobile OTP</Text>
+          </Pressable>
+        </View>
+
+        {method === 'otp' ? (
+          <>
+            <Text style={s.label}>Mobile number</Text>
+            <TextInput
+              style={s.input}
+              value={phone}
+              onChangeText={(v) => { setPhone(v); setError(''); }}
+              placeholder="+91 98765 43210"
+              placeholderTextColor={text.muted}
+              keyboardType="phone-pad"
+              autoComplete="tel"
+              // Locked once a code is out, like the web: the code belongs to
+              // THIS number, and editing it mid-flow would send the code to
+              // the wrong account's lookup.
+              editable={!busy && !sent}
+              accessibilityLabel="Mobile number"
+            />
+
+            {sent ? (
+              <>
+                <Text style={s.info}>
+                  If this number is registered, a 6-digit code is on its way. It works for 5 minutes.
+                </Text>
+                {devCode ? (
+                  <View style={s.devBox} accessibilityLabel={`On-screen code ${devCode}`}>
+                    <Text style={s.devTitle}>On-screen codes are switched on</Text>
+                    <Text style={s.devText}>The SMS did not go out, so the code is shown here: {devCode}</Text>
+                  </View>
+                ) : null}
+                <Text style={s.label}>6-digit code</Text>
+                <TextInput
+                  style={[s.input, s.code]}
+                  value={code}
+                  onChangeText={(v) => { setCode(v.replace(/[^0-9]/g, '').slice(0, 6)); setError(''); }}
+                  keyboardType="number-pad"
+                  autoComplete="sms-otp"
+                  textContentType="oneTimeCode"
+                  maxLength={6}
+                  editable={!busy}
+                  returnKeyType="go"
+                  onSubmitEditing={submitOtp}
+                  accessibilityLabel="6-digit code"
+                />
+              </>
+            ) : null}
+
+            {error ? <Text style={s.error}>{error}</Text> : null}
+
+            {!sent ? (
+              <Pressable style={[s.primary, (busy || phone.trim().length < 8) && s.primaryBusy]}
+                         onPress={sendCode} disabled={busy || phone.trim().length < 8}
+                         accessibilityLabel="Send code">
+                {busy ? <ActivityIndicator color={brand.onBase} /> : <Text style={s.primaryText}>Send code</Text>}
+              </Pressable>
+            ) : (
+              <>
+                <Pressable style={[s.primary, (busy || code.length !== 6) && s.primaryBusy]}
+                           onPress={submitOtp} disabled={busy || code.length !== 6}
+                           accessibilityLabel="Sign in with the code">
+                  {busy ? <ActivityIndicator color={brand.onBase} /> : <Text style={s.primaryText}>Sign in</Text>}
+                </Pressable>
+                <Pressable hitSlop={8} onPress={sendCode} disabled={busy || resendIn > 0}
+                           accessibilityLabel={resendIn > 0 ? `Resend in ${resendIn} seconds` : 'Resend code'}>
+                  <Text style={[s.quiet, resendIn > 0 && { color: text.muted }]}>
+                    {resendIn > 0 ? `Resend in ${resendIn}s` : 'Resend code'}
+                  </Text>
+                </Pressable>
+              </>
+            )}
+          </>
+        ) : (
+        <>
         <Text style={s.label}>Email</Text>
         <TextInput
           style={s.input}
@@ -506,6 +662,8 @@ function Login({ onSignedIn, onChallenge, onGuest }) {
           <Text style={s.quiet}>Forgot password</Text>
         </Pressable>
         {forgotNote ? <Text style={s.quietNote}>{forgotNote}</Text> : null}
+        </>
+        )}
 
         {/* The one thing this app can do without an account. Below the form on
             purpose: most people here are staff signing in, and a guest is
@@ -853,6 +1011,21 @@ const s = StyleSheet.create({
   primaryBusy: { opacity: 0.7 },
   primaryText: { color: brand.onBase, fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
   quiet: { ...type.strong, color: tone.ink, textAlign: 'center', marginTop: space.lg },
+  tabRow: {
+    flexDirection: 'row', backgroundColor: tone.wash, borderRadius: radius.pill,
+    padding: 4, marginBottom: space.lg,
+  },
+  tab: { flex: 1, height: 40, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center' },
+  tabOn: { backgroundColor: surface.card, ...shadow.card },
+  tabText: { ...type.strong, fontSize: 14, color: tone.ink },
+  tabTextOn: { color: text.primary },
+  info: { ...type.caption, fontWeight: '400', color: text.secondary, lineHeight: 17, marginBottom: space.md, marginLeft: 4 },
+  devBox: {
+    backgroundColor: '#FDF4E3', borderWidth: 1, borderColor: '#F0DDB8', borderRadius: radius.sm,
+    padding: space.md, marginBottom: space.md,
+  },
+  devTitle: { ...type.caption, color: '#7A5100', marginBottom: 2 },
+  devText: { ...type.caption, fontWeight: '400', color: '#7A5100', lineHeight: 17 },
   orRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, marginTop: space.xl },
   orLine: { flex: 1, height: 1, backgroundColor: surface.border },
   orText: { ...type.caption, color: text.muted },
