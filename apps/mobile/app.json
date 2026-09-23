@@ -30,6 +30,36 @@
         "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.WAKE_LOCK"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "connect.tatvaos.com",
+              "pathPrefix": "/connect/room"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        },
+        {
+          "action": "VIEW",
+          "data": [
+            {
+              "scheme": "tatvaos",
+              "host": "room"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
       ]
     },
     "plugins": [

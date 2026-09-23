@@ -61,7 +61,9 @@ import {
   AudioSession, VideoView, useRoom, useParticipant, registerGlobals,
 } from '@livekit/react-native';
 
-import { joinMeeting, pollWait, getLobby, admitFromLobby, denyFromLobby } from '../lib/connect';
+import {
+  joinMeeting, pollWait, getLobby, admitFromLobby, denyFromLobby, joinAsGuest,
+} from '../lib/connect';
 import { isRefusal, describeError } from '../lib/refusal';
 import { watchEngines, reapEngines } from '../lib/engineReaper';
 import { brand, radius, type, tone } from '../theme';
@@ -179,7 +181,7 @@ export default function Meeting(props) {
   );
 }
 
-function MeetingSession({ session, meeting, onLeave, onRejoin, prefs }) {
+function MeetingSession({ session, meeting, onLeave, onRejoin, prefs, guest = null }) {
   useKeepAwake();
 
   // ── THE TOKEN IS READ FRESH; THE SESSION IS NOT A REASON TO RECONNECT. ──
@@ -343,10 +345,26 @@ function MeetingSession({ session, meeting, onLeave, onRejoin, prefs }) {
 
   // Try to get in with whatever we have. Sets the screen state for every
   // answer the API can give, including the ones that are not "yes".
+  // ── THE ONLY THING A GUEST DOES DIFFERENTLY. ─────────────────────────
+  //  Amit, 23 Sept 2026: somebody with no TatvaOS account joins from the app.
+  //  A guest seat and a colleague's seat are the SAME shape once minted — a
+  //  LiveKit token and a wsUrl — so everything after this line is shared:
+  //  enter(), the waiting-room poll, the controls, the reaper. Only the knock
+  //  differs, and a guest knocks anonymously (lib/connect.js, the guest door).
+  //
+  //  `guest` also decides what is polled: a guest has no access token and must
+  //  NOT send one, so the wait poll goes out bare. It is one object rather than
+  //  a flag so there is no way to be in guest mode without a code and a name.
+  // ─────────────────────────────────────────────────────────────────────────
+  const waitAs = (waitToken) =>
+    (guest ? pollWait(null, waitToken) : pollWait(sessionRef.current.accessToken, waitToken));
+
   async function admit(pw) {
     let admitted;
     try {
-      admitted = await joinMeeting(sessionRef.current.accessToken, meeting.id, pw);
+      admitted = guest
+        ? await joinAsGuest(guest.code, guest.displayName, pw)
+        : await joinMeeting(sessionRef.current.accessToken, meeting.id, pw);
     } catch (e) {
       if (gone.current) return;
       if (e?.status === 403) {
@@ -363,6 +381,22 @@ function MeetingSession({ session, meeting, onLeave, onRejoin, prefs }) {
     }
     if (gone.current) return;
 
+    // The guest door answers with a KIND rather than throwing: a wrong
+    // password is 403 there and must not read as a dead link (the same
+    // distinction the authenticated path makes in the catch above).
+    if (admitted.kind === 'password') {
+      log(pw ? 'guest password rejected' : 'meeting needs a password');
+      setStatus('password');
+      setNotice(admitted.message);
+      return;
+    }
+    if (admitted.kind === 'closed' || admitted.kind === 'rejected') {
+      log(`guest door closed: ${admitted.message}`);
+      setStatus('blocked');
+      setNotice(admitted.message);
+      return;
+    }
+
     if (admitted.kind === 'joined') { await enter(admitted); return; }
 
     if (admitted.kind === 'waiting') {
@@ -373,7 +407,7 @@ function MeetingSession({ session, meeting, onLeave, onRejoin, prefs }) {
       const poll = async () => {
         if (gone.current) return;
         try {
-          const answer = await pollWait(sessionRef.current.accessToken, admitted.waitToken);
+          const answer = await waitAs(admitted.waitToken);
           if (gone.current) return;
           if (answer.kind === 'waiting') {
             waitTimer.current = setTimeout(poll, WAIT_POLL_MS);

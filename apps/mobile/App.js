@@ -38,6 +38,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { brand, text, surface, visibleProducts, radius, space, type, shadow, tone } from './theme';
 import { login, verifyMfa, restore, signOut, me, onSessionChange } from './api';
 import Meetings from './screens/Meetings';
+import GuestJoin from './screens/GuestJoin';
 import Meeting from './screens/Meeting';
 import ScheduleMeeting from './screens/ScheduleMeeting';
 import Mail from './screens/Mail';
@@ -45,6 +46,7 @@ import MailMessage from './screens/MailMessage';
 import MailCompose from './screens/MailCompose';
 import NextMeetingCard from './components/NextMeetingCard';
 import { handoffUrl } from './lib/handoff';
+import { codeFrom } from './lib/connect';
 import { hosts } from './lib/hosts';
 
 export default function App() {
@@ -66,6 +68,16 @@ function Root() {
   const [phase, setPhase] = useState('restoring');
   const [session, setSession] = useState(null);
   const [challenge, setChallenge] = useState(null);
+  // ── A GUEST, WHO HAS NO SESSION AND NEVER WILL. ────────────────────────
+  //  Amit, 23 Sept 2026. `guestSeat` is { code, displayName, meeting } once
+  //  somebody has given both; until then `guestCode` holds whatever arrived
+  //  in a link, so the screen can open with the meeting already named.
+  //  Deliberately NOT part of `phase`: a guest can appear over the sign-in
+  //  screen, and leaving the meeting must put them back where they were.
+  // ───────────────────────────────────────────────────────────────────────
+  const [guestOpen, setGuestOpen] = useState(false);
+  const [guestCode, setGuestCode] = useState('');
+  const [guestSeat, setGuestSeat] = useState(null);
   const [profile, setProfile] = useState(null);
 
   // Where we are once signed in: home → meetings → meeting. No navigation
@@ -129,6 +141,41 @@ function Root() {
     return () => { cancelled = true; };
   }, [session]);
 
+  // ── A MEETING LINK OPENED THE APP. ─────────────────────────────────────
+  //  Amit, 23 Sept 2026: "if someone join the meeting via link in mobile its
+  //  redirect to mobile app and join there".
+  //
+  //  Two ways in, and both end here:
+  //    tatvaos://room/<code>                          the custom scheme, works today
+  //    https://connect.tatvaos.com/connect/room/<code>  once Android verifies us
+  //
+  //  The https half needs assetlinks.json served from that domain carrying the
+  //  app's PLAY signing fingerprint — not our upload key, because Play re-signs
+  //  every install. Until that file exists Android opens the browser, which is
+  //  the behaviour we have always had, so nothing here breaks in the meantime.
+  //
+  //  codeFrom() is the same parser the paste box uses, so a link and a pasted
+  //  link cannot disagree about where a code ends. A link that carries no
+  //  usable code opens the screen empty rather than doing nothing at all —
+  //  silence after tapping a link reads as a broken app.
+  // ───────────────────────────────────────────────────────────────────────
+  const openFromLink = useCallback((url) => {
+    if (!url) return;
+    if (!/\/room\/|^tatvaos:/i.test(url)) return;
+    const code = codeFrom(url);
+    console.log(`[app] opened from a link${code ? '' : ' with no usable code'}`);
+    setGuestCode(code ?? '');
+    setGuestOpen(true);
+  }, []);
+
+  useEffect(() => {
+    // The app was not running: the link is what started it.
+    Linking.getInitialURL().then(openFromLink).catch(() => {});
+    // The app was already running, in the background or in front.
+    const sub = Linking.addEventListener('url', (e) => openFromLink(e?.url));
+    return () => sub?.remove?.();
+  }, [openFromLink]);
+
   const onSignedIn = useCallback((s) => { setSession(s); setChallenge(null); setPhase('in'); }, []);
 
   const signOutNow = useCallback(async () => {
@@ -189,6 +236,27 @@ function Root() {
   // list is where it now appears. Meetings remounts, so it reloads itself and
   // the new row is there without anything having to push it.
   const scheduled = useCallback(() => setView('meetings'), []);
+
+  // A guest seat outranks everything: somebody in a meeting should see the
+  // meeting, not the screen they were on when they followed the link.
+  if (guestSeat) {
+    return (
+      <Meeting
+        meeting={guestSeat.meeting}
+        guest={{ code: guestSeat.code, displayName: guestSeat.displayName }}
+        onLeave={() => { setGuestSeat(null); setGuestOpen(false); setGuestCode(''); }}
+      />
+    );
+  }
+  if (guestOpen) {
+    return (
+      <GuestJoin
+        initialCode={guestCode}
+        onJoin={(seat) => setGuestSeat(seat)}
+        onBack={() => { setGuestOpen(false); setGuestCode(''); }}
+      />
+    );
+  }
 
   if (phase === 'restoring') return <Splash />;
   if (phase === 'in') {
@@ -284,6 +352,7 @@ function Root() {
     <Login
       onSignedIn={onSignedIn}
       onChallenge={(c) => { setChallenge(c); setPhase('mfa'); }}
+      onGuest={() => setGuestOpen(true)}
     />
   );
 }
@@ -301,7 +370,7 @@ function Splash() {
 
 // ---------------------------------------------------------------------------
 
-function Login({ onSignedIn, onChallenge }) {
+function Login({ onSignedIn, onChallenge, onGuest }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [show, setShow] = useState(false);
@@ -437,6 +506,23 @@ function Login({ onSignedIn, onChallenge }) {
           <Text style={s.quiet}>Forgot password</Text>
         </Pressable>
         {forgotNote ? <Text style={s.quietNote}>{forgotNote}</Text> : null}
+
+        {/* The one thing this app can do without an account. Below the form on
+            purpose: most people here are staff signing in, and a guest is
+            following a link they were sent. 23 Sept 2026. */}
+        {onGuest ? (
+          <>
+            <View style={s.orRow}>
+              <View style={s.orLine} />
+              <Text style={s.orText}>or</Text>
+              <View style={s.orLine} />
+            </View>
+            <Pressable style={s.ghost} onPress={onGuest} accessibilityLabel="Join a meeting as a guest">
+              <Ionicons name="videocam-outline" size={18} color={tone.ink} />
+              <Text style={s.ghostText}>Join a meeting as a guest</Text>
+            </Pressable>
+          </>
+        ) : null}
       </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -767,6 +853,14 @@ const s = StyleSheet.create({
   primaryBusy: { opacity: 0.7 },
   primaryText: { color: brand.onBase, fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
   quiet: { ...type.strong, color: tone.ink, textAlign: 'center', marginTop: space.lg },
+  orRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, marginTop: space.xl },
+  orLine: { flex: 1, height: 1, backgroundColor: surface.border },
+  orText: { ...type.caption, color: text.muted },
+  ghost: {
+    height: 52, borderRadius: 26, backgroundColor: tone.wash, marginTop: space.md,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+  },
+  ghostText: { color: tone.ink, fontSize: 15, fontWeight: '700' },
   quietNote: { color: text.secondary, textAlign: 'center', marginTop: space.sm, fontSize: 13, lineHeight: 19 },
 
   // ── dashboard ────────────────────────────────────────────────────────
