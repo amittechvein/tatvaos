@@ -324,7 +324,7 @@ export const CSS = `
 .cx-root--bar-bottom .cx-fab{bottom:112px}
 /* Out of the way of an open panel rather than pinned under it. */
 @media (min-width:900px){.cx-root--panel .cx-fab{right:388px}}
-.cx-fab .cx-count{top:-4px;right:-4px}
+.cx-fab .cx-count{top:-4px;right:-4px;transform:none}
 
 /* Files in chat. A row, not a bubble: the name and the size are the two
    things you decide on before clicking. */

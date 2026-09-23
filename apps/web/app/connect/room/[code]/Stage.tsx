@@ -2323,6 +2323,13 @@ export default function Stage({ seat, meeting, prefs }: {
   // of equals has no column and needs none.
   const focused = main.length === 1 && rest.length > 0;
 
+  // A SHARE ALONE ON THE STAGE STILL FILLS IT. With every camera off the side
+  // column filters everybody out, `focused` goes false, and the share fell
+  // back to the lone-face tile — capped at 640px in the middle of a big black
+  // stage (Amit, 22 Sept, a two-person meeting with cameras off). The
+  // lone-face rule is right for a face and wrong for a screen.
+  const fillStage = focused || (main.length === 1 && main[0]!.screen);
+
   // Zero while the stage is unmeasured. The first paint has no size yet, and
   // guessing 1 would be a visible one-frame jump from a single huge tile to
   // the real layout. See the note beside stageRef for the rest.
@@ -2803,7 +2810,7 @@ export default function Stage({ seat, meeting, prefs }: {
             no discovery — the button below is for the people who never learnt
             it. */}
         <div ref={stageRef}
-             className={`cx-stage${focused ? ' cx-stage--focus' : ''}`
+             className={`cx-stage${fillStage ? ' cx-stage--focus' : ''}`
                + `${gridCols > 0 ? ' cx-stage--grid' : ''}`}
              // A custom property in a style object. The double assertion is
              // for the React typings, which only learned about --* keys
@@ -2820,9 +2827,10 @@ export default function Stage({ seat, meeting, prefs }: {
               fills. Right beside a column; wrong when you are simply the only
               person here. It read `main.length === 1`, which is true in both
               cases, so arriving first gave you a full-bleed stretched tile of
-              your own face. `focused` is the condition it always meant. */}
+              your own face. `focused` is the condition it always meant — plus
+              a share alone on the stage, see fillStage. */}
           {main.map((t) => (
-            <Tile key={t.key} p={t.p} big={focused}
+            <Tile key={t.key} p={t.p} big={fillStage}
                   local={t.p === room?.localParticipant}
                   showScreen={t.screen}
                   hand={!t.screen && hands[t.p.identity] === true}
@@ -2905,15 +2913,17 @@ export default function Stage({ seat, meeting, prefs }: {
             — and the one thing they want to reach WITHOUT losing sight of
             anybody. Hidden while the chat panel is open, because then the
             button would just be a lid on something already in front of you. */}
+        {/* The count goes INSIDE the button. The button is position:fixed, so
+            a count beside it in a wrapper was placed against the wrapper's
+            spot in the page flow — the bottom-left corner, nowhere near the
+            button — and every unread message went unseen (Amit, 22 Sept). */}
         {panel !== 'chat' && (
-          <span className="cx-btnwrap">
-            <button type="button" className="cx-fab" onClick={() => openPanel('chat')}
-                    aria-label={unread > 0 ? `Chat, ${unread} unread` : 'Chat'}
-                    title="Chat and files">
-              <i className="ri-chat-3-fill" />
-            </button>
-            {unread > 0 && <span className="cx-count">{unread}</span>}
-          </span>
+          <button type="button" className="cx-fab" onClick={() => openPanel('chat')}
+                  aria-label={unread > 0 ? `Chat, ${unread} unread` : 'Chat'}
+                  title="Chat and files">
+            <i className="ri-chat-3-fill" />
+            {unread > 0 && <span className="cx-count" aria-hidden="true">{unread}</span>}
+          </button>
         )}
 
         {more && <div className="cx-more" role="menu">{moreItems}</div>}
