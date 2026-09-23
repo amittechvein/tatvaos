@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    THE REPLY-THREADING HEADER TESTS. Same shape as tests/mail-sort, for the
+    same reason: this is a rule that reads as obviously right and was wrong in
+    production for months without one error being raised.
+
+    MailThreadHeaders.cs is LINKED, not copied: this compiles the file
+    production runs. No test framework and no packages, so `dotnet run` works
+    on a box with no network.
+
+    What it does NOT prove: that the database query feeding Build() returns the
+    conversation oldest-first, or that MimeKit writes the headers it is given.
+    Those were proven by sending real mail into an SMTP sink and reading the
+    bytes off the wire; the PR that added this says which sends were made and
+    what each build emitted.
+
+    NOT RUN BY CI as of 23 September 2026, for the reason tests/mail-sort gives:
+    CI workflow changes go to the CTO, so it is asked for in the PR rather than
+    added by it.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TatvaOS.Tests.MailThreading</RootNamespace>
+    <AssemblyName>mail-threading-test</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The production file itself. Not a copy. -->
+    <Compile Include="../../apps/api/Modules/Mail/MailThreadHeaders.cs" Link="MailThreadHeaders.cs" />
+  </ItemGroup>
+
+</Project>
