@@ -19,6 +19,9 @@ class MockLocalParticipant {
   constructor() { Object.assign(this, listeners()); this.identity = 'user:me'; this.name = 'Me'; this.isLocal = true;
     this.trackPublications = new Map(); this.audioTrackPublications = new Map(); this.videoTrackPublications = new Map(); this.sid = 'PA_me'; }
   getTrackPublication() { return undefined; }
+  // Data messages the screen sends (hands, chat, reactions): kept as the
+  // BYTES it published, so a check can decode them the way the web would.
+  publishData(bytes, opts) { (this.published ??= []).push({ bytes, opts }); }
   async setMicrophoneEnabled(on) { if (mockSteer.mic === 'refuse') { const e = new Error('NotAllowedError'); throw e; } return on; }
   async setCameraEnabled(on) { return on; }
   async setScreenShareEnabled(on, capture, publish) {
@@ -118,6 +121,20 @@ jest.mock('../lib/connect', () => {
     denyFromLobby: (...a) => mockApi.deny(...a),
     inviteToMeeting: (...a) => mockApi.invite(...a),
     getMeetingByCode: (...a) => mockApi.byCode(...a),
+    // "More" (23 Sept 2026): each is steerable from a check, and harmless by
+    // default so a screen that calls one on entry does not need every check
+    // to know about it.
+    listParticipants: (...a) => (mockApi.participants ? mockApi.participants(...a) : Promise.resolve([])),
+    listRecordings: (...a) => (mockApi.recordings ? mockApi.recordings(...a) : Promise.resolve({ enabled: true, live: null })),
+    storeChatLine: (...a) => (mockApi.storeChatLine ? mockApi.storeChatLine(...a) : Promise.resolve({})),
+    muteParticipant: (...a) => (mockApi.mute ? mockApi.mute(...a) : Promise.resolve({})),
+    removeParticipant: (...a) => (mockApi.remove ? mockApi.remove(...a) : Promise.resolve({})),
+    setParticipantRole: (...a) => (mockApi.setRole ? mockApi.setRole(...a) : Promise.resolve({})),
+    muteAll: (...a) => (mockApi.muteAll ? mockApi.muteAll(...a) : Promise.resolve({})),
+    endMeeting: (...a) => (mockApi.end ? mockApi.end(...a) : Promise.resolve({})),
+    startRecording: (...a) => (mockApi.startRecording ? mockApi.startRecording(...a) : Promise.resolve({ id: 'r1', status: 'starting' })),
+    stopRecording: (...a) => (mockApi.stopRecording ? mockApi.stopRecording(...a) : Promise.resolve({})),
+    patchMeeting: (...a) => (mockApi.patch ? mockApi.patch(...a) : Promise.resolve({})),
   };
 });
 

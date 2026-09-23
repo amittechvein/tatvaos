@@ -63,7 +63,12 @@ import {
 
 import {
   joinMeeting, pollWait, getLobby, admitFromLobby, denyFromLobby, joinAsGuest,
+  listParticipants, muteParticipant, removeParticipant, setParticipantRole, muteAll, endMeeting,
+  listRecordings, startRecording, stopRecording, patchMeeting, storeChatLine,
 } from '../lib/connect';
+import { packJson, unpackJson } from '../lib/utf8';
+import { uuid4 } from '../lib/ids';
+import MeetingMore, { personOf } from './MeetingMore';
 import { isRefusal, describeError } from '../lib/refusal';
 import { watchEngines, reapEngines } from '../lib/engineReaper';
 import { brand, radius, type, tone } from '../theme';
@@ -226,6 +231,35 @@ function MeetingSession({ session, meeting, onLeave, onRejoin, prefs, guest = nu
   const [recording, setRecording] = useState(false);
   const [role, setRole] = useState(null); // host | cohost | participant, once admitted
   const [lobby, setLobby] = useState([]); // people waiting, host/cohost only
+
+  // ── "MORE": PEOPLE, CHAT, RECORDING, SETTINGS. ────────────────────────
+  //  Amit, 23 Sept 2026. Hands, chat and reactions are LiveKit DATA MESSAGES
+  //  between the clients — untyped JSON with no topic, the web's convention
+  //  (Stage.tsx DataReceived): the first key that matches wins. Roles,
+  //  recording and settings are the server's and go over REST.
+  //
+  //  UTF-8, properly. The old decode here (String.fromCharCode per byte)
+  //  garbled every emoji and every Hindi word — lib/utf8.js says why.
+  // ─────────────────────────────────────────────────────────────────────
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [moreTab, setMoreTab] = useState('people');
+  const [hands, setHands] = useState(() => new Set());
+  const [myHand, setMyHand] = useState(false);
+  const [roles, setRoles] = useState(() => new Map());       // personOf(identity) -> role
+  const [chat, setChat] = useState([]);                      // { cid, name, text, mine, at }
+  const [unreadChat, setUnreadChat] = useState(0);
+  const [chatPolicy, setChatPolicy] = useState(meeting?.chatPolicy ?? 'everyone');
+  const [rec, setRec] = useState({ enabled: true, live: null });
+  const [settings, setSettings] = useState({
+    sharePolicy: meeting?.sharePolicy ?? 'everyone',
+    shareMode: meeting?.shareMode === 'single' ? 'single' : 'multiple',
+    chatPolicy: meeting?.chatPolicy ?? 'everyone',
+    waitingRoom: meeting?.waitingRoom ?? 'guests',
+    minutesLive: meeting?.minutesLive === true,
+    locked: meeting?.locked === true,
+  });
+  const [reaction, setReaction] = useState(null);           // the last emoji floated, briefly
+  const seenCids = useRef(new Set());
   const leaving = useRef(false);
 
   // One video full screen, or everyone. Keyed like the tiles are, so a person
@@ -292,6 +326,7 @@ function MeetingSession({ session, meeting, onLeave, onRejoin, prefs, guest = nu
     if (gone.current) { room.disconnect().catch(() => {}).finally(() => reapEngines(engines, log)); return; }
     log(`in the room as ${admitted.identity} (${admitted.role})`);
     setRole(admitted.role);
+    if (admitted.chatPolicy) { setChatPolicy(admitted.chatPolicy); setSettings((x) => ({ ...x, chatPolicy: admitted.chatPolicy })); }
     setStatus('in');
 
     // The microphone and camera start the way the person CHOSE on the pre-join
@@ -505,16 +540,61 @@ function MeetingSession({ session, meeting, onLeave, onRejoin, prefs, guest = nu
     // hand rather than with TextDecoder: the message is short ASCII JSON, and
     // whether Hermes provides TextDecoder depends on which polyfills happen to
     // be loaded, which is not a thing to find out from a silent catch.
-    room.on(RoomEvent.DataReceived, (payload) => {
-      try {
-        let text = '';
-        for (let i = 0; i < payload.length; i++) text += String.fromCharCode(payload[i]);
-        const msg = JSON.parse(text);
-        if (msg && (msg.shareMode === 'single' || msg.shareMode === 'multiple')) {
-          log(`share mode is now ${msg.shareMode}`);
-          setShareMode(msg.shareMode);
+    room.on(RoomEvent.DataReceived, (payload, participant) => {
+      const msg = unpackJson(payload);
+      if (!msg || typeof msg !== 'object') return;
+      const from = participant?.identity ?? '';
+      // Same order as the web (Stage.tsx): the first key that matches wins.
+      if ('hand' in msg) {
+        setHands((h) => { const n = new Set(h); if (msg.hand) n.add(from); else n.delete(from); return n; });
+        return;
+      }
+      if (typeof msg.lowerHand === 'string') {
+        setHands((h) => { const n = new Set(h); n.delete(msg.lowerHand); return n; });
+        if (msg.lowerHand === room.localParticipant?.identity) setMyHand(false);
+        return;
+      }
+      if (typeof msg.minutesLive === 'boolean') { setSettings((x) => ({ ...x, minutesLive: msg.minutesLive })); return; }
+      if (msg.chatPolicy === 'everyone' || msg.chatPolicy === 'cohost' || msg.chatPolicy === 'off') {
+        setChatPolicy(msg.chatPolicy); setSettings((x) => ({ ...x, chatPolicy: msg.chatPolicy })); return;
+      }
+      if (msg.sharePolicy === 'everyone' || msg.sharePolicy === 'cohost' || msg.sharePolicy === 'host') {
+        setSettings((x) => ({ ...x, sharePolicy: msg.sharePolicy })); return;
+      }
+      if (msg.shareMode === 'single' || msg.shareMode === 'multiple') {
+        log(`share mode is now ${msg.shareMode}`);
+        setShareMode(msg.shareMode); setSettings((x) => ({ ...x, shareMode: msg.shareMode }));
+        return;
+      }
+      if (msg.role && typeof msg.role.identity === 'string' && (msg.role.to === 'cohost' || msg.role.to === 'participant')) {
+        setRoles((m) => new Map(m).set(personOf(msg.role.identity), msg.role.to));
+        if (personOf(msg.role.identity) === personOf(room.localParticipant?.identity)) {
+          setRole(msg.role.to);
+          setNotice(msg.role.to === 'cohost' ? 'You are now a co-host.' : 'You are no longer a co-host.');
         }
-      } catch { /* not a message for this screen */ }
+        return;
+      }
+      if (typeof msg.react === 'string' && REACTIONS.includes(msg.react)) {
+        setReaction({ emoji: msg.react, from: participant?.name || from, at: Date.now() });
+        return;
+      }
+      if (typeof msg.text === 'string' && msg.text.trim()) {
+        if (msg.cid && seenCids.current.has(msg.cid)) return;
+        if (msg.cid) seenCids.current.add(msg.cid);
+        const line = { cid: msg.cid || uuid4(), name: participant?.name || from.replace(/^user:|^guest:/, ''), text: msg.text.slice(0, 4000), mine: false, at: msg.at || new Date().toISOString() };
+        setChat((c) => [...c, line]);
+        setUnreadChat((n) => n + 1);
+        // One signed-in client keeps a guest's line for the minutes: the one
+        // whose identity sorts first (the web's relayerOf). Nothing is lost
+        // if two do — the server drops duplicates on clientId.
+        if (from.startsWith('guest:') && !guest && sessionRef.current?.accessToken && meeting?.id) {
+          const signedIn = [room.localParticipant, ...room.remoteParticipants.values()]
+            .map((x) => x?.identity).filter((x) => x && x.startsWith('user:')).sort();
+          if (signedIn[0] === room.localParticipant?.identity) {
+            storeChatLine(sessionRef.current.accessToken, meeting.id, { clientId: line.cid, identity: from, body: line.text, sentAt: line.at }).catch(() => {});
+          }
+        }
+      }
     });
     room.on(RoomEvent.ParticipantConnected, (p) => log(`joined: ${p.identity}`));
     room.on(RoomEvent.ParticipantDisconnected, (p) => log(`left: ${p.identity}`));
@@ -596,6 +676,97 @@ function MeetingSession({ session, meeting, onLeave, onRejoin, prefs, guest = nu
   // The invite is the meeting's joinUrl from the API — the same link the web
   // shows — handed to the system share sheet. The URL is a capability, so it
   // is not written to the log.
+  // ── SENDING ON THE DATA CHANNEL, AND THE HOST'S REST CALLS. ───────────
+  const publish = (obj, reliable = true) => {
+    try { room.localParticipant.publishData(packJson(obj), { reliable }); }
+    catch (e) { log(`publish failed: ${describeError(e)}`); }
+  };
+
+  const toggleHand = () => {
+    const next = !myHand;
+    setMyHand(next);
+    setHands((h) => { const n = new Set(h); const me = room.localParticipant?.identity; if (next) n.add(me); else n.delete(me); return n; });
+    publish({ hand: next });
+    log(next ? 'hand raised' : 'hand lowered');
+  };
+
+  const sendChat = (text) => {
+    const line = { cid: uuid4(), name: 'You', text, mine: true, at: new Date().toISOString() };
+    seenCids.current.add(line.cid);
+    setChat((c) => [...c, line]);
+    publish({ text, cid: line.cid, at: line.at });
+    if (!guest && sessionRef.current?.accessToken && meeting?.id) {
+      storeChatLine(sessionRef.current.accessToken, meeting.id,
+        { clientId: line.cid, identity: room.localParticipant?.identity, body: text, sentAt: line.at }).catch(() => {});
+    }
+  };
+
+  const react = (emoji) => { publish({ react: emoji }, false); setReaction({ emoji, from: 'You', at: Date.now() }); };
+
+  // Every host action is the SERVER's to refuse; its sentence is shown.
+  const hostCall = async (what, fn) => {
+    try { await fn(); log(what); }
+    catch (e) { log(`${what} failed: ${describeError(e)}`); setNotice(e?.message || `Could not ${what}.`); }
+  };
+  const tk = () => sessionRef.current?.accessToken;
+  const onMute = (identity, kind) => hostCall(`mute ${kind}`, () => muteParticipant(tk(), meeting.id, identity, kind));
+  const onRemove = (identity) => hostCall('remove', () => removeParticipant(tk(), meeting.id, identity));
+  const onSetRole = (identity, to) => hostCall(`role ${to}`, async () => {
+    await setParticipantRole(tk(), meeting.id, identity, to);
+    setRoles((m) => new Map(m).set(personOf(identity), to));
+    publish({ role: { identity, to } });   // others update their badges from this
+  });
+  const onMuteAll = (who) => hostCall('mute all', () => muteAll(tk(), meeting.id, who));
+  const onEnd = () => hostCall('end meeting', async () => { await endMeeting(tk(), meeting.id); leave(); });
+  const onStartRecording = (mode) => hostCall('start recording', async () => {
+    const r = await startRecording(tk(), meeting.id, mode);
+    setRec((x) => ({ ...x, live: r }));
+  });
+  const onStopRecording = () => hostCall('stop recording', async () => {
+    const id = rec.live?.id;
+    if (!id) { const { live } = await listRecordings(tk(), meeting.id); if (!live) return; await stopRecording(tk(), meeting.id, live.id); }
+    else await stopRecording(tk(), meeting.id, id);
+    setRec((x) => ({ ...x, live: null }));
+  });
+  const onPatchSetting = (patch) => hostCall(`setting ${Object.keys(patch).join(',')}`, async () => {
+    const before = settings;
+    setSettings((x) => ({ ...x, ...patch }));          // optimistic, like the web
+    try { await patchMeeting(tk(), meeting.id, patch); }
+    catch (e) { setSettings(before); throw e; }
+    // The web broadcasts these so the room updates without a refresh.
+    for (const k of ['sharePolicy', 'shareMode', 'minutesLive', 'chatPolicy']) {
+      if (k in patch) publish({ [k]: patch[k] });
+    }
+    if ('chatPolicy' in patch) setChatPolicy(patch.chatPolicy);
+    if ('shareMode' in patch) setShareMode(patch.shareMode);
+  });
+
+  // Roles and the live recording, once in, for a host or co-host. Everyone
+  // else learns roles from the {role} messages and recording from LiveKit.
+  useEffect(() => {
+    if (status !== 'in' || guest || !(role === 'host' || role === 'cohost') || !meeting?.id) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await listParticipants(tk(), meeting.id);
+        if (cancelled) return;
+        setRoles(new Map(rows.map((r) => [personOf(r.identity), r.role])));
+      } catch (e) { log(`participants list failed: ${describeError(e)}`); }
+      try {
+        const r = await listRecordings(tk(), meeting.id);
+        if (!cancelled) setRec(r);
+      } catch (e) { log(`recordings list failed: ${describeError(e)}`); }
+    })();
+    return () => { cancelled = true; };
+  }, [status, role, guest, meeting?.id]);
+
+  // A reaction floats for a moment, then goes.
+  useEffect(() => {
+    if (!reaction) return undefined;
+    const t = setTimeout(() => setReaction(null), 3400);
+    return () => clearTimeout(t);
+  }, [reaction]);
+
   async function invite() {
     if (!meeting?.joinUrl) { setNotice('This meeting has no link to share.'); return; }
     try {
@@ -871,9 +1042,33 @@ function MeetingSession({ session, meeting, onLeave, onRejoin, prefs, guest = nu
         <Control icon={cam ? 'videocam' : 'videocam-off'} label={cam ? 'Cam off' : 'Camera'} on={cam} onPress={toggleCam} onLongPress={cam ? flipCam : undefined} disabled={!inCall} />
         <Control icon="phone-portrait-outline" label={share ? 'Stop share' : 'Share'} on={share} onPress={toggleShare} disabled={!inCall || !!otherPresenter} />
         <Control icon={speaker ? 'volume-high' : 'ear-outline'} label={speaker ? 'Speaker' : 'Earpiece'} on={speaker} onPress={toggleSpeaker} disabled={!inCall} />
+        <Control icon="ellipsis-horizontal" label="More" on={myHand || unreadChat > 0}
+                 onPress={() => { setMoreOpen(true); setUnreadChat(0); }} disabled={!inCall}
+                 badge={unreadChat + (hands.size > 0 && !myHand ? hands.size : 0)} />
         <Control icon="call" label="Leave" danger onPress={leave} />
         </View>
       </View>
+
+      {reaction ? (
+        <View style={s.reaction} pointerEvents="none" accessibilityLabel={`${reaction.from} reacted ${reaction.emoji}`}>
+          <Text style={s.reactionEmoji}>{reaction.emoji}</Text>
+          <Text style={s.reactionFrom}>{reaction.from}</Text>
+        </View>
+      ) : null}
+
+      {inCall ? (
+        <MeetingMore
+          visible={moreOpen} onClose={() => setMoreOpen(false)} tab={moreTab}
+          role={role} isGuest={!!guest} mode={meeting?.mode}
+          participants={participants} hands={hands} roles={roles} myHand={myHand}
+          onToggleHand={toggleHand} onMute={onMute} onRemove={onRemove} onSetRole={onSetRole}
+          onMuteAll={onMuteAll} onEnd={onEnd}
+          chat={chat} chatPolicy={chatPolicy} unreadChat={unreadChat} onSendChat={sendChat}
+          recording={{ enabled: rec.enabled, live: rec.live, active: recording }}
+          onStartRecording={onStartRecording} onStopRecording={onStopRecording}
+          settings={settings} onPatchSetting={onPatchSetting}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -976,7 +1171,9 @@ function Tile({ participant, style, onSelect, pressLabel, full = false }) {
   );
 }
 
-function Control({ icon, label, on, danger, disabled, onPress, onLongPress }) {
+const REACTIONS = ['👍', '👏', '❤️', '😂', '🎉', '😮', '🙏', '💯'];
+
+function Control({ icon, label, on, danger, disabled, onPress, onLongPress, badge = 0 }) {
   const ink = danger || on ? '#FFFFFF' : '#EAE6F3';
   return (
     <Pressable
@@ -989,6 +1186,7 @@ function Control({ icon, label, on, danger, disabled, onPress, onLongPress }) {
     >
       <Ionicons name={icon} size={22} color={ink} />
       <Text style={[s.controlLabel, { color: ink }]} numberOfLines={1}>{label}</Text>
+      {badge > 0 ? <View style={s.controlBadge}><Text style={s.controlBadgeText}>{badge}</Text></View> : null}
     </Pressable>
   );
 }
@@ -1074,4 +1272,12 @@ const s = StyleSheet.create({
   controlDisabled: { opacity: 0.4 },
   controlLabel: { fontSize: 11 },
   hint: { color: '#7C7890', fontSize: 11, textAlign: 'center', paddingTop: 8 },
+  controlBadge: {
+    position: 'absolute', top: 4, right: 6, minWidth: 18, height: 18, borderRadius: 9,
+    backgroundColor: '#FF6B4A', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4,
+  },
+  controlBadgeText: { color: '#fff', fontSize: 11, fontWeight: '800' },
+  reaction: { position: 'absolute', left: 0, right: 0, bottom: 120, alignItems: 'center' },
+  reactionEmoji: { fontSize: 44 },
+  reactionFrom: { color: '#EAE6F3', fontSize: 12, marginTop: 2, backgroundColor: 'rgba(0,0,0,0.35)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 },
 });
