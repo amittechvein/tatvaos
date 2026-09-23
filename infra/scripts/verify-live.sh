@@ -440,10 +440,17 @@ check_website() {
     local body code
     body=$(curl -s --max-time 15 "https://${domain}/")
     code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "https://${domain}/")
-    if [ "$code" = "200" ] && printf '%s' "$body" | grep -q '<title>TatvaOS'; then
+    # No pipe here, on purpose. This script runs under pipefail, and
+    # `printf body | grep -q` is a false RED on a real page: grep -q exits at
+    # the first match and closes the pipe, printf dies of SIGPIPE, pipefail
+    # reports the pipeline failed. Seen on the first live run, 23 Sept 2026,
+    # against a page that had the title. A substring test has no pipe.
+    if [ "$code" = "200" ] && [[ "$body" == *"<title>TatvaOS"* ]]; then
         ok "https://${domain}/ answers 200 with the TatvaOS page"
+    elif [ "$code" = "200" ]; then
+        bad "https://${domain}/ answered 200 without the TatvaOS title (${#body} bytes)"
     else
-        bad "https://${domain}/ answered ${code}$( printf '%s' "$body" | grep -q '<title>TatvaOS' || printf ' without the TatvaOS title')"
+        bad "https://${domain}/ answered ${code} (expected 200 with the TatvaOS page)"
     fi
     # www is a redirect to the apex, never a second copy.
     local www_code www_loc
