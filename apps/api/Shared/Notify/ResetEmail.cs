@@ -113,6 +113,7 @@ public static class ResetEmail
               </table>
             </td>
           </tr>
+{GetTheAppRow.Html("Once your new password is set, it signs you in on the app too.")}
 
           <!-- Footer -->
           <tr>
