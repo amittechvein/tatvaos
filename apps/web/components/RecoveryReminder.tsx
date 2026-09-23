@@ -1,7 +1,7 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useAuth } from '@/lib/auth';
 import { AUTH_INPUT } from '@/components/ui/AuthCard';
@@ -19,8 +19,34 @@ interface RecoveryStatus {
   needsAttention: boolean;
 }
 
+// A breath before it appears. Landing at the same instant as the page makes it
+// read as part of the furniture and it gets clicked away without being read;
+// arriving a moment later reads as a message.
+const APPEAR_AFTER_MS = 1500;
+
 /**
- * A non-blocking nudge to add a recovery email. Reads /api/auth/recovery-status
+ * Asks for a recovery email as a CENTRED DIALOG, shortly after sign-in.
+ *
+ * ── WHY IT IS NOT A CORNER CARD ANY MORE (Amit, 23 September 2026) ────────
+ *
+ *  It was a floating card pinned bottom-right with both fields on show, and
+ *  it did not look good there. Measured before changing it: on a 375px phone
+ *  it covered 29% of the screen and four message rows, and the bottom-right
+ *  corner is already occupied — Connect puts its chat button there (z-index
+ *  1420, which drew OVER this card's 1050) and the build stamp sat under it.
+ *  A corner is not free real estate in this product.
+ *
+ *  So it is centred, on a backdrop, and it is honest about interrupting
+ *  rather than half-interrupting from a corner. It is still dismissible, it
+ *  still snoozes for 48 hours, and it is still silent on every error.
+ *
+ *  NOT over a live meeting. A modal on top of a room somebody is presenting
+ *  in is the one place this must never appear, and a corner card at least
+ *  had the excuse of being out of the way. Same reasoning as the /oauth/
+ *  exclusion below, which the CTO gave on 17 Sept.
+ */
+/**
+ * Reads /api/auth/recovery-status
  * and, if the signed-in user has no VERIFIED recovery email, offers to add one.
  * Submitting stores it unverified and emails a confirmation link (the backend
  * does that); this only shows "check your inbox". Dismissible for 48 hours,
@@ -42,6 +68,12 @@ export function RecoveryReminder() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
+  const [ripe, setRipe] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setRipe(true), APPEAR_AFTER_MS);
+    return () => clearTimeout(t);
+  }, []);
 
   useEffect(() => {
     let hide = false;
@@ -61,21 +93,33 @@ export function RecoveryReminder() {
     return () => { cancelled = true; };
   }, [user, authedFetch]);
 
+  const snooze = useCallback(() => {
+    try { localStorage.setItem(SNOOZE_KEY, String(Date.now() + SNOOZE_MS)); } catch { /* ignore */ }
+  }, []);
+  const close = useCallback(() => {
+    setDismissed(true);
+    snooze();
+  }, [snooze]);
+
+  // Escape closes it, which anything calling itself a dialog has to do — and
+  // this one now covers the page, so there must be a way out from the keyboard.
+  // Declared above the early returns below: hooks cannot be conditional.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [close]);
+
   // Never on the OpenID Connect pages: a consent screen is a security decision
   // about a third party, and everything on it that is not that decision
   // competes with it — cluttered consent screens teach people to click
   // through (CTO, 17 Sept 2026). Those pages are bare on purpose.
   if (pathname.startsWith('/oauth/')) return null;
-  if (!user || dismissed) return null;
+  // Never over a live meeting — see the header.
+  if (pathname.startsWith('/connect/room/')) return null;
+  if (!user || dismissed || !ripe) return null;
   if (!status || status.hasVerifiedRecoveryEmail) return null;
 
-  const snooze = () => {
-    try { localStorage.setItem(SNOOZE_KEY, String(Date.now() + SNOOZE_MS)); } catch { /* ignore */ }
-  };
-  const close = () => {
-    setDismissed(true);
-    snooze();
-  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -113,12 +157,22 @@ export function RecoveryReminder() {
 
   return (
     <div
-      role="dialog"
-      aria-label="Add a recovery email"
-      className="fixed bottom-5 right-5 z-[1050] w-[340px] max-w-[calc(100vw-32px)] rounded-card border border-line bg-surface p-[18px] text-sm text-ink shadow-raised"
+      className="fixed inset-0 z-[1050] flex items-center justify-center overflow-y-auto bg-black/40 p-4 backdrop-blur-[2px]"
+      // The backdrop dismisses, like every other dialog people use. It is the
+      // same snooze as Skip, never a silent "no" that comes back tomorrow.
+      onClick={close}
     >
-      <div className="mb-2 flex items-start justify-between">
-        <strong className="text-[15px] font-semibold text-ink">Add a recovery email</strong>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Add a recovery email"
+        // Without this, a click inside the card reaches the backdrop above and
+        // closes the dialog the person is typing into.
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-[400px] rounded-card border border-line bg-surface p-6 text-sm text-ink shadow-raised"
+      >
+      <div className="mb-2 flex items-start justify-between gap-4">
+        <strong className="text-base font-semibold text-ink">Add a recovery email</strong>
         <button type="button" onClick={close} aria-label="Dismiss"
           className="cursor-pointer border-0 bg-transparent p-0 text-xl leading-none text-ink-faint transition hover:text-ink">
           &times;
@@ -141,10 +195,10 @@ export function RecoveryReminder() {
             aria-label="Current password"
             className={`${AUTH_INPUT} mb-2`} />
           {error && <div className="mb-2 text-[13px] text-danger">{error}</div>}
-          <div className="flex justify-end gap-2">
+          <div className="mt-4 flex justify-end gap-2">
             <button type="button" onClick={close} disabled={busy}
               className={`${btnBase} border border-line bg-surface text-ink hover:bg-canvas`}>
-              Not now
+              Skip
             </button>
             <button type="submit" disabled={busy}
               className={`${btnBase} border-0 bg-brand-600 font-semibold text-white hover:bg-brand-700`}>
@@ -153,6 +207,7 @@ export function RecoveryReminder() {
           </div>
         </form>
       )}
+      </div>
     </div>
   );
 }
