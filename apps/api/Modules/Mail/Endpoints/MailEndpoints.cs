@@ -1495,14 +1495,48 @@ public static class MailEndpoints
     //  Both, OR'd: full-text power without a search box that appears broken
     //  until you finish typing the word.
     // ------------------------------------------------------------------
-    private static IQueryable<Message> ApplySearch(IQueryable<Message> query, string q)
+    private static IQueryable<Message> ApplySearch(
+        IQueryable<Message> query, string q, MailSearch.Context ctx, bool hideBin)
     {
-        // Both halves described above now live in MailQuery, alongside the
-        // from: to: subject: has: is: after: before: operators - so the folder
-        // listing and the cross-folder search understand the same syntax from
-        // one parser. A query cannot mean one thing in search and another in
-        // a folder, because there is only one place that decides.
-        return MailQuery.Apply(query, q);
+        // Both halves described above now live in MailSearch, alongside every
+        // operator - so the folder listing and the cross-folder search
+        // understand the same syntax from one parser. A query cannot mean one
+        // thing in search and another in a folder, because there is only one
+        // place that decides.
+        return MailSearch.Apply(query, q, ctx, hideBin);
+    }
+
+    /// <summary>
+    /// What the search grammar needs resolved before it can build a query:
+    /// this mailbox's own address (from:me), its folders by special use (in:),
+    /// its categories by name (label:), and the attachment rows (filename:).
+    ///
+    /// Two small queries per search. Both are indexed by mailbox and return a
+    /// handful of rows — a folder list and a category list — which is cheaper
+    /// than teaching the expression builder to reach the database itself.
+    /// </summary>
+    private static async Task<MailSearch.Context> SearchContextAsync(
+        AppDbContext db, Mailbox box, CancellationToken ct)
+    {
+        var folders = await db.Folders.AsNoTracking()
+            .Where(f => f.MailboxId == box.Id)
+            .Select(f => new { f.Id, f.SpecialUse })
+            .ToListAsync(ct);
+
+        var categories = await db.MailCategories.AsNoTracking()
+            .Where(c => c.MailboxId == box.Id)
+            .Select(c => new { c.Id, c.Name })
+            .ToListAsync(ct);
+
+        return new MailSearch.Context(
+            box.Address,
+            folders.Where(f => f.SpecialUse != null)
+                   .GroupBy(f => f.SpecialUse!)
+                   .ToDictionary(g => g.Key, g => g.Select(f => f.Id).ToArray()),
+            categories
+                .GroupBy(c => (c.Name ?? string.Empty).ToLowerInvariant())
+                .ToDictionary(g => g.Key, g => g.First().Id),
+            db.Attachments.AsNoTracking());
     }
 
     /// <summary>
@@ -1526,8 +1560,10 @@ public static class MailEndpoints
             // and returning the whole mailbox here would be a surprise.
             return Results.Ok(new { total = 0, messages = Array.Empty<object>() });
 
+        var searchCtx = await SearchContextAsync(db, box, ct);
         var query = ApplySearch(
-            db.Messages.AsNoTracking().Where(m => m.MailboxId == box.Id), term);
+            db.Messages.AsNoTracking().Where(m => m.MailboxId == box.Id), term,
+            searchCtx, hideBin: true);
 
         var total = await query.CountAsync(ct);
 
@@ -1732,7 +1768,7 @@ public static class MailEndpoints
             .Where(m => m.MailboxId == box.Id && m.FolderId == folderId);
 
         if (!string.IsNullOrWhiteSpace(q))
-            query = ApplySearch(query, q);
+            query = ApplySearch(query, q, await SearchContextAsync(db, box, ct), hideBin: false);
 
         var total = await query.CountAsync(ct);
 
