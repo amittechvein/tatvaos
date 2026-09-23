@@ -86,18 +86,6 @@ a{color:var(--brand-dark); text-decoration-thickness:1px; text-underline-offset:
 
 .wrap{width:100%; max-width:var(--wrap); margin-inline:auto; padding-inline:20px}
 
-/* ---------- review strip ------------------------------------------------- */
-.review{
-  background:var(--warn-wash); color:var(--warn);
-  border-bottom:1px solid color-mix(in srgb, var(--warn) 25%, transparent);
-  font-size:13px; line-height:1.45;
-}
-.review .wrap{display:flex; gap:10px; align-items:flex-start; padding-block:9px}
-.review strong{font-weight:700}
-.review button{
-  margin-left:auto; flex:none; background:none; border:0; cursor:pointer;
-  color:inherit; font:inherit; font-weight:600; padding:0 2px; text-decoration:underline;
-}
 
 /* ---------- header ------------------------------------------------------- */
 .site-head{
@@ -323,15 +311,6 @@ p{margin:0}
 </style>
 </head>
 <body>
-<div class="review" id="reviewStrip">
-  <div class="wrap">
-    <div><strong>Draft for review — not published to tatvaos.com.</strong>
-      Product screens are real, captured from a running build against test data. Plans are
-      shown without prices; the personal plans are a proposal not yet signed off.</div>
-    <button type="button" onclick="document.getElementById('reviewStrip').hidden=true">Hide</button>
-  </div>
-</div>
-
 <header class="site-head">
   <div class="wrap">
     <a class="logo" href="#top">
