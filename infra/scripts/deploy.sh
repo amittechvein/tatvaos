@@ -624,11 +624,85 @@ step "Pruning the build cache"
 #
 #  The cache once grew to 48 GB and took the disk to 85% — the disk Mail
 #  writes to — and was cleaned by hand with a note saying deploy.sh should do
-#  it. This is that note, honoured. --keep-storage retains enough for layer
-#  reuse (fast rebuilds), the rest goes; dangling images with it.
-docker builder prune -f --keep-storage=8GB 2>&1 | tail -1 | sed 's/^/   /'
-docker image prune -f 2>&1 | tail -1 | sed 's/^/   /'
-ok "cache bounded at 8 GB — $(df -h / | awk 'NR==2 {print $4}') free on /"
+#  it. This is that note, honoured.
+#
+#  IT DID NOT WORK, AND IT SAID IT DID. Until 23 Sept 2026 this step ran
+#  `docker builder prune -f --keep-storage=8GB` and then printed "cache
+#  bounded at 8 GB" unconditionally. Measured on production that day: the
+#  cache held 51.89 GB and the disk was at 90%, four days after a hand clean.
+#  Two faults, both silent:
+#
+#    1. --keep-storage is DEPRECATED on Docker 29 (the server runs 29.7.1).
+#       It warns and remaps to --reserved-space, and still exits 0.
+#    2. Without -a, prune only removes UNUSED records. Docker called 6.18 GB
+#       "reclaimable" out of 51.89 GB; `-af` then freed 48.83 GB. So the old
+#       line could not have bounded anything, whatever flag it used.
+#
+#  And the `ok` line printed a number nobody had measured. So this version
+#  MEASURES the cache, prunes only when it is over the bound, and prints what
+#  it actually freed. Numbers come from docker, never from the wish.
+#
+#  BUILD CACHE ONLY. Never `docker system prune`, never --volumes: the
+#  volumes on that box are Postgres, the maildirs and Caddy's certificates
+#  (18 Sept 2026 note). image prune -f removes dangling images only.
+CACHE_MAX_GB=${CACHE_MAX_GB:-20}
+MIN_FREE_GB=${MIN_FREE_GB:-25}
+
+# Sizes come from docker's own summary, converted to whole GB. Parsed as TEXT
+# on purpose: the JSON form reports sizes as strings too, and `buildx du` is
+# empty on this daemon. Field 2 is the total, field 3 what docker considers
+# RECLAIMABLE ("Build Cache|51.89GB|6.184GB").
+#
+# The difference matters and cost a rehearsal to learn: a cache can be large
+# and ENTIRELY IN USE by the current images. On 23 Sept, after a hand clean,
+# 3.1 GB remained with 0B reclaimable, and `prune -af` correctly freed
+# nothing. A first version of this step called that a failure — a red line on
+# a healthy deploy, which is the false alarm PR 227 was about.
+cache_field() {
+    docker system df --format '{{.Type}}|{{.Size}}|{{.Reclaimable}}' 2>/dev/null | awk -F'|' -v f="$1" '
+        $1 == "Build Cache" {
+            v = $f; sub(/ .*$/, "", v)            # "6.184GB (29%)" -> "6.184GB"
+            unit = v; sub(/^[0-9.]+/, "", unit); sub(/[A-Za-z]+$/, "", v)
+            if (unit ~ /^TB/) v *= 1024; else if (unit ~ /^MB/) v /= 1024
+            else if (unit ~ /^kB|^KB/) v /= 1048576; else if (unit ~ /^B/) v = 0
+            printf "%.1f", v; found = 1
+        }
+        END { if (!found) print "-1" }'
+}
+free_gb() { df -BG --output=avail / | awk 'NR==2 {gsub("G", ""); print $1 + 0}'; }
+over() { awk -v a="$1" -v b="$2" 'BEGIN{print (a > b) ? 1 : 0}'; }
+
+before_cache=$(cache_field 2); reclaimable=$(cache_field 3); before_free=$(free_gb)
+
+if [ "$(over "$before_cache" "$CACHE_MAX_GB")" = "1" ] || [ "${before_free:-999}" -lt "$MIN_FREE_GB" ]; then
+    if [ "$(over "$reclaimable" 1)" = "0" ]; then
+        # Large but all of it in use. Nothing to do, and nothing wrong.
+        ok "build cache ${before_cache} GB but only ${reclaimable} GB reclaimable — all in use, nothing pruned; ${before_free} GB free on /"
+    else
+        note "build cache ${before_cache} GB (${reclaimable} GB reclaimable), ${before_free} GB free — pruning"
+        docker builder prune -af 2>&1 | tail -1 | sed 's/^/   /'
+        docker image prune -f  2>&1 | tail -1 | sed 's/^/   /'
+        after_cache=$(cache_field 2); after_free=$(free_gb)
+        # CHECKED, not asserted. The line this replaces printed "cache bounded
+        # at 8 GB" every deploy while the cache grew to 51.89 GB.
+        if [ "$(over "$before_cache" "$after_cache")" = "1" ] || [ "${after_free:-0}" -gt "${before_free:-0}" ]; then
+            ok "build cache ${before_cache} -> ${after_cache} GB; free on / ${before_free} -> ${after_free} GB"
+        else
+            bad "prune had ${reclaimable} GB to reclaim and freed nothing: cache still ${after_cache} GB, ${after_free} GB free. Clean by hand."
+        fi
+    fi
+else
+    ok "build cache ${before_cache} GB (bound ${CACHE_MAX_GB} GB), ${before_free} GB free on / — nothing to prune"
+fi
+
+# A full disk fails the NEXT deploy, not this one. Said as a warning, never a
+# failure: this deploy's services are already up, and a red line here would be
+# the same false alarm that made someone roll back a working deploy.
+if [ "$(free_gb)" -lt 15 ]; then
+    note "WARNING: under 15 GB free on /. The NEXT deploy may fail. Clear build cache"
+    note "         (docker builder prune -af) — never volumes: they hold Postgres,"
+    note "         the maildirs and Caddy's certificates."
+fi
 
 # ---------------------------------------------------------------------------
 step "Verifying what is actually live"
