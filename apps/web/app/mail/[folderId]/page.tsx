@@ -15,6 +15,7 @@ import { MessageList } from '@/components/mail/MessageList';
 import { MessageView } from '@/components/mail/MessageView';
 import { Composer, type ComposeMode } from '@/components/mail/Composer';
 import { useMailbox } from '@/components/mail/MailboxSwitcher';
+import { SearchBox } from '@/components/mail/SearchBox';
 import { Icon } from '@/components/ui/Icon';
 
 // ---------------------------------------------------------------------------
@@ -801,16 +802,16 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
             {folder?.name ?? 'Mail'}
           </h1>
 
-          <div className="flex items-center gap-1.5 rounded-full bg-surface px-3.5 py-2 shadow-card">
-            <Icon name="search" className="h-4 w-4 shrink-0 text-ink-faint" />
-            <input
-              ref={searchRef}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search mail"
-              className="w-28 border-0 bg-transparent p-0 text-sm text-ink outline-none placeholder:text-ink-faint sm:w-36"
-            />
-          </div>
+          <SearchBox
+            value={query}
+            onChange={setQuery}
+            inputRef={searchRef}
+            // The folders this mailbox actually has, so "Search in" offers
+            // real places rather than Gmail's list.
+            folders={(boot?.folders ?? [])
+              .filter((f) => f.slug !== null)
+              .map((f) => ({ label: f.name, value: f.slug! }))}
+          />
           {/* Layout switcher — the same four choices as Mail settings, one
               tap away. The backdrop button closes the menu on any outside
               click without a global listener. */}
