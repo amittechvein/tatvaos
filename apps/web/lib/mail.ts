@@ -543,11 +543,25 @@ export const mailApi = {
     f('/mail/away', { method: 'PUT', body: JSON.stringify(away) })
       .then((r) => json<MailAway>(r, 'Could not save your away message.')),
 
-  signature: (f: AuthedFetch) =>
-    f('/mail/signature').then((r) => json<MailSignature>(r, 'Could not load your signature.')),
+  /**
+   * A MAILBOX's signature — which is why both of these take a mailboxId, the
+   * same as every other call on this object.
+   *
+   * They were the last two that did not (Amit, 23 September 2026: "same
+   * signature taking in shared mailbox"). The API has always resolved the
+   * mailbox from ?mailboxId= and kept one signature row per mailbox; the
+   * settings screen simply never said which one it meant, so it read and
+   * wrote the person's OWN signature while they were working a shared queue.
+   * Measured before the fix: bootstrap?mailboxId=<shared> returned the shared
+   * mailbox's signature (empty) while GET /mail/signature returned the
+   * personal one (893 characters) at the same moment.
+   */
+  signature: (f: AuthedFetch, mailboxId?: string) =>
+    f(withMb('/mail/signature', mailboxId))
+      .then((r) => json<MailSignature>(r, 'Could not load your signature.')),
 
-  saveSignature: (f: AuthedFetch, sig: MailSignature) =>
-    f('/mail/signature', { method: 'PUT', body: JSON.stringify(sig) })
+  saveSignature: (f: AuthedFetch, sig: MailSignature, mailboxId?: string) =>
+    f(withMb('/mail/signature', mailboxId), { method: 'PUT', body: JSON.stringify(sig) })
       .then((r) => json<MailSignature>(r, 'Could not save your signature.')),
 
   /**

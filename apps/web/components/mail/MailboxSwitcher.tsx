@@ -35,12 +35,37 @@ interface MailboxState {
   isShared: boolean;
   /** Grants held on the open mailbox: does it allow answering? */
   canSend: boolean;
+  /**
+   * False until the mailbox list has come back and a selection has been made.
+   *
+   * ── WHY ANYONE NEEDS THIS (Amit, 23 September 2026) ───────────────────
+   *
+   *  "Same signature taking in shared mailbox." Opening Mail straight into a
+   *  shared queue showed the SHARED address in From and the PERSONAL
+   *  signature in the body.
+   *
+   *  Nothing was wrong with either of them. The list above is fetched, so for
+   *  the first moments `current` is null and `mailboxId` is undefined — which
+   *  means "my own mailbox" to every call. The page bootstrapped with that,
+   *  got the personal signature, and a composer opening in that instant
+   *  seeded from it. The mailbox then resolved and everything ELSE corrected
+   *  itself, because folders and messages re-fetch; the signature did not,
+   *  because a composer seeds once on purpose, so that a re-render cannot
+   *  overwrite what you have typed.
+   *
+   *  So the fix is not in the composer. It is to stop asking questions about
+   *  "the open mailbox" before there is one. Consumers wait on this.
+   */
+  ready: boolean;
   select: (id: string) => void;
 }
 
 const Ctx = createContext<MailboxState>({
   mailboxes: [], current: null, mailboxId: undefined,
-  isShared: false, canSend: true, select: () => {},
+  // ready TRUE with no provider above: there is no list on its way, so there
+  // is nothing to wait for, and a consumer rendered outside MailboxProvider
+  // must not sit forever waiting for a load that will never happen.
+  isShared: false, canSend: true, ready: true, select: () => {},
 });
 
 export const useMailbox = () => useContext(Ctx);
@@ -72,6 +97,7 @@ export function MailboxProvider({ children }: { children: React.ReactNode }) {
   const { authedFetch } = useAuth();
   const [mailboxes, setMailboxes] = useState<MailboxChoice[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -87,10 +113,14 @@ export function MailboxProvider({ children }: { children: React.ReactNode }) {
         setSelectedId(stillThere
           ? remembered
           : list.find((m) => m.isOwn)?.id ?? list[0]?.id ?? null);
+        setReady(true);
       })
       // An account with no mailbox, or an older API: Mail still works, there
       // is simply nothing to switch between.
-      .catch(() => { if (alive) setMailboxes([]); });
+      // Ready either way. A failed list means "no mailbox to switch to",
+      // which is an answer; leaving ready false would hold Mail on a loading
+      // state for a feature that is only a convenience.
+      .catch(() => { if (alive) { setMailboxes([]); setReady(true); } });
     return () => { alive = false; };
   }, [authedFetch]);
 
@@ -107,6 +137,7 @@ export function MailboxProvider({ children }: { children: React.ReactNode }) {
       canSend: !isShared
         || current.permissions.includes('send_as')
         || current.permissions.includes('full'),
+      ready,
       // Remembered on the way through, so the next load opens the same
       // queue. Storage failures are ignored: a private window that refuses
       // to remember should still be able to switch.
@@ -118,7 +149,7 @@ export function MailboxProvider({ children }: { children: React.ReactNode }) {
         setSelectedId(id);
       },
     };
-  }, [mailboxes, selectedId]);
+  }, [mailboxes, selectedId, ready]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

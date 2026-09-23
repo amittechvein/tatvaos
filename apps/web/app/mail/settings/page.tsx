@@ -46,6 +46,7 @@ import { FiltersPanel } from '@/components/mail/FiltersPanel';
 import { BlockedPanel } from '@/components/mail/BlockedPanel';
 import SignatureEditor from '@/components/mail/SignatureEditor';
 import { SafeHtml } from '@/components/mail/SafeHtml';
+import { useMailbox } from '@/components/mail/MailboxSwitcher';
 import { cleanSignatureHtml, signatureText } from '@/lib/signatureHtml';
 
 // The settings screen is now tab-wise: one concern per tab, so the page is a
@@ -170,6 +171,33 @@ function toHtml(text: string): string {
 export default function MailSettingsPage() {
   const { authedFetch, user, accounts } = useAuth();
 
+  // ── WHICH MAILBOX THESE SETTINGS BELONG TO (Amit, 23 September 2026) ──
+  //
+  //  "Same signature taking in shared mailbox also please fix."
+  //
+  //  This page said "for this mailbox" at the top and meant nothing of the
+  //  sort: every call on it omitted ?mailboxId=, so whichever queue you had
+  //  open in the rail, you were reading and writing YOUR OWN mailbox's
+  //  signature, folders and categories. Someone working a shared inbox
+  //  edited their personal signature believing they were setting the shared
+  //  one — and the shared mailbox's own signature, which the API has always
+  //  stored separately, stayed empty, so mail sent from it went out with no
+  //  signature at all.
+  //
+  //  Measured before the fix, at the same moment: bootstrap?mailboxId=<shared>
+  //  returned an empty signature while GET /mail/signature (no id) returned
+  //  the personal one, 893 characters long.
+  //
+  //  Every call below now names the mailbox, and `load` depends on it, so
+  //  switching queues in the rail reloads this page onto the new one.
+  const { mailboxId, current: openMailbox, isShared, ready: mailboxReady } = useMailbox();
+
+  // Writing a signature, a folder or a category needs FULL access; the API
+  // resolves those with MailboxAccess.Full and answers "You have no mailbox"
+  // to anyone holding only read or send_as. Better to say so up front than to
+  // let somebody write a signature and meet that sentence on save.
+  const mayEdit = !isShared || (openMailbox?.permissions.includes('full') ?? false);
+
   // The HTML IS the document now. The plain-text half is derived from it at
   // save time (signatureText) rather than being a second thing to keep in
   // step — two copies of one fact was how the old editor drifted.
@@ -223,25 +251,31 @@ export default function MailSettingsPage() {
   };
 
   const load = useCallback(async () => {
+    // Same wait as the inbox: asking for "the signature" before the mailbox
+    // is known fetches the personal one, and a flash of somebody's own
+    // signature inside a shared mailbox is the exact confusion this change
+    // exists to end.
+    if (!mailboxReady) return;
     try {
       // Bootstrap alongside the signature, purely for the mailbox address the
       // samples fill in. It fails quietly: a missing address costs a
       // placeholder in a sample, and is no reason to fail the whole page.
-      void mailApi
-        .bootstrap(authedFetch)
-        .then((b) => setAddress(b.mailbox?.address ?? null))
-        .catch(() => {});
-
-      const boot = await mailApi.bootstrap(authedFetch).catch(() => null);
-      if (boot) setFolders(boot.folders);
+      // One bootstrap, not two. It was called twice — once for the address
+      // and once for the folders — which is two round trips for one answer
+      // and two chances for them to disagree about which mailbox they meant.
+      const boot = await mailApi.bootstrap(authedFetch, mailboxId).catch(() => null);
+      if (boot) {
+        setFolders(boot.folders);
+        setAddress(boot.mailbox?.address ?? null);
+      }
 
       // Quiet like the bootstrap: a failed category load costs one section,
       // not the page.
-      void mailApi.categories(authedFetch)
+      void mailApi.categories(authedFetch, mailboxId)
         .then((r) => setCategories(r.categories))
         .catch(() => {});
 
-      const sig = await mailApi.signature(authedFetch);
+      const sig = await mailApi.signature(authedFetch, mailboxId);
       // Prefer the HTML half. Fall back to the text half ONLY when there is
       // no HTML at all: a signature saved by the old textarea always has
       // both, but a row written by anything else may not, and opening blank
@@ -254,7 +288,7 @@ export default function MailSettingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [authedFetch]);
+  }, [authedFetch, mailboxId, mailboxReady]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -280,12 +314,12 @@ export default function MailSettingsPage() {
   }
 
   async function reloadFolders() {
-    const boot = await mailApi.bootstrap(authedFetch).catch(() => null);
+    const boot = await mailApi.bootstrap(authedFetch, mailboxId).catch(() => null);
     if (boot) setFolders(boot.folders);
   }
 
   async function reloadCategories() {
-    const r = await mailApi.categories(authedFetch).catch(() => null);
+    const r = await mailApi.categories(authedFetch, mailboxId).catch(() => null);
     if (r) setCategories(r.categories);
   }
 
@@ -296,7 +330,7 @@ export default function MailSettingsPage() {
     setCategoryError(null);
     setCategoryNote(null);
     try {
-      await mailApi.createCategory(authedFetch, name, newColour);
+      await mailApi.createCategory(authedFetch, name, newColour, mailboxId);
       setNewCategory('');
       await reloadCategories();
     } catch (e) {
@@ -313,7 +347,7 @@ export default function MailSettingsPage() {
     setCategoryError(null);
     setCategoryNote(null);
     try {
-      await mailApi.updateCategory(authedFetch, c.id, { name: next });
+      await mailApi.updateCategory(authedFetch, c.id, { name: next }, mailboxId);
       await reloadCategories();
     } catch (e) {
       setCategoryError(e instanceof Error ? e.message : 'The category could not be renamed.');
@@ -327,7 +361,7 @@ export default function MailSettingsPage() {
     setBusyCategory(c.id);
     setCategoryError(null);
     try {
-      await mailApi.updateCategory(authedFetch, c.id, { colour });
+      await mailApi.updateCategory(authedFetch, c.id, { colour }, mailboxId);
       await reloadCategories();
     } catch (e) {
       setCategoryError(e instanceof Error ? e.message : 'The colour could not be changed.');
@@ -353,7 +387,7 @@ export default function MailSettingsPage() {
     setCategoryError(null);
     setCategoryNote(null);
     try {
-      const r = await mailApi.deleteCategory(authedFetch, c.id);
+      const r = await mailApi.deleteCategory(authedFetch, c.id, mailboxId);
       setCategoryNote(r.messagesUnlabelled > 0
         ? `${c.name} deleted. ${r.messagesUnlabelled} message${r.messagesUnlabelled === 1 ? '' : 's'} lost the colour, none lost their place.`
         : `${c.name} deleted.`);
@@ -372,7 +406,7 @@ export default function MailSettingsPage() {
     setFolderError(null);
     setFolderNote(null);
     try {
-      await mailApi.createFolder(authedFetch, name);
+      await mailApi.createFolder(authedFetch, name, mailboxId);
       setNewFolder('');
       await reloadFolders();
     } catch (e) {
@@ -389,7 +423,7 @@ export default function MailSettingsPage() {
     setFolderError(null);
     setFolderNote(null);
     try {
-      await mailApi.renameFolder(authedFetch, f.id, next);
+      await mailApi.renameFolder(authedFetch, f.id, next, mailboxId);
       await reloadFolders();
     } catch (e) {
       setFolderError(e instanceof Error ? e.message : 'The folder could not be renamed.');
@@ -416,7 +450,7 @@ export default function MailSettingsPage() {
     setFolderError(null);
     setFolderNote(null);
     try {
-      const r = await mailApi.deleteFolder(authedFetch, f.id);
+      const r = await mailApi.deleteFolder(authedFetch, f.id, mailboxId);
       setFolderNote(r.movedToInbox > 0
         ? `${f.name} deleted. ${r.movedToInbox} message${r.movedToInbox === 1 ? '' : 's'} moved to your Inbox.`
         : `${f.name} deleted.`);
@@ -448,7 +482,7 @@ export default function MailSettingsPage() {
         enabled,
         includeOnReply,
       };
-      await mailApi.saveSignature(authedFetch, payload);
+      await mailApi.saveSignature(authedFetch, payload, mailboxId);
       setSaved(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save your signature.');
@@ -463,8 +497,16 @@ export default function MailSettingsPage() {
       <header className="mb-5 flex flex-wrap items-center gap-3">
         <div className="min-w-0 flex-1">
           <h1 className="text-lg font-semibold text-ink">Mail settings</h1>
+          {/* NAMED, not "this mailbox". The page used to say "this mailbox"
+              while editing your own whichever queue was open — a sentence
+              that was reassuring and wrong. Showing the address is what
+              makes the fix visible to the person it was misleading. */}
           <p className="text-sm text-ink-muted">
-            Manage your signature, folders, categories, filters and blocking for this mailbox.
+            Signature, folders, categories, filters and blocking for{' '}
+            {openMailbox
+              ? <span className="font-medium text-ink">{openMailbox.address}</span>
+              : 'this mailbox'}
+            {isShared && ' — a shared mailbox, so these settings are shared too.'}
           </p>
         </div>
         <Link href="/mail/inbox" className="text-sm font-medium text-brand-600 hover:underline">
@@ -496,6 +538,17 @@ export default function MailSettingsPage() {
 
       {error && <p className="mb-4 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">{error}</p>}
 
+      {/* Said UP FRONT rather than on save. Writing any of this needs full
+          access to the mailbox; the API answers "You have no mailbox." to
+          anyone holding only read or send_as, which reads like a fault in
+          the product rather than an answer about permission. */}
+      {!mayEdit && (
+        <p className="mb-4 rounded-lg bg-warn/10 px-3 py-2 text-sm text-ink">
+          You can read {openMailbox?.address ?? 'this mailbox'}, but not change its settings.
+          That needs full access to the mailbox — ask whoever shared it with you.
+        </p>
+      )}
+
       {/* ---- Signature ---------------------------------------------- */}
       {tab === 'signature' && (
       <section className="mt-6 rounded-card border border-line bg-surface p-5">
@@ -512,7 +565,7 @@ export default function MailSettingsPage() {
           <>
             <div className="mb-4">
               <span className="mb-1.5 block text-sm font-medium text-ink">Your signature</span>
-              <SignatureEditor html={html} onChange={edit(setHtml)} />
+              <SignatureEditor html={html} onChange={edit(setHtml)} disabled={!mayEdit} />
             </div>
 
             <div className="mb-5">
@@ -529,6 +582,7 @@ export default function MailSettingsPage() {
                     key={s.id}
                     type="button"
                     title={s.hint}
+                    disabled={!mayEdit}
                     onClick={() => applySample(s.build(identity))}
                     className="rounded-md border border-line px-3 py-1.5 text-sm text-ink transition hover:border-brand-400"
                   >
@@ -578,6 +632,7 @@ export default function MailSettingsPage() {
               <input
                 type="checkbox"
                 checked={enabled}
+                disabled={!mayEdit}
                 onChange={(e) => edit(setEnabled)(e.target.checked)}
                 className="h-4 w-4 rounded border-line text-brand-500"
               />
@@ -589,7 +644,7 @@ export default function MailSettingsPage() {
                 type="checkbox"
                 checked={includeOnReply}
                 onChange={(e) => edit(setIncludeOnReply)(e.target.checked)}
-                disabled={!enabled}
+                disabled={!enabled || !mayEdit}
                 className="h-4 w-4 rounded border-line text-brand-500 disabled:opacity-50"
               />
               Also add it to replies and forwards
@@ -599,7 +654,7 @@ export default function MailSettingsPage() {
               <button
                 type="button"
                 onClick={() => void save()}
-                disabled={saving}
+                disabled={saving || !mayEdit}
                 className="rounded-md bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600 disabled:opacity-50"
               >
                 {saving ? 'Saving…' : 'Save signature'}

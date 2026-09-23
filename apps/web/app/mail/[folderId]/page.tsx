@@ -67,7 +67,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   const { authedFetch } = useAuth();
   // Undefined for my own mailbox — every call below then behaves exactly as
   // it did before shared mailboxes existed.
-  const { mailboxId, isShared, canSend, current: openMailbox } = useMailbox();
+  const { mailboxId, isShared, canSend, current: openMailbox, ready: mailboxReady } = useMailbox();
 
   const [boot, setBoot] = useState<MailBootstrap | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -243,6 +243,15 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
 
   // ---- Initial load: mailbox + folders --------------------------------
   useEffect(() => {
+    // WAIT for the mailbox to be known. Before this guard, the first
+    // bootstrap went out with mailboxId undefined — "my own mailbox" — while
+    // the switcher was still fetching its list, and a composer opening in
+    // that window seeded the PERSONAL signature onto a message being sent
+    // FROM A SHARED ADDRESS (Amit, 23 September 2026). Everything else on
+    // this page re-fetched and corrected itself, which is why only the
+    // signature was ever reported.
+    if (!mailboxReady) return;
+
     let cancelled = false;
     mailApi
       .bootstrap(authedFetch, mailboxId)
@@ -261,7 +270,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     };
     // Re-boots on a mailbox switch: folders, ids and counts are all per
     // mailbox, so the whole view has to come from the new one.
-  }, [authedFetch, mailboxId]);
+  }, [authedFetch, mailboxId, mailboxReady]);
 
   // ---- Unknown folder in the URL → the inbox --------------------------
   useEffect(() => {
