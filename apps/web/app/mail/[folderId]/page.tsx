@@ -61,6 +61,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [categories, setCategories] = useState<MailCategory[]>([]);
   const [labelMenu, setLabelMenu] = useState(false);
+  const [moveMenu, setMoveMenu] = useState(false);
   const [open, setOpen] = useState<Message | null>(null);
   const [openLoading, setOpenLoading] = useState(false);
 
@@ -405,6 +406,47 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     }
   }
 
+  /**
+   * WHERE THIS MESSAGE MAY GO — the list behind every "Move to" menu.
+   *
+   * Drafts, Sent and Scheduled are left out. All three are records of what
+   * THIS mailbox did rather than places to file mail, and a received message
+   * dropped into Sent would read as something the person had written. The
+   * open folder is left out because moving mail to where it already is does
+   * nothing, and an item that does nothing is how people stop trusting a
+   * menu. Everything else is offered, custom folders included — before this,
+   * a folder could be created and never filed into.
+   *
+   * Filtered on specialUse, NOT slug: Scheduled has no slug, so a slug test
+   * read it as an ordinary custom folder and offered it.
+   */
+  const FILED_BY_THE_SYSTEM: readonly (string | null)[] = ['\\Drafts', '\\Sent', '\\Scheduled'];
+  const moveTargets = (boot?.folders ?? [])
+    .filter((f) => f.id !== folder?.id && !FILED_BY_THE_SYSTEM.includes(f.specialUse))
+    .map((f) => ({ id: f.id, name: f.name }));
+
+  async function handleMove(id: string, folderId: string) {
+    if (isShared) { setListError(sharedBlock); return; }
+    const wasUnread = messages.find((m) => m.id === id)?.isRead === false;
+    try {
+      await mailApi.move(authedFetch, id, folderId);
+      removeFromList(id, wasUnread);
+      void refreshFolders();
+    } catch {
+      setListError('The message could not be moved. Reload and try again.');
+    }
+  }
+
+  async function bulkMove(folderId: string) {
+    if (isShared) { setListError(sharedBlock); return; }
+    const ids = [...selectedIds];
+    setMoveMenu(false);
+    setSelectedIds(new Set());
+    await Promise.allSettled(ids.map((id) => mailApi.move(authedFetch, id, folderId)));
+    if (folder) await loadMessages(folder.id, skip);
+    void refreshFolders();
+  }
+
   function toggleSelect(id: string) {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -744,6 +786,41 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
                 <Icon name="envelope" className="h-4.5 w-4.5" />
               </button>
 
+              {/* File the selection somewhere else. Labelled, beside Colour,
+                  for the same reason: no icon says "which folder". */}
+              {moveTargets.length > 0 && (
+                <span className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setMoveMenu((v) => !v)}
+                    className="rounded-lg px-2 py-1.5 font-medium transition hover:bg-canvas hover:text-ink"
+                  >
+                    Move to
+                  </button>
+                  {moveMenu && (
+                    <>
+                      <span className="fixed inset-0 z-10" onClick={() => setMoveMenu(false)} aria-hidden="true" />
+                      <span
+                        role="menu"
+                        className="absolute left-0 top-full z-20 mt-1 flex w-48 flex-col overflow-hidden rounded-xl border border-line bg-surface py-1.5 shadow-raised"
+                      >
+                        {moveTargets.map((t) => (
+                          <button
+                            key={t.id}
+                            type="button"
+                            role="menuitem"
+                            onClick={() => void bulkMove(t.id)}
+                            className="truncate px-3 py-1.5 text-left text-sm text-ink transition hover:bg-canvas"
+                          >
+                            {t.name}
+                          </button>
+                        ))}
+                      </span>
+                    </>
+                  )}
+                </span>
+              )}
+
               {/* Colour the selection. A LABELLED text button, not an icon:
                   there is no icon that says "category" without a legend, and
                   this bar has room for a word. */}
@@ -863,6 +940,9 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
               onDelete={(m) => void handleDelete(m.id)}
               onToggleFlag={(m) => handleToggleFlag(m.id)}
               onArchive={(m) => void handleArchive(m.id)}
+              moveTargets={moveTargets}
+              onMove={(m, folderId) => void handleMove(m.id, folderId)}
+              canArchive={folder?.slug !== 'junk'}
               onBlockSender={(m) => void handleBlockSender(m)}
               onMarkUnread={handleMarkUnread}
               onPrint={handlePrint}
