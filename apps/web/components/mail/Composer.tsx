@@ -241,6 +241,7 @@ export function Composer({
   placement?: 'docked' | 'inline';
 }) {
   const editorRef = useRef<HTMLDivElement>(null);
+  const shell = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const seeded = useRef(false);
 
@@ -248,6 +249,69 @@ export function Composer({
   const initialCc = mode === 'replyAll' ? replyAllCc(replyTo, selfAddress) : '';
   const [cc, setCc] = useState(initialCc);
   const [showCc, setShowCc] = useState(initialCc.length > 0);
+
+  // ── BRING THE REPLY INTO VIEW WHEN IT OPENS. ──────────────────────────
+  //
+  //  Amit's recording, 23 September 2026: on a long thread, pressing Reply
+  //  put the composer below the fold and left the view where it was, so the
+  //  button looked like it had done nothing — he scrolled down by hand to
+  //  find it. The reply lives at the end of the message now (which is right),
+  //  and that is exactly what makes it invisible on a long one.
+  //
+  //  So: scroll it into view and put the caret in the body, once, when it
+  //  opens. `block: end` so the Send button lands on screen with it rather
+  //  than the header alone.
+  //
+  //  Inline only. A docked composer is already in the corner, and scrolling
+  //  the page underneath it would move the mail somebody was reading.
+  //
+  //  Two traps, both measured on a 900x420 window rather than guessed, and
+  //  either one alone leaves the Send button off screen - the same complaint,
+  //  with the fix apparently already in:
+  //
+  //  1. `focus()` scrolls the caret into view by itself, and the editor
+  //     starts well above the bottom of the composer, so focusing AFTER the
+  //     scroll undoes most of it - the pane went to 285px and straight back
+  //     to 132px. `preventScroll` is what stops the two fighting.
+  //  2. `behavior: 'smooth'` did not scroll this pane AT ALL - 0px, every
+  //     time, with no reduced-motion preference set. The instant form lands
+  //     at 283px. A smooth call here is a call that silently does nothing,
+  //     which is this codebase's favourite kind of bug, so it is gone.
+  //
+  //  Do not restore either one without re-measuring where the pane ends up.
+  useEffect(() => {
+    if (placement !== 'inline') return;
+    const id = window.setTimeout(() => {
+      shell.current?.scrollIntoView({ block: 'end' });
+      editorRef.current?.focus({ preventScroll: true });
+    }, 60);   // after the first paint, or there is nothing to scroll to
+    return () => window.clearTimeout(id);
+    // Mount only: switching reply → reply all must not yank the page again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── SWITCHING REPLY → REPLY ALL WITHOUT LOSING WHAT WAS TYPED. ─────────
+  //
+  //  The page now switches an open reply's mode in place instead of opening
+  //  a second box beside it (Amit, 23 Sept: pressing both buttons left two
+  //  stacked replies). Switching mode has to move the recipients, and only
+  //  the recipients — the initialisers above run once, so without this the
+  //  header would still say "Reply all" over a To line holding one address.
+  //
+  //  Not on the first render: the initialisers already did it, and running
+  //  again there would overwrite a draft restored into the same fields.
+  const seenMode = useRef(mode);
+  useEffect(() => {
+    if (seenMode.current === mode) return;
+    seenMode.current = mode;
+
+    setTo(mode === 'forward' ? '' : replyTo ? replyTo.from.email : '');
+    const nextCc = mode === 'replyAll' ? replyAllCc(replyTo, selfAddress) : '';
+    setCc(nextCc);
+    // Opened when there is something to show; left open otherwise, because
+    // collapsing a row somebody has just been typing in is its own surprise.
+    if (nextCc.length > 0) setShowCc(true);
+  }, [mode, replyTo, selfAddress]);
   /** Unfolds the real From/To/Cc/Subject rows — see the note where they render. */
   const [expandFields, setExpandFields] = useState(false);
   const [bcc, setBcc] = useState('');
@@ -763,6 +827,7 @@ export function Composer({
       {pane === 'full' && <div className="fixed inset-0 z-[1190] bg-black/40" aria-hidden="true" />}
 
       <div
+        ref={shell}
         className={
           // In the conversation: no fixed position, no slot arithmetic, no
           // corner. It is part of the page and scrolls with the message it
