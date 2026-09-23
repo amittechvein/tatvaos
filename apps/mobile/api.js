@@ -410,12 +410,37 @@ export async function me(accessToken) {
 }
 
 export async function signOut(accessToken) {
+  // ── THE REFRESH TOKEN GOES IN THE BODY, OR IT IS NOT REVOKED. ─────────
+  //  Mr. Singh, 23 Sept 2026, reading PR 214: "on sign-out, is the refresh
+  //  token revoked server-side, or only deleted from SecureStore?" Only
+  //  deleted, it turned out. The server's /logout revokes the token family
+  //  it is HANDED — from the browser's cookie, or for a phone from the
+  //  request body (LogoutRequest.RefreshToken, "mobile clients send the
+  //  token in the body") — and this sent no body. So a copy of the token
+  //  taken from a device backup or a rooted phone stayed valid for its full
+  //  life after the person had signed out. Pre-existing on the password
+  //  path; the OTP path widened the audience.
+  //
+  //  Read before delete, deliberately: once the local copy is gone there is
+  //  nothing left to revoke, and the server call may still fail.
+  // ─────────────────────────────────────────────────────────────────────
+  let refreshToken = null;
+  try { refreshToken = await SecureStore.getItemAsync(REFRESH_KEY); } catch { /* nothing to revoke */ }
   try {
-    if (accessToken) await request('/api/auth/logout', { token: accessToken });
-  } catch {
+    if (accessToken) {
+      await request('/api/auth/logout', {
+        token: accessToken,
+        body: refreshToken ? { refreshToken } : {},
+      });
+      console.log(`[api] signed out${refreshToken ? ', refresh token revoked on the server' : ''}`);
+    }
+  } catch (e) {
     // Sign-out has to work locally even when the server cannot be reached.
     // Refusing to sign somebody out on a train, so as to keep a server row
     // tidy, is the wrong trade — the session expires on its own anyway.
+    // Logged, because "signed out but the token still works" is the exact
+    // question this function was just asked.
+    console.log(`[api] sign-out reached no server (${e?.message ?? e}); token deleted locally only`);
   }
   await SecureStore.deleteItemAsync(REFRESH_KEY);
 }
