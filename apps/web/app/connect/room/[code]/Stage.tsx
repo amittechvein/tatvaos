@@ -1633,11 +1633,29 @@ export default function Stage({ seat, meeting, prefs }: {
   // ---------------------------------------------------------------------
   //  Recording — the host's half.
   //
-  //  Asked for ONCE on joining, not polled. Two states matter and both are
-  //  already covered without a timer: whether the room is being recorded comes
-  //  from LiveKit on its own channel, and this host's own start/stop replies
-  //  carry the row back. A poll would add a request every few seconds per open
-  //  tab to learn something nothing is changing.
+  //  Asked for on joining and again whenever the room's recording flag
+  //  CHANGES. Still not polled: LiveKit tells every client when recording
+  //  starts or stops, so that flag is the trigger and a timer would be
+  //  asking a question nothing is answering differently.
+  //
+  //  ── WHY THE FLAG HAD TO BECOME A TRIGGER (Amit, 23 September 2026) ────
+  //
+  //  It was asked for ONCE, on joining. Amit started a recording from the
+  //  MOBILE APP while the room was open on his desktop. The desktop header
+  //  said "Recording" — that comes from LiveKit's flag, which arrives fine —
+  //  but the More menu still offered "Record", and pressing it opened the
+  //  "Record this meeting" dialog as though nothing were running.
+  //
+  //  The two are different pieces of state and only one of them was being
+  //  kept current: `beingRecorded` is LiveKit's room flag, told to everybody;
+  //  `recording` is OUR row, and the button needs its id to stop. Anything
+  //  that started a recording somewhere else left that row null here, so the
+  //  button could only offer to start a second one.
+  //
+  //  Re-reading the list on every transition fixes both directions — started
+  //  elsewhere, and stopped elsewhere — and it reads the SERVER rather than
+  //  inferring, so the moment after this host presses Start (when the flag
+  //  has not arrived yet) cannot wrongly clear the row it was just handed.
   // ---------------------------------------------------------------------
   useEffect(() => {
     if (!isHost || !meeting) return;
@@ -1658,7 +1676,10 @@ export default function Stage({ seat, meeting, prefs }: {
       }
     })();
     return () => { alive = false; };
-  }, [isHost, meeting, authedFetch]);
+    // beingRecorded is a TRIGGER here, not a value this effect reads — see
+    // the note above. Listing it is what makes a recording started on
+    // another device reach this button.
+  }, [isHost, meeting, authedFetch, beingRecorded]);
 
   // ── STARTING AND STOPPING ARE NOT THE SAME KIND OF ACT. ─────────────────
   //
