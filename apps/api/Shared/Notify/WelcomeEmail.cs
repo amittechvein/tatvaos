@@ -146,7 +146,7 @@ public static class WelcomeEmail
               </p>
             </td>
           </tr>
-{GetTheAppRow.Html("Your mail and meetings, on Android. Sign in with the same address.")}
+{GetTheAppRow.Html(b, "Your mail and meetings, on Android. Sign in with the same address.")}
 
           <!-- Footer -->
           <tr>
