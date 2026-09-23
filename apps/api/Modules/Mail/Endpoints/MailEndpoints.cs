@@ -1911,6 +1911,21 @@ public static class MailEndpoints
                     // What a click on the row should open.
                     latestMessageId = newest.Id,
                     count = x.Msgs.Count,
+                    // EVERY message in this folder's part of the conversation,
+                    // oldest first. A conversation row is a row you can tick,
+                    // and ticking one and pressing Delete has to delete the
+                    // conversation — not just the newest message in it, which
+                    // would leave the thread in the folder looking deleted and
+                    // reappearing on the next poll. The client cannot work
+                    // these out for itself: it holds one page of rows, and the
+                    // rest of the conversation may be on another page.
+                    messageIds = x.Msgs.Select(m => m.Id).ToList(),
+                    // How many of them are unread. The folder's unread badge
+                    // moves by this when the conversation is opened; without
+                    // it the client can only guess "one", and a conversation
+                    // holding three unread replies leaves the badge two too
+                    // high until the next reload quietly corrects it.
+                    unreadCount = x.Msgs.Count(m => !m.IsRead),
                     // Subject comes from the OLDEST message. Replies accrete
                     // "Re:" and someone who renames it on the fourth reply
                     // would otherwise turn one conversation into two.
