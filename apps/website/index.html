@@ -248,8 +248,7 @@ p{margin:0}
 .addons thead th{background:var(--surface-2); font-family:var(--mono); font-size:11px;
   letter-spacing:.1em; text-transform:uppercase; color:var(--muted); font-weight:700}
 .addons tbody tr:last-child td{border-bottom:0}
-.addons td:nth-child(2){font-variant-numeric:tabular-nums; font-weight:600; white-space:nowrap}
-.addons td:nth-child(3){color:var(--muted); font-size:13.5px}
+.addons td:nth-child(2){color:var(--muted); font-size:13.5px}
 .note{
   margin-top:22px; padding:16px 18px; border-radius:11px; font-size:14px;
   background:var(--surface-2); border:1px solid var(--line); color:var(--ink-2);
@@ -327,9 +326,8 @@ p{margin:0}
 <div class="review" id="reviewStrip">
   <div class="wrap">
     <div><strong>Draft for review — not published to tatvaos.com.</strong>
-      Product screens are real, captured from a running build against test data. Organisation plan
-      prices are the catalogue in the database; personal plans are a proposal not yet signed off,
-      and card payment is not switched on yet.</div>
+      Product screens are real, captured from a running build against test data. Plans are
+      shown without prices; the personal plans are a proposal not yet signed off.</div>
     <button type="button" onclick="document.getElementById('reviewStrip').hidden=true">Hide</button>
   </div>
 </div>
@@ -598,9 +596,10 @@ p{margin:0}
     <div class="wrap">
       <div class="section-head">
         <p class="eyebrow">Plans</p>
-        <h2>Priced for an Indian organisation, not converted from dollars.</h2>
-        <p class="lede">Two front doors: an organisation brings its own domain and buys
-          seats; a person signs up alone and gets an address at tatvaos.com.</p>
+        <h2>Plans for an organisation, and for one person.</h2>
+        <p class="lede">Two front doors: an organisation brings its own domain and adds
+          its people; a person signs up alone and gets an address at tatvaos.com. Ask us
+          for pricing.</p>
       </div>
 
       <div class="plan-switch" role="tablist" aria-label="Who the plan is for">
@@ -614,7 +613,6 @@ p{margin:0}
           <div class="plan">
             <div class="plan-name">Starter</div>
             <p class="plan-for">A small office or clinic getting off free Gmail.</p>
-            <div class="price"><b>₹49</b><span>per person / month</span></div>
             <ul>
               <li>Up to 10 people</li>
               <li>5 GB each</li>
@@ -627,7 +625,6 @@ p{margin:0}
             <span class="badge">Most chosen</span>
             <div class="plan-name">Business</div>
             <p class="plan-for">A growing business or a school office.</p>
-            <div class="price"><b>₹99</b><span>per person / month</span></div>
             <ul>
               <li>Up to 100 people</li>
               <li>30 GB each</li>
@@ -639,7 +636,6 @@ p{margin:0}
           <div class="plan">
             <div class="plan-name">Institution</div>
             <p class="plan-for">A whole school or college, staff and students.</p>
-            <div class="price"><b>₹14,999</b><span>per month</span></div>
             <ul>
               <li>Up to 500 people</li>
               <li>2 TB pooled, split by you</li>
@@ -651,7 +647,6 @@ p{margin:0}
           <div class="plan">
             <div class="plan-name">Enterprise</div>
             <p class="plan-for">Many sites, many domains, its own rules.</p>
-            <div class="price"><b>₹49,999</b><span>per month</span></div>
             <ul>
               <li>Unlimited people</li>
               <li>10 TB pooled</li>
@@ -673,7 +668,6 @@ p{margin:0}
           <div class="plan">
             <div class="plan-name">Free</div>
             <p class="plan-for">Trying it, and for people whose needs are genuinely small.</p>
-            <div class="price"><b>₹0</b><span>forever</span></div>
             <ul>
               <li>1 GB, shared across mail and files</li>
               <li>your.name@tatvaos.com</li>
@@ -686,7 +680,6 @@ p{margin:0}
           <div class="plan">
             <div class="plan-name">Basic</div>
             <p class="plan-for">A tutor, a freelancer, a shop — someone who works with others.</p>
-            <div class="price"><b>₹49</b><span>/ month, or ₹490 a year</span></div>
             <ul>
               <li>5 GB</li>
               <li>Meetings up to 20 people, no time limit</li>
@@ -700,7 +693,6 @@ p{margin:0}
             <span class="badge">Everything on</span>
             <div class="plan-name">Premium</div>
             <p class="plan-for">Everything switched on, for people who record and review.</p>
-            <div class="price"><b>₹99</b><span>/ month, or ₹990 a year</span></div>
             <ul>
               <li>10 GB</li>
               <li>Meetings up to 50 people</li>
@@ -714,11 +706,11 @@ p{margin:0}
 
         <div class="addons">
           <table>
-            <thead><tr><th>Add-on</th><th>Price</th><th>Note</th></tr></thead>
+            <thead><tr><th>Add-on</th><th>Note</th></tr></thead>
             <tbody>
-              <tr><td>+10 GB storage</td><td>₹25 / month</td><td>Stackable</td></tr>
-              <tr><td>+50 GB storage</td><td>₹99 / month</td><td>Better rate at volume</td></tr>
-              <tr><td>Big meetings, up to 100</td><td>₹49 / month</td><td>Premium only</td></tr>
+              <tr><td>+10 GB storage</td><td>Stackable</td></tr>
+              <tr><td>+50 GB storage</td><td>Better rate at volume</td></tr>
+              <tr><td>Big meetings, up to 100</td><td>Premium only</td></tr>
             </tbody>
           </table>
         </div>
@@ -738,8 +730,8 @@ p{margin:0}
         <p class="eyebrow">How it was built</p>
         <h2>Seven weeks, from an empty repository to production.</h2>
         <p class="lede">The first commit is dated 4 August 2026. Everything on this page
-          was built between then and now. Below is what landed, and when — taken from the
-          repository rather than written afterwards.</p>
+          was built between then and now — the numbers are the repository's own, not
+          written afterwards.</p>
       </div>
 
       <div class="tl-intro">
@@ -765,265 +757,6 @@ p{margin:0}
         </div>
       </div>
 
-      <div class="tl">
-
-        <div class="week">
-          <div class="week-spine">
-            <div class="week-label">Week 1</div>
-            <div class="week-range">4 – 9 August</div>
-            <div class="week-count">99 commits</div>
-          </div>
-          <div class="week-body">
-            <div class="entry big">
-              <div class="entry-date">4 August</div>
-              <h3>Day one: a server, a schema and a way in</h3>
-              <p>Server provisioned, DNS preflight, a deliverability harness for mail. The Core
-                schema, cloud environments and CI/CD. Sign-in with refresh-token rotation,
-                lockout and password change. Postfix's open relay on port 25 was closed before
-                a single message was ever sent.</p>
-            </div>
-            <div class="entry">
-              <div class="entry-date">5 August</div>
-              <h3>The front door opens</h3>
-              <p>Self-service signup with four different ways to prove you own your domain, so
-                an administrator can pick whichever one they can actually do. Live domain
-                verification, email and mobile OTP.</p>
-            </div>
-            <div class="entry">
-              <div class="entry-date">6 August</div>
-              <h3>Mail becomes a product</h3>
-              <p>A real mail client: list rows with chips, bulk select, a docked composer,
-                search at the top. Sign-in by mobile OTP. Host discipline — mail only answers on
-                its own subdomain, the console only on its own.</p>
-            </div>
-            <div class="entry">
-              <div class="entry-date">7 – 8 August</div>
-              <h3>The composer, and the things nobody demos</h3>
-              <p>Rich text, attachments, emoji, full-screen and print. Plans managed from the
-                operator console. Profile photos. Forgot-password by email link or phone OTP —
-                which revokes every existing session when the password changes.</p>
-            </div>
-          </div>
-        </div>
-
-        <div class="week">
-          <div class="week-spine">
-            <div class="week-label">Week 2</div>
-            <div class="week-range">10 – 16 August</div>
-            <div class="week-count">159 commits</div>
-          </div>
-          <div class="week-body">
-            <div class="entry">
-              <div class="entry-date">10 – 12 August</div>
-              <h3>Mail stops being a demo</h3>
-              <p>Blocked senders and filter rules applied at delivery, not on display. Real
-                search across every folder and every message body. An alert when a new device
-                signs in. Organisation storage, with a page that shows where it went. The audit
-                trail.</p>
-            </div>
-            <div class="entry big">
-              <div class="entry-date">14 August</div>
-              <h3>Two-step verification</h3>
-              <p>TOTP with encrypted secrets, recovery codes and a replay guard; the challenge
-                at sign-in; the enrolment QR rendered in the browser. The same day: conversation
-                view, search operators, and one-action offboarding that forwards a leaver's mail
-                to their successor.</p>
-            </div>
-            <div class="entry">
-              <div class="entry-date">15 August</div>
-              <h3>Shared mailboxes, and one allowance per person</h3>
-              <p>Grants, send-as and a switcher in the rail. Attachments scanned and the infected
-                ones refused. Storage stopped being a mailbox quota and became one allowance a
-                person spends across every product.</p>
-            </div>
-            <div class="entry big">
-              <div class="entry-date">16 August</div>
-              <h3>Calendar and Space arrive</h3>
-              <p>Calendar with events, recurrence, reminders and four views. Space with a
-                Drive-style upload tray, progress, cancel and drag-and-drop, and a landing page
-                for public links.</p>
-            </div>
-          </div>
-        </div>
-
-        <div class="week">
-          <div class="week-spine">
-            <div class="week-label">Week 3</div>
-            <div class="week-range">17 – 23 August</div>
-            <div class="week-count">196 commits</div>
-          </div>
-          <div class="week-body">
-            <div class="entry">
-              <div class="entry-date">19 – 20 August</div>
-              <h3>Mail meets the rest of the world</h3>
-              <p>Oversize attachments park in Space and send as a link. Calendar invitations
-                carried in the exact form Gmail needs and the exact form Outlook needs, both
-                directions. Deploys began proving the new API starts before retiring the old one.</p>
-            </div>
-            <div class="entry big">
-              <div class="entry-date">21 August</div>
-              <h3>TatvaOS AI gets its one door</h3>
-              <p>One place — and only one — through which TatvaOS AI runs, and it refuses any call
-                that is not scoped to an organisation that has switched it on. Meeting minutes go
-                through it.</p>
-            </div>
-            <div class="entry">
-              <div class="entry-date">23 August</div>
-              <h3>Recordings made to pay for themselves</h3>
-              <p>Recordings count against the owner's own quota and age off after 30 days. The
-                personal pricing was costed against measured numbers rather than guesses: AI
-                minutes at about ₹1 per meeting-hour, captions at nothing.</p>
-            </div>
-          </div>
-        </div>
-
-        <div class="week">
-          <div class="week-spine">
-            <div class="week-label">Week 4</div>
-            <div class="week-range">24 – 30 August</div>
-            <div class="week-count">93 commits</div>
-          </div>
-          <div class="week-body">
-            <div class="entry">
-              <div class="entry-date">26 – 27 August</div>
-              <h3>Filing</h3>
-              <p>Categories. Saving a received attachment straight into Space without the bytes
-                leaving the server. Folders you can rename and delete without deleting the mail
-                inside them. Keyboard shortcuts, and a list of them you can actually find.</p>
-            </div>
-            <div class="entry">
-              <div class="entry-date">29 – 31 August</div>
-              <h3>Categories become visible</h3>
-              <p>A swatch picker, named colour chips in the list, bulk colouring. The reading-pane
-                toolbar redrawn — one labelled Reply as the row's only outlined control, and the
-                destructive actions moved behind their own divider.</p>
-            </div>
-          </div>
-        </div>
-
-        <div class="week">
-          <div class="week-spine">
-            <div class="week-label">Week 5</div>
-            <div class="week-range">31 Aug – 6 September</div>
-            <div class="week-count">147 commits</div>
-          </div>
-          <div class="week-body">
-            <div class="entry big">
-              <div class="entry-date">3 September</div>
-              <h3>TatvaOS becomes something you can build on</h3>
-              <p>API keys and a send endpoint, so a website form or a billing job can post mail
-                through the platform. A keys page with the how-to on it, a downloadable
-                integration guide, and keys restricted to the sender addresses you name.</p>
-            </div>
-            <div class="entry">
-              <div class="entry-date">5 September</div>
-              <h3>The phone signs in</h3>
-              <p>The Android app got a real API client, two-factor, session restore, and a
-                dashboard showing only the tiles that person is entitled to.</p>
-            </div>
-          </div>
-        </div>
-
-        <div class="week">
-          <div class="week-spine">
-            <div class="week-label">Week 6</div>
-            <div class="week-range">7 – 13 September</div>
-            <div class="week-count">145 commits</div>
-          </div>
-          <div class="week-body">
-            <div class="entry">
-              <div class="entry-date">7 September</div>
-              <h3>One kit, every page</h3>
-              <p>Shared controls across signup, the seven organisation pages, the account page,
-                the admin area and Family — so a field looks and behaves the same wherever you
-                meet it.</p>
-            </div>
-            <div class="entry">
-              <div class="entry-date">9 – 11 September</div>
-              <h3>People, at volume</h3>
-              <p>Hire and People entered the catalogue. Bulk create arrived: download a template,
-                fill it in, upload it — including a guard for the phone numbers a spreadsheet has
-                quietly rounded into scientific notation.</p>
-            </div>
-            <div class="entry">
-              <div class="entry-date">13 September</div>
-              <h3>Design before code</h3>
-              <p>Two decisions written down and reviewed before anything was built: what a person
-                is entitled to is <em>derived</em> from their organisation's plan rather than copied
-                into rows that drift; and how signing in on a phone hands over to the browser.</p>
-            </div>
-          </div>
-        </div>
-
-        <div class="week">
-          <div class="week-spine">
-            <div class="week-label">Week 7</div>
-            <div class="week-range">14 – 20 September</div>
-            <div class="week-count">208 commits — the heaviest week</div>
-          </div>
-          <div class="week-body">
-            <div class="entry">
-              <div class="entry-date">15 September</div>
-              <h3>The database takes its rights back</h3>
-              <p>UPDATE and DELETE were revoked from the application on five record tables — the
-                audit trail among them — so a bug cannot rewrite history. CI asserts both
-                directions: that the allowed writes still work, and that the forbidden ones still fail.</p>
-            </div>
-            <div class="entry big">
-              <div class="entry-date">16 September</div>
-              <h3>The rewrite lands in production</h3>
-              <p>The purchased template was deleted and the shell rebuilt on one stylesheet of our
-                own. The same deploy carried the mobile-to-browser sign-in handoff, and a fix so
-                that changing your recovery details now requires your current password.</p>
-            </div>
-            <div class="entry big">
-              <div class="entry-date">17 September</div>
-              <h3>Single sign-on goes live</h3>
-              <p>TatvaOS became an OpenID Connect provider, deployed in stages across one day, with
-                the production signing key rotated the same morning and rate limits put in front of
-                it. The first real sign-on against production passed that evening.</p>
-            </div>
-            <div class="entry">
-              <div class="entry-date">18 September</div>
-              <h3>Consent, and keys for your own software</h3>
-              <p>The consent screen redesigned around what a person is actually agreeing to.
-                Organisation API keys for Mail, People and SSO — with the hard rule that a key can
-                never create an administrator.</p>
-            </div>
-            <div class="entry">
-              <div class="entry-date">19 September</div>
-              <h3>A meetings API, and a live incident</h3>
-              <p>A paged timetable API so an ERP can read and create meetings. That same day a live
-                meeting hit a guest ceiling nobody knew was there — 200 guests, refused silently.
-                It was found, raised to 2,000, and given a warning log, the same day.</p>
-            </div>
-          </div>
-        </div>
-
-        <div class="week">
-          <div class="week-spine">
-            <div class="week-label">Week 8</div>
-            <div class="week-range">21 – 23 September</div>
-            <div class="week-count">18 commits, so far</div>
-          </div>
-          <div class="week-body">
-            <div class="entry">
-              <div class="entry-date">21 September</div>
-              <h3>Invitations that land you signed in</h3>
-              <p>A welcome note and product tiles in the invitation mail, and one-use sign-in links
-                a manager can send from the People page. Accepting an invitation now ends any old
-                sessions and signs you straight in — through the two-factor challenge if you have one.</p>
-            </div>
-            <div class="entry big">
-              <div class="entry-date">22 September</div>
-              <h3>TatvaOS One reaches Google Play</h3>
-              <p>The Android app published — mail and meetings on the phone, signing in with the
-                same account. Taking card payment is the next thing to build.</p>
-            </div>
-          </div>
-        </div>
-
-      </div>
     </div>
   </section>
 
@@ -1080,7 +813,6 @@ p{margin:0}
     <div class="foot-legal">
       <span>© 2026 Techvein</span>
       <span>Hosted in India</span>
-      <span>Prices in ₹, GST treatment to be confirmed</span>
     </div>
   </div>
 </footer>
