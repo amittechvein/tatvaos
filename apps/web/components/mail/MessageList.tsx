@@ -1,10 +1,35 @@
 'use client';
 
 import { displayName, formatMessageDate } from '@tatvaos/core';
-import type { Message } from '@tatvaos/types';
+import type { Address } from '@tatvaos/types';
 import { CATEGORY_COLOURS, type InboxLayout, type MailCategory } from '../../lib/mail';
 import { Avatar } from '../ui/Avatar';
 import { Icon } from '../ui/Icon';
+
+/**
+ * What a row in this list actually needs.
+ *
+ * Declared as its own shape rather than as `Message` because a row is no
+ * longer always a message: in conversation view one row stands for a whole
+ * thread. `Message` satisfies this structurally, so the message list passes
+ * unchanged; a conversation is mapped onto it and carries `count` as well.
+ *
+ * The alternative — building a fake `Message` per conversation with `to: []`
+ * and `sizeBytes: 0` — types fine and is a lie waiting for the first renderer
+ * that reads one of those fields.
+ */
+export interface MailListRow {
+  id: string;
+  from: Address;
+  subject: string;
+  snippet: string;
+  sentAt: string;
+  isRead: boolean;
+  isFlagged: boolean;
+  hasAttachments: boolean;
+  /** How many messages this row stands for. Absent or 1 = a single message. */
+  count?: number;
+}
 
 /**
  * The Yzen table-style message list: checkbox, a star + bookmark cluster,
@@ -41,7 +66,7 @@ export function MessageList({
   categoriesById,
   layout = 'comfortable',
 }: {
-  messages: Message[];
+  messages: MailListRow[];
   selectedIds: Set<string>;
   openId: string | null;
   onToggleSelect: (id: string) => void;
@@ -200,11 +225,23 @@ export function MessageList({
                     {displayName(m.from)}
                   </span>
                   <span
-                    className={`block truncate text-sm ${
+                    className={`flex items-center gap-1.5 truncate text-sm ${
                       m.isRead ? 'text-ink' : 'font-semibold text-ink'
                     }`}
                   >
-                    {m.subject || '(no subject)'}
+                    <span className="truncate">{m.subject || '(no subject)'}</span>
+                    {/* How many messages this conversation holds. Only from 2
+                        up: a "1" on every row in a mailbox with no threads is
+                        noise, and it is how you tell at a glance that the row
+                        is standing for more than it shows. */}
+                    {(m.count ?? 1) > 1 && (
+                      <span
+                        className="shrink-0 rounded-full bg-ink-faint/15 px-1.5 text-[11px] font-medium tabular-nums text-ink-muted"
+                        title={`${m.count} messages in this conversation`}
+                      >
+                        {m.count}
+                      </span>
+                    )}
                   </span>
                   {/* Compact and slim trade the preview line for rows; the
                       attachment marker moves up beside the subject so it is
@@ -221,7 +258,7 @@ export function MessageList({
                          Message type does not carry it yet - a shared-types
                          addition is Core's, so this reads it structurally
                          rather than editing packages/types. */
-                      const catId = (m as Message & { categoryId?: string | null }).categoryId;
+                      const catId = (m as MailListRow & { categoryId?: string | null }).categoryId;
                       const cat = catId && categoriesById ? categoriesById[catId] : undefined;
                       if (!cat) return null;
                       const c = CATEGORY_COLOURS[cat.colour] ?? CATEGORY_COLOURS.grey!;

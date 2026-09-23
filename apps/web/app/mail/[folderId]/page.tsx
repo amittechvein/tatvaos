@@ -9,9 +9,10 @@ import {
   CATEGORY_COLOURS, getInboxLayout, INBOX_LAYOUT_EVENT, INBOX_LAYOUTS,
   mailApi, resolveFolder, setInboxLayout,
   type InboxLayout, type MailBootstrap, type MailCategory, type SearchHit,
+  type ThreadSummary,
 } from '@/lib/mail';
 import DOMPurify from 'dompurify';
-import { MessageList } from '@/components/mail/MessageList';
+import { MessageList, type MailListRow } from '@/components/mail/MessageList';
 import { MessageView } from '@/components/mail/MessageView';
 import { Composer, type ComposeMode } from '@/components/mail/Composer';
 import { useMailbox } from '@/components/mail/MailboxSwitcher';
@@ -54,6 +55,39 @@ function loadPageSize(): PageSize {
   }
 }
 
+// ---------------------------------------------------------------------------
+//  CONVERSATIONS OR MESSAGES
+//
+//  Amit, 23 September 2026, with one exchange open side by side: TatvaOS
+//  listed three rows where Gmail listed one conversation. Nothing was
+//  duplicated — a message and its two replies are three emails — but a list
+//  that shows each of them separately makes a short exchange look like a
+//  pile, and it is the single most visible difference from every mail client
+//  people already use.
+//
+//  The API has had a conversation list all along (/folders/{id}/threads, one
+//  row per thread, grouped on thread_id ?? id so mail from before threading
+//  still appears). The web client even had the function to call it. Nothing
+//  ever did. This wires it up and makes it the default.
+//
+//  It is a VIEW, not a migration: the per-message list is one click away and
+//  the choice is remembered, because triaging a shared support queue is a
+//  genuinely different job from reading your own mail.
+// ---------------------------------------------------------------------------
+type ListView = 'conversations' | 'messages';
+const VIEW_KEY = 'tatvaos.mail.listView';
+
+function loadListView(): ListView {
+  if (typeof window === 'undefined') return 'conversations';
+  try {
+    return window.localStorage.getItem(VIEW_KEY) === 'messages' ? 'messages' : 'conversations';
+  } catch {
+    // Private windows and blocked site data throw on read. A remembered
+    // preference is not worth a blank page.
+    return 'conversations';
+  }
+}
+
 /**
  * The Yzen three-pane mail app: a left navigation rail, a message list, and a
  * reading pane that slides in over the list when a message is opened. List
@@ -72,6 +106,18 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
 
   const [boot, setBoot] = useState<MailBootstrap | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  // Conversation rows, when the list is in conversation view. Held beside the
+  // messages rather than replacing them: a row that stands for a thread is
+  // not a message, and pretending otherwise is how a renderer ends up reading
+  // a field that was never really there.
+  const [threads, setThreads] = useState<ThreadSummary[]>([]);
+  const [view, setView] = useState<ListView>('conversations');
+  /**
+   * Which open is the current one. Incremented on every row click; a fetch
+   * that lands holding an older number is from a row the person has already
+   * navigated away from and writes nothing.
+   */
+  const openTicket = useRef(0);
 
   // The person's inbox layout, chosen in Mail settings and stored on this
   // device. Read in an effect (localStorage does not exist server-side), and
@@ -97,6 +143,10 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   // Next renders this on the server.
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   useEffect(() => { setPageSize(loadPageSize()); }, []);
+  // Read after mount, like the page size: localStorage does not exist during
+  // the server render, and seeding state from it directly is a hydration
+  // mismatch that React papers over by throwing the first paint away.
+  useEffect(() => { setView(loadListView()); }, []);
   /** True while "All" is still fetching its consecutive pages. */
   const [loadingAll, setLoadingAll] = useState(false);
   /** Set when a folder is bigger than a browser should be asked to draw. */
@@ -205,6 +255,28 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
       setListError(null);
       setCappedAt(null);
       try {
+        if (view === 'conversations') {
+          // Conversations are grouped SERVER side, and they have to be: this
+          // page holds one page of rows, and the other half of a conversation
+          // may be on the next one. Grouping what happens to be loaded looks
+          // right on a small folder and silently splits threads on a big one.
+          //
+          // "All" is not offered a second loop here — the row count is
+          // conversations, not messages, so the server maximum already covers
+          // far more mail than the message list's equivalent page.
+          const take = size === 'all' ? SERVER_MAX_TAKE : size;
+          const page = await mailApi.folderThreads(
+            authedFetch, folderId, { skip: skipTo, take, mailboxId },
+          );
+          setThreads(page.threads);
+          setMessages([]);
+          setTotal(page.total);
+          setSkip(skipTo);
+          setSelectedIds(new Set());
+          if (size === 'all' && page.total > page.threads.length) setCappedAt(page.threads.length);
+          return;
+        }
+
         if (size === 'all') {
           // Consecutive pages of the server's maximum, not one huge request.
           // The first answer carries the total, so the loop knows when to
@@ -226,6 +298,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
           } while (got < Math.min(folderTotal, ALL_CEILING));
 
           setMessages(rows);
+          setThreads([]);
           setTotal(folderTotal);
           setSkip(0);
           setSelectedIds(new Set());
@@ -235,6 +308,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
 
         const page = await mailApi.messages(authedFetch, folderId, { skip: skipTo, take: size, mailboxId });
         setMessages(page.messages);
+        setThreads([]);
         setTotal(page.total);
         setSkip(skipTo);
         setSelectedIds(new Set());
@@ -244,7 +318,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
         setLoadingAll(false);
       }
     },
-    [authedFetch, mailboxId],
+    [authedFetch, mailboxId, view],
   );
 
   const loadMessages = useCallback(
@@ -325,9 +399,21 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
       // keep the list fresh, not to silently shorten it.
       if (pageSize === 'all') return;
       try {
-        const page = await mailApi.messages(authedFetch, folderId, { skip, take: pageSize, mailboxId });
-        setMessages(page.messages);
-        setTotal(page.total);
+        // The tick has to fetch what the list is DRAWING. Polling messages
+        // while the list shows conversations left the rows untouched and
+        // still moved the total, so "Showing 1-3 of 7" appeared under three
+        // rows and looked like paging had broken.
+        if (view === 'conversations') {
+          const page = await mailApi.folderThreads(
+            authedFetch, folderId, { skip, take: pageSize, mailboxId },
+          );
+          setThreads(page.threads);
+          setTotal(page.total);
+        } else {
+          const page = await mailApi.messages(authedFetch, folderId, { skip, take: pageSize, mailboxId });
+          setMessages(page.messages);
+          setTotal(page.total);
+        }
       } catch { /* transient; the next tick retries */ }
       void refreshFolders();
     };
@@ -359,7 +445,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
       clearInterval(t);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [folderId, skip, query, authedFetch, refreshFolders, mailboxId, pageSize]);
+  }, [folderId, skip, query, authedFetch, refreshFolders, mailboxId, pageSize, view]);
 
   // ---- Search ---------------------------------------------------------
   //
@@ -394,7 +480,50 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   }, [query, authedFetch, mailboxId, pageSize]);
 
   // What the list renders: search results when searching, else the folder page.
-  const filtered: Message[] = searchHits ?? messages;
+  // Search always lists MESSAGES, whatever the view: a hit is a specific
+  // message in a specific folder, and rolling hits up into conversations
+  // would hide which one actually matched.
+  const inConversationView = view === 'conversations' && !searchHits;
+
+  /** Conversation rows, in the shape the list draws. */
+  const threadRows: MailListRow[] = useMemo(
+    () => threads.map((t) => ({
+      // The row IS the newest message as far as opening goes; `count` is what
+      // tells the list it stands for more than one.
+      id: t.latestMessageId,
+      from: t.from,
+      subject: t.subject,
+      snippet: t.snippet,
+      sentAt: t.sentAt,
+      isRead: t.isRead,
+      isFlagged: t.isFlagged,
+      hasAttachments: t.hasAttachments,
+      count: t.count,
+    })),
+    [threads],
+  );
+
+  /**
+   * Row id → every message that row stands for.
+   *
+   * Bulk actions read this. A conversation row is one tick box, and ticking
+   * it and pressing Delete must delete the conversation: acting on the newest
+   * message alone leaves the rest behind, so the row comes straight back on
+   * the next poll looking like the delete silently failed.
+   */
+  const membersOf = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const t of threads) m.set(t.latestMessageId, t.messageIds);
+    return m;
+  }, [threads]);
+
+  /** One selection of rows, expanded into the messages it really means. */
+  const expand = useCallback(
+    (ids: Iterable<string>) => [...new Set([...ids].flatMap((id) => membersOf.get(id) ?? [id]))],
+    [membersOf],
+  );
+
+  const filtered: MailListRow[] = searchHits ?? (inConversationView ? threadRows : messages);
 
   // ---- Local state helpers --------------------------------------------
   const patchMessage = useCallback((id: string, patch: Partial<Message>) => {
@@ -434,50 +563,66 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   }
 
   async function handleOpen(id: string) {
-    // `filtered`, not `messages`: while searching, the row lives in the search
-    // results — which may be a message in another folder that was never in the
-    // loaded folder page at all.
-    // The thread strip adds a third row source: a sibling in this
-    // conversation may live in Sent and appear in no loaded list.
-    const row = filtered.find((m) => m.id === id) ?? thread?.find((m) => m.id === id);
+    // Three row sources, and now a fourth. While searching the row lives in
+    // the search results — possibly a message in another folder that was
+    // never in the loaded page. The thread strip adds siblings that live in
+    // Sent. And in conversation view the row is not a message at all: it
+    // carries only what a list draws, so there is nothing honest to put in
+    // the reading pane until the fetch below lands.
+    const summary: Message | undefined =
+      (searchHits ?? messages).find((m) => m.id === id) ?? thread?.find((m) => m.id === id);
+    const conversation = threads.find((t) => t.latestMessageId === id);
+    const row = summary ?? (conversation ? filtered.find((m) => m.id === id) : undefined);
     if (!row) return;
 
+    // Every open gets a ticket, and only the newest ticket may write to the
+    // pane. The guards this replaces compared against the message ALREADY
+    // open — which is null the first time a conversation row is clicked, so
+    // neither the body nor the conversation strip would ever have arrived.
+    const ticket = ++openTicket.current;
+
     if (!row.isRead) {
-      patchMessage(id, { isRead: true });
-      if (folder) bumpUnread(folder.id, -1);
-      void mailApi.setRead(authedFetch, id, true, mailboxId);
+      // Opening a conversation reads ALL of it. That is what every client
+      // does, and what this row's own unread rule requires: it counts as
+      // unread while ANY message in it is, so marking just the newest leaves
+      // the row bold and makes the click look like it did nothing.
+      const ids = conversation?.messageIds ?? [id];
+      ids.forEach((mid) => patchMessage(mid, { isRead: true }));
+      if (folder) bumpUnread(folder.id, -(conversation?.unreadCount ?? 1));
+      setThreads((prev) => prev.map((t) =>
+        t.latestMessageId === id ? { ...t, isRead: true, unreadCount: 0 } : t));
+      void Promise.allSettled(
+        ids.map((mid) => mailApi.setRead(authedFetch, mid, true, mailboxId)),
+      );
     }
 
-    setOpen({ ...row, isRead: true });
+    if (summary) setOpen({ ...summary, isRead: true });
     setOpenLoading(true);
 
-    // The conversation loads alongside the body. Kept only if the SAME thread
-    // is still open when it lands; opening a sibling skips the refetch.
-    if (row.threadId && !(thread && thread.some((m) => m.id === id))) {
+    // The conversation loads alongside the body.
+    const rowThreadId = summary?.threadId ?? conversation?.threadId ?? null;
+    if (rowThreadId && !(thread && thread.some((m) => m.id === id))) {
       setThread(null);
-      const tid = row.threadId;
-      void mailApi.thread(authedFetch, tid, mailboxId).then(
-        (page) => setOpen((prev) => {
-          if (prev && prev.threadId === tid) {
-            setThread(page.messages);
-            setThreadTotal(page.total);
-          }
-          return prev;
-        }),
+      void mailApi.thread(authedFetch, rowThreadId, mailboxId).then(
+        (page) => {
+          if (openTicket.current !== ticket) return;
+          setThread(page.messages);
+          setThreadTotal(page.total);
+        },
         () => { /* no strip is a fine fallback; the message still reads */ },
       );
-    } else if (!row.threadId) {
+    } else if (!rowThreadId) {
       setThread(null);
       setThreadTotal(0);
     }
 
     try {
       const full = await mailApi.message(authedFetch, id, mailboxId);
-      setOpen((prev) => (prev && prev.id === id ? { ...full, isRead: true } : prev));
+      if (openTicket.current === ticket) setOpen({ ...full, isRead: true });
     } catch {
       /* the summary stays on screen; body shows the snippet */
     } finally {
-      setOpenLoading(false);
+      if (openTicket.current === ticket) setOpenLoading(false);
     }
   }
 
@@ -571,7 +716,8 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
 
   async function bulkMove(folderId: string) {
     if (isShared) { setListError(sharedBlock); return; }
-    const ids = [...selectedIds];
+    // expand(): a ticked conversation row means every message in it.
+    const ids = expand(selectedIds);
     setMoveMenu(false);
     setSelectedIds(new Set());
     await Promise.allSettled(ids.map((id) => mailApi.move(authedFetch, id, folderId)));
@@ -598,7 +744,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
 
   async function bulkDelete() {
     if (isShared) { setListError(sharedBlock); return; }
-    const ids = [...selectedIds];
+    const ids = expand(selectedIds);
     setSelectedIds(new Set());
     await Promise.allSettled(ids.map((id) => mailApi.delete(authedFetch, id)));
     if (folder) await loadMessages(folder.id, skip);
@@ -625,15 +771,26 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   }
 
   async function bulkSetRead(isRead: boolean) {
-    const ids = [...selectedIds];
+    const rowIds = [...selectedIds];
+    const ids = expand(rowIds);
     setSelectedIds(new Set());
-    ids.forEach((id) => {
-      const m = messages.find((x) => x.id === id);
-      if (m && m.isRead !== isRead) {
-        patchMessage(id, { isRead });
-        if (folder) bumpUnread(folder.id, isRead ? -1 : 1);
+    // The badge moves by what actually CHANGES. In conversation view the
+    // per-message read flags are not all loaded, so the conversation's own
+    // unread count is the only honest number here.
+    let delta = 0;
+    for (const rowId of rowIds) {
+      const conv = threads.find((t) => t.latestMessageId === rowId);
+      if (conv) {
+        delta += isRead ? -conv.unreadCount : (conv.count - conv.unreadCount);
+        continue;
       }
-    });
+      const m = messages.find((x) => x.id === rowId);
+      if (m && m.isRead !== isRead) delta += isRead ? -1 : 1;
+    }
+    ids.forEach((id) => patchMessage(id, { isRead }));
+    setThreads((prev) => prev.map((t) => (selectedIds.has(t.latestMessageId)
+      ? { ...t, isRead, unreadCount: isRead ? 0 : t.count } : t)));
+    if (folder && delta !== 0) bumpUnread(folder.id, delta);
     await Promise.allSettled(ids.map((id) => mailApi.setRead(authedFetch, id, isRead, mailboxId)));
   }
 
@@ -808,7 +965,10 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   const dockedComposers = composers.filter((c) => !inlineComposers.includes(c));
 
   const rangeStart = total === 0 ? 0 : skip + 1;
-  const rangeEnd = Math.min(skip + messages.length, total);
+  // `filtered`, not `messages`: in conversation view the rows are threads and
+  // the total counts threads, so measuring the range against the message
+  // array would read "Showing 1-0 of 3" on a folder that is drawing rows.
+  const rangeEnd = Math.min(skip + filtered.length, total);
   const allSelected = selectedIds.size > 0 && selectedIds.size === filtered.length;
 
   return (
@@ -908,6 +1068,27 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
               </>
             )}
           </div>
+          {/* Conversations or single messages. Deliberately a toolbar button
+              and not a settings page: it is the kind of thing people flip
+              while looking at a list, and hiding it two screens away is how a
+              view nobody could find got built and then never called. */}
+          <button
+            type="button"
+            onClick={() => {
+              const next: ListView = view === 'conversations' ? 'messages' : 'conversations';
+              setView(next);
+              try { window.localStorage.setItem(VIEW_KEY, next); } catch { /* fine */ }
+            }}
+            title={view === 'conversations'
+              ? 'Grouped into conversations — switch to one row per message'
+              : 'One row per message — switch to conversations'}
+            aria-pressed={view === 'conversations'}
+            className={`flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-surface hover:text-ink hover:shadow-card ${
+              view === 'conversations' ? 'text-brand-600' : 'text-ink-muted'
+            }`}
+          >
+            <Icon name="reply-all" className="h-4.5 w-4.5" />
+          </button>
           <button
             type="button"
             onClick={() => folder && void loadMessages(folder.id, skip)}

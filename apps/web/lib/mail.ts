@@ -139,6 +139,14 @@ export interface ThreadSummary {
   /** The message a click on the row should open: newest in this folder. */
   latestMessageId: string;
   count: number;
+  /**
+   * Every message in this folder's part of the conversation, oldest first.
+   * Bulk actions on a conversation row act on all of these — deleting a
+   * conversation has to delete the conversation.
+   */
+  messageIds: string[];
+  /** How many of them are unread, for moving the folder badge correctly. */
+  unreadCount: number;
   subject: string;
   snippet: string;
   from: { name: string | null; email: string };
@@ -418,10 +426,18 @@ export const mailApi = {
    * message id - so mail that predates threading still appears, as a
    * conversation of one, instead of vanishing from the list.
    */
-  folderThreads: (f: AuthedFetch, folderId: string, opts?: { skip?: number; take?: number }) => {
+  folderThreads: (
+    f: AuthedFetch,
+    folderId: string,
+    opts?: { skip?: number; take?: number; mailboxId?: string },
+  ) => {
     const params = new URLSearchParams();
     if (opts?.skip) params.set('skip', String(opts.skip));
     if (opts?.take) params.set('take', String(opts.take));
+    // Without this a shared queue silently lists YOUR inbox instead: the
+    // endpoint falls back to the caller's own mailbox when it is not told
+    // which one, and the rows that come back look perfectly plausible.
+    if (opts?.mailboxId) params.set('mailboxId', opts.mailboxId);
     const qs = params.size > 0 ? `?${params}` : '';
     return f(`/mail/folders/${folderId}/threads${qs}`).then((r) =>
       json<ThreadPage>(r, 'Could not load conversations.'),
