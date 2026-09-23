@@ -108,6 +108,118 @@ export async function joinMeeting(token, meetingId, password) {
   };
 }
 
+// ── THE GUEST DOOR ─────────────────────────────────────────────────────────
+//  Amit, 23 Sept 2026: somebody with no TatvaOS account should be able to join
+//  a meeting from the app, by following the link they were sent or by typing
+//  the code.
+//
+//  Nothing here is new on the server. The web has used this path since August
+//  (apps/web/app/connect/room/[code]/page.tsx); the app simply never called
+//  it. Three anonymous routes under /api/connect/g, and NO token goes to any
+//  of them — `request` leaves the Authorization header off when it is given
+//  none, which is the whole reason these can be written here rather than
+//  around api.js.
+//
+//  SENDING A TOKEN WOULD BE THE BUG. These routes are AllowAnonymous and a
+//  guest has nothing to send; a signed-in person who lands here should go
+//  through the authenticated join instead, or they get a guest seat with no
+//  host powers in their own meeting.
+//
+//  One failure sentence, deliberately. The server answers 404 for a code that
+//  does not exist, a meeting that is cancelled, an organisation with guests
+//  switched off, AND a meeting that has hit its guest ceiling — all identical,
+//  so a stranger cannot probe for which meetings are real. So the app must not
+//  invent a more specific reason than it was given.
+// ───────────────────────────────────────────────────────────────────────────
+
+/** The one sentence the server gives for every closed door. */
+export const DOOR_CLOSED = 'This meeting link does not work.';
+
+/**
+ * What is behind a code, before anyone gives their name. Free, anonymous, and
+ * it writes nothing — so it is safe to call the moment a code is typed.
+ *
+ * { title, state, scheduledStart, passwordRequired, locked, minutesLive, mode }
+ * `state` is active | ended | not_started.
+ */
+export async function doorstep(code) {
+  try {
+    const d = await request(`/api/connect/g/${encodeURIComponent(code)}`, { method: 'GET' });
+    return {
+      kind: 'open',
+      title: d?.title ?? '',
+      state: d?.state ?? 'not_started',
+      scheduledStart: d?.scheduledStart ?? null,
+      passwordRequired: d?.passwordRequired === true,
+      locked: d?.locked === true,
+      // Guests are told when a meeting is captioned live, in the same place
+      // the web tells them. Not a detail to drop on a smaller screen.
+      minutesLive: d?.minutesLive === true,
+      mode: d?.mode ?? 'recorded',
+    };
+  } catch (e) {
+    if (e?.status === 404) return { kind: 'closed', message: DOOR_CLOSED };
+    throw e;
+  }
+}
+
+/**
+ * Knock, with a name. Answers in the same two shapes the authenticated join
+ * uses, so the meeting screen cannot tell the difference once it holds a seat.
+ *
+ * A guest identity is minted FRESH at every door (the server says so), so
+ * there is nothing here worth storing to resume a seat later.
+ */
+export async function joinAsGuest(code, displayName, password) {
+  const name = String(displayName ?? '').trim();
+  // The server's own bounds, checked here so an empty name costs no round trip.
+  if (name.length < 1 || name.length > 100) {
+    return { kind: 'rejected', message: 'Give a name between 1 and 100 characters.' };
+  }
+
+  let data;
+  try {
+    data = await request(`/api/connect/g/${encodeURIComponent(code)}/join`, {
+      method: 'POST',
+      body: password ? { displayName: name, password } : { displayName: name },
+    });
+  } catch (e) {
+    // Each of these is a DIFFERENT answer from the server and is passed on as
+    // its own sentence: a wrong password is 403 and must not read as a dead
+    // link, or people retype a good code forever.
+    if (e?.status === 404) return { kind: 'closed', message: DOOR_CLOSED };
+    if (e?.status === 403) return { kind: 'password', message: 'That password is not right.' };
+    if (e?.status === 409) return { kind: 'closed', message: e.message };
+    if (e?.status === 400) return { kind: 'rejected', message: e.message };
+    throw e;
+  }
+
+  if (data?.status === 'joined') {
+    return {
+      kind: 'joined',
+      token: data.token,
+      wsUrl: data.wsUrl,
+      identity: data.identity,
+      mode: data.mode,
+      chatPolicy: data.chatPolicy,
+      roomKey: data.roomKey ?? null,
+      role: 'participant',       // a guest is never host; the server never says otherwise
+    };
+  }
+  if (data?.status === 'waiting') {
+    return {
+      kind: 'waiting',
+      waitToken: data.waitToken,
+      message: 'You are in the waiting room. Someone has to let you in.',
+    };
+  }
+  return {
+    kind: 'unexpected',
+    message: 'The server answered the join, but not with a status we know.',
+    detail: JSON.stringify(data ?? null).slice(0, 200),
+  };
+}
+
 /**
  * One poll of the waiting room. The API says every 2 seconds; the limiter
  * allows it. Answers, per docs/CONNECT_API.md:
