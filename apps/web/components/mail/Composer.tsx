@@ -246,6 +246,8 @@ export function Composer({
   const initialCc = mode === 'replyAll' ? replyAllCc(replyTo, selfAddress) : '';
   const [cc, setCc] = useState(initialCc);
   const [showCc, setShowCc] = useState(initialCc.length > 0);
+  /** Unfolds the real From/To/Cc/Subject rows — see the note where they render. */
+  const [expandFields, setExpandFields] = useState(false);
   const [bcc, setBcc] = useState('');
   const [showBcc, setShowBcc] = useState(false);
   // The contenteditable does not drive React state, so typing in the body would
@@ -708,6 +710,10 @@ export function Composer({
   const totalSize = files.reduce((n, f) => n + f.size, 0);
 
   const minimised = pane === 'min';
+  // One-line recipients: a REPLY sitting in the conversation, until somebody
+  // asks for the fields. A new message always gets the form — it has nobody
+  // to summarise.
+  const compact = placement === 'inline' && replyTo != null && !expandFields;
 
   return (
     <>
@@ -817,7 +823,31 @@ export function Composer({
           {!minimised && (
             <>
 
-        {/* Recipients */}
+        {/* ── A REPLY OPENS AS ONE LINE, NOT A FORM. ────────────────────────
+            Gmail shows a reply's recipients as a single quiet line and keeps
+            the fields folded away, because a reply already knows who it is
+            going to — the form is for the rare occasion you want to change
+            that. Four stacked rows (From, To, Cc, Subject) over a message
+            that had just been squeezed to a sliver is what Amit was looking
+            at on 23 September.
+
+            Click the line to unfold the real fields; they are the same
+            inputs, so nothing about sending changes. */}
+        {compact ? (
+          <div className="px-4">
+            <button
+              type="button"
+              onClick={() => setExpandFields(true)}
+              className="flex w-full items-center gap-2 border-b border-line py-2.5 text-left text-sm text-ink-muted transition hover:text-ink"
+            >
+              <span className="shrink-0">to</span>
+              <span className="min-w-0 flex-1 truncate text-ink">
+                {[to, cc].filter(Boolean).join(', ') || 'nobody yet'}
+              </span>
+              <span aria-hidden="true" className="shrink-0 text-ink-faint">▾</span>
+            </button>
+          </div>
+        ) : (
         <div className="px-4">
           {/* No focus-within here: this row holds no input, and a border
               that promises focus it can never show is furniture. */}
@@ -909,6 +939,7 @@ export function Composer({
             />
           </label>
         </div>
+        )}
 
         {/* ------------------------------------------------------------------
             The body AND everything attached to it, in ONE scrolling region.

@@ -107,6 +107,7 @@ export function MessageView({
   moveTargets,
   onMove,
   canArchive = true,
+  footer,
 }: {
   message: Message;
   bodyLoading?: boolean;
@@ -147,6 +148,11 @@ export function MessageView({
   onMove?: (m: Message, folderId: string) => void;
   /** False in Junk itself, where the button was drawn and did nothing. */
   canArchive?: boolean;
+  /**
+   * The reply, rendered at the end of the message rather than beside it.
+   * See the note where it is placed.
+   */
+  footer?: React.ReactNode;
   /**
    * The rest of this conversation, oldest first, INCLUDING the open message.
    *
@@ -562,6 +568,18 @@ export function MessageView({
             </div>
           </>
         )}
+
+        {/* ── THE REPLY, AT THE END OF THE MESSAGE. ────────────────────────
+            Amit, 23 September 2026: "currently its divided in two sections".
+            It was: the composer sat BESIDE the message in the pane's flex
+            column, so opening a reply squeezed the message to a sliver and
+            the screen read as two panels arguing over the height.
+
+            Rendered here it is the last thing in the message's own scroll
+            container, which is where Gmail puts it and what "reply" means —
+            you scroll past what was written to write back. The message keeps
+            its height; the reply is below it. */}
+        {footer && <div className="px-6 pb-6">{footer}</div>}
       </div>
     </article>
   );
