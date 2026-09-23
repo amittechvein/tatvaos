@@ -2892,15 +2892,17 @@ export default function Stage({ seat, meeting, prefs }: {
             — and the one thing they want to reach WITHOUT losing sight of
             anybody. Hidden while the chat panel is open, because then the
             button would just be a lid on something already in front of you. */}
+        {/* The count goes INSIDE the button. The button is position:fixed, so
+            a count beside it in a wrapper was placed against the wrapper's
+            spot in the page flow — the bottom-left corner, nowhere near the
+            button — and every unread message went unseen (Amit, 22 Sept). */}
         {panel !== 'chat' && (
-          <span className="cx-btnwrap">
-            <button type="button" className="cx-fab" onClick={() => openPanel('chat')}
-                    aria-label={unread > 0 ? `Chat, ${unread} unread` : 'Chat'}
-                    title="Chat and files">
-              <i className="ri-chat-3-fill" />
-            </button>
-            {unread > 0 && <span className="cx-count">{unread}</span>}
-          </span>
+          <button type="button" className="cx-fab" onClick={() => openPanel('chat')}
+                  aria-label={unread > 0 ? `Chat, ${unread} unread` : 'Chat'}
+                  title="Chat and files">
+            <i className="ri-chat-3-fill" />
+            {unread > 0 && <span className="cx-count" aria-hidden="true">{unread}</span>}
+          </button>
         )}
 
         {more && <div className="cx-more" role="menu">{moreItems}</div>}
