@@ -45,6 +45,29 @@ const Ctx = createContext<MailboxState>({
 
 export const useMailbox = () => useContext(Ctx);
 
+/**
+ * The mailbox this browser last had open.
+ *
+ * ── WHY IT IS REMEMBERED (Amit, 23 September 2026) ──────────────────────
+ *
+ *  "If we are in the shared inbox and doing browser refresh it's back to the
+ *  main account instead of old account." The selection lived in React state
+ *  only, and the loader always chose the OWN mailbox, so every reload — and
+ *  every link followed from outside Mail — threw somebody working a shared
+ *  queue back into their own inbox, usually without them noticing which
+ *  mailbox they were then answering from.
+ *
+ *  Per browser rather than on the account: which queue you are working is a
+ *  property of the window you are sitting at, and somebody with the shared
+ *  box open on a desk machine should not have their phone follow it.
+ *
+ *  The stored id is NOT trusted. It is matched against the list the server
+ *  just returned, so a mailbox that has been taken away, deleted or renamed
+ *  out of your access falls back to your own — access is decided by that
+ *  list, never by this value.
+ */
+const LAST_MAILBOX_KEY = 'tatvaos.mail.lastMailbox';
+
 export function MailboxProvider({ children }: { children: React.ReactNode }) {
   const { authedFetch } = useAuth();
   const [mailboxes, setMailboxes] = useState<MailboxChoice[]>([]);
@@ -56,7 +79,14 @@ export function MailboxProvider({ children }: { children: React.ReactNode }) {
       .then((list) => {
         if (!alive) return;
         setMailboxes(list);
-        setSelectedId(list.find((m) => m.isOwn)?.id ?? list[0]?.id ?? null);
+
+        let remembered: string | null = null;
+        try { remembered = window.localStorage.getItem(LAST_MAILBOX_KEY); } catch { /* fine */ }
+        const stillThere = remembered !== null && list.some((m) => m.id === remembered);
+
+        setSelectedId(stillThere
+          ? remembered
+          : list.find((m) => m.isOwn)?.id ?? list[0]?.id ?? null);
       })
       // An account with no mailbox, or an older API: Mail still works, there
       // is simply nothing to switch between.
@@ -77,7 +107,16 @@ export function MailboxProvider({ children }: { children: React.ReactNode }) {
       canSend: !isShared
         || current.permissions.includes('send_as')
         || current.permissions.includes('full'),
-      select: setSelectedId,
+      // Remembered on the way through, so the next load opens the same
+      // queue. Storage failures are ignored: a private window that refuses
+      // to remember should still be able to switch.
+      select: (id: string | null) => {
+        try {
+          if (id === null) window.localStorage.removeItem(LAST_MAILBOX_KEY);
+          else window.localStorage.setItem(LAST_MAILBOX_KEY, id);
+        } catch { /* fine */ }
+        setSelectedId(id);
+      },
     };
   }, [mailboxes, selectedId]);
 
