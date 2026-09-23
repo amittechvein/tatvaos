@@ -510,7 +510,7 @@ function NotesCard({
                   : t.text}
               </pre>
               <div className="text-[0.6875rem] text-ink-muted">
-                Transcribed by {t.provider ?? 'the configured service'}
+                Transcribed by TatvaOS AI
                 {t.language ? ` · ${t.language}` : ''}
                 {' · '}
                 Machine transcription: expect names and numbers to need checking.

@@ -60,12 +60,17 @@ public static class OrgAiEndpoints
             platformConfigured = ai.IsConfigured,
             model = ai.IsConfigured ? ai.Model : null,
             // Where the data goes when enabled — said HERE, by the API, so the
-            // consent screen can never soften it. Update when the provider
-            // moves to Azure India; that is the point of it being a string.
-            disclosure = "When enabled, meeting transcripts and (in future) mail "
-                       + "content from this organisation are sent to OpenAI in the "
-                       + "United States to be processed. Nothing is sent while this "
-                       + "is off.",
+            // consent screen can never soften it. The place comes from
+            // Ai:DataLocation, which the gateway REQUIRES beside the key and
+            // checks against the hosts it knows (api.openai.com is in the
+            // United States); a vendor move that forgets this setting turns AI
+            // off rather than letting this sentence go stale. Mr. Singh, 23
+            // Sept 2026: "nobody will remember it exists" — so nothing has to.
+            disclosure = ai.IsConfigured
+                ? "When enabled, meeting transcripts from this organisation are "
+                  + $"processed by TatvaOS AI on a third-party service in {ai.DataLocation}. "
+                  + "Nothing is sent while this is off."
+                : "TatvaOS AI is not configured on this platform. Nothing is sent.",
         });
     }
 

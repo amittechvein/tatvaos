@@ -65,6 +65,15 @@ public interface IAiGateway
     string Model { get; }
 
     /// <summary>
+    /// Where content goes when an organisation switches AI on, as a phrase
+    /// for a sentence: "the United States". Read from Ai:DataLocation, and
+    /// REQUIRED beside Ai:ApiKey — a key with no stated location leaves the
+    /// gateway unconfigured, because a consent screen that cannot say where
+    /// the data goes must not offer the switch. Null when not configured.
+    /// </summary>
+    string? DataLocation { get; }
+
+    /// <summary>
     /// May the CURRENT TENANT'S content actually be sent? IsConfigured says
     /// the deployment has a key; this says this organisation consented
     /// (core.tenants.allow_ai — Amit's ruling of 27 Aug 2026, default off).
