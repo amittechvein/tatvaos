@@ -648,13 +648,21 @@ step "Pruning the build cache"
 CACHE_MAX_GB=${CACHE_MAX_GB:-20}
 MIN_FREE_GB=${MIN_FREE_GB:-25}
 
-# Sizes come from docker's own summary ("Build Cache|51.89GB"), converted to
-# whole GB. Parsed as TEXT on purpose: the JSON form reports sizes as strings
-# too, and buildx du is empty on this daemon.
-cache_gb() {
-    docker system df --format '{{.Type}}|{{.Size}}' 2>/dev/null | awk -F'|' '
+# Sizes come from docker's own summary, converted to whole GB. Parsed as TEXT
+# on purpose: the JSON form reports sizes as strings too, and `buildx du` is
+# empty on this daemon. Field 2 is the total, field 3 what docker considers
+# RECLAIMABLE ("Build Cache|51.89GB|6.184GB").
+#
+# The difference matters and cost a rehearsal to learn: a cache can be large
+# and ENTIRELY IN USE by the current images. On 23 Sept, after a hand clean,
+# 3.1 GB remained with 0B reclaimable, and `prune -af` correctly freed
+# nothing. A first version of this step called that a failure — a red line on
+# a healthy deploy, which is the false alarm PR 227 was about.
+cache_field() {
+    docker system df --format '{{.Type}}|{{.Size}}|{{.Reclaimable}}' 2>/dev/null | awk -F'|' -v f="$1" '
         $1 == "Build Cache" {
-            v = $2; sub(/[A-Za-z]+$/, "", v); unit = $2; sub(/^[0-9.]+/, "", unit)
+            v = $f; sub(/ .*$/, "", v)            # "6.184GB (29%)" -> "6.184GB"
+            unit = v; sub(/^[0-9.]+/, "", unit); sub(/[A-Za-z]+$/, "", v)
             if (unit ~ /^TB/) v *= 1024; else if (unit ~ /^MB/) v /= 1024
             else if (unit ~ /^kB|^KB/) v /= 1048576; else if (unit ~ /^B/) v = 0
             printf "%.1f", v; found = 1
@@ -662,20 +670,26 @@ cache_gb() {
         END { if (!found) print "-1" }'
 }
 free_gb() { df -BG --output=avail / | awk 'NR==2 {gsub("G", ""); print $1 + 0}'; }
+over() { awk -v a="$1" -v b="$2" 'BEGIN{print (a > b) ? 1 : 0}'; }
 
-before_cache=$(cache_gb); before_free=$(free_gb)
+before_cache=$(cache_field 2); reclaimable=$(cache_field 3); before_free=$(free_gb)
 
-if [ "$(awk -v a="$before_cache" -v b="$CACHE_MAX_GB" 'BEGIN{print (a > b) ? 1 : 0}')" = "1" ]    || [ "${before_free:-999}" -lt "$MIN_FREE_GB" ]; then
-    note "build cache ${before_cache} GB, ${before_free} GB free — over the ${CACHE_MAX_GB} GB / under the ${MIN_FREE_GB} GB bound, pruning"
-    docker builder prune -af 2>&1 | tail -1 | sed 's/^/   /'
-    docker image prune -f  2>&1 | tail -1 | sed 's/^/   /'
-    after_cache=$(cache_gb); after_free=$(free_gb)
-    # CHECKED, not asserted. The line this replaces printed "cache bounded at
-    # 8 GB" every deploy while the cache grew to 51.89 GB.
-    if [ "$(awk -v a="$after_cache" -v b="$before_cache" 'BEGIN{print (a < b) ? 1 : 0}')" = "1" ]        || [ "${after_free:-0}" -gt "${before_free:-0}" ]; then
-        ok "build cache ${before_cache} -> ${after_cache} GB; free on / ${before_free} -> ${after_free} GB"
+if [ "$(over "$before_cache" "$CACHE_MAX_GB")" = "1" ] || [ "${before_free:-999}" -lt "$MIN_FREE_GB" ]; then
+    if [ "$(over "$reclaimable" 1)" = "0" ]; then
+        # Large but all of it in use. Nothing to do, and nothing wrong.
+        ok "build cache ${before_cache} GB but only ${reclaimable} GB reclaimable — all in use, nothing pruned; ${before_free} GB free on /"
     else
-        bad "prune ran and freed nothing: cache still ${after_cache} GB, ${after_free} GB free. Clean by hand."
+        note "build cache ${before_cache} GB (${reclaimable} GB reclaimable), ${before_free} GB free — pruning"
+        docker builder prune -af 2>&1 | tail -1 | sed 's/^/   /'
+        docker image prune -f  2>&1 | tail -1 | sed 's/^/   /'
+        after_cache=$(cache_field 2); after_free=$(free_gb)
+        # CHECKED, not asserted. The line this replaces printed "cache bounded
+        # at 8 GB" every deploy while the cache grew to 51.89 GB.
+        if [ "$(over "$before_cache" "$after_cache")" = "1" ] || [ "${after_free:-0}" -gt "${before_free:-0}" ]; then
+            ok "build cache ${before_cache} -> ${after_cache} GB; free on / ${before_free} -> ${after_free} GB"
+        else
+            bad "prune had ${reclaimable} GB to reclaim and freed nothing: cache still ${after_cache} GB, ${after_free} GB free. Clean by hand."
+        fi
     fi
 else
     ok "build cache ${before_cache} GB (bound ${CACHE_MAX_GB} GB), ${before_free} GB free on / — nothing to prune"

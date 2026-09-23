@@ -22,10 +22,13 @@ bad()  { fail=$((fail + 1)); printf '  FAIL  %s\n' "$1"; }
 
 # The parser, lifted from deploy.sh. If you change it there, change it here
 # and watch this test fail first.
-parse() {
-    printf 'Images|11.13GB\nBuild Cache|%s\nLocal Volumes|17.11GB\n' "$1" | awk -F'|' '
+parse() {  # field 2 = total, field 3 = reclaimable
+    printf 'Images|11.13GB|3.313GB (29%%)
+Build Cache|%s|%s
+' "$1" "${3:-0B}"     | awk -F'|' -v f="${2:-2}" '
         $1 == "Build Cache" {
-            v = $2; sub(/[A-Za-z]+$/, "", v); unit = $2; sub(/^[0-9.]+/, "", unit)
+            v = $f; sub(/ .*$/, "", v)
+            unit = v; sub(/^[0-9.]+/, "", unit); sub(/[A-Za-z]+$/, "", v)
             if (unit ~ /^TB/) v *= 1024; else if (unit ~ /^MB/) v /= 1024
             else if (unit ~ /^kB|^KB/) v /= 1048576; else if (unit ~ /^B/) v = 0
             printf "%.1f", v; found = 1
@@ -33,8 +36,8 @@ parse() {
         END { if (!found) print "-1" }'
 }
 
-check() {  # what, input, expected
-    local got; got=$(parse "$2")
+check() {  # what, input, expected, [field], [reclaimable]
+    local got; got=$(parse "$2" "${4:-2}" "${5:-0B}")
     if [ "$got" = "$3" ]; then ok "$1 ($2 -> $got GB)"
     else bad "$1: $2 gave $got GB, expected $3"; fi
 }
@@ -47,6 +50,13 @@ check "megabytes are not read as gigabytes"    "820.5MB" "0.8"
 check "terabytes, if it ever gets that far"    "1.2TB"   "1228.8"
 check "kilobytes round to nothing"             "512kB"   "0.0"
 check "an empty cache"                         "0B"      "0.0"
+
+# The RECLAIMABLE column, which docker writes with a percentage after it. A
+# rehearsal on production, 23 Sept, found the cache can be large and entirely
+# IN USE: 3.059GB total, 0B reclaimable, and `prune -af` correctly freed
+# nothing. Reading the total alone made the step call that a failure.
+check "reclaimable, with docker's percentage"   "51.89GB" "6.2" 3 "6.184GB (29%)"
+check "nothing reclaimable: all cache in use"   "3.059GB" "0.0" 3 "0B"
 
 # A parser that cannot fail is not a parser. If docker ever stops printing the
 # row, the reading must say so rather than quietly return zero and let the
