@@ -8,7 +8,7 @@ type IconName =
   | 'bookmark' | 'settings' | 'plus-circle'
   | 'expand' | 'collapse' | 'minimise' | 'list-ul' | 'list-ol' | 'link' | 'emoji'
   | 'split-v' | 'split-h' | 'split-none' | 'chevron-down'
-  | 'drive' | 'clock' | 'lock' | 'print' | 'spellcheck';
+  | 'drive' | 'clock' | 'lock' | 'print' | 'spellcheck' | 'image';
 
 const PATHS: Record<IconName, string> = {
   inbox: 'M4 13h4l2 3h4l2-3h4M4 13l2-8h12l2 8M4 13v6h16v-6',
@@ -49,6 +49,8 @@ const PATHS: Record<IconName, string> = {
   'list-ul': 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
   'list-ol': 'M10 6h11M10 12h11M10 18h11M4 6h1v4M4 10h2M4 16h2v2H4z',
   link: 'M10 13a5 5 0 007 0l2-2a5 5 0 00-7-7l-1 1M14 11a5 5 0 00-7 0l-2 2a5 5 0 007 7l1-1',
+  // A framed picture: rectangle, a sun in the corner, a hill across the bottom.
+  image: 'M4 5h16v14H4V5zm3 4h.01M4 16l4.5-4.5L13 16m-2 0l3-3 4 4',
   emoji: 'M12 21a9 9 0 100-18 9 9 0 000 18zM9 10h.01M15 10h.01M8 15c1 1.3 2.4 2 4 2s3-.7 4-2',
   drive: 'M8 4h8l4 8-4 8H8l-4-8z',
   clock: 'M12 21a9 9 0 100-18 9 9 0 000 18zM12 7v5l3 2',
