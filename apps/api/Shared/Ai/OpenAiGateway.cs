@@ -84,6 +84,20 @@ public sealed class OpenAiGateway : IAiGateway
 
     public string Model { get; }
 
+    public string? DataLocation { get; }
+
+    /// <summary>
+    /// Hosts whose country is public knowledge. The disclosure on the consent
+    /// screen is built from Ai:DataLocation; this table is what stops that
+    /// setting from lying about a host it recognises. A vendor move that
+    /// keeps the old location string fails closed here, at startup, instead
+    /// of on a school's consent screen.
+    /// </summary>
+    private static readonly (string Host, string Country)[] KnownHosts =
+    [
+        ("api.openai.com", "United States"),
+    ];
+
     public OpenAiGateway(
         IHttpClientFactory http, IConfiguration config, ILogger<OpenAiGateway> log,
         TatvaOS.Api.Shared.Tenancy.TenantContext tenant,
@@ -98,6 +112,31 @@ public sealed class OpenAiGateway : IAiGateway
         _apiKey = config["Ai:ApiKey"]?.Trim();
         Model = (config["Ai:Model"] ?? "").Trim();
 
+        var location = config["Ai:DataLocation"]?.Trim();
+
+        if (!string.IsNullOrWhiteSpace(_apiKey) && string.IsNullOrWhiteSpace(location))
+        {
+            // A key without a location is REFUSED, not tolerated. The consent
+            // screen prints the location; without one it would print a lie or
+            // a blank, and either is worse than no AI.
+            _log.LogError(
+                "AI is configured with Ai:ApiKey but Ai:DataLocation is not set. Refused: "
+                + "AI features are unavailable until the location the data goes to is stated.");
+            _apiKey = null;
+        }
+
+        var host = Uri.TryCreate(_baseUrl, UriKind.Absolute, out var u) ? u.Host : "";
+        foreach (var (knownHost, country) in KnownHosts)
+        {
+            if (!string.Equals(host, knownHost, StringComparison.OrdinalIgnoreCase)) continue;
+            if (location is not null && location.Contains(country, StringComparison.OrdinalIgnoreCase)) continue;
+            _log.LogError(
+                "Ai:BaseUrl points at {Host}, which is in {Country}, but Ai:DataLocation says "
+                + "'{Location}'. Refused: the consent screen would name the wrong place.",
+                host, country, location ?? "(unset)");
+            _apiKey = null;
+        }
+
         if (string.IsNullOrWhiteSpace(_apiKey) || Model.Length == 0)
         {
             // INFORMATION, not error. AI is a capability a deployment opts
@@ -109,6 +148,8 @@ public sealed class OpenAiGateway : IAiGateway
                 + "unavailable on this server. Everything else is unaffected.");
             _apiKey = null;
         }
+
+        DataLocation = _apiKey is not null ? location : null;
     }
 
     public bool IsConfigured => _apiKey is not null && Model.Length > 0;
