@@ -17,7 +17,40 @@ import { Composer, type ComposeMode } from '@/components/mail/Composer';
 import { useMailbox } from '@/components/mail/MailboxSwitcher';
 import { Icon } from '@/components/ui/Icon';
 
-const PAGE_SIZE = 50;
+// ---------------------------------------------------------------------------
+//  HOW MANY ROWS AT ONCE — the person's choice, remembered.
+//
+//  Amit, 23 September 2026, looking at a Sent folder of 1329: "showing 50 in
+//  one page, give option to select 50,100,150,250,500,all".
+//
+//  500 is the server's ceiling for ONE request (MailEndpoints.MaxPageSize),
+//  so "All" is not a bigger request — it is consecutive requests of 500 until
+//  the folder runs out. That keeps the expensive shape (the attachment query
+//  runs over a whole page) bounded whatever is asked for.
+//
+//  ALL_CEILING protects the BROWSER, not the server: every row is a React
+//  element, and a folder of 40,000 would freeze the tab rather than fill it.
+//  When a folder is larger than this, the list says so instead of pretending
+//  it showed everything — the count on screen is the thing being trusted.
+// ---------------------------------------------------------------------------
+const PAGE_SIZES = [50, 100, 150, 250, 500] as const;
+type PageSize = number | 'all';
+const DEFAULT_PAGE_SIZE = 50;
+const SERVER_MAX_TAKE = 500;
+const ALL_CEILING = 5000;
+const PAGE_SIZE_KEY = 'tatvaos.mail.pageSize';
+
+function loadPageSize(): PageSize {
+  if (typeof window === 'undefined') return DEFAULT_PAGE_SIZE;
+  try {
+    const raw = window.localStorage.getItem(PAGE_SIZE_KEY);
+    if (raw === 'all') return 'all';
+    const n = Number(raw);
+    return (PAGE_SIZES as readonly number[]).includes(n) ? n : DEFAULT_PAGE_SIZE;
+  } catch {
+    return DEFAULT_PAGE_SIZE;
+  }
+}
 
 /**
  * The Yzen three-pane mail app: a left navigation rail, a message list, and a
@@ -58,6 +91,14 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   }, []);
   const [total, setTotal] = useState(0);
   const [skip, setSkip] = useState(0);
+  // Read on mount, not in the initialiser: localStorage does not exist while
+  // Next renders this on the server.
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
+  useEffect(() => { setPageSize(loadPageSize()); }, []);
+  /** True while "All" is still fetching its consecutive pages. */
+  const [loadingAll, setLoadingAll] = useState(false);
+  /** Set when a folder is bigger than a browser should be asked to draw. */
+  const [cappedAt, setCappedAt] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [categories, setCategories] = useState<MailCategory[]>([]);
   const [labelMenu, setLabelMenu] = useState(false);
@@ -144,20 +185,59 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     return () => { cancelled = true; };
   }, [authedFetch, mailboxId]);
 
-  const loadMessages = useCallback(
-    async (folderId: string, skipTo: number) => {
+  // Takes the size EXPLICITLY. setPageSize does not apply until the next
+  // render, so a loader that read the state would fetch the old size on the
+  // very click that changed it — the chooser would appear to lag by one.
+  const loadMessagesWith = useCallback(
+    async (folderId: string, skipTo: number, size: PageSize) => {
       setListError(null);
+      setCappedAt(null);
       try {
-        const page = await mailApi.messages(authedFetch, folderId, { skip: skipTo, take: PAGE_SIZE, mailboxId });
+        if (size === 'all') {
+          // Consecutive pages of the server's maximum, not one huge request.
+          // The first answer carries the total, so the loop knows when to
+          // stop without asking for a count first.
+          setLoadingAll(true);
+          const rows: Message[] = [];
+          let got = 0;
+          let folderTotal = 0;
+          do {
+            const page = await mailApi.messages(
+              authedFetch, folderId, { skip: got, take: SERVER_MAX_TAKE, mailboxId },
+            );
+            folderTotal = page.total;
+            rows.push(...page.messages);
+            got += page.messages.length;
+            // A page shorter than asked for means the folder ran out; without
+            // this an off-by-one in the total would spin forever.
+            if (page.messages.length < SERVER_MAX_TAKE) break;
+          } while (got < Math.min(folderTotal, ALL_CEILING));
+
+          setMessages(rows);
+          setTotal(folderTotal);
+          setSkip(0);
+          setSelectedIds(new Set());
+          if (folderTotal > rows.length) setCappedAt(rows.length);
+          return;
+        }
+
+        const page = await mailApi.messages(authedFetch, folderId, { skip: skipTo, take: size, mailboxId });
         setMessages(page.messages);
         setTotal(page.total);
         setSkip(skipTo);
         setSelectedIds(new Set());
       } catch (e) {
         setListError(e instanceof Error ? e.message : 'Could not load messages.');
+      } finally {
+        setLoadingAll(false);
       }
     },
     [authedFetch, mailboxId],
+  );
+
+  const loadMessages = useCallback(
+    (folderId: string, skipTo: number) => loadMessagesWith(folderId, skipTo, pageSize),
+    [loadMessagesWith, pageSize],
   );
 
   // ---- Initial load: mailbox + folders --------------------------------
@@ -219,8 +299,12 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     const tick = async () => {
       if (document.visibilityState !== 'visible') return;
       if (query.trim()) return;
+      // Not while "All" is on screen. A tick that fetched one page would
+      // replace a list of 1329 rows with the first 500 — the poll exists to
+      // keep the list fresh, not to silently shorten it.
+      if (pageSize === 'all') return;
       try {
-        const page = await mailApi.messages(authedFetch, folderId, { skip, take: PAGE_SIZE, mailboxId });
+        const page = await mailApi.messages(authedFetch, folderId, { skip, take: pageSize, mailboxId });
         setMessages(page.messages);
         setTotal(page.total);
       } catch { /* transient; the next tick retries */ }
@@ -254,7 +338,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
       clearInterval(t);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [folderId, skip, query, authedFetch, refreshFolders, mailboxId]);
+  }, [folderId, skip, query, authedFetch, refreshFolders, mailboxId, pageSize]);
 
   // ---- Search ---------------------------------------------------------
   //
@@ -274,7 +358,8 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     let cancelled = false;
     setSearching(true);
     const t = setTimeout(() => {
-      mailApi.search(authedFetch, term, { take: PAGE_SIZE, mailboxId })
+      mailApi.search(authedFetch, term,
+        { take: pageSize === 'all' ? SERVER_MAX_TAKE : pageSize, mailboxId })
         .then((page) => {
           if (cancelled) return;
           setSearchHits(page.messages);
@@ -285,7 +370,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     }, 250);
 
     return () => { cancelled = true; clearTimeout(t); };
-  }, [query, authedFetch, mailboxId]);
+  }, [query, authedFetch, mailboxId, pageSize]);
 
   // What the list renders: search results when searching, else the folder page.
   const filtered: Message[] = searchHits ?? messages;
@@ -905,31 +990,71 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
                 ) : (
                   <>{searchTotal} result{searchTotal === 1 ? '' : 's'} in all mail</>
                 )
+              ) : loadingAll ? (
+                <>Loading all {total}&hellip;</>
               ) : (
-                <>Showing {rangeStart}&ndash;{rangeEnd} of {total}</>
+                <>
+                  Showing {rangeStart}&ndash;{rangeEnd} of {total}
+                  {/* Said, not hidden: the number on screen is the thing
+                      being trusted, so a folder too big to draw in one go
+                      must not look like it was shown in full. */}
+                  {cappedAt !== null && (
+                    <span className="ml-1 text-ink-muted">
+                      &mdash; the first {cappedAt} of them, which is as many as
+                      one page can hold
+                    </span>
+                  )}
+                </>
               )}
             </span>
           )}
           {!query && selectedIds.size === 0 && (
-            <span className="ml-auto flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => folder && void loadMessages(folder.id, Math.max(0, skip - PAGE_SIZE))}
-                disabled={skip === 0}
-                aria-label="Newer"
-                className="rounded p-1 transition enabled:hover:bg-canvas enabled:hover:text-ink disabled:opacity-40"
-              >
-                <Icon name="chevron-left" className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => folder && void loadMessages(folder.id, skip + PAGE_SIZE)}
-                disabled={skip + PAGE_SIZE >= total}
-                aria-label="Older"
-                className="rounded p-1 transition enabled:hover:bg-canvas enabled:hover:text-ink disabled:opacity-40"
-              >
-                <Icon name="chevron-right" className="h-4 w-4" />
-              </button>
+            <span className="ml-auto flex items-center gap-2">
+              {/* Rows per page. A plain select: it is a choice from six
+                  values, and a menu would be two clicks for the same thing. */}
+              <label className="flex items-center gap-1.5">
+                <span className="text-ink-muted">Show</span>
+                <select
+                  value={String(pageSize)}
+                  aria-label="Messages per page"
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    const next: PageSize = v === 'all' ? 'all' : Number(v);
+                    setPageSize(next);
+                    try { window.localStorage.setItem(PAGE_SIZE_KEY, v); } catch { /* fine */ }
+                    // Back to the first page: staying on "rows 900-950" while
+                    // the page size becomes 500 would be a window onto
+                    // nothing anybody asked for.
+                    if (folder) void loadMessagesWith(folder.id, 0, next);
+                  }}
+                  className="rounded-lg border border-line bg-surface px-2 py-1 text-xs text-ink"
+                >
+                  {PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
+                  <option value="all">All</option>
+                </select>
+              </label>
+              {pageSize !== 'all' && (
+                <span className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => folder && void loadMessages(folder.id, Math.max(0, skip - pageSize))}
+                    disabled={skip === 0}
+                    aria-label="Newer"
+                    className="rounded p-1 transition enabled:hover:bg-canvas enabled:hover:text-ink disabled:opacity-40"
+                  >
+                    <Icon name="chevron-left" className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => folder && void loadMessages(folder.id, skip + pageSize)}
+                    disabled={skip + pageSize >= total}
+                    aria-label="Older"
+                    className="rounded p-1 transition enabled:hover:bg-canvas enabled:hover:text-ink disabled:opacity-40"
+                  >
+                    <Icon name="chevron-right" className="h-4 w-4" />
+                  </button>
+                </span>
+              )}
             </span>
           )}
         </div>
