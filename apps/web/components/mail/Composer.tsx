@@ -9,6 +9,7 @@ import { useAuth } from '@/lib/auth';
 import { mailApi } from '@/lib/mail';
 import { linkApi } from '@/lib/space';
 import { fetchMyStorage } from '@/lib/myStorage';
+import { cleanPastedHtml } from '@/lib/pasteHtml';
 
 /** Comma- or semicolon-separated addresses → a clean list. */
 function splitAddresses(raw: string): string[] {
@@ -342,6 +343,35 @@ export function Composer({
   }
 
   /** Arrow keys walk the suggestions; Enter/Tab picks; Escape dismisses. */
+  /**
+   * Paste, cleaned.
+   *
+   * The browser's own contenteditable paste inserts the clipboard's HTML
+   * verbatim — which is how a Google search result arrived UPSIDE DOWN in a
+   * new message (Amit, 23 Sept 2026): the copied markup carried a transform,
+   * and the composer applied it faithfully. Whatever lands here is what gets
+   * SENT, so this is the last point at which somebody else's CSS can be
+   * stopped from deciding what a message looks like in the recipient's inbox.
+   *
+   * Formatting survives; layout control does not. See lib/pasteHtml.
+   */
+  function onEditorPaste(e: React.ClipboardEvent) {
+    const html = e.clipboardData.getData('text/html');
+    const text = e.clipboardData.getData('text/plain');
+    if (!html && !text) return;
+
+    e.preventDefault();
+    const clean = html ? cleanPastedHtml(html) : '';
+
+    // insertHTML/insertText rather than setting innerHTML: both go through
+    // the browser's own undo stack, so ctrl+Z after a paste behaves the way
+    // it does everywhere else.
+    if (clean) document.execCommand('insertHTML', false, clean);
+    else document.execCommand('insertText', false, text);
+
+    setBodyEdits((n) => n + 1);
+  }
+
   function onEditorKeyDown(e: React.KeyboardEvent) {
     if (!mention || mentionHits.length === 0) return;
     if (e.key === 'ArrowDown') {
@@ -953,6 +983,7 @@ export function Composer({
             data-placeholder="Write your message"
             onInput={() => { setBodyEdits((n) => n + 1); detectMention(); }}
             onKeyDown={onEditorKeyDown}
+            onPaste={onEditorPaste}
             // The popup is positioned at the caret; a scrolled editor moves
             // the caret out from under it, so close rather than drift.
             onScroll={() => setMention(null)}
