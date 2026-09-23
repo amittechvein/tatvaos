@@ -229,10 +229,10 @@ public static class SignupEndpoints
         if (d.EmailVerifiedAt is null || d.PhoneVerifiedAt is null)
             return Results.BadRequest(new { error = "Verify both codes first." });
 
-        if (string.IsNullOrEmpty(req.Password) || req.Password.Length < 12)
+        if (string.IsNullOrEmpty(req.Password) || req.Password.Length < PasswordPolicy.MinimumLength)
             return Results.BadRequest(new
             {
-                error = "Choose a password of at least 12 characters. A short phrase you will remember beats a short password you will not.",
+                error = PasswordPolicy.TooShort,
             });
 
         // Belt and braces on the email: StartAsync checks this too, but a

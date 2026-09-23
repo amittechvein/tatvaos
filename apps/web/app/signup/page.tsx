@@ -6,6 +6,7 @@ import { Suspense, useCallback, useEffect, useState } from 'react';
 import { Button, Spinner } from '@/components/ui/Kit';
 import { Field, Input, Select } from '@/components/ui/Form';
 import { Alert } from '@/components/ui/Page';
+import { MIN_PASSWORD } from '@/components/ui/PasswordStrength';
 
 // ============================================================================
 //  Converted off MUI. Notes for the next editor.
@@ -313,7 +314,7 @@ function Wizard() {
                      onChange={(e) => setAdminPhone(e.target.value)} />
             </Field>
             <Field label="Choose a password" required
-                   hint="At least 12 characters. A short phrase you will remember beats a short password you will not.">
+                   hint={`At least ${MIN_PASSWORD} characters. A short phrase you will remember beats a short password you will not.`}>
               <Input type="password" value={password}
                      onChange={(e) => setPassword(e.target.value)} />
             </Field>
@@ -322,7 +323,7 @@ function Wizard() {
                  nextDisabled={adminName.trim().length < 2
                    || !/\S+@\S+\.\S+/.test(adminEmail)
                    || adminPhone.replace(/\D/g, '').length < 8
-                   || password.length < 12} />
+                   || password.length < MIN_PASSWORD} />
           </Pane>
         )}
 
@@ -374,7 +375,7 @@ function Wizard() {
                 unmount under the cursor at the first keystroke. */}
             {resumed && (
               <Field label="Choose a password" required
-                     hint="At least 12 characters — you are back on a fresh session, so set it here.">
+                     hint={`At least ${MIN_PASSWORD} characters — you are back on a fresh session, so set it here.`}>
                 <Input type="password" value={password}
                        onChange={(e) => setPassword(e.target.value)} />
               </Field>
@@ -395,7 +396,7 @@ function Wizard() {
 
             <Nav onBack={() => setStep(1)} onNext={verifyCodes} busy={busy}
                  nextLabel="Verify and create account"
-                 nextDisabled={password.length < 12
+                 nextDisabled={password.length < MIN_PASSWORD
                    || (!emailOk && emailCode.length !== 6)
                    || (!phoneOk && phoneCode.length !== 6)} />
           </Pane>
