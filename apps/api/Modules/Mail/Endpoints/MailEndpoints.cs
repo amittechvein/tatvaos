@@ -643,6 +643,23 @@ public static class MailEndpoints
     private const string AttachmentsFolderName = "Email attachments";
 
     /// <summary>
+    /// Most rows one list request may return — messages, threads or search.
+    ///
+    /// Raised from 100 on 23 September 2026, when the list gained a
+    /// "50 / 100 / 150 / 250 / 500 / All" chooser. A CLAMP IS SILENT: asking
+    /// for 250 against the old ceiling returned 100 rows under a total of
+    /// 1329, and nothing in the response said the request had been trimmed.
+    /// A chooser on top of that would have been a menu of numbers where three
+    /// of them quietly meant the same thing.
+    ///
+    /// 500 rather than more, because the attachment-chip query in each of
+    /// these endpoints runs over the whole page. "All" is the CLIENT asking
+    /// for consecutive pages of this size, so no single request can be made
+    /// arbitrarily expensive by a number in a query string.
+    /// </summary>
+    private const int MaxPageSize = 500;
+
+    /// <summary>
     /// The person's "Email attachments" folder in Space, or null to fall back
     /// to their personal root.
     ///
@@ -1517,7 +1534,7 @@ public static class MailEndpoints
         var rows = await query
             .OrderByDescending(m => m.ReceivedAt)
             .Skip(Math.Max(0, skip ?? 0))
-            .Take(Math.Clamp(take ?? 50, 1, 100))
+            .Take(Math.Clamp(take ?? 50, 1, MaxPageSize))
             .Select(m => new
             {
                 m.Id, m.FolderId, m.ThreadId, m.FromName, m.FromAddr, m.ToAddrs,
@@ -1730,7 +1747,7 @@ public static class MailEndpoints
 
         var rows = await ordered
             .Skip(Math.Max(0, skip ?? 0))
-            .Take(Math.Clamp(take ?? 50, 1, 100))
+            .Take(Math.Clamp(take ?? 50, 1, MaxPageSize))
             .Select(m => new
             {
                 m.Id, m.FolderId, m.ThreadId, m.FromName, m.FromAddr, m.ToAddrs,
@@ -1828,7 +1845,7 @@ public static class MailEndpoints
             .Select(g => new { Key = g.Key, Latest = g.Max(x => x.ReceivedAt) })
             .OrderByDescending(x => x.Latest)
             .Skip(Math.Max(0, skip ?? 0))
-            .Take(Math.Clamp(take ?? 50, 1, 100))
+            .Take(Math.Clamp(take ?? 50, 1, MaxPageSize))
             .ToListAsync(ct);
 
         if (page.Count == 0)
