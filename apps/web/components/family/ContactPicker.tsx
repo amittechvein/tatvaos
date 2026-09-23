@@ -65,11 +65,26 @@ export function ContactPicker({ value, onPick, children }: {
 
   const fragment = currentFragment(value);
 
+  // ── SUGGEST ONLY AFTER SOMEBODY TYPES. ─────────────────────────────────
+  //
+  //  Amit, 23 September 2026: "still in reply show suggestion instead auto
+  //  pick." Opening a reply fills To (and Cc, on reply-all) from the message
+  //  being answered. The picker suggested from the VALUE, so both fields
+  //  immediately queried and opened — two stacked lists covering Cc, Subject
+  //  and the top of the message, offering to "complete" an address that was
+  //  already correct and already chosen.
+  //
+  //  A suggestion list is an answer to typing. Nobody typed. So the list
+  //  stays shut until a key is pressed in THIS field, and shuts again when
+  //  the field is left or a name is taken.
+  const [typed, setTyped] = useState(false);
+
   // A slow first request must not land after a fast second one and offer
   // suggestions for text that has already been replaced.
   const token = useRef(0);
 
   useEffect(() => {
+    if (!typed) { setItems([]); setOpen(false); return; }
     if (fragment.length < 2) { setItems([]); setOpen(false); return; }
 
     const mine = ++token.current;
@@ -87,7 +102,11 @@ export function ContactPicker({ value, onPick, children }: {
     }, 180);
 
     return () => clearTimeout(t);
-  }, [authedFetch, fragment]);
+    // `typed` belongs here. Without it the effect only re-runs when the
+    // FRAGMENT changes, so the first keystroke — the one that sets typed —
+    // would be ignored and suggestions would arrive a character late. Caught
+    // by driving the field from a test rather than by reading this back.
+  }, [authedFetch, fragment, typed]);
 
   // Measure the input and follow it. Scroll is captured (third argument true)
   // so the list tracks the composer's own scrolling container, not just the
@@ -115,10 +134,16 @@ export function ContactPicker({ value, onPick, children }: {
     onPick(replaceFragment(value, s.email));
     setOpen(false);
     setItems([]);
+    // A taken name is a finished question: the list must not re-open from
+    // the value it just wrote.
+    setTyped(false);
     anchor.current?.focus();
   }, [onPick, value]);
 
   const onKeyDown = useCallback((e: React.KeyboardEvent) => {
+    // Any key that is not pure navigation counts as typing, and that is what
+    // opens the list — see the note on `typed` above.
+    if (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete') setTyped(true);
     if (!open || items.length === 0) return;
     const chosen = items[active];
     if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => (i + 1) % items.length); }
@@ -127,6 +152,16 @@ export function ContactPicker({ value, onPick, children }: {
     else if ((e.key === 'Enter' || e.key === 'Tab') && chosen) { e.preventDefault(); choose(chosen); }
     else if (e.key === 'Escape') { setOpen(false); }
   }, [open, items, active, choose]);
+
+  // Leaving the field ends the question too — a list left open over the next
+  // field is the same complaint in a different place.
+  useEffect(() => {
+    const el = anchor.current;
+    if (!el) return;
+    const done = () => { setTyped(false); setOpen(false); };
+    el.addEventListener('blur', done);
+    return () => el.removeEventListener('blur', done);
+  }, []);
 
   return (
     <>

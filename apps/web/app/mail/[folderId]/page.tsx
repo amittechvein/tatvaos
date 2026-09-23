@@ -1119,17 +1119,15 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
               expanded={wide}
               onToggleExpand={() => setWide((v) => !v)}
               autoLoadImages={folder?.slug !== 'junk'}
-            />
-            </div>
-
-            {/* THE REPLY, IN THE CONVERSATION. Answering the message on
-                screen belongs under it, not in a corner window that looks
-                exactly like a new message (Amit, 23 Sept). Replies to some
-                OTHER message stay docked below — they have nothing on screen
-                to sit under. */}
-            {inlineComposers.map((c) => (
-              <div key={c.key} className="shrink-0">
+              // THE REPLY, IN THE CONVERSATION — and now INSIDE the message's
+              // own scroll container rather than beside it, so opening one
+              // no longer squeezes the message into a sliver (Amit, 23 Sept:
+              // "currently its divided in two sections"). Replies to some
+              // OTHER message stay docked below; they have nothing on screen
+              // to sit under.
+              footer={inlineComposers.map((c) => (
                 <Composer
+                  key={c.key}
                   placement="inline"
                   replyTo={c.replyTo}
                   mode={c.mode}
@@ -1147,8 +1145,9 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
                     if (folder?.slug === 'sent') void loadMessages(folder.id, 0);
                   }}
                 />
-              </div>
-            ))}
+              ))}
+            />
+            </div>
           </div>
         ) : (
           <div className="hidden h-full w-full flex-col items-center justify-center rounded-card border border-dashed border-line bg-surface/40 lg:flex">
