@@ -8,14 +8,30 @@
 //  existing token classes only, so the UI lane can restyle it without
 //  unpicking layout decisions made in passing.
 //
-//  THE EDITOR IS A TEXTAREA, NOT A RICH-TEXT SURFACE, and that is a security
-//  decision rather than a scoping one. A signature is appended to the HTML
-//  body of every message this mailbox sends. A contentEditable that silently
-//  accepts pasted markup is how a tracking pixel, a remote image beacon, or a
-//  table that breaks in Outlook ends up on all of someone's outgoing mail —
-//  and nobody would notice, because you don't read your own signature. Plain
-//  text escaped into HTML on save is boring and correct. A real rich editor
-//  can come later, with a sanitiser in front of it.
+//  THE EDITOR WAS A TEXTAREA UNTIL 23 SEPTEMBER 2026, and the comment here
+//  said so for a security reason: a signature is appended to the HTML body of
+//  every message this mailbox sends, so a contentEditable that silently
+//  accepts pasted markup is how a tracking pixel or a table that breaks in
+//  Outlook ends up on all of someone's outgoing mail — unnoticed, because you
+//  don't read your own signature. It ended with "a real rich editor can come
+//  later, with a sanitiser in front of it."
+//
+//  This is that editor, and that is that sanitiser: lib/signatureHtml.ts,
+//  which runs on the way IN (here, before save) and on the way OUT (the
+//  composer, before seeding). The reason it needs both ends is that a
+//  signature belongs to a MAILBOX — a shared one is written by one colleague
+//  and rendered in another's composer — and the API stores what it is handed.
+//
+//  What the sanitiser still refuses, on purpose:
+//    · script, iframe, event handlers — DOMPurify's job
+//    · transform, position and the rest of the CSS that makes content lie
+//      about where it is (the upside-down paste of the same morning)
+//    · data: images, which look right in our own preview and are stripped by
+//      Gmail and blocked by Outlook — see the note in signatureHtml.ts
+//
+//  The customer request behind it: name and title in the company colour, a
+//  mobile and email row, the website, the logo beside it, the registered
+//  address underneath. None of that could be typed into a textarea.
 // ============================================================================
 
 import Link from 'next/link';
@@ -28,6 +44,9 @@ import {
 } from '@/lib/mail';
 import { FiltersPanel } from '@/components/mail/FiltersPanel';
 import { BlockedPanel } from '@/components/mail/BlockedPanel';
+import SignatureEditor from '@/components/mail/SignatureEditor';
+import { SafeHtml } from '@/components/mail/SafeHtml';
+import { cleanSignatureHtml, signatureText } from '@/lib/signatureHtml';
 
 // The settings screen is now tab-wise: one concern per tab, so the page is a
 // short list of doors rather than a long scroll. Inbox LAYOUT is deliberately
@@ -69,29 +88,76 @@ const SAMPLES: { id: string; label: string; hint: string; build: (i: Identity) =
     id: 'name',
     label: 'Just your name',
     hint: 'For internal mail, where everyone already knows who you are.',
-    build: (i) => i.name,
+    build: (i) => `<div>${esc(i.name)}</div>`,
   },
   {
     id: 'role',
     label: 'Name and role',
     hint: 'The usual choice.',
-    build: (i) => `${i.name}\n[Your role]\n${i.org}`,
+    build: (i) =>
+      `<div><b>${esc(i.name)}</b></div><div>[Your role]</div><div>${esc(i.org)}</div>`,
   },
   {
     id: 'contact',
     label: 'Full contact',
     hint: 'For mail that leaves the organisation.',
-    build: (i) => `${i.name}\n[Your role] | ${i.org}\n${i.email}\n[Phone]`,
+    build: (i) =>
+      `<div><b>${esc(i.name)}</b></div>`
+      + `<div>[Your role] | ${esc(i.org)}</div>`
+      + `<div><a href="mailto:${esc(i.email)}">${esc(i.email)}</a></div>`
+      + `<div>[Phone]</div>`,
   },
   {
     id: 'closing',
     label: 'With a sign-off',
     hint: 'Adds the closing line, so you stop typing it every time.',
-    build: (i) => `Warm regards,\n\n${i.name}\n[Your role] | ${i.org}\n${i.email}`,
+    build: (i) =>
+      `<div>Warm regards,</div><div><br></div>`
+      + `<div><b>${esc(i.name)}</b></div>`
+      + `<div>[Your role] | ${esc(i.org)}</div>`
+      + `<div><a href="mailto:${esc(i.email)}">${esc(i.email)}</a></div>`,
+  },
+  {
+    id: 'card',
+    label: 'Card, with room for a logo',
+    hint: 'Two columns: your details on the left, your logo on the right. The layout customers ask for.',
+    // A TABLE, not flexbox or grid. Outlook on Windows renders mail through
+    // Word, which has no flex and no grid; a two-column signature that holds
+    // its shape everywhere is a table with widths, and that is why
+    // signatureHtml.ts keeps width/align/cellpadding rather than stripping
+    // them the way the composer's paste cleaner does.
+    build: (i) =>
+      `<table cellpadding="0" cellspacing="0" style="font-family:Arial,sans-serif;font-size:13px"><tbody><tr>`
+      + `<td style="padding-right:18px;vertical-align:top">`
+      + `<div><b style="color:#0a6b3d;font-size:15px">${esc(i.name)}</b> <span style="color:#6b7280">| [Your role]</span></div>`
+      + `<div style="margin-top:8px"><b style="color:#0a6b3d">M:</b> [Phone]</div>`
+      + `<div><b style="color:#0a6b3d">E:</b> <a href="mailto:${esc(i.email)}">${esc(i.email)}</a></div>`
+      + `<div style="margin-top:4px"><b>[www.your-website.com]</b></div>`
+      + `</td>`
+      + `<td style="vertical-align:top">[Insert image — your logo]</td>`
+      + `</tr><tr><td colspan="2" style="padding-top:12px">`
+      + `<div style="font-size:12px;color:#6b7280">${esc(i.org)}, [Registered address]</div>`
+      + `</td></tr></tbody></table>`,
   },
 ];
 
-/** Plain text -> the HTML half. Escaped first, then newlines become breaks. */
+/** A value of ours going into markup of ours. Someone's name may hold an &. */
+function esc(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * Plain text -> HTML. Escaped first, then newlines become breaks.
+ *
+ * No longer the save path — that is cleanSignatureHtml now. This is kept for
+ * ONE case: a signature written before 23 September 2026 whose HTML half is
+ * empty. Opening the rich editor on those must not show a blank box and then
+ * save the blank over what they wrote.
+ */
 function toHtml(text: string): string {
   const escaped = text
     .replace(/&/g, '&amp;')
@@ -104,7 +170,10 @@ function toHtml(text: string): string {
 export default function MailSettingsPage() {
   const { authedFetch, user, accounts } = useAuth();
 
-  const [text, setText] = useState('');
+  // The HTML IS the document now. The plain-text half is derived from it at
+  // save time (signatureText) rather than being a second thing to keep in
+  // step — two copies of one fact was how the old editor drifted.
+  const [html, setHtml] = useState('');
   const [enabled, setEnabled] = useState(false);
   const [includeOnReply, setIncludeOnReply] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -173,9 +242,11 @@ export default function MailSettingsPage() {
         .catch(() => {});
 
       const sig = await mailApi.signature(authedFetch);
-      // The plain-text half is the source of truth for the editor; the HTML
-      // half is generated from it on save, never edited directly.
-      setText(sig.bodyText);
+      // Prefer the HTML half. Fall back to the text half ONLY when there is
+      // no HTML at all: a signature saved by the old textarea always has
+      // both, but a row written by anything else may not, and opening blank
+      // would let a save wipe it.
+      setHtml(cleanSignatureHtml(sig.bodyHtml || toHtml(sig.bodyText)));
       setEnabled(sig.enabled);
       setIncludeOnReply(sig.includeOnReply);
     } catch (e) {
@@ -198,8 +269,10 @@ export default function MailSettingsPage() {
    * easy one to avoid.
    */
   function applySample(sample: string) {
-    if (text.trim().length === 0) {
-      setText(sample);
+    // "Empty" has to ignore the markup a contenteditable leaves behind — an
+    // editor someone typed into and cleared holds <div><br></div>, not ''.
+    if (signatureText(html).length === 0) {
+      setHtml(sample);
       setSaved(false);
       return;
     }
@@ -360,9 +433,18 @@ export default function MailSettingsPage() {
     setError(null);
     setSaved(false);
     try {
+      // Clean on the way in. The API caps the length and stores what it is
+      // given, so this is the only sanitiser on the write path — and the
+      // composer runs the same one again on the read path, because a shared
+      // mailbox's signature is written by one person and rendered in
+      // another's session.
+      const cleanHtml = cleanSignatureHtml(html);
       const payload: MailSignature = {
-        bodyText: text,
-        bodyHtml: toHtml(text),
+        // Derived, not typed: with a rich editor there is no textarea to hold
+        // the plain-text half, and a text half that drifts from the HTML is
+        // what a plain-text reader would have seen instead of the signature.
+        bodyText: signatureText(cleanHtml),
+        bodyHtml: cleanHtml,
         enabled,
         includeOnReply,
       };
@@ -419,24 +501,19 @@ export default function MailSettingsPage() {
       <section className="mt-6 rounded-card border border-line bg-surface p-5">
         <h2 className="mb-1 text-sm font-semibold text-ink">Signature</h2>
         <p className="mb-4 text-xs text-ink-muted">
-          Added to the bottom of messages sent from this mailbox. Plain text — it is escaped
-          before sending, so nothing here can break the recipient&rsquo;s mail client.
+          Added to the bottom of messages sent from this mailbox. Bold, colour, links, lists
+          and an image are all allowed; anything that could break the recipient&rsquo;s mail
+          client is removed when you save.
         </p>
 
         {loading ? (
           <p className="text-sm text-ink-faint">Loading…</p>
         ) : (
           <>
-            <label className="mb-4 block">
+            <div className="mb-4">
               <span className="mb-1.5 block text-sm font-medium text-ink">Your signature</span>
-              <textarea
-                value={text}
-                onChange={(e) => edit(setText)(e.target.value)}
-                rows={6}
-                placeholder={'Amit Dadhich\nTechvein\n+91 …'}
-                className="scroll-thin w-full resize-y rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink outline-none transition placeholder:text-ink-faint focus:border-brand-400"
-              />
-            </label>
+              <SignatureEditor html={html} onChange={edit(setHtml)} />
+            </div>
 
             <div className="mb-5">
               <p className="mb-1 text-sm font-medium text-ink">Start from a sample</p>
@@ -465,13 +542,22 @@ export default function MailSettingsPage() {
                   <p className="mb-2 text-sm text-ink">
                     Replace what you have written with this sample?
                   </p>
-                  <pre className="scroll-thin mb-3 overflow-x-auto whitespace-pre-wrap text-sm text-ink-muted">
-                    {pending}
-                  </pre>
+                  {/* The sample as it will LOOK, not as markup: a person
+                      deciding whether to replace their signature is choosing
+                      between two appearances, and a block of HTML tells them
+                      nothing.
+                      SafeHtml, the same sandboxed frame a received message is
+                      read in — not dangerouslySetInnerHTML, which this repo
+                      lints as an error, and not a bare div, because the point
+                      of the preview is to show what an ISOLATED renderer
+                      makes of this markup. */}
+                  <div className="mb-3">
+                    <SafeHtml html={cleanSignatureHtml(pending)} allowRemoteInitially />
+                  </div>
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      onClick={() => { setText(pending); setPending(null); setSaved(false); }}
+                      onClick={() => { setHtml(pending); setPending(null); setSaved(false); }}
                       className="rounded-md bg-brand-500 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-brand-600"
                     >
                       Replace
@@ -521,10 +607,18 @@ export default function MailSettingsPage() {
               {saved && <span className="text-sm text-ok">Saved.</span>}
             </div>
 
-            {text.trim().length > 0 && (
+            {signatureText(html).length > 0 && (
               <div className="mt-5 border-t border-line pt-4">
                 <p className="mb-2 text-label font-semibold uppercase text-ink-faint">Preview</p>
-                <p className="whitespace-pre-wrap text-sm text-ink-muted">{text}</p>
+                {/* Rendered from the SANITISED html, which is what will be
+                    saved — so the preview shows what recipients get, not what
+                    the editor happens to be holding. If something you added
+                    disappears here, it was removed rather than hidden.
+                    Remote images are shown without asking, unlike a received
+                    message: this is the person's own logo, on their own
+                    signature, and a "Show images" button in front of it would
+                    be protecting them from themselves. */}
+                <SafeHtml html={cleanSignatureHtml(html)} allowRemoteInitially />
               </div>
             )}
 

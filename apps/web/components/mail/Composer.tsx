@@ -10,6 +10,7 @@ import { mailApi } from '@/lib/mail';
 import { linkApi } from '@/lib/space';
 import { fetchMyStorage } from '@/lib/myStorage';
 import { cleanPastedHtml } from '@/lib/pasteHtml';
+import { cleanSignatureHtml } from '@/lib/signatureHtml';
 
 /** Comma- or semicolon-separated addresses → a clean list. */
 function splitAddresses(raw: string): string[] {
@@ -694,7 +695,17 @@ export function Composer({
     // Signature ABOVE the quote: a reply then reads reply → signature → quote,
     // which keeps the quoted history last where it can be collapsed and read
     // as history rather than as part of the new message.
-    const sig = withSig && signature ? `<br><br>${signature.bodyHtml}` : '';
+    //
+    // CLEANED ON THE WAY IN, even though it is "our own" content. From 23
+    // September a signature is rich HTML written in a real editor, and a
+    // signature belongs to a MAILBOX: a shared one is written by one
+    // colleague and seeded here into another's composer. The API stores what
+    // it is handed (SaveSignatureAsync caps the length and does not
+    // sanitise), so the editor's cleaner alone would be one a crafted PUT
+    // walks past. This is the same function the editor uses.
+    const sig = withSig && signature
+      ? `<br><br>${cleanSignatureHtml(signature.bodyHtml)}`
+      : '';
     const quote = mode === 'forward' && replyTo ? quotedHtml(replyTo) : '';
     if (!sig && !quote) return;
 
