@@ -453,6 +453,7 @@ services:
       CALENDAR_DOMAIN: ${CALENDAR_DOMAIN:?CALENDAR_DOMAIN must be set}
       CONNECT_DOMAIN: ${CONNECT_DOMAIN:?CONNECT_DOMAIN must be set}
       PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:?PLATFORM_DOMAIN must be set}
+      WEBSITE_DOMAIN: ${WEBSITE_DOMAIN:?WEBSITE_DOMAIN must be set}
     ports:
       - "80:80"
       - "443:443"
@@ -472,6 +473,10 @@ services:
       # and the conf.d fragments — and nothing else does, because the parent
       # directory holds .env and this mount must never reach it.
       - ./caddy:/etc/caddy:ro
+      # The public website (conf.d/website.caddy). ONLY its public/ folder:
+      # file_server serves every file under the root, so the README beside it
+      # must not be under the root. Its own mount, never the parent directory.
+      - ../../apps/website/public:/srv/website:ro
       - caddydata:/data
       - caddyconfig:/config
     networks: [mailnet]

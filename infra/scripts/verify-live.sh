@@ -423,7 +423,41 @@ check_rate_limit() {
 #  Run everything. No check aborts the script: a dead IMAP must not hide a
 #  stuck queue — the operator gets the whole picture, then one verdict.
 # ---------------------------------------------------------------------------
+check_website() {
+    step "Public website through Caddy"
+    local domain
+    domain="$(grep '^WEBSITE_DOMAIN=' infra/docker/.env 2>/dev/null | cut -d= -f2)"
+    if [ -z "$domain" ]; then
+        bad "WEBSITE_DOMAIN is not set in infra/docker/.env — website.caddy is mounted with no domain behind it"
+        return 1
+    fi
+    if ! command -v curl >/dev/null 2>&1; then
+        bad "curl is not installed on this host; the website cannot be probed."
+        return 1
+    fi
+    # The subject: the page itself, with the text a person would read. A 200
+    # on an empty body is a false green, so the title is asserted too.
+    local body code
+    body=$(curl -s --max-time 15 "https://${domain}/")
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "https://${domain}/")
+    if [ "$code" = "200" ] && printf '%s' "$body" | grep -q '<title>TatvaOS'; then
+        ok "https://${domain}/ answers 200 with the TatvaOS page"
+    else
+        bad "https://${domain}/ answered ${code}$( printf '%s' "$body" | grep -q '<title>TatvaOS' || printf ' without the TatvaOS title')"
+    fi
+    # www is a redirect to the apex, never a second copy.
+    local www_code www_loc
+    www_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "https://www.${domain}/")
+    www_loc=$(curl -s -o /dev/null -w '%{redirect_url}' --max-time 15 "https://www.${domain}/")
+    if [ "$www_code" = "308" ] && [ "$www_loc" = "https://${domain}/" ]; then
+        ok "https://www.${domain}/ redirects 308 to https://${domain}/"
+    else
+        bad "https://www.${domain}/ answered ${www_code} -> '${www_loc}' (expected 308 -> https://${domain}/)"
+    fi
+}
+
 check_services   || true
+check_website    || true
 check_imap       || true
 check_smtp       || true
 check_queue      || true
@@ -434,4 +468,4 @@ if [ "$FAILURES" -gt 0 ]; then
     printf '\n   %s%sNOT verified — %d check(s) failed.%s\n\n' "$B" "$R" "$FAILURES" "$X"
     exit 1
 fi
-printf '\n   %sproduction verified — services, IMAP, SMTP, queue all answer; the rate limit holds through the proxy.%s\n\n' "$G" "$X"
+printf '\n   %sproduction verified — services, website, IMAP, SMTP, queue all answer; the rate limit holds through the proxy.%s\n\n' "$G" "$X"

@@ -1,0 +1,840 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>TatvaOS One</title>
+<meta name="description" content="Mail, files, calendar, meetings and identity for Indian schools, clinics and businesses — one account, hosted in India.">
+<meta name="theme-color" content="#6C3CE9">
+<link rel="icon" href="brand/tatvaos-mark.svg" type="image/svg+xml">
+<meta property="og:title" content="TatvaOS One">
+<meta property="og:description" content="Mail, files, calendar, meetings and identity for Indian organisations, behind one sign-in.">
+<meta property="og:image" content="https://tatvaos.com/shots/mail-inbox.png">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
+
+<style>
+/* ===========================================================================
+   TatvaOS One — public site
+   Palette is the product's own: the violet ramp from apps/web (#6C3CE9) and
+   the warm canvas the console actually renders on. Nothing invented.
+   =========================================================================== */
+:root{
+  --brand:#6C3CE9;
+  --brand-dark:#4A29A8;
+  --brand-light:#8F6BEC;
+  --brand-wash:#F1ECFD;
+
+  --canvas:#FAF7F2;          /* the console's warm ground */
+  --surface:#FFFFFF;
+  --surface-2:#F5F1EA;
+  --ink:#1B1630;
+  --ink-2:#4A4364;
+  --muted:#6F6888;           /* grey pulled toward the violet, not neutral */
+  --line:#E7DFD4;
+  --line-strong:#D6CCBE;
+
+  --ship:#0F7A57;            /* semantic: shipped / live. Not the accent. */
+  --ship-wash:#E4F4EE;
+  --warn:#9A5B00;
+  --warn-wash:#FBF0DE;
+
+  --shadow:0 1px 2px rgba(27,22,48,.05), 0 12px 32px -12px rgba(27,22,48,.18);
+  --shadow-lift:0 2px 4px rgba(27,22,48,.06), 0 28px 60px -20px rgba(27,22,48,.32);
+
+  --display:"Bricolage Grotesque","Inter",system-ui,sans-serif;
+  --body:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+
+  --wrap:1140px;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --canvas:#141021; --surface:#1D1830; --surface-2:#251F3C;
+    --ink:#F4F1FA; --ink-2:#C8C1DC; --muted:#9A92B4;
+    --line:#302947; --line-strong:#41385C;
+    --brand:#9A76F2; --brand-dark:#7B54E8; --brand-light:#B49BF6; --brand-wash:#251C42;
+    --ship:#4FC79B; --ship-wash:#12312A; --warn:#E0A657; --warn-wash:#33260F;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 12px 32px -12px rgba(0,0,0,.6);
+    --shadow-lift:0 2px 4px rgba(0,0,0,.4), 0 28px 60px -20px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"]{
+  --canvas:#141021; --surface:#1D1830; --surface-2:#251F3C;
+  --ink:#F4F1FA; --ink-2:#C8C1DC; --muted:#9A92B4;
+  --line:#302947; --line-strong:#41385C;
+  --brand:#9A76F2; --brand-dark:#7B54E8; --brand-light:#B49BF6; --brand-wash:#251C42;
+  --ship:#4FC79B; --ship-wash:#12312A; --warn:#E0A657; --warn-wash:#33260F;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 12px 32px -12px rgba(0,0,0,.6);
+  --shadow-lift:0 2px 4px rgba(0,0,0,.4), 0 28px 60px -20px rgba(0,0,0,.7);
+}
+
+*,*::before,*::after{box-sizing:border-box}
+body{
+  margin:0; background:var(--canvas); color:var(--ink);
+  font-family:var(--body); font-size:16px; line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+img{max-width:100%; display:block}
+a{color:var(--brand-dark); text-decoration-thickness:1px; text-underline-offset:2px}
+:root[data-theme="dark"] a, :root:not([data-theme="light"]) a{color:var(--brand-light)}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]) a{color:var(--brand-dark)}}
+:focus-visible{outline:2px solid var(--brand); outline-offset:3px; border-radius:4px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+
+.wrap{width:100%; max-width:var(--wrap); margin-inline:auto; padding-inline:20px}
+
+/* ---------- review strip ------------------------------------------------- */
+.review{
+  background:var(--warn-wash); color:var(--warn);
+  border-bottom:1px solid color-mix(in srgb, var(--warn) 25%, transparent);
+  font-size:13px; line-height:1.45;
+}
+.review .wrap{display:flex; gap:10px; align-items:flex-start; padding-block:9px}
+.review strong{font-weight:700}
+.review button{
+  margin-left:auto; flex:none; background:none; border:0; cursor:pointer;
+  color:inherit; font:inherit; font-weight:600; padding:0 2px; text-decoration:underline;
+}
+
+/* ---------- header ------------------------------------------------------- */
+.site-head{
+  position:sticky; top:env(safe-area-inset-top,0px); z-index:40;
+  background:color-mix(in srgb, var(--canvas) 88%, transparent);
+  backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--line);
+}
+.site-head .wrap{display:flex; align-items:center; gap:12px; padding-block:12px}
+.logo{display:flex; align-items:center; gap:9px; font-family:var(--display);
+      font-weight:800; font-size:19px; letter-spacing:-.02em; color:var(--ink); text-decoration:none}
+.logo img{width:26px; height:26px}
+.logo span em{font-style:normal; color:var(--brand)}
+.site-nav{display:flex; gap:4px; margin-left:auto; align-items:center; flex-wrap:wrap}
+.site-nav a{
+  color:var(--ink-2); text-decoration:none; font-size:14px; font-weight:500;
+  padding:7px 11px; border-radius:8px;
+}
+.site-nav a:hover{background:var(--surface-2); color:var(--ink)}
+.btn{
+  display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  font:inherit; font-size:15px; font-weight:600; border-radius:10px;
+  padding:11px 20px; text-decoration:none; border:1px solid transparent; cursor:pointer;
+}
+.btn-primary{background:var(--brand); color:#fff; box-shadow:0 1px 2px rgba(76,41,168,.3)}
+.btn-primary:hover{background:var(--brand-dark)}
+.btn-ghost{background:var(--surface); color:var(--ink); border-color:var(--line-strong)}
+.btn-ghost:hover{border-color:var(--brand); color:var(--brand-dark)}
+.btn-sm{padding:8px 15px; font-size:14px; border-radius:9px}
+
+/* ---------- type --------------------------------------------------------- */
+h1,h2,h3{font-family:var(--display); letter-spacing:-.025em; text-wrap:balance; margin:0}
+h1{font-size:clamp(2.3rem,6.2vw,4rem); line-height:1.03; font-weight:800}
+h2{font-size:clamp(1.65rem,3.6vw,2.5rem); line-height:1.12; font-weight:700}
+h3{font-size:1.16rem; line-height:1.3; font-weight:700}
+p{margin:0}
+.lede{font-size:clamp(1.02rem,1.9vw,1.2rem); color:var(--ink-2); line-height:1.62; max-width:62ch}
+.eyebrow{
+  font-family:var(--mono); font-size:11.5px; font-weight:700; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--brand); margin:0 0 14px;
+}
+.section{padding-block:clamp(56px,8vw,104px)}
+.section-head{display:flex; flex-direction:column; gap:16px; margin-bottom:44px; max-width:66ch}
+
+/* ---------- hero --------------------------------------------------------- */
+.hero{padding-block:clamp(48px,7vw,86px) clamp(40px,6vw,64px); position:relative; overflow:hidden}
+.hero::after{
+  content:""; position:absolute; inset:auto -10% 40% 55%; height:520px;
+  background:radial-gradient(circle at 50% 50%, var(--brand-wash), transparent 70%);
+  pointer-events:none; z-index:0;
+}
+.hero .wrap{position:relative; z-index:1}
+.hero-grid{display:grid; gap:36px}
+.hero h1 em{font-style:normal; color:var(--brand)}
+.hero-actions{display:flex; gap:12px; flex-wrap:wrap; margin-top:30px}
+.hero-facts{
+  display:flex; flex-wrap:wrap; gap:0; margin-top:40px;
+  border-top:1px solid var(--line); padding-top:22px;
+}
+.fact{flex:1 1 150px; padding-right:22px}
+.fact dt{font-family:var(--mono); font-size:11px; letter-spacing:.11em; text-transform:uppercase; color:var(--muted); margin-bottom:5px}
+.fact dd{margin:0; font-family:var(--display); font-weight:700; font-size:1.42rem; letter-spacing:-.02em; font-variant-numeric:tabular-nums}
+
+/* ---------- screenshot frame -------------------------------------------- */
+.frame{
+  border:1px solid var(--line-strong); border-radius:12px; overflow:hidden;
+  background:var(--surface); box-shadow:var(--shadow-lift);
+}
+.frame-bar{
+  display:flex; align-items:center; gap:6px; padding:9px 13px;
+  background:var(--surface-2); border-bottom:1px solid var(--line);
+}
+.frame-bar i{width:9px; height:9px; border-radius:50%; background:var(--line-strong); display:block}
+.frame-bar span{
+  margin-left:8px; font-family:var(--mono); font-size:11px; color:var(--muted);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.frame img{width:100%; height:auto}
+
+/* ---------- product slabs ------------------------------------------------ */
+.slab{display:grid; gap:34px; align-items:center; padding-block:clamp(38px,5vw,60px)}
+.slab + .slab{border-top:1px solid var(--line)}
+.slab-head{display:flex; align-items:center; gap:12px; margin-bottom:16px}
+.slab-head img{width:34px; height:34px; border-radius:8px}
+.slab-head h3{font-size:1.5rem}
+.slab p{color:var(--ink-2); max-width:56ch}
+.ticks{list-style:none; margin:20px 0 0; padding:0; display:grid; gap:9px}
+.ticks li{position:relative; padding-left:24px; font-size:14.5px; color:var(--ink-2); line-height:1.5}
+.ticks li::before{
+  content:""; position:absolute; left:2px; top:.52em; width:9px; height:9px;
+  border-radius:2px; background:var(--brand); opacity:.85;
+}
+@media (min-width:880px){
+  .slab{grid-template-columns:minmax(0,0.85fr) minmax(0,1.15fr); gap:52px}
+  .slab.flip .slab-text{order:2}
+  .slab.flip .slab-shot{order:1}
+  .hero-grid{grid-template-columns:minmax(0,1fr) minmax(0,1.05fr); align-items:center; gap:52px}
+}
+
+/* ---------- foundation cards --------------------------------------------- */
+.found{display:grid; gap:1px; background:var(--line); border:1px solid var(--line); border-radius:14px; overflow:hidden}
+@media (min-width:700px){.found{grid-template-columns:repeat(2,1fr)}}
+@media (min-width:1000px){.found{grid-template-columns:repeat(3,1fr)}}
+.found > div{background:var(--surface); padding:26px 24px}
+.found h3{margin-bottom:9px; font-size:1.03rem}
+.found p{font-size:14.5px; color:var(--ink-2)}
+.found .tag{
+  display:inline-block; font-family:var(--mono); font-size:10.5px; font-weight:700;
+  letter-spacing:.09em; text-transform:uppercase; padding:3px 7px; border-radius:5px;
+  background:var(--ship-wash); color:var(--ship); margin-bottom:11px;
+}
+
+/* ---------- plans -------------------------------------------------------- */
+.plan-switch{display:flex; gap:6px; padding:5px; background:var(--surface-2);
+  border:1px solid var(--line); border-radius:11px; width:fit-content; margin-bottom:34px; flex-wrap:wrap}
+.plan-switch button{
+  font:inherit; font-size:14px; font-weight:600; border:0; cursor:pointer;
+  padding:9px 17px; border-radius:8px; background:transparent; color:var(--ink-2);
+}
+.plan-switch button[aria-selected="true"]{background:var(--surface); color:var(--ink); box-shadow:var(--shadow)}
+
+.plans{display:grid; gap:18px}
+@media (min-width:640px){.plans{grid-template-columns:repeat(2,1fr)}}
+@media (min-width:1040px){.plans.four{grid-template-columns:repeat(4,1fr)} .plans.three{grid-template-columns:repeat(3,1fr)}}
+.plan{
+  background:var(--surface); border:1px solid var(--line); border-radius:14px;
+  padding:26px 22px; display:flex; flex-direction:column; gap:14px;
+}
+.plan.feature{border-color:var(--brand); box-shadow:var(--shadow-lift)}
+.plan-name{font-family:var(--display); font-weight:700; font-size:1.2rem; letter-spacing:-.02em}
+.plan-for{font-size:13.5px; color:var(--muted); min-height:2.6em}
+.price{display:flex; align-items:baseline; gap:6px; flex-wrap:wrap}
+.price b{font-family:var(--display); font-size:2.05rem; font-weight:800; letter-spacing:-.03em; font-variant-numeric:tabular-nums}
+.price span{font-size:13.5px; color:var(--muted)}
+.plan ul{list-style:none; margin:0; padding:0; display:grid; gap:8px; font-size:14px; color:var(--ink-2)}
+.plan ul li{display:flex; gap:9px; align-items:flex-start; line-height:1.45}
+.plan ul li::before{content:"—"; color:var(--brand); flex:none; font-weight:700}
+.plan .btn{margin-top:auto}
+.badge{
+  align-self:flex-start; font-family:var(--mono); font-size:10.5px; font-weight:700;
+  letter-spacing:.09em; text-transform:uppercase; padding:3px 8px; border-radius:5px;
+  background:var(--brand-wash); color:var(--brand-dark);
+}
+:root[data-theme="dark"] .badge{color:var(--brand-light)}
+.addons{margin-top:26px; border:1px solid var(--line); border-radius:12px; overflow:hidden}
+.addons table{width:100%; border-collapse:collapse; font-size:14.5px}
+.addons th,.addons td{text-align:left; padding:13px 18px; border-bottom:1px solid var(--line)}
+.addons thead th{background:var(--surface-2); font-family:var(--mono); font-size:11px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--muted); font-weight:700}
+.addons tbody tr:last-child td{border-bottom:0}
+.addons td:nth-child(2){color:var(--muted); font-size:13.5px}
+.note{
+  margin-top:22px; padding:16px 18px; border-radius:11px; font-size:14px;
+  background:var(--surface-2); border:1px solid var(--line); color:var(--ink-2);
+}
+.note b{color:var(--ink)}
+
+/* ---------- timeline ----------------------------------------------------- */
+.tl-intro{
+  display:grid; gap:26px; margin-bottom:46px; align-items:end;
+}
+@media (min-width:860px){.tl-intro{grid-template-columns:minmax(0,1fr) auto}}
+.bars{display:flex; align-items:flex-end; gap:7px; height:96px}
+.bars div{
+  width:30px; background:var(--brand); border-radius:3px 3px 0 0; position:relative;
+  display:flex; justify-content:center; opacity:.28;
+}
+.bars div.peak{opacity:1}
+.bars div b{
+  position:absolute; top:-19px; font-family:var(--mono); font-size:10.5px;
+  font-weight:700; color:var(--ink-2); font-variant-numeric:tabular-nums;
+}
+.bars-cap{font-family:var(--mono); font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--muted); margin-top:10px; text-align:right}
+
+.tl{position:relative; display:grid; gap:0}
+.week{
+  position:relative; padding:0 0 4px 0;
+}
+@media (min-width:820px){
+  .tl{padding-left:0}
+  .week{display:grid; grid-template-columns:186px minmax(0,1fr); gap:34px}
+}
+.week-spine{position:relative; padding-bottom:30px}
+.week-label{
+  font-family:var(--mono); font-size:11px; font-weight:700; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--muted);
+}
+.week-range{font-family:var(--display); font-weight:700; font-size:1.05rem;
+  letter-spacing:-.02em; margin-top:3px; color:var(--ink)}
+.week-count{font-family:var(--mono); font-size:12px; color:var(--brand); margin-top:5px;
+  font-variant-numeric:tabular-nums}
+.week-body{
+  position:relative; padding-left:26px; padding-bottom:34px;
+  border-left:2px solid var(--line);
+}
+.week:last-child .week-body{border-left-color:transparent}
+.entry{position:relative; padding-bottom:22px}
+.entry::before{
+  content:""; position:absolute; left:-33px; top:7px; width:11px; height:11px;
+  border-radius:50%; background:var(--canvas); border:2.5px solid var(--brand);
+}
+.entry.big::before{background:var(--brand)}
+.entry-date{
+  font-family:var(--mono); font-size:11.5px; font-weight:700; letter-spacing:.06em;
+  color:var(--brand-dark); text-transform:uppercase;
+}
+:root[data-theme="dark"] .entry-date{color:var(--brand-light)}
+.entry h3{font-size:1.06rem; margin:3px 0 6px}
+.entry p{font-size:14.5px; color:var(--ink-2); max-width:64ch}
+
+/* ---------- footer ------------------------------------------------------- */
+.site-foot{border-top:1px solid var(--line); background:var(--surface); padding-block:44px; margin-top:10px}
+.foot-grid{display:grid; gap:28px}
+@media (min-width:760px){.foot-grid{grid-template-columns:1.4fr 1fr 1fr}}
+.foot-grid h4{font-family:var(--mono); font-size:11px; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--muted); margin:0 0 12px; font-weight:700}
+.foot-grid ul{list-style:none; margin:0; padding:0; display:grid; gap:8px; font-size:14.5px}
+.foot-grid a{color:var(--ink-2); text-decoration:none}
+.foot-grid a:hover{color:var(--brand-dark); text-decoration:underline}
+.foot-legal{margin-top:34px; padding-top:20px; border-top:1px solid var(--line);
+  font-size:13px; color:var(--muted); display:flex; gap:14px; flex-wrap:wrap}
+</style>
+</head>
+<body>
+<div class="review" id="reviewStrip">
+  <div class="wrap">
+    <div><strong>Draft for review — not published to tatvaos.com.</strong>
+      Product screens are real, captured from a running build against test data. Plans are
+      shown without prices; the personal plans are a proposal not yet signed off.</div>
+    <button type="button" onclick="document.getElementById('reviewStrip').hidden=true">Hide</button>
+  </div>
+</div>
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="logo" href="#top">
+      <img src="brand/tatvaos-mark.svg" alt="">
+      <span>Tatva<em>OS</em></span>
+    </a>
+    <nav class="site-nav">
+      <a href="#products">Products</a>
+      <a href="#platform">Platform</a>
+      <a href="#plans">Plans</a>
+      <a href="#timeline">How it was built</a>
+      <a class="btn btn-primary btn-sm" href="https://core.tatvaos.com/signup">Get started</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- ===================================================== hero ========== -->
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <p class="eyebrow">TatvaOS One · by Techvein</p>
+        <h1>Your whole organisation, behind <em>one sign-in</em>.</h1>
+        <p class="lede" style="margin-top:20px">
+          Mail, files, calendar, meetings and identity for Indian schools, clinics and
+          businesses. A person exists once. One account reaches every product — and
+          when they leave, one action ends their access to all of it and forwards
+          their mail to whoever takes over.
+        </p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="https://core.tatvaos.com/signup">Start a free trial</a>
+          <a class="btn btn-ghost" href="#products">See the products</a>
+        </div>
+        <dl class="hero-facts">
+          <div class="fact"><dt>Products live</dt><dd>6</dd></div>
+          <div class="fact"><dt>Data centre</dt><dd>India</dd></div>
+          <div class="fact"><dt>Built in</dt><dd>7 weeks</dd></div>
+        </dl>
+      </div>
+      <div class="frame">
+        <div class="frame-bar"><i></i><i></i><i></i><span>core.tatvaos.com/mail/inbox</span></div>
+        <img src="shots/mail-inbox.png" width="2880" height="1800"
+             alt="TatvaOS Mail inbox with a conversation open in the reading pane">
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================= products ========== -->
+  <section class="section" id="products" style="background:var(--surface); border-block:1px solid var(--line)">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">The products</p>
+        <h2>Six products, one account.</h2>
+        <p class="lede">Every screen below is the real thing, photographed from a running
+          build. Nothing here is a mock-up.</p>
+      </div>
+
+      <!-- Mail -->
+      <div class="slab">
+        <div class="slab-text">
+          <div class="slab-head"><img src="brand/mail-logo.png" alt=""><h3>Mail</h3></div>
+          <p>Business email on your own domain, with the things people actually
+            miss when they leave Gmail — and the things Gmail never gave them.</p>
+          <ul class="ticks">
+            <li>Conversations, categories with colours, filter rules applied at delivery</li>
+            <li>Shared mailboxes: grants, send-as, and a switcher in the rail</li>
+            <li>Search across every folder and every body, with operators</li>
+            <li>Signatures, drafts, out-of-office replies</li>
+            <li>Attachments scanned for viruses; oversize ones park in Space and send as a link</li>
+            <li>IMAP and SMTP with app passwords, so Thunderbird and Outlook still work</li>
+          </ul>
+        </div>
+        <div class="slab-shot frame">
+          <div class="frame-bar"><i></i><i></i><i></i><span>Mail — inbox and reading pane</span></div>
+          <img src="shots/mail-inbox.png" loading="lazy" width="2880" height="1800" alt="Mail inbox">
+        </div>
+      </div>
+
+      <!-- Connect -->
+      <div class="slab flip">
+        <div class="slab-text">
+          <div class="slab-head"><img src="brand/connect-logo.png" alt=""><h3>Connect</h3></div>
+          <p>Meetings that belong to the organisation, not to whoever started
+            them. Scheduled from the console or from the phone.</p>
+          <ul class="ticks">
+            <li>Live meetings first in the list, so you join the one that is happening</li>
+            <li>Live captions, and recordings kept for 30 days</li>
+            <li>Minutes by TatvaOS AI — summary, decisions, action items — for organisations that switch it on</li>
+            <li>TatvaOS AI is optional and off by default. When your administrator turns it on, it processes content on a third-party service outside India</li>
+            <li>Waiting room, host controls, mute all, meeting locks</li>
+            <li>Guests join without an account, from a link or a code</li>
+            <li>A meetings API, so an ERP or timetable system can create and list them</li>
+          </ul>
+        </div>
+        <div class="slab-shot frame">
+          <div class="frame-bar"><i></i><i></i><i></i><span>Connect — meetings</span></div>
+          <img src="shots/connect-meetings.png" loading="lazy" width="2880" height="1800" alt="Connect meetings list">
+        </div>
+      </div>
+
+      <!-- Calendar -->
+      <div class="slab">
+        <div class="slab-text">
+          <div class="slab-head"><img src="brand/calendar-logo.png" alt=""><h3>Calendar</h3></div>
+          <p>Day, week, month and agenda. Recurrence and reminders. Invitations
+            that arrive properly in Gmail and in Outlook — both directions.</p>
+          <ul class="ticks">
+            <li>Invitations carried in the exact form each of Gmail and Outlook needs, and their replies read back</li>
+            <li>A meeting link on the event, carried into the invitation</li>
+            <li>Reminders that go out by mail</li>
+          </ul>
+        </div>
+        <div class="slab-shot frame">
+          <div class="frame-bar"><i></i><i></i><i></i><span>Calendar — week</span></div>
+          <img src="shots/calendar-week.png" loading="lazy" width="2880" height="1800" alt="Calendar week view">
+        </div>
+      </div>
+
+      <!-- Space -->
+      <div class="slab flip">
+        <div class="slab-text">
+          <div class="slab-head"><img src="brand/space-logo.png" alt=""><h3>Space</h3></div>
+          <p>Files for a person, for a team and for the whole organisation, out of
+            the same allowance as their mail.</p>
+          <ul class="ticks">
+            <li>My Space, Organisation, Shared with me, Trash</li>
+            <li>Drag-and-drop upload with progress and cancel</li>
+            <li>Public links with an audience you choose</li>
+            <li>Save a mail attachment into Space without the bytes leaving the server</li>
+          </ul>
+        </div>
+        <div class="slab-shot frame">
+          <div class="frame-bar"><i></i><i></i><i></i><span>Space — my files</span></div>
+          <img src="shots/space.png" loading="lazy" width="2880" height="1800" alt="Space file list">
+        </div>
+      </div>
+
+      <!-- Core console -->
+      <div class="slab">
+        <div class="slab-text">
+          <div class="slab-head"><img src="brand/core-logo.png" alt=""><h3>Core — the console</h3></div>
+          <p>Where an administrator runs the organisation. People, domains,
+            storage, keys and the record of who did what.</p>
+          <ul class="ticks">
+            <li>Add one person, or upload a spreadsheet of hundreds</li>
+            <li>Departments, roles, and one-action offboarding with mail forwarding</li>
+            <li>Prove you own your domain — four methods, pick the one you can actually do</li>
+            <li>Buy storage once, split it across Mail and Space yourself</li>
+            <li>An audit trail of every administrative action, filterable by person and product</li>
+          </ul>
+        </div>
+        <div class="slab-shot frame">
+          <div class="frame-bar"><i></i><i></i><i></i><span>Core — organisation dashboard</span></div>
+          <img src="shots/org-dashboard.png" loading="lazy" width="2880" height="1800" alt="Organisation dashboard">
+        </div>
+      </div>
+
+      <!-- Account -->
+      <div class="slab flip">
+        <div class="slab-text">
+          <div class="slab-head"><img src="brand/family-logo.png" alt=""><h3>Your account</h3></div>
+          <p>One place a person manages their own identity: photo, recovery
+            details, two-step verification, signed-in devices and what their
+            storage is being spent on.</p>
+          <ul class="ticks">
+            <li>Two-step verification with an authenticator app and recovery codes</li>
+            <li>Every signed-in device listed, and one click to sign out everywhere else</li>
+            <li>An alert by mail when a new device signs in</li>
+            <li>Storage broken down by product</li>
+            <li>Family contacts, kept apart from the organisation directory</li>
+          </ul>
+        </div>
+        <div class="slab-shot frame">
+          <div class="frame-bar"><i></i><i></i><i></i><span>Account</span></div>
+          <img src="shots/account.png" loading="lazy" width="2880" height="1800" alt="Account page">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================= platform ========== -->
+  <section class="section" id="platform">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">The platform underneath</p>
+        <h2>The parts you only notice when they are missing.</h2>
+        <p class="lede">A suite is only worth more than its parts if the parts share
+          an identity, an allowance and a record. These are the pieces that make
+          that true.</p>
+      </div>
+
+      <div class="found">
+        <div>
+          <span class="tag">Live</span>
+          <h3>One identity, every product</h3>
+          <p>A person exists once in Core. Mail, Calendar, Connect and Space read that
+            one record. Remove them once and they are gone from all of it.</p>
+        </div>
+        <div>
+          <span class="tag">Live</span>
+          <h3>Isolated by the database</h3>
+          <p>Organisations are separated by PostgreSQL row-level security, not by
+            application code remembering to filter. It holds even when the code is wrong.</p>
+        </div>
+        <div>
+          <span class="tag">Live</span>
+          <h3>Sign in to your other software</h3>
+          <p>TatvaOS is an OpenID Connect provider. Your library system, your ERP or
+            your intranet can use a TatvaOS account to sign people in.</p>
+        </div>
+        <div>
+          <span class="tag">Live</span>
+          <h3>Two-step verification</h3>
+          <p>Time-based codes from any authenticator app, recovery codes, a replay
+            guard, and a challenge at sign-in that a stolen password cannot skip.</p>
+        </div>
+        <div>
+          <span class="tag">Live</span>
+          <h3>Storage bought once, split by you</h3>
+          <p>Buy one number for the organisation. Your administrator divides it between
+            Mail and Space and rebalances whenever they like — no new purchase, no ticket.</p>
+        </div>
+        <div>
+          <span class="tag">Live</span>
+          <h3>On the phone too</h3>
+          <p>The TatvaOS One Android app is on Google Play. Mail and meetings on the
+            phone, signed in with the same account — and it hands over to the browser
+            for everything else.</p>
+        </div>
+        <div>
+          <span class="tag">Live</span>
+          <h3>Hosted in India</h3>
+          <p>Your mail, files, calendar and recordings live on our server in Mumbai,
+            with a full audit trail of every administrative action taken on your
+            organisation.</p>
+        </div>
+      </div>
+
+      <div class="slab" style="margin-top:22px; border-top:1px solid var(--line)">
+        <div class="slab-text">
+          <div class="slab-head"><img src="brand/platform-logo.png" alt=""><h3>Build on it</h3></div>
+          <p>Three APIs, each behind an organisation key your administrator issues
+            and can revoke. A key can never create an administrator.</p>
+          <ul class="ticks">
+            <li><b>Mail API</b> — <code style="font-family:var(--mono);font-size:13px">POST /v1/mail/send</code>, restricted to sender addresses you name</li>
+            <li><b>People API</b> — so your own software can admit and remove people</li>
+            <li><b>Meetings API</b> — a paged timetable an ERP can read and write</li>
+            <li><b>SSO applications</b> — register a client, choose the claims, see the consent screen your people will see</li>
+            <li>A downloadable integration guide on the page itself</li>
+          </ul>
+        </div>
+        <div class="slab-shot frame">
+          <div class="frame-bar"><i></i><i></i><i></i><span>Core — SSO applications</span></div>
+          <img src="shots/org-applications.png" loading="lazy" width="2880" height="1800" alt="SSO applications page">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================================================== plans ========== -->
+  <section class="section" id="plans" style="background:var(--surface); border-block:1px solid var(--line)">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Plans</p>
+        <h2>Plans for an organisation, and for one person.</h2>
+        <p class="lede">Two front doors: an organisation brings its own domain and adds
+          its people; a person signs up alone and gets an address at tatvaos.com. Ask us
+          for pricing.</p>
+      </div>
+
+      <div class="plan-switch" role="tablist" aria-label="Who the plan is for">
+        <button type="button" role="tab" id="tab-org" aria-controls="panel-org" aria-selected="true">For organisations</button>
+        <button type="button" role="tab" id="tab-personal" aria-controls="panel-personal" aria-selected="false">For one person</button>
+      </div>
+
+      <!-- organisations -->
+      <div id="panel-org" role="tabpanel" aria-labelledby="tab-org">
+        <div class="plans four">
+          <div class="plan">
+            <div class="plan-name">Starter</div>
+            <p class="plan-for">A small office or clinic getting off free Gmail.</p>
+            <ul>
+              <li>Up to 10 people</li>
+              <li>5 GB each</li>
+              <li>1 domain</li>
+              <li>Mail</li>
+            </ul>
+            <a class="btn btn-ghost btn-sm" href="https://core.tatvaos.com/signup">Start a free trial</a>
+          </div>
+          <div class="plan feature">
+                        <div class="plan-name">Business</div>
+            <p class="plan-for">A growing business or a school office.</p>
+            <ul>
+              <li>Up to 100 people</li>
+              <li>30 GB each</li>
+              <li>5 domains</li>
+              <li>Mail and Space</li>
+            </ul>
+            <a class="btn btn-primary btn-sm" href="https://core.tatvaos.com/signup">Start a free trial</a>
+          </div>
+          <div class="plan">
+            <div class="plan-name">Institution</div>
+            <p class="plan-for">A whole school or college, staff and students.</p>
+            <ul>
+              <li>Up to 500 people</li>
+              <li>2 TB pooled, split by you</li>
+              <li>10 domains</li>
+              <li>Mail, Space and People</li>
+            </ul>
+            <a class="btn btn-ghost btn-sm" href="#contact">Talk to us</a>
+          </div>
+          <div class="plan">
+            <div class="plan-name">Enterprise</div>
+            <p class="plan-for">Many sites, many domains, its own rules.</p>
+            <ul>
+              <li>Unlimited people</li>
+              <li>10 TB pooled</li>
+              <li>Unlimited domains</li>
+              <li>Everything, including Payroll, Sheet and Word as they arrive</li>
+            </ul>
+            <a class="btn btn-ghost btn-sm" href="#contact">Talk to us</a>
+          </div>
+        </div>
+        <div class="note">
+          <b>Connect and Calendar are available on every plan.</b> Meetings and captions
+          are not sold separately — they come with the account.
+        </div>
+      </div>
+
+      <!-- personal -->
+      <div id="panel-personal" role="tabpanel" aria-labelledby="tab-personal" hidden>
+        <div class="note" style="margin:0 0 22px">
+          <b>Personal accounts are not open yet.</b> These are the plans they will launch
+          with. Email us and we will tell you the day they open.
+        </div>
+        <div class="plans three">
+          <div class="plan">
+            <div class="plan-name">Free</div>
+            <p class="plan-for">Trying it, and for people whose needs are genuinely small.</p>
+            <ul>
+              <li>1 GB, shared across mail and files</li>
+              <li>your.name@tatvaos.com</li>
+              <li>Meetings up to 5 people, 60 minutes</li>
+              <li>Live captions</li>
+              <li>No recording, no TatvaOS AI minutes</li>
+            </ul>
+            <a class="btn btn-ghost btn-sm" href="mailto:info@tatvaos.com?subject=Personal%20account">Tell me when it opens</a>
+          </div>
+          <div class="plan">
+            <div class="plan-name">Basic</div>
+            <p class="plan-for">A tutor, a freelancer, a shop — someone who works with others.</p>
+            <ul>
+              <li>5 GB</li>
+              <li>Meetings up to 20 people, no time limit</li>
+              <li>Captions, and a plain meeting record built from who attended — no AI</li>
+              <li>Mail signatures and the everyday features</li>
+              <li>No recording, no TatvaOS AI minutes</li>
+            </ul>
+            <a class="btn btn-ghost btn-sm" href="mailto:info@tatvaos.com?subject=Personal%20account">Tell me when it opens</a>
+          </div>
+          <div class="plan feature">
+            <span class="badge">Everything on</span>
+            <div class="plan-name">Premium</div>
+            <p class="plan-for">Everything switched on, for people who record and review.</p>
+            <ul>
+              <li>10 GB</li>
+              <li>Meetings up to 50 people</li>
+              <li>Recording, audio and video, kept 30 days</li>
+              <li>Minutes by TatvaOS AI — summary, decisions, action items, in English whatever language the meeting was in</li>
+                          </ul>
+            <a class="btn btn-primary btn-sm" href="mailto:info@tatvaos.com?subject=Personal%20account">Tell me when it opens</a>
+          </div>
+        </div>
+
+        <div class="addons">
+          <table>
+            <thead><tr><th>Add-on</th><th>Note</th></tr></thead>
+            <tbody>
+              <tr><td>+10 GB storage</td><td>Stackable</td></tr>
+              <tr><td>+50 GB storage</td><td>Stackable</td></tr>
+              <tr><td>Big meetings, up to 100</td><td>Premium only</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note">
+          <b>Recording and TatvaOS AI minutes stay on Premium</b> rather than becoming
+          add-ons — one clear reason to upgrade beats four toggles nobody understands.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================= timeline ========== -->
+  <section class="section" id="timeline">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">How it was built</p>
+        <h2>Seven weeks, from an empty repository to production.</h2>
+        <p class="lede">The first commit is dated 4 August 2026. Everything on this page
+          was built between then and now — the numbers are the repository's own, not
+          written afterwards.</p>
+      </div>
+
+      <div class="tl-intro">
+        <div>
+          <dl class="hero-facts" style="margin-top:0; border-top:0; padding-top:0">
+            <div class="fact"><dt>First commit</dt><dd>4 Aug 2026</dd></div>
+            <div class="fact"><dt>Commits, as of 23 Sept</dt><dd>1,070</dd></div>
+            <div class="fact"><dt>Elapsed</dt><dd>7 weeks</dd></div>
+          </dl>
+        </div>
+        <div>
+          <div class="bars" role="img" aria-label="Commits per week: 99, 159, 196, 93, 147, 145, 208, 23">
+            <div style="height:46%"><b>99</b></div>
+            <div style="height:74%"><b>159</b></div>
+            <div style="height:91%"><b>196</b></div>
+            <div style="height:43%"><b>93</b></div>
+            <div style="height:68%"><b>147</b></div>
+            <div style="height:67%"><b>145</b></div>
+            <div class="peak" style="height:96%"><b>208</b></div>
+            <div style="height:11%"><b>23</b></div>
+          </div>
+          <p class="bars-cap">Commits per week, W1 → W8</p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ================================================== contact ========== -->
+  <section class="section" id="contact" style="background:var(--surface); border-top:1px solid var(--line)">
+    <div class="wrap" style="text-align:center; display:flex; flex-direction:column; align-items:center; gap:18px">
+      <h2>Start on your own timetable. Your mail keeps working.</h2>
+      <p class="lede" style="text-align:center">
+        Signing up does not touch your existing email. You prove you own your domain and
+        create your people; mail only starts arriving here when you change your domain's
+        records, and that is your step to take. Bringing old mail across is a guided
+        copy from your current mailbox — we have the step-by-step, and we will help.
+      </p>
+      <div class="hero-actions" style="justify-content:center">
+        <a class="btn btn-primary" href="https://core.tatvaos.com/signup">Start a free trial</a>
+        <a class="btn btn-ghost" href="mailto:info@tatvaos.com">Email us</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <a class="logo" href="#top" style="margin-bottom:12px">
+          <img src="brand/tatvaos-mark.svg" alt=""><span>Tatva<em>OS</em></span>
+        </a>
+        <p style="font-size:14px; color:var(--muted); max-width:34ch">
+          Business email and identity for Indian organisations. Built and hosted in India
+          by Techvein.
+        </p>
+      </div>
+      <div>
+        <h4>Products</h4>
+        <ul>
+          <li><a href="#products">Mail</a></li>
+          <li><a href="#products">Connect</a></li>
+          <li><a href="#products">Calendar</a></li>
+          <li><a href="#products">Space</a></li>
+          <li><a href="#products">Core console</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Company</h4>
+        <ul>
+          <li><a href="#plans">Plans</a></li>
+          <li><a href="#timeline">How it was built</a></li>
+          <li><a href="https://core.tatvaos.com/login">Sign in</a></li>
+          <li><a href="mailto:info@tatvaos.com">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="foot-legal">
+      <span>© 2026 Techvein</span>
+      <span>Hosted in India</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var tabs = [
+    { btn: document.getElementById('tab-org'), panel: document.getElementById('panel-org') },
+    { btn: document.getElementById('tab-personal'), panel: document.getElementById('panel-personal') }
+  ];
+  tabs.forEach(function (t, i) {
+    t.btn.addEventListener('click', function () {
+      tabs.forEach(function (o, j) {
+        o.btn.setAttribute('aria-selected', String(i === j));
+        o.panel.hidden = i !== j;
+      });
+    });
+  });
+})();
+</script>
+
+</body>
+</html>
