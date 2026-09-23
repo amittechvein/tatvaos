@@ -651,6 +651,33 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
       return;
     }
     setComposers((prev) => {
+      // ── ONE REPLY PER MESSAGE. ──────────────────────────────────────────
+      //
+      //  Amit, 23 September 2026: pressing Reply and then Reply all left TWO
+      //  reply boxes stacked inside the same message, each with its own
+      //  recipients and its own Send. Whichever you then typed into, the
+      //  other was still there to be sent by mistake.
+      //
+      //  Gmail treats the second press as "change this reply", not "start
+      //  another one", and that is the honest reading: there is one answer
+      //  being written to one message. So an existing reply to the SAME
+      //  message switches mode in place — the recipients are recomputed by
+      //  the composer (see the effect on `mode`) and anything already typed
+      //  survives, which is the whole reason for not remounting it.
+      //  Only reply ↔ reply all switches in place. FORWARD is a different
+      //  message — different subject, no recipients, and often sent while a
+      //  reply is still being written — so it gets its own composer.
+      const isAnswer = (x: ComposeMode) => x === 'reply' || x === 'replyAll';
+      const already = m !== null && isAnswer(m2)
+        ? prev.findIndex((c) => isAnswer(c.mode) && c.replyTo?.id === m.id)
+        : -1;
+      if (already >= 0) {
+        if (prev[already]!.mode === m2) return prev;
+        const next = [...prev];
+        next[already] = { ...next[already]!, mode: m2 };
+        return next;
+      }
+
       // Three is what a 1080p-wide window fits. The fourth request is
       // ignored rather than evicting someone's half-written draft.
       if (prev.length >= 3) return prev;
