@@ -95,6 +95,83 @@ export const SEARCH_OPERATORS: { op: string; example: string; hint: string }[] =
   { op: 'rfc822msgid:', example: 'rfc822msgid:<id@host>', hint: 'the message id, for support' },
 ];
 
+/**
+ * The operator names the server actually knows, taken from the list above so
+ * the two cannot drift apart.
+ */
+export const KNOWN_FIELDS: ReadonlySet<string> = new Set(
+  SEARCH_OPERATORS.map((o) => o.op.slice(0, o.op.indexOf(':'))),
+);
+
+/** One thing the person can see and remove. May cover several tokens. */
+export interface SearchChip {
+  /** Operator name, or null when this is plain text. */
+  field: string | null;
+  value: string;
+  negated: boolean;
+  /** Which tokens of the query this chip stands for. */
+  indices: number[];
+}
+
+/**
+ * The chips for a query — which is NOT one per token.
+ *
+ * ── WHY RUNS OF PLAIN WORDS COLLAPSE INTO ONE CHIP ──────────────────────
+ *
+ *  Amit, 23 September 2026, searching for a subject line: typing
+ *  "New sign-in to your account" produced FIVE chips — "contains New",
+ *  "contains sign-in", "contains to", "contains your", "contains account" —
+ *  three rows of them. Five chips say nothing that the words in the box did
+ *  not already say, and they cost more room than the search box itself.
+ *
+ *  A chip exists to show that something was UNDERSTOOD AS A CONDITION.
+ *  `from:priya` earns one because the box is claiming to have read an
+ *  operator and could be wrong. A word is just a word: the server searches
+ *  for it, the person can already see it, and there is nothing to confirm.
+ *  So consecutive plain words become a single "contains ..." chip, and
+ *  removing it removes all of them.
+ *
+ *  AN UNKNOWN OPERATOR IS PLAIN TEXT, and must look like it. `form:priya`
+ *  (the typo for `from:`) used to draw a chip reading "form priya", which
+ *  is the box claiming to have understood an operator that does not exist
+ *  while the server searched for the literal word. The screen must not
+ *  disagree with the server, so anything outside KNOWN_FIELDS is shown as
+ *  text, exactly as the server treats it.
+ */
+export function chipsFor(query: string): SearchChip[] {
+  const chips: SearchChip[] = [];
+
+  tokenise(query).forEach((t, i) => {
+    if (t.field !== null && KNOWN_FIELDS.has(t.field)) {
+      chips.push({ field: t.field, value: t.value, negated: t.negated, indices: [i] });
+      return;
+    }
+
+    // Plain text, or an operator the server does not know — same thing.
+    const bare = (t.negated ? t.raw.slice(1) : t.raw).replace(/^"|"$/g, '');
+    const last = chips[chips.length - 1];
+    // A run only continues while nothing about it changes; "-holiday party"
+    // is a removal and a word, not one phrase.
+    if (last && last.field === null && !last.negated && !t.negated) {
+      last.value = `${last.value} ${bare}`;
+      last.indices.push(i);
+    } else {
+      chips.push({ field: null, value: bare, negated: t.negated, indices: [i] });
+    }
+  });
+
+  return chips;
+}
+
+/** Everything except the tokens listed, joined back into a query. */
+export function withoutTokens(query: string, indices: number[]): string {
+  const drop = new Set(indices);
+  return tokenise(query)
+    .filter((_, i) => !drop.has(i))
+    .map((t) => t.raw)
+    .join(' ');
+}
+
 /** What the person is typing right now, for the suggestion list. */
 export function currentFragment(query: string): string {
   const afterSpace = query.split(/\s+/).pop() ?? '';
