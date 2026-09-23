@@ -104,6 +104,9 @@ export function MessageView({
   expanded,
   onToggleExpand,
   autoLoadImages = false,
+  moveTargets,
+  onMove,
+  canArchive = true,
 }: {
   message: Message;
   bodyLoading?: boolean;
@@ -132,6 +135,19 @@ export function MessageView({
    */
   onBlockSender?: (m: Message) => void;
   /**
+   * Where this message may be filed, the open folder already removed.
+   *
+   * Until 23 September 2026 the only move in the whole of webmail was "Move
+   * to Junk", so mail went INTO Trash and Junk and could never come back:
+   * nothing anywhere called move with any other folder, and a custom folder
+   * could be created but never filed into. Absent, or empty, means the menu
+   * is not drawn at all rather than opening onto nothing.
+   */
+  moveTargets?: { id: string; name: string }[];
+  onMove?: (m: Message, folderId: string) => void;
+  /** False in Junk itself, where the button was drawn and did nothing. */
+  canArchive?: boolean;
+  /**
    * The rest of this conversation, oldest first, INCLUDING the open message.
    *
    * Passed in rather than fetched here, because everything else in this
@@ -158,6 +174,7 @@ export function MessageView({
   autoLoadImages?: boolean;
 }) {
   const [menu, setMenu] = useState(false);
+  const [moveMenu, setMoveMenu] = useState(false);
 
   // Gmail's little ▾ next to "to …": the full envelope on demand — exact
   // addresses, full date, subject — without spending header space on it.
@@ -367,7 +384,38 @@ export function MessageView({
             both take the message away, and neither belongs adjacent to Back,
             where a hurried mis-click used to land on Delete. */}
         <span className="mx-1 hidden h-5 w-px bg-line sm:block" />
-        <ToolButton icon="junk" label="Move to Junk" onClick={() => onArchive(message)} />
+        {/* The way OUT of a folder. Trash and Junk had a door in and no door
+            back: this is it, and it is the same control everywhere rather
+            than a Restore button that only Trash knows about. */}
+        {onMove && moveTargets && moveTargets.length > 0 && (
+          <div className="relative">
+            <ToolButton icon="archive" label="Move to" onClick={() => setMoveMenu((v) => !v)} />
+            {moveMenu && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setMoveMenu(false)} aria-hidden="true" />
+                <div
+                  role="menu"
+                  className="absolute left-0 top-full z-20 mt-1 w-56 overflow-hidden rounded-xl border border-line bg-surface py-1.5 text-sm shadow-raised"
+                >
+                  {moveTargets.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      role="menuitem"
+                      onClick={() => { onMove(message, t.id); setMoveMenu(false); }}
+                      className="block w-full truncate px-4 py-2 text-left text-ink hover:bg-canvas"
+                    >
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+        {canArchive && (
+          <ToolButton icon="junk" label="Move to Junk" onClick={() => onArchive(message)} />
+        )}
         <ToolButton icon="trash" label="Delete" tone="danger" onClick={() => onDelete(message)} />
         <div className="ml-auto flex items-center gap-1">
           {/* Gmail's split/full-page choice, as one toggle. */}

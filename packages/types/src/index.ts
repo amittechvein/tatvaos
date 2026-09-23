@@ -39,7 +39,14 @@ export interface Mailbox {
   usedBytes: number;
 }
 
-export type SpecialUse = '\\Inbox' | '\\Sent' | '\\Drafts' | '\\Junk' | '\\Trash' | null;
+/**
+ * '\\Scheduled' is sent by the API (0029-mail-away-and-schedule.sql makes the
+ * folder for every mailbox) and was missing here, so it arrived typed as a
+ * custom folder — which is how it nearly became a "Move to" destination.
+ * Additive: nothing that reads this field switches exhaustively on it.
+ */
+export type SpecialUse =
+  | '\\Inbox' | '\\Sent' | '\\Drafts' | '\\Junk' | '\\Trash' | '\\Scheduled' | null;
 
 export interface Folder {
   id: Uuid;
