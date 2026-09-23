@@ -60,11 +60,11 @@ const Stage = dynamic(() => import('./Stage'), {
 
 type Phase =
   | { kind: 'resolving' }
-  // `asVisitor` means: you are signed in, but this meeting belongs to another
+  // `asGuest` means: you are signed in, but this meeting belongs to another
   // organisation, so the only way in is the guest door. Said out loud on the
   // door rather than silently — somebody who is signed in and lands in a
   // meeting under a typed name deserves to know why.
-  | { kind: 'door'; door: Doorstep; meeting: Meeting | null; asVisitor?: boolean }
+  | { kind: 'door'; door: Doorstep; meeting: Meeting | null; asGuest?: boolean }
   | { kind: 'waiting'; waitToken: string }
   // The seat is already minted — it is a ten-minute join WINDOW, so the time
   // spent checking a camera here costs nothing. The room does not know about
@@ -147,13 +147,13 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
             meeting = await connectApi.byCode(authedFetch, code);
           } catch (e) {
             if (!(e instanceof HttpError) || e.status !== 404) throw e;
-            const visitorDoor = await guestApi.doorstep(code);
+            const guestDoor = await guestApi.doorstep(code);
             if (!alive) return;
-            if (visitorDoor.mode === 'private' && !e2eeSupported()) {
+            if (guestDoor.mode === 'private' && !e2eeSupported()) {
               setPhase({ kind: 'cannotEncrypt' });
               return;
             }
-            setPhase({ kind: 'door', door: visitorDoor, meeting: null, asVisitor: true });
+            setPhase({ kind: 'door', door: guestDoor, meeting: null, asGuest: true });
             return;
           }
           // BEFORE the token. A private meeting on a browser without the
@@ -320,7 +320,7 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
         door={phase.door}
         meeting={phase.meeting}
         signedInName={user?.displayName ?? null}
-        asVisitor={phase.asVisitor === true}
+        asGuest={phase.asGuest === true}
         onSeat={(res, meeting) => {
           setPhase(res.status === 'waiting'
             ? { kind: 'waiting', waitToken: res.waitToken }
@@ -349,13 +349,13 @@ export default function RoomPage({ params }: { params: Promise<{ code: string }>
 // ===========================================================================
 //  The door
 // ===========================================================================
-function Door({ code, door, meeting, signedInName, asVisitor = false, onSeat, onGone }: {
+function Door({ code, door, meeting, signedInName, asGuest = false, onSeat, onGone }: {
   code: string;
   door: Doorstep;
   meeting: Meeting | null;
   signedInName: string | null;
   /** Signed in, but this meeting belongs to another organisation. */
-  asVisitor?: boolean;
+  asGuest?: boolean;
   onSeat: (res: JoinResult, meeting: Meeting | null) => void;
   onGone: (message: string) => void;
 }) {
@@ -411,11 +411,12 @@ function Door({ code, door, meeting, signedInName, asVisitor = false, onSeat, on
 
         {/* Why the name box is here for somebody who is already signed in.
             Without this line it reads as the product forgetting who you are. */}
-        {asVisitor && (
+        {asGuest && (
           <div className="cx-banner" style={{ borderRadius: 10, marginBottom: 14 }}>
-            This meeting is run by another organisation, so you join it as a
-            visitor. Your TatvaOS account is not shared with them — check the
-            name you want them to see.
+            This meeting belongs to another organisation. You&apos;re joining as
+            a guest, so you may be asked to wait to be let in. Your TatvaOS
+            account is not shared with them — check the name you want them to
+            see.
           </div>
         )}
 
