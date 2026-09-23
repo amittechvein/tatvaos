@@ -594,6 +594,15 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   }
 
   const mailbox = boot.mailbox;
+  // A reply belongs in the conversation ONLY while the message it answers is
+  // the one on screen. Reply to something, open a different message, and the
+  // draft has nothing to sit under — so it becomes a docked window rather
+  // than being torn out of the page or silently hidden with typing in it.
+  const inlineComposers = composers.filter(
+    (c) => c.mode !== 'new' && c.replyTo !== null && open !== null && c.replyTo.id === open.id,
+  );
+  const dockedComposers = composers.filter((c) => !inlineComposers.includes(c));
+
   const rangeStart = total === 0 ? 0 : skip + 1;
   const rangeEnd = Math.min(skip + messages.length, total);
   const allSelected = selectedIds.size > 0 && selectedIds.size === filtered.length;
@@ -854,7 +863,11 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
       {/* ---- Reading pane ---- */}
       <section className={`min-w-0 flex-1 ${open ? 'flex' : 'hidden lg:flex'}`}>
         {open ? (
-          <div className="w-full">
+          // A column: the message, then the reply under it. min-h-0 so the
+          // message pane can shrink rather than pushing the composer off the
+          // bottom — the flex default nobody expects.
+          <div className="flex w-full min-w-0 flex-col gap-3 min-h-0">
+            <div className="min-h-0 flex-1">
             <MessageView
               message={open}
               bodyLoading={openLoading}
@@ -875,6 +888,35 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
               onToggleExpand={() => setWide((v) => !v)}
               autoLoadImages={folder?.slug !== 'junk'}
             />
+            </div>
+
+            {/* THE REPLY, IN THE CONVERSATION. Answering the message on
+                screen belongs under it, not in a corner window that looks
+                exactly like a new message (Amit, 23 Sept). Replies to some
+                OTHER message stay docked below — they have nothing on screen
+                to sit under. */}
+            {inlineComposers.map((c) => (
+              <div key={c.key} className="shrink-0">
+                <Composer
+                  placement="inline"
+                  replyTo={c.replyTo}
+                  mode={c.mode}
+                  selfAddress={mailbox.address}
+                  fromAddress={mailbox.address}
+                  onClose={() => setComposers((prev) => prev.filter((x) => x.key !== c.key))}
+                  onSend={async (draft) => {
+                    await mailApi.send(authedFetch, {
+                      ...draft,
+                      mailboxId,
+                      inReplyToId: c.mode === 'reply' || c.mode === 'replyAll'
+                        ? c.replyTo?.id : undefined,
+                    });
+                    void refreshFolders();
+                    if (folder?.slug === 'sent') void loadMessages(folder.id, 0);
+                  }}
+                />
+              </div>
+            ))}
           </div>
         ) : (
           <div className="hidden h-full w-full flex-col items-center justify-center rounded-card border border-dashed border-line bg-surface/40 lg:flex">
@@ -889,7 +931,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
 
       </div>
 
-      {composers.map((c, i) => (
+      {dockedComposers.map((c, i) => (
         <Composer
           key={c.key}
           offset={i}

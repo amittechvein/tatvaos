@@ -192,6 +192,7 @@ export function Composer({
   onClose,
   onSend,
   offset = 0,
+  placement = 'docked',
 }: {
   replyTo?: Message | null;
   mode?: ComposeMode;
@@ -221,6 +222,21 @@ export function Composer({
    * screen ignores it — only one thing can be the task.
    */
   offset?: number;
+  /**
+   * 'inline' puts the composer IN the conversation, under the message being
+   * answered, instead of in a floating window at the corner.
+   *
+   * Amit, 23 September 2026: "REPLY OPENING LIKE NEW MSG, IT'S A BIT
+   * CONFUSING, REPLIES SHOULD OPEN A REPLY BOX WITHIN IN MAIL." A reply that
+   * arrives as the same panel a brand-new message uses loses the one fact
+   * that matters — that it is attached to the thing on screen. Every mail
+   * client people already use answers in place.
+   *
+   * Everything else is identical: the same autosave, attachments, signature,
+   * formatting and send path. Only where it sits changes, which is why this
+   * is a placement prop and not a second component to keep in step.
+   */
+  placement?: 'docked' | 'inline';
 }) {
   const editorRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -701,7 +717,12 @@ export function Composer({
 
       <div
         className={
-          pane === 'full'
+          // In the conversation: no fixed position, no slot arithmetic, no
+          // corner. It is part of the page and scrolls with the message it
+          // answers. Full screen still works from here.
+          placement === 'inline' && pane !== 'full'
+            ? 'w-full'
+            : pane === 'full'
             // Above YZEN's chrome: it puts .app-header at z-index 100 and
             // .app-sidebar at 103, so at Tailwind's z-50 the header covered the
             // composer's own title bar — and with it the close button.
@@ -717,15 +738,22 @@ export function Composer({
         // An inline style because slot arithmetic is not a class; harmless on
         // phones, where inset-x-0 pins both edges for offset 0 and the rest
         // are hidden above.
-        style={pane === 'full' ? undefined : { right: 20 + offset * 580 }}
+        style={pane === 'full' || placement === 'inline'
+          ? undefined
+          : { right: 20 + offset * 580 }}
       >
         <div
-          className={`flex w-full flex-col overflow-hidden bg-surface shadow-raised ${
-            pane === 'full'
-              ? 'h-full max-w-5xl rounded-card'
-              : minimised
-                ? 'rounded-t-card sm:w-[360px]'
-                : 'h-[78vh] rounded-t-card sm:h-[560px] sm:w-[560px]'
+          className={`flex w-full flex-col overflow-hidden bg-surface ${
+            placement === 'inline' && pane !== 'full'
+              // A card in the flow, not a panel over the page: a border
+              // instead of the floating shadow, and a height that suits a
+              // reply rather than filling the corner.
+              ? 'rounded-card border border-line min-h-[320px]'
+              : pane === 'full'
+                ? 'h-full max-w-5xl rounded-card shadow-raised'
+                : minimised
+                  ? 'rounded-t-card shadow-raised sm:w-[360px]'
+                  : 'h-[78vh] rounded-t-card shadow-raised sm:h-[560px] sm:w-[560px]'
           }`}
         >
           {/* Title bar. While minimised the whole bar restores the draft — the
@@ -735,10 +763,16 @@ export function Composer({
             onClick={minimised ? () => setPane('docked') : undefined}
           >
             <span className="truncate text-sm font-semibold tracking-tight">
-              {replyTo ? 'Reply' : 'New message'}
+              {mode === 'replyAll' ? 'Reply all'
+                : mode === 'forward' ? 'Forward'
+                  : replyTo ? 'Reply' : 'New message'}
               {minimised && subject.trim() ? ` — ${subject.trim()}` : ''}
             </span>
             <div className="flex items-center gap-1">
+              {/* Nothing to minimise INTO when the composer sits in the
+                  conversation — the strip would collapse to a bar in the
+                  middle of the message and read as broken. */}
+              {placement !== 'inline' && (
               <button
                 type="button"
                 onClick={(e) => {
@@ -754,6 +788,7 @@ export function Composer({
               >
                 <Icon name={minimised ? 'expand' : 'minimise'} className="h-4 w-4" />
               </button>
+              )}
               {/* Hidden while minimised: restore is the only sensible action
                   there, and next to it this button showed the SAME expand
                   icon — two identical icons doing different things. */}
