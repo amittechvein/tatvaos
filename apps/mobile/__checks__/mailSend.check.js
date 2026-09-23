@@ -221,3 +221,20 @@ describe('uploading with progress', () => {
     expect(sent).toHaveLength(0);
   });
 });
+
+// ── SENDING FROM A SHARED MAILBOX ───────────────────────────────────────────
+//  Amit, 23 Sept 2026. The server reads mailboxId as a FORM FIELD on send
+//  (not the query string the read routes use). Without it a reply written
+//  while reading support@ goes out from the person's own address.
+test('a shared mailbox goes up as a form field, and is absent for my own', async () => {
+  await send('AT', { to: 'r@x.com', mailboxId: 'mb-shared' });
+  expect(get('mailboxId')).toEqual(['mb-shared']);
+  expect(sent.at(-1).path).toBe('/api/mail/send');   // never in the query
+
+  parts.length = 0;
+  await send('AT', { to: 'r@x.com' });
+  expect(get('mailboxId')).toEqual([]);
+  parts.length = 0;
+  await send('AT', { to: 'r@x.com', mailboxId: null });
+  expect(get('mailboxId')).toEqual([]);
+});

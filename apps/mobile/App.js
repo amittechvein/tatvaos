@@ -181,7 +181,7 @@ function Root() {
   const signOutNow = useCallback(async () => {
     const token = session?.accessToken;
     setSession(null); setProfile(null); setPhase('login');
-    setView('home'); setActiveMeeting(null);
+    setView('home'); setActiveMeeting(null); setMailboxId(null);
     await signOut(token);
   }, [session]);
 
@@ -223,6 +223,15 @@ function Root() {
   const [mailReload, setMailReload] = useState(0);
   const [mailNotice, setMailNotice] = useState(null);
   const [mailSignature, setMailSignature] = useState('');
+  // ── WHICH MAILBOX MAIL IS OPEN ON. ─────────────────────────────────────
+  //  Amit, 23 Sept 2026: "able to access shared mailbox". null is the
+  //  person's own; a shared mailbox's id otherwise. Held HERE rather than in
+  //  the Mail screen because the message and compose screens are mounted by
+  //  this file and every one of their calls must name the same mailbox — a
+  //  message opened from support@ and then flagged in the person's own
+  //  mailbox would be a 404 at best. Resets to own on sign-out with the rest.
+  // ───────────────────────────────────────────────────────────────────────
+  const [mailboxId, setMailboxId] = useState(null);
 
   const openConnect = useCallback(() => setView('meetings'), []);
   const openMail = useCallback(() => { setOpenMessage(null); setComposing(null); setView('mail'); }, []);
@@ -268,6 +277,7 @@ function Root() {
           session={session}
           draft={composing}
           signature={mailSignature}
+          mailboxId={mailboxId}
           onClose={() => setComposing(null)}
           onSent={(warning) => {
             setComposing(null);
@@ -283,6 +293,7 @@ function Root() {
         <MailMessage
           session={session}
           messageId={openMessage}
+          mailboxId={mailboxId}
           onBack={(changed) => {
             setOpenMessage(null);
             if (changed) setMailReload((n) => n + 1);
@@ -301,6 +312,8 @@ function Root() {
           onNoticeSeen={() => setMailNotice(null)}
           onBack={backHome}
           onMailbox={({ signature }) => setMailSignature(signature ?? '')}
+          mailboxId={mailboxId}
+          onSwitchMailbox={(id) => { setMailboxId(id ?? null); setOpenMessage(null); setComposing(null); }}
           onOpen={(m) => setOpenMessage(m.id)}
           onCompose={(draft) => setComposing(draft)}
         />
