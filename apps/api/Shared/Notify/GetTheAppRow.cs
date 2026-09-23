@@ -9,12 +9,29 @@ namespace TatvaOS.Api.Shared.Notify;
 /// forget when an app is renamed or an App Store link is added beside it.
 /// WelcomeEmail and ResetEmail both call this.
 ///
-/// Same construction rules as the emails that use it — a nested table with
-/// inline styles, no background image, and readable with remote images
-/// blocked, which is the default in every client. That is why this is a
-/// bordered text button rather than the official Play badge PNG: a badge is
-/// an image, and an image that does not load leaves an empty box where the
-/// only call to action was. The text says where it goes.
+/// ── THE OFFICIAL BADGE, WITH THE TEXT AS ITS FALLBACK ───────────────────
+///
+///  It shipped first as a bordered text button, because every mail client
+///  blocks remote images by default and a badge that does not load leaves an
+///  empty box where the only thing to click used to be. Amit asked for the
+///  real badge (23 Sept), and Google's brand guidelines want their artwork
+///  rather than a lookalike.
+///
+///  Both, then: the badge is an `img` whose ALT TEXT is "Get it on Google
+///  Play". With images on, it is the official badge. With images blocked —
+///  the common case — the client renders the alt text inside the same link,
+///  so the row still says what it is and still goes where it goes. The link
+///  wraps the image, so the clickable target is identical either way.
+///
+///  The `img` carries TEXT styling (colour, weight, underline) that it can
+///  never show itself. That is deliberate: most clients render alt text with
+///  the image's own style, and without it the fallback drew as flat black
+///  body text with nothing to say it was clickable — seen in the pane on
+///  23 Sept by pointing the src at a missing file.
+///
+///  The PNG is SERVED BY US (apps/web/public/brand), not hotlinked from
+///  Google: an email that reaches into a third party's CDN tells that third
+///  party when the message was opened and from where.
 ///
 /// The package id is the one in apps/mobile/app.json (com.techvein.tatvaos),
 /// which is what Google Play serves — the listing went live on 22 September
@@ -37,7 +54,8 @@ public static class GetTheAppRow
     /// The sentence above the button. It differs by email — a new person is
     /// being invited in, somebody resetting a password already has the app.
     /// </param>
-    public static string Html(string line) => $@"
+    /// <param name="baseUrl">The web origin, for the badge's absolute src.</param>
+    public static string Html(string baseUrl, string line) => $@"
           <tr>
             <td style=""padding:8px 32px 20px;"">
               <table role=""presentation"" width=""100%"" cellpadding=""0"" cellspacing=""0""
@@ -47,10 +65,11 @@ public static class GetTheAppRow
                     <div style=""font-size:14px;font-weight:700;color:{Ink};"">TatvaOS on your phone</div>
                     <div style=""font-size:13px;line-height:1.5;color:{Muted};margin-top:2px;"">{line}</div>
                     <table role=""presentation"" cellpadding=""0"" cellspacing=""0"" style=""margin-top:12px;""><tr>
-                      <td style=""border:1px solid {Border};border-radius:8px;background:#ffffff;"">
-                        <a href=""{PlayStoreUrl}""
-                           style=""display:inline-block;padding:10px 18px;font-size:13px;font-weight:700;color:{Ink};text-decoration:none;"">
-                          Get it on Google Play
+                      <td>
+                        <a href=""{PlayStoreUrl}"" style=""display:inline-block;text-decoration:none;font-size:13px;font-weight:700;color:{Ink};"">
+                          <img src=""{baseUrl.TrimEnd('/')}/brand/google-play-badge.png""
+                               alt=""Get it on Google Play"" width=""162"" height=""63""
+                               style=""display:block;border:0;color:{Ink};font-size:13px;font-weight:700;text-decoration:underline;"">
                         </a>
                       </td>
                     </tr></table>
