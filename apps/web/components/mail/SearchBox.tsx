@@ -85,7 +85,7 @@ export function SearchBox({
           onKeyDown={onKeyDown}
           placeholder="Search mail"
           aria-label="Search mail"
-          className="w-28 border-0 bg-transparent p-0 text-sm text-ink outline-none placeholder:text-ink-faint sm:w-44"
+          className="min-w-0 flex-1 border-0 bg-transparent p-0 text-sm text-ink outline-none placeholder:text-ink-faint"
         />
         {value.length > 0 && (
           <button type="button" onClick={() => onChange('')} aria-label="Clear search"

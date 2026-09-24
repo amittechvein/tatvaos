@@ -68,7 +68,12 @@ export function AdvancedSearch({
   const label = 'mb-1 block text-[11px] font-semibold uppercase tracking-wide text-ink-muted';
 
   return (
-    <div className="absolute right-0 top-full z-30 mt-9 w-[22rem] max-w-[calc(100vw-2rem)] rounded-xl border border-line bg-surface p-4 shadow-raised">
+    // Hangs from the box's LEFT edge. Anchored right it grew leftwards under
+    // the rail, which drew over its labels ("ROM", "UBJECT") — Amit's
+    // screenshot, 24 September 2026. On a phone the box is too narrow to hang
+    // anything from (it started 124px off-screen at 375px), so there the form
+    // is pinned to the viewport, 1rem in from each side, below the header.
+    <div className="fixed inset-x-4 top-[5rem] z-30 max-h-[calc(100vh-6rem)] overflow-y-auto rounded-xl border border-line bg-surface p-4 shadow-raised sm:absolute sm:inset-x-auto sm:left-0 sm:top-full sm:mt-9 sm:max-h-none sm:w-[22rem] sm:overflow-visible">
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2">
           <span className={label}>From</span>
