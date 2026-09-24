@@ -245,6 +245,10 @@ same "salary hidden when the job says so" "$(jq_ "$(body "$r")" "str(d['salary']
 same "the description is the plain text as typed" "$(jq_ "$(body "$r")" "repr(d['description'])")" "'Plain text.\\nSecond line <b>not bold</b>.'"
 same "the data contact is shown" "$(jq_ "$(body "$r")" "d['privacyContact']")" "privacy@techvein.test"
 same "and applying is not open yet" "$(jq_ "$(body "$r")" "str(d['applyOpen'])")" "False"
+# Mr. Singh, 24 Sept: nothing public is indexed before launch. The JSON says so
+# on every answer; the pages carry it in app/careers/layout.tsx.
+robots=$(curl -s -D - -o /dev/null "$API/api/public/careers/$SLUG_T/jobs/$S_OPEN" -H "X-Forwarded-For: 10.55.1.1" | tr -d '\r' | grep -i '^x-robots-tag:' | cut -d' ' -f2-)
+same "the public API tells search engines not to index it" "$robots" "noindex, nofollow"
 same "salary shown when the job says so" "$(jq_ "$(body "$(pub "$SLUG_T/jobs/$S_PAY")")" "f\"{d['salary']['currency']} {int(d['salary']['min'])}-{int(d['salary']['max'])} {d['salary']['period']}\"")" "INR 500000-700000 year"
 for pair in "on hold:$S_HOLD" "closed:$S_CLOSED" "past its closing date:$S_PAST"; do
     what=${pair%%:*}; s=${pair#*:}

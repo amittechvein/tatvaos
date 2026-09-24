@@ -118,9 +118,17 @@ export default function HireCareersSetupPage() {
             {(p) => <Input {...p} value={name} maxLength={120} onChange={(e) => setName(e.target.value)} />}
           </Field>
           <Field label="Who answers questions about candidates' data"
-                 hint="Shown on every job. Candidates write here to see, correct or delete their data; your organisation replies within 30 days. By default, your organisation's owner.">
+                 hint="Candidates write here to see, correct or delete their data; your organisation replies within 30 days. By default, your organisation's owner.">
             {(p) => <Input {...p} type="email" value={contact} maxLength={320} onChange={(e) => setContact(e.target.value)} />}
           </Field>
+          {/* Mr. Singh, 24 Sept 2026 (PR 275): the default is a named person,
+              and this address goes on the open internet. Say so, and offer the
+              role address, before anyone saves. Wording awaiting his approval. */}
+          <Alert tone="warn">
+            This address is shown publicly on every job, so spammers will find it. A shared address such
+            as privacy@ or hr@ is better than a person&apos;s own — someone must still read it and reply
+            within 30 days.
+          </Alert>
           <Switch label="Show the careers page" hint="Lists your open job openings. Drafts, jobs on hold and closed jobs never appear."
                   checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
           <FormActions>

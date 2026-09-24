@@ -58,7 +58,15 @@ public static class CareersEndpoints
         var pub = app.MapGroup("/api/public/careers")
             .AllowAnonymous()
             .RequireRateLimiting("careers-read")
-            .WithTags("Hire (public)");
+            .WithTags("Hire (public)")
+            // JSON is never a page to index, whatever the launch state. The
+            // pages themselves carry noindex in app/careers/layout.tsx until
+            // launch (Mr. Singh, 24 Sept 2026).
+            .AddEndpointFilter(async (ctx, next) =>
+            {
+                ctx.HttpContext.Response.Headers["X-Robots-Tag"] = "noindex, nofollow";
+                return await next(ctx);
+            });
         pub.MapGet("/{site}", PublicListAsync);
         pub.MapGet("/{site}/jobs/{jobSlug}", PublicJobAsync);
     }

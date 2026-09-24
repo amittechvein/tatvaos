@@ -81,7 +81,15 @@ RETURNS TABLE (tenant_id uuid, display_name text, erasure_contact text)
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = hire, core, pg_temp
+-- Pinned, and EXPLICIT about pg_catalog first and pg_temp last (Mr. Singh,
+-- 24 Sept: this function is reachable unauthenticated from the internet, the
+-- highest-value target in the system). Postgres would search pg_catalog
+-- first anyway; saying so means nobody has to know that. pg_temp last means a
+-- caller's temporary table can never shadow a name used here — and every
+-- table below is schema-qualified besides. tests/isolation checks every
+-- SECURITY DEFINER function has a pinned path and that no application role
+-- can create objects in any schema, which is what would make a path matter.
+SET search_path = pg_catalog, hire, core, pg_temp
 AS $$
     SELECT s.tenant_id, s.display_name, s.erasure_contact
       FROM hire.careers_sites s

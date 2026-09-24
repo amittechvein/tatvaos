@@ -389,6 +389,44 @@ r=$(no_context "SELECT count(*) FROM hire.resolve_careers_site('iso-careers-t')"
 
 run_as postgres "DELETE FROM hire.careers_sites WHERE slug IN ('iso-careers-t','iso-careers-s');" >/dev/null 2>&1
 
+hdr "SECURITY DEFINER functions cannot be hijacked through their search path"
+
+# Mr. Singh, 24 Sept 2026 (PR 275): a SECURITY DEFINER function runs with its
+# owner's rights and past row-level security; with a mutable search_path,
+# anyone who can create an object in a schema on that path can have their
+# code run with those rights. Two things make that impossible, and both are
+# checked across EVERY such function, not only the careers resolver:
+#   1. every SECURITY DEFINER function pins search_path;
+#   2. no application role can CREATE in any schema — so there is nowhere to
+#      plant a lookalike even if a path were wrong.
+# Audited by hand the same day: 43 functions, all pinned; eight Connect
+# functions omit pg_temp, but every table they name is schema-qualified, so a
+# temporary table has nothing to shadow (reported to Mr. Singh as hygiene).
+n=$(scalar_as postgres "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                         WHERE p.prosecdef AND n.nspname NOT IN ('pg_catalog','information_schema')
+                           AND NOT coalesce(array_to_string(p.proconfig, ';'), '') ~ 'search_path='")
+total=$(scalar_as postgres "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                             WHERE p.prosecdef AND n.nspname NOT IN ('pg_catalog','information_schema')")
+[ "${total:-0}" -ge 10 ] && [ "${n:-1}" -eq 0 ] \
+    && pass "all ${total} SECURITY DEFINER functions pin their search_path" \
+    || fail "DANGEROUS: ${n:-?} of ${total:-?} SECURITY DEFINER function(s) have no pinned search_path"
+
+c=$(scalar_as postgres "SELECT count(*) FROM pg_namespace n CROSS JOIN pg_roles r
+                         WHERE r.rolname IN ('tatvaos_app','tatvaos_mailedge')
+                           AND n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema'
+                           AND has_schema_privilege(r.oid, n.oid, 'CREATE')")
+pub=$(scalar_as postgres "SELECT count(*) FROM pg_namespace n
+                           WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema'
+                             AND has_schema_privilege('public', n.oid, 'CREATE')")
+[ "${c:-1}" -eq 0 ] && [ "${pub:-1}" -eq 0 ] \
+    && pass "no application role (and not PUBLIC) can create objects in any schema" \
+    || fail "DANGEROUS: application roles can CREATE in ${c:-?} schema(s), PUBLIC in ${pub:-?}"
+
+path=$(scalar_as postgres "SELECT array_to_string(proconfig, ';') FROM pg_proc WHERE oid = 'hire.resolve_careers_site(text)'::regprocedure")
+[ "$path" = "search_path=pg_catalog,hire,core,pg_temp" ] \
+    && pass "the public careers resolver searches pg_catalog first and pg_temp last" \
+    || fail "the careers resolver's path is '$path'"
+
 hdr "Sign-in handoff codes are isolated, and the redeem reaches no further than one row"
 
 # Decision 0003. This table is unusual and so is its test: the REDEEM is

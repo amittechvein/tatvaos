@@ -628,6 +628,15 @@ builder.Services.AddRateLimiter(o =>
 
     // The public careers pages (decision 0010 §5): 120 reads a minute per
     // address, keyed on the rightmost X-Forwarded-For like every limiter here.
+    //
+    // ⚠ CDN WARNING (Mr. Singh, 24 Sept 2026). Rightmost XFF is the real client
+    // ONLY because Caddy is the one proxy in front. Put Cloudflare or any CDN
+    // in front of the careers pages — the natural next step for a public page
+    // — and the rightmost entry becomes the CDN's own address: every visitor
+    // on earth then shares one 120-a-minute bucket and the page is down for
+    // all of them. Whoever adds a CDN must reconfigure every limiter here IN
+    // THE SAME CHANGE (the CDN's client-IP header, trusted only from its
+    // published ranges). Also in docs/DEPLOY_RUNBOOK.md §4.
     o.AddPolicy("careers-read", httpContext =>
     {
         var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();
