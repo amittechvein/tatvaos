@@ -17,8 +17,12 @@ public sealed class JobOpening
     public Guid TenantId { get; set; }
 
     public string Title { get; set; } = "";
-    /// <summary>Public address on the careers page. Set once; never follows a title edit.</summary>
-    public string Slug { get; set; } = "";
+    /// <summary>
+    /// Public address on the careers page. NULL until first publish, then
+    /// fixed from the title as published and never rewritten (Mr. Singh,
+    /// 24 Sept: a draft's working title must not leak into a public URL).
+    /// </summary>
+    public string? Slug { get; set; }
 
     public Guid? DepartmentId { get; set; }
     public Guid? DesignationId { get; set; }

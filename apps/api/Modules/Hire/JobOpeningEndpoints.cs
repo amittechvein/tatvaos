@@ -181,8 +181,6 @@ public static class JobOpeningEndpoints
         var error = await ApplyAsync(job, req, db, isNew: true, ct);
         if (error is not null) return Results.BadRequest(new { error });
 
-        job.Slug = await NewSlugAsync(db, job.Title, ct);
-
         db.JobOpenings.Add(job);
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("job.created", "job_opening", job.Id.ToString(),
@@ -257,7 +255,15 @@ public static class JobOpeningEndpoints
         {
             if (PublishProblem(job) is { } problem)
                 return Results.BadRequest(new { error = $"Not ready to publish: {problem}" });
-            job.PublishedAt ??= now;
+            // First publish fixes the public address, from the title AS
+            // PUBLISHED. Before this moment nothing outside could link to the
+            // job, so the draft title — often the confidential one — never
+            // reaches a URL. Reopening keeps the slug it already has.
+            if (job.PublishedAt is null)
+            {
+                job.Slug = await NewSlugAsync(db, job.Title, ct);
+                job.PublishedAt = now;
+            }
             job.ClosedReason = null;
             job.ClosedAt = null;
             job.OpeningDate ??= Today();
@@ -429,6 +435,13 @@ public static class JobOpeningEndpoints
     /// Today in India. The server runs in UTC, and between midnight and 05:30
     /// IST a UTC "today" is still yesterday — a job closing today would read
     /// as already closed for the first five and a half hours of the day.
+    ///
+    /// KNOWN BOUNDARY (Mr. Singh asked, 24 Sept): this is fixed to IST because
+    /// an organisation has no time zone to read — core.tenants carries a
+    /// country only, and core.users.timezone is a PERSON's zone, which is the
+    /// wrong owner for a job's closing date. Correct while every customer is
+    /// in India. The first customer outside it needs a tenant time zone, and
+    /// this is the one place to change.
     /// </summary>
     private static DateOnly Today() =>
         DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, Ist).DateTime);
@@ -436,10 +449,11 @@ public static class JobOpeningEndpoints
     private static readonly TimeZoneInfo Ist = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
 
     /// <summary>
-    /// "senior-backend-engineer-k3x9q". The title's latin letters and digits,
-    /// then five random characters — so two "Teacher" openings do not collide
-    /// and the address cannot be guessed from the title alone. A title with no
-    /// latin letters (हिंदी शिक्षक) becomes "job-k3x9q", which still works.
+    /// "senior-backend-engineer-k3x9qm7rta". The title's latin letters and
+    /// digits, then TEN random characters (32^10, about 10^15) — on a public
+    /// careers domain an unlisted job is protected by its slug and nothing
+    /// else, so it must not be enumerable (Mr. Singh, 24 Sept; it was five).
+    /// A title with no latin letters (हिंदी शिक्षक) becomes "job-k3x9qm7rta".
     /// </summary>
     private static async Task<string> NewSlugAsync(AppDbContext db, string title, CancellationToken ct)
     {
@@ -451,12 +465,12 @@ public static class JobOpeningEndpoints
         for (var attempt = 0; attempt < 5; attempt++)
         {
             var sb = new StringBuilder(stem).Append('-');
-            for (var i = 0; i < 5; i++) sb.Append(alphabet[RandomNumberGenerator.GetInt32(alphabet.Length)]);
+            for (var i = 0; i < 10; i++) sb.Append(alphabet[RandomNumberGenerator.GetInt32(alphabet.Length)]);
             var slug = sb.ToString();
             if (!await db.JobOpenings.AnyAsync(j => j.Slug == slug, ct)) return slug;
         }
-        // 32^5 is 33 million per title; five collisions in a row means
-        // something other than chance, and it should be loud.
+        // Five collisions in a row at 32^10 means something other than
+        // chance, and it should be loud.
         throw new InvalidOperationException("Could not find a free job address after five attempts.");
     }
 
