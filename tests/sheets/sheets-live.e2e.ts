@@ -25,6 +25,10 @@ import { SheetsModel } from '../../apps/web/lib/sheets/model.ts';
 import { writeXlsx, readXlsx } from '../../apps/web/lib/sheets/io/xlsx.ts';
 
 const API = process.env.SHEETS_API ?? 'http://localhost:5151/api';
+// The platform operator, who switches Docs (and so Sheets) on per organisation.
+const [ADMIN_EMAIL, ADMIN_PASSWORD] = (process.env.DOCS_ADMIN ?? 'platform@docs.local,dev-only-platform-pass').split(',') as [string, string];
+const [TENANT_A, TENANT_C] = (process.env.DOCS_TENANTS
+  ?? '11111111-1111-1111-1111-111111111111,22222222-2222-2222-2222-222222222222').split(',') as [string, string];
 const [OWNER, EMPLOYEE, OTHER] = (process.env.SHEETS_PHONES ?? '+919999900002,+919999900003,+919999900004').split(',') as [string, string, string];
 
 let passed = 0;
@@ -105,6 +109,26 @@ async function main() {
   const employee = await signIn(EMPLOYEE);
   const other = await signIn(OTHER);
   const A = client(owner), B = client(employee), C = client(other);
+  const login = await fetch(`${API}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }) });
+  const adminBody = await login.json().catch(() => ({})) as { accessToken?: string };
+  if (!adminBody.accessToken) throw new Error(`platform operator sign-in failed (status ${login.status})`);
+  const P = client({ token: adminBody.accessToken });
+
+  console.log("Sheets is behind Docs' switch");
+  await P(`/admin/organisations/${TENANT_A}/docs`, { method: 'PUT', body: JSON.stringify({ enabled: false }) });
+  const offCreate = await A('/docs', { method: 'POST', body: JSON.stringify({ kind: 'spreadsheet' }) });
+  check('while Docs is off, creating a spreadsheet is refused (403 docs_off)', offCreate.status === 403 && offCreate.body?.reason === 'docs_off',
+    `${offCreate.status} ${JSON.stringify(offCreate.body)}`);
+  const offList = await A('/docs?kind=spreadsheet');
+  check('…and the Sheets list is refused too', offList.status === 403, `${offList.status}`);
+  const on = await P(`/admin/organisations/${TENANT_A}/docs`, { method: 'PUT', body: JSON.stringify({ enabled: true }) });
+  check('the operator switches it back on', on.status === 200, `${on.status}`);
+  // The other organisation ON as well: its 404s below must mean "cannot see
+  // it", not "Docs is off here" (which answers 403 and would pass for the
+  // wrong reason — measured on the first run).
+  const onC = await P(`/admin/organisations/${TENANT_C}/docs`, { method: 'PUT', body: JSON.stringify({ enabled: true }) });
+  check('…and on for the other organisation', onC.status === 200 && (await C('/docs/status')).body?.enabled === true, `${onC.status}`);
 
   console.log('Create, list, visibility');
   const created = await A('/docs', { method: 'POST', body: JSON.stringify({ title: 'E2E fees', scope: 'personal', kind: 'spreadsheet' }) });
@@ -210,6 +234,14 @@ async function main() {
   check('other organisation gets 404 from the AI endpoint', (await C(`/sheets/${id}/ai`, { method: 'POST', body: JSON.stringify({ action: 'formula', prompt: 'x' }) })).status === 404);
   check('an unknown AI action is 400 (when AI is on) or the AI-off answer', [400, 403, 503].includes(
     (await A(`/sheets/${id}/ai`, { method: 'POST', body: JSON.stringify({ action: 'nope' }) })).status));
+
+  console.log('Switching off reaches an open spreadsheet');
+  await P(`/admin/organisations/${TENANT_A}/docs`, { method: 'PUT', body: JSON.stringify({ enabled: false }) });
+  check('opening it is refused at once (403)', (await A(`/docs/${id}`)).status === 403);
+  check('its AI is refused at once (403)', (await A(`/sheets/${id}/ai`, { method: 'POST', body: JSON.stringify({ action: 'analyze', context: 'a	b' }) })).status === 403);
+  await P(`/admin/organisations/${TENANT_A}/docs`, { method: 'PUT', body: JSON.stringify({ enabled: true }) });
+  const back = await A(`/docs/${id}`);
+  check('switched back on, the spreadsheet is still there', back.status === 200 && back.body?.title === 'E2E fees', `${back.status}`);
 
   for (const s of [a1, a2]) { s?.model?.destroy(); s?.ws.close(); }
   console.log(`\n${passed} passed, ${failed} failed`);
