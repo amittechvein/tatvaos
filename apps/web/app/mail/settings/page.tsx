@@ -45,9 +45,13 @@ import {
 import { FiltersPanel } from '@/components/mail/FiltersPanel';
 import { BlockedPanel } from '@/components/mail/BlockedPanel';
 import SignatureEditor from '@/components/mail/SignatureEditor';
+import SignatureGallery from '@/components/mail/SignatureGallery';
 import { SafeHtml } from '@/components/mail/SafeHtml';
 import { useMailbox } from '@/components/mail/MailboxSwitcher';
 import { cleanSignatureHtml, signatureText } from '@/lib/signatureHtml';
+import {
+  SIGNATURE_TEMPLATES, type SignatureIdentity,
+} from '@/lib/signatureTemplates';
 
 // The settings screen is now tab-wise: one concern per tab, so the page is a
 // short list of doors rather than a long scroll. Inbox LAYOUT is deliberately
@@ -62,94 +66,6 @@ const TABS: { id: SettingsTab; label: string; icon: string }[] = [
   { id: 'filters', label: 'Filters', icon: 'M3 5h18l-7 8v5l-4 2v-7z' },
   { id: 'blocking', label: 'Blocking', icon: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM5.6 5.6l12.8 12.8' },
 ];
-
-/**
- * The details a sample signature fills in for you.
- *
- * `email` is the MAILBOX address, never the sign-in email. Those are commonly
- * different - someone signs in as a person and sends as a mailbox - and a
- * signature quietly advertising the wrong address is the kind of error nobody
- * proofreads, because you never read your own signature.
- */
-interface Identity {
-  name: string;
-  email: string;
-  org: string;
-}
-
-/**
- * Starting points, not a house style.
- *
- * Square-bracket placeholders are deliberate: they are obviously unfinished,
- * so a half-edited sample looks wrong at a glance rather than going out
- * looking deliberate. Anything we actually know is filled in already.
- */
-const SAMPLES: { id: string; label: string; hint: string; build: (i: Identity) => string }[] = [
-  {
-    id: 'name',
-    label: 'Just your name',
-    hint: 'For internal mail, where everyone already knows who you are.',
-    build: (i) => `<div>${esc(i.name)}</div>`,
-  },
-  {
-    id: 'role',
-    label: 'Name and role',
-    hint: 'The usual choice.',
-    build: (i) =>
-      `<div><b>${esc(i.name)}</b></div><div>[Your role]</div><div>${esc(i.org)}</div>`,
-  },
-  {
-    id: 'contact',
-    label: 'Full contact',
-    hint: 'For mail that leaves the organisation.',
-    build: (i) =>
-      `<div><b>${esc(i.name)}</b></div>`
-      + `<div>[Your role] | ${esc(i.org)}</div>`
-      + `<div><a href="mailto:${esc(i.email)}">${esc(i.email)}</a></div>`
-      + `<div>[Phone]</div>`,
-  },
-  {
-    id: 'closing',
-    label: 'With a sign-off',
-    hint: 'Adds the closing line, so you stop typing it every time.',
-    build: (i) =>
-      `<div>Warm regards,</div><div><br></div>`
-      + `<div><b>${esc(i.name)}</b></div>`
-      + `<div>[Your role] | ${esc(i.org)}</div>`
-      + `<div><a href="mailto:${esc(i.email)}">${esc(i.email)}</a></div>`,
-  },
-  {
-    id: 'card',
-    label: 'Card, with room for a logo',
-    hint: 'Two columns: your details on the left, your logo on the right. The layout customers ask for.',
-    // A TABLE, not flexbox or grid. Outlook on Windows renders mail through
-    // Word, which has no flex and no grid; a two-column signature that holds
-    // its shape everywhere is a table with widths, and that is why
-    // signatureHtml.ts keeps width/align/cellpadding rather than stripping
-    // them the way the composer's paste cleaner does.
-    build: (i) =>
-      `<table cellpadding="0" cellspacing="0" style="font-family:Arial,sans-serif;font-size:13px"><tbody><tr>`
-      + `<td style="padding-right:18px;vertical-align:top">`
-      + `<div><b style="color:#0a6b3d;font-size:15px">${esc(i.name)}</b> <span style="color:#6b7280">| [Your role]</span></div>`
-      + `<div style="margin-top:8px"><b style="color:#0a6b3d">M:</b> [Phone]</div>`
-      + `<div><b style="color:#0a6b3d">E:</b> <a href="mailto:${esc(i.email)}">${esc(i.email)}</a></div>`
-      + `<div style="margin-top:4px"><b>[www.your-website.com]</b></div>`
-      + `</td>`
-      + `<td style="vertical-align:top">[Insert image — your logo]</td>`
-      + `</tr><tr><td colspan="2" style="padding-top:12px">`
-      + `<div style="font-size:12px;color:#6b7280">${esc(i.org)}, [Registered address]</div>`
-      + `</td></tr></tbody></table>`,
-  },
-];
-
-/** A value of ours going into markup of ours. Someone's name may hold an &. */
-function esc(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
 
 /**
  * Plain text -> HTML. Escaped first, then newlines become breaks.
@@ -236,12 +152,22 @@ export default function MailSettingsPage() {
   const [categoryNote, setCategoryNote] = useState<string | null>(null);
   /** A sample waiting on "replace what I've written?". Null when nothing is. */
   const [pending, setPending] = useState<string | null>(null);
+  /**
+   * Whether the layout gallery is showing.
+   *
+   * Opened by the loader when the signature comes back empty, because an
+   * empty box is the worst place to design a signature from and the whole
+   * point of the layouts is to be found. Left closed for somebody who
+   * already has one: they came to tweak it, and each card is a rendered
+   * frame they would be paying for.
+   */
+  const [gallery, setGallery] = useState(false);
 
   // Which settings tab is showing. Signature first — it is the one people open
   // settings to change most often.
   const [tab, setTab] = useState<SettingsTab>('signature');
 
-  const identity: Identity = {
+  const identity: SignatureIdentity = {
     name: user?.displayName ?? '[Your name]',
     // The mailbox address if we have it. Falling back to the sign-in email is
     // a last resort and can be wrong, which is why the samples are editable
@@ -280,9 +206,15 @@ export default function MailSettingsPage() {
       // no HTML at all: a signature saved by the old textarea always has
       // both, but a row written by anything else may not, and opening blank
       // would let a save wipe it.
-      setHtml(cleanSignatureHtml(sig.bodyHtml || toHtml(sig.bodyText)));
+      const loaded = cleanSignatureHtml(sig.bodyHtml || toHtml(sig.bodyText));
+      setHtml(loaded);
       setEnabled(sig.enabled);
       setIncludeOnReply(sig.includeOnReply);
+      // Nothing written yet — show the layouts rather than an empty box.
+      // Note this runs on a MAILBOX SWITCH too, which is right: a shared
+      // mailbox with no signature of its own should open on the gallery
+      // exactly as a new personal one does.
+      setGallery(signatureText(loaded).length === 0);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load your signature.');
     } finally {
@@ -569,27 +501,36 @@ export default function MailSettingsPage() {
             </div>
 
             <div className="mb-5">
-              <p className="mb-1 text-sm font-medium text-ink">Start from a sample</p>
-              <p className="mb-2.5 text-xs text-ink-muted">
-                Fills the box above with your name, address and organisation already in
-                place. Everything stays editable, and anything in [square brackets] is
-                waiting for you.
+              <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-medium text-ink">Start from a layout</p>
+                <button
+                  type="button"
+                  onClick={() => setGallery((v) => !v)}
+                  className="text-sm font-medium text-brand-600 transition hover:underline"
+                >
+                  {gallery ? 'Hide layouts' : `Browse ${SIGNATURE_TEMPLATES.length} layouts`}
+                </button>
+              </div>
+              <p className="mb-3 text-xs text-ink-muted">
+                Each one arrives with your name, address and organisation already in place.
+                Everything stays editable, and anything in [square brackets] is waiting for
+                you. Layouts marked <span className="font-medium">logo</span> leave a spot
+                for one — put it in with the picture button above.
               </p>
 
-              <div className="flex flex-wrap gap-2">
-                {SAMPLES.map((s) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    title={s.hint}
-                    disabled={!mayEdit}
-                    onClick={() => applySample(s.build(identity))}
-                    className="rounded-md border border-line px-3 py-1.5 text-sm text-ink transition hover:border-brand-400"
-                  >
-                    {s.label}
-                  </button>
-                ))}
-              </div>
+              {/* Closed by default once you have a signature. Each card is
+                  a rendered frame, so eleven of them is eleven documents;
+                  somebody returning to tweak what they wrote should not pay
+                  for that, and somebody starting from an empty box should not
+                  have to go looking. It opens itself exactly when the editor
+                  is empty — see the loader. */}
+              {gallery && (
+                <SignatureGallery
+                  identity={identity}
+                  disabled={!mayEdit}
+                  onPick={applySample}
+                />
+              )}
 
               {pending !== null && (
                 <div className="mt-3 rounded-md border border-line bg-canvas p-3">
