@@ -84,6 +84,17 @@ openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:BACKUP_ENC_PASSPHRASE
     -in backups/pre-deploy-<stamp>.sql.gz.enc | gunzip | psql -U postgres
 ```
 
+**Read this during an incident, not after it: a pre-deploy copy lives only
+3 days.** A bad deploy noticed on day four has no pre-deploy copy to go back
+to. Use the newest off-box object from before that deploy instead (kept 7
+days, six-hourly, so up to six hours are lost). Check `ls -l backups/` for
+the dates before you plan the restore.
+
+**Rotating `BACKUP_ENC_PASSPHRASE`: keep the old one until everything written
+with it has aged out.** That is 3 days for local and pre-deploy copies and 7
+days for off-box objects. Rotate and throw away the old passphrase on the same
+day, and a week of backups can no longer be opened.
+
 **The old plain copies** (`pre-deploy-*.sql`, `pre-deploy-*.sql.gz`, 323 of
 them, 31 GB, 4 Aug to 24 Sept 2026) are **never deleted by a deploy**; each
 deploy counts them aloud. They were chmod-ed 700/600 by hand on 25 Sept. Mr.
