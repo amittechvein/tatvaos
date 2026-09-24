@@ -524,7 +524,7 @@ public static class UserEndpoints
             note = inviteToken is null
                 ? "They must change the password you typed on first sign-in."
                 : inviteDelivered == true
-                    ? $"An invitation to set their password has been sent to {Mask.Email(recoveryEmail)}."
+                    ? $"An invitation to set their password has been sent to {Mask.Email(recoveryEmail)}." + Invitations.CheckSpamNote
                     : "The invitation could not be sent. Resend it from their profile once the address is right, or set a password instead.",
         });
     }
@@ -1079,7 +1079,7 @@ public static class UserEndpoints
             sent = delivered,
             sentTo = Mask.Email(user.RecoveryEmail),
             note = delivered
-                ? $"A link has been sent to {Mask.Email(user.RecoveryEmail)}. It works once, for {(int)Invitations.SignInLinkLifetime.TotalHours} hours. Their current password keeps working until they use it."
+                ? $"A link has been sent to {Mask.Email(user.RecoveryEmail)}. It works once, for {(int)Invitations.SignInLinkLifetime.TotalHours} hours. Their current password keeps working until they use it." + Invitations.CheckSpamNote
                 : "The link could not be sent. Check the recovery address, or use Reset password.",
         });
     }
@@ -1123,7 +1123,7 @@ public static class UserEndpoints
             sent = delivered,
             sentTo = Mask.Email(user.RecoveryEmail),
             note = delivered
-                ? $"A new invitation has been sent to {Mask.Email(user.RecoveryEmail)}. The previous link no longer works."
+                ? $"A new invitation has been sent to {Mask.Email(user.RecoveryEmail)}. The previous link no longer works." + Invitations.CheckSpamNote
                 : "The invitation could not be sent. Check the recovery address, or set a password instead.",
         });
     }
