@@ -198,12 +198,20 @@ same direction as the prose. Only `--expect` made a noise, and only because it
 compares text; both runs in the tool's fourteen-day life happened to use it,
 which is luck and not design. The tool now aborts on any ignored option (#279).
 
-*And the ruling that was wrong.* I first called this "embarrassing but not
-dangerous — it fails loudly", reasoning from the symptom rather than measuring
-it. It does not fail loudly; with `--expect` absent it does not fail at all.
-Recorded here because the error was mine and it is the same one this section
-exists to catch: a check believed safe on reasoning, when running it would
-have taken five minutes. — Mr. Singh
+*And the ruling that was wrong.* Mr. Singh first called this defect
+"embarrassing but not dangerous — it fails loudly". It does not fail loudly;
+with `--expect` absent it does not fail at all. In his own words, 25 Sept:
+
+> I reasoned that from the symptom you'd described, and I didn't measure it.
+
+> I called something safe that wasn't, on reasoning rather than evidence.
+> That's the same error I've been holding everyone else to. Put the correction
+> in the record next to the incident.
+
+*Everything in this entry except the indented quotations is written by the
+Claude Code session that found the defect, not by Mr. Singh. He asked for the
+correction to be recorded; he has not checked this wording. If it misstates
+him, the error is the transcriber's.*
 
 ## 6b. A result is about a version. Say which one.
 
