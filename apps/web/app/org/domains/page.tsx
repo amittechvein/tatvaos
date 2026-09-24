@@ -46,6 +46,8 @@ interface DomainRow {
   isActive: boolean;
   isPlatform: boolean;
   ownershipVerified: boolean;
+  superseded?: boolean;
+  supersededNotice?: string | null;
   lastCheckedAt: string | null;
   lastCheckResult: string | null;
 }
@@ -231,6 +233,8 @@ export default function DomainsPage() {
 
                     {d.isPlatform ? (
                       <BrandPill>TatvaOS address</BrandPill>
+                    ) : d.superseded ? (
+                      <Badge tone="warn">Claim closed</Badge>
                     ) : d.ownershipVerified ? (
                       <Badge tone="ok">Verified</Badge>
                     ) : (
@@ -239,7 +243,9 @@ export default function DomainsPage() {
                   </div>
 
                   <p className="text-[0.8125rem] text-ink-muted mb-0 mt-1">
-                    {d.isPlatform
+                    {d.superseded
+                      ? d.supersededNotice
+                      : d.isPlatform
                       ? 'Issued by us and working immediately. Cannot be removed — it is how you sign in if your own domain’s DNS ever breaks.'
                       : d.ownershipVerified
                         ? d.lastCheckResult ?? 'Ownership proven.'
@@ -247,7 +253,7 @@ export default function DomainsPage() {
                   </p>
                 </div>
 
-                {!d.isPlatform && (
+                {!d.isPlatform && !d.superseded && (
                   <Button variant="secondary" onClick={() => openDomain(d.id)}>
                     {d.ownershipVerified ? 'DNS records' : 'Set up'}
                   </Button>

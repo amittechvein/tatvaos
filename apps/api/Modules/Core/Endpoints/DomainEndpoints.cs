@@ -41,6 +41,10 @@ public static class DomainEndpoints
             {
                 d.Id, d.Fqdn, d.Type, d.IsActive, d.IsPlatform,
                 ownershipVerified = d.OwnershipVerifiedAt != null,
+                // A claim closed because somebody else proved ownership. The
+                // notice says WHY and never WHO (Mr. Singh, 24 Sept 2026).
+                superseded = d.SupersededAt != null,
+                supersededNotice = d.SupersededAt != null ? DomainClaims.SupersededNotice : null,
                 d.OwnershipVerifiedAt, d.MxVerifiedAt, d.SpfVerifiedAt,
                 d.DkimVerifiedAt, d.DmarcVerifiedAt,
                 d.LastCheckedAt, d.LastCheckResult, d.CreatedAt,
@@ -91,8 +95,9 @@ public static class DomainEndpoints
     private static async Task<IResult> AddAsync(
         AddDomainRequest req, AppDbContext db, TenantContext tenant, IConfiguration config,
         AuditWriter audit, DomainVerifier verifier, DkimKeyService dkimKeys,
-        CancellationToken ct)
+        ILoggerFactory logs, CancellationToken ct)
     {
+        var log = logs.CreateLogger("TatvaOS.Domains");
         var fqdn = req.Fqdn?.Trim().ToLowerInvariant().TrimEnd('.') ?? "";
 
         if (!IsPlausibleDomain(fqdn))
@@ -103,16 +108,37 @@ public static class DomainEndpoints
         if (ReservedDomains.IsBounceDomain(config, fqdn))
             return Results.BadRequest(new { error = ReservedDomains.Refusal(config) });
 
-        // Platform-wide, not per tenant. Two organisations cannot both claim
-        // example.com — whoever proves ownership first holds it, and letting
-        // both add it would make delivery ambiguous rather than merely wrong.
-        if (await db.Domains.IgnoreQueryFilters().AnyAsync(d => d.Fqdn == fqdn, ct))
-            return Results.Conflict(new
-            {
-                error = $"{fqdn} is already registered on this platform. If your organisation " +
-                        "owns it and someone else has claimed it, contact support — we verify " +
-                        "ownership before transferring a domain.",
-            });
+        // ── EXCLUSIVITY COMES FROM VERIFICATION, NOT FROM CLAIMING ──────
+        //
+        //  Until 24 September 2026 fqdn was UNIQUE outright, so the first
+        //  claim — verified or not — locked the name for everyone. Mr. Singh:
+        //  anyone with an account could add the domains of every school in a
+        //  district and stop all of them onboarding, and the victim could
+        //  only see "already in use".
+        //
+        //  Now several organisations may hold a PENDING claim; only a
+        //  VERIFIED one is exclusive. The rules are in DomainClaims, where
+        //  they can be tested without a database or live DNS.
+        var claims = await db.Domains.IgnoreQueryFilters()
+            .Where(d => d.Fqdn == fqdn)
+            .Select(d => new DomainClaims.Claim(
+                d.Id, d.TenantId, d.OwnershipVerifiedAt != null, d.SupersededAt != null, d.CreatedAt))
+            .ToListAsync(ct);
+
+        var pendingHere = await db.Domains.IgnoreQueryFilters()
+            .CountAsync(d => d.TenantId == tenant.TenantId
+                          && d.OwnershipVerifiedAt == null
+                          && d.SupersededAt == null
+                          && !d.IsPlatform, ct);
+
+        if (DomainClaims.RefusalToAdd(claims, tenant.TenantId, pendingHere) is { } refusal)
+        {
+            // Logged so a refused addition can be explained later, and so a
+            // run of them from one organisation is visible.
+            log.LogInformation("Domain claim refused for {Fqdn} (tenant has {Pending} pending)",
+                               fqdn, pendingHere);
+            return Results.Conflict(new { error = refusal });
+        }
 
         var domain = new Domain
         {
@@ -153,7 +179,7 @@ public static class DomainEndpoints
     // ------------------------------------------------------------------
     private static async Task<IResult> VerifyAsync(
         Guid id, AppDbContext db, DomainVerifier verifier, AuditWriter audit,
-        DkimKeyService dkimKeys, CancellationToken ct)
+        DkimKeyService dkimKeys, ILoggerFactory logs, CancellationToken ct)
     {
         var d = await db.Domains.FirstOrDefaultAsync(x => x.Id == id, ct);
         if (d is null) return Results.NotFound();
@@ -199,6 +225,42 @@ public static class DomainEndpoints
         {
             d.IsActive = true;
             justActivated = true;
+        }
+
+        // ── THE WINNER TAKES THE NAME ───────────────────────────────────────
+        //
+        //  Several organisations may hold a pending claim on one fqdn. The one
+        //  that publishes the TXT record takes it; the rest are closed here —
+        //  kept as rows so their holders can be TOLD, and never told by whom
+        //  (DomainClaims.SupersededNotice).
+        //
+        //  Closing rather than freezing is safe because nothing can attach to
+        //  a pending claim: both mailbox paths refuse unless the domain is
+        //  verified AND active (checked 24 Sept 2026). If that ever changes,
+        //  this must freeze the losing claim for support instead.
+        if (result.OwnershipProven)
+        {
+            var siblings = await db.Domains.IgnoreQueryFilters()
+                .Where(x => x.Fqdn == d.Fqdn)
+                .Select(x => new DomainClaims.Claim(
+                    x.Id, x.TenantId, x.OwnershipVerifiedAt != null, x.SupersededAt != null, x.CreatedAt))
+                .ToListAsync(ct);
+
+            var losers = DomainClaims.LosersOf(siblings, d.Id);
+            if (losers.Count > 0)
+            {
+                var closedAt = DateTimeOffset.UtcNow;
+                await db.Domains.IgnoreQueryFilters()
+                    .Where(x => losers.Contains(x.Id))
+                    .ExecuteUpdateAsync(u => u
+                        .SetProperty(x => x.SupersededAt, closedAt)
+                        .SetProperty(x => x.IsActive, false), ct);
+
+                logs.CreateLogger("TatvaOS.Domains").LogInformation(
+                    "{Fqdn} verified; {Count} other claim(s) closed", d.Fqdn, losers.Count);
+                await audit.WriteAsync("domain.claims_superseded", "domain", d.Id.ToString(),
+                    after: new { d.Fqdn, closed = losers.Count }, ct: ct);
+            }
         }
 
         await db.SaveChangesAsync(ct);
