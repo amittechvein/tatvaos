@@ -43,6 +43,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -Eeuo pipefail
 
+# rclone lives in ~/bin on this box - installed without sudo, because the
+# deploy user has none. backup.sh has said so since it was written: "Cron runs
+# with a bare PATH, so the script says where to look rather than hoping the
+# environment does." This script hoped, and --plan stopped on 26 Sept with
+# "rclone not on PATH" while rclone was sitting in ~/bin all along.
+export PATH="$HOME/bin:$PATH"
+
 MODE="${1:---plan}"
 case "$MODE" in --plan|--run) ;; *) echo "usage: $0 [--plan|--run]"; exit 2 ;; esac
 
@@ -150,11 +157,12 @@ note "size: $SIZE"
 if [ "$MODE" = "--plan" ]; then
     echo
     echo "  --plan stops here. --run would then:"
-    echo "    1. mkdir a scratch dir under /var/tmp (mode 700)"
-    echo "    2. rclone copy the object above into it"
-    echo "    3. openssl -d | gunzip it there"
-    echo "    4. docker run -d --name $DRILL_NAME --network none $PG_IMAGE"
-    echo "    5. psql the dump into that container"
+    echo "    1. docker run -d --name $DRILL_NAME --network none $PG_IMAGE"
+    echo "    2. rclone cat the object above (nothing downloaded to disk)"
+    echo "    3. openssl -d, then pull ONLY */postgres.sql.gz from the tar"
+    echo "       (vmail and blobs are never decrypted at all)"
+    echo "    4. gunzip that member straight into the container psql"
+    echo "    5. no plaintext copy of the database is written to this host"
     echo "    6. compare row COUNTS per table against live (counts only)"
     echo "    7. run the tenancy query on the RESTORED copy: with no tenant"
     echo "       set, every FORCE-RLS table must return 0 rows"
@@ -166,22 +174,20 @@ fi
 echo
 echo "  restore"
 
-SCRATCH="$(mktemp -d /var/tmp/restore-drill-XXXXXX)"
-chmod 700 "$SCRATCH"
-ok "scratch $SCRATCH (700)"
+# NOTHING DECRYPTED EVER TOUCHES THIS DISK.
+#
+# The off-box object is `tar czf -` of the whole backup set: postgres.sql.gz
+# AND a .tar.gz of every Docker volume - vmail.tar.gz is everyone's mail,
+# blobs is every uploaded file. The first draft of this script downloaded it,
+# decrypted it and unpacked it into /var/tmp: 4.3 GB compressed, far more
+# unpacked, on a box with 32 GB free - and then fed a TAR STREAM to psql,
+# which would simply have failed. --plan caught it on 26 Sept 2026.
+#
+# So: stream it. rclone cat -> decrypt -> pull ONLY */postgres.sql.gz out of
+# the archive -> gunzip -> straight into the drill container. The mail and
+# the files are never decrypted at all, and no plaintext copy of the database
+# exists anywhere on the host, not even briefly.
 
-rclone copy "$REMOTE/$NEWEST" "$SCRATCH/" --checksum
-ok "object fetched"
-
-RESTORE_PASS="$PASS"; export RESTORE_PASS
-openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:RESTORE_PASS \
-        -in "$SCRATCH/$(basename "$NEWEST")" \
-    | gunzip > "$SCRATCH/dump.sql"
-unset RESTORE_PASS
-[ -s "$SCRATCH/dump.sql" ] || die "decrypted dump is empty"
-ok "decrypted and decompressed ($(du -h "$SCRATCH/dump.sql" | cut -f1))"
-
-# --network none: it cannot reach the live database even if the dump tries.
 docker run -d --name "$DRILL_NAME" --network none \
     -e POSTGRES_PASSWORD=drill -e POSTGRES_HOST_AUTH_METHOD=trust \
     "$PG_IMAGE" >/dev/null
@@ -194,8 +200,18 @@ for i in $(seq 1 60); do
 done
 ok "drill Postgres ready"
 
-docker exec -i "$DRILL_NAME" psql -U postgres -v ON_ERROR_STOP=1 -q < "$SCRATCH/dump.sql"
-ok "dump restored into the drill container"
+RESTORE_PASS="$PASS"; export RESTORE_PASS
+# pipefail is load-bearing here: without it a failure in rclone, openssl or
+# tar is hidden by psql exiting 0 on an empty stream, and the drill would
+# report a restored database that is in fact empty.
+set -o pipefail
+rclone cat "$REMOTE/$NEWEST" \
+  | openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:RESTORE_PASS \
+  | tar -xzO --wildcards "*/postgres.sql.gz" \
+  | gunzip \
+  | docker exec -i "$DRILL_NAME" psql -U postgres -v ON_ERROR_STOP=1 -q
+unset RESTORE_PASS
+ok "streamed, decrypted and restored - nothing written to this disk"
 
 # ── THE COMPARISON ──────────────────────────────────────────────────────────
 echo
