@@ -7,10 +7,21 @@
 --
 --  R1 of the Hire roadmap (docs/TATVAOS_HR_ROADMAP.md §3, Phase 1). Amit,
 --  24 September 2026: Hire is hire.tatvaos.com for every customer, and each
---  customer's careers page lives on OUR domain first — so a job opening
---  carries a slug from day one, which is what its public address will be
---  built from. Nothing public reads this table yet; the careers portal is a
---  later change with its own review (roadmap §6.2).
+--  customer's careers page lives on OUR domain first — so a published job
+--  opening carries a slug, which is what its public address is built from.
+--
+--  THE SLUG IS SET AT FIRST PUBLISH, NOT AT CREATE (Mr. Singh, 24 Sept).
+--  Draft titles are routinely not the published ones, and the difference is
+--  usually the confidential part: "Head of Maths — replacing Sharma" renamed
+--  to "Head of Maths" before it goes out must not leave "replacing-sharma" in
+--  a public URL forever. A slug only has to be stable once something outside
+--  can link to it, which is publication. So it is NULL on a draft that was
+--  never published, fixed at first publish, and never rewritten after —
+--  unpublish/republish keeps it. The random part is TEN characters: on a
+--  public careers domain an unlisted job is protected by its slug alone.
+--
+--  Nothing public reads this table yet; the careers portal is a later change
+--  with its own review (roadmap §6.2).
 --
 --  ---------------------------------------------------------------------------
 --  EVERY REFERENCE IS PINNED TO THE SAME ORGANISATION, IN THE DATABASE.
@@ -64,10 +75,11 @@ CREATE TABLE IF NOT EXISTS hire.job_openings (
 
     title            text NOT NULL CHECK (length(btrim(title)) BETWEEN 1 AND 150),
     -- Lower-case words and hyphens, unique per organisation. The public
-    -- address of the job on the careers page. Set once by the API from the
-    -- title plus a short random suffix; NOT rewritten when the title changes,
-    -- because a link someone already shared must keep working.
-    slug             text NOT NULL CHECK (slug ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND length(slug) <= 120),
+    -- address of the job on the careers page. NULL until the job is first
+    -- published; then set once by the API from the title AS PUBLISHED plus
+    -- ten random characters, and never rewritten, because a link someone
+    -- already shared must keep working.
+    slug             text CHECK (slug IS NULL OR (slug ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND length(slug) <= 120)),
 
     department_id    uuid,
     designation_id   uuid,
@@ -122,6 +134,11 @@ CREATE TABLE IF NOT EXISTS hire.job_openings (
         opening_date IS NULL OR closing_date IS NULL OR closing_date >= opening_date),
     CONSTRAINT ck_job_closed_reason CHECK (
         (status = 'closed') = (closed_reason IS NOT NULL)),
+    -- Published at least once <=> has its public address. Neither without
+    -- the other: a public job with no slug has no URL, a draft with one has
+    -- leaked its working title into it.
+    CONSTRAINT ck_job_slug_at_publish CHECK (
+        (published_at IS NULL) = (slug IS NULL)),
 
     CONSTRAINT fk_job_location FOREIGN KEY (tenant_id, location_id)
         REFERENCES core.locations (tenant_id, id) ON DELETE RESTRICT,

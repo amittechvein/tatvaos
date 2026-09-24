@@ -3,7 +3,7 @@
 #
 # Mostly about what the API REFUSES, because a job opening is about to become
 # the first thing TatvaOS shows to the public:
-#   1. an admin creates a draft; it gets a slug; the audit row says product hire
+#   1. an admin creates a draft; it has NO public address yet; audited as hire
 #   2. nonsense is refused with a sentence (title, ranges, dates, pay, type)
 #   3. another organisation's location or person cannot be named (404 as
 #      "does not exist" — the tenant filter — with the database FK behind it)
@@ -14,10 +14,16 @@
 #   7. a published job can never be deleted; a draft can
 #   8. a location or designation in use cannot be deleted, only archived; an
 #      archived one may stay on a job but not be newly chosen
-#   9. the slug does not follow a rename (a shared link keeps working)
+#  4b. the public address is made at FIRST PUBLISH from the title as
+#      published — a confidential draft title never reaches it (Mr. Singh,
+#      24 Sept) — with ten random characters; the database refuses a
+#      published job without one
+#   9. the slug does not follow a rename or a reopen (a shared link keeps working)
 #  10. an employee gets 403; ANOTHER organisation's admin gets 404 on every
 #      verb, and the row is unchanged afterwards
 #  11. the list: counts per status, the status filter, the title search
+#  13. deleting a department warns how many openings name it first, blanks
+#      their department, and writes job.department_cleared on each job
 #
 # ── CALIBRATION, 24 September 2026 (house rule 6) ──────────────────────────
 #  * PUBLISH CHECK REMOVED FROM SAVE -> "blanking the description of an open
@@ -29,6 +35,13 @@
 #    still said "does not exist". So step 3 is evidence that SOME layer holds,
 #    not that the query filter does; the database FK is a third layer, proven
 #    separately in tests/isolation (run as postgres, which bypasses RLS).
+#  * SLUG MADE AT CREATE (5 chars) + ck_job_slug_at_publish DROPPED -> the
+#    two "a draft has no public address" checks go red showing
+#    "...-replacing-sharma-...", the shape check goes red on 5 characters,
+#    and the database check goes red (UPDATE 1). "The confidential words are
+#    not in it" STAYED GREEN, because publish still minted a fresh slug from
+#    the published title. So the draft checks are what carry "a draft title
+#    never reaches a URL", not the post-publish one.
 #
 # Starts its own API, like tests/orgapi/test-org-api.sh, and takes the same
 # TATVAOS_PSQL / TATVAOS_PSQL_APP / TATVAOS_PG_HOST variables, plus
@@ -72,7 +85,12 @@ GREEN=$(c $'\033[32m'); RED=$(c $'\033[31m'); CYAN=$(c $'\033[36m'); RST=$(c $'\
 pass() { PASSED=$((PASSED+1)); printf '  %s✓%s %s\n' "$GREEN" "$RST" "$1"; }
 fail() { FAILED=$((FAILED+1)); printf '  %s✗%s %s\n' "$RED" "$RST" "$1"; }
 step() { printf '\n%s>> %s%s\n' "$CYAN" "$1" "$RST"; }
-j()    { "$PY" -c "import sys,json; d=json.load(sys.stdin); print($1)" 2>/dev/null; }
+# A failed read prints a marker rather than nothing: an empty result reads as
+# "the API returned nothing" and sends you looking at the wrong layer. Found
+# on one laptop run where a single read came back blank between two that
+# worked on the SAME response.
+j()    { "$PY" -c "import sys,json; d=json.load(sys.stdin); print($1)" 2>"$SCRATCH/j.err" \
+             || printf 'JSON-READ-FAILED(%s)' "$(head -c 160 "$SCRATCH/j.err" | tr '\n' ' ')"; }
 jq_()  { printf '%s' "$1" | j "$2"; }
 status() { printf '%s' "$1" | tail -n1; }
 body()   { printf '%s' "$1" | sed '$d'; }
@@ -135,6 +153,15 @@ signin() {
 step "0. Start the API against $TATVAOS_PG_HOST/$DB and sign in"
 for _ in $(seq 1 30); do [ -n "$(PG 'SELECT 1')" ] && break; sleep 1; done
 [ -n "$(PG 'SELECT 1')" ] || { fail "psql does not answer"; exit 1; }
+# Something already answering on our port means the health check below would
+# be answered by IT — typically the previous run's API still shutting down —
+# and every request after would go to a dying process. Found as "owner
+# sign-in failed" on the first of two back-to-back runs, never the second.
+# Wait for the port to fall silent, and say so plainly if it will not.
+for _ in $(seq 1 20); do curl -s -o /dev/null "$API/health" 2>/dev/null || break; sleep 1; done
+if curl -s -o /dev/null "$API/health" 2>/dev/null; then
+    fail "something is already listening on port $PORT - stop it, or set TATVAOS_HIRE_TEST_PORT"; exit 1
+fi
 dotnet run --no-build -c Release --project "$PROJ" > "$LOG" 2>&1 &
 API_PID=$!
 for _ in $(seq 1 150); do curl -s -o /dev/null -w '%{http_code}' "$API/health" 2>/dev/null | grep -q 200 && break; sleep 1; done
@@ -166,13 +193,14 @@ ok=1; for v in "$LOC" "$LOC2" "$DES" "$SCHOOL_LOC"; do printf '%s' "$v" | grep -
     || { fail "fixtures are not ids (loc '$LOC' loc2 '$LOC2' des '$DES' school '$SCHOOL_LOC')"; exit 1; }
 
 step "1. An admin creates a draft"
-r=$(call "$TOKEN" POST /hire/jobs "{\"title\":\"Backend Engineer $RUN\",\"employmentType\":\"full_time\",\"designationId\":\"$DES\",\"hiringManagerId\":\"$OWNER_ID\",\"skills\":[\"C#\",\" SQL \",\"c#\",\"\"]}")
+# The draft title carries the confidential part, as real drafts do; step 4
+# publishes it under a different title.
+r=$(call "$TOKEN" POST /hire/jobs "{\"title\":\"Backend Engineer $RUN replacing Sharma\",\"employmentType\":\"full_time\",\"designationId\":\"$DES\",\"hiringManagerId\":\"$OWNER_ID\",\"skills\":[\"C#\",\" SQL \",\"c#\",\"\"]}")
 expect "created" 201 "$r"
 JOB=$(jq_ "$(body "$r")" "d['id']")
 same "it starts as a draft" "$(jq_ "$(body "$r")" "d['status']")" "draft"
-SLUG=$(jq_ "$(body "$r")" "d['slug']")
-printf '%s' "$SLUG" | grep -qE "^backend-engineer-$RUN-[a-z0-9]{5}$" && pass "slug is the title plus five random characters ($SLUG)" \
-    || fail "slug has the wrong shape: '$SLUG'"
+same "a draft has no public address yet" "$(jq_ "$(body "$r")" "str(d['slug'])")" "None"
+same "and none in the database either" "$(PG "SELECT coalesce(slug,'null') FROM hire.job_openings WHERE id='$JOB'")" "null"
 same "skills trimmed, blanks dropped, duplicates ignoring case removed" "$(jq_ "$(body "$r")" "','.join(d['skills'])")" "C#,SQL"
 same "the audit row names product hire" "$(PG "SELECT product_code FROM core.audit_logs WHERE action='job.created' AND target_id='$JOB'")" "hire"
 
@@ -207,6 +235,21 @@ same "status is open" "$(jq_ "$(body "$r")" "d['status']")" "open"
 [ "$(jq_ "$(body "$r")" "d['publishedAt'] is not None")" = "True" ] && pass "publishedAt recorded" || fail "publishedAt not set"
 [ "$(jq_ "$(body "$r")" "d['openingDate'] is not None")" = "True" ] && pass "an empty opening date becomes the day it was published" || fail "openingDate not filled in"
 same "audited as job.published" "$(PG "SELECT count(*) FROM core.audit_logs WHERE action='job.published' AND target_id='$JOB'")" "1"
+SLUG=$(jq_ "$(body "$r")" "d['slug']")
+printf '%s' "$SLUG" | grep -qE "^backend-engineer-$RUN-[a-z0-9]{10}$" \
+    && pass "publishing made the public address from the PUBLISHED title, plus ten random characters ($SLUG)" \
+    || fail "slug has the wrong shape: '$SLUG'"
+case "$SLUG" in
+    "")                   fail "no slug to inspect for the draft title" ;;
+    *sharma*|*replacing*) fail "LEAK: the draft's confidential title reached the public address ($SLUG)" ;;
+    *)                    pass "the draft title's confidential words are not in it" ;;
+esac
+# The database, not only the API: a job cannot be marked published with no
+# address. Run as postgres, so nothing but the CHECK can refuse it.
+DRAFT_X=$(jq_ "$(body "$(call "$TOKEN" POST /hire/jobs "{\"title\":\"Unpublished $RUN\"}")")" "d['id']")
+out=$($TATVAOS_PSQL "UPDATE hire.job_openings SET published_at = now() WHERE id = '$DRAFT_X'" 2>&1)
+printf '%s' "$out" | grep -q "ck_job_slug_at_publish" && pass "the database refuses a published job with no public address" \
+    || fail "a job was marked published with no slug: $(brief "$out")"
 
 step "5. An open job cannot be edited back into something unpublishable"
 expect "blanking the description of an open job" 400 \
@@ -225,6 +268,7 @@ expect "an unknown status" 400 "$(call "$TOKEN" POST /hire/jobs/$JOB/status '{"s
 r=$(call "$TOKEN" POST /hire/jobs/$JOB/status '{"status":"open"}')
 expect "reopened" 200 "$r"
 same "reopening clears the closed reason" "$(PG "SELECT coalesce(closed_reason,'none') FROM hire.job_openings WHERE id='$JOB'")" "none"
+same "and keeps the public address it already had" "$(PG "SELECT slug FROM hire.job_openings WHERE id='$JOB'")" "$SLUG"
 DRAFT=$(jq_ "$(body "$(call "$TOKEN" POST /hire/jobs "{\"title\":\"Throwaway $RUN\"}")")" "d['id']")
 expect "a draft cannot be put on hold" 409 "$(call "$TOKEN" POST /hire/jobs/$DRAFT/status '{"status":"on_hold"}')" "only be published"
 
@@ -271,6 +315,23 @@ same "counts carry every status" "$(jq_ "$(body "$r")" "','.join(sorted(d['count
 r=$(call "$TOKEN" GET "/hire/jobs?status=draft&q=Platform%20Engineer%20$RUN")
 same "the draft tab does not show an open job" "$(jq_ "$(body "$r")" "len(d['jobs'])")" "0"
 expect "an unknown status filter" 400 "$(call "$TOKEN" GET "/hire/jobs?status=everything")"
+
+step "13. Deleting a department warns first and leaves a trail on each job"
+AUDIT_FLOOR_13=$(PG "SELECT coalesce(max(id),0) FROM core.audit_logs")
+DEPT=$(jq_ "$(body "$(call "$TOKEN" POST /org/departments "{\"name\":\"Hire test dept $RUN\"}")")" "d['id']")
+printf '%s' "$DEPT" | grep -qE '^[0-9a-f-]{36}$' && pass "fixture: a department" || fail "no department fixture ('$DEPT')"
+expect "the open job is put in it" 200 \
+    "$(call "$TOKEN" PUT /hire/jobs/$JOB "{\"title\":\"Platform Engineer $RUN\",\"description\":\"Build the API.\",\"locationId\":\"$LOC2\",\"departmentId\":\"$DEPT\"}")"
+tree=$(body "$(call "$TOKEN" GET /org/departments)")
+same "the departments screen knows one opening names it" \
+    "$(printf '%s' "$tree" | j "(lambda f: f(f, d['tree']))(lambda f, ns: next((n['jobOpeningCount'] for n in ns if n['id']=='$DEPT'), None) or next((x for x in (f(f, n['children']) for n in ns) if x is not None), None))")" "1"
+expect "the department is deleted" 200 "$(call "$TOKEN" DELETE /org/departments/$DEPT)"
+same "the job's department is blank now" "$(PG "SELECT coalesce(department_id::text,'none') FROM hire.job_openings WHERE id='$JOB'")" "none"
+same "and the job still exists, still open" "$(PG "SELECT status FROM hire.job_openings WHERE id='$JOB'")" "open"
+same "the JOB's history says why" \
+    "$(PG "SELECT count(*) FROM core.audit_logs WHERE action='job.department_cleared' AND target_id='$JOB' AND product_code='hire' AND id > $AUDIT_FLOOR_13")" "1"
+has "and names the department it lost" \
+    "$(PG "SELECT before_state::text FROM core.audit_logs WHERE action='job.department_cleared' AND target_id='$JOB' AND id > $AUDIT_FLOOR_13")" "Hire test dept $RUN"
 
 printf '\n%s----------------------------------------%s\n' "$CYAN" "$RST"
 printf '  passed: %d   failed: %d\n\n' "$PASSED" "$FAILED"

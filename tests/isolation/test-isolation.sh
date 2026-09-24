@@ -249,14 +249,17 @@ run_as postgres "
 hdr "Hire job openings are isolated, and cannot point into another organisation"
 
 # Fixture as postgres. The School location exists so a Techvein job can TRY
-# to name it below.
+# to name it below. Drafts, so no slug: since 24 Sept a slug exists only once
+# a job is published (ck_job_slug_at_publish). The first run after that rule
+# went red on "sees its own job" when this fixture still carried slugs and
+# was refused — the guard doing its job, not a leak.
 run_as postgres "
     INSERT INTO core.locations (id, tenant_id, name) VALUES
         ('0a000000-0000-0000-0000-0000000000a1','$SCHOOL','iso-job-loc-school')
     ON CONFLICT DO NOTHING;
-    INSERT INTO hire.job_openings (id, tenant_id, title, slug) VALUES
-        ('0b000000-0000-0000-0000-0000000000b1','$TECHVEIN','iso-job-techvein','iso-job-techvein'),
-        ('0b000000-0000-0000-0000-0000000000b2','$SCHOOL','iso-job-school','iso-job-school')
+    INSERT INTO hire.job_openings (id, tenant_id, title) VALUES
+        ('0b000000-0000-0000-0000-0000000000b1','$TECHVEIN','iso-job-techvein'),
+        ('0b000000-0000-0000-0000-0000000000b2','$SCHOOL','iso-job-school')
     ON CONFLICT DO NOTHING;" >/dev/null 2>&1
 
 own=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM hire.job_openings WHERE title = 'iso-job-techvein'")
@@ -286,7 +289,7 @@ hij=$(scalar_as postgres "SELECT count(*) FROM hire.job_openings WHERE title = '
                       || fail "LEAK: Techvein renamed an ABC School job"
 
 forge_out=$(run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
-    INSERT INTO hire.job_openings (tenant_id, title, slug) VALUES ('$SCHOOL','iso-job-forged','iso-job-forged');" 2>&1)
+    INSERT INTO hire.job_openings (tenant_id, title) VALUES ('$SCHOOL','iso-job-forged');" 2>&1)
 if [ $? -ne 0 ] && printf '%s' "$forge_out" | grep -qi 'row-level security'; then
     pass "cross-tenant job INSERT blocked by WITH CHECK"
 else
