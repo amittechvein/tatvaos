@@ -143,6 +143,9 @@ export type ComposeMode = 'new' | 'reply' | 'replyAll' | 'forward';
  */
 type PaneState = 'docked' | 'full' | 'min';
 
+/** Marks the seeded signature block so a mailbox switch can replace it. */
+const SIG_ATTR = 'data-tatva-signature';
+
 /**
  * The signature, as the mail bootstrap returns it.
  *
@@ -194,6 +197,9 @@ export function Composer({
   onClose,
   onSend,
   offset = 0,
+  right,
+  minimised: minimisedProp,
+  onMinimisedChange,
   placement = 'docked',
 }: {
   replyTo?: Message | null;
@@ -225,6 +231,19 @@ export function Composer({
    */
   offset?: number;
   /**
+   * Distance from the right edge in px, worked out by the page from the real
+   * widths of the windows beside this one. Without it the old fixed 580px
+   * slot applies — which is what pushed a third window off the left edge of
+   * a 1536px screen (Amit, 24 September 2026).
+   */
+  right?: number;
+  /**
+   * Minimised, when the page is deciding — it minimises older windows to make
+   * room for a new one. Left undefined, the composer keeps its own state.
+   */
+  minimised?: boolean;
+  onMinimisedChange?: (minimised: boolean) => void;
+  /**
    * 'inline' puts the composer IN the conversation, under the message being
    * answered, instead of in a floating window at the corner.
    *
@@ -244,6 +263,8 @@ export function Composer({
   const shell = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const seeded = useRef(false);
+  /** The plain-text signature last put into the body, to swap on a mailbox switch. */
+  const seededPlainSig = useRef('');
 
   const [to, setTo] = useState(mode === 'forward' ? '' : replyTo ? replyTo.from.email : '');
   const initialCc = mode === 'replyAll' ? replyAllCc(replyTo, selfAddress) : '';
@@ -733,18 +754,46 @@ export function Composer({
   // A forward starts with the original quoted into the body. Seed the editor
   // once, after it mounts, and only when there is something to quote.
   useEffect(() => {
-    if (seeded.current) return;
-
     // Whether the signature applies at all. `enabled` is the master switch;
     // `includeOnReply` is asked separately because most people want a signature
     // on a new message and not on the fourth reply in a thread.
     const withSig = Boolean(signature?.enabled && (mode === 'new' || signature.includeOnReply));
+
+    // ── THE SIGNATURE FOLLOWS THE MAILBOX. ────────────────────────────────
+    //
+    //  Amit, 24 September 2026: three windows, all "From support@", one with
+    //  no signature and one with his own. From is a live prop — switch
+    //  mailbox and every open window re-labels itself — but the signature
+    //  was seeded ONCE, so a window opened in your own mailbox kept your
+    //  personal signature on mail that now goes out as the shared address.
+    //
+    //  So once seeded, a later signature (the page re-boots on a switch and
+    //  hands a new one down) REPLACES the old one in place — found by the
+    //  marker it was seeded with, never by matching text. If the marker is
+    //  gone the person deleted the signature, and it stays deleted.
+    if (seeded.current) {
+      if (plain) {
+        const next = withSig && signature ? signature.bodyText : '';
+        const prevText = seededPlainSig.current;
+        if (prevText === next) return;
+        // Plain text has no marker to find, so this one does match text —
+        // and only swaps it while it is still there, untouched.
+        setPlainBody((b) => (prevText && b.includes(prevText) ? b.replace(prevText, next) : b));
+        seededPlainSig.current = next;
+        return;
+      }
+      const box = editorRef.current?.querySelector<HTMLElement>(`[${SIG_ATTR}]`);
+      if (!box) return;
+      box.innerHTML = withSig && signature ? cleanSignatureHtml(signature.bodyHtml) : '';
+      return;
+    }
 
     if (plain) {
       if (!withSig || !signature) return;
       // Functional update so an already-typed body is never overwritten — this
       // effect re-runs on a mode change, and the body may not be empty by then.
       setPlainBody((b) => (b.trim() === '' ? `\n\n${signature.bodyText}` : b));
+      seededPlainSig.current = signature.bodyText;
       seeded.current = true;
       return;
     }
@@ -767,8 +816,11 @@ export function Composer({
     // it is handed (SaveSignatureAsync caps the length and does not
     // sanitise), so the editor's cleaner alone would be one a crafted PUT
     // walks past. This is the same function the editor uses.
+    // Wrapped in a marked block so a mailbox switch can find and swap it
+    // (above). The block stays even when the new mailbox has no signature —
+    // empty — so switching back puts that mailbox's one in again.
     const sig = withSig && signature
-      ? `<br><br>${cleanSignatureHtml(signature.bodyHtml)}`
+      ? `<br><br><div ${SIG_ATTR}="">${cleanSignatureHtml(signature.bodyHtml)}</div>`
       : '';
     const quote = mode === 'forward' && replyTo ? quotedHtml(replyTo) : '';
     if (!sig && !quote) return;
@@ -814,7 +866,13 @@ export function Composer({
 
   const totalSize = files.reduce((n, f) => n + f.size, 0);
 
-  const minimised = pane === 'min';
+  // Full screen wins over a minimise the page asked for: only one thing can be
+  // the task, and it is the one the person just made full screen.
+  const minimised = pane === 'full' ? false : (minimisedProp ?? pane === 'min');
+  function setMinimised(next: boolean) {
+    if (onMinimisedChange) onMinimisedChange(next);
+    else setPane(next ? 'min' : 'docked');
+  }
   // One-line recipients: a REPLY sitting in the conversation, until somebody
   // asks for the fields. A new message always gets the form — it has nobody
   // to summarise.
@@ -852,7 +910,7 @@ export function Composer({
         // are hidden above.
         style={pane === 'full' || placement === 'inline'
           ? undefined
-          : { right: 20 + offset * 580 }}
+          : { right: right ?? 20 + offset * 580 }}
       >
         <div
           className={`flex w-full flex-col overflow-hidden bg-surface ${
@@ -872,7 +930,7 @@ export function Composer({
               collapsed strip is the only target left, so all of it should work. */}
           <header
             className={`flex items-center justify-between bg-rail px-4 py-3 text-ink ${minimised ? 'cursor-pointer' : ''}`}
-            onClick={minimised ? () => setPane('docked') : undefined}
+            onClick={minimised ? () => setMinimised(false) : undefined}
           >
             <span className="truncate text-sm font-semibold tracking-tight">
               {mode === 'replyAll' ? 'Reply all'
@@ -892,7 +950,7 @@ export function Composer({
                   // Minimising is the clearest "I am coming back to this" there
                   // is, so the draft is flushed rather than left to the timer.
                   if (!minimised) saveDraftNow();
-                  setPane(minimised ? 'docked' : 'min');
+                  setMinimised(!minimised);
                 }}
                 aria-label={minimised ? 'Restore' : 'Minimise'}
                 title={minimised ? 'Restore' : 'Minimise'}
@@ -926,8 +984,14 @@ export function Composer({
             </div>
           </header>
 
-          {!minimised && (
-            <>
+          {/* HIDDEN, NOT UNMOUNTED, while minimised. This block used to be
+              `{!minimised && ...}`, which threw the editor away on minimise:
+              the body lives in the contenteditable's DOM, not in React state,
+              so Restore brought back an EMPTY message — typed text and
+              signature both gone (measured 24 Sept 2026: 'HELLO-TYPED …'
+              before, '' after). `contents` when shown keeps every child a
+              direct flex item of the panel, exactly as the fragment did. */}
+          <div className={minimised ? 'hidden' : 'contents'}>
 
         {/* ── A REPLY OPENS AS ONE LINE, NOT A FORM. ────────────────────────
             Gmail shows a reply's recipients as a single quiet line and keeps
@@ -1407,8 +1471,7 @@ export function Composer({
                 e.target.value = '';
               }}
             />
-            </>
-          )}
+          </div>
         </div>
       </div>
     </>
