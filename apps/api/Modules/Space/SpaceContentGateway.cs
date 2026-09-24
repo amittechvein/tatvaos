@@ -46,9 +46,10 @@ public sealed class SpaceContentGateway(
         if (f is null) return null;
 
         var stream = blobs.OpenRead(f.BlobKey);
-        return stream is null
-            ? null
-            : new SpaceContent(stream, f.Id, f.Name, f.MimeType, f.SizeBytes);
+        if (stream is null) return null;
+        // A document leaves as "Title.html" — see DocsFormat.AsDownload.
+        var (name, mime) = TatvaOS.Api.Modules.Docs.DocsFormat.AsDownload(f.Name, f.MimeType);
+        return new SpaceContent(stream, f.Id, name, mime, f.SizeBytes);
     }
 
     /// <summary>
@@ -60,10 +61,15 @@ public sealed class SpaceContentGateway(
         IReadOnlyCollection<Guid> fileIds, CancellationToken ct = default)
     {
         if (fileIds.Count == 0) return [];
-        return await db.SpaceFiles.AsNoTracking()
+        var rows = await db.SpaceFiles.AsNoTracking()
             .Where(f => fileIds.Contains(f.Id) && f.DeletedAt == null)
-            .Select(f => new SpaceContentInfo(f.Id, f.Name, f.MimeType, f.SizeBytes))
+            .Select(f => new { f.Id, f.Name, f.MimeType, f.SizeBytes })
             .ToListAsync(ct);
+        return rows.Select(f =>
+        {
+            var (name, mime) = TatvaOS.Api.Modules.Docs.DocsFormat.AsDownload(f.Name, f.MimeType);
+            return new SpaceContentInfo(f.Id, name, mime, f.SizeBytes);
+        }).ToList();
     }
 
     public sealed record SpaceContentInfo(Guid FileId, string Name, string MimeType, long SizeBytes);

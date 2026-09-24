@@ -902,6 +902,11 @@ public static class SpaceEndpoints
         if (file.DeletedAt is not null) return Error(409, "This file is in the trash. Restore it first.");
         if (Rank(await FilePermAsync(db, file, uid, ct)) < Rank("edit"))
             return Error(403, "You need edit access to replace this file's content.");
+        // A TatvaOS document's blob is a rendering Docs rewrites on every
+        // checkpoint; its content lives in docs.documents. Replacing the blob
+        // would be silently undone by the next checkpoint, so refuse it.
+        if (file.MimeType == TatvaOS.Api.Modules.Docs.DocsFormat.MimeType)
+            return Error(409, "This is a TatvaOS document. Open it in Docs to change it.");
 
         var oldKey = file.BlobKey;
         var oldSize = file.SizeBytes;
@@ -959,7 +964,12 @@ public static class SpaceEndpoints
         // thumbnails) do not come through this handler, by design.
         await SpaceDriveEndpoints.RecordActivityAsync(db, tenant, file.Id, "opened", ct);
 
-        return Results.File(stream, file.MimeType, file.Name, enableRangeProcessing: true);
+        // A TatvaOS document's blob is its HTML rendering, named and typed as
+        // such on the way out (DocsFormat.AsDownload) so it opens in a
+        // browser rather than as an extensionless file. Still an attachment
+        // (fileDownloadName), never rendered inline here.
+        var (name, mime) = TatvaOS.Api.Modules.Docs.DocsFormat.AsDownload(file.Name, file.MimeType);
+        return Results.File(stream, mime, name, enableRangeProcessing: true);
     }
 
     // ==================================================================

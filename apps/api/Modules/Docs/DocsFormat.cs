@@ -18,6 +18,15 @@ public static class DocsFormat
     public const string DefaultTitle = "Untitled document";
 
     /// <summary>
+    /// How a Space file is named and typed when its bytes LEAVE Space — a
+    /// download, or an attachment Mail takes from Space. A document's blob is
+    /// its HTML rendering, so it goes out as "Title.html", text/html; every
+    /// other file is untouched. One function so the two exits cannot disagree.
+    /// </summary>
+    public static (string Name, string MimeType) AsDownload(string name, string mimeType) =>
+        mimeType == MimeType ? (name + ".html", "text/html; charset=utf-8") : (name, mimeType);
+
+    /// <summary>
     /// Wrap the editor's HTML into a standalone page — the file's blob. It is
     /// what Space downloads, what a public link serves, and what Mail attaches
     /// from Space, so it must read correctly with nothing else around it.
