@@ -312,6 +312,9 @@ forgotten one fails quietly. So every launch step is named here:
    never a page to index.)
 4. `hire.caddy` / `HIRE_DOMAIN` routing deployed (a deploy-area PR).
 5. The notice wording (§7) signed off by Mr. Singh, with the real N.
+5b. **Mr. Singh's sign-off on the data-contact warning** on Hire → Careers page
+   (`apps/web/app/hire/careers/page.tsx`), exact text in PR #275's comment of
+   25 Sept. Merged unsigned on his ruling because both switches are off.
 6. Only then: `hire.careers_portal_enabled` set to `true` — the last step,
    and audited.
 
