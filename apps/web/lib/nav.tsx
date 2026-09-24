@@ -335,6 +335,26 @@ export function connectNav(): NavSection[] {
 }
 
 // ============================================================================
+//  Hire — recruitment (R1, 24 September 2026).
+//
+//  NOT IN THE LAUNCHER YET. There is no RAIL_PRODUCTS entry on purpose: the
+//  product row is is_available=false, and a tile would put Hire in every
+//  customer's app grid before Amit has decided to launch it. Admins reach it
+//  at /hire directly until then. Add the tile in the commit that launches it.
+// ============================================================================
+export function hireNav(): NavSection[] {
+  return [
+    {
+      heading: 'Hire',
+      items: [
+        { href: '/hire/jobs', label: 'Job openings', icon: <Icon d={PATHS.notes} colour="#7367f0" /> },
+        { href: '/hire/jobs/new', label: 'New job opening', icon: <Icon d={PATHS.compose} colour="#6C3CE9" /> },
+      ],
+    },
+  ];
+}
+
+// ============================================================================
 //  Space — file storage.
 // ============================================================================
 export function spaceNav(): NavSection[] {

@@ -246,6 +246,74 @@ run_as postgres "
     DELETE FROM core.locations    WHERE name  LIKE 'iso-loc-%' OR lower(btrim(name))  LIKE 'iso-loc-%';
     DELETE FROM core.designations WHERE title LIKE 'iso-des-%' OR lower(btrim(title)) LIKE 'iso-des-%';" >/dev/null 2>&1
 
+hdr "Hire job openings are isolated, and cannot point into another organisation"
+
+# Fixture as postgres. The School location exists so a Techvein job can TRY
+# to name it below.
+run_as postgres "
+    INSERT INTO core.locations (id, tenant_id, name) VALUES
+        ('0a000000-0000-0000-0000-0000000000a1','$SCHOOL','iso-job-loc-school')
+    ON CONFLICT DO NOTHING;
+    INSERT INTO hire.job_openings (id, tenant_id, title, slug) VALUES
+        ('0b000000-0000-0000-0000-0000000000b1','$TECHVEIN','iso-job-techvein','iso-job-techvein'),
+        ('0b000000-0000-0000-0000-0000000000b2','$SCHOOL','iso-job-school','iso-job-school')
+    ON CONFLICT DO NOTHING;" >/dev/null 2>&1
+
+own=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM hire.job_openings WHERE title = 'iso-job-techvein'")
+[ "${own:-0}" -eq 1 ] && pass "Techvein sees its own job opening" \
+                      || fail "Techvein cannot see its own job (got '${own}') - fixture or RLS too strict"
+
+leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM hire.job_openings WHERE tenant_id = '$SCHOOL'")
+[ "${leak:-1}" -eq 0 ] && pass "Techvein cannot see ABC School's job openings" \
+                       || fail "LEAK: $leak ABC School job(s) visible to Techvein"
+
+leak=$(as_tenant "$SCHOOL" "SELECT count(*) FROM hire.job_openings WHERE title = 'iso-job-techvein'")
+[ "${leak:-1}" -eq 0 ] && pass "ABC School cannot see Techvein's job opening" \
+                       || fail "LEAK: a Techvein job is visible to ABC School"
+
+n=$(no_context "SELECT count(*) FROM hire.job_openings")
+[ "${n:-1}" -eq 0 ] && pass "no tenant context returns zero job openings" \
+                    || fail "DANGEROUS: ${n} job opening(s) visible with no tenant set"
+
+empty=$(scalar_as tatvaos_app "SET app.tenant_id = ''; SELECT count(*) FROM hire.job_openings")
+[ "${empty:-x}" = "0" ] && pass "empty tenant string returns zero job openings, does not throw" \
+                        || fail "hire.job_openings: empty app.tenant_id did not return 0 (got '${empty}')"
+
+run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
+    UPDATE hire.job_openings SET title = 'iso-job-hijacked' WHERE tenant_id = '$SCHOOL';" >/dev/null 2>&1
+hij=$(scalar_as postgres "SELECT count(*) FROM hire.job_openings WHERE title = 'iso-job-hijacked'")
+[ "${hij:-1}" -eq 0 ] && pass "cross-tenant job UPDATE changed nothing" \
+                      || fail "LEAK: Techvein renamed an ABC School job"
+
+forge_out=$(run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
+    INSERT INTO hire.job_openings (tenant_id, title, slug) VALUES ('$SCHOOL','iso-job-forged','iso-job-forged');" 2>&1)
+if [ $? -ne 0 ] && printf '%s' "$forge_out" | grep -qi 'row-level security'; then
+    pass "cross-tenant job INSERT blocked by WITH CHECK"
+else
+    fail "LEAK: Techvein wrote a job tagged as ABC School - WITH CHECK is missing"
+fi
+
+# The references. Run as POSTGRES, which bypasses row-level security, so the
+# only thing that can refuse is the composite (tenant_id, id) foreign key. A
+# plain FK on id alone would accept both of these.
+for ref in "location_id:0a000000-0000-0000-0000-0000000000a1:ABC School's location" \
+           "hiring_manager_id:$(scalar_as postgres "SELECT id FROM core.users WHERE tenant_id = '$SCHOOL' ORDER BY id LIMIT 1"):an ABC School person"
+do
+    col=${ref%%:*}; rest=${ref#*:}; val=${rest%%:*}; what=${rest#*:}
+    if [ -z "$val" ]; then fail "no fixture for '$what' - nothing to test the $col foreign key with"; continue; fi
+    out=$(run_as postgres "UPDATE hire.job_openings SET $col = '$val'
+                            WHERE id = '0b000000-0000-0000-0000-0000000000b1';" 2>&1)
+    if printf '%s' "$out" | grep -qi 'foreign key'; then
+        pass "a Techvein job cannot name $what ($col), even bypassing RLS"
+    else
+        fail "LEAK: a Techvein job was allowed to name $what ($col)"
+    fi
+done
+
+run_as postgres "
+    DELETE FROM hire.job_openings WHERE title LIKE 'iso-job-%';
+    DELETE FROM core.locations WHERE name = 'iso-job-loc-school';" >/dev/null 2>&1
+
 hdr "Sign-in handoff codes are isolated, and the redeem reaches no further than one row"
 
 # Decision 0003. This table is unusual and so is its test: the REDEEM is
