@@ -47,9 +47,17 @@ function replaceFragment(value: string, email: string): string {
   return `${head}${email}, `;
 }
 
-export function ContactPicker({ value, onPick, children }: {
+export function ContactPicker({ value, onPick, single = false, children }: {
   value: string;
   onPick: (next: string) => void;
+  /**
+   * One address, not a list: a pick REPLACES the whole value and adds no
+   * trailing ", ". For fields that hold exactly one person — the advanced
+   * search form's From and To (Amit, 24 September 2026: "give suggestion
+   * when type initials in search"), where "amit@x.com, " would be searched
+   * as a literal comma. The composer leaves this off.
+   */
+  single?: boolean;
   children: (
     ref: React.RefObject<HTMLInputElement | null>,
     onKeyDown: (e: React.KeyboardEvent) => void,
@@ -63,7 +71,7 @@ export function ContactPicker({ value, onPick, children }: {
   const [open, setOpen] = useState(false);
   const [box, setBox] = useState<{ top: number; left: number; width: number } | null>(null);
 
-  const fragment = currentFragment(value);
+  const fragment = single ? value.trim() : currentFragment(value);
 
   // ── SUGGEST ONLY AFTER SOMEBODY TYPES. ─────────────────────────────────
   //
@@ -131,14 +139,14 @@ export function ContactPicker({ value, onPick, children }: {
   }, [open, items.length]);
 
   const choose = useCallback((s: Suggestion) => {
-    onPick(replaceFragment(value, s.email));
+    onPick(single ? s.email : replaceFragment(value, s.email));
     setOpen(false);
     setItems([]);
     // A taken name is a finished question: the list must not re-open from
     // the value it just wrote.
     setTyped(false);
     anchor.current?.focus();
-  }, [onPick, value]);
+  }, [onPick, value, single]);
 
   const onKeyDown = useCallback((e: React.KeyboardEvent) => {
     // Any key that is not pure navigation counts as typing, and that is what
