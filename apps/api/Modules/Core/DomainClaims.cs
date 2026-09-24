@@ -40,28 +40,45 @@ public static class DomainClaims
     public readonly record struct Claim(Guid Id, Guid TenantId, bool Verified, bool Superseded, DateTimeOffset CreatedAt);
 
     /// <summary>
+    /// Why an addition was refused: a short stable <paramref name="Code"/> for
+    /// the log, and the <paramref name="Message"/> the customer reads. They are
+    /// one object on purpose — a separate "reason" function would drift from
+    /// the wording, and then the log would describe a refusal that never
+    /// happened.
+    /// </summary>
+    public readonly record struct Refusal(string Code, string Message);
+
+    /// <summary>The reason codes, so a log reader can count them.</summary>
+    public const string RefusedAlreadyVerified = "already_verified";
+    public const string RefusedAlreadyYours = "already_yours";
+    public const string RefusedTooManyPending = "too_many_pending";
+
+    /// <summary>
     /// Why an addition is refused, or null to allow it. The wording is the
     /// customer's, so it says what to do next and never names another
     /// organisation.
     /// </summary>
-    public static string? RefusalToAdd(
+    public static Refusal? RefusalToAdd(
         IReadOnlyCollection<Claim> claimsOnThisFqdn, Guid tenantId, int pendingForThisTenant)
     {
         // Someone has proved they own it. That is the ONLY thing that blocks
         // a claim now, and the message must not say who: naming them tells a
         // squatter which school they were targeting.
         if (claimsOnThisFqdn.Any(c => c.Verified && !c.Superseded))
-            return "This domain is already verified by its owner on TatvaOS. "
+            return new Refusal(RefusedAlreadyVerified,
+                   "This domain is already verified by its owner on TatvaOS. "
                  + "If that is your organisation, sign in with that account. "
-                 + "If you believe this is wrong, contact support — we check ownership before moving a domain.";
+                 + "If you believe this is wrong, contact support — we check ownership before moving a domain.");
 
         // The same organisation asking twice. Not an attack; just tell them.
         if (claimsOnThisFqdn.Any(c => c.TenantId == tenantId && !c.Superseded))
-            return "You have already added this domain. Open it to see the record to publish.";
+            return new Refusal(RefusedAlreadyYours,
+                   "You have already added this domain. Open it to see the record to publish.");
 
         if (pendingForThisTenant >= MaxPendingPerTenant)
-            return $"You have {pendingForThisTenant} domains waiting to be verified. "
-                 + "Verify one of those before adding another, or contact support if you genuinely need more.";
+            return new Refusal(RefusedTooManyPending,
+                   $"You have {pendingForThisTenant} domains waiting to be verified. "
+                 + "Verify one of those before adding another, or contact support if you genuinely need more.");
 
         return null;
     }

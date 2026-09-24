@@ -134,10 +134,14 @@ public static class DomainEndpoints
         if (DomainClaims.RefusalToAdd(claims, tenant.TenantId, pendingHere) is { } refusal)
         {
             // Logged so a refused addition can be explained later, and so a
-            // run of them from one organisation is visible.
-            log.LogInformation("Domain claim refused for {Fqdn} (tenant has {Pending} pending)",
-                               fqdn, pendingHere);
-            return Results.Conflict(new { error = refusal });
+            // run of them from one organisation is visible. The REASON is in
+            // the line: without it an over-cap refusal and a this-is-somebody-
+            // else's-domain refusal read identically, and only the second one
+            // is a squatter hitting a wall (Mr. Singh, 25 Sept).
+            log.LogInformation(
+                "Domain claim refused for {Fqdn}: {Reason} (tenant has {Pending} pending)",
+                fqdn, refusal.Code, pendingHere);
+            return Results.Conflict(new { error = refusal.Message });
         }
 
         var domain = new Domain

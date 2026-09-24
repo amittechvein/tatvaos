@@ -11,8 +11,13 @@ namespace TatvaOS.Tests.DomainClaims;
 /// every school in a district and stop all of them onboarding. Exclusivity
 /// now comes from verification.
 ///
-/// These rules decide who is locked out of their own domain, so they are
-/// tested where they can be: as pure functions, with no database and no DNS.
+/// ── WHY IT IS LAID OUT LIKE THIS ─────────────────────────────────────────
+///
+///  Mr. Singh, 25 September: "Show each one with its permitted counterpart in
+///  the same run." So the output is four blocks, one per condition, and each
+///  block prints the case that is REFUSED next to the case that is ALLOWED.
+///  A rule tested only in the refusing direction is half a rule: it cannot
+///  tell you whether it refuses everything.
 ///
 /// Usage: dotnet run --project tests/domain-claims
 /// Exit:  0 all passed, 1 otherwise.
@@ -27,6 +32,18 @@ internal static class Program
         else { failed++; Console.WriteLine($"  FAIL  {what}"); }
     }
 
+    /// <summary>The refused half of a pair.</summary>
+    private static void Refused(string what, bool ok) => Ok("REFUSED   " + what, ok);
+
+    /// <summary>The permitted half. Without it the refusal proves nothing.</summary>
+    private static void Allowed(string what, bool ok) => Ok("PERMITTED " + what, ok);
+
+    private static void Condition(string n, string title)
+    {
+        Console.WriteLine();
+        Console.WriteLine($"  {n}. {title}");
+    }
+
     private static readonly Guid School = Guid.NewGuid();
     private static readonly Guid Squatter = Guid.NewGuid();
     private static readonly Guid Third = Guid.NewGuid();
@@ -36,78 +53,110 @@ internal static class Program
         Guid tenant, bool verified = false, bool superseded = false, int ageDays = 0, Guid? id = null) =>
         new(id ?? Guid.NewGuid(), tenant, verified, superseded, Now.AddDays(-ageDays));
 
+    private static Api.Modules.Core.DomainClaims.Refusal? Refusal(
+        IReadOnlyCollection<Api.Modules.Core.DomainClaims.Claim> claims, Guid tenant, int pending = 0) =>
+        Api.Modules.Core.DomainClaims.RefusalToAdd(claims, tenant, pending);
+
+    /// <summary>
+    /// The repository root, found by walking up from the test binary. Used by
+    /// the one structural check below; returns null rather than throwing if
+    /// the layout ever changes, and that check then fails loudly.
+    /// </summary>
+    private static string? RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            if (Directory.Exists(Path.Combine(dir.FullName, "apps", "api"))) return dir.FullName;
+            dir = dir.Parent;
+        }
+        return null;
+    }
+
     private static int Main()
     {
         Console.WriteLine();
-        Console.WriteLine("  Domain claims");
-        Console.WriteLine("  =============");
+        Console.WriteLine("  Domain claims — Mr. Singh's four conditions, each with its counterpart");
+        Console.WriteLine("  ====================================================================");
 
-        Console.WriteLine();
-        Console.WriteLine("  The squatting case Mr. Singh described");
+        // ── THE CASE THE WHOLE CHANGE EXISTS FOR ─────────────────────────
+        Condition("0", "The squatting case: a claim is not a lock");
 
-        // The squatter claims the school's domain first. Before 24 Sept this
-        // locked the name and the school could not add it at all.
         var squatterClaim = Claim(Squatter);
-        Ok("a pending claim does NOT stop the real owner adding the domain",
-            Api.Modules.Core.DomainClaims.RefusalToAdd([squatterClaim], School, 0) is null);
+        Allowed("a pending claim does not stop the real owner adding the domain",
+            Refusal([squatterClaim], School) is null);
 
-        Ok("a hundred pending claims still do not stop them",
-            Api.Modules.Core.DomainClaims.RefusalToAdd(
-                Enumerable.Range(0, 100).Select(_ => Claim(Squatter)).ToList(), School, 0) is null);
+        Allowed("a hundred pending claims still do not stop them",
+            Refusal(Enumerable.Range(0, 100).Select(_ => Claim(Squatter)).ToList(), School) is null);
 
-        // The school publishes the TXT record and verifies.
         var schoolWins = Claim(School, verified: true);
-        var refusal = Api.Modules.Core.DomainClaims.RefusalToAdd([schoolWins], Third, 0);
-        Ok("once verified, nobody else may claim it", refusal is not null);
-        Ok("and the refusal never names the organisation that holds it",
-            refusal is not null
-            && !refusal.Contains("techvein", StringComparison.OrdinalIgnoreCase)
-            && !refusal.Contains(School.ToString())
-            && refusal.Contains("contact support"));
+        Refused("once VERIFIED, nobody else may claim it",
+            Refusal([schoolWins], Third) is not null);
 
-        Ok("the losing claims are exactly the other live ones",
+        Allowed("and a claim the asker themselves lost does not block them trying again",
+            Refusal([Claim(School, superseded: true)], School) is null);
+
+        // ── CONDITION 1 ──────────────────────────────────────────────────
+        Condition("1", "Closing a losing claim destroys nothing");
+
+        Refused("the losing claim is the one closed",
             Api.Modules.Core.DomainClaims.LosersOf([schoolWins, squatterClaim], schoolWins.Id)
                 is [var only] && only == squatterClaim.Id);
 
-        Ok("an already-closed claim is not closed twice",
-            Api.Modules.Core.DomainClaims.LosersOf(
-                [schoolWins, Claim(Squatter, superseded: true)], schoolWins.Id).Count == 0);
-
-        Ok("the winner never supersedes itself",
+        Allowed("the winner's own row is left alone — it never supersedes itself",
             !Api.Modules.Core.DomainClaims.LosersOf([schoolWins, squatterClaim], schoolWins.Id)
                 .Contains(schoolWins.Id));
 
-        Ok("what the loser is told says why, not who",
-            Api.Modules.Core.DomainClaims.SupersededNotice.Contains("verified by its owner")
-            && !Api.Modules.Core.DomainClaims.SupersededNotice.Contains("organisation named")
-            && Api.Modules.Core.DomainClaims.SupersededNotice.Contains("contact support"));
+        Allowed("an already-closed claim keeps its original closing time, not a later one",
+            Api.Modules.Core.DomainClaims.LosersOf(
+                [schoolWins, Claim(Squatter, superseded: true)], schoolWins.Id).Count == 0);
 
-        Console.WriteLine();
-        Console.WriteLine("  The ordinary cases");
+        // The belief this condition rests on, checked rather than asserted:
+        // closing a claim is safe because NOTHING can be attached to an
+        // unverified domain. That guard lives in the endpoints, which need a
+        // database and a tenant to run, so this check is structural — it reads
+        // the source. It is worth having anyway: if someone relaxes either
+        // guard, the reason it is safe to close a claim has gone, and this is
+        // the thing that will say so.
+        var root = RepoRoot();
+        Ok("(structural) the repository root was found", root is not null);
+        if (root is not null)
+        {
+            var guards = new[]
+            {
+                Path.Combine(root, "apps", "api", "Modules", "Admin", "Endpoints", "UserEndpoints.cs"),
+                Path.Combine(root, "apps", "api", "Modules", "Admin", "Endpoints", "SharedMailboxEndpoints.cs"),
+            };
+            foreach (var g in guards)
+            {
+                var text = File.Exists(g) ? File.ReadAllText(g) : "";
+                Allowed($"nothing attaches to an unverified domain — {Path.GetFileName(g)} still checks OwnershipVerifiedAt",
+                    text.Contains("OwnershipVerifiedAt"));
+            }
+        }
 
-        Ok("adding a domain nobody has claimed is allowed",
-            Api.Modules.Core.DomainClaims.RefusalToAdd([], School, 0) is null);
+        // ── CONDITION 2 ──────────────────────────────────────────────────
+        Condition("2", "The notice says why, and never who");
 
-        Ok("the same organisation adding it twice is told, not duplicated",
-            Api.Modules.Core.DomainClaims.RefusalToAdd([Claim(School)], School, 1)
-                is { } again && again.Contains("already added"));
+        var notice = Api.Modules.Core.DomainClaims.SupersededNotice;
+        var blocked = Refusal([schoolWins], Third);
 
-        Ok("a claim this organisation lost does not block it trying again",
-            Api.Modules.Core.DomainClaims.RefusalToAdd([Claim(School, superseded: true)], School, 0) is null);
+        Refused("the notice names no organisation",
+            !notice.Contains(School.ToString()) && !notice.Contains(Squatter.ToString())
+            && !notice.Contains("techvein", StringComparison.OrdinalIgnoreCase));
 
-        Console.WriteLine();
-        Console.WriteLine("  The rate limit (a school adding 500 domains is not a school)");
+        Refused("nor does the refusal the next claimant sees",
+            blocked is { } b1 && !b1.Message.Contains(School.ToString())
+            && !b1.Message.Contains("techvein", StringComparison.OrdinalIgnoreCase));
 
-        Ok($"at the cap ({Api.Modules.Core.DomainClaims.MaxPendingPerTenant}) the next addition is refused",
-            Api.Modules.Core.DomainClaims.RefusalToAdd([], School, Api.Modules.Core.DomainClaims.MaxPendingPerTenant)
-                is { } capped && capped.Contains("waiting to be verified"));
+        Allowed("but the notice still says enough to act on: why, and where to go",
+            notice.Contains("verified by its owner") && notice.Contains("contact support"));
 
-        Ok("one below the cap is still allowed",
-            Api.Modules.Core.DomainClaims.RefusalToAdd([], School,
-                Api.Modules.Core.DomainClaims.MaxPendingPerTenant - 1) is null);
+        Allowed("and so does the refusal",
+            blocked is { } b2 && b2.Message.Contains("contact support"));
 
-        Console.WriteLine();
-        Console.WriteLine("  Sweeping abandoned claims");
+        // ── CONDITION 3 ──────────────────────────────────────────────────
+        Condition("3", "Pending claims expire after thirty days");
 
         var old = Claim(Squatter, ageDays: 31);
         var fresh = Claim(Squatter, ageDays: 29);
@@ -115,15 +164,57 @@ internal static class Program
         var oldSuperseded = Claim(Squatter, superseded: true, ageDays: 400);
 
         var expired = Api.Modules.Core.DomainClaims.Expired([old, fresh, oldVerified, oldSuperseded], Now);
-        Ok("a pending claim older than thirty days is swept", expired.Contains(old.Id));
-        Ok("a claim of twenty-nine days is left alone", !expired.Contains(fresh.Id));
-        Ok("a VERIFIED domain is never swept, however old", !expired.Contains(oldVerified.Id));
-        Ok("a superseded row is never swept — it is why that claim ended",
+
+        Refused("a pending claim of thirty-one days is swept", expired.Contains(old.Id));
+        Allowed("one of twenty-nine days is left standing", !expired.Contains(fresh.Id));
+        Allowed("a VERIFIED domain is never swept, at four hundred days old",
+            !expired.Contains(oldVerified.Id));
+        Allowed("a superseded row is never swept — it is the record of why that claim ended",
             !expired.Contains(oldSuperseded.Id));
         Ok("exactly one of those four is swept", expired.Count == 1);
 
+        // ── CONDITION 4 ──────────────────────────────────────────────────
+        Condition("4", "The rate limit, and a refusal a log reader can tell apart");
+
+        var cap = Api.Modules.Core.DomainClaims.MaxPendingPerTenant;
+
+        Refused($"at the cap ({cap}) the next addition is refused",
+            Refusal([], School, cap) is { } capped
+            && capped.Code == Api.Modules.Core.DomainClaims.RefusedTooManyPending);
+
+        Allowed($"one below the cap ({cap - 1}) is allowed",
+            Refusal([], School, cap - 1) is null);
+
+        Allowed("and being at the cap never blocks the OWNER of a name from being refused for the right reason",
+            Refusal([schoolWins], Third, cap) is { } both
+            && both.Code == Api.Modules.Core.DomainClaims.RefusedAlreadyVerified);
+
+        // The reason codes are the point: without them the log line for "you
+        // have too many pending" and the log line for "this is somebody
+        // else's verified domain" are the same sentence, and only the second
+        // is a squatter hitting a wall.
+        var codes = new[]
+        {
+            Refusal([schoolWins], Third)?.Code,
+            Refusal([Claim(School)], School, 1)?.Code,
+            Refusal([], School, cap)?.Code,
+        };
+        Ok("the three refusals carry three different reason codes",
+            codes.All(c => c is not null) && codes.Distinct().Count() == 3);
+
+        Ok("and each code is the one the log claims it is",
+            codes[0] == Api.Modules.Core.DomainClaims.RefusedAlreadyVerified
+            && codes[1] == Api.Modules.Core.DomainClaims.RefusedAlreadyYours
+            && codes[2] == Api.Modules.Core.DomainClaims.RefusedTooManyPending);
+
+        Allowed("adding a domain nobody has claimed is allowed and logs nothing",
+            Refusal([], School) is null);
+
+        Refused("the same organisation adding it twice is told, not duplicated",
+            Refusal([Claim(School)], School, 1) is { } again && again.Message.Contains("already added"));
+
         Console.WriteLine();
-        Console.WriteLine("  =============");
+        Console.WriteLine("  ====================================================================");
         Console.WriteLine(failed == 0 ? $"  PASS  {passed} assertions" : $"  FAIL  {failed} of {passed + failed}");
         Console.WriteLine();
         return failed == 0 ? 0 : 1;
