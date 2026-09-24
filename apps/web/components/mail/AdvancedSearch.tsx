@@ -64,36 +64,49 @@ export function AdvancedSearch({
     return parts.join(' ');
   };
 
-  const field = 'w-full rounded-lg border border-line bg-surface px-2.5 py-1.5 text-sm text-ink outline-none focus:border-brand-500';
-  const label = 'mb-1 block text-[11px] font-semibold uppercase tracking-wide text-ink-muted';
+  // The size row's three controls set their own widths. They must not also
+  // carry w-full: which of two width classes wins is CSS order, not class
+  // order, and w-full won — the KB/MB list ran 200px out of the form.
+  const control = 'rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink outline-none placeholder:text-ink-faint focus:border-brand-500';
+  const field = `w-full ${control}`;
+  const label = 'mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-ink-muted';
+
+  /** Empties the form and leaves it open — Gmail's "Clear". Closing is a
+   *  click anywhere outside, as it is for every other popover in the bar. */
+  const clear = () => {
+    setFrom(''); setTo(''); setSubject(''); setWords(''); setWithout('');
+    setWhere(''); setWithin(''); setSizeOp('larger'); setSizeVal(''); setSizeUnit('M');
+    setHasAttachment(false); setUnreadOnly(false);
+  };
 
   return (
-    // Hangs from the box's LEFT edge. Anchored right it grew leftwards under
-    // the rail, which drew over its labels ("ROM", "UBJECT") — Amit's
-    // screenshot, 24 September 2026. On a phone the box is too narrow to hang
-    // anything from (it started 124px off-screen at 375px), so there the form
-    // is pinned to the viewport, 1rem in from each side, below the header.
-    <div className="fixed inset-x-4 top-[5rem] z-30 max-h-[calc(100vh-6rem)] overflow-y-auto rounded-xl border border-line bg-surface p-4 shadow-raised sm:absolute sm:inset-x-auto sm:left-0 sm:top-full sm:mt-9 sm:max-h-none sm:w-[22rem] sm:overflow-visible">
-      <div className="grid grid-cols-2 gap-3">
-        <div className="col-span-2">
+    // Two columns, lined up with the box's RIGHT edge just below it, as in
+    // Amit's design of 24 September 2026. The box is at least ~550px wide
+    // wherever this is anchored, so it no longer reaches under the rail —
+    // which is what cut off "ROM" and "UBJECT" when the box was 176px. On a
+    // phone there is no room to hang anything (it started 124px off-screen
+    // at 375px), so there it is pinned 1rem in from each side, one column.
+    <div className="fixed inset-x-4 top-[5rem] z-30 max-h-[calc(100vh-6rem)] overflow-y-auto rounded-2xl border border-line bg-surface p-4 shadow-raised sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 sm:max-h-none sm:w-[33rem] sm:max-w-[calc(100vw-2rem)] sm:overflow-visible">
+      <div className="grid grid-cols-1 gap-x-3 gap-y-3.5 sm:grid-cols-2">
+        <div>
           <span className={label}>From</span>
-          <input value={from} onChange={(e) => setFrom(e.target.value)} className={field} placeholder="name or address" />
+          <input value={from} onChange={(e) => setFrom(e.target.value)} className={field} placeholder="Name or email" />
         </div>
-        <div className="col-span-2">
+        <div>
           <span className={label}>To</span>
-          <input value={to} onChange={(e) => setTo(e.target.value)} className={field} placeholder="whole address, or me" />
+          <input value={to} onChange={(e) => setTo(e.target.value)} className={field} placeholder="Name or email" />
         </div>
-        <div className="col-span-2">
+        <div>
           <span className={label}>Subject</span>
-          <input value={subject} onChange={(e) => setSubject(e.target.value)} className={field} />
+          <input value={subject} onChange={(e) => setSubject(e.target.value)} className={field} placeholder="Subject contains" />
         </div>
-        <div className="col-span-2">
+        <div>
           <span className={label}>Has the words</span>
-          <input value={words} onChange={(e) => setWords(e.target.value)} className={field} />
+          <input value={words} onChange={(e) => setWords(e.target.value)} className={field} placeholder="Words to include" />
         </div>
-        <div className="col-span-2">
+        <div>
           <span className={label}>Doesn&apos;t have</span>
-          <input value={without} onChange={(e) => setWithout(e.target.value)} className={field} placeholder="words to leave out" />
+          <input value={without} onChange={(e) => setWithout(e.target.value)} className={field} placeholder="Words to exclude" />
         </div>
 
         <div>
@@ -104,44 +117,36 @@ export function AdvancedSearch({
             <option value="anywhere">Anywhere (incl. bin)</option>
           </select>
         </div>
-        <div>
-          <span className={label}>Date within</span>
-          <select value={within} onChange={(e) => setWithin(e.target.value)} className={field}>
-            <option value="">Any time</option>
-            <option value="1d">1 day</option>
-            <option value="7d">1 week</option>
-            <option value="1m">1 month</option>
-            <option value="6m">6 months</option>
-            <option value="1y">1 year</option>
-          </select>
-        </div>
-
-        <div className="col-span-2">
-          <span className={label}>Size</span>
-          <div className="flex gap-2">
-            <select value={sizeOp} onChange={(e) => setSizeOp(e.target.value)} className={`${field} w-28`}>
-              <option value="larger">greater than</option>
-              <option value="smaller">less than</option>
-            </select>
-            <input value={sizeVal} onChange={(e) => setSizeVal(e.target.value)} inputMode="numeric"
-                   className={`${field} w-20`} placeholder="10" />
-            <select value={sizeUnit} onChange={(e) => setSizeUnit(e.target.value)} className={`${field} w-20`}>
-              <option value="K">KB</option>
-              <option value="M">MB</option>
+        {/* Date takes less room than size's three controls, so this row is
+            split unevenly rather than in the two halves above it. */}
+        <div className="grid grid-cols-1 gap-3 sm:col-span-2 sm:grid-cols-[10rem_1fr]">
+          <div>
+            <span className={label}>Date within</span>
+            <select value={within} onChange={(e) => setWithin(e.target.value)} className={field}>
+              <option value="">Any time</option>
+              <option value="1d">1 day</option>
+              <option value="7d">1 week</option>
+              <option value="1m">1 month</option>
+              <option value="6m">6 months</option>
+              <option value="1y">1 year</option>
             </select>
           </div>
+          <div>
+            <span className={label}>Size</span>
+            <div className="flex gap-2">
+              <select value={sizeOp} onChange={(e) => setSizeOp(e.target.value)} className={`${control} w-[8.5rem] shrink-0`}>
+                <option value="larger">Greater than</option>
+                <option value="smaller">Less than</option>
+              </select>
+              <input value={sizeVal} onChange={(e) => setSizeVal(e.target.value)} inputMode="numeric"
+                     className={`${control} w-0 min-w-0 flex-1`} placeholder="10" />
+              <select value={sizeUnit} onChange={(e) => setSizeUnit(e.target.value)} className={`${control} w-20 shrink-0`}>
+                <option value="K">KB</option>
+                <option value="M">MB</option>
+              </select>
+            </div>
+          </div>
         </div>
-
-        <label className="col-span-2 flex items-center gap-2 text-sm text-ink">
-          <input type="checkbox" checked={hasAttachment} onChange={(e) => setHasAttachment(e.target.checked)}
-                 className="h-4 w-4 accent-brand-600" />
-          Has attachment
-        </label>
-        <label className="col-span-2 flex items-center gap-2 text-sm text-ink">
-          <input type="checkbox" checked={unreadOnly} onChange={(e) => setUnreadOnly(e.target.checked)}
-                 className="h-4 w-4 accent-brand-600" />
-          Unread only
-        </label>
       </div>
 
       {/* What it will actually run. Shown because the form's whole job is to
@@ -153,16 +158,30 @@ export function AdvancedSearch({
         </div>
       )}
 
-      <div className="mt-3 flex justify-end gap-2">
-        <button type="button" onClick={onClose}
-                className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink transition hover:bg-canvas">
-          Cancel
-        </button>
-        <button type="button" onClick={() => { onSearch(build()); onClose(); }}
-                disabled={!build()}
-                className="rounded-lg bg-brand-600 px-4 py-1.5 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:opacity-50">
-          Search
-        </button>
+      <div className="mt-4 flex flex-wrap items-end justify-between gap-3">
+        <div className="space-y-1.5">
+          <label className="flex items-center gap-2 text-sm text-ink">
+            <input type="checkbox" checked={hasAttachment} onChange={(e) => setHasAttachment(e.target.checked)}
+                   className="h-4 w-4 accent-brand-600" />
+            Has attachment
+          </label>
+          <label className="flex items-center gap-2 text-sm text-ink">
+            <input type="checkbox" checked={unreadOnly} onChange={(e) => setUnreadOnly(e.target.checked)}
+                   className="h-4 w-4 accent-brand-600" />
+            Unread only
+          </label>
+        </div>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={clear}
+                  className="rounded-lg px-3 py-2 text-sm text-ink-muted transition hover:bg-canvas hover:text-ink">
+            Clear
+          </button>
+          <button type="button" onClick={() => { onSearch(build()); onClose(); }}
+                  disabled={!build()}
+                  className="rounded-lg bg-brand-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:opacity-50">
+            Search
+          </button>
+        </div>
       </div>
     </div>
   );

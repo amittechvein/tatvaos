@@ -29,9 +29,10 @@ export const HEADER_LINK =
 function MailSearchSlot() {
   const { query, setQuery, folders, hosted, inputRef } = useMailSearch();
   if (!hosted) return null;
-  // It takes the width between the rail toggle and the icon cluster, as
-  // Gmail's does. Until 24 September 2026 it sat at 176px with an empty
-  // spacer filling the rest of the bar (Amit's screenshot, outlined).
+  // The slot takes the width between the rail toggle and the icon cluster;
+  // inside it SearchBox caps the box at 720px and puts its ? at the far
+  // right. Until 24 September 2026 the box sat at 176px with an empty spacer
+  // filling the rest of the bar (Amit's screenshot, outlined).
   return (
     <div className="min-w-0 flex-1">
       <SearchBox value={query} onChange={setQuery} folders={folders} inputRef={inputRef} />

@@ -73,72 +73,83 @@ export function SearchBox({
     else if (e.key === 'Escape') { setOpen(false); }
   };
 
+  // ── LAYOUT, FROM AMIT'S DESIGN OF 24 SEPTEMBER 2026 ────────────────────
+  //  The box stops at 720px, Gmail's width; filling the whole bar (PR 246,
+  //  the same morning) read as too long once seen on a wide screen. One
+  //  sliders icon inside it opens the advanced form, and the ? that lists
+  //  the operators sits apart at the bar's right end, beside the launcher.
   return (
-    <div ref={box} className="relative">
-      <div className="flex items-center gap-1.5 rounded-full bg-surface px-3.5 py-2 shadow-card">
-        <Icon name="search" className="h-4 w-4 shrink-0 text-ink-faint" />
-        <input
-          ref={inputRef}
-          value={value}
-          onChange={(e) => { onChange(e.target.value); setOpen(true); }}
-          onFocus={() => setOpen(true)}
-          onKeyDown={onKeyDown}
-          placeholder="Search mail"
-          aria-label="Search mail"
-          className="min-w-0 flex-1 border-0 bg-transparent p-0 text-sm text-ink outline-none placeholder:text-ink-faint"
-        />
-        {value.length > 0 && (
-          <button type="button" onClick={() => onChange('')} aria-label="Clear search"
-                  className="text-ink-faint transition hover:text-ink">×</button>
+    <div ref={box} className="relative flex min-w-0 flex-1 items-center gap-2">
+      <div className="relative w-full max-w-[720px]">
+        <div className="flex items-center gap-2 rounded-full bg-surface px-4 py-2.5 shadow-card">
+          <Icon name="search" className="h-4 w-4 shrink-0 text-ink-faint" />
+          <input
+            ref={inputRef}
+            value={value}
+            onChange={(e) => { onChange(e.target.value); setOpen(true); }}
+            onFocus={() => setOpen(true)}
+            onKeyDown={onKeyDown}
+            placeholder="Search mail"
+            aria-label="Search mail"
+            className="min-w-0 flex-1 border-0 bg-transparent p-0 text-sm text-ink outline-none placeholder:text-ink-faint"
+          />
+          {value.length > 0 && (
+            <button type="button" onClick={() => onChange('')} aria-label="Clear search"
+                    className="text-ink-faint transition hover:text-ink">×</button>
+          )}
+          {/* Gmail's "show search options" — the form for people who do not
+              know the operators, which is most people. */}
+          <button type="button"
+                  onClick={() => { setAdvanced((v) => !v); setOpen(false); setHelp(false); }}
+                  aria-label="Advanced search" aria-expanded={advanced}
+                  title="Advanced search"
+                  className={`grid h-7 w-7 shrink-0 place-items-center rounded-full transition hover:bg-canvas ${advanced ? 'text-brand-600' : 'text-brand-500 hover:text-brand-600'}`}>
+            <i className="ri-equalizer-line text-[18px]" />
+          </button>
+        </div>
+
+        {advanced && (
+          <AdvancedSearch
+            folders={folders}
+            initial={value}
+            onSearch={(q) => onChange(q)}
+            onClose={() => setAdvanced(false)}
+          />
         )}
-        {/* The caret is Gmail's "show search options" — the form for people
-            who do not know the operators, which is most people. */}
-        <button type="button"
-                onClick={() => { setAdvanced((v) => !v); setOpen(false); setHelp(false); }}
-                aria-label="Advanced search" aria-expanded={advanced}
-                title="Advanced search"
-                className="text-ink-faint transition hover:text-ink">▾</button>
-        {/* Hidden on a phone: in the top bar this sits next to the app
-            launcher and the two collided at 375px. The caret beside it opens
-            the advanced form, which is the same discovery by other means. */}
-        <button type="button" onClick={() => { setHelp((v) => !v); setOpen(false); setAdvanced(false); }}
-                aria-label="Search options" title="What you can search for"
-                className="hidden text-ink-faint transition hover:text-ink sm:block">?</button>
+
+        {/* Operator suggestions while typing. */}
+        {open && suggestions.length > 0 && (
+          <div role="listbox" aria-label="Search operators"
+               className="absolute right-0 top-full z-30 mt-2 w-72 overflow-hidden rounded-xl border border-line bg-surface py-1 shadow-raised">
+            {suggestions.map((s, i) => (
+              <button
+                key={s.op}
+                type="button"
+                role="option"
+                aria-selected={i === active}
+                onMouseEnter={() => setActive(i)}
+                onClick={() => choose(s.op)}
+                className={`block w-full px-3 py-2 text-left ${i === active ? 'bg-canvas' : ''}`}
+              >
+                <div className="text-sm font-medium text-ink">{s.example}</div>
+                <div className="text-[11px] text-ink-muted">{s.hint}</div>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      {advanced && (
-        <AdvancedSearch
-          folders={folders}
-          initial={value}
-          onSearch={(q) => onChange(q)}
-          onClose={() => setAdvanced(false)}
-        />
-      )}
-
-      {/* Operator suggestions while typing. */}
-      {open && suggestions.length > 0 && (
-        <div role="listbox" aria-label="Search operators"
-             className="absolute right-0 top-full z-30 mt-9 w-72 overflow-hidden rounded-xl border border-line bg-surface py-1 shadow-raised">
-          {suggestions.map((s, i) => (
-            <button
-              key={s.op}
-              type="button"
-              role="option"
-              aria-selected={i === active}
-              onMouseEnter={() => setActive(i)}
-              onClick={() => choose(s.op)}
-              className={`block w-full px-3 py-2 text-left ${i === active ? 'bg-canvas' : ''}`}
-            >
-              <div className="text-sm font-medium text-ink">{s.example}</div>
-              <div className="text-[11px] text-ink-muted">{s.hint}</div>
-            </button>
-          ))}
-        </div>
-      )}
+      {/* Hidden on a phone: at 375px it collided with the app launcher, and
+          the sliders icon reaches the same help by other means. */}
+      <button type="button" onClick={() => { setHelp((v) => !v); setOpen(false); setAdvanced(false); }}
+              aria-label="Search options" title="What you can search for" aria-expanded={help}
+              className="ml-auto hidden h-10 w-10 shrink-0 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-canvas hover:text-ink sm:grid">
+        <i className="ri-question-line text-[20px]" />
+      </button>
 
       {/* The whole list, for somebody who does not know what to type. */}
       {help && (
-        <div className="absolute right-0 top-full z-30 mt-9 max-h-[60vh] w-80 overflow-y-auto rounded-xl border border-line bg-surface p-3 shadow-raised">
+        <div className="absolute right-0 top-full z-30 mt-2 max-h-[60vh] w-80 overflow-y-auto rounded-xl border border-line bg-surface p-3 shadow-raised">
           <p className="mb-2 mt-0 text-xs text-ink-muted">
             Combine these freely. A space means <strong className="text-ink">and</strong>,
             {' '}<strong className="text-ink">OR</strong> means either, and a
