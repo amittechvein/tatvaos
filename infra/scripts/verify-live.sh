@@ -420,6 +420,62 @@ check_rate_limit() {
 }
 
 # ---------------------------------------------------------------------------
+#  The development-only operator sign-in does not exist here.
+#
+#  POST /api/dev/operator-session issues a password-less platform-operator
+#  session on a developer's own machine (PR 281,
+#  apps/api/Modules/Auth/Endpoints/DevOperatorSignIn.cs). The API refuses to
+#  boot with its switch on outside Development, and maps the route only in
+#  Development — but nobody reads the live container's environment, so this
+#  asks production itself, every deploy (Mr. Singh, 25 Sept 2026).
+#
+#  404 EXACTLY, on both methods. The route is POST-only, so a GET answering
+#  405 means it is MAPPED — a failure, however harmless the method looks.
+#  And first a neighbouring API route must answer its own 400: Caddy sends
+#  all of /api/* to the API, so that proves a 404 below came from the API's
+#  router and not from the proxy failing to reach it.
+#
+#  VERIFY_BASE_URL (default https://<SITE_DOMAIN>) exists so this one check
+#  can be calibrated against a local API; nothing in a deploy sets it.
+# ---------------------------------------------------------------------------
+check_dev_operator_route() {
+    step "Development-only operator sign-in is absent"
+
+    local domain="${VERIFY_DOMAIN:-$(grep '^SITE_DOMAIN=' infra/docker/.env 2>/dev/null | cut -d= -f2)}"
+    local base="${VERIFY_BASE_URL:-${domain:+https://$domain}}"
+    if [ -z "$base" ]; then
+        bad "SITE_DOMAIN is not set in infra/docker/.env — cannot ask the API whether the route exists."
+        return 1
+    fi
+    if ! command -v curl >/dev/null 2>&1; then
+        bad "curl is not installed on this host; the route cannot be probed."
+        return 1
+    fi
+
+    local neighbour post get
+    neighbour=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X POST "$base/api/auth/otp/request" \
+        -H 'Content-Type: application/json' -d '{"phone":"not-a-number"}')
+    if [ "$neighbour" != "400" ]; then
+        bad "the neighbouring route /api/auth/otp/request answered ${neighbour} (expected 400) — cannot tell the API's 404 from the proxy's"
+        return 1
+    fi
+    # GET first, and POST only if GET found nothing mapped: if the door were
+    # open, a POST from this probe could itself be what opens a session.
+    get=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$base/api/dev/operator-session")
+    post="not sent"
+    [ "$get" = "404" ] && post=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X POST "$base/api/dev/operator-session")
+
+    if [ "$post" = "404" ] && [ "$get" = "404" ]; then
+        ok "/api/dev/operator-session: POST 404, GET 404 — not mapped (the API answered its neighbour with 400)"
+        return 0
+    fi
+    bad "/api/dev/operator-session: POST ${post}, GET ${get} (expected 404 and 404)"
+    [ "$get" = "405" ] && note "GET 405 means the route IS MAPPED on this server — the development operator door exists here"
+    [ "$post" = "200" ] && note "POST 200 means a PLATFORM-OPERATOR SESSION WAS ISSUED with no password — roll back now"
+    return 1
+}
+
+# ---------------------------------------------------------------------------
 #  Run everything. No check aborts the script: a dead IMAP must not hide a
 #  stuck queue — the operator gets the whole picture, then one verdict.
 # ---------------------------------------------------------------------------
@@ -469,10 +525,11 @@ check_imap       || true
 check_smtp       || true
 check_queue      || true
 check_rate_limit || true
+check_dev_operator_route || true
 
 step "Verdict"
 if [ "$FAILURES" -gt 0 ]; then
     printf '\n   %s%sNOT verified — %d check(s) failed.%s\n\n' "$B" "$R" "$FAILURES" "$X"
     exit 1
 fi
-printf '\n   %sproduction verified — services, website, IMAP, SMTP, queue all answer; the rate limit holds through the proxy.%s\n\n' "$G" "$X"
+printf '\n   %sproduction verified — services, website, IMAP, SMTP, queue all answer; the rate limit holds through the proxy; no development operator door.%s\n\n' "$G" "$X"
