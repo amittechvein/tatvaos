@@ -203,7 +203,7 @@ public sealed class OpenAiGateway : IAiGateway
     }
 
     public async Task<AiResult> CompleteAsync(
-        string instruction, string input, CancellationToken ct)
+        string instruction, string input, CancellationToken ct, string feature = "other")
     {
         if (!IsConfigured)
             return AiResult.Failed("AI features are not switched on for this server.");

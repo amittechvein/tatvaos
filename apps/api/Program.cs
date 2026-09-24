@@ -360,7 +360,12 @@ builder.Services.AddHttpClient();
 // SCOPED since 27 Aug 2026: consent is per-organisation, so the gateway
 // reads the current tenant's allow_ai flag (fail-closed) — which needs the
 // scoped TenantContext and AppDbContext. Nothing else changed.
-builder.Services.AddScoped<IAiGateway, OpenAiGateway>();
+// The provider gateway is registered as ITSELF, and IAiGateway resolves to
+// the metering wrapper around it (MeteredAiGateway): every module that asks
+// for AI gets usage recorded, the per-person and per-organisation limits, and
+// the operator's pause, with no way to reach the provider around them.
+builder.Services.AddScoped<OpenAiGateway>();
+builder.Services.AddScoped<IAiGateway, MeteredAiGateway>();
 
 // Scoped: it writes through the request's AppDbContext and reads its
 // TenantContext. A singleton holding either would serve one tenant's scope to
@@ -780,6 +785,8 @@ app.MapMyStorageEndpoints();
 // The organisation's AI consent switch — the screen for allow_ai, so "can we
 // turn it off ourselves" is answered by a toggle rather than a promise.
 app.MapOrgAiEndpoints();
+// The operator's read of an organisation's AI use (the limits are settings).
+app.MapOrgAiUsageEndpoints();
 // Calendar. Recurrence is expanded at read time, never stored — see
 // Modules/Calendar/Recurrence.cs.
 app.MapCalendarEndpoints();

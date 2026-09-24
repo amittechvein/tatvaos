@@ -44,7 +44,8 @@ public static class OrgAiEndpoints
     public sealed record PutRequest(bool? Enabled);
 
     private static async Task<IResult> GetAsync(
-        AppDbContext db, TenantContext tenant, IAiGateway ai, CancellationToken ct)
+        AppDbContext db, TenantContext tenant, IAiGateway ai,
+        TatvaOS.Api.Shared.Settings.SettingsReader settings, CancellationToken ct)
     {
         var row = await db.Tenants.AsNoTracking()
             .Where(t => t.Id == tenant.TenantId)
@@ -71,6 +72,9 @@ public static class OrgAiEndpoints
                   + $"processed by TatvaOS AI on a third-party service in {ai.DataLocation}. "
                   + "Nothing is sent while this is off."
                 : "TatvaOS AI is not configured on this platform. Nothing is sent.",
+            // This month's use against the allowance — the number the
+            // administrator is emailed about at 80 % and 100 % (MeteredAiGateway).
+            usage = await AiUsageReport.ThisMonthAsync(db, settings, ct),
         });
     }
 

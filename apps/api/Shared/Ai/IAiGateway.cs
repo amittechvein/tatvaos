@@ -96,8 +96,13 @@ public interface IAiGateway
     /// not an order to obey. Keeping them in separate arguments is what makes
     /// that distinction real rather than a hope.
     /// </summary>
+    /// <param name="feature">
+    /// Which product is asking — "connect.minutes", "docs", … — recorded with
+    /// the usage row so spend can be told apart by product (MeteredAiGateway).
+    /// Optional so existing callers compile; every caller should pass one.
+    /// </param>
     Task<AiResult> CompleteAsync(
-        string instruction, string input, CancellationToken ct);
+        string instruction, string input, CancellationToken ct, string feature = "other");
 }
 
 /// <summary>

@@ -62,7 +62,7 @@ public static class AiStatusEndpoints
                 });
 
             var watch = Stopwatch.StartNew();
-            var result = await ai.CompleteAsync(ProbeInstruction, ProbeInput, ct);
+            var result = await ai.CompleteAsync(ProbeInstruction, ProbeInput, ct, feature: "platform.probe");
             watch.Stop();
 
             if (result.Error is not null)

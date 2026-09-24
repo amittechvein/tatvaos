@@ -186,6 +186,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<SpacePublicLink> SpacePublicLinks => Set<SpacePublicLink>();
     public DbSet<SpaceTenantSetting> SpaceTenantSettings => Set<SpaceTenantSetting>();
 
+    // AI usage — metering and limits (20260924-ai-usage.sql). Configured in
+    // the single "AI usage" block at the end of OnModelCreating.
+    public DbSet<AiUsage> AiUsage => Set<AiUsage>();
+    public DbSet<AiUsageAlert> AiUsageAlerts => Set<AiUsageAlert>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         // ---- Schemas -----------------------------------------------------
@@ -817,6 +822,31 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             .HasForeignKey(l => l.CreatedByUserId).OnDelete(DeleteBehavior.SetNull);
         b.Entity<SpaceTenantSetting>().HasOne<Tenant>().WithOne()
             .HasForeignKey<SpaceTenantSetting>(s => s.TenantId).OnDelete(DeleteBehavior.Cascade);
+
+        // ---- AI usage ----------------------------------------------------
+        // One additive block. Both tables are records: the app appends and
+        // reads (the migration revokes UPDATE and DELETE).
+        b.Entity<AiUsage>(e =>
+        {
+            e.ToTable("ai_usage", "core");
+            e.HasKey(u => u.Id);
+            e.Property(u => u.Id).ValueGeneratedOnAdd();
+            e.HasQueryFilter(u => u.TenantId == tenant.TenantId);
+            e.HasOne<Tenant>().WithMany()
+                .HasForeignKey(u => u.TenantId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<User>().WithMany()
+                .HasForeignKey(u => u.UserId).OnDelete(DeleteBehavior.SetNull);
+        });
+        b.Entity<AiUsageAlert>(e =>
+        {
+            e.ToTable("ai_usage_alerts", "core");
+            // Composite key — EF's convention would find none (the
+            // ConnectTenantSettings outage of 9 Sept).
+            e.HasKey(a => new { a.TenantId, a.Month, a.Level });
+            e.HasQueryFilter(a => a.TenantId == tenant.TenantId);
+            e.HasOne<Tenant>().WithMany()
+                .HasForeignKey(a => a.TenantId).OnDelete(DeleteBehavior.Cascade);
+        });
 
         base.OnModelCreating(b);
 

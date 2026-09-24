@@ -47,6 +47,13 @@ const SECTIONS: { id: string; title: string; blurb: string }[] = [
     blurb: 'Stored and ready. Checkout wiring ships with the billing section.',
   },
   {
+    id: 'ai',
+    title: 'TatvaOS AI — spend controls',
+    blurb: 'Apply to every organisation. The pause stops all AI at once; the limits cap one '
+      + 'person per hour and one organisation per month. Every AI request is metered, and each '
+      + 'organisation can see its own use on its TatvaOS AI page.',
+  },
+  {
     id: 'mail',
     title: 'System email',
     blurb: 'OTP codes and invoices send as this address through our own mail server. '
@@ -176,6 +183,12 @@ export default function SettingsPage() {
                           <option value="auto">Auto — Infobip if configured, else MSG91</option>
                           <option value="infobip">Infobip</option>
                           <option value="msg91">MSG91</option>
+                        </Select>
+                      ) : s.key === 'ai.paused' ? (
+                        <Select value={val(s) || 'false'}
+                                onChange={(e) => setEdits((p) => ({ ...p, [s.key]: e.target.value }))}>
+                          <option value="false">Running — AI works where organisations allow it</option>
+                          <option value="true">PAUSED — every AI request is refused</option>
                         </Select>
                       ) : s.key === 'sms.show_otp_on_screen' ? (
                         <Select value={val(s) || 'false'}
