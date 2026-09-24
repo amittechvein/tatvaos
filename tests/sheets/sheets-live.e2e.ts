@@ -155,6 +155,7 @@ async function main() {
     sheetsList.body.documents.find((d: { id: string }) => d.id === id)?.mimeType === 'application/vnd.tatvaos.spreadsheet');
 
   check('owner opens it (200, level owner)', (await A(`/docs/${id}`)).body?.myPermission === 'owner');
+  check('the server reports its kind as spreadsheet (each editor refuses the other kind)', (await A(`/docs/${id}`)).body?.kind === 'spreadsheet');
   check('unshared colleague gets 404', (await B(`/docs/${id}`)).status === 404);
   check('other organisation gets 404', (await C(`/docs/${id}`)).status === 404);
   check('other organisation cannot get a live ticket', (await C(`/docs/${id}/live-ticket`, { method: 'POST' })).status === 404);
@@ -244,8 +245,49 @@ async function main() {
   check('an unknown AI action is 400 (when AI is on) or the AI-off answer', [400, 403, 503].includes(
     (await A(`/sheets/${id}/ai`, { method: 'POST', body: JSON.stringify({ action: 'nope' }) })).status));
 
+  console.log("A file's type is the server's: Space never stores the reserved types a client claims");
+  // Mr. Singh, 24 Sept: the switch now keys on the file's type, so the type
+  // must be something no client can set. Each refusal below has its PERMIT
+  // beside it in the same run — the same call with an ordinary type goes
+  // through — so a refusal can never be passing because nothing works.
+  const upload = async (type: string, name: string) => {
+    const body = new TextEncoder().encode('Name,Fee' + String.fromCharCode(10) + 'Aarav,48000');
+    const f = new FormData();
+    f.append('scope', 'personal');
+    f.append('sizeBytes', String(body.length));
+    f.append('file', new Blob([body], { type }), name);
+    const r = await fetch(`${API}/space/files`, { method: 'POST', headers: { Authorization: `Bearer ${owner.token}` }, body: f });
+    return { status: r.status, body: await r.json().catch(() => null) as { id: string; mimeType: string } | null };
+  };
+  const overwrite = async (fileId: string, type: string) => {
+    const body = new TextEncoder().encode('replaced');
+    const f = new FormData();
+    f.append('sizeBytes', String(body.length));
+    f.append('file', new Blob([body], { type }), 'x');
+    const r = await fetch(`${API}/space/files/${fileId}/content`, { method: 'PUT', headers: { Authorization: `Bearer ${owner.token}` }, body: f });
+    return { status: r.status, body: await r.json().catch(() => null) as { mimeType: string } | null };
+  };
+  const plain = await upload('text/csv', 'fees.csv');
+  check('permit: an upload keeps an ordinary type it declares (text/csv)', plain.status === 201 && plain.body?.mimeType === 'text/csv',
+    `${plain.status} ${plain.body?.mimeType}`);
+  for (const [label, type] of [['spreadsheet', 'application/vnd.tatvaos.spreadsheet'], ['document', 'application/vnd.tatvaos.document']] as const) {
+    const forged = await upload(type, `forged-${label}`);
+    check(`an upload claiming the ${label} type is stored as something else`, forged.status === 201 && forged.body?.mimeType !== type,
+      `${forged.status} stored as ${forged.body?.mimeType}`);
+    const listed = await A(`/docs?kind=${label}&view=owned`);
+    check(`…and it is not in the ${label} list`, listed.status === 200 && !listed.body.documents.some((d: { id: string }) => d.id === forged.body?.id));
+  }
+  const reTyped = await overwrite(plain.body!.id, 'text/plain');
+  check('permit: overwriting a file may change it to an ordinary type (text/plain)', reTyped.status === 200 && reTyped.body?.mimeType === 'text/plain',
+    `${reTyped.status} ${reTyped.body?.mimeType}`);
+  const forgedOver = await overwrite(plain.body!.id, 'application/vnd.tatvaos.spreadsheet');
+  check('overwriting a file cannot turn it into a spreadsheet', forgedOver.status === 200 && forgedOver.body?.mimeType !== 'application/vnd.tatvaos.spreadsheet',
+    `${forgedOver.status} ${forgedOver.body?.mimeType}`);
+  check('overwriting a real spreadsheet is still refused (409)', (await overwrite(id, 'text/plain')).status === 409);
+
   console.log('Each switch reaches only its own kind');
   const docId = docWhileOff.body.id as string;
+  check('…and a document’s kind as document', (await A(`/docs/${docId}`)).body?.kind === 'document');
   await sw('docs', TENANT_A, false);
   check('Docs off: the document is refused (403 docs_off)', (await A(`/docs/${docId}`)).body?.reason === 'docs_off');
   check('…but the spreadsheet still opens (200)', (await A(`/docs/${id}`)).status === 200);
@@ -260,6 +302,19 @@ async function main() {
     `${refused.status} ${JSON.stringify(refused.body)}`);
   check('…its AI is refused at once (403)', (await A(`/sheets/${id}/ai`, { method: 'POST', body: JSON.stringify({ action: 'analyze', context: 'a	b' }) })).status === 403);
   check('…while the document opens (200)', (await A(`/docs/${docId}`)).status === 200);
+  // Rule (Mr. Singh, 24 Sept): switching a product off withdraws the editor,
+  // never the customer's data. The same download answered 200 while on (the
+  // Space-copy checks above); it must still answer, as an .xlsx, while off.
+  const offDl = await A(`/space/files/${id}/content`);
+  check('Sheets off: the organisation can still download the spreadsheet from Space (200, .xlsx)',
+    offDl.status === 200 && (offDl.headers.get('content-type') ?? '').includes('spreadsheetml'),
+    `${offDl.status} ${offDl.headers.get('content-type')}`);
+  let offRead = null;
+  try { offRead = await readXlsx(offDl.bytes); } catch { offRead = null; }
+  check('…and the download is the real workbook, not an empty shell', offRead?.sheets[0]?.cells.get('4,0')?.value === 200000,
+    JSON.stringify(offRead?.sheets[0]?.cells.get('4,0')));
+  const offList = await A('/space/list?scope=personal');
+  check('…and Space still lists it', offList.status === 200 && JSON.stringify(offList.body).includes(id), `${offList.status}`);
   let closed: number | null = null;
   live!.ws.onclose = (ev) => { closed = ev.code; };
   await waitFor(() => closed !== null, 60_000);

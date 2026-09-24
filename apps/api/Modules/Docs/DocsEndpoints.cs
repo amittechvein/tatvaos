@@ -346,7 +346,8 @@ public static class DocsEndpoints
             file.OwnershipType, file.FolderId, starred, shared,
             file.DeletedAt, file.CreatedAt, file.UpdatedAt,
             new MeDto(uid, names.GetValueOrDefault(uid) ?? ""),
-            aiState));
+            aiState,
+            LiveSwitch.IsSheet(file.MimeType) ? "spreadsheet" : "document"));
     }
 
     // ==================================================================

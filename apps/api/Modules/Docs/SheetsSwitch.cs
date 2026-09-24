@@ -27,6 +27,29 @@ public static class SheetsSwitch
 /// route (DocsEndpoints) and the live channel (DocsLiveHub); each asks the
 /// switch that belongs to the file's own type — so turning Docs off never
 /// closes a spreadsheet, and turning Sheets off never closes a document.
+///
+/// WHAT THIS DOES AND DOES NOT ENFORCE (Mr. Singh's review, 24 Sept 2026).
+/// The switch is keyed on the file's type, so the type must be the server's:
+/// only DocsEndpoints.CreateAsync sets a live type, Space refuses to
+/// overwrite a live file, and every client- or sender-supplied type passes
+/// through DocsFormat.ClientType, which strips the two live types. So the
+/// switch consulted is always the one belonging to how the file was CREATED.
+///
+/// It does not decide which editor a browser runs on a file: the server
+/// relays Yjs content without reading it (DocsLiveHub), so a hand-made client
+/// with edit access to a document can store any content in it. Each editor
+/// refuses the other kind's files (DocumentMeta.kind), which covers mistakes
+/// and wrong links; it is not a control against a deliberate hand-made client,
+/// and nothing short of parsing the content could be.
+///
+/// RULES, stated rather than left to side-effect:
+///  1. Switching a product off withdraws its EDITOR, never the customer's
+///     data. Space still lists and downloads the file (a spreadsheet as its
+///     .xlsx). Checked by tests/sheets/sheets-live.e2e.ts every run.
+///  2. Two switch tables (docs.tenant_settings, docs.sheets_tenant_settings)
+///     is the limit. Before a THIRD product gets a switch, unify them — the
+///     entitlement system, or one table with a product column — so product
+///     gates cannot drift apart (Mr. Singh, 24 Sept 2026).
 /// </summary>
 public static class LiveSwitch
 {

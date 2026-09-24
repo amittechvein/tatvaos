@@ -29,6 +29,27 @@ public static class DocsFormat
     public const string DefaultTitle = "Untitled document";
     public const string DefaultSpreadsheetTitle = "Untitled spreadsheet";
 
+    /// <summary>
+    /// The type to STORE for a type a client (or an email's sender) claims.
+    /// The two live types are the server's alone: only DocsEndpoints.CreateAsync
+    /// sets them, and Space refuses to overwrite a file carrying one. Every
+    /// other way a type enters Space — upload, overwrite, a mail attachment
+    /// saved to Space — goes through here, so no client can make a file
+    /// claim to be a document or a spreadsheet. That matters because each
+    /// kind answers to its own product switch (LiveSwitch): a type a client
+    /// could set would let it choose which switch is consulted (Mr. Singh,
+    /// 24 Sept 2026). Measured before this existed: an upload claiming the
+    /// spreadsheet type was stored as one and listed in Sheets.
+    /// </summary>
+    public static string ClientType(string? claimed)
+    {
+        if (string.IsNullOrWhiteSpace(claimed)) return "application/octet-stream";
+        // Compare on the bare media type: "…spreadsheet; charset=x" and odd
+        // casing must not slip past.
+        var bare = claimed.Split(';')[0].Trim();
+        return IsLive(bare.ToLowerInvariant()) ? "application/octet-stream" : claimed;
+    }
+
     /// <summary>Is this a file the live editors own (a document or a spreadsheet)?</summary>
     public static bool IsLive(string? mimeType) =>
         mimeType is MimeType or SpreadsheetMimeType;

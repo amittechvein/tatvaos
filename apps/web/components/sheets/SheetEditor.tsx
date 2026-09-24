@@ -87,7 +87,7 @@ export function SheetEditor({ id }: { id: string }) {
   }, [authedFetch, id]);
 
   useEffect(() => {
-    if (!meta || meta.deletedAt) return;
+    if (!meta || meta.deletedAt || meta.kind !== 'spreadsheet') return;
     // The model is created and destroyed WITH the connection, in one
     // effect. Created in a useMemo and destroyed in a separate cleanup, it
     // was torn down by React's development double-run and never rebuilt —
@@ -111,6 +111,20 @@ export function SheetEditor({ id }: { id: string }) {
     );
   }
   if (!meta) return <div className="flex h-screen items-center justify-center bg-canvas"><Spinner /></div>;
+  // A document's address typed under /sheets: never open it here. The Sheets
+  // editor would write spreadsheet structure into the document's content,
+  // and the file answers to Docs' switch, not Sheets'. The server cannot
+  // tell which editor a browser runs (it never reads the content), so this
+  // refusal lives in the editor — see the note on LiveSwitch.
+  if (meta.kind !== 'spreadsheet') {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center gap-3 bg-canvas px-6 text-center">
+        <SheetGlyph className="h-12 w-12 opacity-60" />
+        <p className="text-base font-medium text-ink">&ldquo;{meta.title}&rdquo; is a document, not a spreadsheet.</p>
+        <Link href={`/docs/d/${meta.id}`} className="text-sm text-brand-600 hover:underline">Open it in Docs</Link>
+      </div>
+    );
+  }
   if (meta.deletedAt) {
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-3 bg-canvas px-6 text-center">

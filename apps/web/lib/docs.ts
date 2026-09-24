@@ -42,7 +42,7 @@ export interface DocumentMeta {
   updatedAt: string;
   me: { id: string; displayName: string };
   ai: { available: boolean; reason: string | null };
-  /** What the file is. Each editor refuses the other's files. */
+  /** Which editor this file belongs to. Absent from older servers: read as "document". */
   kind?: 'document' | 'spreadsheet';
 }
 

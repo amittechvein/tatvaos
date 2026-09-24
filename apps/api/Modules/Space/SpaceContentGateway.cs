@@ -178,7 +178,8 @@ public sealed class SpaceContentGateway(
             OwnershipType = ownership,
             OwnerUserId = owner,
             Name = name,
-            MimeType = string.IsNullOrWhiteSpace(mimeType) ? "application/octet-stream" : mimeType,
+            // An email's sender chose this type; the live types are the server's alone.
+            MimeType = TatvaOS.Api.Modules.Docs.DocsFormat.ClientType(mimeType),
             BlobKey = key,
             SizeBytes = written,
         };
