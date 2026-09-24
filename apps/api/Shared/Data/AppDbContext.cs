@@ -295,6 +295,30 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.Hire.HireTeamMember>().HasKey(m => new { m.TenantId, m.UserId });
         b.Entity<TatvaOS.Api.Modules.Hire.HireTeamMember>()
             .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        // 20260924-d: candidates, applications, pipeline, history. Mapped with
+        // NO DbSet property, like job openings — HireAccess is the only route
+        // (tests/hire/check-job-gate.sh).
+        b.Entity<TatvaOS.Api.Modules.Hire.HirePipelineStage>().ToTable("pipeline_stages", "hire");
+        b.Entity<TatvaOS.Api.Modules.Hire.HirePipelineStage>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Hire.HireCandidate>().ToTable("candidates", "hire");
+        b.Entity<TatvaOS.Api.Modules.Hire.HireCandidate>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Hire.HireApplication>().ToTable("applications", "hire");
+        b.Entity<TatvaOS.Api.Modules.Hire.HireApplication>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Hire.HireApplicationEvent>().ToTable("application_events", "hire");
+        b.Entity<TatvaOS.Api.Modules.Hire.HireApplicationEvent>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        // Declared so EF inserts an application BEFORE its first history row
+        // when both are saved together. Without it EF ordered the event first
+        // and the composite FK refused it (23503) — found on the first run of
+        // the candidates test; same lesson as department_id and DkimKeys.
+        b.Entity<TatvaOS.Api.Modules.Hire.HireApplicationEvent>()
+            .HasOne<TatvaOS.Api.Modules.Hire.HireApplication>().WithMany()
+            .HasForeignKey(e => new { e.TenantId, e.ApplicationId })
+            .HasPrincipalKey(a => new { a.TenantId, a.Id })
+            .OnDelete(DeleteBehavior.Cascade);
         b.Entity<TatvaOS.Api.Modules.Mail.MailApiSend>().ToTable("api_sends", "mail");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>().ToTable("meeting_notes", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingChat>().ToTable("meeting_chat", "connect");

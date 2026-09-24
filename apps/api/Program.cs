@@ -761,6 +761,8 @@ app.MapOrgStructureEndpoints();
 // TatvaOS Hire R1: job openings (24 Sept 2026).
 TatvaOS.Api.Modules.Hire.JobOpeningEndpoints.MapJobOpeningEndpoints(app);
 TatvaOS.Api.Modules.Hire.HireTeamEndpoints.MapHireTeamEndpoints(app);
+// Candidates, applications and the pipeline (24 Sept 2026).
+TatvaOS.Api.Modules.Hire.CandidateEndpoints.MapCandidateEndpoints(app);
 app.MapStorageEndpoints();
 app.MapAuditEndpoints();
 // Shared mailboxes are PROVISIONING — the same act as creating a person, so

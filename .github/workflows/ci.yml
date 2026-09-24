@@ -283,7 +283,7 @@ jobs:
       # another organisation's office or person, a confidential draft title
       # reaching a public address, a hiring manager seeing someone else's job.
       # Approved by Mr. Singh, 24 Sept 2026 (PR 262 review).
-      - name: "Hire: job openings and the hiring team"
+      - name: "Hire: job openings, the hiring team, candidates and applications"
         run: bash tests/hire/test-job-openings.sh
 
       - name: Install the web app's TypeScript (for the PiP check)

@@ -349,6 +349,7 @@ export function hireNav({ showTeam }: { showTeam: boolean }): NavSection[] {
       items: [
         { href: '/hire/jobs', label: 'Job openings', icon: <Icon d={PATHS.notes} colour="#7367f0" /> },
         { href: '/hire/jobs/new', label: 'New job opening', icon: <Icon d={PATHS.compose} colour="#6C3CE9" /> },
+        { href: '/hire/candidates', label: 'Candidates', icon: <Icon d={PATHS.users} colour="#28c76f" /> },
         // Administrators change the team; recruiters may see who is on it.
         // Hiring managers see neither — it is not their question.
         ...(showTeam
