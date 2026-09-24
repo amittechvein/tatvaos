@@ -4,7 +4,7 @@
 // Amit, 24 Sept 2026: "search in mail" — parity with the web's PR 232. The
 // grammar is the server's; these hold the client's half.
 
-const { buildSearchQuery, groupValue, mentionsBin, chipsFor, hasOperators, SEARCH_OPERATORS, KNOWN_FIELDS } = require('../lib/mailSearch');
+const { buildSearchQuery, groupValue, mentionsBin, chipsFor, hasOperators, SEARCH_OPERATORS, KNOWN_FIELDS, formFromQuery } = require('../lib/mailSearch');
 
 describe('the operator list', () => {
   test('every operator the list offers is one the server knows', () => {
@@ -84,5 +84,30 @@ describe('chipsFor', () => {
     expect(hasOperators('is:unread')).toBe(true);
     expect(hasOperators('-holiday')).toBe(true);
     expect(chipsFor('')).toEqual([]);
+  });
+});
+
+// 24 Sept 2026, seen on the Samsung: with newer_than:7d in the box, opening the
+// form copied it into "Has the words", and picking 1 week wrote it twice.
+describe('formFromQuery — the box read back into the form', () => {
+  test('every control the form has takes its operator; nothing is duplicated on rebuild', () => {
+    const f = formFromQuery('from:priya to:me subject:(q3 report) in:sent newer_than:7d larger:10M has:attachment is:unread urgent -draft');
+    expect(f).toMatchObject({ from: 'priya', to: 'me', subject: 'q3 report', where: 'sent', within: '7d', sizeOp: 'larger', sizeVal: '10', sizeUnit: 'M', hasAttachment: true, unreadOnly: true, words: 'urgent', without: 'draft' });
+    expect(buildSearchQuery(f)).toBe('from:priya to:me subject:(q3 report) in:sent newer_than:7d larger:10M has:attachment is:unread urgent -draft');
+  });
+  test('the Samsung case: newer_than:7d in the box, then 1 week picked, is ONE newer_than', () => {
+    const f = formFromQuery('newer_than:7d');
+    expect(f.within).toBe('7d');
+    expect(f.words).toBe('');
+    expect(buildSearchQuery({ ...f, within: '7d' })).toBe('newer_than:7d');
+  });
+  test('an operator the form has no control for stays in the words, as typed', () => {
+    const f = formFromQuery('filename:pdf newer_than:3d cc:(a b) hello');
+    expect(f.within).toBe('');
+    expect(f.words).toBe('filename:pdf newer_than:3d cc:(a b) hello');
+    expect(buildSearchQuery(f)).toBe('filename:pdf newer_than:3d cc:(a b) hello');
+  });
+  test('an empty box is the empty form', () => {
+    expect(formFromQuery('')).toMatchObject({ from: '', words: '', without: '', where: '', within: '', hasAttachment: false, unreadOnly: false });
   });
 });

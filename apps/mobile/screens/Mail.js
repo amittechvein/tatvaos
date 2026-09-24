@@ -29,7 +29,7 @@ import { Ionicons } from '@expo/vector-icons';
 import {
   bootstrap, listMessages, searchMessages, orderFolders, senderLabel, whenLabel, SORTS, DEFAULT_SORT, sortLabel, listMailboxes,
 } from '../lib/mail';
-import { SEARCH_OPERATORS, buildSearchQuery, mentionsBin, chipsFor, hasOperators } from '../lib/mailSearch';
+import { SEARCH_OPERATORS, buildSearchQuery, mentionsBin, chipsFor, hasOperators, formFromQuery } from '../lib/mailSearch';
 import { brand, surface, text, radius, space, type, shadow, tone } from '../theme';
 
 const log = (line) => console.log(`[mail] ${line}`);
@@ -258,7 +258,7 @@ export default function Mail({
           autoCapitalize="none"
           accessibilityLabel="Search mail"
         />
-        <Pressable hitSlop={8} onPress={() => { setA('words', query); setShowAdvanced(true); }}
+        <Pressable hitSlop={8} onPress={() => { setAdv(formFromQuery(query)); setShowAdvanced(true); }}
                    accessibilityLabel="Advanced search">
           <Ionicons name="options-outline" size={18} color={showAdvanced ? brand.base : text.muted} />
         </Pressable>

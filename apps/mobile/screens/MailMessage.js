@@ -377,7 +377,11 @@ export default function MailMessage({
 
       {error ? <Text style={s.error}>{error}</Text> : null}
 
-      {blocked > 0 ? (
+      {/* The image banner and the conversation strip step aside while a
+          response is being written: with the keyboard up the Samsung had
+          ~1440 px left, and these two pushed the Reply / Reply all / Forward
+          bar under the keyboard (24 Sept 2026). They come back on Cancel. */}
+      {blocked > 0 && !mode ? (
         <Pressable style={s.banner} onPress={() => setShowImages(true)}
                    accessibilityLabel="Show images in this message">
           <Ionicons name="image-outline" size={16} color={text.secondary} />
@@ -388,7 +392,7 @@ export default function MailMessage({
         </Pressable>
       ) : null}
 
-      {thread.length ? (
+      {thread.length && !mode ? (
         <View style={s.thread} accessibilityLabel={`${thread.length} other message${thread.length === 1 ? '' : 's'} in this conversation`}>
           <Text style={s.threadTitle}>
             {thread.length} other message{thread.length === 1 ? '' : 's'} in this conversation

@@ -58,7 +58,24 @@ export default function App() {
           inbox and a message. The two dark screens (the login hero and the
           meeting room) mount their own light-content bar over this one. */}
       <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
-      <Root />
+      {/* ── THE KEYBOARD DOES NOT SHRINK THE WINDOW ON THIS BUILD. ──────────
+          Measured on the Samsung (Android 16, edge-to-edge, 24 Sept 2026):
+          with the keyboard up, dumpsys reported the app window still
+          0..2340 px tall and the IME inset 901 px, and the reply box sat at
+          1575..2016 — wholly under the keyboard. adjustResize is declared in
+          the manifest and ignored. A client's screenshot the same morning
+          showed the login password box hidden the same way. So the root
+          pads itself by the keyboard's height (RN measures it from the
+          keyboardDidShow event), which is what adjustResize would have done,
+          once, for every screen. iOS is left to the screens' own wrappers,
+          which already use padding there; enabling this too would double it.
+          If a later Android build DOES resize, this pads twice — the sign is
+          a blank band above the keyboard; then remove this, not the screens'.
+          ──────────────────────────────────────────────────────────────── */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" enabled={Platform.OS === 'android'}
+                            accessibilityLabel="App">
+        <Root />
+      </KeyboardAvoidingView>
     </SafeAreaProvider>
   );
 }
@@ -529,6 +546,13 @@ export function Login({ onSignedIn, onChallenge, onGuest }) {
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
       <KeyboardAvoidingView style={{ flex: 1 }}
                             behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      {/* A ScrollView, not a View: on a short phone the keyboard covered the
+          password box with nothing to scroll (a client's screenshot, 24 Sept
+          2026 — "what am I typing?"). The window shrinks (adjustResize) and
+          Android scrolls the focused input into view only inside a scroller.
+          flexGrow keeps the sheet filling the screen when there is room. */}
+      <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled"
+                  bounces={false} accessibilityLabel="Sign-in page">
       <View style={s.hero}>
         <View style={[s.washCircle, s.washCircleA]} />
         <View style={[s.washCircle, s.washCircleB]} />
@@ -650,6 +674,7 @@ export function Login({ onSignedIn, onChallenge, onGuest }) {
             secureTextEntry={!show}
             autoCapitalize="none"
             autoComplete="password"
+            accessibilityLabel="Password"
             editable={!busy}
             returnKeyType="go"
             onSubmitEditing={submit}
@@ -704,6 +729,7 @@ export function Login({ onSignedIn, onChallenge, onGuest }) {
           </>
         ) : null}
       </View>
+      </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );

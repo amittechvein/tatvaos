@@ -194,3 +194,28 @@ describe('search, the way the web searches', () => {
     expect(r.queryByText(/stay out unless/)).toBeNull();
   });
 });
+
+describe('advanced search opened with a query already in the box', () => {
+  test('newer_than:7d in the box selects 1 week, and the preview names it ONCE', async () => {
+    const r = render(<Mail session={session} onBack={() => {}} onOpen={() => {}} onCompose={() => {}} />);
+    await waitFor(() => expect(r.getByLabelText('Search help')).toBeTruthy());
+    fireEvent.changeText(r.getByLabelText('Search mail'), 'newer_than:7d');
+    fireEvent.press(r.getByLabelText('Advanced search'));
+    expect(r.getByLabelText('Date within: 1 week').props.accessibilityState.selected).toBe(true);
+    expect(r.getByLabelText('Has the words').props.value).toBe('');
+    fireEvent.press(r.getByLabelText('Date within: 1 week'));
+    expect(r.getByText('newer_than:7d')).toBeTruthy();
+    expect(r.queryByText('newer_than:7d newer_than:7d')).toBeNull();
+  });
+});
+
+describe('room for the response box', () => {
+  test('the conversation strip steps aside while writing, and returns on Cancel', async () => {
+    const r = await openMessage();
+    await waitFor(() => expect(r.getByText('2 other messages in this conversation')).toBeTruthy());
+    fireEvent.press(r.getByLabelText('Reply'));
+    expect(r.queryByText('2 other messages in this conversation')).toBeNull();
+    fireEvent.press(r.getByLabelText('Close the reply box'));
+    expect(r.getByText('2 other messages in this conversation')).toBeTruthy();
+  });
+});

@@ -114,3 +114,34 @@ export function chipsFor(query) {
 
 /** True when the query uses at least one operator — the chips row is drawn only then. */
 export const hasOperators = (query) => chipsFor(query).some((c) => c.field !== null || c.negated);
+
+/**
+ * The query in the box, read back INTO the advanced form — so opening the
+ * form with newer_than:7d already typed selects "1 week" rather than copying
+ * the operator into "Has the words", where picking 1 week then wrote
+ * `newer_than:7d newer_than:7d` (seen on the Samsung, 24 Sept 2026: harmless
+ * to the server, nonsense to the person). Operators the form has no control
+ * for stay in the words, as text, so nothing typed is lost.
+ */
+export function formFromQuery(query) {
+  const f = { from: '', to: '', subject: '', words: '', without: '', where: '', within: '', sizeOp: 'larger', sizeVal: '', sizeUnit: 'M', hasAttachment: false, unreadOnly: false };
+  const words = [];
+  const without = [];
+  for (const c of chipsFor(query)) {
+    const v = c.value;
+    if (c.negated) { without.push(c.field ? `${c.field}:${groupValue(v)}` : v); continue; }
+    const size = c.field === 'larger' || c.field === 'smaller' ? v.match(/^(\d+)([KM])?$/i) : null;
+    if (c.field === 'from' && !f.from) f.from = v;
+    else if (c.field === 'to' && !f.to) f.to = v;
+    else if (c.field === 'subject' && !f.subject) f.subject = v;
+    else if (c.field === 'in' && !f.where && /^(inbox|sent|drafts|trash|spam|anywhere)$/i.test(v)) f.where = v.toLowerCase();
+    else if (c.field === 'newer_than' && !f.within && /^(1d|7d|1m|1y)$/i.test(v)) f.within = v.toLowerCase();
+    else if (size && !f.sizeVal) { f.sizeOp = c.field; f.sizeVal = size[1]; f.sizeUnit = (size[2] || 'M').toUpperCase(); }
+    else if (c.field === 'has' && /^attachment$/i.test(v)) f.hasAttachment = true;
+    else if (c.field === 'is' && /^unread$/i.test(v)) f.unreadOnly = true;
+    else words.push(c.field ? `${c.field}:${groupValue(v)}` : v);
+  }
+  f.words = words.join(' ');
+  f.without = without.join(' ');
+  return f;
+}
