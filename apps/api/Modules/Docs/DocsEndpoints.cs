@@ -410,15 +410,16 @@ public static class DocsEndpoints
             if (req.UpToSeq > maxSeq)
                 return Error(409, "That checkpoint names updates this document does not have.");
 
+            // A browser BEHIND the last checkpoint changes nothing: its state,
+            // HTML and text all predate what is already stored, and taking
+            // its HTML would roll Space's copy backwards until someone else
+            // saved. Not an error — it simply has nothing newer to offer.
+            if (req.UpToSeq < doc.StateSeq)
+                return Results.Ok(new { saved = false, stale = true });
+
             var now = DateTimeOffset.UtcNow;
-            if (req.UpToSeq >= doc.StateSeq)
-            {
-                doc.State = state;
-                doc.StateSeq = req.UpToSeq;
-            }
-            // else: another browser already compacted further. Its state
-            // stays; this one's HTML and text are still current (it has
-            // everything up to its own seq, and the page is what it shows).
+            doc.State = state;
+            doc.StateSeq = req.UpToSeq;
             doc.TextContent = text;
             doc.CheckpointAt = now;
             doc.CheckpointByUserId = uid;

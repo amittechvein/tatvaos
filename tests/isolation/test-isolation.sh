@@ -509,6 +509,63 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+hdr "Docs documents are isolated, and follow Space's sharing"
+
+# A document is a Space file; docs.* rows are visible exactly when the
+# space.files row is (20260924-docs-schema.sql). So this checks three
+# audiences, not two: the owner (must see), a COLLEAGUE in the same tenant
+# with no share (must not — the tenant test alone would pass them), and the
+# other tenant. Then a share is added and the colleague must start seeing it,
+# which proves the policy defers to Space rather than to the tenant alone.
+# Fixture inserted as postgres and removed at the end, like Connect's.
+DOC='d0c00000-0000-0000-0000-000000000001'
+OWNER='d1111111-1111-1111-1111-111111111111'
+COLLEAGUE='d1111111-1111-1111-1111-111111111112'
+OTHER='d2222222-2222-2222-2222-222222222222'
+run_as postgres "
+    DELETE FROM space.files WHERE id = '$DOC';
+    INSERT INTO space.files (id, tenant_id, created_by_user_id, ownership_type, owner_user_id,
+                             name, mime_type, blob_key, size_bytes)
+    VALUES ('$DOC', '$TECHVEIN', '$OWNER', 'personal', '$OWNER',
+            'Isolation fixture', 'application/vnd.tatvaos.document', 'isolation-test/$DOC', 0);
+    INSERT INTO docs.documents (file_id, tenant_id) VALUES ('$DOC', '$TECHVEIN');
+    INSERT INTO docs.updates (file_id, tenant_id, user_id, data) VALUES ('$DOC', '$TECHVEIN', '$OWNER', '\x01');
+    INSERT INTO docs.comments (file_id, tenant_id, author_user_id, body) VALUES ('$DOC', '$TECHVEIN', '$OWNER', 'fixture');
+    INSERT INTO docs.versions (file_id, tenant_id, state) VALUES ('$DOC', '$TECHVEIN', '\x01');
+" >/dev/null 2>&1
+
+as_person() {
+    scalar_as tatvaos_app "SET app.tenant_id = '$1'; SET app.user_id = '$2'; $3"
+}
+
+for t in documents updates comments versions; do
+    n=$(as_person "$TECHVEIN" "$OWNER" "SELECT count(*) FROM docs.$t WHERE file_id = '$DOC'")
+    [ "${n:-0}" -ge 1 ] && pass "owner sees their own docs.$t row" \
+                        || fail "owner sees nothing in docs.$t - policy too strict or fixture missing"
+    n=$(as_person "$TECHVEIN" "$COLLEAGUE" "SELECT count(*) FROM docs.$t WHERE file_id = '$DOC'")
+    [ "${n:-1}" -eq 0 ] && pass "unshared colleague cannot see docs.$t" \
+                        || fail "LEAK: an unshared colleague sees $n docs.$t row(s)"
+    n=$(as_person "$SCHOOL" "$OTHER" "SELECT count(*) FROM docs.$t WHERE file_id = '$DOC'")
+    [ "${n:-1}" -eq 0 ] && pass "other tenant cannot see docs.$t" \
+                        || fail "LEAK: another tenant sees $n docs.$t row(s)"
+    n=$(no_context "SELECT count(*) FROM docs.$t")
+    [ "${n:-1}" -eq 0 ] && pass "no context sees nothing in docs.$t" \
+                        || fail "DANGEROUS: ${n} docs.$t row(s) visible with no tenant set"
+done
+
+run_as postgres "
+    INSERT INTO space.shares (tenant_id, file_id, shared_by_user_id, shared_with_user_id, permission)
+    VALUES ('$TECHVEIN', '$DOC', '$OWNER', '$COLLEAGUE', 'view');
+" >/dev/null 2>&1
+n=$(as_person "$TECHVEIN" "$COLLEAGUE" "SELECT count(*) FROM docs.updates WHERE file_id = '$DOC'")
+[ "${n:-0}" -ge 1 ] && pass "a Space share lets the colleague see the document's content" \
+                    || fail "a Space share did NOT reach docs.* - the policy is not deferring to Space"
+
+run_as postgres "DELETE FROM space.files WHERE id = '$DOC';" >/dev/null 2>&1
+n=$(run_as postgres "SELECT count(*) FROM docs.updates WHERE file_id = '$DOC'" | tail -n1 | tr -d '[:space:]')
+[ "${n:-1}" -eq 0 ] && pass "purging the Space file removes the document's rows with it" \
+                    || fail "docs.* rows survived their Space file ($n left)"
+
 hdr "Append-only tables refuse rewrites from the app"
 
 # Every schema re-grants the app UPDATE and DELETE on all its tables on every
