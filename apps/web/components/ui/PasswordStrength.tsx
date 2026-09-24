@@ -5,7 +5,9 @@
  * client rule that drifts from the server's shows a green bar and then a
  * rejection, which reads as the form being broken.
  */
-export const MIN_PASSWORD = 8;
+// Must equal PasswordPolicy.MinimumLength on the server (see the note there:
+// back to 12 on 24 Sept 2026 after a day at 8 with no blocklist).
+export const MIN_PASSWORD = 12;
 
 /**
  * Length only — deliberately not a character-class score.
