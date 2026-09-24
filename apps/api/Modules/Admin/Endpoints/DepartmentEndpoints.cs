@@ -47,6 +47,11 @@ public static class DepartmentEndpoints
         bool QuotaInherited,
         int UserCount,
         int DescendantUserCount,
+        // Job openings (TatvaOS Hire) naming THIS department. Deleting it
+        // blanks their department, so the delete dialog says how many first
+        // (Mr. Singh, 24 Sept). Own count only: a department with children
+        // cannot be deleted, so descendants never matter here.
+        int JobOpeningCount,
         List<Node> Children);
 
     // ------------------------------------------------------------------
@@ -60,6 +65,7 @@ public static class DepartmentEndpoints
                 d.Id, d.ParentId, d.Name, d.Description, d.DefaultRole,
                 d.DefaultProducts, d.CanSendExternal, d.Colour, d.DefaultQuotaBytes,
                 UserCount = db.Users.Count(u => u.DepartmentId == d.Id && u.Status != "deleted"),
+                JobOpeningCount = db.JobOpenings.Count(j => j.DepartmentId == d.Id),
             })
             .ToListAsync(ct);
 
@@ -93,6 +99,7 @@ public static class DepartmentEndpoints
                     // Includes everyone beneath. "Engineering has 3 people" is
                     // misleading when its four sub-teams hold forty more.
                     DescendantUserCount: r.UserCount + children.Sum(c => c.DescendantUserCount),
+                    JobOpeningCount: r.JobOpeningCount,
                     Children: children);
             }).ToList();
         }
@@ -273,10 +280,25 @@ public static class DepartmentEndpoints
                       + "deleting it would reset their storage and permissions to the organisation defaults.",
             });
 
+        // The database blanks department_id on every job opening naming this
+        // department (ON DELETE SET NULL). That write would leave no trace in
+        // the JOB's history, so the jobs are read first and each one gets its
+        // own audit row after (Mr. Singh, 24 Sept) — possibly a published
+        // posting, and "why did this lose its department" must be answerable.
+        var jobs = await db.JobOpenings.AsNoTracking()
+            .Where(j => j.DepartmentId == id)
+            .Select(j => new { j.Id, j.Title, j.Status })
+            .ToListAsync(ct);
+
         db.Departments.Remove(dept);
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("department.deleted", "department", id.ToString(),
-            before: new { dept.Name }, ct: ct);
+            before: new { dept.Name, jobOpeningsCleared = jobs.Count }, ct: ct);
+        foreach (var j in jobs)
+            await audit.WriteAsync("job.department_cleared", "job_opening", j.Id.ToString(),
+                before: new { department = dept.Name, departmentId = id },
+                after: new { department = (string?)null, reason = "department deleted", j.Status },
+                ct: ct, productCode: "hire");
 
         return Results.Ok(new { deleted = true });
     }

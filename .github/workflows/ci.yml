@@ -272,6 +272,13 @@ jobs:
       - name: "Organisation API: people, meetings and the calendar"
         run: bash tests/orgapi/test-org-api.sh
 
+      # TatvaOS Hire: job openings and the hiring team. Mostly refusals —
+      # another organisation's office or person, a confidential draft title
+      # reaching a public address, a hiring manager seeing someone else's job.
+      # Approved by Mr. Singh, 24 Sept 2026 (PR 262 review).
+      - name: "Hire: job openings and the hiring team"
+        run: bash tests/hire/test-job-openings.sh
+
       - name: Install the web app's TypeScript (for the PiP check)
         run: pnpm install --frozen-lockfile
 

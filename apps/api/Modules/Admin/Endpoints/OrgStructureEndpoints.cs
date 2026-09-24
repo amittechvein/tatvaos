@@ -17,10 +17,11 @@ namespace TatvaOS.Api.Modules.Admin.Endpoints;
 ///  here exists only to answer 409 with a sentence instead of a 500.
 ///
 ///  ARCHIVE BEFORE DELETE. is_active = false keeps a row meaning what it
-///  meant for everything already naming it. Delete is allowed today because
-///  nothing references these tables yet; the first table that does must add
-///  its refusal to DeleteLocationAsync / DeleteDesignationAsync, exactly as
-///  departments refuse while people are in them.
+///  meant for everything already naming it. Delete is refused while a job
+///  opening names the row (hire.job_openings, which also holds a RESTRICT
+///  foreign key as the backstop); any later table that references these must
+///  add its own refusal beside those, as departments refuse while people are
+///  in them.
 ///
 ///  ADMINS ONLY, READS INCLUDED. Hire will need hiring managers to pick from
 ///  these lists; that read goes through Hire's own endpoints when they exist,
@@ -120,8 +121,16 @@ public static class OrgStructureEndpoints
         var row = await db.OrgLocations.FirstOrDefaultAsync(l => l.Id == id, ct);
         if (row is null) return Results.NotFound();
 
-        // Nothing references a location yet. The first thing that does —
-        // hire.job_openings — adds its refusal here.
+        // Refused while a job opening names it, with a sentence rather than
+        // the foreign key's 500. Archiving is the way to retire one.
+        var jobs = await db.JobOpenings.CountAsync(j => j.LocationId == id, ct);
+        if (jobs > 0)
+            return Results.Conflict(new
+            {
+                error = $"{jobs} job opening(s) are at {row.Name}. Switch off In use instead — "
+                      + "it disappears from new choices and those jobs keep their location.",
+            });
+
         db.OrgLocations.Remove(row);
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("location.deleted", "location", id.ToString(),
@@ -239,8 +248,14 @@ public static class OrgStructureEndpoints
         var row = await db.OrgDesignations.FirstOrDefaultAsync(d => d.Id == id, ct);
         if (row is null) return Results.NotFound();
 
-        // As for locations: the first table to reference a designation adds
-        // its refusal here.
+        var jobs = await db.JobOpenings.CountAsync(j => j.DesignationId == id, ct);
+        if (jobs > 0)
+            return Results.Conflict(new
+            {
+                error = $"{jobs} job opening(s) use {row.Title}. Switch off In use instead — "
+                      + "it disappears from new choices and those jobs keep their title.",
+            });
+
         db.OrgDesignations.Remove(row);
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("designation.deleted", "designation", id.ToString(),

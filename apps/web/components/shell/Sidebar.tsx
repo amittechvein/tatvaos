@@ -57,7 +57,7 @@ export interface RailState {
 export function Sidebar({ sections, brand, scope, footer, header, rail, onPeek, onCloseMobile }: {
   sections: NavSection[];
   brand: string;
-  scope: 'platform' | 'organisation' | 'mail' | 'family' | 'space' | 'calendar' | 'connect';
+  scope: 'platform' | 'organisation' | 'mail' | 'family' | 'space' | 'calendar' | 'connect' | 'hire';
   /** Pinned to the bottom of the rail (Mail puts the storage meter here).
    *  Hidden while the rail is collapsed to icons. */
   footer?: React.ReactNode;
