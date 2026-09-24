@@ -69,8 +69,8 @@ export function SheetsHome({ view }: { view: SheetsView }) {
   const [showAll, setShowAll] = useState(false);
   const [retentionDays, setRetentionDays] = useState<number | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  // null = still asking. Sheets is behind Docs' switch (spreadsheets live in
-  // Docs' tables), off unless the operator turned it on for the organisation.
+  // null = still asking. Sheets has its own switch, off unless the platform
+  // operator turned it on for this organisation.
   const [enabled, setEnabled] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -152,7 +152,7 @@ export function SheetsHome({ view }: { view: SheetsView }) {
         <SheetGlyph className="h-12 w-12 opacity-60" />
         <p className="text-base font-medium text-ink">Sheets is not switched on for your organisation yet.</p>
         <p className="max-w-md text-sm text-ink-muted">
-          It comes with TatvaOS Docs, which is being introduced one organisation at a time. Your files in Space are unaffected.
+          It is being introduced one organisation at a time. Your files in Space are unaffected.
         </p>
       </div>
     );

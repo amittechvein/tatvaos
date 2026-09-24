@@ -883,6 +883,8 @@ app.MapSpaceThumbnailEndpoints();
 // Docs: collaborative documents, each one a Space file.
 app.MapDocsEndpoints();
 app.MapDocsAdminEndpoints();
+// Sheets' own per-organisation switch, beside Docs' (SheetsSwitch.cs).
+app.MapSheetsAdminEndpoints();
 // Sheets: spreadsheets are Docs files too (DocsFormat.SpreadsheetMimeType);
 // only their AI actions need endpoints of their own.
 app.MapSheetsAiEndpoints();

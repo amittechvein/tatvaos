@@ -149,7 +149,6 @@ public static class DocsEndpoints
         AppDbContext db, TenantContext tenant, Guid id, bool tracked, bool forChange, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return (Results.Unauthorized(), null!, "", default);
-        if (!await DocsSwitch.EnabledAsync(db, ct)) return (DocsSwitch.Off(), null!, "", uid);
 
         // Documents and spreadsheets alike: everything below — live channel,
         // versions, comments — is the same for both (DocsFormat.IsLive).
@@ -157,6 +156,13 @@ public static class DocsEndpoints
             && (f.MimeType == DocsFormat.MimeType || f.MimeType == DocsFormat.SpreadsheetMimeType));
         var file = await (tracked ? q : q.AsNoTracking()).FirstOrDefaultAsync(ct);
         if (file is null) return (Error(404, "No such document."), null!, "", uid);
+        // Each kind answers to its own switch (LiveSwitch): Docs off leaves
+        // spreadsheets open, Sheets off leaves documents open. Checked after
+        // the lookup because only the file says which switch applies; the
+        // lookup runs under the caller's RLS, so it reveals nothing they
+        // could not already see in Space.
+        if (!await LiveSwitch.EnabledAsync(db, file.MimeType, ct))
+            return (LiveSwitch.Off(file.MimeType), null!, "", uid);
         if (forChange && file.DeletedAt is not null)
             return (Error(409, "This document is in the trash. Restore it first."), null!, "", uid);
 
@@ -179,13 +185,13 @@ public static class DocsEndpoints
         string? view = "recent", string? q = null, int page = 1, int pageSize = 50, string? kind = null)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
-        if (!await DocsSwitch.EnabledAsync(db, ct)) return DocsSwitch.Off();
+        // Docs' home lists documents, Sheets' lists spreadsheets; absent kind
+        // is "document" so the Docs client is unchanged. Each behind its own switch.
+        var mime = kind == "spreadsheet" ? DocsFormat.SpreadsheetMimeType : DocsFormat.MimeType;
+        if (!await LiveSwitch.EnabledAsync(db, mime, ct)) return LiveSwitch.Off(mime);
         if (page < 1) page = 1;
         pageSize = Math.Clamp(pageSize, 1, 200);
 
-        // Docs' home lists documents, Sheets' lists spreadsheets; absent kind
-        // is "document" so the Docs client is unchanged.
-        var mime = kind == "spreadsheet" ? DocsFormat.SpreadsheetMimeType : DocsFormat.MimeType;
         var files = db.SpaceFiles.AsNoTracking().Where(f => f.MimeType == mime);
         files = view switch
         {
@@ -245,11 +251,12 @@ public static class DocsEndpoints
         IBlobStore blobs, IConfiguration config, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
-        if (!await DocsSwitch.EnabledAsync(db, ct)) return DocsSwitch.Off();
 
         if (req.Kind is not (null or "document" or "spreadsheet"))
             return Error(400, "kind must be document or spreadsheet.");
         var sheet = req.Kind == "spreadsheet";
+        var kindMime = sheet ? DocsFormat.SpreadsheetMimeType : DocsFormat.MimeType;
+        if (!await LiveSwitch.EnabledAsync(db, kindMime, ct)) return LiveSwitch.Off(kindMime);
         var title = CleanTitle(req.Title) ?? (sheet ? DocsFormat.DefaultSpreadsheetTitle : DocsFormat.DefaultTitle);
 
         // Where it lands and who owns it: Space's rule, not a copy of it.

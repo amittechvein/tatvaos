@@ -124,9 +124,9 @@ export const RAIL_PRODUCTS: RailProduct[] = [
   // list is the same for everyone — a tile here would lead every customer to
   // a "not switched on" page. The tile comes back, blue (#1a73e8, not
   // Calendar's #4285f4), in the commit that turns Docs on for everyone.
-  // Sheets, likewise: no tile. Spreadsheets live in Docs' tables and behind
-  // Docs' switch (DocsSwitch), so they are on exactly where Docs is. The tile
-  // (green, #188038) comes back with Docs'.
+  // Sheets, likewise: no tile. It has its own per-organisation switch
+  // (SheetsSwitch), off by default; the tile (green, #188038) comes back in
+  // the commit that turns Sheets on for everyone.
   // Being built. It stays in the grid because it is genuinely next and the
   // tile sets the expectation; products nobody has STARTED were removed —
   // a wall of greyed tiles reads as a suite that does not exist.

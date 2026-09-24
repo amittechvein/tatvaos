@@ -46,6 +46,12 @@ export type SheetRow = SpaceFile & { isStarred?: boolean; ownerDisplayName?: str
 export const sheetsApi = {
   ...docsApi,
 
+  /** Is Sheets on for my organisation? Its own switch, separate from Docs'. */
+  status: (f: AuthedFetch) =>
+    f('/sheets/status')
+      .then((r) => json<{ enabled: boolean }>(r, 'Could not check whether Sheets is on.'))
+      .then((b) => b.enabled),
+
   list: (f: AuthedFetch, view: SheetsView, q = '') =>
     f(`/docs?kind=spreadsheet&view=${view}${q ? `&q=${encodeURIComponent(q)}` : ''}`)
       .then((r) => json<{ documents: SheetRow[]; total: number }>(r, 'Could not load your spreadsheets.')),

@@ -43,6 +43,12 @@ public static class SheetsAiEndpoints
         app.MapPost("/api/sheets/{id:guid}/ai", AiAsync)
             .RequireAuthorization("User")
             .WithTags("Sheets");
+
+        // Is Sheets on for my organisation? (Its own switch — SheetsSwitch.)
+        app.MapGet("/api/sheets/status", async (AppDbContext db, CancellationToken ct) =>
+                Results.Ok(new { enabled = await SheetsSwitch.EnabledAsync(db, ct) }))
+            .RequireAuthorization("User")
+            .WithTags("Sheets");
     }
 
     private static IResult Error(int status, string message) =>

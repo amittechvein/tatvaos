@@ -54,6 +54,11 @@ export default function SpacePage({ params }: { params: Promise<{ view: string }
   useEffect(() => {
     docsApi.status(authedFetch).then(setDocsOn).catch(() => setDocsOn(false));
   }, [authedFetch]);
+  // Sheets likewise, on its own switch.
+  const [sheetsOn, setSheetsOn] = useState(false);
+  useEffect(() => {
+    sheetsApi.status(authedFetch).then(setSheetsOn).catch(() => setSheetsOn(false));
+  }, [authedFetch]);
   const { upload, jobs, drainCompleted } = useUploads();
 
   const [folderId, setFolderId] = useState<string | null>(null);
@@ -188,7 +193,7 @@ export default function SpacePage({ params }: { params: Promise<{ view: string }
             className="min-w-0 flex-1 truncate text-sm font-medium text-ink hover:underline">
             {item.name}
           </Link>
-        ) : file && docsOn && isSpreadsheet(file) && !trashed ? (
+        ) : file && sheetsOn && isSpreadsheet(file) && !trashed ? (
           // A TatvaOS spreadsheet opens in Sheets. Download saves the .xlsx
           // its editor writes at every checkpoint.
           <Link href={sheetHref(file.id)}
@@ -331,7 +336,7 @@ export default function SpacePage({ params }: { params: Promise<{ view: string }
                 className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink-muted transition hover:bg-canvas hover:text-ink">
                 New document
               </button>}
-              {docsOn && <button type="button"
+              {sheetsOn && <button type="button"
                 onClick={() => void sheetsApi.create(authedFetch, undefined, folderId, scope)
                   .then((d) => router.push(sheetHref(d.id)))
                   .catch((e: Error) => setError(e.message))}

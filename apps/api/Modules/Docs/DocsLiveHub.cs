@@ -520,9 +520,11 @@ public sealed class DocsLiveHub(IServiceScopeFactory scopes, DocsInstanceGuard g
                 t.Set(ticket.TenantId, ticket.UserId, ticket.Role);
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                 var file = await db.SpaceFiles.AsNoTracking().FirstOrDefaultAsync(f => f.Id == fileId, ct);
-                // Docs switched off for the organisation counts as access
-                // removed: the operator's switch must reach open editors too.
-                perm = file is null || file.DeletedAt is not null || !await DocsSwitch.EnabledAsync(db, ct)
+                // Docs (or, for a spreadsheet, Sheets) switched off for the
+                // organisation counts as access removed: the operator's switch
+                // must reach open editors too. Each file answers to its own
+                // kind's switch (LiveSwitch).
+                perm = file is null || file.DeletedAt is not null || !await LiveSwitch.EnabledAsync(db, file.MimeType, ct)
                     ? null
                     : await SpaceEndpoints.FilePermAsync(db, file, ticket.UserId, ct);
             }

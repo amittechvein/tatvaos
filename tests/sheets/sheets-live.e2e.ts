@@ -115,20 +115,29 @@ async function main() {
   if (!adminBody.accessToken) throw new Error(`platform operator sign-in failed (status ${login.status})`);
   const P = client({ token: adminBody.accessToken });
 
-  console.log("Sheets is behind Docs' switch");
-  await P(`/admin/organisations/${TENANT_A}/docs`, { method: 'PUT', body: JSON.stringify({ enabled: false }) });
+  const sw = (product: 'docs' | 'sheets', tenantId: string, enabled: boolean) =>
+    P(`/admin/organisations/${tenantId}/${product}`, { method: 'PUT', body: JSON.stringify({ enabled }) });
+
+  console.log('Sheets has its own switch, independent of Docs');
+  await sw('sheets', TENANT_A, false);
+  await sw('docs', TENANT_A, true);
+  check('Sheets reports off while Docs reports on', (await A('/sheets/status')).body?.enabled === false
+    && (await A('/docs/status')).body?.enabled === true);
   const offCreate = await A('/docs', { method: 'POST', body: JSON.stringify({ kind: 'spreadsheet' }) });
-  check('while Docs is off, creating a spreadsheet is refused (403 docs_off)', offCreate.status === 403 && offCreate.body?.reason === 'docs_off',
+  check('Sheets off: creating a spreadsheet is refused (403 sheets_off)', offCreate.status === 403 && offCreate.body?.reason === 'sheets_off',
     `${offCreate.status} ${JSON.stringify(offCreate.body)}`);
-  const offList = await A('/docs?kind=spreadsheet');
-  check('…and the Sheets list is refused too', offList.status === 403, `${offList.status}`);
-  const on = await P(`/admin/organisations/${TENANT_A}/docs`, { method: 'PUT', body: JSON.stringify({ enabled: true }) });
-  check('the operator switches it back on', on.status === 200, `${on.status}`);
-  // The other organisation ON as well: its 404s below must mean "cannot see
-  // it", not "Docs is off here" (which answers 403 and would pass for the
-  // wrong reason — measured on the first run).
-  const onC = await P(`/admin/organisations/${TENANT_C}/docs`, { method: 'PUT', body: JSON.stringify({ enabled: true }) });
-  check('…and on for the other organisation', onC.status === 200 && (await C('/docs/status')).body?.enabled === true, `${onC.status}`);
+  check('Sheets off: the Sheets list is refused (403)', (await A('/docs?kind=spreadsheet')).status === 403);
+  const docWhileOff = await A('/docs', { method: 'POST', body: JSON.stringify({ title: 'E2E doc while Sheets off' }) });
+  check('…while Docs, on its own switch, still creates documents (201)', docWhileOff.status === 201, `${docWhileOff.status}`);
+  const selfOn = await A(`/admin/organisations/${TENANT_A}/sheets`, { method: 'PUT', body: JSON.stringify({ enabled: true }) });
+  check('an organisation owner cannot switch Sheets on (403)', selfOn.status === 403, `${selfOn.status}`);
+  check('the operator switches Sheets on for both organisations',
+    (await sw('sheets', TENANT_A, true)).status === 200 && (await sw('sheets', TENANT_C, true)).status === 200);
+  // The other organisation ON as well (Docs too, for the document checks):
+  // its 404s below must mean "cannot see it", not "switched off here" (403),
+  // which would pass for the wrong reason — measured on an earlier run.
+  await sw('docs', TENANT_C, true);
+  check('Sheets now reports on', (await A('/sheets/status')).body?.enabled === true);
 
   console.log('Create, list, visibility');
   const created = await A('/docs', { method: 'POST', body: JSON.stringify({ title: 'E2E fees', scope: 'personal', kind: 'spreadsheet' }) });
@@ -235,11 +244,27 @@ async function main() {
   check('an unknown AI action is 400 (when AI is on) or the AI-off answer', [400, 403, 503].includes(
     (await A(`/sheets/${id}/ai`, { method: 'POST', body: JSON.stringify({ action: 'nope' }) })).status));
 
-  console.log('Switching off reaches an open spreadsheet');
-  await P(`/admin/organisations/${TENANT_A}/docs`, { method: 'PUT', body: JSON.stringify({ enabled: false }) });
-  check('opening it is refused at once (403)', (await A(`/docs/${id}`)).status === 403);
-  check('its AI is refused at once (403)', (await A(`/sheets/${id}/ai`, { method: 'POST', body: JSON.stringify({ action: 'analyze', context: 'a	b' }) })).status === 403);
-  await P(`/admin/organisations/${TENANT_A}/docs`, { method: 'PUT', body: JSON.stringify({ enabled: true }) });
+  console.log('Each switch reaches only its own kind');
+  const docId = docWhileOff.body.id as string;
+  await sw('docs', TENANT_A, false);
+  check('Docs off: the document is refused (403 docs_off)', (await A(`/docs/${docId}`)).body?.reason === 'docs_off');
+  check('…but the spreadsheet still opens (200)', (await A(`/docs/${id}`)).status === 200);
+  check('…and its AI is not blocked by the Docs switch', (await A(`/sheets/${id}/ai`, { method: 'POST', body: JSON.stringify({ action: 'nope' }) })).body?.reason !== 'docs_off');
+  await sw('docs', TENANT_A, true);
+
+  const live = await connect(A, id);
+  check('a live connection to the spreadsheet is open', !!live?.synced);
+  await sw('sheets', TENANT_A, false);
+  const refused = await A(`/docs/${id}`);
+  check('Sheets off: the spreadsheet is refused at once (403 sheets_off)', refused.status === 403 && refused.body?.reason === 'sheets_off',
+    `${refused.status} ${JSON.stringify(refused.body)}`);
+  check('…its AI is refused at once (403)', (await A(`/sheets/${id}/ai`, { method: 'POST', body: JSON.stringify({ action: 'analyze', context: 'a	b' }) })).status === 403);
+  check('…while the document opens (200)', (await A(`/docs/${docId}`)).status === 200);
+  let closed: number | null = null;
+  live!.ws.onclose = (ev) => { closed = ev.code; };
+  await waitFor(() => closed !== null, 60_000);
+  check('…and the open spreadsheet is closed with 4403 within a minute', closed === 4403, `close code ${closed}`);
+  await sw('sheets', TENANT_A, true);
   const back = await A(`/docs/${id}`);
   check('switched back on, the spreadsheet is still there', back.status === 200 && back.body?.title === 'E2E fees', `${back.status}`);
 

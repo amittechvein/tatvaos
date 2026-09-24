@@ -205,6 +205,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<DocsComment> DocsComments => Set<DocsComment>();
     public DbSet<DocsImage> DocsImages => Set<DocsImage>();
     public DbSet<DocsTenantSetting> DocsTenantSettings => Set<DocsTenantSetting>();
+    // Sheets' own switch (20260925-sheets-switch.sql); configured beside Docs'.
+    public DbSet<SheetsTenantSetting> SheetsTenantSettings => Set<SheetsTenantSetting>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -984,6 +986,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             e.HasQueryFilter(s => s.TenantId == tenant.TenantId);
             e.HasOne<Tenant>().WithOne()
                 .HasForeignKey<DocsTenantSetting>(s => s.TenantId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<User>().WithMany()
+                .HasForeignKey(s => s.UpdatedByUserId).OnDelete(DeleteBehavior.SetNull);
+        });
+        b.Entity<SheetsTenantSetting>(e =>
+        {
+            e.ToTable("sheets_tenant_settings", "docs");
+            e.HasKey(s => s.TenantId);
+            e.HasQueryFilter(s => s.TenantId == tenant.TenantId);
+            e.HasOne<Tenant>().WithOne()
+                .HasForeignKey<SheetsTenantSetting>(s => s.TenantId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne<User>().WithMany()
                 .HasForeignKey(s => s.UpdatedByUserId).OnDelete(DeleteBehavior.SetNull);
         });
