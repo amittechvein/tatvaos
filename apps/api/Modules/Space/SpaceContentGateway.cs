@@ -45,11 +45,16 @@ public sealed class SpaceContentGateway(
             .FirstOrDefaultAsync(x => x.Id == fileId && x.DeletedAt == null, ct);
         if (f is null) return null;
 
+        // A TatvaOS document is NOT attachable (DocsFormat.NotAttachable): its
+        // blob is HTML, and HTML attachments are a phishing carrier that mail
+        // gateways quarantine. DescribeAsync says so by name; here it is
+        // simply not opened, so no caller can send one by accident.
+        if (f.MimeType == TatvaOS.Api.Modules.Docs.DocsFormat.MimeType) return null;
+
         var stream = blobs.OpenRead(f.BlobKey);
-        if (stream is null) return null;
-        // A document leaves as "Title.html" — see DocsFormat.AsDownload.
-        var (name, mime) = TatvaOS.Api.Modules.Docs.DocsFormat.AsDownload(f.Name, f.MimeType);
-        return new SpaceContent(stream, f.Id, name, mime, f.SizeBytes);
+        return stream is null
+            ? null
+            : new SpaceContent(stream, f.Id, f.Name, f.MimeType, f.SizeBytes);
     }
 
     /// <summary>
@@ -61,18 +66,21 @@ public sealed class SpaceContentGateway(
         IReadOnlyCollection<Guid> fileIds, CancellationToken ct = default)
     {
         if (fileIds.Count == 0) return [];
-        var rows = await db.SpaceFiles.AsNoTracking()
+        return await db.SpaceFiles.AsNoTracking()
             .Where(f => fileIds.Contains(f.Id) && f.DeletedAt == null)
-            .Select(f => new { f.Id, f.Name, f.MimeType, f.SizeBytes })
+            .Select(f => new SpaceContentInfo(f.Id, f.Name, f.MimeType, f.SizeBytes,
+                f.MimeType == TatvaOS.Api.Modules.Docs.DocsFormat.MimeType
+                    ? TatvaOS.Api.Modules.Docs.DocsFormat.NotAttachable : null))
             .ToListAsync(ct);
-        return rows.Select(f =>
-        {
-            var (name, mime) = TatvaOS.Api.Modules.Docs.DocsFormat.AsDownload(f.Name, f.MimeType);
-            return new SpaceContentInfo(f.Id, name, mime, f.SizeBytes);
-        }).ToList();
     }
 
-    public sealed record SpaceContentInfo(Guid FileId, string Name, string MimeType, long SizeBytes);
+    /// <param name="NotAttachable">
+    /// Null for an ordinary file. For a TatvaOS document, the sentence to show
+    /// the person instead of attaching it — so the caller can name WHY, rather
+    /// than report the file as missing.
+    /// </param>
+    public sealed record SpaceContentInfo(
+        Guid FileId, string Name, string MimeType, long SizeBytes, string? NotAttachable = null);
 
     // =====================================================================
     //  The write direction — "save to Space"
