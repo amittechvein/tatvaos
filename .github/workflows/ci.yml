@@ -116,6 +116,18 @@ jobs:
       - name: "Hire check: the job-openings gate has no way around it"
         run: bash tests/hire/check-job-gate.sh
 
+      # The development-only operator sign-in (PR 281). Approved into CI by
+      # Mr. Singh, 25 Sept 2026. Both need no database. gates/ compiles
+      # DevOperatorGate.cs linked and asks it every question production could
+      # (environment, switch, caller address, forwarded headers, database
+      # host). check-signin-tail.sh fails if CompleteSignInAsync — the tail
+      # every sign-in shares, internal since PR 281 — gains a caller outside
+      # the known sign-in paths.
+      - name: "Dev operator check: every gate answers as production needs"
+        run: dotnet run --project tests/dev-operator/gates
+      - name: "Dev operator check: only known sign-in paths reach the session tail"
+        run: bash tests/dev-operator/check-signin-tail.sh
+
   isolation:
     name: Tenant isolation
     runs-on: ubuntu-latest
@@ -292,6 +304,15 @@ jobs:
       # closed. Restores the platform switch on exit.
       - name: "Hire: the public careers page shows only what it may"
         run: bash tests/hire/test-careers.sh
+
+      # The development-only operator sign-in, against the BUILT API in six
+      # configurations: refuses to boot as Production/Staging with the switch
+      # on; not mapped with it off (CI's own Development included); a real
+      # operator session only with Development + switch + loopback database;
+      # refused (409) against the same database by a non-loopback address.
+      # Mr. Singh, 25 Sept 2026. Starts its own API on :5083.
+      - name: "Dev operator: impossible outside Development, proven on the built API"
+        run: bash tests/dev-operator/test.sh
 
       - name: Install the web app's TypeScript (for the PiP check)
         run: pnpm install --frozen-lockfile

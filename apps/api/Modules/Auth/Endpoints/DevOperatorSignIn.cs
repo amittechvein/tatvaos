@@ -33,8 +33,12 @@ namespace TatvaOS.Api.Modules.Auth.Endpoints;
 ///  bootstrap operator, whose row this never reads or writes. ".test" is a
 ///  reserved top-level domain (RFC 2606); mail to it cannot be delivered.
 ///
-///  FOUR GATES, each sufficient on its own, all fail closed. Every one of
-///  them is decided in DevOperatorGate.cs and nowhere else:
+///  FIVE GATES, all fail closed, every one decided in DevOperatorGate.cs and
+///  nowhere else. THE FIRST THREE ARE EACH SUFFICIENT ALONE: they depend
+///  only on this process's own environment and code. THE LAST TWO ARE
+///  DEFENCE IN DEPTH, NOT SUFFICIENT ALONE: they depend on network topology
+///  (Mr. Singh, 25 Sept 2026 — an earlier version of this comment called all
+///  four "sufficient on its own", which overstated the fourth).
 ///
 ///   1. STARTUP. The switch (DevOperatorSignIn__Enabled=true, an
 ///      environment variable, deliberately NOT in any appsettings file)
@@ -46,19 +50,30 @@ namespace TatvaOS.Api.Modules.Auth.Endpoints;
 ///      Development AND the switch is on. Development alone is not enough:
 ///      CI runs the API as Development (.github/workflows/ci.yml) and must
 ///      not grow an operator door because of it. Unmapped means 404, and
-///      the handler's code is unreachable.
-///   3. REQUEST. The handler asks the host environment again. Belt and
-///      braces against a future refactor that maps it somewhere else.
-///   4. LOOPBACK. Only a caller on this machine. In production the only
-///      thing that reaches the API is Caddy on the compose network, whose
-///      address is never loopback — and the forwarded-headers middleware
-///      forwards scheme and host only, never the client address, so no
-///      header can make a remote caller look local.
+///      the handler's code is unreachable. verify-live.sh asks production
+///      for the route on every deploy and requires exactly 404.
+///   3. REQUEST. The handler asks the same question again. Belt and braces
+///      against a future refactor that maps it somewhere else.
+///   4. LOOPBACK CALLER — defence in depth. The connection's own address,
+///      never a forwarded header (see DevOperatorGate.IsLocalCaller). In
+///      production the caller is Caddy on the compose network, not
+///      loopback. But loopback is a property of topology: put Caddy and the
+///      API on the host network, or in one network namespace, and Caddy's
+///      requests ARE loopback. So this gate alone would not hold.
+///   5. LOOPBACK DATABASE — defence in depth, on the data. The account is
+///      created or signed in only when the database host resolves entirely
+///      to loopback, so a Development API that could reach a real database
+///      (an exposed port, a tunnel) does not create an operator in it.
+///      Topology again: a production database reached over loopback would
+///      pass. It narrows the door; it does not close it alone.
 ///
 ///  Every use is logged as a warning and written to the audit trail.
 ///
 ///  Proven by tests/dev-operator/: gates/ compiles DevOperatorGate.cs and
-///  checks every answer, including production's own caller address;
+///  checks every answer, including production's own caller address, a
+///  forwarded header claiming loopback, and production's database host;
+///  check-signin-tail.sh fails if CompleteSignInAsync gains a caller
+///  outside the known sign-in paths;
 ///  test.sh runs the built API — refused to boot as Production and as
 ///  Staging with the switch on, route absent as Production and as
 ///  Development with it off, and the positive case (a real operator session
@@ -97,12 +112,27 @@ public static class DevOperatorSignIn
         if (!DevOperatorGate.IsOpen(env, config))
             return Results.NotFound();
 
-        // Gate 4.
-        var remote = http.Connection.RemoteIpAddress;
-        if (!DevOperatorGate.IsLocalCaller(remote))
+        // Gate 4 — the connection's address, never a header.
+        if (!DevOperatorGate.IsLocalCaller(http))
             return Results.NotFound();
+        var remote = http.Connection.RemoteIpAddress;
 
         var log = loggers.CreateLogger("DevOperatorSignIn");
+
+        // Gate 5 — BEFORE the first query, so a non-local database is never
+        // read or written by this door. The connection string this context
+        // actually uses, not a copy of it from configuration.
+        if (!DevOperatorGate.IsLoopbackDatabase(db.Database.GetConnectionString(), System.Net.Dns.GetHostAddresses))
+        {
+            log.LogWarning(
+                "DEVELOPMENT ONLY: refused a platform-operator session — the database host is not loopback.");
+            return Results.Conflict(new
+            {
+                error = "Refused: this API's database is not on this machine. The development operator " +
+                        "sign-in only runs against a loopback database (Host=localhost or 127.0.0.1 / ::1). " +
+                        "See tests/dev-operator/README.md.",
+            });
+        }
 
         // Platform-wide, like BootstrapAdmin: there is no tenant yet.
         var user = await db.Users.IgnoreQueryFilters()

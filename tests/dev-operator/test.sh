@@ -2,7 +2,7 @@
 #
 # TatvaOS — the development-only operator sign-in (Mr. Singh, 24 Sept 2026).
 #
-# Runs the BUILT API five times, each in a different environment, and asks
+# Runs the BUILT API six times, each in a different configuration, and asks
 # the one question that matters in each: can a password-less platform-
 # operator session be had here?
 #
@@ -11,7 +11,11 @@
 #   3  Production  + switch off  starts; the route does not exist
 #   4  Development + switch off  starts; the route does not exist (CI's case)
 #   5  Development + switch on   the route exists and issues a real operator
-#                                session that opens the operator console API
+#                                session that opens the operator console API;
+#                                a forwarded header claiming a remote address
+#                                does not move the connection address
+#   6  Development + switch on,  the route exists (GET 405) but refuses (409):
+#      database NOT loopback     gate 5, on the data (Mr. Singh, 25 Sept)
 #
 # 5 is the calibration for 3 and 4: the same request, the same URL, answered
 # with a session. Without it a 404 could mean a typo in the path. And 3 is
@@ -23,10 +27,18 @@
 # only when it is not — so GET tells the routing gate apart from the
 # request-time one, which POST alone cannot.
 #
-# Gate 4 (loopback only) is NOT exercised here: a non-loopback request needs
-# the API listening on a LAN address, which on Windows raises a firewall
-# prompt. tests/dev-operator/gates proves that decision directly, including
-# production's own caller address.
+# Gate 4 (loopback caller) is NOT exercised from a remote socket here: that
+# needs the API listening on a LAN address, which on Windows raises a
+# firewall prompt. tests/dev-operator/gates proves that decision directly,
+# including production's own caller address and forwarded headers claiming
+# loopback; stage 5 below proves the header cannot move the address the
+# gate reads.
+#
+# Stages 1-5 connect the API to Postgres as Host=localhost (gate 5 requires a
+# loopback database; WSL forwards localhost). Stage 6 connects the same
+# database by a NON-loopback address: the WSL address on a laptop, this
+# machine's first address elsewhere (CI, where the service port is published
+# on every interface).
 #
 # Needs: dotnet, a built Release API (dotnet build -c Release
 # apps/api/TatvaOS.Api.csproj), python, and local Postgres (WSL or Docker),
@@ -71,7 +83,11 @@ j() { "$PY" -c "import sys,json; d=json.load(sys.stdin); print($1)" 2>/dev/null;
 
 export JWT_SIGNING_KEY='dev-only-key-at-least-32-characters-long'
 export ASPNETCORE_URLS="$API"
-export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
+pg_conn() { printf 'Host=%s;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true' "$1"; }
+LOOPBACK_DB="${TATVAOS_DEVOP_DB_HOST:-localhost}"
+if command -v wsl >/dev/null 2>&1; then REMOTE_DB="$(wsl hostname -I | awk '{print $1}' | tr -d '\r')"
+else REMOTE_DB="$(hostname -I 2>/dev/null | awk '{print $1}')"; fi
+export ConnectionStrings__Postgres="$(pg_conn "$LOOPBACK_DB")"
 export Smtp__Host=localhost Smtp__Port=5870
 export Oidc__KeyDirectory="$KEYDIR"
 # Never inherited from the caller's shell: every run below sets it itself.
@@ -182,6 +198,9 @@ if start_api "Development" "true"; then
     pass "Development starts with the switch on"
     grep -q "DEVELOPMENT ONLY: $ROUTE is mapped" "$LOG" && pass "the startup log announces the route" || fail "no startup warning naming the route"
     h=$(code "$API$ROUTE"); [ "$h" = "405" ] && pass "GET answers 405 — mapped, POST only (so 4's 404 meant unmapped)" || fail "GET answered $h"
+    # A note, not a check: the positive results below are the proof that a
+    # loopback database passes gate 5.
+    printf '  (the API connects to the database as Host=%s)\n' "$LOOPBACK_DB"
 
     body=$(curl -s -D "$SCRATCH/h1" -X POST "$API$ROUTE")
     [ "$(printf '%s' "$body" | j "d['user']['role']")" = "super_admin" ] && pass "session issued for a super_admin" || fail "response: $(printf '%s' "$body" | head -c 300)"
@@ -204,13 +223,46 @@ if start_api "Development" "true"; then
     h=$(code -X POST -H 'Content-Type: application/json' -d "{\"email\":\"$EMAIL\",\"password\":\"not-a-password-anyone-has\"}" "$API/api/auth/login")
     [ "$h" = "401" ] && pass "password sign-in to the account is refused (401)" || fail "password login answered $h"
 
+    # Gate 4 reads the CONNECTION's address. If anything — a middleware
+    # someone "harmonised" with the rate limiters, ForwardedHeaders with
+    # X-Forwarded-For turned on — rewrote it from this header, a loopback
+    # caller would become 203.0.113.9 and be refused here. The dangerous
+    # direction (remote caller claiming loopback) is in gates/.
+    h=$(code -X POST -H "X-Forwarded-For: 203.0.113.9" -H "X-Real-IP: 203.0.113.9" -H "Forwarded: for=203.0.113.9" "$API$ROUTE")
+    [ "$h" = "200" ] && pass "a loopback caller claiming 203.0.113.9 in forwarded headers is still served — no header moves the address gate 4 reads" \
+                     || fail "a loopback caller with forwarded headers answered $h — something rewrites the connection address from a header"
+
     AUDIT_AFTER=$(PG "select count(*) from core.audit_logs where action = 'auth.dev_operator_session'")
-    [ "$((AUDIT_AFTER - AUDIT_BEFORE))" = "2" ] && pass "two sign-ins, two audit rows" || fail "audit rows went $AUDIT_BEFORE -> $AUDIT_AFTER"
-    [ "$(grep -c "DEVELOPMENT ONLY: issued a platform-operator session" "$LOG")" = "2" ] && pass "two sign-ins, two warnings in the log" || fail "warnings: $(grep -c "DEVELOPMENT ONLY: issued" "$LOG")"
+    [ "$((AUDIT_AFTER - AUDIT_BEFORE))" = "3" ] && pass "three sign-ins, three audit rows" || fail "audit rows went $AUDIT_BEFORE -> $AUDIT_AFTER"
+    [ "$(grep -c "DEVELOPMENT ONLY: issued a platform-operator session" "$LOG")" = "3" ] && pass "three sign-ins, three warnings in the log" || fail "warnings: $(grep -c "DEVELOPMENT ONLY: issued" "$LOG")"
 else
     fail "Development did not start with the switch on — tail of its log:"; tail -8 "$LOG"
 fi
 stop_api
+
+step "6. Development with the switch on, database NOT loopback — gate 5 refuses"
+if [ -z "$REMOTE_DB" ]; then
+    fail "NOT RUN: no non-loopback address for the database on this machine — gate 5 unproven here"
+else
+    ConnectionStrings__Postgres="$(pg_conn "$REMOTE_DB")"; export ConnectionStrings__Postgres
+    AUDIT_BEFORE=$(PG "select count(*) from core.audit_logs where action = 'auth.dev_operator_session'")
+    if start_api "Development" "true"; then
+        pass "Development starts with the switch on, database at $REMOTE_DB"
+        h=$(code "$API$ROUTE"); [ "$h" = "405" ] && pass "GET answers 405 — the route IS mapped, so what follows is gate 5 and not gate 2" || fail "GET answered $h"
+        # The calibration for the refusal: this address really is the database
+        # — the API reaches it — so a 409 is the gate, not a dead link.
+        h=$(code "$API/health/db"); [ "$h" = "200" ] && pass "the API reaches the database at $REMOTE_DB (/health/db 200)" || fail "/health/db answered $h — a refusal below would prove nothing"
+        body=$(curl -s -w '\n%{http_code}' -X POST "$API$ROUTE")
+        [ "$(printf '%s' "$body" | tail -n1)" = "409" ] && pass "POST answers 409 — refused, the database is not on this machine" || fail "POST answered $(printf '%s' "$body" | tail -n1): $(printf '%s' "$body" | head -c 200)"
+        [[ "$body" == *accessToken* ]] && fail "a SESSION WAS ISSUED against a non-loopback database" || pass "no session in the response"
+        grep -q "the database host is not loopback" "$LOG" && pass "the refusal is logged" || fail "no refusal line in the log"
+        [ "$(PG "select count(*) from core.audit_logs where action = 'auth.dev_operator_session'")" = "$AUDIT_BEFORE" ] && pass "no audit row: nothing was written" || fail "an audit row was written"
+    else
+        fail "Development did not start against $REMOTE_DB — tail of its log:"; tail -8 "$LOG"
+    fi
+    stop_api
+    ConnectionStrings__Postgres="$(pg_conn "$LOOPBACK_DB")"; export ConnectionStrings__Postgres
+fi
 
 echo
 if [ "$FAILED" = "0" ]; then printf '%sPASS %s%s\n' "$GREEN" "$PASSED" "$RST"; exit 0
