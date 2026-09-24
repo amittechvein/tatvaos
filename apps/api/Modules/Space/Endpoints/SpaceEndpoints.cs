@@ -183,7 +183,7 @@ public static class SpaceEndpoints
     //  The permission ladder.
     // ------------------------------------------------------------------
 
-    private static int Rank(string p) => p switch
+    internal static int Rank(string p) => p switch
     {
         "owner" => 3, "edit" => 2, "comment" => 1, "view" => 0, _ => -1
     };
@@ -229,7 +229,7 @@ public static class SpaceEndpoints
     /// the folder does not make you owner of a colleague's item — and the
     /// file's own grants).
     /// </summary>
-    private static async Task<string> FilePermAsync(AppDbContext db, SpaceFile f, Guid uid, CancellationToken ct)
+    internal static async Task<string> FilePermAsync(AppDbContext db, SpaceFile f, Guid uid, CancellationToken ct)
     {
         if (f.OwnerUserId == uid) return "owner";
 
@@ -600,7 +600,7 @@ public static class SpaceEndpoints
     /// folder (or root scope), the ownership new content inherits, and the
     /// caller's level there.
     /// </summary>
-    private static async Task<(IResult? Error, Guid? FolderId, string OwnershipType, Guid? OwnerUserId)>
+    internal static async Task<(IResult? Error, Guid? FolderId, string OwnershipType, Guid? OwnerUserId)>
         ResolveDestinationAsync(AppDbContext db, Guid uid, Guid? folderId, string? scope, CancellationToken ct)
     {
         if (folderId is Guid fid)
@@ -734,7 +734,7 @@ public static class SpaceEndpoints
         return v.Ok ? null : Error(413, v.Message!, v.Reason);
     }
 
-    private static long MaxFileBytes(IConfiguration config)
+    internal static long MaxFileBytes(IConfiguration config)
         => config.GetValue<long?>("Space:MaxFileBytes") ?? 2L * 1024 * 1024 * 1024;
 
     private sealed record UploadedPart(string FileName, string ContentType, string BlobKey, long Written);
