@@ -367,6 +367,10 @@ builder.Services.AddScoped<IAiGateway, OpenAiGateway>();
 // every open editor of a document must find; it creates its own scopes for
 // database work (see DocsLiveHub's header, and its single-process note).
 builder.Services.AddSingleton<DocsLiveHub>();
+// Makes "exactly one API container" loud: only the lock holder serves live
+// editing (DocsInstanceGuard's header; decision 0008's deployment rule).
+builder.Services.AddSingleton<DocsInstanceGuard>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<DocsInstanceGuard>());
 
 // Scoped: it writes through the request's AppDbContext and reads its
 // TenantContext. A singleton holding either would serve one tenant's scope to

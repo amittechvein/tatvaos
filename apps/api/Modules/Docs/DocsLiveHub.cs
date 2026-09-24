@@ -73,11 +73,13 @@ namespace TatvaOS.Api.Modules.Docs;
 ///
 ///  SINGLE PROCESS. Rooms live in memory. That is correct while the API is
 ///  one container (docker-compose.base.yml); a second replica would need the
-///  broadcast to go through Postgres LISTEN/NOTIFY or Redis, and would
-///  silently split rooms without it.
+///  broadcast to go through Postgres LISTEN/NOTIFY or Redis. It is NOT left
+///  to prose: DocsInstanceGuard lets only the holder of a database-wide lock
+///  serve live editing, and every other instance refuses /live and logs a
+///  CRITICAL line every minute (decision 0008, deployment rule).
 /// ─────────────────────────────────────────────────────────────────────────
 /// </summary>
-public sealed class DocsLiveHub(IServiceScopeFactory scopes, ILogger<DocsLiveHub> log)
+public sealed class DocsLiveHub(IServiceScopeFactory scopes, DocsInstanceGuard guard, ILogger<DocsLiveHub> log)
 {
     public const byte MsgUpdate = 0x01, MsgAwareness = 0x02, MsgAck = 0x04,
         MsgSynced = 0x05, MsgEvent = 0x06, MsgState = 0x07;
@@ -502,6 +504,16 @@ public sealed class DocsLiveHub(IServiceScopeFactory scopes, ILogger<DocsLiveHub
             try
             {
                 await Task.Delay(PermissionRecheck, ct);
+
+                // This process stopped being the only live-editing instance
+                // (its lock connection died). Send the browser away to
+                // reconnect — to whichever instance holds the lock now —
+                // rather than keep a room another instance may also have.
+                if (!guard.IsSoleInstance)
+                {
+                    conn.Close(4001, "reconnect");
+                    return;
+                }
 
                 using var scope = scopes.CreateScope();
                 var t = scope.ServiceProvider.GetRequiredService<TenantContext>();

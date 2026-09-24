@@ -79,10 +79,22 @@ public static class DocsEndpoints
 
         g.MapPost("/{id:guid}/ai", AiAsync);
 
-        // The WebSocket. Anonymous at the HTTP layer ON PURPOSE: a browser
-        // cannot put the access token on an upgrade request, so the ticket
-        // from /live-ticket is the credential, checked before the upgrade is
-        // accepted. See DocsLiveHub's header.
+        // ─── WHY AllowAnonymous HERE IS SAFE — read before copying or "fixing" ───
+        // A browser cannot put the access token on a WebSocket upgrade, so the
+        // credential is the single-use ticket from /live-ticket (an
+        // authenticated route), and:
+        //   1. the ticket is REDEEMED BEFORE the upgrade is accepted — a bad,
+        //      expired, reused or other-document ticket gets 401 and no socket;
+        //   2. the ticket only says WHO asked. What they get is decided again
+        //      by the database: the file and the level are re-read through
+        //      RLS and SpaceEndpoints.FilePermAsync after redemption;
+        //   3. the level is enforced on every update frame, re-read every 45 s,
+        //      and the connection dies at 30 minutes.
+        // Copying AllowAnonymous onto a route WITHOUT step 1 is an open door.
+        //
+        // The ticket travels in the query string. No Caddy door that serves
+        // /api writes an access log today (only the retired platform host
+        // does); if one ever does, redact `ticket` for this path.
         app.MapGet("/api/docs/{id:guid}/live", LiveAsync)
             .AllowAnonymous()
             .WithTags("Docs");
@@ -351,11 +363,21 @@ public static class DocsEndpoints
     }
 
     private static async Task LiveAsync(
-        Guid id, HttpContext http, AppDbContext db, TenantContext tenant, DocsLiveHub hub, CancellationToken ct)
+        Guid id, HttpContext http, AppDbContext db, TenantContext tenant, DocsLiveHub hub,
+        DocsInstanceGuard guard, CancellationToken ct)
     {
         if (!http.WebSockets.IsWebSocketRequest)
         {
             http.Response.StatusCode = StatusCodes.Status400BadRequest;
+            return;
+        }
+
+        // Not the single live-editing instance: refuse before anything else,
+        // so no browser ever joins a room another process may also hold. The
+        // browser retries with backoff and finds the instance that does.
+        if (!guard.IsSoleInstance)
+        {
+            http.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
             return;
         }
 

@@ -100,7 +100,7 @@ async function connect(call, id, label) {
   const doc = new Y.Doc();
   const awareness = new awarenessProtocol.Awareness(doc);
   const s = { doc, awareness, events: [], acks: [], updatesIn: 0, awarenessIn: [], lastSeq: 0, stateSeq: null,
-    synced: false, closed: null, ticket: t.body.ticket, label };
+    synced: false, closed: null, ticket: t.body.ticket, label, sent: [] };
   const ws = new WebSocket(url);
   ws.binaryType = 'arraybuffer';
   s.ws = ws;
@@ -119,6 +119,7 @@ async function connect(call, id, label) {
   doc.on('update', (u, origin) => {
     if (origin === 'server') return;
     const f = new Uint8Array(u.length + 1); f[0] = MSG.update; f.set(u, 1);
+    s.sent.push(f);
     if (ws.readyState === WebSocket.OPEN) ws.send(f);
   });
   s.sendAwareness = (state) => {
@@ -241,6 +242,8 @@ async function main() {
 
   const ownerUpdatesBefore = a1.updatesIn;
   appendParagraph(b1.doc, 'VIEWER WROTE THIS');
+  // Kept byte for byte: the calibration below re-sends this exact frame.
+  const viewerFrame = b1.sent[b1.sent.length - 1];
   check('viewer\'s edit is refused with a readonly event', await waitFor(() => b1.events.some((e) => e.type === 'readonly')));
   await sleep(300);
   check('viewer\'s edit never reaches the owner', a1.updatesIn === ownerUpdatesBefore && !textOf(a1.doc).includes('VIEWER'));
@@ -263,6 +266,18 @@ async function main() {
   await waitFor(() => textOf(a1.doc).length === textOf(b2.doc).length && textOf(a1.doc).includes('B-two') && textOf(b2.doc).includes('A-two'));
   check('simultaneous edits converge', textOf(a1.doc) === textOf(b2.doc) && textOf(a1.doc).includes('A-two') && textOf(a1.doc).includes('B-two'),
     `${textOf(a1.doc)} vs ${textOf(b2.doc)}`);
+
+  // CALIBRATION of the viewer checks above, by raising the fixture rather
+  // than weakening the code (Mr. Singh, PR 273): the SAME person, now an
+  // editor, sends the IDENTICAL frame the server refused from them as a
+  // viewer. It must now be stored and relayed. If the level check dropped
+  // every update regardless of level, this goes red; if it keyed on anything
+  // but the level, the earlier refusal would not have happened.
+  const ownerInBefore = a1.updatesIn;
+  b2.ws.send(viewerFrame);
+  check('calibration: the refused viewer frame, re-sent at edit level, is accepted and relayed',
+    await waitFor(() => a1.updatesIn > ownerInBefore && textOf(a1.doc).includes('VIEWER WROTE THIS')),
+    `owner text ${JSON.stringify(textOf(a1.doc))}`);
 
   // Presence.
   b2.sendAwareness({ user: { name: 'Employee', color: '#1a73e8' } });
