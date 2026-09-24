@@ -155,6 +155,32 @@ public static class Invitations
     /// caller records the answer in <see cref="User.InviteDelivered"/>; this
     /// is the one send that is NOT best-effort-and-forgotten.
     /// </summary>
+    /// <summary>
+    /// Said after every invitation or sign-in link the console reports as
+    /// sent. ONE copy, because three screens say "sent" and wording that
+    /// drifts apart reads as three different features.
+    ///
+    /// Amit, 24 September 2026, after TatvaOS mail was found in Gmail's spam
+    /// folder. The cause is not a defect we can fix in code: authentication
+    /// is fully compliant (SPF, DKIM, DMARC, alignment — Google's own
+    /// dashboard says so) and the user-reported spam rate is 0.00%. What is
+    /// missing is SENDING HISTORY: Postmaster Tools has no data for the
+    /// domain after 21 September because the volume is below what Google
+    /// will report on, and an unknown sender is filed cautiously.
+    ///
+    /// So the honest thing is to tell the administrator at the moment they
+    /// are already waiting for the mail, rather than send every customer a
+    /// message announcing that our email looks untrustworthy. Marking it
+    /// "not spam" also teaches Gmail for the whole domain, which is the one
+    /// lever that works while the volume is small.
+    ///
+    /// Remove this sentence when the domain has a reputation — it should not
+    /// outlive its reason.
+    /// </summary>
+    public const string CheckSpamNote =
+        " If it has not arrived in a few minutes, ask them to check their spam folder "
+        + "and mark it as not spam.";
+
     public static Task<bool> SendAsync(
         SystemMailer mailer, User user, string orgName, string baseUrl, string token,
         CancellationToken ct = default)
