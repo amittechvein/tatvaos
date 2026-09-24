@@ -296,6 +296,22 @@ if docker ps --format '{{.Names}}' | grep -q postgres; then
     if $COMPOSE exec -T postgres pg_dumpall -U postgres > "backups/pre-deploy-${STAMP}.sql" 2>/dev/null; then
         SIZE=$(du -h "backups/pre-deploy-${STAMP}.sql" | cut -f1)
         ok "backups/pre-deploy-${STAMP}.sql (${SIZE})"
+        # KEEP THE LAST 10 AND NOTHING ELSE. This dump has one job: undo the
+        # deploy that is about to happen. The 14-day history is backup.sh's
+        # (pg_dumpall AND the mail and Space volumes, four times a day, with
+        # an encrypted copy off the box); this file is a strict subset of that
+        # set, so keeping it longer keeps nothing extra. Until 24 Sept 2026
+        # there was NO retention here: 313 files, 38.8 GB, a gigabyte per
+        # deploy, and the disk hit 81% with customer data at 16 GB.
+        # Mr. Singh, 24 Sept: "keep the last 10 pre-deploy dumps. Nothing else."
+        pruned=$(ls -1t backups/pre-deploy-*.sql 2>/dev/null | tail -n +11)
+        if [ -n "$pruned" ]; then
+            n=$(printf '%s
+' "$pruned" | wc -l)
+            printf '%s
+' "$pruned" | xargs -r rm -f --
+            note "pruned ${n} older pre-deploy dump(s); the last 10 stay, backup.sh holds the 14 days"
+        fi
     else
         bad "backup failed — stopping rather than deploying over unbacked data"
         exit 1
