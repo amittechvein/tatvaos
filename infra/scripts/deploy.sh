@@ -290,19 +290,130 @@ ok "images ready"
 
 # ---------------------------------------------------------------------------
 step "Backing up the database"
+# ── COMPRESSED, CHECKED WHOLE, ENCRYPTED, LOCKED DOWN, KEPT BY DAYS. ──────
+#  Until 24 September 2026 this wrote an UNCOMPRESSED dump before every
+#  deploy and never deleted one. On 25 Sept the server held 323 of them,
+#  31 GB back to 4 Aug, unencrypted and readable by every account on the
+#  machine — a full copy of everything every customer believes was deleted.
+#  Mr. Singh's ruling, 25 Sept 2026 (PR 254), and each rule's failure:
+#
+#   1. gzip AS IT IS WRITTEN, then encrypt, in one pipe. pipefail (top of
+#      this file) makes a failed pg_dumpall fail the pipeline, so a dead
+#      dump cannot hide behind a successful gzip or openssl.
+#
+#   2. ENCRYPTED AT REST with the SAME scheme and passphrase as backup.sh's
+#      off-box copies (AES-256-CBC, PBKDF2, 200,000 iterations;
+#      BACKUP_ENC_PASSPHRASE from backup.sh's config file, which Amit also
+#      holds on paper). One scheme, one key to keep. On production a missing
+#      passphrase STOPS the deploy: an unencrypted copy is exactly what this
+#      replaces, so it is not an acceptable fallback.
+#
+#   3. LOCKED DOWN FROM BIRTH: umask 077, the directory 700, each file 600.
+#      Not fixed afterwards — created that way (the 323 old copies were
+#      chmod-ed by hand on 25 Sept, Amit's go).
+#
+#   4. CHECKED WHOLE, not just present: decrypted and gunzipped in a pipe and
+#      checked for pg_dumpall's "database cluster dump complete" marker. A
+#      wrong passphrase, a damaged archive or a dump cut off halfway all fail
+#      here — before anything is deleted and before the deploy continues.
+#
+#   5. KEPT BY DAYS, NOT BY COUNT. A count makes the period depend on how
+#      often we deploy, which no privacy notice can state. The window is
+#      backup.sh's own BACKUP_KEEP_DAYS (same config file, same default 14),
+#      so pre-deploy copies and the regular local backups are ONE number.
+#      Pruning runs only after this deploy's copy passed rule 4, and removes
+#      only ENCRYPTED pre-deploy copies (*.sql.gz.enc) older than the window.
+#
+#   6. THE OLD PLAIN COPIES ARE NOT TOUCHED HERE. Mr. Singh: they are deleted
+#      only after a restore has been proven, by a person, in one explicit
+#      logged action — never as a side effect of a deploy. This step counts
+#      them and says so every time until they are gone.
+#
+#  Restore one:
+#    openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:BACKUP_ENC_PASSPHRASE \
+#        -in backups/pre-deploy-<stamp>.sql.gz.enc | gunzip | psql -U postgres
+# ─────────────────────────────────────────────────────────────────────────
+BACKUP_CONF="${BACKUP_DIR:-/srv/backups/tatvaos}/.backup-env"
+# Only the two values this step needs, read in a subshell: sourcing the
+# whole file here would put the object-storage credentials into every
+# process deploy.sh starts.
+conf_value() {
+    [ -r "$BACKUP_CONF" ] || return 0
+    ( set -a; . "$BACKUP_CONF" >/dev/null 2>&1; eval "printf '%s' \"\${$1:-}\"" )
+}
+PREDEPLOY_KEEP_DAYS="${PREDEPLOY_KEEP_DAYS:-$(conf_value BACKUP_KEEP_DAYS)}"
+PREDEPLOY_KEEP_DAYS="${PREDEPLOY_KEEP_DAYS:-14}"
+PREDEPLOY_PASS="${PREDEPLOY_PASS:-$(conf_value BACKUP_ENC_PASSPHRASE)}"
+if ! [[ "$PREDEPLOY_KEEP_DAYS" =~ ^[0-9]+$ ]] || [ "$PREDEPLOY_KEEP_DAYS" -lt 1 ]; then
+    bad "BACKUP_KEEP_DAYS is '$PREDEPLOY_KEEP_DAYS' — not a whole number of days; stopping"
+    exit 1
+fi
 if docker ps --format '{{.Names}}' | grep -q postgres; then
-    mkdir -p backups
+    ( umask 077; mkdir -p backups )
+    chmod 700 backups
     STAMP=$(date +%Y%m%d-%H%M%S)
-    if $COMPOSE exec -T postgres pg_dumpall -U postgres > "backups/pre-deploy-${STAMP}.sql" 2>/dev/null; then
-        SIZE=$(du -h "backups/pre-deploy-${STAMP}.sql" | cut -f1)
-        ok "backups/pre-deploy-${STAMP}.sql (${SIZE})"
+    if [ -z "$PREDEPLOY_PASS" ]; then
+        if [ "$ENV" = "production" ]; then
+            bad "no BACKUP_ENC_PASSPHRASE in $BACKUP_CONF — will not write an unencrypted copy of production; stopping"
+            exit 1
+        fi
+        note "no encryption passphrase ($ENV) — this non-production copy is compressed but NOT encrypted"
+    fi
+    if [ -n "$PREDEPLOY_PASS" ]; then
+        DUMP="backups/pre-deploy-${STAMP}.sql.gz.enc"
+        export PREDEPLOY_PASS
+        if ! ( umask 077; $COMPOSE exec -T postgres pg_dumpall -U postgres 2>/dev/null \
+                 | gzip -6 \
+                 | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:PREDEPLOY_PASS > "$DUMP" ); then
+            bad "backup failed — stopping rather than deploying over unbacked data"
+            rm -f -- "$DUMP"; exit 1
+        fi
+        read_back() { openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:PREDEPLOY_PASS -in "$DUMP" 2>/dev/null; }
     else
-        bad "backup failed — stopping rather than deploying over unbacked data"
+        DUMP="backups/pre-deploy-${STAMP}.sql.gz"
+        if ! ( umask 077; $COMPOSE exec -T postgres pg_dumpall -U postgres 2>/dev/null | gzip -6 > "$DUMP" ); then
+            bad "backup failed — stopping rather than deploying over unbacked data"
+            rm -f -- "$DUMP"; exit 1
+        fi
+        read_back() { cat -- "$DUMP"; }
+    fi
+    chmod 600 -- "$DUMP"
+    if ! read_back | gzip -t 2>/dev/null; then
+        bad "backup does not decrypt to a valid gzip ($DUMP) — stopping"
         exit 1
+    fi
+    # Captured, then matched in bash — NOT `| grep -q`. Under pipefail a
+    # grep -q that exits on its first match can SIGPIPE the stage before it
+    # and fail the pipeline on a GOOD dump: the false red PR 227 removed
+    # from verify-live.sh. tail reads to EOF, so nothing here exits early.
+    dump_end=$(read_back | gzip -dc 2>/dev/null | tail -c 400)
+    if [[ "$dump_end" != *"database cluster dump complete"* ]]; then
+        bad "backup is TRUNCATED — no end-of-dump marker in $DUMP — stopping"
+        exit 1
+    fi
+    ok "$DUMP ($(du -h "$DUMP" | cut -f1), whole, $( [ -n "$PREDEPLOY_PASS" ] && echo encrypted || echo NOT encrypted ), mode $(stat -c %a "$DUMP"))"
+
+    # Encrypted pre-deploy copies older than the window go. -- guards
+    # against a name starting with '-'. Plain .sql / .sql.gz are NOT matched
+    # (rule 6).
+    mapfile -t old < <(find backups -maxdepth 1 -type f -name 'pre-deploy-*.sql.gz.enc' \
+                            -mtime "+$PREDEPLOY_KEEP_DAYS" 2>/dev/null | sort)
+    if [ "${#old[@]}" -gt 0 ]; then
+        rm -f -- "${old[@]}"
+        ok "removed ${#old[@]} encrypted pre-deploy copy(ies) older than $PREDEPLOY_KEEP_DAYS days"
+    fi
+    kept=$(find backups -maxdepth 1 -type f -name 'pre-deploy-*.sql.gz.enc' | wc -l)
+    ok "$kept encrypted pre-deploy copy(ies) kept; window $PREDEPLOY_KEEP_DAYS days (BACKUP_KEEP_DAYS)"
+    legacy=$(find backups -maxdepth 1 -type f \( -name 'pre-deploy-*.sql' -o -name 'pre-deploy-*.sql.gz' \) | wc -l)
+    if [ "$legacy" -gt 0 ]; then
+        note "$legacy OLD UNENCRYPTED pre-deploy copies still here — left for the explicit, logged deletion after a restore is proven (Mr. Singh, 25 Sept). Not deleted by deploys."
     fi
 else
     note "no running database yet — first deploy"
 fi
+# The passphrase was exported only for openssl above. Nothing started from
+# here on (builds, compose up, verify-live) has any business holding it.
+unset PREDEPLOY_PASS
 
 # ---------------------------------------------------------------------------
 # SCHEMA BEFORE SERVICES — the order is the point.
