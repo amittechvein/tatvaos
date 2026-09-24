@@ -180,6 +180,48 @@ h0 = await hits();
 p = await probe();
 check('an hourly limit of 0 allows none', p.body.working === false && (await hits()) === h0, JSON.stringify(p.body));
 
+console.log('The test warning email: operator only, and every send audited');
+// Mr. Singh, 25 Sept: it mails any address typed, so it is a relay unless only
+// the platform operator can reach it, and each send must be audited WITH the
+// address. An organisation's own owner is the nearest thing to an attacker
+// with a valid session; they must get 403 and no mail may leave.
+const OWNER_PHONE = process.env.AI_OWNER_PHONE ?? '+919999900002';
+const r1 = await fetch(`${API}/auth/otp/request`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: OWNER_PHONE }) });
+const code = (await r1.json().catch(() => ({}))).devCode;
+const owner = code && await (await fetch(`${API}/auth/otp/verify`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: OWNER_PHONE, code }) })).json();
+check('an organisation owner can sign in (fixture; wait 60 s and rerun if not)', !!owner?.accessToken);
+const RELAY_TO = `relay-probe-${Date.now()}@example.test`;
+let mBefore = (await mail()).length;
+const asOwner = await fetch(`${API}/admin/settings/test-ai-warning`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${owner?.accessToken}` },
+  body: JSON.stringify({ to: RELAY_TO }) });
+check('an organisation owner is refused (403)', asOwner.status === 403, `status ${asOwner.status}`);
+const anon = await fetch(`${API}/admin/settings/test-ai-warning`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: RELAY_TO }) });
+check('no session is refused (401)', anon.status === 401, `status ${anon.status}`);
+check('and neither sent any mail', (await mail()).slice(mBefore).length === 0, JSON.stringify((await mail()).slice(mBefore)));
+
+const AUDIT_TO = `ai-warning-${Date.now()}@example.test`;
+mBefore = (await mail()).length;
+const sent = await call('POST', '/admin/settings/test-ai-warning', { to: AUDIT_TO });
+check('the operator\'s send is handed to the mail server', sent.status === 200 && sent.body.sent === true, JSON.stringify(sent.body));
+check('and it arrives, marked [Test]', (await mail()).slice(mBefore).some((m) => /^\[Test\]/.test(m.subject)),
+  JSON.stringify((await mail()).slice(mBefore)));
+const trail = await call('GET', '/org/audit?action=settings.test_ai_warning');
+const row = (trail.body.entries ?? []).find((e) => (e.afterState ?? '').includes(AUDIT_TO));
+check('the send is audited with the address and the result', !!row && JSON.parse(row.afterState).sent === true && row.actorUserId,
+  `status ${trail.status}: ${JSON.stringify(trail.body).slice(0, 300)}`);
+// Control for the check above: it must be able to go red. An address this run
+// never sent to must NOT be found, so a match proves the row names THIS send,
+// not merely that the trail has something in it.
+const NEVER_SENT = `never-sent-${Date.now()}@example.test`;
+check('control: an address never sent to is not in the trail',
+  trail.status === 200 && !(trail.body.entries ?? []).some((e) => (e.afterState ?? '').includes(NEVER_SENT)));
+const refused = await call('POST', '/admin/settings/test-ai-warning', { to: 'not an address' });
+check('a malformed address is refused before anything is sent', refused.status === 400);
+
 // ---- leave everything as found -------------------------------------------------
 await settings(found);
 await consent(false);

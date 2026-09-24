@@ -116,11 +116,16 @@ public static class SettingsEndpoints
     /// a customer, so before any organisation can trigger one it is checked
     /// the way the last three mail faults were: one real send to an outside
     /// mailbox, opened, read. This is the button for that, so it needs no
-    /// shell and no one else's credentials. The address is not stored.
+    /// shell and no one else's credentials.
+    ///
+    /// It sends real mail to any address typed, so it is a small relay: the
+    /// group's SuperAdmin guard is what keeps it closed, and every send is
+    /// audited WITH the address and whether the mail server took it (Mr. Singh,
+    /// 25 Sept). A refused address is not audited — nothing was sent.
     /// </summary>
     private static async Task<IResult> TestAiWarningAsync(
         TestAiWarningRequest req, TatvaOS.Api.Shared.Notify.SystemMailer mailer, IConfiguration config,
-        CancellationToken ct)
+        AuditWriter audit, CancellationToken ct)
     {
         var to = req.To?.Trim() ?? "";
         if (to.Length is < 3 or > 320 || !to.Contains('@') || to.Contains(' '))
@@ -131,6 +136,9 @@ public static class SettingsEndpoints
             "[Test] " + TatvaOS.Api.Shared.Notify.AiUsageWarningEmail.Subject("Example School", 80),
             TatvaOS.Api.Shared.Notify.AiUsageWarningEmail.Html("there", "Example School", baseUrl, 80, 80),
             from: "no_reply@tatvaos.com", ct);
+
+        await audit.WriteAsync("settings.test_ai_warning_sent", "email", null,
+            after: new { to, sent }, ct: ct);
 
         return Results.Ok(new
         {
