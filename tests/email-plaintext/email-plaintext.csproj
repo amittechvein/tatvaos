@@ -34,6 +34,7 @@
   <ItemGroup>
     <!-- The production file itself. Not a copy. -->
     <Compile Include="../../apps/api/Shared/Notify/HtmlToText.cs" Link="HtmlToText.cs" />
+    <Compile Include="../../apps/api/Shared/Notify/MailIdentity.cs" Link="MailIdentity.cs" />
     <!-- A real template, so the test measures the mail we actually send. -->
     <Compile Include="../../apps/api/Shared/Notify/InviteEmail.cs" Link="InviteEmail.cs" />
   </ItemGroup>

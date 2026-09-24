@@ -77,6 +77,21 @@ internal static class Program
             text.Split('\n').All(l => l == l.Trim()));
         Ok("empty html gives empty text, not a crash", HtmlToText.Convert(null) == "" && HtmlToText.Convert("  ") == "");
 
+        Console.WriteLine();
+        Console.WriteLine("  The Message-ID (Amit's forwarded mail had NONE; Gmail invented one)");
+        var id = MailIdentity.MessageIdFor("no_reply@tatvaos.com");
+        Ok("has the angle brackets a header needs", id.StartsWith('<') && id.EndsWith('>'));
+        Ok("on the SENDER's domain, never the container's hostname", id.EndsWith("@tatvaos.com>"));
+        Ok("two calls never collide", MailIdentity.MessageIdFor("a@b.test") != MailIdentity.MessageIdFor("a@b.test"));
+        Ok("a display-name sender reads the right domain",
+            MailIdentity.MessageIdFor("TatvaOS <no_reply@tatvaos.com>").EndsWith("@tatvaos.com>"));
+        Ok("an address with no domain still gets ours",
+            MailIdentity.MessageIdFor("broken").EndsWith("@tatvaos.com>"));
+        Ok("null or empty does not throw", MailIdentity.MessageIdFor(null).EndsWith("@tatvaos.com>")
+            && MailIdentity.MessageIdFor("").EndsWith("@tatvaos.com>"));
+        Ok("no spaces or control characters (a header must not fold here)",
+            !id.Contains(' ') && id.All(c => !char.IsControl(c)));
+
         if (Environment.GetEnvironmentVariable("TEXT_PREVIEW") is { Length: > 0 })
         {
             Console.WriteLine();
