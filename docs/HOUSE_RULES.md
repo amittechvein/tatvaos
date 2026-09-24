@@ -155,6 +155,24 @@ Three in one week, each obeying the "show it red" rule and still wrong:
   under calibration; the step was rewritten to use a fresh token, and only
   then did the patched build fail it.
 
+**And it must fail at the assertion — Mr. Singh, 25 Sept 2026.**
+
+> A calibration must fail at the assertion it exists to exercise — not during
+> setup, not on a load error, not anywhere else. A red that arrives before the
+> check runs is noise.
+
+*The cost.* PR 277 moved a unique constraint so that several organisations
+could hold a pending claim on one domain while only one could hold a verified
+one. Its first calibration copy was that migration with the `DROP CONSTRAINT`
+removed — and the run did go red, with
+`duplicate key value violates unique constraint "domains_fqdn_key"`. But that
+red arrived while *loading the test state*, before a single expectation was
+evaluated. It proved the premise — two pending claims are impossible under the
+old rule — and calibrated nothing, because no assertion had run. The copy was
+changed to the migration with the new index removed, which is the mistake
+actually worth catching: the one that lets two organisations both hold a
+verified claim. Two expectations then went red, and the greens meant something.
+
 ## 6b. A result is about a version. Say which one.
 
 Rule 6 asks whether a check *can* fail. This asks whether its result still
