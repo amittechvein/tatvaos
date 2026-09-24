@@ -85,6 +85,8 @@ export class DocsLiveProvider {
   lastSeq = 0;
   /** The level the server last told us. Edits are only sent at edit or above. */
   perm = 'view';
+  /** Why the server ended the session for good (4403/4404/4429), for the page to say. */
+  closedReason: 'access' | 'too-many' | null = null;
 
   private readonly remote = new Y.Doc();
   private queue: Uint8Array[] = [];
@@ -142,6 +144,11 @@ export class DocsLiveProvider {
       const status = (e as { status?: number }).status;
       // 404/409: the document is gone or in the trash. Retrying will not help.
       if (status === 404 || status === 409 || status === 403) {
+        // The page reads perm and closedReason, not just the event: a
+        // closed channel with a stale "edit" level would keep saying
+        // "All changes saved" while nothing reaches the server.
+        this.perm = 'none';
+        this.closedReason = 'access';
         this.status = 'closed';
         this.emit();
         this.onEvent({ type: 'perm', perm: 'none', reason: (e as Error).message });
@@ -164,7 +171,10 @@ export class DocsLiveProvider {
       // `doc`, and the next sync's diff against `remote` resends it.
       this.inflight = [];
       if (this.destroyed) return;
-      if (ev.code === 4403 || ev.code === 4404) {
+      // 4429: too many documents open at once (DocsLiveHub's per-person cap).
+      if (ev.code === 4403 || ev.code === 4404 || ev.code === 4429) {
+        this.perm = 'none';
+        this.closedReason = ev.code === 4429 ? 'too-many' : 'access';
         this.status = 'closed';
         this.emit();
         this.onEvent({ type: 'perm', perm: 'none', reason: ev.reason });

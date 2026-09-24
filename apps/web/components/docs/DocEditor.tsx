@@ -606,7 +606,7 @@ function Workspace({ meta, setMeta, provider, eventSink }: {
     page.pageNumbers ? ' @bottom-right { content: counter(page); font: 10pt Arial, sans-serif; color: #555; }' : ''} }`;
 
   // ---- status line -----------------------------------------------------------
-  const status = lostAccess ? { text: 'You no longer have access', tone: 'text-danger', icon: <I.cloudOff className="h-4 w-4" /> }
+  const status = lostAccess ? { text: provider.closedReason === 'too-many' ? 'Not connected' : 'You no longer have access', tone: 'text-danger', icon: <I.cloudOff className="h-4 w-4" /> }
     : provider.status === 'offline' ? { text: provider.pending ? 'Offline — your edits are kept in this tab' : 'Offline', tone: 'text-warn', icon: <I.cloudOff className="h-4 w-4" /> }
     : provider.status === 'connecting' ? { text: 'Connecting…', tone: 'text-ink-faint', icon: null }
     : provider.pending ? { text: 'Saving…', tone: 'text-ink-faint', icon: null }
@@ -785,7 +785,11 @@ function Workspace({ meta, setMeta, provider, eventSink }: {
 
       {(notice || lostAccess) && (
         <div className="mx-3 mb-1 flex items-center gap-2 rounded-lg bg-[#fef7e0] px-3 py-1.5 text-sm text-[#3c2c00]">
-          <span className="flex-1">{lostAccess ? 'You no longer have access to this document. Anything you type now will not be saved.' : notice}</span>
+          <span className="flex-1">{lostAccess
+            ? provider.closedReason === 'too-many'
+              ? 'You have too many documents open at once. Close some, then reload this one. Anything you type now will not be saved.'
+              : 'You no longer have access to this document. Anything you type now will not be saved.'
+            : notice}</span>
           {!lostAccess && <button type="button" onClick={() => setNotice(null)} aria-label="Dismiss" className="p-0.5"><I.close className="h-4 w-4" /></button>}
         </div>
       )}

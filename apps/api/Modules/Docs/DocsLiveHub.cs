@@ -57,7 +57,8 @@ namespace TatvaOS.Api.Modules.Docs;
 ///  could already open, for a minute.
 ///
 ///  CLOSE CODES the browser acts on: 4403 = access removed, do not
-///  reconnect; 4404 = no such document, do not reconnect; anything else
+///  reconnect; 4404 = no such document, do not reconnect; 4429 = too many
+///  documents open (MaxConnectionsPerPerson), do not reconnect; anything else
 ///  (4001 lifetime, 1000, 1006 network) = fetch a new ticket and reconnect.
 ///
 ///  WHY CONNECTIONS ARE CUT EVERY 30 MINUTES
@@ -87,6 +88,14 @@ public sealed class DocsLiveHub(IServiceScopeFactory scopes, ILogger<DocsLiveHub
     private static readonly TimeSpan TicketLifetime = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan ConnectionLifetime = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan PermissionRecheck = TimeSpan.FromSeconds(45);
+
+    /// <summary>
+    /// Open live connections one person may hold at once, across all
+    /// documents. Each costs a socket, a DbContext and a watcher; without a
+    /// cap one account (or one stolen session) could hold thousands. Twenty
+    /// is far above anyone's real number of open document tabs.
+    /// </summary>
+    private const int MaxConnectionsPerPerson = 20;
 
     // ------------------------------------------------------------------
     //  Tickets
@@ -169,6 +178,7 @@ public sealed class DocsLiveHub(IServiceScopeFactory scopes, ILogger<DocsLiveHub
     }
 
     private readonly ConcurrentDictionary<Guid, Room> _rooms = new();
+    private readonly ConcurrentDictionary<Guid, int> _perPerson = new();
 
     private Room RoomFor(Guid fileId) => _rooms.GetOrAdd(fileId, _ => new Room());
 
@@ -230,6 +240,36 @@ public sealed class DocsLiveHub(IServiceScopeFactory scopes, ILogger<DocsLiveHub
         var perm = await SpaceEndpoints.FilePermAsync(db, file, ticket.UserId, ct);
 
         using var socket = await http.WebSockets.AcceptWebSocketAsync();
+
+        // Over the cap: accept, say why, close. Refusing the handshake instead
+        // would look to the browser like a network failure and it would retry
+        // forever; 4429 tells it to stop and show the reason.
+        if (_perPerson.AddOrUpdate(ticket.UserId, 1, (_, n) => n + 1) > MaxConnectionsPerPerson)
+        {
+            _perPerson.AddOrUpdate(ticket.UserId, 0, (_, n) => n - 1);
+            log.LogWarning("Docs live connection refused: per-person cap reached. userId={UserId}", ticket.UserId);
+            try
+            {
+                using var t = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                await socket.CloseOutputAsync((WebSocketCloseStatus)4429,
+                    "too many open documents", t.Token);
+            }
+            catch { /* already gone */ }
+            return;
+        }
+        try
+        {
+            await RunConnectedAsync(socket, fileId, ticket, perm, db, ct);
+        }
+        finally
+        {
+            _perPerson.AddOrUpdate(ticket.UserId, 0, (_, n) => n - 1);
+        }
+    }
+
+    private async Task RunConnectedAsync(
+        WebSocket socket, Guid fileId, Ticket ticket, string perm, AppDbContext db, CancellationToken ct)
+    {
         var conn = new Conn
         {
             Socket = socket,

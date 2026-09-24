@@ -317,6 +317,35 @@ async function main() {
   const svgUp = await A(`/docs/${id}/images`, { method: 'POST', body: svg });
   check('an SVG claiming to be a PNG is refused (415)', svgUp.status === 415, `status ${svgUp.status}`);
 
+  // ---- per-person connection cap ------------------------------------------------------
+  console.log('Connection cap');
+  // The owner already holds one connection (a1). Nineteen more reach the cap
+  // of twenty; each must sync (the control), and the next must be told 4429.
+  const extra = [];
+  for (let i = 0; i < 19; i += 1) extra.push(await connect(A, id, `cap-${i}`));
+  check('up to twenty connections per person all sync', extra.every((x) => x.synced),
+    `${extra.filter((x) => x.synced).length}/19 synced`);
+  const overCap = await connect(A, id, 'cap-over');
+  await waitFor(() => overCap.closed);
+  check('the twenty-first is closed with 4429', overCap.closed?.code === 4429, JSON.stringify(overCap.closed));
+  extra.forEach((x) => x.ws.close());
+  await sleep(500);
+  const after = await connect(A, id, 'cap-after');
+  check('closing tabs frees the slots again', after.synced, JSON.stringify(after.closed));
+  after.ws.close();
+
+  // ---- removing access ends an open session --------------------------------------------
+  console.log('Access removed while open (waits up to 50 s for the recheck)');
+  const bOpen = await connect(B, id, 'employee-open');
+  check('the commenter is connected', bOpen.synced);
+  const shares = await A(`/space/files/${id}/shares`);
+  const mine = shares.body.shares?.find((s) => s.userId === employee.id);
+  const un = await A(`/space/files/${id}/shares/${mine?.id}`, { method: 'DELETE' });
+  check('owner removes the share', un.status === 200 || un.status === 204, `status ${un.status}`);
+  await waitFor(() => bOpen.closed, 50_000);
+  check('the open session is closed with 4403 (do not reconnect)', bOpen.closed?.code === 4403, JSON.stringify(bOpen.closed));
+  check('and the colleague can no longer open it', (await B(`/docs/${id}`)).status === 404);
+
   // ---- rename + trash ---------------------------------------------------------------
   console.log('Rename and trash');
   const rn = await A(`/docs/${id}`, { method: 'PATCH', body: JSON.stringify({ title: 'E2E plan (final)' }) });
