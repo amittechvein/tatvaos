@@ -39,6 +39,8 @@ interface Node {
   quotaInherited: boolean;
   userCount: number;
   descendantUserCount: number;
+  /** Job openings (Hire) naming this department — blanked if it is deleted. */
+  jobOpeningCount: number;
   children: Node[];
 }
 
@@ -202,6 +204,9 @@ export default function DepartmentsPage() {
             {deleting.descendantUserCount > 0
               ? `${deleting.descendantUserCount} ${deleting.descendantUserCount === 1 ? 'person' : 'people'} would lose these settings and fall back to the organisation default. `
               : 'Nobody is in it. '}
+            {deleting.jobOpeningCount > 0
+              ? `${deleting.jobOpeningCount} job opening${deleting.jobOpeningCount === 1 ? '' : 's'} name this department and will show no department afterwards — including any that are published. `
+              : ''}
             No mailbox or file is deleted.
           </p>
         </Modal>

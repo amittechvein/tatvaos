@@ -50,13 +50,19 @@ interface ParkOffer {
   free: number | null;
 }
 
-/** Escaped for the HTML half. The names come from a server; escape anyway. */
+/**
+ * Escaped for the HTML half. The names come from a server; escape anyway.
+ * Also the escape for everything quoteHtml takes from a received message,
+ * which is where the single quote was added (24 Sept): an attribute is one
+ * careless edit away, and ' is the character that closes one.
+ */
 function esc(v: string): string {
   return v
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 /**
@@ -143,6 +149,9 @@ export type ComposeMode = 'new' | 'reply' | 'replyAll' | 'forward';
  */
 type PaneState = 'docked' | 'full' | 'min';
 
+/** Marks the seeded signature block so a mailbox switch can replace it. */
+const SIG_ATTR = 'data-tatva-signature';
+
 /**
  * The signature, as the mail bootstrap returns it.
  *
@@ -177,11 +186,124 @@ function replyAllCc(original: Message | null | undefined, self: string): string 
   return [...new Set(others)].join(', ');
 }
 
-function quotedHtml(m: Message): string {
+// ── THE QUOTED ORIGINAL ──────────────────────────────────────────────────
+//
+//  Two faults, found together on 24 September 2026.
+//
+//  1. REPLIES CARRIED NO QUOTE AT ALL. Only a forward did. Amit's reply to a
+//     courier went out as the single word "ok" and a signature: to a human
+//     it said nothing about what it answered, and Gmail filed it as spam —
+//     "similar to messages that were identified as spam in the past" — a
+//     bare one-word reply from a young domain being exactly the shape of a
+//     bot. The phone app always quoted replies; only the web did not.
+//
+//  2. THE QUOTE THAT DID EXIST WAS A SCRIPT HOLE. It put the original's
+//     bodyHtml into the editor raw, and the sender's display name unescaped,
+//     through innerHTML. bodyHtml is the one field the shared type says in
+//     so many words must never be rendered raw. Measured on a local stack: a
+//     message whose HTML set a flag on window left it unset while being READ
+//     (SafeHtml's sandbox holds) and set it the moment Forward was pressed —
+//     the body's script and the name's script both. Forward was live on
+//     production. Widening the quote to every reply without this fix would
+//     have put that behind the most-pressed button in the app.
+//
+//  So everything below that came from the message is either cleaned by the
+//  same sanitiser paste uses, or escaped as text. Nothing is interpolated raw.
+//
+//  The markup is Gmail's own: class="gmail_quote" around the history and
+//  "gmail_attr" on the "On … wrote:" line. Gmail — and several others that
+//  copied it — recognise that and fold it behind "…" on the RECIPIENT's
+//  side, so a TatvaOS reply reads there exactly like a native one.
+//  data-tv-quote marks the block as ours, so switching reply ↔ forward can
+//  find it and swap it without touching anything the person typed.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** "Name <email>", escaped. Both halves are chosen by whoever sent the mail. */
+function who(a: { name?: string | null; email: string }): string {
+  return a.name ? `${esc(a.name)} &lt;${esc(a.email)}&gt;` : esc(a.email);
+}
+
+/** The original's body, safe to put into our own editor. */
+function quotedBody(m: Message): string {
+  if (m.bodyHtml) {
+    const clean = cleanPastedHtml(m.bodyHtml);
+    if (clean) return clean;
+  }
+  return esc(m.bodyText ?? m.snippet ?? '').replace(/\r?\n/g, '<br>');
+}
+
+type QuoteKind = 'reply' | 'forward';
+const quoteKind = (mode: ComposeMode): QuoteKind => (mode === 'forward' ? 'forward' : 'reply');
+
+/** The quoted original as HTML — a reply's "On … wrote:" or a forward's header. */
+function quoteHtml(m: Message, mode: ComposeMode): string {
+  const when = esc(new Date(m.sentAt).toLocaleString());
+  if (quoteKind(mode) === 'forward') {
+    const head = [
+      '---------- Forwarded message ---------',
+      `From: ${who(m.from)}`,
+      `Date: ${when}`,
+      `Subject: ${esc(m.subject || '(no subject)')}`,
+      `To: ${(m.to ?? []).map(who).join(', ')}`,
+      ...(m.cc && m.cc.length > 0 ? [`Cc: ${m.cc.map(who).join(', ')}`] : []),
+    ].join('<br>');
+    return `<div class="gmail_quote" data-tv-quote="forward">`
+      + `<div class="gmail_attr">${head}<br></div><br>${quotedBody(m)}</div>`;
+  }
+  return `<div class="gmail_quote" data-tv-quote="reply">`
+    + `<div class="gmail_attr">On ${when}, ${who(m.from)} wrote:<br></div>`
+    + `<blockquote class="gmail_quote" style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex">`
+    + `${quotedBody(m)}</blockquote></div>`;
+}
+
+/** The same, for the plain-text editor. Plain text cannot run anything. */
+function quoteText(m: Message, mode: ComposeMode): string {
   const when = new Date(m.sentAt).toLocaleString();
-  const inner = m.bodyHtml ?? (m.bodyText ?? m.snippet).replace(/\n/g, '<br>');
-  return `<br><br><div style="border-left:2px solid #ccc;padding-left:12px;color:#666">`
-    + `On ${when}, ${m.from.name ?? m.from.email} &lt;${m.from.email}&gt; wrote:<br>${inner}</div>`;
+  const name = (a: { name?: string | null; email: string }) =>
+    (a.name ? `${a.name} <${a.email}>` : a.email);
+  const body = (m.bodyText ?? m.snippet ?? '').replace(/\r\n/g, '\n');
+  if (quoteKind(mode) === 'forward') {
+    return [
+      '---------- Forwarded message ---------',
+      `From: ${name(m.from)}`,
+      `Date: ${when}`,
+      `Subject: ${m.subject || '(no subject)'}`,
+      `To: ${(m.to ?? []).map(name).join(', ')}`,
+      '',
+      body,
+    ].join('\n');
+  }
+  return `On ${when}, ${name(m.from)} wrote:\n${body.split('\n').map((l) => `> ${l}`).join('\n')}`;
+}
+
+/**
+ * The editor's text, WITH a folded quote in it.
+ *
+ * innerText follows CSS, and a folded reply quote is display:none — so
+ * reading the editor while the quote was folded left it out of the
+ * text/plain half of the message. Found on the wire, not in the browser
+ * (24 Sept): the HTML part carried the quote and the plain part did not,
+ * so any helpdesk that reads plain text — many do — got the bare one-word
+ * reply this change exists to stop sending. Unfolded for the length of one
+ * synchronous read and put back; nothing repaints in between.
+ */
+function editorText(el: HTMLElement | null): string {
+  if (!el) return '';
+  const folded = !el.hasAttribute('data-quote-open');
+  if (folded) el.setAttribute('data-quote-open', '');
+  try {
+    return el.innerText;
+  } finally {
+    if (folded) el.removeAttribute('data-quote-open');
+  }
+}
+
+/** The subject a reply or forward starts with, before anyone edits it. */
+function autoSubject(m: Message | null | undefined, mode: ComposeMode): string {
+  if (!m) return '';
+  const base = m.subject;
+  if (mode === 'forward') return /^fwd:/i.test(base) ? base : `Fwd: ${base}`;
+  return /^re:/i.test(base) ? base : `Re: ${base}`;
 }
 
 export function Composer({
@@ -194,6 +316,9 @@ export function Composer({
   onClose,
   onSend,
   offset = 0,
+  right,
+  minimised: minimisedProp,
+  onMinimisedChange,
   placement = 'docked',
 }: {
   replyTo?: Message | null;
@@ -225,6 +350,19 @@ export function Composer({
    */
   offset?: number;
   /**
+   * Distance from the right edge in px, worked out by the page from the real
+   * widths of the windows beside this one. Without it the old fixed 580px
+   * slot applies — which is what pushed a third window off the left edge of
+   * a 1536px screen (Amit, 24 September 2026).
+   */
+  right?: number;
+  /**
+   * Minimised, when the page is deciding — it minimises older windows to make
+   * room for a new one. Left undefined, the composer keeps its own state.
+   */
+  minimised?: boolean;
+  onMinimisedChange?: (minimised: boolean) => void;
+  /**
    * 'inline' puts the composer IN the conversation, under the message being
    * answered, instead of in a floating window at the corner.
    *
@@ -244,6 +382,8 @@ export function Composer({
   const shell = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const seeded = useRef(false);
+  /** The plain-text signature last put into the body, to swap on a mailbox switch. */
+  const seededPlainSig = useRef('');
 
   const [to, setTo] = useState(mode === 'forward' ? '' : replyTo ? replyTo.from.email : '');
   const initialCc = mode === 'replyAll' ? replyAllCc(replyTo, selfAddress) : '';
@@ -455,12 +595,7 @@ export function Composer({
       setMention(null);
     }
   }
-  const [subject, setSubject] = useState(() => {
-    if (!replyTo) return '';
-    const base = replyTo.subject;
-    if (mode === 'forward') return base.match(/^fwd:/i) ? base : `Fwd: ${base}`;
-    return base.match(/^re:/i) ? base : `Re: ${base}`;
-  });
+  const [subject, setSubject] = useState(() => autoSubject(replyTo, mode));
   const [files, setFiles] = useState<File[]>([]);
   /** Parked in Space, going out as links when this message is sent. */
   const [links, setLinks] = useState<SpaceLink[]>([]);
@@ -480,6 +615,58 @@ export function Composer({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [plainBody, setPlainBody] = useState('');
+  /**
+   * Whether a reply's quoted history is unfolded in the editor. Folded by
+   * default, the way Gmail does it: the new inline reply box sits INSIDE the
+   * message being answered, and a full copy of that message under the caret
+   * turns a two-line reply into a scroll. It is still sent either way — this
+   * only changes what the editor draws.
+   */
+  const [showQuote, setShowQuote] = useState(false);
+  /** The plain-text quote as last seeded, so a mode switch can swap it. */
+  const plainQuote = useRef('');
+
+  // ── REPLY ↔ FORWARD IN ONE BOX. ─────────────────────────────────────────
+  //
+  //  Amit, 24 September 2026: "fix reply and forward both open in diff
+  //  window". Pressing Reply and then Forward left two boxes in the same
+  //  message, each with its own Send. The page now switches the one box's
+  //  mode instead (see startCompose), and the recipient effect above moves
+  //  To/Cc. This moves the two other things a forward changes:
+  //
+  //   · THE SUBJECT, only while it is still the automatic one. If somebody
+  //     has rewritten it, it is theirs and a mode switch must not undo it.
+  //   · THE QUOTE's heading — "On … wrote:" becomes a forwarded-message
+  //     header and back. Found by its data-tv-quote marker and replaced in
+  //     place, so every word typed above it survives the switch.
+  //
+  //  Tracked on its own ref, not seenMode: that one is consumed by the
+  //  recipient effect, and two effects sharing one "previous" value is how
+  //  the second one ends up always seeing no change.
+  const seenModeForBody = useRef(mode);
+  useEffect(() => {
+    const prev = seenModeForBody.current;
+    if (prev === mode) return;
+    seenModeForBody.current = mode;
+    if (!replyTo) return;
+
+    setSubject((s) => (s === autoSubject(replyTo, prev) ? autoSubject(replyTo, mode) : s));
+
+    if (quoteKind(prev) === quoteKind(mode)) return;   // reply ↔ reply all: same quote
+
+    if (plain) {
+      const next = quoteText(replyTo, mode);
+      setPlainBody((b) => (plainQuote.current && b.includes(plainQuote.current)
+        ? b.replace(plainQuote.current, next)
+        : b));
+      plainQuote.current = next;
+      return;
+    }
+
+    const block = editorRef.current?.querySelector('[data-tv-quote]');
+    // Our own escaped and sanitised output — see quoteHtml. Never message HTML.
+    if (block) block.outerHTML = quoteHtml(replyTo, mode);
+  }, [mode, replyTo, plain]);
 
   const moreRef = useRef<HTMLDivElement>(null);
   const emojiBtnRef = useRef<HTMLSpanElement>(null);
@@ -696,7 +883,7 @@ export function Composer({
       const linkText = linkBlockText(links);
       const linkHtml = linkBlockHtml(links);
 
-      const bodyText = (plain ? plainBody : (editorRef.current?.innerText ?? '')) + linkText;
+      const bodyText = (plain ? plainBody : editorText(editorRef.current)) + linkText;
       const rawHtml = plain ? undefined : (editorRef.current?.innerHTML || undefined);
       // In plain mode there is no HTML half at all and the text block carries
       // the links alone. Otherwise an empty body plus links still needs one.
@@ -733,18 +920,52 @@ export function Composer({
   // A forward starts with the original quoted into the body. Seed the editor
   // once, after it mounts, and only when there is something to quote.
   useEffect(() => {
-    if (seeded.current) return;
-
     // Whether the signature applies at all. `enabled` is the master switch;
     // `includeOnReply` is asked separately because most people want a signature
     // on a new message and not on the fourth reply in a thread.
     const withSig = Boolean(signature?.enabled && (mode === 'new' || signature.includeOnReply));
 
+    // ── THE SIGNATURE FOLLOWS THE MAILBOX. ────────────────────────────────
+    //
+    //  Amit, 24 September 2026: three windows, all "From support@", one with
+    //  no signature and one with his own. From is a live prop — switch
+    //  mailbox and every open window re-labels itself — but the signature
+    //  was seeded ONCE, so a window opened in your own mailbox kept your
+    //  personal signature on mail that now goes out as the shared address.
+    //
+    //  So once seeded, a later signature (the page re-boots on a switch and
+    //  hands a new one down) REPLACES the old one in place — found by the
+    //  marker it was seeded with, never by matching text. If the marker is
+    //  gone the person deleted the signature, and it stays deleted.
+    if (seeded.current) {
+      if (plain) {
+        const next = withSig && signature ? signature.bodyText : '';
+        const prevText = seededPlainSig.current;
+        if (prevText === next) return;
+        // Plain text has no marker to find, so this one does match text —
+        // and only swaps it while it is still there, untouched.
+        setPlainBody((b) => (prevText && b.includes(prevText) ? b.replace(prevText, next) : b));
+        seededPlainSig.current = next;
+        return;
+      }
+      const box = editorRef.current?.querySelector<HTMLElement>(`[${SIG_ATTR}]`);
+      if (!box) return;
+      box.innerHTML = withSig && signature ? cleanSignatureHtml(signature.bodyHtml) : '';
+      return;
+    }
+
     if (plain) {
-      if (!withSig || !signature) return;
+      const sigText = withSig && signature ? `\n\n${signature.bodyText}` : '';
+      // Plain text gets the quote too. Before this a plain-text FORWARD
+      // carried only the signature — the message being forwarded was simply
+      // not in it.
+      const q = replyTo && mode !== 'new' ? quoteText(replyTo, mode) : '';
+      if (!sigText && !q) return;
+      plainQuote.current = q;
       // Functional update so an already-typed body is never overwritten — this
       // effect re-runs on a mode change, and the body may not be empty by then.
-      setPlainBody((b) => (b.trim() === '' ? `\n\n${signature.bodyText}` : b));
+      setPlainBody((b) => (b.trim() === '' ? `${sigText}${q ? `\n\n${q}` : ''}` : b));
+      seededPlainSig.current = withSig && signature ? signature.bodyText : '';
       seeded.current = true;
       return;
     }
@@ -767,12 +988,19 @@ export function Composer({
     // it is handed (SaveSignatureAsync caps the length and does not
     // sanitise), so the editor's cleaner alone would be one a crafted PUT
     // walks past. This is the same function the editor uses.
+    // Wrapped in a marked block so a mailbox switch can find and swap it
+    // (above). The block stays even when the new mailbox has no signature —
+    // empty — so switching back puts that mailbox's one in again.
     const sig = withSig && signature
-      ? `<br><br>${cleanSignatureHtml(signature.bodyHtml)}`
+      ? `<br><br><div ${SIG_ATTR}="">${cleanSignatureHtml(signature.bodyHtml)}</div>`
       : '';
-    const quote = mode === 'forward' && replyTo ? quotedHtml(replyTo) : '';
+    // EVERY reply and forward, not only a forward — see quoteHtml for the
+    // spam verdict and the script hole this used to be.
+    const quote = replyTo && mode !== 'new' ? `<br><br>${quoteHtml(replyTo, mode)}` : '';
     if (!sig && !quote) return;
 
+    // Only our own output reaches innerHTML: the signature through
+    // cleanSignatureHtml, the quote through quoteHtml's sanitiser and escapes.
     el.innerHTML = sig + quote;
     seeded.current = true;
   }, [mode, replyTo, plain, signature]);
@@ -782,7 +1010,7 @@ export function Composer({
     const el = editorRef.current;
     return {
       to, cc, bcc, subject,
-      bodyText: plain ? plainBody : (el?.innerText ?? ''),
+      bodyText: plain ? plainBody : editorText(el ?? null),
       bodyHtml: plain ? '' : (el?.innerHTML ?? ''),
     };
   }
@@ -814,7 +1042,13 @@ export function Composer({
 
   const totalSize = files.reduce((n, f) => n + f.size, 0);
 
-  const minimised = pane === 'min';
+  // Full screen wins over a minimise the page asked for: only one thing can be
+  // the task, and it is the one the person just made full screen.
+  const minimised = pane === 'full' ? false : (minimisedProp ?? pane === 'min');
+  function setMinimised(next: boolean) {
+    if (onMinimisedChange) onMinimisedChange(next);
+    else setPane(next ? 'min' : 'docked');
+  }
   // One-line recipients: a REPLY sitting in the conversation, until somebody
   // asks for the fields. A new message always gets the form — it has nobody
   // to summarise.
@@ -852,7 +1086,7 @@ export function Composer({
         // are hidden above.
         style={pane === 'full' || placement === 'inline'
           ? undefined
-          : { right: 20 + offset * 580 }}
+          : { right: right ?? 20 + offset * 580 }}
       >
         <div
           className={`flex w-full flex-col overflow-hidden bg-surface ${
@@ -872,7 +1106,7 @@ export function Composer({
               collapsed strip is the only target left, so all of it should work. */}
           <header
             className={`flex items-center justify-between bg-rail px-4 py-3 text-ink ${minimised ? 'cursor-pointer' : ''}`}
-            onClick={minimised ? () => setPane('docked') : undefined}
+            onClick={minimised ? () => setMinimised(false) : undefined}
           >
             <span className="truncate text-sm font-semibold tracking-tight">
               {mode === 'replyAll' ? 'Reply all'
@@ -892,7 +1126,7 @@ export function Composer({
                   // Minimising is the clearest "I am coming back to this" there
                   // is, so the draft is flushed rather than left to the timer.
                   if (!minimised) saveDraftNow();
-                  setPane(minimised ? 'docked' : 'min');
+                  setMinimised(!minimised);
                 }}
                 aria-label={minimised ? 'Restore' : 'Minimise'}
                 title={minimised ? 'Restore' : 'Minimise'}
@@ -926,8 +1160,14 @@ export function Composer({
             </div>
           </header>
 
-          {!minimised && (
-            <>
+          {/* HIDDEN, NOT UNMOUNTED, while minimised. This block used to be
+              `{!minimised && ...}`, which threw the editor away on minimise:
+              the body lives in the contenteditable's DOM, not in React state,
+              so Restore brought back an EMPTY message — typed text and
+              signature both gone (measured 24 Sept 2026: 'HELLO-TYPED …'
+              before, '' after). `contents` when shown keeps every child a
+              direct flex item of the panel, exactly as the fragment did. */}
+          <div className={minimised ? 'hidden' : 'contents'}>
 
         {/* ── A REPLY OPENS AS ONE LINE, NOT A FORM. ────────────────────────
             Gmail shows a reply's recipients as a single quiet line and keeps
@@ -1111,7 +1351,24 @@ export function Composer({
             // content, so the region scrolls instead of the text escaping;
             // shrink-0 stops the scroll container squashing it back.
             className="composer-body min-h-[220px] grow shrink-0 px-4 py-3 text-sm leading-relaxed text-ink outline-none"
+            data-quote-open={showQuote ? '' : undefined}
           />
+        )}
+
+        {/* Gmail's "…": the quoted history is folded under a reply, not left
+            out of it. Shown only while there is a folded quote to reveal. */}
+        {!plain && replyTo && (mode === 'reply' || mode === 'replyAll') && (
+          <div className="px-4 pb-2">
+            <button
+              type="button"
+              onClick={() => setShowQuote((v) => !v)}
+              title={showQuote ? 'Hide the quoted message' : 'Show the quoted message'}
+              aria-expanded={showQuote}
+              className="rounded-md bg-canvas px-2 py-0.5 text-xs font-bold leading-none tracking-widest text-ink-muted hover:bg-line hover:text-ink"
+            >
+              •••
+            </button>
+          </div>
         )}
 
         {/* The @-mention suggestions, at the caret. */}
@@ -1407,8 +1664,7 @@ export function Composer({
                 e.target.value = '';
               }}
             />
-            </>
-          )}
+          </div>
         </div>
       </div>
     </>

@@ -44,7 +44,7 @@ export function AppShell({
   railFooter,
   railHeader,
 }: {
-  scope: 'platform' | 'organisation' | 'mail' | 'family' | 'space' | 'calendar' | 'connect';
+  scope: 'platform' | 'organisation' | 'mail' | 'family' | 'space' | 'calendar' | 'connect' | 'hire';
   brand: string;
   sections: NavSection[];
   title?: string;

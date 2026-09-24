@@ -179,6 +179,9 @@ export function organisationNav(): NavSection[] {
           children: [
             { href: '/org/users', label: 'All people' },
             { href: '/org/departments', label: 'Departments' },
+            // Phase 0 of Hire & People (24 Sept 2026).
+            { href: '/org/locations', label: 'Locations' },
+            { href: '/org/designations', label: 'Designations' },
           ],
         },
         { href: '/org/domains', label: 'Domains', icon: <Icon d={PATHS.globe} /> },
@@ -326,6 +329,35 @@ export function connectNav(): NavSection[] {
         { href: '/connect/past', label: 'Past meetings', icon: <Icon d={PATHS.history} colour="#7367f0" /> },
         { href: '/connect/recordings', label: 'Recordings', icon: <Icon d={PATHS.record} colour="#ef4757" /> },
         { href: '/connect/minutes', label: 'Minutes', icon: <Icon d={PATHS.notes} colour="#f0a020" /> },
+      ],
+    },
+  ];
+}
+
+// ============================================================================
+//  Hire — recruitment (R1, 24 September 2026).
+//
+//  NOT IN THE LAUNCHER YET. There is no RAIL_PRODUCTS entry on purpose: the
+//  product row is is_available=false, and a tile would put Hire in every
+//  customer's app grid before Amit has decided to launch it. Admins reach it
+//  at /hire directly until then. Add the tile in the commit that launches it.
+// ============================================================================
+export function hireNav({ showTeam, showCareers = false }: { showTeam: boolean; showCareers?: boolean }): NavSection[] {
+  return [
+    {
+      heading: 'Hire',
+      items: [
+        { href: '/hire/jobs', label: 'Job openings', icon: <Icon d={PATHS.notes} colour="#7367f0" /> },
+        { href: '/hire/jobs/new', label: 'New job opening', icon: <Icon d={PATHS.compose} colour="#6C3CE9" /> },
+        // Administrators change the team; recruiters may see who is on it.
+        // Hiring managers see neither — it is not their question.
+        ...(showTeam
+          ? [{ href: '/hire/team', label: 'Team', icon: <Icon d={PATHS.users} colour="#00b8d9" /> }]
+          : []),
+        // Administrators only: it decides what the public sees.
+        ...(showCareers
+          ? [{ href: '/hire/careers', label: 'Careers page', icon: <Icon d={PATHS.globe} colour="#28c76f" /> }]
+          : []),
       ],
     },
   ];

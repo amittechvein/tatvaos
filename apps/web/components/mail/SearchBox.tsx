@@ -50,8 +50,14 @@ export function SearchBox({
   // elsewhere reads as stuck.
   useEffect(() => {
     if (!open && !help && !advanced) return;
+    // composedPath, not contains(target). Picking an address suggestion in the
+    // advanced form removes that suggestion from the page during React's own
+    // mousedown handling, BEFORE this document listener runs — so the target
+    // is detached, contains() says "outside", and the whole form closed on
+    // the click that filled it in (found driving it with a mouse, 24 Sept
+    // 2026). The path is fixed when the event is dispatched.
     const away = (e: MouseEvent) => {
-      if (box.current && !box.current.contains(e.target as Node)) {
+      if (box.current && !e.composedPath().includes(box.current)) {
         setOpen(false); setHelp(false); setAdvanced(false);
       }
     };

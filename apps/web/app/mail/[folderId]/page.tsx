@@ -15,6 +15,7 @@ import DOMPurify from 'dompurify';
 import { MessageList, type MailListRow } from '@/components/mail/MessageList';
 import { MessageView } from '@/components/mail/MessageView';
 import { Composer, type ComposeMode } from '@/components/mail/Composer';
+import { dockHasRoom, layoutDock } from '@/lib/composerDock';
 import { useMailbox } from '@/components/mail/MailboxSwitcher';
 import { SearchChips } from '@/components/mail/SearchChips';
 import { useMailSearch, useMailSearchHost } from '@/components/mail/MailSearchContext';
@@ -188,9 +189,23 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   // ones dock to its left, Gmail-style. A list, not a boolean: a reply mid-
   // draft should not evict the draft.
   const [composers, setComposers] = useState<
-    { key: number; replyTo: Message | null; mode: ComposeMode }[]
+    // `min` is what the PERSON chose. Windows minimised only to make room are
+    // worked out at render (layoutDock), so they reopen when room comes back.
+    { key: number; replyTo: Message | null; mode: ComposeMode; min: boolean }[]
   >([]);
   const composerKey = useRef(0);
+  // The window that stays open when room runs short: the last one opened or
+  // restored. Everything older folds to a title strip first.
+  const [dockFocus, setDockFocus] = useState<number | null>(null);
+  // The browser's width in CSS px, which is NOT the screen's — Windows at 125%
+  // turns a 1920px laptop into a 1536px browser. Measured, never assumed.
+  const [viewportW, setViewportW] = useState(1920);
+  useEffect(() => {
+    const read = () => setViewportW(window.innerWidth);
+    read();
+    window.addEventListener('resize', read);
+    return () => window.removeEventListener('resize', read);
+  }, []);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const searchParams = useSearchParams();
@@ -841,12 +856,17 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
       //  message switches mode in place — the recipients are recomputed by
       //  the composer (see the effect on `mode`) and anything already typed
       //  survives, which is the whole reason for not remounting it.
-      //  Only reply ↔ reply all switches in place. FORWARD is a different
-      //  message — different subject, no recipients, and often sent while a
-      //  reply is still being written — so it gets its own composer.
-      const isAnswer = (x: ComposeMode) => x === 'reply' || x === 'replyAll';
-      const already = m !== null && isAnswer(m2)
-        ? prev.findIndex((c) => isAnswer(c.mode) && c.replyTo?.id === m.id)
+      //  FORWARD TOO, from 24 September. It used to be excluded — "a
+      //  different message, often sent while a reply is still being
+      //  written" — and so Reply then Forward left two boxes in the same
+      //  message, each with its own Send. Amit: "fix reply and forward both
+      //  open in diff window". Gmail has one response box per message with
+      //  a type switch, and that is what this is now: the composer moves the
+      //  recipients, the subject (while it is still the automatic one) and
+      //  the quote's heading, and keeps every word typed.
+      const isResponse = (x: ComposeMode) => x === 'reply' || x === 'replyAll' || x === 'forward';
+      const already = m !== null && isResponse(m2)
+        ? prev.findIndex((c) => isResponse(c.mode) && c.replyTo?.id === m.id)
         : -1;
       if (already >= 0) {
         if (prev[already]!.mode === m2) return prev;
@@ -855,12 +875,21 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
         return next;
       }
 
-      // Three is what a 1080p-wide window fits. The fourth request is
-      // ignored rather than evicting someone's half-written draft.
-      if (prev.length >= 3) return prev;
+      // A request that does not fit is ignored rather than evicting someone's
+      // half-written draft. "Fits" is measured against this browser's width,
+      // with the other windows minimised (see lib/composerDock.ts) — it used
+      // to be a flat three, which overflowed a 1536px browser.
+      // A reply to the open message sits in the conversation, not the dock,
+      // so it needs no room there.
+      const inline = (x: { mode: ComposeMode; replyTo: Message | null }) =>
+        x.mode !== 'new' && x.replyTo !== null && open !== null && x.replyTo.id === open.id;
+      if (!inline({ mode: m2, replyTo: m })
+        && !dockHasRoom(prev.filter((c) => !inline(c)).length, viewportW)) return prev;
       composerKey.current += 1;
-      return [...prev, { key: composerKey.current, replyTo: m, mode: m2 }];
+      return [...prev, { key: composerKey.current, replyTo: m, mode: m2, min: false }];
     });
+    // The newest window is the one kept open; a restore elsewhere moves it.
+    setDockFocus(null);
   }
 
   const downloadAttachment = (messageId: string, attachmentId: string, filename: string) =>
@@ -963,6 +992,15 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     (c) => c.mode !== 'new' && c.replyTo !== null && open !== null && c.replyTo.id === open.id,
   );
   const dockedComposers = composers.filter((c) => !inlineComposers.includes(c));
+  // Kept open: the restored window if it is still docked, else the newest one
+  // the person has not minimised themselves.
+  const keepIdx = (() => {
+    const f = dockedComposers.findIndex((c) => c.key === dockFocus && !c.min);
+    if (f >= 0) return f;
+    for (let i = dockedComposers.length - 1; i >= 0; i--) if (!dockedComposers[i]!.min) return i;
+    return -1;
+  })();
+  const dock = layoutDock(dockedComposers.map((c) => c.min), keepIdx, viewportW);
 
   const rangeStart = total === 0 ? 0 : skip + 1;
   // `filtered`, not `messages`: in conversation view the rows are threads and
@@ -1396,6 +1434,14 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
         <Composer
           key={c.key}
           offset={i}
+          right={dock.right[i]}
+          minimised={dock.minimised[i]}
+          onMinimisedChange={(min) => {
+            setComposers((prev) => prev.map((x) => (x.key === c.key ? { ...x, min } : x)));
+            // Restoring one makes it the window that stays open; the others
+            // fold away to make its room if they have to.
+            if (!min) setDockFocus(c.key);
+          }}
           replyTo={c.replyTo}
           mode={c.mode}
           selfAddress={mailbox.address}

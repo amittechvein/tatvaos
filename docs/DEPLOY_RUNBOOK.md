@@ -118,6 +118,16 @@ throughout. (8 Sept: seven silent minutes with the terminal's output lost.)
 > and the person on call will be chasing a check. Exclude the server's own
 > address from that alert, or expect one 429 per deploy.
 
+> **Never put a CDN in front without reconfiguring every rate limiter in
+> the same change.** Every limiter in `apps/api/Program.cs` keys on the
+> *rightmost* `X-Forwarded-For` entry, which is the real client only because
+> Caddy is the one proxy in front. Behind Cloudflare or any CDN, the rightmost
+> entry becomes the CDN's own address, so every visitor shares one bucket. The
+> public careers page (120 reads a minute) would then be down for everyone at
+> once. Whoever adds a CDN switches the limiters to the CDN's client-IP header,
+> trusted only from the CDN's published ranges (Mr. Singh, 24 Sept 2026,
+> PR 275).
+
 The deploy runs `verify-live.sh` itself and refuses to report success if it
 fails, so `production deployed` is a real verdict, not an inference.
 

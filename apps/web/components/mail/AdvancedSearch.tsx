@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { ContactPicker } from '@/components/family/ContactPicker';
 
 /**
  * Advanced search — the form that writes the query for you.
@@ -88,13 +89,25 @@ export function AdvancedSearch({
     // at 375px), so there it is pinned 1rem in from each side, one column.
     <div className="fixed inset-x-4 top-[5rem] z-30 max-h-[calc(100vh-6rem)] overflow-y-auto rounded-2xl border border-line bg-surface p-4 shadow-raised sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 sm:max-h-none sm:w-[33rem] sm:max-w-[calc(100vw-2rem)] sm:overflow-visible">
       <div className="grid grid-cols-1 gap-x-3 gap-y-3.5 sm:grid-cols-2">
+        {/* Same suggestions as the composer's To line (contacts and
+            colleagues, after two typed letters), one address per field. */}
         <div>
           <span className={label}>From</span>
-          <input value={from} onChange={(e) => setFrom(e.target.value)} className={field} placeholder="Name or email" />
+          <ContactPicker value={from} onPick={setFrom} single>
+            {(ref, onKeyDown) => (
+              <input ref={ref} value={from} onChange={(e) => setFrom(e.target.value)} onKeyDown={onKeyDown}
+                     className={field} placeholder="Name or email" autoComplete="off" />
+            )}
+          </ContactPicker>
         </div>
         <div>
           <span className={label}>To</span>
-          <input value={to} onChange={(e) => setTo(e.target.value)} className={field} placeholder="Name or email" />
+          <ContactPicker value={to} onPick={setTo} single>
+            {(ref, onKeyDown) => (
+              <input ref={ref} value={to} onChange={(e) => setTo(e.target.value)} onKeyDown={onKeyDown}
+                     className={field} placeholder="Name or email" autoComplete="off" />
+            )}
+          </ContactPicker>
         </div>
         <div>
           <span className={label}>Subject</span>

@@ -177,6 +177,256 @@ run_as postgres "
     DELETE FROM connect.meetings
      WHERE title IN ('iso-techvein','iso-school','forged-by-isolation-test');" >/dev/null 2>&1
 
+hdr "Locations and designations are isolated (Hire & People, Phase 0)"
+
+# Fixture as postgres (bypasses RLS), asserted as tatvaos_app, removed at the
+# end - the Connect pattern above. One row per tenant per table.
+run_as postgres "
+    INSERT INTO core.locations (tenant_id, name) VALUES
+        ('$TECHVEIN','iso-loc-techvein'), ('$SCHOOL','iso-loc-school')
+    ON CONFLICT DO NOTHING;
+    INSERT INTO core.designations (tenant_id, title) VALUES
+        ('$TECHVEIN','iso-des-techvein'), ('$SCHOOL','iso-des-school')
+    ON CONFLICT DO NOTHING;" >/dev/null 2>&1
+
+for pair in "core.locations:name:iso-loc" "core.designations:title:iso-des"; do
+    tbl=${pair%%:*}; rest=${pair#*:}; col=${rest%%:*}; pfx=${rest#*:}
+
+    # The subject happened: the fixture is really there, and the owner sees it.
+    # Without this every "0 leaked" below would pass on an empty table.
+    own=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM $tbl WHERE $col = '$pfx-techvein'")
+    [ "${own:-0}" -eq 1 ] && pass "$tbl: Techvein sees its own row" \
+                          || fail "$tbl: Techvein cannot see its own row (got '${own}') - fixture or RLS too strict"
+
+    leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM $tbl WHERE tenant_id = '$SCHOOL'")
+    [ "${leak:-1}" -eq 0 ] && pass "$tbl: Techvein cannot see ABC School's rows" \
+                           || fail "LEAK: $tbl shows $leak ABC School row(s) to Techvein"
+
+    leak=$(as_tenant "$SCHOOL" "SELECT count(*) FROM $tbl WHERE $col = '$pfx-techvein'")
+    [ "${leak:-1}" -eq 0 ] && pass "$tbl: ABC School cannot see Techvein's row" \
+                           || fail "LEAK: $tbl shows a Techvein row to ABC School"
+
+    n=$(no_context "SELECT count(*) FROM $tbl")
+    [ "${n:-1}" -eq 0 ] && pass "$tbl: no tenant context returns zero rows" \
+                        || fail "DANGEROUS: $tbl shows ${n} row(s) with no tenant set"
+
+    empty=$(scalar_as tatvaos_app "SET app.tenant_id = ''; SELECT count(*) FROM $tbl")
+    [ "${empty:-x}" = "0" ] && pass "$tbl: empty tenant string returns zero, does not throw" \
+                            || fail "$tbl: empty app.tenant_id did not return 0 (got '${empty}') - check the nullif()"
+
+    # An UPDATE aimed across the boundary must touch nothing. Read back as
+    # postgres, so RLS cannot hide a row that was in fact changed.
+    run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
+        UPDATE $tbl SET $col = '$pfx-hijacked' WHERE tenant_id = '$SCHOOL';" >/dev/null 2>&1
+    hij=$(scalar_as postgres "SELECT count(*) FROM $tbl WHERE $col = '$pfx-hijacked'")
+    [ "${hij:-1}" -eq 0 ] && pass "$tbl: cross-tenant UPDATE changed nothing" \
+                          || fail "LEAK: Techvein renamed an ABC School row in $tbl"
+
+    forge_out=$(run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
+        INSERT INTO $tbl (tenant_id, $col) VALUES ('$SCHOOL', '$pfx-forged');" 2>&1)
+    forge_rc=$?
+    if [ "$forge_rc" -ne 0 ] && printf '%s' "$forge_out" | grep -qi 'row-level security'; then
+        pass "$tbl: cross-tenant INSERT blocked by WITH CHECK"
+    else
+        fail "LEAK: Techvein wrote a $tbl row tagged as ABC School - WITH CHECK is missing"
+    fi
+
+    # Names are unique per organisation ignoring case and outer spaces. The
+    # refusal must be the unique index, not some other error.
+    dup_out=$(run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
+        INSERT INTO $tbl (tenant_id, $col) VALUES ('$TECHVEIN', '  ISO-${pfx#iso-}-TECHVEIN ');" 2>&1)
+    if printf '%s' "$dup_out" | grep -qi 'duplicate key'; then
+        pass "$tbl: same name in a different case is refused"
+    else
+        fail "$tbl: a case-variant duplicate was accepted or failed for another reason"
+    fi
+done
+
+run_as postgres "
+    DELETE FROM core.locations    WHERE name  LIKE 'iso-loc-%' OR lower(btrim(name))  LIKE 'iso-loc-%';
+    DELETE FROM core.designations WHERE title LIKE 'iso-des-%' OR lower(btrim(title)) LIKE 'iso-des-%';" >/dev/null 2>&1
+
+hdr "Hire job openings are isolated, and cannot point into another organisation"
+
+# Fixture as postgres. The School location exists so a Techvein job can TRY
+# to name it below. Drafts, so no slug: since 24 Sept a slug exists only once
+# a job is published (ck_job_slug_at_publish). The first run after that rule
+# went red on "sees its own job" when this fixture still carried slugs and
+# was refused — the guard doing its job, not a leak.
+run_as postgres "
+    INSERT INTO core.locations (id, tenant_id, name) VALUES
+        ('0a000000-0000-0000-0000-0000000000a1','$SCHOOL','iso-job-loc-school')
+    ON CONFLICT DO NOTHING;
+    INSERT INTO hire.job_openings (id, tenant_id, title) VALUES
+        ('0b000000-0000-0000-0000-0000000000b1','$TECHVEIN','iso-job-techvein'),
+        ('0b000000-0000-0000-0000-0000000000b2','$SCHOOL','iso-job-school')
+    ON CONFLICT DO NOTHING;" >/dev/null 2>&1
+
+own=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM hire.job_openings WHERE title = 'iso-job-techvein'")
+[ "${own:-0}" -eq 1 ] && pass "Techvein sees its own job opening" \
+                      || fail "Techvein cannot see its own job (got '${own}') - fixture or RLS too strict"
+
+leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM hire.job_openings WHERE tenant_id = '$SCHOOL'")
+[ "${leak:-1}" -eq 0 ] && pass "Techvein cannot see ABC School's job openings" \
+                       || fail "LEAK: $leak ABC School job(s) visible to Techvein"
+
+leak=$(as_tenant "$SCHOOL" "SELECT count(*) FROM hire.job_openings WHERE title = 'iso-job-techvein'")
+[ "${leak:-1}" -eq 0 ] && pass "ABC School cannot see Techvein's job opening" \
+                       || fail "LEAK: a Techvein job is visible to ABC School"
+
+n=$(no_context "SELECT count(*) FROM hire.job_openings")
+[ "${n:-1}" -eq 0 ] && pass "no tenant context returns zero job openings" \
+                    || fail "DANGEROUS: ${n} job opening(s) visible with no tenant set"
+
+empty=$(scalar_as tatvaos_app "SET app.tenant_id = ''; SELECT count(*) FROM hire.job_openings")
+[ "${empty:-x}" = "0" ] && pass "empty tenant string returns zero job openings, does not throw" \
+                        || fail "hire.job_openings: empty app.tenant_id did not return 0 (got '${empty}')"
+
+run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
+    UPDATE hire.job_openings SET title = 'iso-job-hijacked' WHERE tenant_id = '$SCHOOL';" >/dev/null 2>&1
+hij=$(scalar_as postgres "SELECT count(*) FROM hire.job_openings WHERE title = 'iso-job-hijacked'")
+[ "${hij:-1}" -eq 0 ] && pass "cross-tenant job UPDATE changed nothing" \
+                      || fail "LEAK: Techvein renamed an ABC School job"
+
+forge_out=$(run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
+    INSERT INTO hire.job_openings (tenant_id, title) VALUES ('$SCHOOL','iso-job-forged');" 2>&1)
+if [ $? -ne 0 ] && printf '%s' "$forge_out" | grep -qi 'row-level security'; then
+    pass "cross-tenant job INSERT blocked by WITH CHECK"
+else
+    fail "LEAK: Techvein wrote a job tagged as ABC School - WITH CHECK is missing"
+fi
+
+# The references. Run as POSTGRES, which bypasses row-level security, so the
+# only thing that can refuse is the composite (tenant_id, id) foreign key. A
+# plain FK on id alone would accept both of these.
+for ref in "location_id:0a000000-0000-0000-0000-0000000000a1:ABC School's location" \
+           "hiring_manager_id:$(scalar_as postgres "SELECT id FROM core.users WHERE tenant_id = '$SCHOOL' ORDER BY id LIMIT 1"):an ABC School person"
+do
+    col=${ref%%:*}; rest=${ref#*:}; val=${rest%%:*}; what=${rest#*:}
+    if [ -z "$val" ]; then fail "no fixture for '$what' - nothing to test the $col foreign key with"; continue; fi
+    out=$(run_as postgres "UPDATE hire.job_openings SET $col = '$val'
+                            WHERE id = '0b000000-0000-0000-0000-0000000000b1';" 2>&1)
+    if printf '%s' "$out" | grep -qi 'foreign key'; then
+        pass "a Techvein job cannot name $what ($col), even bypassing RLS"
+    else
+        fail "LEAK: a Techvein job was allowed to name $what ($col)"
+    fi
+done
+
+run_as postgres "
+    DELETE FROM hire.job_openings WHERE title LIKE 'iso-job-%';
+    DELETE FROM core.locations WHERE name = 'iso-job-loc-school';" >/dev/null 2>&1
+
+hdr "Hire teams are isolated, and cannot contain another organisation's people"
+
+T_USER=$(scalar_as postgres "SELECT id FROM core.users WHERE tenant_id = '$TECHVEIN' ORDER BY id LIMIT 1")
+S_USER=$(scalar_as postgres "SELECT id FROM core.users WHERE tenant_id = '$SCHOOL' ORDER BY id LIMIT 1")
+run_as postgres "
+    INSERT INTO hire.team_members (tenant_id, user_id, role) VALUES
+        ('$TECHVEIN','$T_USER','recruiter'), ('$SCHOOL','$S_USER','recruiter')
+    ON CONFLICT DO NOTHING;" >/dev/null 2>&1
+
+own=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM hire.team_members WHERE user_id = '$T_USER'")
+[ "${own:-0}" -eq 1 ] && pass "Techvein sees its own team member" \
+                      || fail "Techvein cannot see its own team member (got '${own}') - fixture or RLS too strict"
+
+leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM hire.team_members WHERE tenant_id = '$SCHOOL'")
+[ "${leak:-1}" -eq 0 ] && pass "Techvein cannot see ABC School's hiring team" \
+                       || fail "LEAK: $leak ABC School team member(s) visible to Techvein"
+
+n=$(no_context "SELECT count(*) FROM hire.team_members")
+[ "${n:-1}" -eq 0 ] && pass "no tenant context returns zero team members" \
+                    || fail "DANGEROUS: ${n} team member(s) visible with no tenant set"
+
+# The privilege-escalation shape: Techvein's admin writing a row that makes
+# someone a recruiter in ABC School. WITH CHECK must refuse it.
+forge_out=$(run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
+    INSERT INTO hire.team_members (tenant_id, user_id, role) VALUES ('$SCHOOL','$S_USER','hiring_manager')
+    ON CONFLICT (tenant_id, user_id) DO UPDATE SET role = 'hiring_manager';" 2>&1)
+if [ $? -ne 0 ] && printf '%s' "$forge_out" | grep -qi 'row-level security'; then
+    pass "cross-tenant team write blocked by WITH CHECK"
+else
+    fail "LEAK: Techvein wrote into ABC School's hiring team - WITH CHECK is missing"
+fi
+
+# As postgres (bypasses RLS): only the composite FK can refuse an ABC School
+# person on Techvein's team.
+out=$(run_as postgres "INSERT INTO hire.team_members (tenant_id, user_id, role)
+                       VALUES ('$TECHVEIN','$S_USER','recruiter');" 2>&1)
+if [ -z "$S_USER" ]; then fail "no ABC School person to test the team foreign key with"
+elif printf '%s' "$out" | grep -qi 'foreign key'; then pass "Techvein's team cannot contain an ABC School person, even bypassing RLS"
+else fail "LEAK: an ABC School person was put on Techvein's hiring team"; fi
+
+run_as postgres "DELETE FROM hire.team_members WHERE user_id IN ('$T_USER','$S_USER');" >/dev/null 2>&1
+
+hdr "Hire careers sites are isolated, and the public resolver fails closed"
+
+run_as postgres "
+    INSERT INTO hire.careers_sites (tenant_id, slug, display_name, erasure_contact, is_enabled) VALUES
+        ('$TECHVEIN','iso-careers-t','iso-careers-t','p@t.example',true),
+        ('$SCHOOL','iso-careers-s','iso-careers-s','p@s.example',true)
+    ON CONFLICT DO NOTHING;" >/dev/null 2>&1
+
+own=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM hire.careers_sites WHERE slug = 'iso-careers-t'")
+[ "${own:-0}" -eq 1 ] && pass "Techvein sees its own careers site" \
+                      || fail "Techvein cannot see its own careers site (got '${own}') - fixture or RLS too strict"
+leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM hire.careers_sites WHERE tenant_id = '$SCHOOL'")
+[ "${leak:-1}" -eq 0 ] && pass "Techvein cannot see ABC School's careers site" \
+                       || fail "LEAK: ABC School's careers site visible to Techvein"
+n=$(no_context "SELECT count(*) FROM hire.careers_sites")
+[ "${n:-1}" -eq 0 ] && pass "no tenant context returns zero careers sites" \
+                    || fail "DANGEROUS: ${n} careers site(s) visible with no tenant set"
+
+# The resolver is how a stranger reaches a tenant. With the platform switch
+# as the migration leaves it (off), it must answer nothing even for an
+# enabled site.
+sw=$(scalar_as postgres "SELECT coalesce((SELECT value FROM core.platform_settings WHERE key='hire.careers_portal_enabled'),'(missing)')")
+[ "$sw" = "false" ] && pass "the platform switch is off as installed" \
+                    || fail "the platform switch reads '$sw' - it must be installed as false"
+r=$(no_context "SELECT count(*) FROM hire.resolve_careers_site('iso-careers-t')")
+[ "${r:-1}" -eq 0 ] && pass "the public resolver answers nothing while the platform switch is off" \
+                    || fail "DANGEROUS: the careers resolver answered with the platform switch off"
+
+run_as postgres "DELETE FROM hire.careers_sites WHERE slug IN ('iso-careers-t','iso-careers-s');" >/dev/null 2>&1
+
+hdr "SECURITY DEFINER functions cannot be hijacked through their search path"
+
+# Mr. Singh, 24 Sept 2026 (PR 275): a SECURITY DEFINER function runs with its
+# owner's rights and past row-level security; with a mutable search_path,
+# anyone who can create an object in a schema on that path can have their
+# code run with those rights. Two things make that impossible, and both are
+# checked across EVERY such function, not only the careers resolver:
+#   1. every SECURITY DEFINER function pins search_path;
+#   2. no application role can CREATE in any schema — so there is nowhere to
+#      plant a lookalike even if a path were wrong.
+# Audited by hand the same day: 43 functions, all pinned; eight Connect
+# functions omit pg_temp, but every table they name is schema-qualified, so a
+# temporary table has nothing to shadow (reported to Mr. Singh as hygiene).
+n=$(scalar_as postgres "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                         WHERE p.prosecdef AND n.nspname NOT IN ('pg_catalog','information_schema')
+                           AND NOT coalesce(array_to_string(p.proconfig, ';'), '') ~ 'search_path='")
+total=$(scalar_as postgres "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                             WHERE p.prosecdef AND n.nspname NOT IN ('pg_catalog','information_schema')")
+[ "${total:-0}" -ge 10 ] && [ "${n:-1}" -eq 0 ] \
+    && pass "all ${total} SECURITY DEFINER functions pin their search_path" \
+    || fail "DANGEROUS: ${n:-?} of ${total:-?} SECURITY DEFINER function(s) have no pinned search_path"
+
+c=$(scalar_as postgres "SELECT count(*) FROM pg_namespace n CROSS JOIN pg_roles r
+                         WHERE r.rolname IN ('tatvaos_app','tatvaos_mailedge')
+                           AND n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema'
+                           AND has_schema_privilege(r.oid, n.oid, 'CREATE')")
+pub=$(scalar_as postgres "SELECT count(*) FROM pg_namespace n
+                           WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema'
+                             AND has_schema_privilege('public', n.oid, 'CREATE')")
+[ "${c:-1}" -eq 0 ] && [ "${pub:-1}" -eq 0 ] \
+    && pass "no application role (and not PUBLIC) can create objects in any schema" \
+    || fail "DANGEROUS: application roles can CREATE in ${c:-?} schema(s), PUBLIC in ${pub:-?}"
+
+path=$(scalar_as postgres "SELECT array_to_string(proconfig, ';') FROM pg_proc WHERE oid = 'hire.resolve_careers_site(text)'::regprocedure")
+[ "$path" = "search_path=pg_catalog,hire,core,pg_temp" ] \
+    && pass "the public careers resolver searches pg_catalog first and pg_temp last" \
+    || fail "the careers resolver's path is '$path'"
+
 hdr "Sign-in handoff codes are isolated, and the redeem reaches no further than one row"
 
 # Decision 0003. This table is unusual and so is its test: the REDEEM is
