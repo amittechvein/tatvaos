@@ -22,6 +22,11 @@
 #  10. an employee gets 403; ANOTHER organisation's admin gets 404 on every
 #      verb, and the row is unchanged afterwards
 #  11. the list: counts per status, the status filter, the title search
+#  12. the hiring team (Amit, 24 Sept): a recruiter sees and manages every
+#      job but cannot change the team; a hiring manager sees ONLY jobs that
+#      name them (others 404), cannot name or hand over to anyone else, and
+#      loses a job the moment it is handed to someone else; removal ends
+#      access; another organisation cannot touch the team
 #  13. deleting a department warns how many openings name it first, blanks
 #      their department, and writes job.department_cleared on each job
 #
@@ -35,6 +40,12 @@
 #    still said "does not exist". So step 3 is evidence that SOME layer holds,
 #    not that the query filter does; the database FK is a third layer, proven
 #    separately in tests/isolation (run as postgres, which bypasses RLS).
+#  * HireAccess.Jobs() WIDENED to return every job for a hiring manager ->
+#    exactly the five step-12 hiring-manager visibility checks go red (open,
+#    status, list, count, and the handed-over job). This is the quiet failure
+#    HireAccess warns about; these five are what would catch it.
+#  * TEAM CHANGES ALLOWED TO RECRUITERS -> exactly "a recruiter cannot change
+#    the team" goes red.
 #  * SLUG MADE AT CREATE (5 chars) + ck_job_slug_at_publish DROPPED -> the
 #    two "a draft has no public address" checks go red showing
 #    "...-replacing-sharma-...", the shape check goes red on 5 characters,
@@ -315,6 +326,57 @@ same "counts carry every status" "$(jq_ "$(body "$r")" "','.join(sorted(d['count
 r=$(call "$TOKEN" GET "/hire/jobs?status=draft&q=Platform%20Engineer%20$RUN")
 same "the draft tab does not show an open job" "$(jq_ "$(body "$r")" "len(d['jobs'])")" "0"
 expect "an unknown status filter" 400 "$(call "$TOKEN" GET "/hire/jobs?status=everything")"
+
+step "12. The hiring team"
+# Audit rows are counted from HERE, not by time: a time window made two runs
+# in ten minutes see each other's rows (found on the calibration run).
+AUDIT_FLOOR=$(PG "SELECT coalesce(max(id),0) FROM core.audit_logs")
+me_of() { jq_ "$(body "$(call "$1" GET /hire/me)")" "d['access']"; }
+same "not on the team: /hire/me says none" "$(me_of "$EMP")" "none"
+same "an administrator needs no team row" "$(me_of "$TOKEN")" "admin"
+expect "an unknown team role" 400 "$(call "$TOKEN" PUT /hire/team/$EMPLOYEE_ID '{"role":"boss"}')" "recruiter or hiring manager"
+expect "ABC School's admin adding a Techvein person to a team" 404 \
+    "$(call "$OTHER" PUT /hire/team/$EMPLOYEE_ID '{"role":"recruiter"}')" "not in this organisation"
+same "and ABC School's team did not gain them" "$(PG "SELECT count(*) FROM hire.team_members WHERE user_id='$EMPLOYEE_ID' AND tenant_id='$SCHOOL'")" "0"
+
+expect "admin makes the employee a recruiter" 200 "$(call "$TOKEN" PUT /hire/team/$EMPLOYEE_ID '{"role":"recruiter"}')"
+same "/hire/me says recruiter" "$(me_of "$EMP")" "recruiter"
+r=$(call "$EMP" GET "/hire/jobs?status=all&q=Platform%20Engineer%20$RUN")
+same "a recruiter sees the admin's job" "$(jq_ "$(body "$r")" "[x['id'] for x in d['jobs']][0]")" "$JOB"
+expect "a recruiter creates a job" 201 "$(call "$EMP" POST /hire/jobs "{\"title\":\"Recruiter job $RUN\"}")"
+expect "a recruiter can list the team" 200 "$(call "$EMP" GET /hire/team)"
+expect "a recruiter cannot change the team" 403 "$(call "$EMP" PUT /hire/team/$EMPLOYEE_ID '{"role":"recruiter"}')" "only an administrator"
+expect "nor remove anyone from it" 403 "$(call "$EMP" DELETE /hire/team/$EMPLOYEE_ID)"
+
+expect "admin makes them a hiring manager instead" 200 "$(call "$TOKEN" PUT /hire/team/$EMPLOYEE_ID '{"role":"hiring_manager"}')"
+same "/hire/me says hiring_manager" "$(me_of "$EMP")" "hiring_manager"
+expect "a hiring manager cannot open a job that names someone else" 404 "$(call "$EMP" GET /hire/jobs/$JOB)"
+expect "nor change its status" 404 "$(call "$EMP" POST /hire/jobs/$JOB/status '{"status":"on_hold"}')"
+r=$(call "$EMP" GET "/hire/jobs?status=all&q=$RUN")
+same "and does not see it in the list" "$(jq_ "$(body "$r")" "str('$JOB' in [x['id'] for x in d['jobs']])")" "False"
+same "nor count it" "$(jq_ "$(body "$r")" "sum(d['counts'].values())")" "$(PG "SELECT count(*) FROM hire.job_openings WHERE hiring_manager_id='$EMPLOYEE_ID'")"
+r=$(call "$EMP" POST /hire/jobs "{\"title\":\"HM job $RUN\",\"description\":\"Mine.\",\"locationId\":\"$LOC2\"}")
+expect "a hiring manager creates a job" 201 "$r"
+HMJOB=$(jq_ "$(body "$r")" "d['id']")
+same "which names them as its hiring manager" "$(jq_ "$(body "$r")" "d['hiringManagerId']")" "$EMPLOYEE_ID"
+expect "naming someone else on a new job" 400 \
+    "$(call "$EMP" POST /hire/jobs "{\"title\":\"x\",\"hiringManagerId\":\"$OWNER_ID\"}")" "jobs you manage yourself"
+expect "handing their own job to someone else" 400 \
+    "$(call "$EMP" PUT /hire/jobs/$HMJOB "{\"title\":\"HM job $RUN\",\"description\":\"Mine.\",\"locationId\":\"$LOC2\",\"hiringManagerId\":\"$OWNER_ID\"}")" "recruiter or an administrator"
+expect "editing their own job" 200 \
+    "$(call "$EMP" PUT /hire/jobs/$HMJOB "{\"title\":\"HM job $RUN\",\"description\":\"Mine, edited.\",\"locationId\":\"$LOC2\",\"hiringManagerId\":\"$EMPLOYEE_ID\"}")"
+expect "publishing their own job" 200 "$(call "$EMP" POST /hire/jobs/$HMJOB/status '{"status":"open"}')"
+expect "a hiring manager cannot see the team" 403 "$(call "$EMP" GET /hire/team)"
+expect "the admin hands the job to someone else" 200 \
+    "$(call "$TOKEN" PUT /hire/jobs/$HMJOB "{\"title\":\"HM job $RUN\",\"description\":\"Mine, edited.\",\"locationId\":\"$LOC2\",\"hiringManagerId\":\"$OWNER_ID\"}")"
+expect "and the former hiring manager can no longer open it" 404 "$(call "$EMP" GET /hire/jobs/$HMJOB)"
+
+expect "removed from the team" 200 "$(call "$TOKEN" DELETE /hire/team/$EMPLOYEE_ID)"
+same "/hire/me says none again" "$(me_of "$EMP")" "none"
+expect "and the job list is refused" 403 "$(call "$EMP" GET /hire/jobs)"
+same "every team change is audited under product hire" \
+    "$(PG "SELECT string_agg(action, ',' ORDER BY id) FROM core.audit_logs WHERE target_id='$EMPLOYEE_ID' AND product_code='hire' AND action LIKE 'hire_team.%' AND id > $AUDIT_FLOOR")" \
+    "hire_team.added,hire_team.changed,hire_team.removed"
 
 step "13. Deleting a department warns first and leaves a trail on each job"
 AUDIT_FLOOR_13=$(PG "SELECT coalesce(max(id),0) FROM core.audit_logs")

@@ -12,9 +12,10 @@ namespace TatvaOS.Api.Modules.Hire;
 /// Job openings — TatvaOS Hire R1 (24 September 2026).
 ///
 /// ─────────────────────────────────────────────────────────────────────────
-///  WHO. Organisation administrators only, for now. Recruiters and hiring
-///  managers who are not admins are a product decision (Amit's) still to
-///  come; widening this group is that decision, not a code tidy-up.
+///  WHO — HireAccess decides (Amit, 24 Sept 2026). Administrators and
+///  recruiters see every job; a hiring manager sees only the jobs that name
+///  them, and anything else answers 404. Every job lookup here starts from
+///  access.Jobs(level); AppDbContext offers no other route (see HireAccess).
 ///
 ///  STATUS IS ITS OWN CALL. Editing a job and publishing it are different
 ///  acts with different consequences — one changes words, the other puts
@@ -51,7 +52,7 @@ public static class JobOpeningEndpoints
     public static void MapJobOpeningEndpoints(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api/hire/jobs")
-            .RequireAuthorization("OrgAdmin")
+            .RequireAuthorization("User")
             .WithTags("Hire");
 
         g.MapGet("/", ListAsync);
@@ -65,14 +66,17 @@ public static class JobOpeningEndpoints
 
     // ------------------------------------------------------------------ list
     private static async Task<IResult> ListAsync(
-        string? status, string? q, AppDbContext db, CancellationToken ct)
+        string? status, string? q, HireAccess access, AppDbContext db, CancellationToken ct)
     {
-        var counts = await db.JobOpenings.AsNoTracking()
+        var level = await access.LevelAsync(ct);
+        if (level == HireLevel.None) return HireAccess.NoAccess();
+
+        var counts = await access.Jobs(level).AsNoTracking()
             .GroupBy(j => j.Status)
             .Select(g => new { Status = g.Key, N = g.Count() })
             .ToDictionaryAsync(x => x.Status, x => x.N, ct);
 
-        var query = db.JobOpenings.AsNoTracking();
+        var query = access.Jobs(level).AsNoTracking();
         if (!string.IsNullOrWhiteSpace(status) && status != "all")
         {
             if (!Statuses.Contains(status))
@@ -115,8 +119,10 @@ public static class JobOpeningEndpoints
     /// only when a job already names one, so editing an older job does not
     /// silently drop its location.
     /// </summary>
-    private static async Task<IResult> OptionsAsync(AppDbContext db, CancellationToken ct)
+    private static async Task<IResult> OptionsAsync(HireAccess access, AppDbContext db, CancellationToken ct)
     {
+        if (await access.LevelAsync(ct) == HireLevel.None) return HireAccess.NoAccess();
+
         var departments = await db.Departments.AsNoTracking()
             .OrderBy(d => d.Name).Select(d => new { d.Id, d.Name }).ToListAsync(ct);
         var designations = await db.OrgDesignations.AsNoTracking()
@@ -137,17 +143,32 @@ public static class JobOpeningEndpoints
     }
 
     // ------------------------------------------------------------------- get
-    private static async Task<IResult> GetAsync(Guid id, AppDbContext db, CancellationToken ct)
+    private static async Task<IResult> GetAsync(Guid id, HireAccess access, CancellationToken ct)
     {
-        var job = await db.JobOpenings.AsNoTracking().FirstOrDefaultAsync(j => j.Id == id, ct);
+        var level = await access.LevelAsync(ct);
+        if (level == HireLevel.None) return HireAccess.NoAccess();
+        var job = await access.Jobs(level).AsNoTracking().FirstOrDefaultAsync(j => j.Id == id, ct);
         return job is null ? Results.NotFound() : Results.Ok(Shape(job));
     }
 
     // ---------------------------------------------------------------- create
     private static async Task<IResult> CreateAsync(
-        SaveJobRequest req, AppDbContext db, TenantContext tenant, AuditWriter audit,
+        SaveJobRequest req, HireAccess access, AppDbContext db, TenantContext tenant, AuditWriter audit,
         CancellationToken ct)
     {
+        var level = await access.LevelAsync(ct);
+        if (level == HireLevel.None) return HireAccess.NoAccess();
+
+        // A hiring manager's own job names them, or they could not open it
+        // again after saving. Left empty, it is filled in; naming someone
+        // else is refused rather than silently overwritten.
+        if (level == HireLevel.HiringManager)
+        {
+            if (req.HiringManagerId is Guid hm && hm != access.UserId)
+                return Results.BadRequest(new { error = "As a hiring manager you can only create jobs you manage yourself." });
+            req = req with { HiringManagerId = access.UserId };
+        }
+
         var job = new JobOpening
         {
             Id = Guid.NewGuid(),
@@ -160,7 +181,7 @@ public static class JobOpeningEndpoints
         var error = await ApplyAsync(job, req, db, isNew: true, ct);
         if (error is not null) return Results.BadRequest(new { error });
 
-        db.JobOpenings.Add(job);
+        access.Add(job);
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("job.created", "job_opening", job.Id.ToString(),
             after: new { job.Title, job.Status }, ct: ct, productCode: Product);
@@ -170,10 +191,17 @@ public static class JobOpeningEndpoints
 
     // ---------------------------------------------------------------- update
     private static async Task<IResult> UpdateAsync(
-        Guid id, SaveJobRequest req, AppDbContext db, AuditWriter audit, CancellationToken ct)
+        Guid id, SaveJobRequest req, HireAccess access, AppDbContext db, AuditWriter audit, CancellationToken ct)
     {
-        var job = await db.JobOpenings.FirstOrDefaultAsync(j => j.Id == id, ct);
+        var level = await access.LevelAsync(ct);
+        if (level == HireLevel.None) return HireAccess.NoAccess();
+        var job = await access.Jobs(level).FirstOrDefaultAsync(j => j.Id == id, ct);
         if (job is null) return Results.NotFound();
+
+        // Handing the job to someone else would lock its hiring manager out
+        // of it mid-edit; that is a recruiter's or an administrator's call.
+        if (level == HireLevel.HiringManager && req.HiringManagerId != access.UserId)
+            return Results.BadRequest(new { error = "Only a recruiter or an administrator can change a job's hiring manager." });
 
         var before = new { job.Title, job.LocationId, job.Vacancies, job.ClosingDate };
 
@@ -193,9 +221,11 @@ public static class JobOpeningEndpoints
 
     // ---------------------------------------------------------------- status
     private static async Task<IResult> ChangeStatusAsync(
-        Guid id, ChangeJobStatusRequest req, AppDbContext db, AuditWriter audit, CancellationToken ct)
+        Guid id, ChangeJobStatusRequest req, HireAccess access, AppDbContext db, AuditWriter audit, CancellationToken ct)
     {
-        var job = await db.JobOpenings.FirstOrDefaultAsync(j => j.Id == id, ct);
+        var level = await access.LevelAsync(ct);
+        if (level == HireLevel.None) return HireAccess.NoAccess();
+        var job = await access.Jobs(level).FirstOrDefaultAsync(j => j.Id == id, ct);
         if (job is null) return Results.NotFound();
 
         var to = req.Status?.Trim() ?? "";
@@ -231,7 +261,7 @@ public static class JobOpeningEndpoints
             // reaches a URL. Reopening keeps the slug it already has.
             if (job.PublishedAt is null)
             {
-                job.Slug = await NewSlugAsync(db, job.Title, ct);
+                job.Slug = await NewSlugAsync(access, job.Title, ct);
                 job.PublishedAt = now;
             }
             job.ClosedReason = null;
@@ -260,9 +290,11 @@ public static class JobOpeningEndpoints
 
     // ---------------------------------------------------------------- delete
     private static async Task<IResult> DeleteAsync(
-        Guid id, AppDbContext db, AuditWriter audit, CancellationToken ct)
+        Guid id, HireAccess access, AppDbContext db, AuditWriter audit, CancellationToken ct)
     {
-        var job = await db.JobOpenings.FirstOrDefaultAsync(j => j.Id == id, ct);
+        var level = await access.LevelAsync(ct);
+        if (level == HireLevel.None) return HireAccess.NoAccess();
+        var job = await access.Jobs(level).FirstOrDefaultAsync(j => j.Id == id, ct);
         if (job is null) return Results.NotFound();
 
         if (job.PublishedAt is not null)
@@ -272,7 +304,7 @@ public static class JobOpeningEndpoints
                       + "anyone who applied must still be able to see what they applied for.",
             });
 
-        db.JobOpenings.Remove(job);
+        access.Remove(job);
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("job.deleted", "job_opening", id.ToString(),
             before: new { job.Title }, ct: ct, productCode: Product);
@@ -423,7 +455,7 @@ public static class JobOpeningEndpoints
     /// else, so it must not be enumerable (Mr. Singh, 24 Sept; it was five).
     /// A title with no latin letters (हिंदी शिक्षक) becomes "job-k3x9qm7rta".
     /// </summary>
-    private static async Task<string> NewSlugAsync(AppDbContext db, string title, CancellationToken ct)
+    private static async Task<string> NewSlugAsync(HireAccess access, string title, CancellationToken ct)
     {
         var stem = Regex.Replace(title.ToLowerInvariant(), "[^a-z0-9]+", "-").Trim('-');
         if (stem.Length > 100) stem = stem[..100].TrimEnd('-');
@@ -435,7 +467,7 @@ public static class JobOpeningEndpoints
             var sb = new StringBuilder(stem).Append('-');
             for (var i = 0; i < 10; i++) sb.Append(alphabet[RandomNumberGenerator.GetInt32(alphabet.Length)]);
             var slug = sb.ToString();
-            if (!await db.JobOpenings.AnyAsync(j => j.Slug == slug, ct)) return slug;
+            if (!await access.SlugTakenAsync(slug, ct)) return slug;
         }
         // Five collisions in a row at 32^10 means something other than
         // chance, and it should be loud.

@@ -317,6 +317,48 @@ run_as postgres "
     DELETE FROM hire.job_openings WHERE title LIKE 'iso-job-%';
     DELETE FROM core.locations WHERE name = 'iso-job-loc-school';" >/dev/null 2>&1
 
+hdr "Hire teams are isolated, and cannot contain another organisation's people"
+
+T_USER=$(scalar_as postgres "SELECT id FROM core.users WHERE tenant_id = '$TECHVEIN' ORDER BY id LIMIT 1")
+S_USER=$(scalar_as postgres "SELECT id FROM core.users WHERE tenant_id = '$SCHOOL' ORDER BY id LIMIT 1")
+run_as postgres "
+    INSERT INTO hire.team_members (tenant_id, user_id, role) VALUES
+        ('$TECHVEIN','$T_USER','recruiter'), ('$SCHOOL','$S_USER','recruiter')
+    ON CONFLICT DO NOTHING;" >/dev/null 2>&1
+
+own=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM hire.team_members WHERE user_id = '$T_USER'")
+[ "${own:-0}" -eq 1 ] && pass "Techvein sees its own team member" \
+                      || fail "Techvein cannot see its own team member (got '${own}') - fixture or RLS too strict"
+
+leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM hire.team_members WHERE tenant_id = '$SCHOOL'")
+[ "${leak:-1}" -eq 0 ] && pass "Techvein cannot see ABC School's hiring team" \
+                       || fail "LEAK: $leak ABC School team member(s) visible to Techvein"
+
+n=$(no_context "SELECT count(*) FROM hire.team_members")
+[ "${n:-1}" -eq 0 ] && pass "no tenant context returns zero team members" \
+                    || fail "DANGEROUS: ${n} team member(s) visible with no tenant set"
+
+# The privilege-escalation shape: Techvein's admin writing a row that makes
+# someone a recruiter in ABC School. WITH CHECK must refuse it.
+forge_out=$(run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
+    INSERT INTO hire.team_members (tenant_id, user_id, role) VALUES ('$SCHOOL','$S_USER','hiring_manager')
+    ON CONFLICT (tenant_id, user_id) DO UPDATE SET role = 'hiring_manager';" 2>&1)
+if [ $? -ne 0 ] && printf '%s' "$forge_out" | grep -qi 'row-level security'; then
+    pass "cross-tenant team write blocked by WITH CHECK"
+else
+    fail "LEAK: Techvein wrote into ABC School's hiring team - WITH CHECK is missing"
+fi
+
+# As postgres (bypasses RLS): only the composite FK can refuse an ABC School
+# person on Techvein's team.
+out=$(run_as postgres "INSERT INTO hire.team_members (tenant_id, user_id, role)
+                       VALUES ('$TECHVEIN','$S_USER','recruiter');" 2>&1)
+if [ -z "$S_USER" ]; then fail "no ABC School person to test the team foreign key with"
+elif printf '%s' "$out" | grep -qi 'foreign key'; then pass "Techvein's team cannot contain an ABC School person, even bypassing RLS"
+else fail "LEAK: an ABC School person was put on Techvein's hiring team"; fi
+
+run_as postgres "DELETE FROM hire.team_members WHERE user_id IN ('$T_USER','$S_USER');" >/dev/null 2>&1
+
 hdr "Sign-in handoff codes are isolated, and the redeem reaches no further than one row"
 
 # Decision 0003. This table is unusual and so is its test: the REDEEM is

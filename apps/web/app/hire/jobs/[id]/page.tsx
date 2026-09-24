@@ -7,6 +7,7 @@ import { Button, Spinner } from '@/components/ui/Kit';
 import { Modal } from '@/components/ui/Modal';
 import { Alert, PageHeader } from '@/components/ui/Page';
 import { useAuth } from '@/lib/auth';
+import { useHireAccess } from '../../HireAccess';
 import { JobForm, type Job, type JobOptions } from '../_components/JobForm';
 import { fmtDate, StatusBadge } from '../_components/JobStatus';
 
@@ -21,7 +22,8 @@ import { fmtDate, StatusBadge } from '../_components/JobStatus';
 // ============================================================================
 
 function JobPage() {
-  const { authedFetch } = useAuth();
+  const { authedFetch, user } = useAuth();
+  const me = useHireAccess();
   const router = useRouter();
   const { id } = useParams<{ id: string }>();
   const justCreated = useSearchParams().get('created') === '1';
@@ -113,7 +115,7 @@ function JobPage() {
     return (
       <>
         <PageHeader title="Job opening not found" breadcrumb={[{ label: 'Job openings', href: '/hire/jobs' }]} />
-        <Alert tone="warn">It may have been deleted, or it belongs to another organisation.</Alert>
+        <Alert tone="warn">It may have been deleted, or it is not one of the jobs you manage.</Alert>
       </>
     );
   }
@@ -168,11 +170,12 @@ function JobPage() {
       {job.status === 'draft' && (
         <Alert tone="info">
           This is a draft. Publishing needs a description and a location; until then only your
-          organisation&apos;s administrators can see it.
+          hiring team can see it.
         </Alert>
       )}
 
       <JobForm key={formKey} job={job} options={options} submitLabel="Save changes"
+               lockHiringManagerTo={me.access === 'hiring_manager' ? user?.id : undefined}
                busy={saving} error={formError} onSubmit={(p) => void save(p)} />
 
       {closing && (
