@@ -307,6 +307,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.Hire.HireApplication>().ToTable("applications", "hire");
         b.Entity<TatvaOS.Api.Modules.Hire.HireApplication>()
             .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Hire.HireSetting>().ToTable("settings", "hire");
+        b.Entity<TatvaOS.Api.Modules.Hire.HireSetting>().HasKey(s => s.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Hire.HireSetting>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<TatvaOS.Api.Modules.Hire.HireApplicationEvent>().ToTable("application_events", "hire");
         b.Entity<TatvaOS.Api.Modules.Hire.HireApplicationEvent>()
             .HasQueryFilter(e => e.TenantId == tenant.TenantId);

@@ -173,6 +173,89 @@ public sealed class HireAccess(AppDbContext db, TenantContext tenant, IHttpConte
     public void AddApplication(HireApplication a) => db.Set<HireApplication>().Add(a);
     public void AddEvent(HireApplicationEvent e) => db.Set<HireApplicationEvent>().Add(e);
 
+    // ------------------------------------------------------------- settings
+
+    /// <summary>The default and the ceiling: 180 days (Amit, 24 Sept 2026).</summary>
+    public const int MaxRetentionDays = 180;
+    /// <summary>The floor: a mistyped "1" must not erase last week's candidates tonight.</summary>
+    public const int MinRetentionDays = 30;
+
+    /// <summary>This organisation's Hire settings, or the defaults if none are saved.</summary>
+    public async Task<HireSetting> SettingsAsync(CancellationToken ct) =>
+        await db.Set<HireSetting>().FirstOrDefaultAsync(ct)
+        ?? new HireSetting { TenantId = tenant.TenantId, RetentionDays = MaxRetentionDays };
+
+    /// <summary>How long a shorter period waits before it applies (Mr. Singh, 24 Sept 2026).</summary>
+    public static readonly TimeSpan ShorteningDelay = TimeSpan.FromDays(7);
+
+    private async Task<HireSetting> SettingsRowAsync(CancellationToken ct)
+    {
+        var row = await db.Set<HireSetting>().FirstOrDefaultAsync(ct);
+        if (row is null)
+        {
+            row = new HireSetting { TenantId = tenant.TenantId, RetentionDays = MaxRetentionDays, UpdatedAt = DateTimeOffset.UtcNow };
+            db.Set<HireSetting>().Add(row);
+        }
+        return row;
+    }
+
+    /// <summary>
+    /// A longer (or equal) period applies at once — it is the safe direction —
+    /// and cancels any shortening that was waiting.
+    /// </summary>
+    public async Task ApplyRetentionNowAsync(int days, CancellationToken ct)
+    {
+        var row = await SettingsRowAsync(ct);
+        row.RetentionDays = days;
+        row.UpdatedBy = tenant.UserId;
+        row.UpdatedAt = DateTimeOffset.UtcNow;
+        ClearPending(row);
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>A shorter period, to apply at <paramref name="effectiveAt"/>.</summary>
+    public async Task ScheduleShorteningAsync(int days, DateTimeOffset effectiveAt, CancellationToken ct)
+    {
+        var row = await SettingsRowAsync(ct);
+        row.PendingRetentionDays = days;
+        row.PendingEffectiveAt = effectiveAt;
+        row.PendingRequestedBy = tenant.UserId;
+        row.PendingRequestedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>Cancels a waiting shortening. True if there was one.</summary>
+    public async Task<bool> CancelShorteningAsync(CancellationToken ct)
+    {
+        var row = await db.Set<HireSetting>().FirstOrDefaultAsync(ct);
+        if (row?.PendingRetentionDays is null) return false;
+        ClearPending(row);
+        await db.SaveChangesAsync(ct);
+        return true;
+    }
+
+    private static void ClearPending(HireSetting row)
+    {
+        row.PendingRetentionDays = null;
+        row.PendingEffectiveAt = null;
+        row.PendingRequestedBy = null;
+        row.PendingRequestedAt = null;
+    }
+
+    /// <summary>
+    /// How many of THIS organisation's candidates a period of
+    /// <paramref name="days"/> would delete at <paramref name="at"/> that the
+    /// current period would not — the number the settings page states before
+    /// anyone confirms. Uses hire.due_candidates(), the sweep's own
+    /// definition, inside the tenant's row-level security.
+    /// </summary>
+    public async Task<int> ShorteningImpactAsync(int days, DateTimeOffset at, CancellationToken ct) =>
+        await db.Database.SqlQuery<int>($@"
+            SELECT count(*)::int AS ""Value""
+              FROM hire.due_candidates({at}, {days}) d
+             WHERE NOT EXISTS (SELECT 1 FROM hire.due_candidates({at}, NULL) x WHERE x.id = d.id)")
+            .SingleAsync(ct);
+
     // -------------------------------------------------------------- pipeline
 
     /// <summary>

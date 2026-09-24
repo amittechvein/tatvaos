@@ -154,6 +154,7 @@ public static class CandidateEndpoints
         {
             Id = Guid.NewGuid(), TenantId = tenant.TenantId, CreatedBy = tenant.UserId,
             CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow,
+            LastEditedAt = DateTimeOffset.UtcNow,
         };
         var error = Apply(c, req);
         if (error is not null) return Results.BadRequest(new { error });
@@ -195,6 +196,9 @@ public static class CandidateEndpoints
         }
 
         c.UpdatedAt = DateTimeOffset.UtcNow;
+        // A person saved the profile: the one thing that restarts the
+        // retention clock for someone never put forward. Viewing does not.
+        c.LastEditedAt = c.UpdatedAt;
         await access.SaveAsync(ct);
         // Which fields changed, never their values: see the class comment.
         await audit.WriteAsync("candidate.updated", "candidate", id.ToString(), ct: ct, productCode: Product);
@@ -369,6 +373,7 @@ public static class CandidateEndpoints
         access.AddEvent(Event(tenant, app.Id, "rejected", app.StageId, app.StageId, reason, now));
         app.Outcome = "rejected";
         app.RejectionReason = reason;
+        app.DecidedAt = now;   // the retention clock starts here
         app.UpdatedAt = now;
         await access.SaveAsync(ct);
         // The reason stays in the Hire tables; the audit row says only that it happened.
@@ -390,6 +395,7 @@ public static class CandidateEndpoints
         access.AddEvent(Event(tenant, app.Id, "withdrawn", app.StageId, app.StageId,
             string.IsNullOrEmpty(reason) ? null : reason, now));
         app.Outcome = "withdrawn";
+        app.DecidedAt = now;   // the retention clock starts here
         app.UpdatedAt = now;
         await access.SaveAsync(ct);
         await audit.WriteAsync("application.withdrawn", "application", id.ToString(), ct: ct, productCode: Product);
@@ -410,6 +416,7 @@ public static class CandidateEndpoints
         access.AddEvent(Event(tenant, app.Id, "reopened", app.StageId, app.StageId, null, now));
         app.Outcome = "active";
         app.RejectionReason = null;
+        app.DecidedAt = null;  // back under consideration: no clock running
         app.UpdatedAt = now;
         await access.SaveAsync(ct);
         await audit.WriteAsync("application.reopened", "application", id.ToString(), ct: ct, productCode: Product);
