@@ -251,41 +251,69 @@ Amit's decision, and the precondition for opening the portal:
 This part needs no ruling beyond Amit's decision; it comes to you as a
 normal PR (migration + a scheduled erasure).
 
-### 8b. Backups — what "deleted" can honestly promise (Mr. Singh, 24 Sept)
+### 8b. Backups — what "deleted" can honestly promise (Mr. Singh, 24–25 Sept)
 
 Mr. Singh's question: any deletion promise that ignores backups is false, so
 someone must know N in "deleted from live systems at six months, and from
-backups within a further N days". Read from the repository on 24 Sept:
+backups within a further N days". **Measured on the production server on
+25 Sept** (read-only: one setting line and file metadata, on Mr. Singh's
+approval; no file contents read):
 
-| Copy | Where | Kept | Source |
+| Copy | Where | Kept | Encrypted |
 |---|---|---|---|
-| Six-hourly backup, local | `/srv/backups/tatvaos/<stamp>/` | **14 days** (`BACKUP_KEEP_DAYS`) | `infra/scripts/backup.sh`, runbook |
-| Six-hourly backup, off-box | object storage, AES-256 | **30 days** (`BACKUP_S3_KEEP_DAYS` as documented) | `docs/runbooks/backup-and-restore.md` |
-| **Pre-deploy full dump** | `backups/pre-deploy-<stamp>.sql` on the server | **Forever, on `main` today** — 313 files / 38.8 GB when Core counted them on 24 Sept | `infra/scripts/deploy.sh` |
+| Six-hourly backup, local | `/srv/backups/tatvaos/` (dir `drwx------ deploy`) | 14 days by the script's default (`BACKUP_KEEP_DAYS`; the server's value not read) | no — local disk |
+| Six-hourly backup, off-box | object storage | **7 days** — `BACKUP_S3_KEEP_DAYS=7` on the server. **The runbook's 30 is wrong.** | AES-256 |
+| **Pre-deploy full copy** | `/srv/tatvaos-production/backups/` | **Forever** — **323 files, 31 GB, the oldest from 4 Aug 2026** (the repository's first day) | **no** — plain `.sql` / gzip |
 
-So **today N is unbounded**: a candidate erased by the sweep survives in every
-pre-deploy dump taken while they existed, indefinitely. Core's open PR #254
-caps those dumps by **count** (the last few), which bounds N only by how often
-we deploy — not a number a notice can state.
+The pre-deploy copies are also **readable by every user on the machine**
+(files `-rw-rw-r--`, directory `drwxrwxr-x`, every parent traversable). Two
+accounts can log in (`root`, `deploy`; `deploy` is in `docker`, so
+root-equivalent) and no container mounts that directory — so today the
+practical readers are whoever holds root or the `deploy` SSH key, plus any
+service account on the host that is ever compromised.
 
-**Not yet verified:** the off-box `BACKUP_S3_KEEP_DAYS` actually set on the
-production server (the runbook shows 30; confirming it is a production read,
-which needs Amit's approval).
+**Mr. Singh's ruling (25 Sept): the cap is by DAYS, not by count** — a count
+makes the period depend on how often we deploy, which no notice can state.
+Pre-deploy copies keep the same fixed window as the regular backups, so there
+is one number. This moves Core's #254 ahead of the Hire queue: it is every
+lane's privacy wording, not only Hire's.
 
-**Proposed, for the lawyer and for you:**
-1. The pre-deploy dumps get a **time** limit, not only a count — e.g. 14 days —
-   so every copy of the database expires on a known schedule. (Core's #254,
-   or a follow-up to it.)
-2. The notice then says, honestly: *"…deleted six months after a decision. Copies
-   in our backups are deleted within a further 30 days."* — with 30 replaced
-   by whatever the longest-lived copy really is once item 1 is done.
-3. Restoring a backup must not resurrect erased people: after any restore,
-   the retention sweep runs before the system is opened to users (it is
-   idempotent and takes seconds). A line in the restore runbook.
+**Proposed with it (for #254 or its follow-up, Core / Mr. Singh):**
+1. Pre-deploy copies deleted after a fixed number of days, matching the
+   regular backups.
+2. Written `0600`, directory `0700` — as the regular backups already are.
+3. Deleting the 323 existing copies is irreversible and removes the only
+   history older than the backup window: **a decision for Amit and Mr. Singh,
+   not a side effect of a deploy.**
+4. Correct the runbook's off-box period from 30 to 7 days.
+
+**For the notice**, once the window above is enforced: *"…deleted six months
+after a decision. Copies in our backups are deleted within a further N days."*
+— N being the longest window any copy is kept (14 if nothing changes the
+local default). Restoring a backup must not resurrect erased people: after
+any restore, the retention sweep runs before the system is opened to users
+(idempotent, seconds) — a line for the restore runbook.
 
 **Questions for the lawyer**, alongside the six months and the 30-day reply:
 does "deleted within a further N days from backups" satisfy DPDP erasure for
-backups we cannot edit row by row; and is N = 30 acceptable.
+backups that cannot be edited row by row; and is that N acceptable.
+
+## Launch checklist (named items — nothing launches until each is done)
+
+Mr. Singh, 25 Sept: "the launch change removes it" is a manual step, and a
+forgotten one fails quietly. So every launch step is named here:
+
+1. Mr. Singh's rulings on §1–§7 implemented; the lawyer has confirmed the
+   six months, the 30-day reply and the backup N (§8b).
+2. Pre-deploy copies capped by days (§8b) — deployed, not only merged.
+3. **Remove `noindex` from `apps/web/app/careers/layout.tsx`.** Until this
+   line goes, search engines are told not to list any careers page, and the
+   product is never found. (The public API keeps its `X-Robots-Tag`: JSON is
+   never a page to index.)
+4. `hire.caddy` / `HIRE_DOMAIN` routing deployed (a deploy-area PR).
+5. The notice wording (§7) signed off by Mr. Singh, with the real N.
+6. Only then: `hire.careers_portal_enabled` set to `true` — the last step,
+   and audited.
 
 ## Order of work
 
