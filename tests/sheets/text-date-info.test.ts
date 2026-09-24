@@ -363,3 +363,10 @@ test('ISFORMULA follows an edit to the cell it looks at', () => {
   wb.set('A1', '=2+3');
   assert.equal(wb.get('B1'), true);
 });
+
+test('HYPERLINK shows its label, or the address when there is none', () => {
+  assert.equal(calc('=HYPERLINK("https://tatvaos.com","Site")'), 'Site');
+  assert.equal(calc('=HYPERLINK("https://tatvaos.com")'), 'https://tatvaos.com');
+  assert.equal(calc('=HYPERLINK("https://x.in",A1)', { A1: '42' }), 42);
+  assert.equal(shown(calc('=HYPERLINK(1/0)')), '#DIV/0!');
+});

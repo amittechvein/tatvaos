@@ -14,8 +14,14 @@ import { SI } from './icons';
 //  function the caret is inside ("SUMIF(range, criterion, [sum_range])").
 // ============================================================================
 
-export function FormulaBar({ address, value, editing, readOnly, onJump, onFocusEdit, onChange, onCommit, onCancel }: {
+export function FormulaBar({ address, value, editing, readOnly, note, onJump, onFocusEdit, onChange, onCommit, onCancel }: {
   address: string;
+  /**
+   * A short warning about this cell, shown INSIDE the bar (a banner below it
+   * would push the grid down and back up as the selection moves — measured:
+   * clicks landed a row off). The full sentence is the label's tooltip.
+   */
+  note?: string | null;
   /** The draft while editing, else the active cell's input. */
   value: string;
   editing: boolean;
@@ -77,6 +83,13 @@ export function FormulaBar({ address, value, editing, readOnly, onJump, onFocusE
           if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
         }}
         className="min-h-[30px] flex-1 resize-none bg-transparent px-2 py-1.5 font-mono text-[13px] leading-5 text-ink outline-none" />
+      {note && (
+        <span role="note" title={note} aria-label={note}
+          className="m-1 flex shrink-0 cursor-help items-center gap-1 self-center rounded-full bg-[#f1f3f4] px-2.5 py-0.5 text-xs text-[#3c4043] dark:bg-canvas dark:text-ink-muted">
+          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" aria-hidden="true"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v6M12 7.5v.5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" /></svg>
+          Saved as text in downloads
+        </span>
+      )}
 
       {editing && (help.names.length > 0 || help.sig) && (
         <div className="absolute left-32 top-full z-40 mt-1 w-[26rem] max-w-[80vw] rounded-lg border border-line bg-surface py-1 text-sm shadow-raised">

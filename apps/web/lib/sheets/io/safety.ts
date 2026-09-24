@@ -12,6 +12,13 @@
 //                   Accepted cost: a sheet NAMED with brackets ("Q1 [draft]")
 //                   cannot be referred to by a formula in the .xlsx copy —
 //                   the formula still works in Sheets; in the file it is text.
+//    HYPERLINK      allowed, but its target must be a quoted "http:",
+//                   "https:" or "mailto:" link (what follows may be joined
+//                   on: "https://…?id="&A2). file: and \server paths make
+//                   Windows sign in to someone else's server and leak the
+//                   person's password hash (Mr. Singh, 25 Sept 2026); a
+//                   target built from a cell cannot be checked, so it too
+//                   stays text.
 //    call-out functions, which fetch from the internet or run code:
 //                   WEBSERVICE, IMPORTDATA/IMPORTXML/IMPORTHTML/IMPORTFEED/
 //                   IMPORTRANGE, RTD, CALL, REGISTER.ID, EXEC, DDE.
@@ -42,11 +49,30 @@ export function formulaIsSafe(formula: string): boolean {
   const bare = outsideStrings(formula.startsWith('=') ? formula.slice(1) : formula);
   if (bare.includes('|')) return false;
   if (bare.includes('[') || bare.includes(']')) return false;
+  if (!hyperlinksAreSafe(formula.startsWith('=') ? formula.slice(1) : formula, bare)) return false;
   const upper = bare.toUpperCase();
   for (const fn of CALL_OUT_FUNCTIONS) {
     // The name as a function call: not preceded by a name character, followed by "(".
     const re = new RegExp(`(^|[^A-Z0-9_.])${fn.replace('.', '\\.')}\\s*\\(`);
     if (re.test(upper)) return false;
+  }
+  return true;
+}
+
+/** Every HYPERLINK( in the formula starts with a quoted http:, https: or mailto: target. */
+function hyperlinksAreSafe(src: string, bare: string): boolean {
+  const re = /(^|[^A-Z0-9_.])HYPERLINK\s*\(/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(bare))) {
+    let i = m.index + m[0].length;
+    while (i < src.length && /\s/.test(src[i]!)) i += 1;
+    if (src[i] !== '"') return false;               // not a literal: cannot be checked
+    let target = '';
+    for (i += 1; i < src.length; i += 1) {
+      if (src[i] === '"') { if (src[i + 1] === '"') { target += '"'; i += 1; continue; } break; }
+      target += src[i];
+    }
+    if (!/^\s*(https?:|mailto:)/i.test(target)) return false;
   }
   return true;
 }

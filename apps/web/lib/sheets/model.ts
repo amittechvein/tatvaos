@@ -762,7 +762,11 @@ export class SheetsModel {
   }
 
   renameSheet(id: string, name: string): string | null {
-    const clean = name.trim().replace(/[[\]:*?/\\]/g, '').slice(0, 100);
+    // Excel cannot store [ ] : * ? / \ in a sheet name, and a formula in the
+    // .xlsx copy may not contain [ ] (safety.ts). Say so while the person is
+    // naming the sheet (Mr. Singh, 25 Sept 2026) — never change it silently.
+    if (/[[\]:*?/\\]/.test(name)) return 'A sheet name cannot contain [ ] : * ? / or \\ — Excel cannot store them.';
+    const clean = name.trim().slice(0, 100);
     if (!clean) return 'A sheet needs a name.';
     const old = this.meta(id)!.name;
     if (clean === old) return null;
@@ -907,10 +911,14 @@ export class SheetsModel {
       const oldIds = mode === 'replace' ? this.sheetIds() : [];
       const renames: [string, string][] = [];
       for (const s of data.sheets) {
-        const want = s.name || 'Sheet';
+        // Excel makes these characters impossible in a real file's sheet
+        // names; a hand-made file may carry them, and they must not reach a
+        // formula (safety.ts). Dropped here, where there is no one to ask.
+        const want = (typeof s.name === 'string' ? s.name.replace(/[[\]:*?/\\]/g, '').trim().slice(0, 100) : '') || 'Sheet';
         // Names from the file must not collide with sheets we are keeping.
         const nm = mode === 'append' ? this.uniqueName(want) : want;
-        if (nm !== want) renames.push([want, nm]);
+        // Formulas in the file name the sheet as the FILE did; follow any change.
+        if (typeof s.name === 'string' && s.name !== nm) renames.push([s.name, nm]);
         const id = this.addSheet(undefined, `__import_${newId()}`, Math.max(s.rows, 1), Math.max(s.cols, 1));
         this.sheetsMap.get(id)!.set('name', nm);
         first ??= id;

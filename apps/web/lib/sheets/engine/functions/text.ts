@@ -90,6 +90,19 @@ function fixedText(n: number, decimals: number, grouped: boolean, prefix: string
 }
 
 export const TEXT: Record<string, FnDef> = {
+  HYPERLINK: {
+    min: 1, max: 2, category: 'Text', sig: 'HYPERLINK(url, [label])',
+    desc: 'A link: the cell shows the label, or the address when there is none.',
+    // The cell's VALUE is the text shown. Which targets may leave in a file
+    // (http, https, mailto only) is decided by io/safety.ts, not here.
+    fn: (a, ctx) => {
+      const url = text(a.get(0), ctx);
+      if (isError(url)) return url;
+      if (a.missing(1)) return url;
+      const label = ctx.scalar(a.get(1));
+      return label === null ? url : label;
+    },
+  },
   CONCATENATE: {
     min: 1, max: Infinity, category: 'Text', sig: 'CONCATENATE(text1, [text2, …])',
     desc: 'Joins text end to end; a range joins every cell in it.',

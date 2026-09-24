@@ -19,6 +19,9 @@ namespace TatvaOS.Api.Modules.Docs;
 ///      macro-enabled content types, any .bin part;
 ///    · reaching outside the file: external-link parts, data connections,
 ///      query tables, and any relationship with TargetMode="External";
+///    · HYPERLINK targets other than a quoted http:, https: or mailto:
+///      link — file: and \\server paths make Windows sign in to someone
+///      else's server and leak the password hash (Mr. Singh, 25 Sept);
 ///    · formulas that call out (same rules as apps/web/lib/sheets/io/
 ///      safety.ts — change both or neither): "|" outside quoted text (DDE),
 ///      "[" or "]" (a reference into another workbook), and WEBSERVICE,
@@ -36,6 +39,8 @@ namespace TatvaOS.Api.Modules.Docs;
 ///  the Yjs content, so it cannot compare. A clean workbook can show ₹5,000
 ///  where the live sheet has ₹50,000. Known limitation, as for Docs' HTML;
 ///  the durable fix is rendering the file on the server from the Yjs state.
+///  Until that is built, Sheets goes to no customer but Techvein — decision
+///  0011 (docs/decisions/0011-docs-and-sheets-before-customers.md).
 ///
 ///  Bounded: at most 10,000 parts, 200 MB uncompressed, 20 MB per XML part
 ///  read — enforced while reading, not taken from the zip's own claims.
@@ -119,6 +124,7 @@ public static partial class XlsxGuard
         // Blank out "quoted text" so no rule fires on text.
         var bare = QuotedText().Replace(f, m => new string(' ', m.Length));
         if (bare.Contains('|') || bare.Contains('[') || bare.Contains(']')) return false;
+        if (!HyperlinksAreSafe(f, bare)) return false;
         var upper = bare.ToUpperInvariant().Replace("_XLFN.", "").Replace("_XLWS.", "");
         foreach (var fn in CallOut)
         {
@@ -126,6 +132,35 @@ public static partial class XlsxGuard
         }
         return true;
     }
+
+    /// <summary>Every HYPERLINK( starts with a quoted http:, https: or mailto: target (safety.ts hyperlinksAreSafe).</summary>
+    private static bool HyperlinksAreSafe(string src, string bare)
+    {
+        foreach (Match m in Hyperlink().Matches(bare))
+        {
+            var i = m.Index + m.Length;
+            while (i < src.Length && char.IsWhiteSpace(src[i])) i++;
+            if (i >= src.Length || src[i] != '"') return false; // not a literal: cannot be checked
+            var target = new StringBuilder();
+            for (i++; i < src.Length; i++)
+            {
+                if (src[i] == '"')
+                {
+                    if (i + 1 < src.Length && src[i + 1] == '"') { target.Append('"'); i++; continue; }
+                    break;
+                }
+                target.Append(src[i]);
+            }
+            if (!AllowedLink().IsMatch(target.ToString())) return false;
+        }
+        return true;
+    }
+
+    [GeneratedRegex(@"(^|[^A-Z0-9_.])(_XLFN\.)?HYPERLINK\s*\(", RegexOptions.IgnoreCase)]
+    private static partial Regex Hyperlink();
+
+    [GeneratedRegex(@"^\s*(https?:|mailto:)", RegexOptions.IgnoreCase)]
+    private static partial Regex AllowedLink();
 
     /// <summary>An XML part as text, counting its REAL size against the total as it is read.</summary>
     private static string? ReadCapped(ZipArchiveEntry e, ref long total)

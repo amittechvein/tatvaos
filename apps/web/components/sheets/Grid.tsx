@@ -28,6 +28,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { lex } from '@/lib/sheets/engine/lexer';
 import { formatValue } from '@/lib/sheets/engine/format';
+import { formulaIsSafe } from '@/lib/sheets/io/safety';
 import { parseCell, norm, type Rect } from '@/lib/sheets/engine/address';
 import type { SheetsModel, Clip } from '@/lib/sheets/model';
 import { Geometry } from './geometry';
@@ -139,6 +140,7 @@ export const Grid = forwardRef<GridHandle, GridProps>(function Grid(props, ref) 
       merges: p.model.merges(p.sheetId),
       locale: p.model.locale(),
       hasComment: p.hasComment,
+      textInDownloads: (r, c) => textInDownloads(p.model.input(p.sheetId, r, c)),
     }, {
       scrollLeft: sc.scrollLeft, scrollTop: sc.scrollTop, width: w, height: h,
       selection: s.rect, active: s.active, rowSel: s.rowSel, colSel: s.colSel,
@@ -702,6 +704,10 @@ export const Grid = forwardRef<GridHandle, GridProps>(function Grid(props, ref) 
             p.onHover({ x: e.clientX, y: e.clientY, text: `${v.code} — ${v.message}` });
             return;
           }
+          if (textInDownloads(p.model.input(p.sheetId, h.r, h.c))) {
+            p.onHover({ x: e.clientX, y: e.clientY, text: TEXT_IN_DOWNLOADS });
+            return;
+          }
         }
         p.onHover(null);
         return;
@@ -894,6 +900,24 @@ export const Grid = forwardRef<GridHandle, GridProps>(function Grid(props, ref) 
 });
 
 // ---------------------------------------------------------------------------
+
+/** Said on hover and under the formula bar for a formula safety.ts keeps out of files. */
+export const TEXT_IN_DOWNLOADS =
+  'This formula works here, but it is saved as plain text in Excel downloads and email attachments, '
+  + 'because it would reach outside the file (a command, another file, a web fetch, or a link that is not http, https or mailto).';
+
+const safeCache = new Map<string, boolean>();
+/** Is this input a formula the .xlsx writer will turn into text? Cached: it runs for every cell painted. */
+export function textInDownloads(input: string | null): boolean {
+  if (!input || !input.startsWith('=') || input.length < 2) return false;
+  let safe = safeCache.get(input);
+  if (safe === undefined) {
+    safe = formulaIsSafe(input);
+    if (safeCache.size > 5000) safeCache.clear();
+    safeCache.set(input, safe);
+  }
+  return !safe;
+}
 
 function range(a: number, b: number): number[] {
   const out: number[] = [];

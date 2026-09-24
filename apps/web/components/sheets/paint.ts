@@ -27,6 +27,8 @@ export interface PaintSource {
   locale: Locale;
   /** Cells with an open comment thread get the orange corner Sheets draws. */
   hasComment?: (r: number, c: number) => boolean;
+  /** Cells whose formula is saved as text in downloads (safety.ts) get a grey corner. */
+  textInDownloads?: (r: number, c: number) => boolean;
 }
 
 export interface Remote { name: string; color: string; rect: Rect; active: { r: number; c: number } }
@@ -189,6 +191,23 @@ function drawRegion(
       const m = covered.get(`${r},${c}`);
       const box = m ? cellRect(g, st, m.r1, m.c1, m.r2, m.c2) : cellRect(g, st, r, c, r, c);
       drawBorders(ctx, box, f, !m || r === m.r1, !m || r === m.r2, !m || c === m.c1, !m || c === m.c2);
+    }
+  }
+
+  // Formulas that go into downloads as text: a grey corner at the bottom
+  // left, so the person who typed it can see it before anyone downloads.
+  if (src.textInDownloads) {
+    ctx.fillStyle = '#80868b';
+    for (let r = r1; r <= r2; r += 1) {
+      for (let c = c1; c <= c2; c += 1) {
+        if (!src.textInDownloads(r, c)) continue;
+        const box = cellRect(g, st, r, c, r, c);
+        ctx.beginPath();
+        ctx.moveTo(box.x, box.y + box.h - 8);
+        ctx.lineTo(box.x, box.y + box.h - 1);
+        ctx.lineTo(box.x + 7, box.y + box.h - 1);
+        ctx.fill();
+      }
     }
   }
 

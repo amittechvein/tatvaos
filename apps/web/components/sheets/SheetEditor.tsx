@@ -26,7 +26,7 @@ import { HistoryPanel } from '@/components/docs/HistoryPanel';
 import { I } from '@/components/docs/icons';
 import '@/components/docs/docs.css';
 
-import { Grid, cellLabel, displayText, type GridHandle, type Selection } from './Grid';
+import { Grid, cellLabel, displayText, textInDownloads, TEXT_IN_DOWNLOADS, type GridHandle, type Selection } from './Grid';
 import { FormulaBar } from './FormulaBar';
 import { SheetsToolbar, NUMBER_FORMATS } from './SheetsToolbar';
 import { SheetTabs } from './SheetTabs';
@@ -905,6 +905,7 @@ function Workspace({ meta, setMeta, provider, model, eventSink }: {
 
       {/* ---- formula bar + grid + side panel -------------------------------- */}
       <FormulaBar address={address} value={draft ?? activeInput} editing={draft !== null} readOnly={!editOk}
+        note={textInDownloads(draft ?? activeInput) ? TEXT_IN_DOWNLOADS : null}
         onJump={jump}
         onFocusEdit={() => { grid.current?.setDraft(activeInput); setDraft(activeInput); }}
         onChange={(t) => { grid.current?.setDraft(t); setDraft(t); }}
@@ -969,7 +970,10 @@ function Workspace({ meta, setMeta, provider, model, eventSink }: {
         <div className="min-w-0 flex-1">
           {ready && (
             <SheetTabs sheets={preview ? preview.model.sheets() : sheets} active={shownSheet} canEdit={editOk}
-              onSelect={(s) => { setSheetId(s); requestAnimationFrame(() => grid.current?.focus()); }}
+              // Clicking the tab that is already open does nothing: focusing the
+              // grid here stole focus from the rename box a double-click opens,
+              // and the new name was typed into a cell (found 25 Sept).
+              onSelect={(s) => { if (s === shownSheet) return; setSheetId(s); requestAnimationFrame(() => grid.current?.focus()); }}
               a={{
                 add: () => setSheetId(model.addSheet(sheetId)),
                 rename: (sid, name) => model.renameSheet(sid, name),
