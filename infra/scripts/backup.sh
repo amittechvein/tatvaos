@@ -3,7 +3,7 @@
 # TatvaOS — the nightly backup
 #
 #   ./infra/scripts/backup.sh            # run it now
-#   ./infra/scripts/backup.sh --install  # install the 02:30 cron entry
+#   ./infra/scripts/backup.sh --install  # install (or update) the cron entry
 #
 # Run ON the production server, from the repo checkout.
 #
@@ -64,6 +64,22 @@ if [ -f "$S3_CONF" ]; then
 fi
 
 KEEP_DAYS="${BACKUP_KEEP_DAYS:-14}"
+# The tiered schedule (backup-tiers.sh): a set every 2 hours, thinned to one
+# per 6 hours after a day and one per day after two, gone after a week. Off
+# unless BACKUP_S3_TIERED=1, so merging this changes nothing on the server
+# until .backup-env and the cron line are changed on purpose.
+TIERED="${BACKUP_S3_TIERED:-}"
+# How many sets stay on THIS disk once a set is safely off the box. Unset =
+# the old rule, KEEP_DAYS days. Twelve sets a day at several GB each would
+# fill the disk within days, so the tiered schedule refuses to install
+# without this.
+LOCAL_KEEP="${BACKUP_LOCAL_KEEP:-}"
+# 0 would delete the set this run has just made; anything not a number would
+# make the prune below do something nobody chose. Refuse both, loudly.
+if [ -n "$LOCAL_KEEP" ] && ! [[ "$LOCAL_KEEP" =~ ^[1-9][0-9]*$ ]]; then
+    printf '[FAIL] BACKUP_LOCAL_KEEP must be a whole number, 1 or more (got "%s")\n' "$LOCAL_KEEP"
+    exit 1
+fi
 # rsync/scp target for off-box copies, e.g. user@host:/backups/tatvaos.
 # Empty means local only — which is a single point of failure, loudly.
 REMOTE="${BACKUP_REMOTE:-}"
@@ -78,21 +94,49 @@ if [ "${1:-}" = "--install" ]; then
     # have failed on the redirect before the script ever ran — silently,
     # every night, which is the worst way for a backup to be broken.
     mkdir -p "$DEST"
-    LINE="30 2 * * * cd $(pwd) && ./infra/scripts/backup.sh >> ${DEST}/backup.log 2>&1"
-    # Idempotent: re-running --install must not stack duplicate entries.
-    if crontab -l 2>/dev/null | grep -Fq 'infra/scripts/backup.sh'; then
-        ok "cron entry already installed"
+    # The schedule follows the retention rule, so the two cannot disagree:
+    # every 2 hours only when the tiered thinning is on, otherwise every 6.
+    # Two-hourly sets under the old 30-day rule would be ~360 sets in the
+    # bucket, far past what the plan includes.
+    if [ "$TIERED" = "1" ]; then
+        if [ -z "$LOCAL_KEEP" ]; then
+            bad "BACKUP_S3_TIERED=1 needs BACKUP_LOCAL_KEEP set too (see the top of this script)"
+            exit 1
+        fi
+        WHEN="30 */2 * * *"; SAID="every 2 hours at half past"
     else
-        (crontab -l 2>/dev/null; echo "$LINE") | crontab -
-        ok "installed: nightly at 02:30, logging to ${DEST}/backup.log"
+        WHEN="30 2,8,14,20 * * *"; SAID="every 6 hours (02:30, 08:30, 14:30, 20:30)"
+    fi
+    LINE="${WHEN} cd $(pwd) && ./infra/scripts/backup.sh >> ${DEST}/backup.log 2>&1"
+    # Idempotent, and it REPLACES an existing entry rather than stacking a
+    # second one — two entries would run two backups at once.
+    old=$(crontab -l 2>/dev/null | grep -F 'infra/scripts/backup.sh')
+    if [ "$old" = "$LINE" ]; then
+        ok "cron entry already installed: $SAID"
+    else
+        [ -n "$old" ] && note "replacing: $old"
+        (crontab -l 2>/dev/null | grep -vF 'infra/scripts/backup.sh'; echo "$LINE") | crontab -
+        ok "installed: $SAID, logging to ${DEST}/backup.log"
     fi
     crontab -l | grep -F 'backup.sh' | sed 's/^/   /'
     exit 0
 fi
 
+mkdir -p "$DEST" || { bad "cannot write $DEST"; exit 1; }
+
+# One backup at a time. At every 2 hours a slow run (a big mail import, a
+# slow bucket) can still be going when the next one starts; two at once would
+# double the disk used and race each other's retention.
+exec 9>"${DEST}/.backup.lock"
+if ! flock -n 9; then
+    bad "the previous backup is still running — this run did nothing"
+    exit 1
+fi
+
 mkdir -p "$OUT" || { bad "cannot write $OUT"; exit 1; }
 
 failed=0
+offbox_ok=0
 
 # ---------------------------------------------------------------------------
 step "Database"
@@ -220,7 +264,9 @@ step "Off-box copy — object storage"
 #  Expected in ${DEST}/.backup-env:
 #      BACKUP_S3_REMOTE='linode:tatvaos-backups'   # rclone remote:bucket
 #      BACKUP_ENC_PASSPHRASE='...'                 # also on paper, offline
-#      BACKUP_S3_KEEP_DAYS=30                      # optional
+#      BACKUP_S3_KEEP_DAYS=30                      # optional; not used when tiered
+#      BACKUP_S3_TIERED=1                          # optional: the 2h/6h/daily schedule
+#      BACKUP_LOCAL_KEEP=2                         # required with BACKUP_S3_TIERED
 # ---------------------------------------------------------------------------
 # (.backup-env is loaded at the top of the script, before any knob is read.)
 
@@ -244,14 +290,45 @@ if [ -n "${BACKUP_S3_REMOTE:-}" ] && [ -n "${BACKUP_ENC_PASSPHRASE:-}" ]; then
             SIZE=$(rclone size --json "$OBJECT" 2>/dev/null | grep -o '"bytes":[0-9]*' | cut -d: -f2)
             if [ -n "$SIZE" ] && [ "$SIZE" -gt 1024 ]; then
                 ok "uploaded ${STAMP}.tar.gz.enc ($((SIZE / 1024 / 1024)) MB) — encrypted, off this machine"
+                offbox_ok=1
             else
                 bad "upload reported success but the object is missing or empty"
                 failed=1
             fi
 
-            # Bucket retention, independent of local retention.
-            rclone delete --min-age "${BACKUP_S3_KEEP_DAYS:-30}d" "$BACKUP_S3_REMOTE" 2>/dev/null
-            note "bucket keeps ${BACKUP_S3_KEEP_DAYS:-30} days"
+            # Bucket retention, independent of local retention — and only
+            # after THIS run's set is proven to be in the bucket. A run whose
+            # upload failed thins nothing.
+            if [ "$offbox_ok" = "1" ] && [ "$TIERED" = "1" ]; then
+                listing=$(rclone lsf --files-only "$BACKUP_S3_REMOTE" 2>/dev/null)
+                if ! printf '%s\n' "$listing" | grep -qxF -- "${STAMP}.tar.gz.enc"; then
+                    # The set just uploaded must be in the listing. If it is
+                    # not, the listing is wrong (failed, truncated) and must
+                    # not be read as "these are all the sets there are".
+                    bad "the bucket listing does not show this run's set — retention skipped"
+                    failed=1
+                else
+                    doomed=$(printf '%s\n' "$listing" | bash ./infra/scripts/backup-tiers.sh 2>"${OUT}.tiers-notes")
+                    sed 's/^/   /' "${OUT}.tiers-notes"; rm -f "${OUT}.tiers-notes"
+                    gone=0
+                    while IFS= read -r obj; do
+                        [ -z "$obj" ] && continue
+                        # One named object at a time — never a recursive
+                        # delete, so nothing else in the bucket can go.
+                        if rclone deletefile "${BACKUP_S3_REMOTE}/${obj}" 2>/dev/null; then
+                            gone=$((gone + 1))
+                        else
+                            warn "could not delete ${obj}"
+                        fi
+                    done <<< "$doomed"
+                    left=$(rclone lsf --files-only "$BACKUP_S3_REMOTE" 2>/dev/null | grep -c '\.tar\.gz\.enc$')
+                    note "tiered: every set for a day, 6-hourly to two days, daily to a week"
+                    note "deleted ${gone}, ${left} set(s) in the bucket"
+                fi
+            elif [ "$offbox_ok" = "1" ]; then
+                rclone delete --min-age "${BACKUP_S3_KEEP_DAYS:-30}d" "$BACKUP_S3_REMOTE" 2>/dev/null
+                note "bucket keeps ${BACKUP_S3_KEEP_DAYS:-30} days"
+            fi
         else
             bad "encrypt/upload FAILED — this backup exists only on this machine"
             failed=1
@@ -276,10 +353,24 @@ fi
 
 # ---------------------------------------------------------------------------
 step "Retention"
-# Only ever prunes inside DEST, and only whole timestamped directories.
-find "$DEST" -mindepth 1 -maxdepth 1 -type d -mtime "+${KEEP_DAYS}" \
-     -exec rm -rf {} + 2>/dev/null
-ok "keeping $KEEP_DAYS days — $(find "$DEST" -mindepth 1 -maxdepth 1 -type d | wc -l) set(s) on disk"
+if [ -n "$LOCAL_KEEP" ] && [ "$offbox_ok" = "1" ]; then
+    # Keep only the newest LOCAL_KEEP sets on this disk. The bucket is the
+    # history; the local sets are for a quick "restore one mailbox" without a
+    # download. Only whole directories named like a stamp, only inside DEST,
+    # and only on a run whose own set is proven off the box — otherwise the
+    # local copies may be the only copies, and the old rule below applies.
+    find "$DEST" -mindepth 1 -maxdepth 1 -type d -regextype posix-extended \
+         -regex '.*/[0-9]{8}-[0-9]{6}' -printf '%f\n' \
+        | sort -r | tail -n "+$((LOCAL_KEEP + 1))" \
+        | while IFS= read -r old; do rm -rf "${DEST:?}/${old}"; done
+    ok "keeping the newest $LOCAL_KEEP set(s) here — $(find "$DEST" -mindepth 1 -maxdepth 1 -type d | wc -l) on disk"
+else
+    [ -n "$LOCAL_KEEP" ] && warn "this set is not proven off the box — keeping $KEEP_DAYS days of local sets, not $LOCAL_KEEP"
+    # Only ever prunes inside DEST, and only whole timestamped directories.
+    find "$DEST" -mindepth 1 -maxdepth 1 -type d -mtime "+${KEEP_DAYS}" \
+         -exec rm -rf {} + 2>/dev/null
+    ok "keeping $KEEP_DAYS days — $(find "$DEST" -mindepth 1 -maxdepth 1 -type d | wc -l) set(s) on disk"
+fi
 
 # ---------------------------------------------------------------------------
 step "Verdict"

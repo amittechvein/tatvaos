@@ -25,7 +25,8 @@ real restore.** The paper copy was verified against a live object on 9 Sept
 
 ## What is backed up
 
-`infra/scripts/backup.sh`, **every six hours** (02:30, 08:30, 14:30, 20:30):
+`infra/scripts/backup.sh`, **every six hours** (02:30, 08:30, 14:30, 20:30) —
+or **every two hours** once the tiered schedule below is switched on:
 
 | artefact | why losing it hurts |
 |---|---|
@@ -35,11 +36,14 @@ real restore.** The paper copy was verified against a live object on 9 Sept
 | `dkimkeys.tar.gz` | small; losing them means re-publishing DNS for every customer domain |
 | `env.txt` | the uncommitted secrets, without which none of the above starts |
 
-So up to **six hours** can be lost, not twenty-four.
+So up to **six hours** can be lost (two, on the tiered schedule), not
+twenty-four.
 
 ## Where the copies live
 
-**Local** — `/srv/backups/tatvaos/<stamp>/`, kept 14 days (`BACKUP_KEEP_DAYS`).
+**Local** — `/srv/backups/tatvaos/<stamp>/`, kept `BACKUP_KEEP_DAYS` days
+(default 14; production 3) — or, when `BACKUP_LOCAL_KEEP` is set, only the
+newest that many sets, and only after the run's own set is proven in the bucket.
 Unencrypted. Fine for "someone deleted a mailbox", useless for "the server is
 gone". The directory is mode 700: the sets contain the whole database and
 everyone's mail in the clear.
@@ -51,8 +55,46 @@ Configured in `/srv/backups/tatvaos/.backup-env`:
 ```bash
 BACKUP_S3_REMOTE='linode:tatvaos-backups'
 BACKUP_ENC_PASSPHRASE='...'                # also on paper, offline
-BACKUP_S3_KEEP_DAYS=30
+BACKUP_S3_KEEP_DAYS=30                     # ignored when BACKUP_S3_TIERED=1
 ```
+
+### The tiered schedule (Amit, 24 Sept 2026)
+
+Off until these two lines are added to `.backup-env` **and** `--install` is
+re-run (it rewrites the cron line to match):
+
+```bash
+BACKUP_S3_TIERED=1
+BACKUP_LOCAL_KEEP=2
+```
+
+| age | kept in the bucket |
+|---|---|
+| under 24 hours | every set (one every 2 hours — 12) |
+| 24 to 48 hours | one per 6-hour slot (about 4) |
+| 2 to 7 days | one per day (about 5) |
+| over 7 days | none |
+
+About 21 sets. Which to delete is decided by `infra/scripts/backup-tiers.sh`
+from the **names** of the objects, and each is deleted by name — never a
+recursive delete, so anything else in the bucket is left alone. It deletes
+nothing on a run whose own upload failed or whose bucket listing does not show
+the set just uploaded, and it never deletes the newest three sets
+(`BACKUP_S3_MIN_KEEP`), so a week-long outage followed by one good run does not
+empty the bucket.
+
+`BACKUP_LOCAL_KEEP` is not optional here: twelve full sets a day would fill the
+server's disk within days. `--install` refuses the two-hourly cron line without
+it. A run takes a lock (`.backup.lock`), so a slow run and the next one never
+overlap — the second says so in the log and does nothing.
+
+Tests, no server needed: `bash infra/scripts/backup-tiers-test.sh` (the rule —
+fourteen simulated days) and `bash infra/scripts/backup-sh-test.sh` (the
+deleting, end to end with fakes; Linux or WSL, it needs `flock`).
+
+`linode:tatvaos-backups-hold` is a **separate** bucket holding one set set
+aside by hand on 24 Sept 2026 (the last set before the mail import). Nothing
+in `backup.sh` touches it.
 
 **`BACKUP_REMOTE` is the legacy rsync hook and is deprecated.** The script
 labels it `Off-box copy — rsync (legacy hook)` and it copies *unencrypted*.
@@ -244,10 +286,11 @@ tests them.
 
 ## Not covered
 
-- **Point-in-time recovery.** These are six-hourly snapshots; up to six hours
-  can be lost. WAL archiving is the upgrade when that stops being acceptable.
+- **Point-in-time recovery.** These are six-hourly (or two-hourly) snapshots;
+  up to that much can be lost. WAL archiving is the upgrade when that stops being acceptable.
 - **Rotation and old secrets.** A rotated credential survives in local sets for
-  14 days and in off-box objects for `BACKUP_S3_KEEP_DAYS`. Rotation is not
+  `BACKUP_KEEP_DAYS` (or the newest `BACKUP_LOCAL_KEEP` sets) and in off-box
+  objects for `BACKUP_S3_KEEP_DAYS` — seven days on the tiered schedule. Rotation is not
   finished when the new secret is live; it is finished when the old one is out
   of reach.
 - **Restoring onto a bare machine.** See the drill section above.
