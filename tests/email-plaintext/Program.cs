@@ -92,6 +92,24 @@ internal static class Program
         Ok("no spaces or control characters (a header must not fold here)",
             !id.Contains(' ') && id.All(c => !char.IsControl(c)));
 
+        Console.WriteLine();
+        Console.WriteLine("  The REAL message on the wire (written by System.Net.Mail itself)");
+        var mime = WriteAndRead(html);
+        var crlf = string.Concat((char)13, (char)10);      // no escapes: a heredoc mangles them
+        var headerEnd = mime.IndexOf(crlf + crlf, StringComparison.Ordinal);
+        var headers = headerEnd > 0 ? mime[..headerEnd] : mime;
+        Ok("it is multipart/alternative", headers.Contains("Content-Type: multipart/alternative"));
+        Ok("EXACTLY ONE text/plain part (it was sent twice on 24 Sept)",
+            CountOf(mime, "Content-Type: text/plain") == 1);
+        Ok("exactly one text/html part", CountOf(mime, "Content-Type: text/html") == 1);
+        Ok("the text part comes BEFORE the html (RFC 2046: least preferred first)",
+            mime.IndexOf("text/plain", StringComparison.Ordinal) < mime.IndexOf("text/html", StringComparison.Ordinal));
+        Ok("a Message-ID on our domain, so nothing invents one",
+            headers.Contains("Message-ID: <") && headers.Contains("@tatvaos.com>"));
+        Ok("marked auto-generated", headers.Contains("Auto-Submitted: auto-generated"));
+        Ok("no List-Unsubscribe on a password email (nothing to turn off)",
+            !headers.Contains("List-Unsubscribe"));
+
         if (Environment.GetEnvironmentVariable("TEXT_PREVIEW") is { Length: > 0 })
         {
             Console.WriteLine();
@@ -104,5 +122,37 @@ internal static class Program
         Console.WriteLine(failed == 0 ? $"  PASS  {passed} assertions" : $"  FAIL  {failed} of {passed + failed} assertions");
         Console.WriteLine();
         return failed == 0 ? 0 : 1;
+    }
+    private static int CountOf(string s, string what)
+    {
+        var n = 0;
+        for (var i = s.IndexOf(what, StringComparison.Ordinal); i >= 0;
+             i = s.IndexOf(what, i + what.Length, StringComparison.Ordinal)) n++;
+        return n;
+    }
+
+    /// <summary>
+    /// The message as bytes, without an SMTP server: System.Net.Mail will
+    /// write it to a directory instead of a socket. This is what three faults
+    /// in one day were hiding from — shape is now testable.
+    /// </summary>
+    private static string WriteAndRead(string htmlBody)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "tatvaos-mail-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            using var client = new System.Net.Mail.SmtpClient
+            {
+                DeliveryMethod = System.Net.Mail.SmtpDeliveryMethod.SpecifiedPickupDirectory,
+                PickupDirectoryLocation = dir,
+            };
+            using var msg = SystemMailMessage.Build(
+                "no_reply@tatvaos.com", "someone@example.com", "A link to choose a new password",
+                htmlBody, html: true);
+            client.Send(msg);
+            return File.ReadAllText(Directory.GetFiles(dir, "*.eml")[0]);
+        }
+        finally { try { Directory.Delete(dir, true); } catch { /* a temp dir */ } }
     }
 }

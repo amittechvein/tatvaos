@@ -56,65 +56,7 @@ public sealed class SystemMailer(
         try
         {
             using var client = new SmtpClient(host, port);
-            using var msg = new MailMessage(sender, to) { Subject = subject };
-
-            // ── BOTH PARTS, ALWAYS ──────────────────────────────────────────
-            //
-            //  Until 24 September 2026 this sent `IsBodyHtml = true` and
-            //  nothing else. Amit reported TatvaOS mail arriving in Gmail's
-            //  spam folder; Gmail's own headers on the message said dkim=pass,
-            //  spf=pass, dmarc=pass — the authentication was perfect, and the
-            //  MESSAGE was the problem. HTML with no text/plain alternative is
-            //  a long-standing spam signal, and it is worse mail besides: a
-            //  text-only client, a watch or a screen reader had nothing.
-            //
-            //  The text is derived from the HTML (HtmlToText), so it cannot
-            //  drift out of date the way a hand-written second copy would.
-            if (html)
-            {
-                var text = HtmlToText.Convert(body);
-                msg.Body = text;
-                msg.IsBodyHtml = false;
-                msg.AlternateViews.Add(
-                    AlternateView.CreateAlternateViewFromString(text, Encoding.UTF8, "text/plain"));
-                msg.AlternateViews.Add(
-                    AlternateView.CreateAlternateViewFromString(body, Encoding.UTF8, "text/html"));
-            }
-            else
-            {
-                msg.Body = body;
-                msg.IsBodyHtml = false;
-            }
-
-            // RFC 3834: this is a machine writing, so an out-of-office must not
-            // answer it and a mail loop cannot start.
-            msg.Headers.Add("Auto-Submitted", "auto-generated");
-
-            // ── A MESSAGE-ID, ON OUR OWN DOMAIN ─────────────────────────────
-            //
-            //  System.Net.Mail writes none, and Postfix did not add one
-            //  either: the sign-in link Amit forwarded on 24 September 2026
-            //  reached Gmail with NO Message-ID, so Gmail invented one —
-            //  "<...SMTPIN_ADDED_MISSING@mx.google.com>" is in the headers of
-            //  that message. A missing Message-ID is a spam signal, breaks
-            //  threading, and means replies and bounces cannot be tied back.
-            //
-            //  MailSender learned this on 3 September for webmail (see the
-            //  comment there about the container's hostname). Every system
-            //  notice kept sending without one for three weeks longer.
-            //
-            //  The domain comes from the SENDER's address, never the
-            //  machine's hostname, which inside a container is a random hex
-            //  Docker id that resolves to nothing.
-            msg.Headers.Add("Message-ID", MailIdentity.MessageIdFor(sender));
-
-            // Only when there is somewhere real to go. See the parameter.
-            if (!string.IsNullOrWhiteSpace(unsubscribe))
-            {
-                msg.Headers.Add("List-Unsubscribe", unsubscribe.StartsWith('<') ? unsubscribe : $"<{unsubscribe}>");
-                if (unsubscribe.Contains("http", StringComparison.OrdinalIgnoreCase))
-                    msg.Headers.Add("List-Unsubscribe-Post", "List-Unsubscribe=One-Click");
-            }
+            using var msg = SystemMailMessage.Build(sender, to, subject, body, html, unsubscribe);
 
             await client.SendMailAsync(msg, ct);
             return true;
