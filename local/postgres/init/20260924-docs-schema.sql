@@ -40,6 +40,15 @@
 --  Space has three separate purge paths that delete a file's ONE blob, and a
 --  document's pictures in the blob store would be orphaned by all three.
 --
+--  THAT IS A WORKAROUND, NOT THE DESIGN (Mr. Singh, 24 Sept, on PR 272).
+--  The argument is really that Space's purge paths are wrong: each assumes a
+--  file owns exactly one blob, so any feature that attaches more than one
+--  blob to a file hits the same wall. The exit: one purge routine that
+--  removes EVERY blob belonging to a file, called from all three paths; then
+--  docs.images can move to the blob store. Until then, the cost to watch:
+--  pictures are in the nightly database backup, so backup and restore time
+--  grow with document content — measure it once there is real content.
+--
 --  Isolation: tenant AND "can the caller see the space.files row". The
 --  EXISTS below runs under the CALLER's space.files policy, so a document is
 --  visible to exactly the people Space shows the file to — share, owner,
