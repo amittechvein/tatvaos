@@ -43,15 +43,14 @@ COMMENT ON COLUMN core.domains.superseded_at IS
     'kept so the losing organisation can be told why its claim ended.';
 
 -- The old rule: one row per fqdn, whoever asked first.
+ALTER TABLE core.domains DROP CONSTRAINT IF EXISTS domains_fqdn_key;
 
 -- The new rule: one VERIFIED row per fqdn. Pending claims may coexist.
 --
 --  Superseded rows are excluded as well as unverified ones: a claim that
 --  lost cannot block the winner, and the winner's own row is the only one
 --  that will ever carry ownership_verified_at with superseded_at NULL.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_core_domains_verified_unique
-    ON core.domains (fqdn)
-    WHERE ownership_verified_at IS NOT NULL AND superseded_at IS NULL;
+-- (calibration: the new unique index is deliberately missing)
 
 -- The sweeper reads exactly this shape: claims that never proved anything.
 CREATE INDEX IF NOT EXISTS idx_core_domains_pending_age

@@ -29,6 +29,16 @@ python infra/scripts/verify-one-migration.py \
   pending claim on one name (impossible before this migration), a verified
   domain, and a probe recording whether a *second* verified row for one name
   is refused. It must be.
-- **broken.sql** is this migration with the `DROP CONSTRAINT` line removed.
-  The run must FAIL against it, or the expectations are not measuring
-  anything.
+- **broken.sql** is this migration with the new partial unique index removed
+  — the exact mistake that would let two organisations both hold a VERIFIED
+  claim on one name. The run must FAIL against it, or the expectations are
+  not measuring anything. It fails two of them (the index is absent, and the
+  probe finds a second verified row is accepted).
+
+  It deliberately keeps the `DROP CONSTRAINT`. Removing *that* instead makes
+  the arranged state impossible to load at all — the `--arrange` step dies
+  with `duplicate key value violates unique constraint "domains_fqdn_key"`,
+  which is a true statement about the old rule but reaches the tool as an
+  error rather than as a red expectation, so it calibrates nothing. Worth
+  running once by hand if you doubt the premise; not worth keeping as the
+  calibration copy.
