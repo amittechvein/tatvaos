@@ -90,6 +90,24 @@ public sealed class SystemMailer(
             // answer it and a mail loop cannot start.
             msg.Headers.Add("Auto-Submitted", "auto-generated");
 
+            // ── A MESSAGE-ID, ON OUR OWN DOMAIN ─────────────────────────────
+            //
+            //  System.Net.Mail writes none, and Postfix did not add one
+            //  either: the sign-in link Amit forwarded on 24 September 2026
+            //  reached Gmail with NO Message-ID, so Gmail invented one —
+            //  "<...SMTPIN_ADDED_MISSING@mx.google.com>" is in the headers of
+            //  that message. A missing Message-ID is a spam signal, breaks
+            //  threading, and means replies and bounces cannot be tied back.
+            //
+            //  MailSender learned this on 3 September for webmail (see the
+            //  comment there about the container's hostname). Every system
+            //  notice kept sending without one for three weeks longer.
+            //
+            //  The domain comes from the SENDER's address, never the
+            //  machine's hostname, which inside a container is a random hex
+            //  Docker id that resolves to nothing.
+            msg.Headers.Add("Message-ID", MailIdentity.MessageIdFor(sender));
+
             // Only when there is somewhere real to go. See the parameter.
             if (!string.IsNullOrWhiteSpace(unsubscribe))
             {
