@@ -223,6 +223,10 @@ function Root() {
   const [mailReload, setMailReload] = useState(0);
   const [mailNotice, setMailNotice] = useState(null);
   const [mailSignature, setMailSignature] = useState('');
+  // The address mail goes out from — the person's own, or the shared
+  // mailbox's when one is open. Reply all needs it to leave the sender
+  // themselves out of the recipients. From /bootstrap, like the signature.
+  const [mailAddress, setMailAddress] = useState('');
   // ── WHICH MAILBOX MAIL IS OPEN ON. ─────────────────────────────────────
   //  Amit, 23 Sept 2026: "able to access shared mailbox". null is the
   //  person's own; a shared mailbox's id otherwise. Held HERE rather than in
@@ -278,6 +282,7 @@ function Root() {
           draft={composing}
           signature={mailSignature}
           mailboxId={mailboxId}
+          myAddress={mailAddress}
           onClose={() => setComposing(null)}
           onSent={(warning) => {
             setComposing(null);
@@ -294,6 +299,10 @@ function Root() {
           session={session}
           messageId={openMessage}
           mailboxId={mailboxId}
+          signature={mailSignature}
+          myAddress={mailAddress}
+          onOpen={(id) => setOpenMessage(id)}
+          onSent={(warning) => { setMailNotice(warning || 'Sent.'); setMailReload((n) => n + 1); }}
           onBack={(changed) => {
             setOpenMessage(null);
             if (changed) setMailReload((n) => n + 1);
@@ -311,7 +320,7 @@ function Root() {
           notice={mailNotice}
           onNoticeSeen={() => setMailNotice(null)}
           onBack={backHome}
-          onMailbox={({ signature }) => setMailSignature(signature ?? '')}
+          onMailbox={({ mailbox, signature }) => { setMailSignature(signature ?? ''); setMailAddress(mailbox?.address ?? ''); }}
           mailboxId={mailboxId}
           onSwitchMailbox={(id) => { setMailboxId(id ?? null); setOpenMessage(null); setComposing(null); }}
           onOpen={(m) => setOpenMessage(m.id)}

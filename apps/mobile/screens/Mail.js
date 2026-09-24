@@ -21,8 +21,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, FlatList, Pressable, TextInput, ActivityIndicator,
-  RefreshControl, StyleSheet, BackHandler, Modal,
+  View, Text, FlatList, Pressable, TextInput, ActivityIndicator, RefreshControl, StyleSheet, BackHandler, Modal, Switch, ScrollView,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -30,6 +29,7 @@ import { Ionicons } from '@expo/vector-icons';
 import {
   bootstrap, listMessages, searchMessages, orderFolders, senderLabel, whenLabel, SORTS, DEFAULT_SORT, sortLabel, listMailboxes,
 } from '../lib/mail';
+import { SEARCH_OPERATORS, buildSearchQuery, mentionsBin, chipsFor, hasOperators } from '../lib/mailSearch';
 import { brand, surface, text, radius, space, type, shadow, tone } from '../theme';
 
 const log = (line) => console.log(`[mail] ${line}`);
@@ -52,6 +52,17 @@ export default function Mail({
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [pickFolder, setPickFolder] = useState(false);
+  // ── SEARCH THE WAY THE WEB SEARCHES, 24 SEPT 2026. ─────────────────────
+  //  The grammar is the server's (PR 232) and the typed string goes through
+  //  unchanged, so what the phone adds is what the web puts around the box:
+  //  the operator list, a form that writes the query, chips, and the note
+  //  that deleted and junk mail stay out unless asked. lib/mailSearch.js.
+  // ─────────────────────────────────────────────────────────────────────
+  const [showHelp, setShowHelp] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [adv, setAdv] = useState({ from: '', to: '', subject: '', words: '', without: '', where: '', within: '', sizeOp: 'larger', sizeVal: '', sizeUnit: 'M', hasAttachment: false, unreadOnly: false });
+  const setA = (k, v) => setAdv((a) => ({ ...a, [k]: v }));
+  const advQuery = buildSearchQuery(adv);
   // ── SHARED MAILBOXES. ──────────────────────────────────────────────────
   //  Amit, 23 Sept 2026. `mailboxes` is every mailbox this person may open,
   //  own first; the picker only exists when there is more than one, so a
@@ -233,7 +244,9 @@ export default function Mail({
       ) : null}
 
       <View style={s.searchRow}>
-        <Ionicons name="search" size={16} color={text.muted} />
+        <Pressable hitSlop={8} onPress={() => setShowHelp(true)} accessibilityLabel="Search help">
+          <Ionicons name="search" size={16} color={text.muted} />
+        </Pressable>
         <TextInput
           style={s.search}
           value={query}
@@ -245,6 +258,10 @@ export default function Mail({
           autoCapitalize="none"
           accessibilityLabel="Search mail"
         />
+        <Pressable hitSlop={8} onPress={() => { setA('words', query); setShowAdvanced(true); }}
+                   accessibilityLabel="Advanced search">
+          <Ionicons name="options-outline" size={18} color={showAdvanced ? brand.base : text.muted} />
+        </Pressable>
         {searching || query.length > 0 ? (
           <Pressable onPress={() => { setQuery(''); setSearching(false); load({}); }} hitSlop={8}
                      accessibilityLabel="Clear search">
@@ -263,6 +280,20 @@ export default function Mail({
       ) : null}
       {sortNotice ? <Text style={s.sortNoticeText}>{sortNotice}</Text> : null}
 
+      {searching && hasOperators(query) ? (
+        <View style={s.chips} accessibilityLabel="Search terms">
+          {chipsFor(query).map((c, i) => (
+            <View key={`${c.field}-${c.value}-${i}`} style={[s.chip, c.negated && s.chipNeg]}>
+              <Text style={s.chipText} numberOfLines={1}>
+                {c.negated ? 'not ' : ''}{c.field ? `${c.field} ` : ''}{c.value}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+      {searching && !mentionsBin(query) ? (
+        <Text style={s.binNote}>Deleted and junk mail stay out unless you add in:trash, in:spam or in:anywhere.</Text>
+      ) : null}
       {notice ? (
         <Pressable style={s.notice} onPress={onNoticeSeen} accessibilityLabel="Dismiss">
           <Ionicons name="checkmark-circle" size={16} color={brand.base} />
@@ -352,6 +383,101 @@ export default function Mail({
               );
             })}
           </View>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={showHelp} transparent animationType="fade" onRequestClose={() => setShowHelp(false)}>
+        <Pressable style={s.backdrop} onPress={() => setShowHelp(false)}>
+          <View style={[s.sheet, { paddingBottom: 16 + insets.bottom, maxHeight: '80%' }]}>
+            <Text style={s.sheetTitle}>SEARCH</Text>
+            <Text style={s.helpLead}>
+              Combine these freely. A space means <Text style={s.helpStrong}>and</Text>,{' '}
+              <Text style={s.helpStrong}>OR</Text> means either, and a <Text style={s.helpStrong}>-</Text> in front leaves something out.
+            </Text>
+            <ScrollView style={{ flexGrow: 0 }}>
+              {SEARCH_OPERATORS.map((o) => (
+                <Pressable key={o.op} style={s.helpRow}
+                           onPress={() => { setQuery((q) => `${q.trim()} ${o.example}`.trim()); setShowHelp(false); }}
+                           accessibilityLabel={`Add ${o.example}`}>
+                  <Text style={s.helpExample}>{o.example}</Text>
+                  <Text style={s.helpHint}>{o.hint}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+            <Text style={s.helpFoot}>
+              Deleted and junk mail stay out unless you ask for them with <Text style={s.helpStrong}>in:trash</Text>,{' '}
+              <Text style={s.helpStrong}>in:spam</Text> or <Text style={s.helpStrong}>in:anywhere</Text>.
+            </Text>
+          </View>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={showAdvanced} transparent animationType="fade" onRequestClose={() => setShowAdvanced(false)}>
+        <Pressable style={s.backdrop} onPress={() => setShowAdvanced(false)}>
+          <Pressable style={[s.sheet, { paddingBottom: 16 + insets.bottom, maxHeight: '88%' }]} onPress={() => {}}>
+            <Text style={s.sheetTitle}>ADVANCED SEARCH</Text>
+            <ScrollView style={{ flexGrow: 0 }} keyboardShouldPersistTaps="handled">
+              {[['from', 'From'], ['to', 'To'], ['subject', 'Subject'], ['words', 'Has the words'], ['without', "Doesn't have"]].map(([k, label]) => (
+                <View key={k} style={s.advField}>
+                  <Text style={s.advLabel}>{label}</Text>
+                  <TextInput style={s.advInput} value={adv[k]} onChangeText={(v) => setA(k, v)}
+                             autoCapitalize="none" autoCorrect={false} accessibilityLabel={label} />
+                </View>
+              ))}
+              <Text style={s.advLabel}>Search in</Text>
+              <View style={s.advChips}>
+                {[['', 'All mail'], ['inbox', 'Inbox'], ['sent', 'Sent'], ['drafts', 'Drafts'], ['trash', 'Trash'], ['spam', 'Spam'], ['anywhere', 'Anywhere']].map(([v, label]) => (
+                  <Pressable key={v || 'all'} style={[s.advChip, adv.where === v && s.advChipOn]} onPress={() => setA('where', v)}
+                             accessibilityRole="radio" accessibilityState={{ selected: adv.where === v }} accessibilityLabel={`Search in: ${label}`}>
+                    <Text style={[s.advChipText, adv.where === v && s.advChipTextOn]}>{label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Text style={s.advLabel}>Date within</Text>
+              <View style={s.advChips}>
+                {[['', 'Any time'], ['1d', '1 day'], ['7d', '1 week'], ['1m', '1 month'], ['1y', '1 year']].map(([v, label]) => (
+                  <Pressable key={v || 'any'} style={[s.advChip, adv.within === v && s.advChipOn]} onPress={() => setA('within', v)}
+                             accessibilityRole="radio" accessibilityState={{ selected: adv.within === v }} accessibilityLabel={`Date within: ${label}`}>
+                    <Text style={[s.advChipText, adv.within === v && s.advChipTextOn]}>{label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Text style={s.advLabel}>Size</Text>
+              <View style={[s.advChips, { alignItems: 'center' }]}>
+                {[['larger', 'Larger than'], ['smaller', 'Smaller than']].map(([v, label]) => (
+                  <Pressable key={v} style={[s.advChip, adv.sizeOp === v && s.advChipOn]} onPress={() => setA('sizeOp', v)}
+                             accessibilityRole="radio" accessibilityState={{ selected: adv.sizeOp === v }} accessibilityLabel={label}>
+                    <Text style={[s.advChipText, adv.sizeOp === v && s.advChipTextOn]}>{label}</Text>
+                  </Pressable>
+                ))}
+                <TextInput style={[s.advInput, { width: 64 }]} value={adv.sizeVal} onChangeText={(v) => setA('sizeVal', v.replace(/[^0-9]/g, ''))}
+                           keyboardType="number-pad" placeholder="10" placeholderTextColor={text.muted} accessibilityLabel="Size number" />
+                {[['K', 'KB'], ['M', 'MB']].map(([v, label]) => (
+                  <Pressable key={v} style={[s.advChip, adv.sizeUnit === v && s.advChipOn]} onPress={() => setA('sizeUnit', v)}
+                             accessibilityRole="radio" accessibilityState={{ selected: adv.sizeUnit === v }} accessibilityLabel={`Size unit ${label}`}>
+                    <Text style={[s.advChipText, adv.sizeUnit === v && s.advChipTextOn]}>{label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <View style={s.advSwitch}>
+                <Text style={s.advLabel}>Has attachment</Text>
+                <Switch value={adv.hasAttachment} onValueChange={(v) => setA('hasAttachment', v)} accessibilityLabel="Has attachment" />
+              </View>
+              <View style={s.advSwitch}>
+                <Text style={s.advLabel}>Unread only</Text>
+                <Switch value={adv.unreadOnly} onValueChange={(v) => setA('unreadOnly', v)} accessibilityLabel="Unread only" />
+              </View>
+              {/* The query it will run, shown before it runs — the web does this
+                  so the form teaches the operators instead of hiding them. */}
+              <Text style={s.advPreview} accessibilityLabel={`Query: ${advQuery || 'nothing yet'}`}>{advQuery || 'Fill in something above.'}</Text>
+            </ScrollView>
+            <Pressable style={[s.advGo, !advQuery && { opacity: 0.45 }]} disabled={!advQuery}
+                       onPress={() => { setShowAdvanced(false); setQuery(advQuery); load({ q: advQuery }); }}
+                       accessibilityLabel="Run this search">
+              <Ionicons name="search" size={16} color={brand.onBase} />
+              <Text style={s.advGoText}>Search</Text>
+            </Pressable>
+          </Pressable>
         </Pressable>
       </Modal>
 
@@ -498,6 +624,29 @@ const s = StyleSheet.create({
   folderOn: { color: brand.base, fontWeight: '700' },
   folderCount: { fontSize: 13, color: text.muted },
   mailboxMeta: { fontSize: 12, color: text.muted, marginTop: 1 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: 16, paddingBottom: 6 },
+  chip: { backgroundColor: tone.wash, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4, maxWidth: '100%' },
+  chipNeg: { backgroundColor: '#FBEAF0' },
+  chipText: { fontSize: 12, color: tone.ink, fontWeight: '600' },
+  binNote: { fontSize: 11, color: text.muted, paddingHorizontal: 16, paddingBottom: 6 },
+  helpLead: { fontSize: 13, color: text.secondary, lineHeight: 18, marginBottom: 8 },
+  helpStrong: { fontWeight: '700', color: text.primary },
+  helpRow: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: surface.border },
+  helpExample: { fontSize: 14, fontWeight: '600', color: text.primary },
+  helpHint: { fontSize: 12, color: text.muted, marginTop: 1 },
+  helpFoot: { fontSize: 12, color: text.muted, lineHeight: 17, marginTop: 10 },
+  advField: { marginBottom: 8 },
+  advLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 0.8, color: text.muted, marginBottom: 4, marginTop: 4 },
+  advInput: { height: 40, borderRadius: 10, backgroundColor: surface.page, borderWidth: 1, borderColor: surface.border, paddingHorizontal: 10, fontSize: 14, color: text.primary },
+  advChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 6 },
+  advChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: surface.page, borderWidth: 1, borderColor: surface.border },
+  advChipOn: { backgroundColor: brand.base, borderColor: brand.base },
+  advChipText: { fontSize: 12, color: text.primary, fontWeight: '600' },
+  advChipTextOn: { color: brand.onBase },
+  advSwitch: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 2 },
+  advPreview: { fontSize: 13, color: tone.ink, backgroundColor: tone.wash, borderRadius: 8, padding: 8, marginTop: 8 },
+  advGo: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 46, borderRadius: 23, backgroundColor: brand.base, marginTop: 10 },
+  advGoText: { color: brand.onBase, fontSize: 15, fontWeight: '700' },
   // Amber, like the web's banner: a state the person should keep noticing
   // while it lasts, not an error and not a notice they can dismiss.
   shared: {
