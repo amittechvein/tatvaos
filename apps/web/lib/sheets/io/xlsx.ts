@@ -36,6 +36,7 @@ import {
   type BorderSide, type BorderStyle, type CellData, type CellFormat, type SheetData, type WorkbookData,
 } from '../workbook';
 import { readZip, writeZip } from './zip';
+import { formulaIsSafe } from './safety';
 
 // ============================================================================
 //  1. XML
@@ -978,7 +979,13 @@ function cellXml(ref: string, cell: CellData, styles: StyleTable, strings: Strin
   let body = '';
   let type = '';
 
-  if (input !== null && input.startsWith('=') && input.length > 1) {
+  if (input !== null && input.startsWith('=') && input.length > 1 && !formulaIsSafe(input)) {
+    // A formula that would call out when the file is opened (DDE, another
+    // workbook, a web fetch — safety.ts) goes into the file as the TEXT the
+    // person typed, never as a formula. The server refuses a file carrying
+    // one (XlsxGuard.cs); writing it as text keeps the spreadsheet saving.
+    type = 's'; body = `<v>${strings.add(input)}</v>`;
+  } else if (input !== null && input.startsWith('=') && input.length > 1) {
     body = `<f>${escapeXml(addFunctionPrefixes(input.slice(1)))}</f>`;
     const v = cell.value;
     if (typeof v === 'number' && Number.isFinite(v)) body += `<v>${numberText(v)}</v>`;

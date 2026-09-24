@@ -62,6 +62,37 @@ export interface WorkbookData {
   sheets: SheetData[];
 }
 
+const HEX = /^#[0-9a-fA-F]{6}$/;
+const BORDER_STYLES: BorderStyle[] = ['thin', 'medium', 'thick', 'dashed', 'dotted', 'double'];
+
+/**
+ * A format rebuilt from known fields with the right types, or undefined.
+ * Whatever a hand-made client stored in a cell's format — a string, an
+ * object with extra keys, a colour that is not a colour — only this comes
+ * out, so no part of the app (grid, print, .xlsx) meets anything else.
+ */
+export function cleanFormat(raw: unknown): CellFormat | undefined {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
+  const r = raw as Record<string, unknown>;
+  const f: CellFormat = {};
+  for (const k of ['b', 'i', 'u', 's'] as const) if (r[k] === true) f[k] = true;
+  if (typeof r.font === 'string' && r.font.length <= 100) f.font = r.font;
+  if (typeof r.size === 'number' && Number.isFinite(r.size) && r.size >= 1 && r.size <= 400) f.size = r.size;
+  if (typeof r.color === 'string' && HEX.test(r.color)) f.color = r.color;
+  if (typeof r.bg === 'string' && HEX.test(r.bg)) f.bg = r.bg;
+  if (r.ha === 'left' || r.ha === 'center' || r.ha === 'right') f.ha = r.ha;
+  if (r.va === 'top' || r.va === 'middle' || r.va === 'bottom') f.va = r.va;
+  if (r.wrap === 'overflow' || r.wrap === 'wrap' || r.wrap === 'clip') f.wrap = r.wrap;
+  if (typeof r.nf === 'string' && r.nf.length <= 200) f.nf = r.nf;
+  for (const k of ['bt', 'bb', 'bl', 'br'] as const) {
+    const b = r[k] as { style?: unknown; color?: unknown } | undefined;
+    if (b && typeof b === 'object' && BORDER_STYLES.includes(b.style as BorderStyle)) {
+      f[k] = { style: b.style as BorderStyle, color: typeof b.color === 'string' && HEX.test(b.color) ? b.color : '#000000' };
+    }
+  }
+  return Object.keys(f).length > 0 ? f : undefined;
+}
+
 export const DEFAULT_COL_WIDTH = 100;
 export const DEFAULT_ROW_HEIGHT = 21;
 export const DEFAULT_ROWS = 1000;

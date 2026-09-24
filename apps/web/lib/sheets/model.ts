@@ -47,7 +47,7 @@ import {
 } from './engine/rewrite';
 import {
   DEFAULT_COLS, DEFAULT_ROWS, cellKey, parseCellKey,
-  type CellFormat, type SheetData, type WorkbookData,
+  cleanFormat, type CellFormat, type SheetData, type WorkbookData,
 } from './workbook';
 
 /** Transactions from this tab carry this origin; the undo manager tracks only these. */
@@ -200,13 +200,32 @@ export class SheetsModel {
     this.emit({ structural: true, layout: true, remote: false, local: false });
   };
 
+  /**
+   * The sheet's map, only if it IS a sheet: a Y.Map whose rows and columns
+   * are arrays and whose values, formats, merges and sizes are maps. The
+   * Y.Doc is whatever the collaborators' browsers wrote — a hand-made client
+   * can write anything (Mr. Singh, 25 Sept 2026) — so every read starts
+   * here, and anything else is treated as absent rather than trusted.
+   * tests/sheets/malformed.test.ts holds the cases.
+   */
+  private sheetY(sheetId: string): Y.Map<unknown> | null {
+    const y = this.sheetsMap.get(sheetId) as unknown;
+    if (!(y instanceof Y.Map)) return null;
+    if (!(y.get('rows') instanceof Y.Array) || !(y.get('cols') instanceof Y.Array)) return null;
+    for (const k of ['values', 'formats', 'merges', 'colWidths', 'rowHeights']) {
+      if (!(y.get(k) instanceof Y.Map)) return null;
+    }
+    return y as Y.Map<unknown>;
+  }
+
   private cache(sheetId: string): SheetCache | null {
     const hit = this.caches.get(sheetId);
     if (hit) return hit;
-    const y = this.sheetsMap.get(sheetId);
+    const y = this.sheetY(sheetId);
     if (!y) return null;
-    const rowIds = (y.get('rows') as Y.Array<string>).toArray();
-    const colIds = (y.get('cols') as Y.Array<string>).toArray();
+    const ids = (field: string) => (y.get(field) as Y.Array<unknown>).toArray().filter((x): x is string => typeof x === 'string');
+    const rowIds = ids('rows');
+    const colIds = ids('cols');
     const c: SheetCache = {
       y, rowIds, colIds,
       rowIndex: new Map(rowIds.map((id, i) => [id, i])),
@@ -235,7 +254,15 @@ export class SheetsModel {
   }
 
   sheetIds(): string[] {
-    return this.order.toArray().filter((id) => this.sheetsMap.has(id));
+    // Only strings, each once, each a real sheet (see sheetY).
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const id of this.order.toArray() as unknown[]) {
+      if (typeof id !== 'string' || seen.has(id) || !this.sheetY(id)) continue;
+      seen.add(id);
+      out.push(id);
+    }
+    return out;
   }
 
   sheets(): SheetMeta[] {
@@ -243,15 +270,18 @@ export class SheetsModel {
   }
 
   meta(id: string): SheetMeta | null {
-    const y = this.sheetsMap.get(id);
+    const y = this.sheetY(id);
     if (!y) return null;
+    const name = y.get('name');
+    const tab = y.get('tabColor');
+    const count = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 10_000 ? v : 0);
     return {
       id,
-      name: (y.get('name') as string) ?? 'Sheet',
-      tabColor: y.get('tabColor') as string | undefined,
+      name: typeof name === 'string' && name.trim() !== '' ? name : 'Sheet',
+      tabColor: typeof tab === 'string' && /^#[0-9a-fA-F]{6}$/.test(tab) ? tab : undefined,
       hidden: y.get('hidden') === true,
-      frozenRows: (y.get('frozenRows') as number) ?? 0,
-      frozenCols: (y.get('frozenCols') as number) ?? 0,
+      frozenRows: count(y.get('frozenRows')),
+      frozenCols: count(y.get('frozenCols')),
     };
   }
 
@@ -271,7 +301,8 @@ export class SheetsModel {
   input(sheetId: string, r: number, c: number): string | null {
     const k = this.key(sheetId, r, c);
     if (!k) return null;
-    return (this.sub<Y.Map<string>>(sheetId, 'values').get(k)) ?? null;
+    const v = this.sub<Y.Map<unknown>>(sheetId, 'values').get(k);
+    return typeof v === 'string' ? v : null;
   }
 
   value(sheetId: string, r: number, c: number): Scalar {
@@ -281,24 +312,25 @@ export class SheetsModel {
   format(sheetId: string, r: number, c: number): CellFormat | undefined {
     const k = this.key(sheetId, r, c);
     if (!k) return undefined;
-    return this.sub<Y.Map<CellFormat>>(sheetId, 'formats').get(k);
+    return cleanFormat(this.sub<Y.Map<unknown>>(sheetId, 'formats').get(k));
   }
 
   colWidth(sheetId: string, c: number): number | undefined {
     const id = this.cache(sheetId)?.colIds[c];
-    return id ? this.sub<Y.Map<number>>(sheetId, 'colWidths').get(id) : undefined;
+    return id ? pixels(this.sub<Y.Map<unknown>>(sheetId, 'colWidths').get(id)) : undefined;
   }
 
   rowHeight(sheetId: string, r: number): number | undefined {
     const id = this.cache(sheetId)?.rowIds[r];
-    return id ? this.sub<Y.Map<number>>(sheetId, 'rowHeights').get(id) : undefined;
+    return id ? pixels(this.sub<Y.Map<unknown>>(sheetId, 'rowHeights').get(id)) : undefined;
   }
 
   /** Every cell with content, as positions. For search, export and AI. */
   *filled(sheetId: string): Generator<[number, number, string]> {
     const cache = this.cache(sheetId);
     if (!cache) return;
-    for (const [k, v] of this.sub<Y.Map<string>>(sheetId, 'values')) {
+    for (const [k, v] of this.sub<Y.Map<unknown>>(sheetId, 'values')) {
+      if (typeof v !== 'string') continue;
       const [rid, cid] = k.split('|') as [string, string];
       const r = cache.rowIndex.get(rid);
       const c = cache.colIndex.get(cid);
@@ -317,7 +349,10 @@ export class SheetsModel {
     const cache = this.cache(sheetId);
     if (!cache) return [];
     const out: MergeRect[] = [];
-    for (const [id, m] of this.sub<Y.Map<{ r1: string; c1: string; r2: string; c2: string }>>(sheetId, 'merges')) {
+    for (const [id, raw] of this.sub<Y.Map<unknown>>(sheetId, 'merges')) {
+      const m = raw as { r1?: unknown; c1?: unknown; r2?: unknown; c2?: unknown } | null;
+      if (typeof m !== 'object' || m === null) continue;
+      if (typeof m.r1 !== 'string' || typeof m.c1 !== 'string' || typeof m.r2 !== 'string' || typeof m.c2 !== 'string') continue;
       const r1 = cache.rowIndex.get(m.r1); const r2 = cache.rowIndex.get(m.r2);
       const c1 = cache.colIndex.get(m.c1); const c2 = cache.colIndex.get(m.c2);
       // A merge whose corner row or column was deleted is gone.
@@ -379,7 +414,7 @@ export class SheetsModel {
         values.set(k, e.input);
         const implied = parseInput(e.input, locale).format;
         if (implied) {
-          const f = formats.get(k);
+          const f = cleanFormat(formats.get(k));
           if (!f?.nf) formats.set(k, { ...f, nf: implied });
         }
       }
@@ -395,7 +430,7 @@ export class SheetsModel {
         for (let c = n.c1; c <= n.c2; c += 1) {
           const k = this.key(sheetId, r, c);
           if (!k) continue;
-          const next: CellFormat = { ...formats.get(k), ...patch };
+          const next: CellFormat = { ...cleanFormat(formats.get(k)), ...patch };
           for (const f of Object.keys(next) as (keyof CellFormat)[]) if (next[f] === undefined) delete next[f];
           if (Object.keys(next).length === 0) formats.delete(k); else formats.set(k, next);
         }
@@ -415,7 +450,7 @@ export class SheetsModel {
         for (let c = n.c1; c <= n.c2; c += 1) {
           const k = this.key(sheetId, r, c);
           if (!k) continue;
-          const f: CellFormat = { ...formats.get(k) };
+          const f: CellFormat = { ...cleanFormat(formats.get(k)) };
           const top = r === n.r1; const bottom = r === n.r2; const left = c === n.c1; const right = c === n.c2;
           const put = (s: 'bt' | 'bb' | 'bl' | 'br', on: boolean) => { if (on) { if (side) f[s] = side; else delete f[s]; } };
           switch (which) {
@@ -773,7 +808,8 @@ export class SheetsModel {
       for (const [k, f] of fm) {
         const [rid, cid] = k.split('|') as [string, string];
         const r = srcCache.rowIndex.get(rid); const c = srcCache.colIndex.get(cid);
-        if (r !== undefined && c !== undefined) formats.set(this.key(copyId, r, c)!, f);
+        const clean = cleanFormat(f);
+        if (clean && r !== undefined && c !== undefined) formats.set(this.key(copyId, r, c)!, clean);
       }
       for (let c = 0; c < size.cols; c += 1) { const w = this.colWidth(id, c); if (w) this.setColWidth(copyId, [c], w); }
       for (let r = 0; r < size.rows; r += 1) { const h = this.rowHeight(id, r); if (h) this.setRowHeight(copyId, [r], h); }
@@ -840,10 +876,11 @@ export class SheetsModel {
         for (const [k, f] of this.sub<Y.Map<CellFormat>>(id, 'formats')) {
           const [rid, cid] = k.split('|') as [string, string];
           const r = cache.rowIndex.get(rid); const c = cache.colIndex.get(cid);
-          if (r === undefined || c === undefined) continue;
+          const clean = cleanFormat(f);
+          if (!clean || r === undefined || c === undefined) continue;
           const ck = cellKey(r, c);
           const cell = cells.get(ck) ?? { input: null };
-          cells.set(ck, { ...cell, format: f });
+          cells.set(ck, { ...cell, format: clean });
         }
         const colWidths: Record<number, number> = {};
         for (let c = 0; c < size.cols; c += 1) { const w = this.colWidth(id, c); if (w) colWidths[c] = w; }
@@ -914,6 +951,11 @@ export class SheetsModel {
     });
     return first;
   }
+}
+
+/** A stored column width or row height, if it is a sensible number of pixels. */
+function pixels(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 1 && v <= 5000 ? v : undefined;
 }
 
 /** Seeding is not an edit anyone should be able to undo. */

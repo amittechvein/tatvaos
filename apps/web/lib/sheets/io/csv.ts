@@ -23,6 +23,7 @@
 import { MAX_COLS, MAX_ROWS } from '../engine/address';
 import { isError } from '../engine/types';
 import { numberToText } from '../engine/values';
+import { csvSafeText } from './safety';
 import { DEFAULT_COLS, DEFAULT_ROWS, cellKey, parseCellKey, type SheetData } from '../workbook';
 
 type Delimiter = ',' | '\t' | ';';
@@ -124,13 +125,13 @@ function cellText(cell: { input: string | null; value?: unknown }): string {
     if (typeof v === 'number') return numberToText(v);
     if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
     if (isError(v)) return v.code;
-    return String(v);
+    return csvSafeText(String(v));
   }
   const input = cell.input;
   if (input === null) return '';
   if (input.startsWith('=') && input.length > 1) return ''; // a formula with no known value
-  if (input.startsWith("'")) return input.slice(1);
-  return input;
+  if (input.startsWith("'")) return csvSafeText(input.slice(1));
+  return csvSafeText(input);
 }
 
 /** Write one sheet as CSV (or TSV with '\t'). */

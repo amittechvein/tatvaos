@@ -461,6 +461,18 @@ public static class DocsEndpoints
             // PK\x03\x04: the start of every zip file, which is what an .xlsx is.
             if (x.Length < 4 || x[0] != 0x50 || x[1] != 0x4B || x[2] != 0x03 || x[3] != 0x04)
                 return Error(400, "The .xlsx copy is not a zip file.");
+            // Macros, embedded objects, links outside the file, calling-out
+            // formulas: refused (XlsxGuard). The editor's own writer never
+            // produces them, so this fires only for a hand-made client — or
+            // a writer bug, which the log line makes findable. Ids and the
+            // reason code only, never content.
+            var refusal = XlsxGuard.Check(x);
+            if (refusal is not null)
+            {
+                loggers.CreateLogger("TatvaOS.Sheets").LogWarning(
+                    "Spreadsheet checkpoint refused its .xlsx: {Reason}. fileId={FileId} userId={UserId}", refusal, id, uid);
+                return Results.Json(new { error = "The spreadsheet's Excel copy was refused because it contains something that is not allowed in a TatvaOS file.", reason = refusal }, statusCode: 400);
+            }
             xlsx = x;
         }
         else if (req.Xlsx is not null)
