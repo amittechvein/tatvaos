@@ -26,10 +26,10 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 API="$ROOT/apps/api"
 GATE="Modules/Hire/HireAccess.cs"
 
-TYPES='(JobOpening|HireCandidate|HireApplication|HireApplicationEvent|HirePipelineStage)'
+TYPES='(JobOpening|HireCandidate|HireApplication|HireApplicationEvent|HirePipelineStage|HireSetting)'
 SET_RE="Set<[[:space:]]*(TatvaOS\\.Api\\.Modules\\.Hire\\.)?${TYPES}[[:space:]]*>"
 DBSET_RE="DbSet<[[:space:]]*(TatvaOS\\.Api\\.Modules\\.Hire\\.)?${TYPES}[[:space:]]*>"
-SQL_RE='hire\.(job_openings|candidates|applications|application_events|pipeline_stages)\b'
+SQL_RE='hire\.(job_openings|candidates|applications|application_events|pipeline_stages|settings)\b'
 PROP_RE='\.(JobOpenings|HireCandidates|HireApplications|HireApplicationEvents|HirePipelineStages|Candidates|Applications)\b[^(]'
 
 fails=0

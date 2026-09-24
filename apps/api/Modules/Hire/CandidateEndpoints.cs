@@ -369,6 +369,7 @@ public static class CandidateEndpoints
         access.AddEvent(Event(tenant, app.Id, "rejected", app.StageId, app.StageId, reason, now));
         app.Outcome = "rejected";
         app.RejectionReason = reason;
+        app.DecidedAt = now;   // the retention clock starts here
         app.UpdatedAt = now;
         await access.SaveAsync(ct);
         // The reason stays in the Hire tables; the audit row says only that it happened.
@@ -390,6 +391,7 @@ public static class CandidateEndpoints
         access.AddEvent(Event(tenant, app.Id, "withdrawn", app.StageId, app.StageId,
             string.IsNullOrEmpty(reason) ? null : reason, now));
         app.Outcome = "withdrawn";
+        app.DecidedAt = now;   // the retention clock starts here
         app.UpdatedAt = now;
         await access.SaveAsync(ct);
         await audit.WriteAsync("application.withdrawn", "application", id.ToString(), ct: ct, productCode: Product);
@@ -410,6 +412,7 @@ public static class CandidateEndpoints
         access.AddEvent(Event(tenant, app.Id, "reopened", app.StageId, app.StageId, null, now));
         app.Outcome = "active";
         app.RejectionReason = null;
+        app.DecidedAt = null;  // back under consideration: no clock running
         app.UpdatedAt = now;
         await access.SaveAsync(ct);
         await audit.WriteAsync("application.reopened", "application", id.ToString(), ct: ct, productCode: Product);

@@ -25,6 +25,11 @@ public static class HireTeamEndpoints
         // the API re-checks on every call regardless.
         app.MapGet("/api/hire/me", MeAsync).RequireAuthorization("User").WithTags("Hire");
 
+        // Retention (Amit, 24 Sept 2026). Administrators only, like the team:
+        // it decides when people's data is deleted.
+        app.MapGet("/api/hire/settings", GetSettingsAsync).RequireAuthorization("User").WithTags("Hire");
+        app.MapPut("/api/hire/settings", SaveSettingsAsync).RequireAuthorization("User").WithTags("Hire");
+
         var g = app.MapGroup("/api/hire/team").RequireAuthorization("User").WithTags("Hire");
         g.MapGet("/", ListAsync);
         g.MapPut("/{userId:guid}", SetAsync);
@@ -40,6 +45,44 @@ public static class HireTeamEndpoints
             canManageTeam = level == HireLevel.Admin,
             canSeeAllJobs = level >= HireLevel.Recruiter,
         });
+    }
+
+    private static async Task<IResult> GetSettingsAsync(HireAccess access, CancellationToken ct)
+    {
+        if (await access.LevelAsync(ct) != HireLevel.Admin)
+            return Results.Json(new { error = "Only an administrator can see Hire settings." },
+                                statusCode: StatusCodes.Status403Forbidden);
+        var s = await access.SettingsAsync(ct);
+        return Results.Ok(new
+        {
+            retentionDays = s.RetentionDays,
+            minDays = HireAccess.MinRetentionDays,
+            maxDays = HireAccess.MaxRetentionDays,
+            s.UpdatedAt,
+        });
+    }
+
+    private static async Task<IResult> SaveSettingsAsync(
+        SaveHireSettingsRequest req, HireAccess access, AuditWriter audit, CancellationToken ct)
+    {
+        if (await access.LevelAsync(ct) != HireLevel.Admin)
+            return Results.Json(new { error = "Only an administrator can change Hire settings." },
+                                statusCode: StatusCodes.Status403Forbidden);
+        if (req.RetentionDays is not int days
+            || days < HireAccess.MinRetentionDays || days > HireAccess.MaxRetentionDays)
+            return Results.BadRequest(new
+            {
+                error = $"Keep candidates for between {HireAccess.MinRetentionDays} and "
+                      + $"{HireAccess.MaxRetentionDays} days after a decision. Longer needs each "
+                      + "candidate's own consent, which is recorded when they apply.",
+            });
+
+        var before = (await access.SettingsAsync(ct)).RetentionDays;
+        await access.SaveRetentionAsync(days, ct);
+        await audit.WriteAsync("hire_settings.retention_changed", "hire_settings", null,
+            before: new { retentionDays = before }, after: new { retentionDays = days },
+            ct: ct, productCode: "hire");
+        return Results.Ok(new { retentionDays = days });
     }
 
     private static async Task<IResult> ListAsync(HireAccess access, AppDbContext db, CancellationToken ct)
@@ -132,3 +175,4 @@ public static class HireTeamEndpoints
 }
 
 public sealed record SetTeamRoleRequest(string? Role);
+public sealed record SaveHireSettingsRequest(int? RetentionDays);

@@ -451,6 +451,8 @@ builder.Services.AddScoped<TatvaOS.Api.Modules.Calendar.ICalendarImipSink,
 // finished telling us about is asked about directly, so a lost webhook costs
 // a delay rather than a recording that never appears.
 builder.Services.AddHostedService<ConnectNotesWorker>();
+// Hire: deletes candidates past their retention period (Amit, 24 Sept 2026).
+builder.Services.AddHostedService<TatvaOS.Api.Workers.HireRetentionWorker>();
 
 // The public-link resolve is the one anonymous, internet-reachable route
 // on the platform. Per-IP fixed window. Behind Caddy the peer address is

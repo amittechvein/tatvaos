@@ -40,6 +40,8 @@
 #      job's pipeline is frozen
 #  17. erasure removes the candidate, applications and history, and no audit
 #      row written since step 14 names them or repeats the rejection reason
+#  18. retention settings (30..180 days, admins only, per organisation) and
+#      the decision clock: set on reject/withdraw, cleared on reopen
 #
 # ── CALIBRATION, 24 September 2026 (house rule 6) ──────────────────────────
 #  * PUBLISH CHECK REMOVED FROM SAVE -> "blanking the description of an open
@@ -519,6 +521,32 @@ same "the erasure itself is audited" "$(PG "SELECT count(*) FROM core.audit_logs
 same "and no audit row since step 14 holds their name, email or rejection reason" \
     "$(PG "SELECT count(*) FROM core.audit_logs WHERE id > $PERSONAL_FLOOR AND (coalesce(before_state::text,'')||coalesce(after_state::text,'')) ~* '(asha|verma|$RUN@example|production react)'")" "0"
 expect "and they are 404 now" 404 "$(call "$TOKEN" GET /hire/candidates/$CAND)"
+
+step "18. Retention settings and the decision clock"
+r=$(call "$TOKEN" GET /hire/settings)
+expect "an admin reads the Hire settings" 200 "$r"
+same "the default is 180 days, between 30 and 180" "$(jq_ "$(body "$r")" "f\"{d['retentionDays']}/{d['minDays']}/{d['maxDays']}\"")" "180/30/180"
+expect "longer than 180 days" 400 "$(call "$TOKEN" PUT /hire/settings '{"retentionDays":181}')" "consent"
+expect "shorter than 30 days" 400 "$(call "$TOKEN" PUT /hire/settings '{"retentionDays":29}')" "between 30 and 180"
+expect "90 days" 200 "$(call "$TOKEN" PUT /hire/settings '{"retentionDays":90}')"
+same "saved" "$(jq_ "$(body "$(call "$TOKEN" GET /hire/settings)")" "d['retentionDays']")" "90"
+same "and audited, with the old and new period" \
+    "$(PG "SELECT before_state->>'retentionDays' || '->' || (after_state->>'retentionDays') FROM core.audit_logs WHERE action='hire_settings.retention_changed' ORDER BY id DESC LIMIT 1")" "180->90"
+expect "ABC School's admin still sees their own default" 200 "$(call "$OTHER" GET /hire/settings)"
+same "untouched by Techvein's change" "$(jq_ "$(body "$(call "$OTHER" GET /hire/settings)")" "d['retentionDays']")" "180"
+expect "a recruiter is made" 200 "$(call "$TOKEN" PUT /hire/team/$EMPLOYEE_ID '{"role":"recruiter"}')"
+expect "a recruiter cannot read the settings" 403 "$(call "$EMP" GET /hire/settings)"
+expect "nor change them" 403 "$(call "$EMP" PUT /hire/settings '{"retentionDays":30}')" "only an administrator"
+expect "the recruiter leaves the team" 200 "$(call "$TOKEN" DELETE /hire/team/$EMPLOYEE_ID)"
+expect "back to 180" 200 "$(call "$TOKEN" PUT /hire/settings '{"retentionDays":180}')"
+
+same "an active application has no decision date" "$(PG "SELECT coalesce(decided_at::text,'none') FROM hire.applications WHERE id='$APP_B1'")" "none"
+expect "rejecting it" 200 "$(call "$TOKEN" POST /hire/applications/$APP_B1/reject '{"reason":"Retention clock check"}')"
+same "starts the clock" "$(PG "SELECT (decided_at IS NOT NULL AND decided_at > now() - interval '5 minutes')::text FROM hire.applications WHERE id='$APP_B1'")" "true"
+expect "reopening it" 200 "$(call "$TOKEN" POST /hire/applications/$APP_B1/reopen)"
+same "stops the clock" "$(PG "SELECT coalesce(decided_at::text,'none') FROM hire.applications WHERE id='$APP_B1'")" "none"
+expect "withdrawing it" 200 "$(call "$TOKEN" POST /hire/applications/$APP_B1/withdraw '{}')"
+same "starts it again" "$(PG "SELECT (decided_at IS NOT NULL)::text FROM hire.applications WHERE id='$APP_B1'")" "true"
 
 printf '\n%s----------------------------------------%s\n' "$CYAN" "$RST"
 printf '  passed: %d   failed: %d\n\n' "$PASSED" "$FAILED"

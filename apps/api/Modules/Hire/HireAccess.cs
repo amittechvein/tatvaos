@@ -173,6 +173,33 @@ public sealed class HireAccess(AppDbContext db, TenantContext tenant, IHttpConte
     public void AddApplication(HireApplication a) => db.Set<HireApplication>().Add(a);
     public void AddEvent(HireApplicationEvent e) => db.Set<HireApplicationEvent>().Add(e);
 
+    // ------------------------------------------------------------- settings
+
+    /// <summary>The default and the ceiling: 180 days (Amit, 24 Sept 2026).</summary>
+    public const int MaxRetentionDays = 180;
+    /// <summary>The floor: a mistyped "1" must not erase last week's candidates tonight.</summary>
+    public const int MinRetentionDays = 30;
+
+    /// <summary>This organisation's Hire settings, or the defaults if none are saved.</summary>
+    public async Task<HireSetting> SettingsAsync(CancellationToken ct) =>
+        await db.Set<HireSetting>().FirstOrDefaultAsync(ct)
+        ?? new HireSetting { TenantId = tenant.TenantId, RetentionDays = MaxRetentionDays };
+
+    /// <summary>Saves the retention period (already validated by the caller).</summary>
+    public async Task SaveRetentionAsync(int days, CancellationToken ct)
+    {
+        var row = await db.Set<HireSetting>().FirstOrDefaultAsync(ct);
+        if (row is null)
+        {
+            row = new HireSetting { TenantId = tenant.TenantId };
+            db.Set<HireSetting>().Add(row);
+        }
+        row.RetentionDays = days;
+        row.UpdatedBy = tenant.UserId;
+        row.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+    }
+
     // -------------------------------------------------------------- pipeline
 
     /// <summary>
