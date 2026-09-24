@@ -80,6 +80,14 @@ pass() { PASSED=$((PASSED+1)); printf '  %s✓%s %s\n' "$GREEN" "$RST" "$1"; }
 fail() { FAILED=$((FAILED+1)); printf '  %s✗%s %s\n' "$RED" "$RST" "$1"; }
 step() { printf '\n%s>> %s%s\n' "$CYAN" "$1" "$RST"; }
 j() { "$PY" -c "import sys,json; d=json.load(sys.stdin); print($1)" 2>/dev/null; }
+# What a failure line may say about a response: its error text, or the NAMES
+# of its fields — never their values. A sign-in response carries an access
+# and a refresh token, and a test must not print a token (house rule 5),
+# local or not. Caught 25 Sept 2026, when a calibration run printed one.
+safe() { "$PY" -c "import sys,json
+try:
+    d=json.load(sys.stdin); print(d.get('error') or 'fields: ' + ','.join(sorted(d)))
+except Exception: print('(not JSON)')" 2>/dev/null; }
 
 export JWT_SIGNING_KEY='dev-only-key-at-least-32-characters-long'
 export ASPNETCORE_URLS="$API"
@@ -203,7 +211,7 @@ if start_api "Development" "true"; then
     printf '  (the API connects to the database as Host=%s)\n' "$LOOPBACK_DB"
 
     body=$(curl -s -D "$SCRATCH/h1" -X POST "$API$ROUTE")
-    [ "$(printf '%s' "$body" | j "d['user']['role']")" = "super_admin" ] && pass "session issued for a super_admin" || fail "response: $(printf '%s' "$body" | head -c 300)"
+    [ "$(printf '%s' "$body" | j "d['user']['role']")" = "super_admin" ] && pass "session issued for a super_admin" || fail "response: $(printf '%s' "$body" | safe)"
     [ "$(printf '%s' "$body" | j "d['user']['email']")" = "$EMAIL" ] && pass "the account is $EMAIL, not the bootstrap operator" || fail "email: $(printf '%s' "$body" | j "d['user'].get('email')")"
     [ "$(printf '%s' "$body" | j "d['mustChangePassword']")" = "False" ] && pass "not forced into a password change" || fail "mustChangePassword: $(printf '%s' "$body" | j "d.get('mustChangePassword')")"
     grep -qi "^set-cookie: tv_refresh_" "$SCRATCH/h1" && pass "a refresh cookie is set — a browser is signed in by this call" || fail "no tv_refresh_ cookie in the response"
@@ -216,7 +224,7 @@ if start_api "Development" "true"; then
     [ "$h" = "401" ] && pass "…and without it the same call is 401 (the 200 is the session's doing)" || fail "unauthenticated /api/admin/organisations answered $h"
 
     body2=$(curl -s -X POST "$API$ROUTE")
-    [ "$(printf '%s' "$body2" | j "d['user']['id']")" = "$ID1" ] && pass "a second call signs in the SAME account" || fail "second call: $(printf '%s' "$body2" | head -c 200)"
+    [ "$(printf '%s' "$body2" | j "d['user']['id']")" = "$ID1" ] && pass "a second call signs in the SAME account" || fail "second call: $(printf '%s' "$body2" | safe)"
     [ "$(PG "select count(*) from core.users where email = '$EMAIL'")" = "1" ] && pass "exactly one $EMAIL row" || fail "rows for $EMAIL: $(PG "select count(*) from core.users where email = '$EMAIL'")"
     [ "$(PG "select (password_hash is null)::text || ',' || (phone is null)::text || ',' || role from core.users where email = '$EMAIL'")" = "true,true,super_admin" ] \
         && pass "the row has no password and no phone — no other door opens it" || fail "row: $(PG "select (password_hash is null)::text || ',' || (phone is null)::text || ',' || role from core.users where email = '$EMAIL'")"
@@ -253,7 +261,7 @@ else
         # — the API reaches it — so a 409 is the gate, not a dead link.
         h=$(code "$API/health/db"); [ "$h" = "200" ] && pass "the API reaches the database at $REMOTE_DB (/health/db 200)" || fail "/health/db answered $h — a refusal below would prove nothing"
         body=$(curl -s -w '\n%{http_code}' -X POST "$API$ROUTE")
-        [ "$(printf '%s' "$body" | tail -n1)" = "409" ] && pass "POST answers 409 — refused, the database is not on this machine" || fail "POST answered $(printf '%s' "$body" | tail -n1): $(printf '%s' "$body" | head -c 200)"
+        [ "$(printf '%s' "$body" | tail -n1)" = "409" ] && pass "POST answers 409 — refused, the database is not on this machine" || fail "POST answered $(printf '%s' "$body" | tail -n1): $(printf '%s' "$body" | sed '$d' | safe)"
         [[ "$body" == *accessToken* ]] && fail "a SESSION WAS ISSUED against a non-loopback database" || pass "no session in the response"
         grep -q "the database host is not loopback" "$LOG" && pass "the refusal is logged" || fail "no refusal line in the log"
         [ "$(PG "select count(*) from core.audit_logs where action = 'auth.dev_operator_session'")" = "$AUDIT_BEFORE" ] && pass "no audit row: nothing was written" || fail "an audit row was written"
