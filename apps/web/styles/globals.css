@@ -117,6 +117,14 @@
     pointer-events: none;
   }
 
+  /* A reply's quoted history, folded until asked for — Gmail's "…". Hidden
+     from the EDITOR only: it is still in the editor's HTML, so it is still in
+     what gets sent. A forward's quote is never folded, because the forwarded
+     message is the point of a forward. */
+  .composer-body:not([data-quote-open]) [data-tv-quote="reply"] {
+    display: none;
+  }
+
   /* Thin scrollbars — this is a dense, list-heavy interface */
   .scroll-thin { scrollbar-width: thin; scrollbar-color: rgb(var(--ink-faint)) transparent; }
   .scroll-thin::-webkit-scrollbar { width: 8px; height: 8px; }

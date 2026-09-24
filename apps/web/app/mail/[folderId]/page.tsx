@@ -856,12 +856,17 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
       //  message switches mode in place — the recipients are recomputed by
       //  the composer (see the effect on `mode`) and anything already typed
       //  survives, which is the whole reason for not remounting it.
-      //  Only reply ↔ reply all switches in place. FORWARD is a different
-      //  message — different subject, no recipients, and often sent while a
-      //  reply is still being written — so it gets its own composer.
-      const isAnswer = (x: ComposeMode) => x === 'reply' || x === 'replyAll';
-      const already = m !== null && isAnswer(m2)
-        ? prev.findIndex((c) => isAnswer(c.mode) && c.replyTo?.id === m.id)
+      //  FORWARD TOO, from 24 September. It used to be excluded — "a
+      //  different message, often sent while a reply is still being
+      //  written" — and so Reply then Forward left two boxes in the same
+      //  message, each with its own Send. Amit: "fix reply and forward both
+      //  open in diff window". Gmail has one response box per message with
+      //  a type switch, and that is what this is now: the composer moves the
+      //  recipients, the subject (while it is still the automatic one) and
+      //  the quote's heading, and keeps every word typed.
+      const isResponse = (x: ComposeMode) => x === 'reply' || x === 'replyAll' || x === 'forward';
+      const already = m !== null && isResponse(m2)
+        ? prev.findIndex((c) => isResponse(c.mode) && c.replyTo?.id === m.id)
         : -1;
       if (already >= 0) {
         if (prev[already]!.mode === m2) return prev;
