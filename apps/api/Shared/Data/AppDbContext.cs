@@ -271,6 +271,24 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         // Explicit schema on every one, like everything else here: a default
         // is exactly how a Mail table once silently landed in core.
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeeting>().ToTable("meetings", "connect");
+        // Decision 0007, step one: the second isolation layer. Until this line,
+        // RLS was the ONLY thing keeping one organisation's meetings from
+        // another's — run the API as a role that bypasses RLS and the Meetings
+        // API timetable returned another organisation's classes
+        // (tests/orgapi/test-paging-promises.sh, MUTATE_BYPASS_RLS=1).
+        //
+        // Every read of this set was checked before adding it (26 sites, 8
+        // files): each runs with a tenant already entered — a signed-in user,
+        // an organisation key, the guest door, the LiveKit webhook, the notes
+        // worker and the ticketed download all call EnterAnonymousScope first.
+        // TenantId THROWS when no tenant is set, so a path that reads meetings
+        // without one now fails loudly instead of quietly returning nothing.
+        //
+        // If a new path breaks on this filter, enter the tenant before the
+        // query. IgnoreQueryFilters() drops EVERY filter on that query,
+        // including ones added later — it is never the default fix (0007).
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeeting>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectParticipant>().ToTable("participants", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectLobbyRequest>().ToTable("lobby_requests", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingEvent>().ToTable("meeting_events", "connect");
