@@ -57,8 +57,12 @@ public static class SignInAlertEmail
         var ist = whenUtc.ToOffset(TimeSpan.FromHours(5.5));
         var when = WebUtility.HtmlEncode($"{ist:dddd, d MMMM yyyy 'at' h:mm tt} IST");
 
-        var changePassword = $"{b}/account/password";
-        var sessions = $"{b}/account/security";
+        // Both must be pages that exist. Until 24 Sept 2026 these were
+        // /account/password and /account/security, neither of which was ever a
+        // route — the one link a worried reader clicks landed on a 404. Those
+        // two paths now redirect, for the emails already sent.
+        var changePassword = $"{b}/change-password";
+        var sessions = $"{b}/account?section=devices";
 
         return $@"<!DOCTYPE html>
 <html lang=""en"">

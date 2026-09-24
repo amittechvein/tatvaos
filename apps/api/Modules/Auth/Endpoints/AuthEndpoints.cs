@@ -619,7 +619,7 @@ public static class AuthEndpoints
             SendNewDeviceAlertInBackground(
                 scopeFactory, user.Email, user.DisplayName,
                 Shared.DeviceFingerprint.Describe(http.Request.Headers.UserAgent.ToString()),
-                http.Connection.RemoteIpAddress?.ToString(),
+                Shared.ClientIp.From(http),
                 config["Jwt:Issuer"] ?? "https://core.tatvaos.com");
 
         // Take a slot rather than overwriting whoever was signed in. Somebody
@@ -2498,7 +2498,7 @@ public static class AuthEndpoints
             FamilyId = familyId,
             ExpiresAt = DateTimeOffset.UtcNow.Add(TokenIssuer.RefreshTokenLifetime),
             UserAgent = Truncate(http.Request.Headers.UserAgent.ToString(), 512),
-            IpAddress = http.Connection.RemoteIpAddress?.ToString(),
+            IpAddress = Shared.ClientIp.From(http),
             // Set on ROTATION as well as sign-in, so a device stays recognised
             // for as long as it keeps renewing. Were it only stamped at
             // sign-in, a long-lived session that rotates for weeks would age

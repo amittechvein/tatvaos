@@ -163,6 +163,17 @@ function AccountHub() {
 
   const [section, setSection] = useState<SectionId>('home');
   const [q, setQ] = useState('');
+
+  // ?section=devices opens that section. The new-sign-in email links here for
+  // "review every active session" — landing someone who suspects a stranger
+  // on Home, one click short of the list, is the wrong page at the wrong time.
+  // Read from window rather than useSearchParams, which would need a Suspense
+  // boundary around the whole hub for one value read once.
+  useEffect(() => {
+    const wanted = new URLSearchParams(window.location.search).get('section');
+    const match = SECTIONS.find((s) => s.id === wanted);
+    if (match) setSection(match.id);
+  }, []);
   const [me, setMe] = useState<Me | null>(null);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [loading, setLoading] = useState(true);
