@@ -290,15 +290,69 @@ ok "images ready"
 
 # ---------------------------------------------------------------------------
 step "Backing up the database"
+# ── COMPRESSED, CHECKED WHOLE, AND CAPPED. ──────────────────────────────
+#  Until 24 Sept 2026 this wrote an UNCOMPRESSED dump before every deploy
+#  and never deleted one: 313 files since 4 Aug, 38 GB of a 157 GB disk at
+#  81%, each dump 1.0 GB after 23 Sept. A full disk takes down Postgres and
+#  mail, not just the next deploy. The old files were gzipped by hand that
+#  day (38 -> 23 GB, all 311 verified with gzip -t).
+#
+#  Three rules now, each with the failure it prevents:
+#
+#   1. gzip AS IT IS WRITTEN. pipefail (top of this file) makes a failed
+#      pg_dumpall fail the pipeline, so a dead dump cannot hide behind a
+#      successful gzip.
+#
+#   2. CHECKED WHOLE, not just present. A pg_dumpall that completes always
+#      ends with "PostgreSQL database cluster dump complete". A dump cut off
+#      halfway (disk full, container restart) still leaves a readable file,
+#      and without this line a truncated backup would print "ok". gzip -t
+#      catches a damaged archive; the marker catches a short one.
+#
+#   3. KEEP THE NEWEST $PREDEPLOY_KEEP (default 20), and prune ONLY after
+#      this deploy's dump has passed both checks — a deploy whose backup
+#      failed stops above and deletes nothing. Older history is not lost:
+#      backup.sh takes the database 4x a day, keeps 3 days on this disk and
+#      30 days off it (encrypted, object storage — 115 objects on 24 Sept).
+#      Pruning touches only pre-deploy-* files in backups/, nothing else.
+#
+#  Restore one:  gunzip -c backups/pre-deploy-<stamp>.sql.gz | psql -U postgres
+# ─────────────────────────────────────────────────────────────────────────
+PREDEPLOY_KEEP="${PREDEPLOY_KEEP:-20}"
 if docker ps --format '{{.Names}}' | grep -q postgres; then
     mkdir -p backups
     STAMP=$(date +%Y%m%d-%H%M%S)
-    if $COMPOSE exec -T postgres pg_dumpall -U postgres > "backups/pre-deploy-${STAMP}.sql" 2>/dev/null; then
-        SIZE=$(du -h "backups/pre-deploy-${STAMP}.sql" | cut -f1)
-        ok "backups/pre-deploy-${STAMP}.sql (${SIZE})"
-    else
+    DUMP="backups/pre-deploy-${STAMP}.sql.gz"
+    if ! $COMPOSE exec -T postgres pg_dumpall -U postgres 2>/dev/null | gzip -6 > "$DUMP"; then
         bad "backup failed — stopping rather than deploying over unbacked data"
+        rm -f "$DUMP"
         exit 1
+    fi
+    if ! gzip -t "$DUMP" 2>/dev/null; then
+        bad "backup is not a valid gzip ($DUMP) — stopping"
+        exit 1
+    fi
+    # Captured, then matched in bash — NOT `| grep -q`. Under pipefail a
+    # grep -q that exits on its first match can SIGPIPE the stage before it
+    # and fail the pipeline on a GOOD dump: the false red PR 227 removed
+    # from verify-live.sh. tail reads to EOF, so nothing here exits early.
+    dump_end=$(gzip -dc "$DUMP" 2>/dev/null | tail -c 400)
+    if [[ "$dump_end" != *"database cluster dump complete"* ]]; then
+        bad "backup is TRUNCATED — no end-of-dump marker in $DUMP — stopping"
+        exit 1
+    fi
+    ok "$DUMP ($(du -h "$DUMP" | cut -f1), whole)"
+
+    # Newest first; everything past the cap goes. -- guards against a name
+    # starting with '-'. Both the new .sql.gz and any older .sql are counted,
+    # so the cap holds across the switch.
+    mapfile -t old < <(ls -1t backups/pre-deploy-*.sql.gz backups/pre-deploy-*.sql 2>/dev/null                           | tail -n +"$((PREDEPLOY_KEEP + 1))")
+    if [ "${#old[@]}" -gt 0 ]; then
+        freed=$(du -cb -- "${old[@]}" | tail -1 | cut -f1)
+        rm -f -- "${old[@]}"
+        ok "kept newest $PREDEPLOY_KEEP pre-deploy dumps; removed ${#old[@]} older ($(awk -v b="$freed" 'BEGIN{printf "%.1f GB", b/1e9}'))"
+    else
+        ok "$(ls -1 backups/pre-deploy-* 2>/dev/null | wc -l) pre-deploy dump(s) on disk, cap $PREDEPLOY_KEEP"
     fi
 else
     note "no running database yet — first deploy"
