@@ -183,7 +183,7 @@ public static class SpaceEndpoints
     //  The permission ladder.
     // ------------------------------------------------------------------
 
-    private static int Rank(string p) => p switch
+    internal static int Rank(string p) => p switch
     {
         "owner" => 3, "edit" => 2, "comment" => 1, "view" => 0, _ => -1
     };
@@ -229,7 +229,7 @@ public static class SpaceEndpoints
     /// the folder does not make you owner of a colleague's item — and the
     /// file's own grants).
     /// </summary>
-    private static async Task<string> FilePermAsync(AppDbContext db, SpaceFile f, Guid uid, CancellationToken ct)
+    internal static async Task<string> FilePermAsync(AppDbContext db, SpaceFile f, Guid uid, CancellationToken ct)
     {
         if (f.OwnerUserId == uid) return "owner";
 
@@ -600,7 +600,7 @@ public static class SpaceEndpoints
     /// folder (or root scope), the ownership new content inherits, and the
     /// caller's level there.
     /// </summary>
-    private static async Task<(IResult? Error, Guid? FolderId, string OwnershipType, Guid? OwnerUserId)>
+    internal static async Task<(IResult? Error, Guid? FolderId, string OwnershipType, Guid? OwnerUserId)>
         ResolveDestinationAsync(AppDbContext db, Guid uid, Guid? folderId, string? scope, CancellationToken ct)
     {
         if (folderId is Guid fid)
@@ -734,7 +734,7 @@ public static class SpaceEndpoints
         return v.Ok ? null : Error(413, v.Message!, v.Reason);
     }
 
-    private static long MaxFileBytes(IConfiguration config)
+    internal static long MaxFileBytes(IConfiguration config)
         => config.GetValue<long?>("Space:MaxFileBytes") ?? 2L * 1024 * 1024 * 1024;
 
     private sealed record UploadedPart(string FileName, string ContentType, string BlobKey, long Written);
@@ -902,6 +902,11 @@ public static class SpaceEndpoints
         if (file.DeletedAt is not null) return Error(409, "This file is in the trash. Restore it first.");
         if (Rank(await FilePermAsync(db, file, uid, ct)) < Rank("edit"))
             return Error(403, "You need edit access to replace this file's content.");
+        // A TatvaOS document's blob is a rendering Docs rewrites on every
+        // checkpoint; its content lives in docs.documents. Replacing the blob
+        // would be silently undone by the next checkpoint, so refuse it.
+        if (file.MimeType == TatvaOS.Api.Modules.Docs.DocsFormat.MimeType)
+            return Error(409, "This is a TatvaOS document. Open it in Docs to change it.");
 
         var oldKey = file.BlobKey;
         var oldSize = file.SizeBytes;
@@ -959,7 +964,12 @@ public static class SpaceEndpoints
         // thumbnails) do not come through this handler, by design.
         await SpaceDriveEndpoints.RecordActivityAsync(db, tenant, file.Id, "opened", ct);
 
-        return Results.File(stream, file.MimeType, file.Name, enableRangeProcessing: true);
+        // A TatvaOS document's blob is its HTML rendering, named and typed as
+        // such on the way out (DocsFormat.AsDownload) so it opens in a
+        // browser rather than as an extensionless file. Still an attachment
+        // (fileDownloadName), never rendered inline here.
+        var (name, mime) = TatvaOS.Api.Modules.Docs.DocsFormat.AsDownload(file.Name, file.MimeType);
+        return Results.File(stream, mime, name, enableRangeProcessing: true);
     }
 
     // ==================================================================
