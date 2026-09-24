@@ -31,12 +31,21 @@ public sealed class SystemMailer(
     /// (the welcome is always no_reply@tatvaos.com) without changing the
     /// platform default used by everything else.
     /// </summary>
+    /// <param name="unsubscribe">
+    /// A mailbox or page where this KIND of message can be turned off, for the
+    /// List-Unsubscribe header. Null for mail that cannot be turned off —
+    /// a password reset, an invitation, a security alert. Offering to
+    /// unsubscribe from those would be a lie, and worse, a way to switch off
+    /// the warning that someone signed in.
+    /// </param>
     public Task<bool> SendHtmlAsync(
-        string to, string subject, string htmlBody, string? from = null, CancellationToken ct = default)
-        => SendCoreAsync(to, subject, htmlBody, html: true, from, ct);
+        string to, string subject, string htmlBody, string? from = null,
+        CancellationToken ct = default, string? unsubscribe = null)
+        => SendCoreAsync(to, subject, htmlBody, html: true, from, ct, unsubscribe);
 
     private async Task<bool> SendCoreAsync(
-        string to, string subject, string body, bool html, string? from, CancellationToken ct)
+        string to, string subject, string body, bool html, string? from, CancellationToken ct,
+        string? unsubscribe = null)
     {
         var host = config["Smtp:Host"] ?? "postfix";
         var port = int.TryParse(config["Smtp:Port"], out var p) ? p : 587;
@@ -47,7 +56,48 @@ public sealed class SystemMailer(
         try
         {
             using var client = new SmtpClient(host, port);
-            using var msg = new MailMessage(sender, to, subject, body) { IsBodyHtml = html };
+            using var msg = new MailMessage(sender, to) { Subject = subject };
+
+            // ── BOTH PARTS, ALWAYS ──────────────────────────────────────────
+            //
+            //  Until 24 September 2026 this sent `IsBodyHtml = true` and
+            //  nothing else. Amit reported TatvaOS mail arriving in Gmail's
+            //  spam folder; Gmail's own headers on the message said dkim=pass,
+            //  spf=pass, dmarc=pass — the authentication was perfect, and the
+            //  MESSAGE was the problem. HTML with no text/plain alternative is
+            //  a long-standing spam signal, and it is worse mail besides: a
+            //  text-only client, a watch or a screen reader had nothing.
+            //
+            //  The text is derived from the HTML (HtmlToText), so it cannot
+            //  drift out of date the way a hand-written second copy would.
+            if (html)
+            {
+                var text = HtmlToText.Convert(body);
+                msg.Body = text;
+                msg.IsBodyHtml = false;
+                msg.AlternateViews.Add(
+                    AlternateView.CreateAlternateViewFromString(text, Encoding.UTF8, "text/plain"));
+                msg.AlternateViews.Add(
+                    AlternateView.CreateAlternateViewFromString(body, Encoding.UTF8, "text/html"));
+            }
+            else
+            {
+                msg.Body = body;
+                msg.IsBodyHtml = false;
+            }
+
+            // RFC 3834: this is a machine writing, so an out-of-office must not
+            // answer it and a mail loop cannot start.
+            msg.Headers.Add("Auto-Submitted", "auto-generated");
+
+            // Only when there is somewhere real to go. See the parameter.
+            if (!string.IsNullOrWhiteSpace(unsubscribe))
+            {
+                msg.Headers.Add("List-Unsubscribe", unsubscribe.StartsWith('<') ? unsubscribe : $"<{unsubscribe}>");
+                if (unsubscribe.Contains("http", StringComparison.OrdinalIgnoreCase))
+                    msg.Headers.Add("List-Unsubscribe-Post", "List-Unsubscribe=One-Click");
+            }
+
             await client.SendMailAsync(msg, ct);
             return true;
         }
