@@ -177,6 +177,75 @@ run_as postgres "
     DELETE FROM connect.meetings
      WHERE title IN ('iso-techvein','iso-school','forged-by-isolation-test');" >/dev/null 2>&1
 
+hdr "Locations and designations are isolated (Hire & People, Phase 0)"
+
+# Fixture as postgres (bypasses RLS), asserted as tatvaos_app, removed at the
+# end - the Connect pattern above. One row per tenant per table.
+run_as postgres "
+    INSERT INTO core.locations (tenant_id, name) VALUES
+        ('$TECHVEIN','iso-loc-techvein'), ('$SCHOOL','iso-loc-school')
+    ON CONFLICT DO NOTHING;
+    INSERT INTO core.designations (tenant_id, title) VALUES
+        ('$TECHVEIN','iso-des-techvein'), ('$SCHOOL','iso-des-school')
+    ON CONFLICT DO NOTHING;" >/dev/null 2>&1
+
+for pair in "core.locations:name:iso-loc" "core.designations:title:iso-des"; do
+    tbl=${pair%%:*}; rest=${pair#*:}; col=${rest%%:*}; pfx=${rest#*:}
+
+    # The subject happened: the fixture is really there, and the owner sees it.
+    # Without this every "0 leaked" below would pass on an empty table.
+    own=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM $tbl WHERE $col = '$pfx-techvein'")
+    [ "${own:-0}" -eq 1 ] && pass "$tbl: Techvein sees its own row" \
+                          || fail "$tbl: Techvein cannot see its own row (got '${own}') - fixture or RLS too strict"
+
+    leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM $tbl WHERE tenant_id = '$SCHOOL'")
+    [ "${leak:-1}" -eq 0 ] && pass "$tbl: Techvein cannot see ABC School's rows" \
+                           || fail "LEAK: $tbl shows $leak ABC School row(s) to Techvein"
+
+    leak=$(as_tenant "$SCHOOL" "SELECT count(*) FROM $tbl WHERE $col = '$pfx-techvein'")
+    [ "${leak:-1}" -eq 0 ] && pass "$tbl: ABC School cannot see Techvein's row" \
+                           || fail "LEAK: $tbl shows a Techvein row to ABC School"
+
+    n=$(no_context "SELECT count(*) FROM $tbl")
+    [ "${n:-1}" -eq 0 ] && pass "$tbl: no tenant context returns zero rows" \
+                        || fail "DANGEROUS: $tbl shows ${n} row(s) with no tenant set"
+
+    empty=$(scalar_as tatvaos_app "SET app.tenant_id = ''; SELECT count(*) FROM $tbl")
+    [ "${empty:-x}" = "0" ] && pass "$tbl: empty tenant string returns zero, does not throw" \
+                            || fail "$tbl: empty app.tenant_id did not return 0 (got '${empty}') - check the nullif()"
+
+    # An UPDATE aimed across the boundary must touch nothing. Read back as
+    # postgres, so RLS cannot hide a row that was in fact changed.
+    run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
+        UPDATE $tbl SET $col = '$pfx-hijacked' WHERE tenant_id = '$SCHOOL';" >/dev/null 2>&1
+    hij=$(scalar_as postgres "SELECT count(*) FROM $tbl WHERE $col = '$pfx-hijacked'")
+    [ "${hij:-1}" -eq 0 ] && pass "$tbl: cross-tenant UPDATE changed nothing" \
+                          || fail "LEAK: Techvein renamed an ABC School row in $tbl"
+
+    forge_out=$(run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
+        INSERT INTO $tbl (tenant_id, $col) VALUES ('$SCHOOL', '$pfx-forged');" 2>&1)
+    forge_rc=$?
+    if [ "$forge_rc" -ne 0 ] && printf '%s' "$forge_out" | grep -qi 'row-level security'; then
+        pass "$tbl: cross-tenant INSERT blocked by WITH CHECK"
+    else
+        fail "LEAK: Techvein wrote a $tbl row tagged as ABC School - WITH CHECK is missing"
+    fi
+
+    # Names are unique per organisation ignoring case and outer spaces. The
+    # refusal must be the unique index, not some other error.
+    dup_out=$(run_as tatvaos_app "SET app.tenant_id = '$TECHVEIN';
+        INSERT INTO $tbl (tenant_id, $col) VALUES ('$TECHVEIN', '  ISO-${pfx#iso-}-TECHVEIN ');" 2>&1)
+    if printf '%s' "$dup_out" | grep -qi 'duplicate key'; then
+        pass "$tbl: same name in a different case is refused"
+    else
+        fail "$tbl: a case-variant duplicate was accepted or failed for another reason"
+    fi
+done
+
+run_as postgres "
+    DELETE FROM core.locations    WHERE name  LIKE 'iso-loc-%' OR lower(btrim(name))  LIKE 'iso-loc-%';
+    DELETE FROM core.designations WHERE title LIKE 'iso-des-%' OR lower(btrim(title)) LIKE 'iso-des-%';" >/dev/null 2>&1
+
 hdr "Sign-in handoff codes are isolated, and the redeem reaches no further than one row"
 
 # Decision 0003. This table is unusual and so is its test: the REDEEM is

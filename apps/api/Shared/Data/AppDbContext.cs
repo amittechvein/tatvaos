@@ -152,6 +152,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     // sign-in identities.
     public DbSet<TatvaOS.Api.Modules.Admin.OrgApiKey> OrgApiKeys
         => Set<TatvaOS.Api.Modules.Admin.OrgApiKey>();
+    // Added by 20260924-org-locations-designations. Phase 0 of Hire & People:
+    // organisation structure a job opening names, read later by People too.
+    public DbSet<TatvaOS.Api.Modules.Admin.OrgLocation> OrgLocations
+        => Set<TatvaOS.Api.Modules.Admin.OrgLocation>();
+    public DbSet<TatvaOS.Api.Modules.Admin.OrgDesignation> OrgDesignations
+        => Set<TatvaOS.Api.Modules.Admin.OrgDesignation>();
     public DbSet<TatvaOS.Api.Modules.Mail.MailApiSend> MailApiSends
         => Set<TatvaOS.Api.Modules.Mail.MailApiSend>();
     public DbSet<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes> ConnectMeetingNotes
@@ -267,6 +273,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.Mail.MailApiKey>().ToTable("api_keys", "mail");
         b.Entity<TatvaOS.Api.Modules.Admin.OrgApiKey>().ToTable("api_keys", "core");
         b.Entity<TatvaOS.Api.Modules.Admin.OrgApiKey>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Admin.OrgLocation>().ToTable("locations", "core");
+        b.Entity<TatvaOS.Api.Modules.Admin.OrgLocation>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Admin.OrgDesignation>().ToTable("designations", "core");
+        b.Entity<TatvaOS.Api.Modules.Admin.OrgDesignation>()
             .HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<TatvaOS.Api.Modules.Mail.MailApiSend>().ToTable("api_sends", "mail");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>().ToTable("meeting_notes", "connect");

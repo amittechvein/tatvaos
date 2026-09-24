@@ -754,6 +754,8 @@ app.MapDomainEndpoints();
 app.MapSignupEndpoints();
 app.MapSettingsEndpoints();
 app.MapDepartmentEndpoints();
+// Locations and designations: Phase 0 of Hire & People (24 Sept 2026).
+app.MapOrgStructureEndpoints();
 app.MapStorageEndpoints();
 app.MapAuditEndpoints();
 // Shared mailboxes are PROVISIONING — the same act as creating a person, so

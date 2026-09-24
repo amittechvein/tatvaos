@@ -179,6 +179,9 @@ export function organisationNav(): NavSection[] {
           children: [
             { href: '/org/users', label: 'All people' },
             { href: '/org/departments', label: 'Departments' },
+            // Phase 0 of Hire & People (24 Sept 2026).
+            { href: '/org/locations', label: 'Locations' },
+            { href: '/org/designations', label: 'Designations' },
           ],
         },
         { href: '/org/domains', label: 'Domains', icon: <Icon d={PATHS.globe} /> },
