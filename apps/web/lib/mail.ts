@@ -456,6 +456,12 @@ export const mailApi = {
     const params = new URLSearchParams({ q });
     if (opts?.skip) params.set('skip', String(opts.skip));
     if (opts?.take) params.set('take', String(opts.take));
+    // Without this a search in a shared mailbox ran against the reader's OWN
+    // mailbox: the option was accepted and never sent, so to:support@… found
+    // "0 results in all mail" inside support@'s inbox (Amit, 24 Sept 2026).
+    // The API has always taken ?mailboxId= here, with the same read check as
+    // the folder listing.
+    if (opts?.mailboxId) params.set('mailboxId', opts.mailboxId);
     return f(`/mail/search?${params}`).then((r) => json<SearchPage>(r, 'Could not search your mail.'));
   },
 
