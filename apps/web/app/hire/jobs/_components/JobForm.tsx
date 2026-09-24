@@ -67,8 +67,12 @@ export const EMPLOYMENT_LABEL: Record<string, string> = {
 const num = (s: string) => (s.trim() === '' ? null : Number(s));
 const str = (n: number | null | undefined) => (n === null || n === undefined ? '' : String(n));
 
-export function JobForm({ job, options, submitLabel, busy, error, onSubmit, onCancel }: {
+export function JobForm({ job, options, submitLabel, busy, error, onSubmit, onCancel, lockHiringManagerTo }: {
   job: Job | null;
+  /** A hiring manager's own form: the field is fixed to them, because the
+   *  API refuses a hiring manager naming anyone else (they would lose the
+   *  job). Undefined for recruiters and administrators. */
+  lockHiringManagerTo?: string;
   options: JobOptions;
   submitLabel: string;
   busy: boolean;
@@ -94,7 +98,7 @@ export function JobForm({ job, options, submitLabel, busy, error, onSubmit, onCa
   const [description, setDescription] = useState(job?.description ?? '');
   const [responsibilities, setResponsibilities] = useState(job?.responsibilities ?? '');
   const [requirements, setRequirements] = useState(job?.requirements ?? '');
-  const [hiringManagerId, setHiringManagerId] = useState(job?.hiringManagerId ?? '');
+  const [hiringManagerId, setHiringManagerId] = useState(lockHiringManagerTo ?? job?.hiringManagerId ?? '');
   const [recruiterId, setRecruiterId] = useState(job?.recruiterId ?? '');
   const [openingDate, setOpeningDate] = useState(job?.openingDate ?? '');
   const [closingDate, setClosingDate] = useState(job?.closingDate ?? '');
@@ -265,9 +269,11 @@ export function JobForm({ job, options, submitLabel, busy, error, onSubmit, onCa
 
       <Card title="People and dates" className="mb-5">
         <div className="grid gap-x-4 sm:grid-cols-2">
-          <Field label="Hiring manager">
+          <Field label="Hiring manager"
+                 hint={lockHiringManagerTo ? 'You. A recruiter or an administrator can hand the job to someone else.' : undefined}>
             {(p) => (
-              <Select {...p} value={hiringManagerId} onChange={(e) => setHiringManagerId(e.target.value)}>
+              <Select {...p} value={hiringManagerId} disabled={Boolean(lockHiringManagerTo)}
+                      onChange={(e) => setHiringManagerId(e.target.value)}>
                 <option value="">None</option>
                 {options.people.map((u) => <option key={u.id} value={u.id}>{u.displayName}</option>)}
               </Select>

@@ -6,12 +6,14 @@ import { useEffect, useState } from 'react';
 import { Spinner } from '@/components/ui/Kit';
 import { Alert, PageHeader } from '@/components/ui/Page';
 import { useAuth } from '@/lib/auth';
+import { useHireAccess } from '../../HireAccess';
 import { JobForm, type JobOptions } from '../_components/JobForm';
 
 // A new job is always saved as a DRAFT. Publishing is a separate, deliberate
 // step on the job's own page, where the checks for "fit to be seen" run.
 export default function NewJobPage() {
-  const { authedFetch } = useAuth();
+  const { authedFetch, user } = useAuth();
+  const me = useHireAccess();
   const router = useRouter();
   const [options, setOptions] = useState<JobOptions | null>(null);
   const [busy, setBusy] = useState(false);
@@ -43,13 +45,14 @@ export default function NewJobPage() {
     <>
       <PageHeader
         title="New job opening"
-        subtitle="Saved as a draft. Nobody outside your organisation sees it until you publish."
+        subtitle="Saved as a draft. Only your hiring team sees it until it is published."
         breadcrumb={[{ label: 'Job openings', href: '/hire/jobs' }, { label: 'New' }]}
       />
       {!options ? (
         error ? <Alert tone="danger">{error}</Alert> : <Spinner />
       ) : (
         <JobForm job={null} options={options} submitLabel="Save draft" busy={busy} error={error}
+                 lockHiringManagerTo={me.access === 'hiring_manager' ? user?.id : undefined}
                  onSubmit={(p) => void create(p)} onCancel={() => router.push('/hire/jobs')} />
       )}
     </>

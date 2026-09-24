@@ -161,6 +161,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     // Added by 20260924-b-hire-job-openings. TatvaOS Hire R1.
     public DbSet<TatvaOS.Api.Modules.Hire.JobOpening> JobOpenings
         => Set<TatvaOS.Api.Modules.Hire.JobOpening>();
+    // Added by 20260924-c-hire-team. Who besides admins may use Hire.
+    public DbSet<TatvaOS.Api.Modules.Hire.HireTeamMember> HireTeamMembers
+        => Set<TatvaOS.Api.Modules.Hire.HireTeamMember>();
     public DbSet<TatvaOS.Api.Modules.Mail.MailApiSend> MailApiSends
         => Set<TatvaOS.Api.Modules.Mail.MailApiSend>();
     public DbSet<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes> ConnectMeetingNotes
@@ -285,6 +288,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             .HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<TatvaOS.Api.Modules.Hire.JobOpening>().ToTable("job_openings", "hire");
         b.Entity<TatvaOS.Api.Modules.Hire.JobOpening>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Hire.HireTeamMember>().ToTable("team_members", "hire");
+        b.Entity<TatvaOS.Api.Modules.Hire.HireTeamMember>().HasKey(m => new { m.TenantId, m.UserId });
+        b.Entity<TatvaOS.Api.Modules.Hire.HireTeamMember>()
             .HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<TatvaOS.Api.Modules.Mail.MailApiSend>().ToTable("api_sends", "mail");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>().ToTable("meeting_notes", "connect");

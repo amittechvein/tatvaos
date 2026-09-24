@@ -115,6 +115,8 @@ builder.Services.AddScoped<TokenIssuer>();
 builder.Services.AddScoped<TotpService>();
 builder.Services.AddScoped<StorageAllocator>();
 builder.Services.AddScoped<AuditWriter>();
+// What the signed-in person may do in Hire (admin / recruiter / hiring manager).
+builder.Services.AddScoped<TatvaOS.Api.Modules.Hire.HireAccess>();
 
 // ---- OpenID Connect provider (decision 0004) — stage 1: the stores -------
 // OpenIddict's core with EF Core storage on our own entities, and the two
@@ -758,6 +760,7 @@ app.MapDepartmentEndpoints();
 app.MapOrgStructureEndpoints();
 // TatvaOS Hire R1: job openings (24 Sept 2026).
 TatvaOS.Api.Modules.Hire.JobOpeningEndpoints.MapJobOpeningEndpoints(app);
+TatvaOS.Api.Modules.Hire.HireTeamEndpoints.MapHireTeamEndpoints(app);
 app.MapStorageEndpoints();
 app.MapAuditEndpoints();
 // Shared mailboxes are PROVISIONING — the same act as creating a person, so
