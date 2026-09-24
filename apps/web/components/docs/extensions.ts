@@ -109,9 +109,12 @@ export const ParagraphFormat = Extension.create({
     return {
       // Tab in a paragraph indents, as it does in a word processor. It is
       // deliberately NOT bound when the editor cannot change (read-only):
-      // then Tab must move focus, or a keyboard user is trapped.
-      Tab: () => this.editor.isEditable && this.editor.commands.indent(),
-      'Shift-Tab': () => this.editor.isEditable && this.editor.commands.outdent(),
+      // then Tab must move focus, or a keyboard user is trapped. Inside a
+      // table Tab belongs to the table (next cell) — measured 24 Sept: this
+      // handler ran first and indented the cell's paragraph instead, so a
+      // row typed with Tabs landed entirely in the first cell.
+      Tab: () => this.editor.isEditable && !this.editor.isActive('table') && this.editor.commands.indent(),
+      'Shift-Tab': () => this.editor.isEditable && !this.editor.isActive('table') && this.editor.commands.outdent(),
     };
   },
 });
