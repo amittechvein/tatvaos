@@ -45,8 +45,14 @@ public enum HireLevel { None = 0, HiringManager = 1, Recruiter = 2, Admin = 3 }
 ///  manager every job in the organisation, and nothing would look wrong —
 ///  the tenant filter would still be doing its job.
 ///
+///  The same holds for candidates, applications, their history and the
+///  pipeline (20260924-d): Candidates(level) and Applications(level) are the
+///  only reads, and a hiring manager sees a candidate only through an
+///  application to a job that names them.
+///
 ///  Two kinds of access leave this file, and only these:
-///    * Jobs(level): what THIS person may see. Every Hire screen uses it.
+///    * Jobs(level), Candidates(level), Applications(level): what THIS person
+///      may see. Every Hire screen uses them.
 ///    * OrganisationWide: counts and ids for Core's administrative "is this
 ///      in use" checks (location, designation, department deletion). They
 ///      return numbers and ids, never a query, so they cannot be extended
@@ -95,6 +101,128 @@ public sealed class HireAccess(AppDbContext db, TenantContext tenant, IHttpConte
             return q.Where(j => j.HiringManagerId == me);
         return q.Where(_ => false);
     }
+
+    // ------------------------------------------------------------ candidates
+
+    /// <summary>
+    /// The candidates this person may see. Recruiters and administrators: all
+    /// of them. A hiring manager: only people with at least one application
+    /// to a job that names them — never the organisation's whole talent pool.
+    /// </summary>
+    public IQueryable<HireCandidate> Candidates(HireLevel level)
+    {
+        var q = db.Set<HireCandidate>().AsQueryable();
+        if (level >= HireLevel.Recruiter) return q;
+        if (level == HireLevel.HiringManager && tenant.UserId is Guid me)
+        {
+            var mine = Applications(level);
+            return q.Where(c => mine.Any(a => a.CandidateId == c.Id));
+        }
+        return q.Where(_ => false);
+    }
+
+    /// <summary>
+    /// The applications this person may see: all, or — for a hiring manager —
+    /// those to jobs that name them. Defined through Jobs(level), so the two
+    /// can never disagree about which jobs are theirs.
+    /// </summary>
+    public IQueryable<HireApplication> Applications(HireLevel level)
+    {
+        var q = db.Set<HireApplication>().AsQueryable();
+        if (level >= HireLevel.Recruiter) return q;
+        if (level == HireLevel.HiringManager)
+        {
+            var jobs = Jobs(level);
+            return q.Where(a => jobs.Any(j => j.Id == a.JobId));
+        }
+        return q.Where(_ => false);
+    }
+
+    /// <summary>History of applications this person may see.</summary>
+    public IQueryable<HireApplicationEvent> Events(HireLevel level)
+    {
+        var apps = Applications(level);
+        return db.Set<HireApplicationEvent>().Where(e => apps.Any(a => a.Id == e.ApplicationId));
+    }
+
+    /// <summary>
+    /// Is this email already a candidate anywhere in the organisation —
+    /// including people this person cannot see. Returns the id only when the
+    /// caller may see that candidate; otherwise just "taken", so a hiring
+    /// manager cannot use it to discover who else is being recruited.
+    /// </summary>
+    public async Task<(bool Taken, Guid? VisibleId)> CandidateEmailTakenAsync(
+        HireLevel level, string email, Guid? except, CancellationToken ct)
+    {
+        var key = email.ToLower();
+        var id = await db.Set<HireCandidate>()
+            .Where(c => c.Email != null && c.Email.ToLower() == key && c.Id != except)
+            .Select(c => (Guid?)c.Id)
+            .FirstOrDefaultAsync(ct);
+        if (id is null) return (false, null);
+        var visible = await Candidates(level).AnyAsync(c => c.Id == id, ct);
+        return (true, visible ? id : null);
+    }
+
+    /// <summary>Saves what the caller added or changed through this gate.</summary>
+    public Task<int> SaveAsync(CancellationToken ct) => db.SaveChangesAsync(ct);
+
+    public void AddCandidate(HireCandidate c) => db.Set<HireCandidate>().Add(c);
+    /// <summary>Erasure. Cascades to applications and their history in the database.</summary>
+    public void RemoveCandidate(HireCandidate c) => db.Set<HireCandidate>().Remove(c);
+    public void AddApplication(HireApplication a) => db.Set<HireApplication>().Add(a);
+    public void AddEvent(HireApplicationEvent e) => db.Set<HireApplicationEvent>().Add(e);
+
+    // -------------------------------------------------------------- pipeline
+
+    /// <summary>
+    /// The roadmap's default pipeline (§3 Phase 1). Rejected and Withdrawn are
+    /// outcomes, not stages — see the migration.
+    /// </summary>
+    private static readonly (string Key, string Name)[] DefaultStages =
+    [
+        ("applied", "Applied"), ("screening", "Screening"), ("shortlisted", "Shortlisted"),
+        ("hr_interview", "HR Interview"), ("assessment", "Assessment"),
+        ("technical_interview", "Technical Interview"), ("final_interview", "Final Interview"),
+        ("selected", "Selected"), ("offer", "Offer"), ("offer_accepted", "Offer Accepted"),
+        ("pre_joining", "Pre-Joining"), ("joined", "Joined"),
+    ];
+
+    /// <summary>
+    /// This organisation's pipeline, in order — created with the defaults the
+    /// first time anyone needs it. A unique (tenant, key) index makes two
+    /// first requests at once safe: the loser's insert fails and it re-reads.
+    /// </summary>
+    public async Task<List<HirePipelineStage>> PipelineAsync(CancellationToken ct)
+    {
+        var stages = await db.Set<HirePipelineStage>().AsNoTracking()
+            .OrderBy(s => s.Position).ToListAsync(ct);
+        if (stages.Count > 0) return stages;
+
+        var now = DateTimeOffset.UtcNow;
+        for (var i = 0; i < DefaultStages.Length; i++)
+            db.Set<HirePipelineStage>().Add(new HirePipelineStage
+            {
+                Id = Guid.NewGuid(), TenantId = tenant.TenantId,
+                Key = DefaultStages[i].Key, Name = DefaultStages[i].Name,
+                Position = (i + 1) * 10, IsFinal = i == DefaultStages.Length - 1,
+                IsActive = true, CreatedAt = now,
+            });
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException)
+        {
+            // Another request created them first. Forget ours and read theirs.
+            foreach (var e in db.ChangeTracker.Entries<HirePipelineStage>().ToList())
+                e.State = EntityState.Detached;
+        }
+        return await db.Set<HirePipelineStage>().AsNoTracking()
+            .OrderBy(s => s.Position).ToListAsync(ct);
+    }
+
+    // ------------------------------------------------------------------ jobs
 
     /// <summary>A new job, for the caller to save. The caller has already checked the level.</summary>
     public void Add(JobOpening job) => db.Set<JobOpening>().Add(job);
