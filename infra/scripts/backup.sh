@@ -220,7 +220,9 @@ step "Off-box copy — object storage"
 #  Expected in ${DEST}/.backup-env:
 #      BACKUP_S3_REMOTE='linode:tatvaos-backups'   # rclone remote:bucket
 #      BACKUP_ENC_PASSPHRASE='...'                 # also on paper, offline
-#      BACKUP_S3_KEEP_DAYS=30                      # optional
+#      BACKUP_S3_KEEP_DAYS=7                       # optional; default 30, production sets 7
+#      BACKUP_KEEP_DAYS=3                          # optional; default 14, production sets 3.
+#                                                  # deploy.sh's pre-deploy copies use it too.
 # ---------------------------------------------------------------------------
 # (.backup-env is loaded at the top of the script, before any knob is read.)
 

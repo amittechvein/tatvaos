@@ -39,8 +39,9 @@ So up to **six hours** can be lost, not twenty-four.
 
 ## Where the copies live
 
-**Local** — `/srv/backups/tatvaos/<stamp>/`, kept 14 days (`BACKUP_KEEP_DAYS`).
-Unencrypted. Fine for "someone deleted a mailbox", useless for "the server is
+**Local** — `/srv/backups/tatvaos/<stamp>/`, kept `BACKUP_KEEP_DAYS` days:
+the script's default is 14, and **production sets 3** (measured 24 Sept
+2026). Unencrypted. Fine for "someone deleted a mailbox", useless for "the server is
 gone". The directory is mode 700: the sets contain the whole database and
 everyone's mail in the clear.
 
@@ -51,8 +52,55 @@ Configured in `/srv/backups/tatvaos/.backup-env`:
 ```bash
 BACKUP_S3_REMOTE='linode:tatvaos-backups'
 BACKUP_ENC_PASSPHRASE='...'                # also on paper, offline
-BACKUP_S3_KEEP_DAYS=30
+BACKUP_S3_KEEP_DAYS=7                      # production's real value
+BACKUP_KEEP_DAYS=3                         # local sets AND pre-deploy copies
 ```
+
+**Off-box copies are kept 7 days, not 30.** This page said 30 until 24 Sept
+2026; the server's own config says 7, and the server is what happens. Measure
+it (`BACKUP_S3_KEEP_DAYS` only — never print the file) before quoting a
+number to anyone.
+
+**Pre-deploy copies** — `/srv/tatvaos-production/backups/pre-deploy-<stamp>.sql.gz.enc`,
+one per deploy, written by `deploy.sh` before it touches anything (PR 254,
+Mr. Singh's ruling of 25 Sept 2026):
+
+- **Encrypted** with the same scheme and the same `BACKUP_ENC_PASSPHRASE` as
+  the off-box objects. On production a missing passphrase **stops the
+  deploy** — it will not write a plain copy.
+- **Locked down**: directory 700, each file 600, created that way.
+- **Kept by days, the same `BACKUP_KEEP_DAYS` as the local sets** — one
+  number. With production's 3, a pre-deploy copy older than 3 days is gone;
+  anything older comes from the off-box objects (7 days).
+- **Checked whole** before the deploy carries on: decrypted, gunzipped, and
+  checked for `pg_dumpall`'s end-of-dump marker.
+
+Restore one (it is a whole-cluster `pg_dumpall`; restore into a scratch
+container first unless the live database is already lost):
+
+```bash
+set -a; . /srv/backups/tatvaos/.backup-env; set +a
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:BACKUP_ENC_PASSPHRASE \
+    -in backups/pre-deploy-<stamp>.sql.gz.enc | gunzip | psql -U postgres
+```
+
+**Read this during an incident, not after it: a pre-deploy copy lives only
+3 days.** A bad deploy noticed on day four has no pre-deploy copy to go back
+to. Use the newest off-box object from before that deploy instead (kept 7
+days, six-hourly, so up to six hours are lost). Check `ls -l backups/` for
+the dates before you plan the restore.
+
+**Rotating `BACKUP_ENC_PASSPHRASE`: keep the old one until everything written
+with it has aged out.** That is 3 days for local and pre-deploy copies and 7
+days for off-box objects. Rotate and throw away the old passphrase on the same
+day, and a week of backups can no longer be opened.
+
+**The old plain copies** (`pre-deploy-*.sql`, `pre-deploy-*.sql.gz`, 323 of
+them, 31 GB, 4 Aug to 24 Sept 2026) are **never deleted by a deploy**; each
+deploy counts them aloud. They were chmod-ed 700/600 by hand on 25 Sept. Mr.
+Singh's order for removing them: (a) prove a restore into a scratch database;
+(b) PR 254 live; (c) one explicit deletion run by a person, logged with the
+count, the date range and who authorised it.
 
 **`BACKUP_REMOTE` is the legacy rsync hook and is deprecated.** The script
 labels it `Off-box copy — rsync (legacy hook)` and it copies *unencrypted*.
@@ -246,8 +294,11 @@ tests them.
 
 - **Point-in-time recovery.** These are six-hourly snapshots; up to six hours
   can be lost. WAL archiving is the upgrade when that stops being acceptable.
-- **Rotation and old secrets.** A rotated credential survives in local sets for
-  14 days and in off-box objects for `BACKUP_S3_KEEP_DAYS`. Rotation is not
+- **Rotation and old secrets.** A rotated credential survives in local sets and
+  pre-deploy copies for `BACKUP_KEEP_DAYS` and in off-box objects for
+  `BACKUP_S3_KEEP_DAYS`. **Changing `BACKUP_ENC_PASSPHRASE` does not re-encrypt
+  anything already written** — keep the old one until the last copy made with
+  it has aged out of every window. Rotation is not
   finished when the new secret is live; it is finished when the old one is out
   of reach.
 - **Restoring onto a bare machine.** See the drill section above.
