@@ -349,6 +349,73 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+step "Off-box copy — meeting recordings (incremental mirror)"
+#
+#  Recordings are the one artefact the six-hourly set leaves out: at ~10 GB
+#  they would triple every upload (Mr. Singh, 24 Sept 2026). Losing the box
+#  today loses up to 30 days of them — for a school, lessons. So they are
+#  MIRRORED, not bundled: `rclone sync` uploads only what is new since the
+#  last run and deletes in the bucket what the 30-day age-off deleted on the
+#  volume. Cost at 10 GB: about twenty cents a month.
+#
+#  ENCRYPTED WITH THE SAME PAPER PASSPHRASE, NO NEW SECRET. rclone's crypt
+#  backend is configured here, in the environment, for this one command:
+#  its password is BACKUP_ENC_PASSPHRASE obscured, so the passphrase that
+#  opens the sets also opens the recordings. Filenames are encrypted too
+#  (a recording's name carries a meeting id). Nothing is written to
+#  rclone.conf and nothing is printed.
+#
+#  THE RECEIPT IS A COUNT. `rclone sync` returning zero after copying nothing
+#  is the false-pass shape this project keeps finding, so the number of
+#  files in the bucket is compared with the number on the volume; they must
+#  be equal, or this step FAILS the run. A mirror that is short is not a
+#  mirror.
+#
+#  Off by default until Amit's go lands in .backup-env:
+#      BACKUP_RECORDINGS_REMOTE='linode:tatvaos-recordings'
+# ---------------------------------------------------------------------------
+if [ -n "${BACKUP_RECORDINGS_REMOTE:-}" ] && [ -n "${BACKUP_S3_REMOTE:-}" ] && [ -n "${BACKUP_ENC_PASSPHRASE:-}" ]; then
+    if ! command -v rclone >/dev/null 2>&1; then
+        bad "rclone is not installed — recordings were NOT mirrored"
+        failed=1
+    else
+        # A crypt remote that exists only for this process.
+        export RCLONE_CONFIG_RECCRYPT_TYPE=crypt
+        export RCLONE_CONFIG_RECCRYPT_REMOTE="$BACKUP_RECORDINGS_REMOTE"
+        export RCLONE_CONFIG_RECCRYPT_FILENAME_ENCRYPTION=standard
+        export RCLONE_CONFIG_RECCRYPT_DIRECTORY_NAME_ENCRYPTION=true
+        RCLONE_CONFIG_RECCRYPT_PASSWORD=$(rclone obscure "$BACKUP_ENC_PASSPHRASE")
+        export RCLONE_CONFIG_RECCRYPT_PASSWORD
+        RC_ENV="-e RCLONE_CONFIG_RECCRYPT_TYPE -e RCLONE_CONFIG_RECCRYPT_REMOTE -e RCLONE_CONFIG_RECCRYPT_FILENAME_ENCRYPTION -e RCLONE_CONFIG_RECCRYPT_DIRECTORY_NAME_ENCRYPTION -e RCLONE_CONFIG_RECCRYPT_PASSWORD"
+        # The volume is read only, through a throwaway container, the same
+        # way the other volumes are read above. The bytes go from the volume
+        # straight to the bucket; nothing lands on the root disk.
+        on_volume=$(docker run --rm -v tatvaos_connectrec:/src:ro alpine sh -c "find /src -type f | wc -l" 2>/dev/null)
+        if [ -z "$on_volume" ]; then
+            bad "could not read the recordings volume — recordings were NOT mirrored"
+            failed=1
+        elif docker run --rm -v tatvaos_connectrec:/src:ro $RC_ENV \
+                 -v "$HOME/.config/rclone:/config/rclone:ro" \
+                 rclone/rclone:1.68 sync /src reccrypt: --delete-after --transfers 2 2>&1 | sed 's/^/   /'; then
+            in_bucket=$(docker run --rm $RC_ENV -v "$HOME/.config/rclone:/config/rclone:ro" \
+                 rclone/rclone:1.68 lsf -R --files-only reccrypt: 2>/dev/null | wc -l)
+            if [ "$in_bucket" -eq "$on_volume" ]; then
+                ok "recordings mirrored — ${in_bucket} files in the bucket, ${on_volume} on the volume, encrypted"
+            else
+                bad "recordings mirror is SHORT: ${in_bucket} files in the bucket, ${on_volume} on the volume"
+                failed=1
+            fi
+        else
+            bad "recordings sync FAILED — the bucket may be behind the volume"
+            failed=1
+        fi
+        unset RCLONE_CONFIG_RECCRYPT_PASSWORD
+    fi
+else
+    note "recordings mirror not configured (BACKUP_RECORDINGS_REMOTE unset) — recordings exist only on this machine"
+fi
+
 step "Off-box copy — rsync (legacy hook)"
 if [ -n "$REMOTE" ]; then
     if rsync -a --delete-after "${OUT}/" "${REMOTE}/${STAMP}/" 2>&1 | sed 's/^/   /'; then
