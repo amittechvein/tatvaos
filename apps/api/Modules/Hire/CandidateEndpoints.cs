@@ -154,6 +154,7 @@ public static class CandidateEndpoints
         {
             Id = Guid.NewGuid(), TenantId = tenant.TenantId, CreatedBy = tenant.UserId,
             CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow,
+            LastEditedAt = DateTimeOffset.UtcNow,
         };
         var error = Apply(c, req);
         if (error is not null) return Results.BadRequest(new { error });
@@ -195,6 +196,9 @@ public static class CandidateEndpoints
         }
 
         c.UpdatedAt = DateTimeOffset.UtcNow;
+        // A person saved the profile: the one thing that restarts the
+        // retention clock for someone never put forward. Viewing does not.
+        c.LastEditedAt = c.UpdatedAt;
         await access.SaveAsync(ct);
         // Which fields changed, never their values: see the class comment.
         await audit.WriteAsync("candidate.updated", "candidate", id.ToString(), ct: ct, productCode: Product);

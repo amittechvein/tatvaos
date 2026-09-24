@@ -56,6 +56,13 @@ public sealed class HireCandidate
     /// the careers portal's optional tick will (decision 0010 §7).
     /// </summary>
     public DateOnly? TalentPoolUntil { get; set; }
+    /// <summary>
+    /// When a PERSON last saved this profile — written only by the API's
+    /// create and update. The retention clock for someone never put forward
+    /// runs from here, not from UpdatedAt, so a re-index or a migration that
+    /// touches the row cannot keep their data alive (Mr. Singh, 24 Sept).
+    /// </summary>
+    public DateTimeOffset LastEditedAt { get; set; }
     public DateTimeOffset? TalentPoolConsentAt { get; set; }
     public Guid? CreatedBy { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -99,6 +106,15 @@ public sealed class HireSetting
     public int RetentionDays { get; set; } = 180;
     public Guid? UpdatedBy { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
+    /// <summary>
+    /// A SHORTER period waiting seven days before it applies (Mr. Singh,
+    /// 24 Sept 2026): visible on the settings page and cancellable until then.
+    /// The retention sweep applies it once PendingEffectiveAt has passed.
+    /// </summary>
+    public int? PendingRetentionDays { get; set; }
+    public DateTimeOffset? PendingEffectiveAt { get; set; }
+    public Guid? PendingRequestedBy { get; set; }
+    public DateTimeOffset? PendingRequestedAt { get; set; }
 }
 
 /// <summary>What happened to an application, in order. Append-only (no UPDATE or DELETE grant).</summary>

@@ -29,6 +29,8 @@ public static class HireTeamEndpoints
         // it decides when people's data is deleted.
         app.MapGet("/api/hire/settings", GetSettingsAsync).RequireAuthorization("User").WithTags("Hire");
         app.MapPut("/api/hire/settings", SaveSettingsAsync).RequireAuthorization("User").WithTags("Hire");
+        app.MapGet("/api/hire/settings/impact", ImpactAsync).RequireAuthorization("User").WithTags("Hire");
+        app.MapDelete("/api/hire/settings/pending", CancelPendingAsync).RequireAuthorization("User").WithTags("Hire");
 
         var g = app.MapGroup("/api/hire/team").RequireAuthorization("User").WithTags("Hire");
         g.MapGet("/", ListAsync);
@@ -47,19 +49,54 @@ public static class HireTeamEndpoints
         });
     }
 
-    private static async Task<IResult> GetSettingsAsync(HireAccess access, CancellationToken ct)
+    private static async Task<IResult> GetSettingsAsync(HireAccess access, AppDbContext db, CancellationToken ct)
     {
         if (await access.LevelAsync(ct) != HireLevel.Admin)
             return Results.Json(new { error = "Only an administrator can see Hire settings." },
                                 statusCode: StatusCodes.Status403Forbidden);
         var s = await access.SettingsAsync(ct);
+        string? by = null;
+        if (s.PendingRequestedBy is Guid u)
+            by = await db.Users.AsNoTracking().Where(x => x.Id == u).Select(x => x.DisplayName).FirstOrDefaultAsync(ct);
         return Results.Ok(new
         {
             retentionDays = s.RetentionDays,
             minDays = HireAccess.MinRetentionDays,
             maxDays = HireAccess.MaxRetentionDays,
             s.UpdatedAt,
+            pending = s.PendingRetentionDays is int d
+                ? new { days = d, effectiveAt = s.PendingEffectiveAt, requestedBy = by, requestedAt = s.PendingRequestedAt }
+                : null,
         });
+    }
+
+    /// <summary>
+    /// What a shorter period would delete, and when — asked before anything
+    /// is saved. Longer or equal periods delete nothing more.
+    /// </summary>
+    private static async Task<IResult> ImpactAsync(int? days, HireAccess access, CancellationToken ct)
+    {
+        if (await access.LevelAsync(ct) != HireLevel.Admin)
+            return Results.Json(new { error = "Only an administrator can see Hire settings." },
+                                statusCode: StatusCodes.Status403Forbidden);
+        if (days is not int d || d < HireAccess.MinRetentionDays || d > HireAccess.MaxRetentionDays)
+            return Results.BadRequest(new { error = $"Days must be between {HireAccess.MinRetentionDays} and {HireAccess.MaxRetentionDays}." });
+        var current = (await access.SettingsAsync(ct)).RetentionDays;
+        if (d >= current) return Results.Ok(new { deletes = 0, effectiveAt = (DateTimeOffset?)null });
+        var at = DateTimeOffset.UtcNow.Add(HireAccess.ShorteningDelay);
+        return Results.Ok(new { deletes = await access.ShorteningImpactAsync(d, at, ct), effectiveAt = at });
+    }
+
+    private static async Task<IResult> CancelPendingAsync(HireAccess access, AuditWriter audit, CancellationToken ct)
+    {
+        if (await access.LevelAsync(ct) != HireLevel.Admin)
+            return Results.Json(new { error = "Only an administrator can change Hire settings." },
+                                statusCode: StatusCodes.Status403Forbidden);
+        var s = await access.SettingsAsync(ct);
+        if (!await access.CancelShorteningAsync(ct)) return Results.NotFound(new { error = "Nothing is waiting to be applied." });
+        await audit.WriteAsync("hire_settings.retention_shortening_cancelled", "hire_settings", null,
+            before: new { pendingDays = s.PendingRetentionDays, s.PendingEffectiveAt }, ct: ct, productCode: "hire");
+        return Results.Ok(new { cancelled = true });
     }
 
     private static async Task<IResult> SaveSettingsAsync(
@@ -77,12 +114,41 @@ public static class HireTeamEndpoints
                       + "candidate's own consent, which is recorded when they apply.",
             });
 
-        var before = (await access.SettingsAsync(ct)).RetentionDays;
-        await access.SaveRetentionAsync(days, ct);
-        await audit.WriteAsync("hire_settings.retention_changed", "hire_settings", null,
-            before: new { retentionDays = before }, after: new { retentionDays = days },
-            ct: ct, productCode: "hire");
-        return Results.Ok(new { retentionDays = days });
+        var current = await access.SettingsAsync(ct);
+        var before = current.RetentionDays;
+
+        // Longer or the same: the safe direction, applied at once; it also
+        // cancels any shortening that was waiting.
+        if (days >= before)
+        {
+            await access.ApplyRetentionNowAsync(days, ct);
+            await audit.WriteAsync("hire_settings.retention_changed", "hire_settings", null,
+                before: new { retentionDays = before, pendingDays = current.PendingRetentionDays },
+                after: new { retentionDays = days }, ct: ct, productCode: "hire");
+            return Results.Ok(new { retentionDays = days, pending = (object?)null });
+        }
+
+        // Shorter: state what it will destroy, and do nothing until the caller
+        // confirms that exact number (Mr. Singh, 24 Sept 2026). If more
+        // candidates became due between the preview and the save, the number
+        // no longer matches and they are asked again.
+        var at = DateTimeOffset.UtcNow.Add(HireAccess.ShorteningDelay);
+        var deletes = await access.ShorteningImpactAsync(days, at, ct);
+        if (req.ConfirmDeletes != deletes)
+            return Results.Json(new
+            {
+                error = $"Shortening to {days} days will delete {deletes} candidate(s) on "
+                      + $"{at:d MMMM yyyy} who would otherwise be kept longer. Confirm that number to go ahead.",
+                needsConfirmation = true,
+                deletes,
+                effectiveAt = at,
+            }, statusCode: StatusCodes.Status409Conflict);
+
+        await access.ScheduleShorteningAsync(days, at, ct);
+        await audit.WriteAsync("hire_settings.retention_shortening_scheduled", "hire_settings", null,
+            before: new { retentionDays = before },
+            after: new { pendingDays = days, effectiveAt = at, deletes }, ct: ct, productCode: "hire");
+        return Results.Ok(new { retentionDays = before, pending = new { days, effectiveAt = at, deletes } });
     }
 
     private static async Task<IResult> ListAsync(HireAccess access, AppDbContext db, CancellationToken ct)
@@ -175,4 +241,4 @@ public static class HireTeamEndpoints
 }
 
 public sealed record SetTeamRoleRequest(string? Role);
-public sealed record SaveHireSettingsRequest(int? RetentionDays);
+public sealed record SaveHireSettingsRequest(int? RetentionDays, int? ConfirmDeletes);

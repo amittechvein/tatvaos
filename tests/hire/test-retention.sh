@@ -13,12 +13,26 @@
 #   E  withdrawn 200 days ago, consent ran out       -> erased
 #   F  never put forward, untouched 181 days         -> erased
 #   G  never put forward, touched 10 days ago        -> kept
-#   H  ABC School (period 30 d), rejected 31 d ago   -> erased
-#   I  ABC School (period 30 d), rejected 29 d ago   -> kept
+#   H  ABC School (30 d, applied by the sweep), 31 d -> erased
+#   I  ABC School (30 d, applied by the sweep), 29 d -> kept
+#   B2 Techvein asked for 30 d, 7 days NOT up, 60 d  -> kept
+#   G2 last edited 181 d ago, system touch today     -> erased
+#
+# Mr. Singh, 24 Sept 2026 added: a shorter period waits seven days and the
+# sweep applies it only once due (and logs that); the preview counts exactly
+# who a shortening would delete, inside the tenant; the clock for someone
+# never put forward is last_edited_at, which a system touch does not move;
+# the sweep's log carries how many, under which period, set by whom and when.
 #
 # ...then that the erasure took their applications and history, that the audit
-# log says HOW MANY and never who, that a second run takes nobody, and that the
-# database refuses the states the sweep relies on never existing.
+# log says HOW MANY and never who, that a second run takes nobody, that the
+# database refuses the states the sweep relies on never existing, and that
+# NOTHING of this test is left behind (a stage it left once broke the next
+# test on the same database).
+#
+# CALIBRATED 24 Sept: sweep ignoring consent and the organisation's period ->
+# D and H wrong; due rule on updated_at -> F and G2 wrongly kept; pending
+# never applied -> H kept and nothing logged. Each restored -> 40/0.
 #
 # Runs the sweep as tatvaos_app with NO tenant — exactly how
 # HireRetentionWorker calls it. Takes TATVAOS_PSQL / TATVAOS_PSQL_APP like the
@@ -64,8 +78,22 @@ printf '\n>> 0. Fixtures (run %s)\n' "$RUN"
 
 # One stage and one job per organisation, then candidates with back-dated
 # decisions. Everything is named ret-$RUN-* so it can be found and removed.
-PG "INSERT INTO hire.settings (tenant_id, retention_days) VALUES ('$S', 30)
-    ON CONFLICT (tenant_id) DO UPDATE SET retention_days = 30" >/dev/null
+# Mr. Singh, 24 Sept: a shorter period waits seven days. ABC School asked for
+# 30 days eight days ago, so its wait is over and the sweep must apply it
+# before judging anyone. Techvein asked for 30 days today, so its wait is NOT
+# over and its candidates are still judged at 180.
+PG "INSERT INTO hire.settings (tenant_id, retention_days, pending_retention_days, pending_effective_at, pending_requested_at)
+    VALUES ('$S', 180, 30, now() - interval '1 day', now() - interval '8 days')
+    ON CONFLICT (tenant_id) DO UPDATE SET retention_days = 180, pending_retention_days = 30,
+        pending_effective_at = now() - interval '1 day', pending_requested_at = now() - interval '8 days'" >/dev/null
+PG "INSERT INTO hire.settings (tenant_id, retention_days, pending_retention_days, pending_effective_at, pending_requested_at)
+    VALUES ('$T', 180, 30, now() + interval '6 days', now() - interval '1 day')
+    ON CONFLICT (tenant_id) DO UPDATE SET retention_days = 180, pending_retention_days = 30,
+        pending_effective_at = now() + interval '6 days', pending_requested_at = now() - interval '1 day',
+        updated_by = NULL" >/dev/null
+# updated_by NULL: Techvein's 180 is the untouched DEFAULT here. Without this,
+# a row left by test-job-openings (an admin explicitly choosing 180) made the
+# sweep's log say 'organisation' — correct for that state, wrong fixture.
 fixture() {   # tenant key label outcome decided_days_ago(or '') consent_until(or '')
     local tenant=$1 key=$2 outcome=$3 days=$4 consent=$5
     local stage job cand until_sql consent_sql
@@ -78,10 +106,13 @@ fixture() {   # tenant key label outcome decided_days_ago(or '') consent_until(o
     [ -z "$stage" ] && stage=$(PG "WITH i AS (INSERT INTO hire.pipeline_stages (tenant_id, key, name, position) VALUES ('$tenant','ret_stage','ret',999) RETURNING id) SELECT id FROM i")
     job=$(PG "SELECT id FROM hire.job_openings WHERE tenant_id='$tenant' AND title='ret-$RUN-job'")
     [ -z "$job" ] && job=$(PG "WITH i AS (INSERT INTO hire.job_openings (tenant_id, title) VALUES ('$tenant','ret-$RUN-job') RETURNING id) SELECT id FROM i")
-    cand=$(PG "WITH i AS (INSERT INTO hire.candidates (tenant_id, full_name, email, talent_pool_until, talent_pool_consent_at, updated_at)
+    # last_edited_at is the clock; updated_at is set to NOW on every fixture,
+    # as if a maintenance job had just touched the row — which must not
+    # restart anyone's retention (Mr. Singh, 24 Sept).
+    cand=$(PG "WITH i AS (INSERT INTO hire.candidates (tenant_id, full_name, email, talent_pool_until, talent_pool_consent_at, last_edited_at, updated_at)
                VALUES ('$tenant','ret-$RUN-$key','ret-$RUN-$key@example.test',
                        $until_sql, $consent_sql,
-                       now() - interval '${6:-0} days') RETURNING id) SELECT id FROM i")
+                       now() - interval '${6:-0} days', now()) RETURNING id) SELECT id FROM i")
     if [ "$outcome" != "none" ]; then
         PG "INSERT INTO hire.applications (tenant_id, candidate_id, job_id, stage_id, outcome, rejection_reason, decided_at)
             VALUES ('$tenant','$cand','$job','$stage','$outcome',
@@ -105,16 +136,42 @@ F=$(fixture "$T" F none '' '' 181)
 G=$(fixture "$T" G none '' '' 10)
 H=$(fixture "$S" H rejected 31 '')
 I=$(fixture "$S" I rejected 29 '')
+# Techvein asked for 30 days, but its seven days are not up: someone rejected
+# 60 days ago is still under 180 and must stay.
+B2=$(fixture "$T" B2 rejected 60 '')
+# Never put forward, last edited by a person 181 days ago; then a system job
+# touches the row today (updated_at, and a no-op column write). Still due.
+G2=$(fixture "$T" G2 none '' '' 181)
+PG "UPDATE hire.candidates SET updated_at = now(), skills = skills WHERE id = '$G2'" >/dev/null
 n=$(PG "SELECT count(*) FROM hire.candidates WHERE full_name LIKE 'ret-$RUN-%'")
-same "nine candidates in place" "$n" "9"
+same "eleven candidates in place" "$n" "11"
+same "G2's row was touched today, its last edit was not" \
+    "$(PG "SELECT (updated_at > now() - interval '1 minute' AND last_edited_at < now() - interval '180 days')::text FROM hire.candidates WHERE id='$G2'")" "true"
+
+printf '\n>> 0b. What a shorter period would delete, asked before it is saved\n'
+# As the app inside Techvein: the preview the settings page shows. At the
+# date a 30-day period would start (seven days on), it deletes B2 (60 d)
+# that 180 days would keep. B (179 d) is NOT counted: seven days on it is
+# past 180 anyway — the first version of this check expected it, wrongly.
+# A, E, F, G2 are due under 180 already and not counted either.
+impact=$(PGAPP "SET app.tenant_id = '$T';
+    SELECT string_agg(d.id::text, ',' ORDER BY d.id) FROM hire.due_candidates(now() + interval '7 days', 30) d
+     WHERE NOT EXISTS (SELECT 1 FROM hire.due_candidates(now() + interval '7 days', NULL) x WHERE x.id = d.id)
+       AND d.id IN ('$A','$B','$B2','$C','$D','$E','$F','$G','$G2')")
+same "the preview names exactly B2" "$impact" "$B2"
+same "and cannot see ABC School's candidates at all" \
+    "$(PGAPP "SET app.tenant_id = '$T'; SELECT count(*) FROM hire.due_candidates(now() + interval '365 days', 30) WHERE tenant_id = '$S'")" "0"
 same "C really has an active application" "$(PG "SELECT count(*) FROM hire.applications WHERE candidate_id='$C' AND outcome='active'")" "1"
 same "F really has no application" "$(PG "SELECT count(*) FROM hire.applications WHERE candidate_id='$F'")" "0"
 FLOOR=$(PG "SELECT coalesce(max(id),0) FROM core.audit_logs")
 
 printf '\n>> 1. The sweep, as the app with no tenant\n'
-erased=$(PGAPP "SELECT hire.sweep_expired_candidates()")
-[ -n "$erased" ] && [ "$erased" -ge 4 ] 2>/dev/null && pass "the sweep ran and erased at least the four due ($erased)" \
-    || fail "the sweep answered '$erased' — expected a count of at least 4"
+# stderr kept: when the sweep itself errors, the database's own message is
+# the only useful thing to print (the first run of this version printed '').
+sweep_out=$($TATVAOS_PSQL_APP "SELECT hire.sweep_expired_candidates()" 2>&1 | grep -v "^wsl:")
+erased=$(printf '%s\n' "$sweep_out" | tail -n1)
+[ -n "$erased" ] && [ "$erased" -ge 5 ] 2>/dev/null && pass "the sweep ran and erased at least the five due ($erased)" \
+    || fail "the sweep answered '$erased' — expected a count of at least 5. Database said: $(printf '%s' "$sweep_out" | head -c 300)"
 
 gone()  { same "$1 is erased"  "$(PG "SELECT count(*) FROM hire.candidates WHERE id='$2'")" "0"; }
 kept()  { same "$1 is kept"    "$(PG "SELECT count(*) FROM hire.candidates WHERE id='$2'")" "1"; }
@@ -127,6 +184,16 @@ gone "F (never put forward, untouched 181 days)" "$F"
 kept "G (never put forward, touched 10 days ago)" "$G"
 gone "H (ABC School, 30-day period, rejected 31 days ago)" "$H"
 kept "I (ABC School, 30-day period, rejected 29 days ago)" "$I"
+kept "B2 (Techvein's shortening still waiting, rejected 60 days ago)" "$B2"
+gone "G2 (last edited 181 days ago; a system touch today does not save them)" "$G2"
+
+printf '\n>> 1b. The waiting shortenings\n'
+same "ABC School's, seven days up, now applies" \
+    "$(PG "SELECT retention_days||'/'||coalesce(pending_retention_days::text,'none') FROM hire.settings WHERE tenant_id='$S'")" "30/none"
+same "and was logged: 180 -> 30, applied by the sweep" \
+    "$(PG "SELECT (before_state->>'retentionDays')||'->'||(after_state->>'retentionDays') FROM core.audit_logs WHERE id > $FLOOR AND tenant_id='$S' AND action='hire_settings.retention_applied'")" "180->30"
+same "Techvein's, not yet due, still waits" \
+    "$(PG "SELECT retention_days||'/'||coalesce(pending_retention_days::text,'none') FROM hire.settings WHERE tenant_id='$T'")" "180/30"
 
 printf '\n>> 2. Everything about an erased candidate went with them\n'
 same "no application left for A, E or H" \
@@ -137,10 +204,14 @@ same "the kept candidates' history is untouched (B, C, D, I)" \
     "$(PG "SELECT count(*) FROM hire.application_events e JOIN hire.applications a ON a.id=e.application_id WHERE a.candidate_id IN ('$B','$C','$D','$I') AND e.reason='ret-$RUN-event'")" "4"
 
 printf '\n>> 3. The audit log says how many, never who\n'
-same "one row for Techvein, counting its three" \
-    "$(PG "SELECT (after_state->>'erased') FROM core.audit_logs WHERE id > $FLOOR AND tenant_id='$T' AND action='candidate.retention_erased'")" "3"
-same "one row for ABC School, counting its one" \
-    "$(PG "SELECT (after_state->>'erased') FROM core.audit_logs WHERE id > $FLOOR AND tenant_id='$S' AND action='candidate.retention_erased'")" "1"
+# Mr. Singh, 24 Sept: log the EVENT — how many, when, under which period, set
+# by whom — so "what became of my application" has an answer.
+same "one row for Techvein: four erased, under the 180-day default" \
+    "$(PG "SELECT (after_state->>'erased')||'/'||(after_state->>'retentionDays')||'/'||(after_state->>'policy') FROM core.audit_logs WHERE id > $FLOOR AND tenant_id='$T' AND action='candidate.retention_erased'")" "4/180/default"
+same "one row for ABC School: one erased, under its own 30 days" \
+    "$(PG "SELECT (after_state->>'erased')||'/'||(after_state->>'retentionDays')||'/'||(after_state->>'policy') FROM core.audit_logs WHERE id > $FLOOR AND tenant_id='$S' AND action='candidate.retention_erased'")" "1/30/organisation"
+same "and it says when the period was set" \
+    "$(PG "SELECT (after_state->>'periodSetAt' IS NOT NULL)::text FROM core.audit_logs WHERE id > $FLOOR AND tenant_id='$S' AND action='candidate.retention_erased'")" "true"
 same "no audit row written by the sweep names anyone" \
     "$(PG "SELECT count(*) FROM core.audit_logs WHERE id > $FLOOR AND (coalesce(before_state::text,'')||coalesce(after_state::text,'')||coalesce(target_id,'')) ~* 'ret-$RUN|@example'")" "0"
 
@@ -149,7 +220,7 @@ before=$(PG "SELECT count(*) FROM hire.candidates WHERE full_name LIKE 'ret-$RUN
 again=$(PGAPP "SELECT hire.sweep_expired_candidates()")
 same "the survivors are all still there" "$(PG "SELECT count(*) FROM hire.candidates WHERE full_name LIKE 'ret-$RUN-%'")" "$before"
 same "and the second run erased nothing of ours (it answered $again)" \
-    "$(PG "SELECT count(*) FROM hire.candidates WHERE id IN ('$B','$C','$D','$G','$I')")" "5"
+    "$(PG "SELECT count(*) FROM hire.candidates WHERE id IN ('$B','$B2','$C','$D','$G','$I')")" "6"
 
 printf '\n>> 5. The database refuses what the sweep relies on never existing\n'
 refused() {  # label sql constraint
@@ -166,14 +237,25 @@ refused "a retention period longer than 180 days" \
     "UPDATE hire.settings SET retention_days = 181 WHERE tenant_id='$S'" "retention_days_check"
 refused "a retention period shorter than 30 days" \
     "UPDATE hire.settings SET retention_days = 29 WHERE tenant_id='$S'" "retention_days_check"
+refused "a 'pending' change that lengthens (only shortening waits)" \
+    "UPDATE hire.settings SET pending_retention_days = 190 WHERE tenant_id='$T'" "ck_settings_pending_shorter"
+refused "a pending change without its date" \
+    "UPDATE hire.settings SET pending_effective_at = NULL WHERE tenant_id='$T'" "ck_settings_pending_whole"
 same "the app cannot read another organisation's settings" \
     "$(PGAPP "SET app.tenant_id = '$T'; SELECT count(*) FROM hire.settings WHERE tenant_id = '$S'")" "0"
 
 printf '\n>> Clean up\n'
 PG "DELETE FROM hire.candidates WHERE full_name LIKE 'ret-$RUN-%'" >/dev/null
 PG "DELETE FROM hire.job_openings WHERE title LIKE 'ret-$RUN-%'" >/dev/null
-PG "DELETE FROM hire.settings WHERE tenant_id = '$S'" >/dev/null
+PG "DELETE FROM hire.settings WHERE tenant_id IN ('$S', '$T')" >/dev/null
+# The stage too. The first version left it: the organisation's pipeline then
+# held one stage, so the default twelve were never created, and the next test
+# on the same database (test-job-openings step 14) failed for a reason that
+# had nothing to do with it. Cross-test pollution; now removed and checked.
+PG "DELETE FROM hire.pipeline_stages WHERE key = 'ret_stage'" >/dev/null
 same "fixtures removed" "$(PG "SELECT count(*) FROM hire.candidates WHERE full_name LIKE 'ret-$RUN-%'")" "0"
+same "nothing of this test left behind (stages, jobs, settings)" \
+    "$(PG "SELECT (SELECT count(*) FROM hire.pipeline_stages WHERE key='ret_stage') + (SELECT count(*) FROM hire.job_openings WHERE title LIKE 'ret-$RUN-%') + (SELECT count(*) FROM hire.settings WHERE tenant_id IN ('$S','$T'))")" "0"
 
 printf '\n  passed: %d   failed: %d\n\n' "$PASSED" "$FAILED"
 [ "$FAILED" -eq 0 ]
