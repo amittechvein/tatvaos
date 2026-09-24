@@ -251,6 +251,42 @@ Amit's decision, and the precondition for opening the portal:
 This part needs no ruling beyond Amit's decision; it comes to you as a
 normal PR (migration + a scheduled erasure).
 
+### 8b. Backups — what "deleted" can honestly promise (Mr. Singh, 24 Sept)
+
+Mr. Singh's question: any deletion promise that ignores backups is false, so
+someone must know N in "deleted from live systems at six months, and from
+backups within a further N days". Read from the repository on 24 Sept:
+
+| Copy | Where | Kept | Source |
+|---|---|---|---|
+| Six-hourly backup, local | `/srv/backups/tatvaos/<stamp>/` | **14 days** (`BACKUP_KEEP_DAYS`) | `infra/scripts/backup.sh`, runbook |
+| Six-hourly backup, off-box | object storage, AES-256 | **30 days** (`BACKUP_S3_KEEP_DAYS` as documented) | `docs/runbooks/backup-and-restore.md` |
+| **Pre-deploy full dump** | `backups/pre-deploy-<stamp>.sql` on the server | **Forever, on `main` today** — 313 files / 38.8 GB when Core counted them on 24 Sept | `infra/scripts/deploy.sh` |
+
+So **today N is unbounded**: a candidate erased by the sweep survives in every
+pre-deploy dump taken while they existed, indefinitely. Core's open PR #254
+caps those dumps by **count** (the last few), which bounds N only by how often
+we deploy — not a number a notice can state.
+
+**Not yet verified:** the off-box `BACKUP_S3_KEEP_DAYS` actually set on the
+production server (the runbook shows 30; confirming it is a production read,
+which needs Amit's approval).
+
+**Proposed, for the lawyer and for you:**
+1. The pre-deploy dumps get a **time** limit, not only a count — e.g. 14 days —
+   so every copy of the database expires on a known schedule. (Core's #254,
+   or a follow-up to it.)
+2. The notice then says, honestly: *"…deleted six months after a decision. Copies
+   in our backups are deleted within a further 30 days."* — with 30 replaced
+   by whatever the longest-lived copy really is once item 1 is done.
+3. Restoring a backup must not resurrect erased people: after any restore,
+   the retention sweep runs before the system is opened to users (it is
+   idempotent and takes seconds). A line in the restore runbook.
+
+**Questions for the lawyer**, alongside the six months and the 30-day reply:
+does "deleted within a further N days from backups" satisfy DPDP erasure for
+backups we cannot edit row by row; and is N = 30 acceptable.
+
 ## Order of work
 
 Each step is its own PR, and the portal is **not switched on in production**
