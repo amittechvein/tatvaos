@@ -174,12 +174,26 @@ public static class Invitations
     /// "not spam" also teaches Gmail for the whole domain, which is the one
     /// lever that works while the volume is small.
     ///
-    /// Remove this sentence when the domain has a reputation — it should not
-    /// outlive its reason.
+    /// ── REMOVE THIS ON OR AFTER 1 OCTOBER 2026 ─────────────────────────
+    ///
+    ///  Mr. Singh, 24 Sept: "keep the sentence for now, and put a date on
+    ///  removing it... Set the date; don't leave it to someone noticing."
+    ///
+    ///  He also named the flaw in the reasoning that produced it: three real
+    ///  message defects were found the SAME day (no text part, no
+    ///  Message-ID, a duplicated text part), and a missing Message-ID alone
+    ///  can file a message as spam. So the premise — "nothing is
+    ///  misconfigured, it is only reputation" — may simply have been wrong,
+    ///  and this sentence may be apologising for a fault that is now fixed.
+    ///
+    ///  The test, one week after those fixes went live (24 Sept): send a
+    ///  real invitation to a FRESH Gmail address, a fresh Outlook address
+    ///  and one other provider. If they land in the inbox, delete this
+    ///  sentence and its three call sites.
     /// </summary>
     public const string CheckSpamNote =
         " If it has not arrived in a few minutes, ask them to check their spam folder "
-        + "and mark it as not spam.";
+        + "and mark it as not spam, which helps later messages reach them.";
 
     public static Task<bool> SendAsync(
         SystemMailer mailer, User user, string orgName, string baseUrl, string token,
