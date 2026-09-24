@@ -97,12 +97,25 @@ public interface IAiGateway
     /// that distinction real rather than a hope.
     /// </summary>
     /// <param name="feature">
-    /// Which product is asking — "connect.minutes", "docs", … — recorded with
-    /// the usage row so spend can be told apart by product (MeteredAiGateway).
-    /// Optional so existing callers compile; every caller should pass one.
+    /// REQUIRED. Which product is asking — "connect.minutes", "docs", … — in
+    /// lowercase letters, digits, dots, dashes or underscores. Recorded with
+    /// the usage row so spend can be told apart by product; a request without
+    /// a valid label is refused and not sent (Mr. Singh on PR 280: "a
+    /// breakdown with an unnamed bucket isn't a breakdown").
     /// </param>
     Task<AiResult> CompleteAsync(
-        string instruction, string input, CancellationToken ct, string feature = "other");
+        string instruction, string input, CancellationToken ct, string feature);
+}
+
+/// <summary>
+/// The longest input any AI request sends, in characters (beyond it the input
+/// is cut and AiResult.Truncated says so). Here, not on OpenAiGateway, so a
+/// module that sizes its input never needs to name the provider class — which
+/// only MeteredAiGateway may (tests/ai/gateway-not-bypassable.sh).
+/// </summary>
+public static class AiInput
+{
+    public const int MaxCharacters = 24_000;
 }
 
 /// <summary>

@@ -63,7 +63,7 @@ public sealed class OpenAiGateway : IAiGateway
     /// of magnitude deliberately — two caps that drift apart are two
     /// behaviours to explain.
     /// </summary>
-    public const int MaxInputCharacters = 24_000;
+    public const int MaxInputCharacters = AiInput.MaxCharacters;
 
     /// <summary>
     /// A model that has not answered in this long is not going to. Mail's
@@ -203,7 +203,7 @@ public sealed class OpenAiGateway : IAiGateway
     }
 
     public async Task<AiResult> CompleteAsync(
-        string instruction, string input, CancellationToken ct, string feature = "other")
+        string instruction, string input, CancellationToken ct, string feature)
     {
         if (!IsConfigured)
             return AiResult.Failed("AI features are not switched on for this server.");

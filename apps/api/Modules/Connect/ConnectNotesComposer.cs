@@ -91,7 +91,7 @@ public sealed class ConnectNotesComposer(
     /// ever made independent again.
     /// </summary>
     private const int MaxTranscriptChars =
-        TatvaOS.Api.Shared.Ai.OpenAiGateway.MaxInputCharacters - 1_000;
+        TatvaOS.Api.Shared.Ai.AiInput.MaxCharacters - 1_000;
 
     public async Task<Notes> ComposeAsync(
         string meetingTitle,

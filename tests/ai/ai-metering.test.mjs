@@ -19,8 +19,11 @@
 //
 //  Environment: DOCS_API (default http://localhost:5161/api), FAKE (default
 //  http://127.0.0.1:5198), AI_ADMIN "email,password" (default the local
-//  BOOTSTRAP_ADMIN_* values). Leaves every setting as it found it: consent
-//  off, limits empty (defaults), not paused.
+//  BOOTSTRAP_ADMIN_* values). Leaves every ai.* setting exactly as it found
+//  it (read at the start), and the operator's organisation's consent off.
+//
+//  Limit meanings under test (Mr. Singh on PR 280): EMPTY = no limit,
+//  0 = none allowed, a number = that number.
 // ============================================================================
 
 const API = process.env.DOCS_API ?? 'http://localhost:5161/api';
@@ -56,8 +59,12 @@ const consent = (on) => call('PUT', '/org/ai', { enabled: on });
 
 console.log(`AI metering against ${API} (fake provider ${FAKE})\n`);
 
-// ---- start from a known state --------------------------------------------------
-await settings({ 'ai.paused': 'false', 'ai.limit.per_person_per_hour': '1000', 'ai.limit.org_monthly_tokens': '0' });
+// ---- start from a known state, remembering what was there ---------------------
+const found = Object.fromEntries((await call('GET', '/admin/settings')).body
+  .filter((i) => i.key.startsWith('ai.')).map((i) => [i.key, i.value ?? '']));
+check('the limits start seeded, not empty (an empty field would mean unlimited)',
+  found['ai.limit.per_person_per_hour'] !== '' && found['ai.limit.org_monthly_tokens'] !== '', JSON.stringify(found));
+await settings({ 'ai.paused': 'false', 'ai.limit.per_person_per_hour': '1000', 'ai.limit.org_monthly_tokens': '' });
 await consent(true);
 
 console.log('Metering');
@@ -69,6 +76,9 @@ let u1 = await usage();
 check('it is metered: +1 request, +150 tokens (the provider\'s own counts)',
   u1.requests === u0.requests + 1 && u1.tokens === u0.tokens + 150, `${JSON.stringify(u0)} -> ${JSON.stringify(u1)}`);
 check('attributed to the feature that asked', u1.byFeature.some((f) => f.feature === 'platform.probe'));
+check('and to the model it went to, in and out counted separately',
+  u1.byModel.some((m) => m.model === 'fake-model' && m.tokensIn === 100 * m.requests && m.tokensOut === 50 * m.requests),
+  JSON.stringify(u1.byModel));
 
 const op = await call('GET', `/admin/organisations/${login.user?.tenantId ?? JSON.parse(Buffer.from(login.accessToken.split('.')[1], 'base64url')).tenant_id}/ai-usage`);
 check('the operator sees the same numbers the organisation sees', op.status === 200 && op.body.tokens === u1.tokens && op.body.requests === u1.requests,
@@ -126,8 +136,32 @@ check('no further emails for the same level this month', (await mail()).length =
 const u2 = await usage();
 check('the screen shows 100% of the allowance', u2.percentOfCeiling === 100, JSON.stringify(u2));
 
-console.log('Per-person hourly limit');
+console.log('Raising the ceiling mid-month warns again at the new one');
+const m1 = (await mail()).length;
+await settings({ 'ai.limit.org_monthly_tokens': String(u2.tokens + 200) });
+p = await probe();
+check('after raising the ceiling, AI works again', p.body.working === true, JSON.stringify(p.body));
+check('crossing 80% of the NEW ceiling emails again',
+  (await mail()).slice(m1).filter((m) => /80%/.test(m.subject)).length === 1, JSON.stringify((await mail()).slice(m1)));
+await probe();
+check('and reaching the new ceiling sends a new "stopped" email',
+  (await mail()).slice(m1).filter((m) => /stopped/i.test(m.subject)).length === 1);
+
+console.log('Zero means zero; empty means no limit');
 await settings({ 'ai.limit.org_monthly_tokens': '0' });
+h0 = await hits();
+p = await probe();
+check('a ceiling of 0 refuses (an operator stopping an organisation)', p.body.working === false && /allowance/i.test(p.body.detail ?? ''),
+  JSON.stringify(p.body));
+check('a ceiling of 0 never calls the provider', (await hits()) === h0);
+check('the screen reads 0 as none allowed, not as unlimited', (await usage()).ceilingTokens === 0 && (await usage()).percentOfCeiling === 100);
+await settings({ 'ai.limit.org_monthly_tokens': '' });
+p = await probe();
+check('an empty ceiling is no ceiling: allowed, whatever was used', p.body.working === true, JSON.stringify(p.body));
+check('the screen reads empty as no ceiling', (await usage()).ceilingTokens === null);
+
+console.log('Per-person hourly limit');
+await settings({ 'ai.limit.org_monthly_tokens': '' });
 // Every call this person has had answered in the last hour counts. Set the
 // limit to exactly one more than that: one more is allowed, then refused.
 // ASSUMES every answered call this month was in the last hour — true on a
@@ -141,10 +175,17 @@ h0 = await hits();
 p = await probe();
 check('the next is refused, saying it is the hourly limit', p.body.working === false && /last hour/i.test(p.body.detail ?? ''), JSON.stringify(p.body));
 check('and the provider is not called', (await hits()) === h0);
+await settings({ 'ai.limit.per_person_per_hour': '0' });
+h0 = await hits();
+p = await probe();
+check('an hourly limit of 0 allows none', p.body.working === false && (await hits()) === h0, JSON.stringify(p.body));
 
 // ---- leave everything as found -------------------------------------------------
-await settings({ 'ai.paused': 'false', 'ai.limit.per_person_per_hour': '', 'ai.limit.org_monthly_tokens': '' });
+await settings(found);
 await consent(false);
+const after = Object.fromEntries((await call('GET', '/admin/settings')).body
+  .filter((i) => i.key.startsWith('ai.')).map((i) => [i.key, i.value ?? '']));
+check('every ai.* setting is back as it was found', JSON.stringify(after) === JSON.stringify(found), JSON.stringify(after));
 
 console.log(`\n  passed: ${passed}   failed: ${failed}`);
 process.exit(failed === 0 ? 0 : 1);

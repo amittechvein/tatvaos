@@ -40,11 +40,27 @@ namespace TatvaOS.Api.Shared.Ai;
 /// ─────────────────────────────────────────────────────────────────────────
 /// </summary>
 public sealed class MeteredAiGateway(
-    OpenAiGateway inner, AppDbContext db, TenantContext tenant, SettingsReader settings,
+    IServiceProvider services, AppDbContext db, TenantContext tenant, SettingsReader settings,
     SystemMailer mailer, IConfiguration config, ILogger<MeteredAiGateway> log) : IAiGateway
 {
+    /// <summary>
+    /// The provider, constructed HERE and nowhere else. OpenAiGateway is not
+    /// registered in DI, so it cannot be injected around this class; building
+    /// it with ActivatorUtilities still gives it its own dependencies from the
+    /// same scope (the same TenantContext and AppDbContext as this request).
+    /// </summary>
+    private readonly OpenAiGateway inner = ActivatorUtilities.CreateInstance<OpenAiGateway>(services);
+
+    /// <summary>
+    /// Used only when a setting row is MISSING altogether (the migration seeds
+    /// both, so this is a fail-safe, not a configuration). An EMPTY value means
+    /// no limit; 0 means none allowed — Mr. Singh on PR 280: zero must mean zero.
+    /// </summary>
     public const int DefaultPerPersonPerHour = 50;
     public const long DefaultOrgMonthlyTokens = 2_000_000;
+
+    private static readonly System.Text.RegularExpressions.Regex FeaturePattern =
+        new("^[a-z][a-z0-9._-]{0,63}$", System.Text.RegularExpressions.RegexOptions.Compiled);
 
     /// <summary>India has no daylight saving; a fixed offset is exact, and needs no tzdata in the container.</summary>
     private static readonly TimeSpan India = TimeSpan.FromMinutes(330);
@@ -54,19 +70,36 @@ public sealed class MeteredAiGateway(
     public string? DataLocation => inner.DataLocation;
     public Task<bool> EnabledForTenantAsync(CancellationToken ct) => inner.EnabledForTenantAsync(ct);
 
-    public sealed record Limits(bool Paused, int PerPersonPerHour, long OrgMonthlyTokens);
+    /// <summary>The limits in force. NULL means no limit; 0 means none allowed.</summary>
+    public sealed record Limits(bool Paused, int? PerPersonPerHour, long? OrgMonthlyTokens);
 
-    /// <summary>The limits in force: the operator's settings, else the defaults. One reader for the gateway and the screens.</summary>
-    public static async Task<Limits> ReadLimitsAsync(SettingsReader settings, CancellationToken ct)
+    /// <summary>
+    /// The limits in force, from the operator's settings. One reader for the
+    /// gateway and the screens.
+    ///   row missing        → the default (the migration seeds both rows)
+    ///   value empty        → NO limit (null)
+    ///   value a number ≥ 0 → that number; 0 allows none
+    ///   anything else      → the default, and a warning: a typo must not
+    ///                        silently mean "unlimited"
+    /// </summary>
+    public static async Task<Limits> ReadLimitsAsync(SettingsReader settings, CancellationToken ct, ILogger? log = null)
     {
         var all = await settings.GetAsync(ct);
         var paused = all.TryGetValue(SettingKeys.AiPaused, out var p)
                      && string.Equals(p?.Trim(), "true", StringComparison.OrdinalIgnoreCase);
-        var perHour = all.TryGetValue(SettingKeys.AiPerPersonPerHour, out var h) && int.TryParse(h, out var hv) && hv > 0
-            ? hv : DefaultPerPersonPerHour;
-        var month = all.TryGetValue(SettingKeys.AiOrgMonthlyTokens, out var m) && long.TryParse(m, out var mv) && mv >= 0
-            ? mv : DefaultOrgMonthlyTokens;
-        return new Limits(paused, perHour, month);
+        return new Limits(paused,
+            (int?)Read(all, SettingKeys.AiPerPersonPerHour, DefaultPerPersonPerHour, int.MaxValue, log),
+            Read(all, SettingKeys.AiOrgMonthlyTokens, DefaultOrgMonthlyTokens, long.MaxValue, log));
+    }
+
+    private static long? Read(Dictionary<string, string> all, string key, long fallback, long max, ILogger? log)
+    {
+        if (!all.TryGetValue(key, out var raw)) return fallback;
+        var v = raw.Trim().Replace(",", "").Replace("_", "");
+        if (v.Length == 0) return null;
+        if (long.TryParse(v, out var n) && n >= 0 && n <= max) return n;
+        log?.LogWarning("Setting {Key} is not a whole number ('{Raw}'); using the default {Fallback}.", key, raw, fallback);
+        return fallback;
     }
 
     /// <summary>
@@ -103,8 +136,17 @@ public sealed class MeteredAiGateway(
     }
 
     public async Task<AiResult> CompleteAsync(
-        string instruction, string input, CancellationToken ct, string feature = "other")
+        string instruction, string input, CancellationToken ct, string feature)
     {
+        // 0. No valid label, no request. Not metered — there is no honest
+        //    bucket to meter it under — but loud, because it is a code bug.
+        if (feature is null || !FeaturePattern.IsMatch(feature))
+        {
+            log.LogError("AI request REFUSED: missing or invalid feature label '{Feature}'. Every caller must name its feature.",
+                feature ?? "(null)");
+            return AiResult.Failed("This AI request could not be sent (it did not say which feature it was for).");
+        }
+
         // 1. Nothing will be sent: let the provider gateway give its own
         //    refusal, unmetered.
         if (!inner.IsConfigured || !tenant.HasTenant || !await inner.EnabledForTenantAsync(ct))
@@ -116,7 +158,7 @@ public sealed class MeteredAiGateway(
         long monthUsed;
         try
         {
-            limits = await ReadLimitsAsync(settings, ct);
+            limits = await ReadLimitsAsync(settings, ct, log);
 
             // 2. The operator's stop.
             if (limits.Paused)
@@ -128,24 +170,26 @@ public sealed class MeteredAiGateway(
 
             // 3. This person, last hour. Background work (no person) is
             //    counted against the organisation only.
-            if (user is Guid uid)
+            if (user is Guid uid && limits.PerPersonPerHour is int perHour)
             {
                 var since = now.AddHours(-1);
                 var recent = await db.AiUsage.AsNoTracking()
                     .CountAsync(u => u.UserId == uid && u.CreatedAt >= since
                                      && (u.Outcome == "ok" || u.Outcome == "failed"), ct);
-                if (recent >= limits.PerPersonPerHour)
+                if (recent >= perHour)
                 {
                     await RecordAsync(feature, "refused_person_limit", 0, 0, ct);
-                    return AiResult.Failed(
-                        $"You have used TatvaOS AI {limits.PerPersonPerHour} times in the last hour, which is the limit. " +
-                        "Please try again a little later.");
+                    return AiResult.Failed(perHour == 0
+                        ? "TatvaOS AI is not available to individual requests at the moment."
+                        : $"You have used TatvaOS AI {perHour} times in the last hour, which is the limit. " +
+                          "Please try again a little later.");
                 }
             }
 
-            // 4. This organisation, this month (0 = no ceiling).
+            // 4. This organisation, this month. null = no ceiling; 0 = none
+            //    allowed (an operator stopping an organisation's AI).
             monthUsed = await MonthTokensAsync(db, now, ct);
-            if (limits.OrgMonthlyTokens > 0 && monthUsed >= limits.OrgMonthlyTokens)
+            if (limits.OrgMonthlyTokens is long cap && monthUsed >= cap)
             {
                 await RecordAsync(feature, "refused_org_limit", 0, 0, ct);
                 return AiResult.Failed(
@@ -166,8 +210,8 @@ public sealed class MeteredAiGateway(
         var result = await inner.CompleteAsync(instruction, input, ct, feature);
         await RecordAsync(feature, result.Error is null ? "ok" : "failed", result.TokensIn, result.TokensOut, ct);
 
-        if (result.Error is null && limits.OrgMonthlyTokens > 0)
-            await MaybeWarnAsync(monthUsed + result.TokensIn + result.TokensOut, limits.OrgMonthlyTokens, now, ct);
+        if (result.Error is null && limits.OrgMonthlyTokens is long ceiling && ceiling > 0)
+            await MaybeWarnAsync(monthUsed + result.TokensIn + result.TokensOut, ceiling, now, ct);
 
         return result;
     }
@@ -179,11 +223,13 @@ public sealed class MeteredAiGateway(
         // feature has half-changed (or leave a failed row tracked for the
         // caller's next save to trip over).
         var f = string.IsNullOrWhiteSpace(feature) ? "other" : feature.Length > 64 ? feature[..64] : feature;
+        var model = Model.Length > 100 ? Model[..100] : Model;
         try
         {
             await db.Database.ExecuteSqlInterpolatedAsync($"""
-                INSERT INTO core.ai_usage (tenant_id, user_id, feature, outcome, tokens_in, tokens_out)
-                VALUES ({tenant.TenantId}, {tenant.UserId}, {f}, {outcome}, {Math.Max(0, tokensIn)}, {Math.Max(0, tokensOut)})
+                INSERT INTO core.ai_usage (tenant_id, user_id, feature, outcome, tokens_in, tokens_out, model)
+                VALUES ({tenant.TenantId}, {tenant.UserId}, {f}, {outcome}, {Math.Max(0, tokensIn)}, {Math.Max(0, tokensOut)},
+                        {model})
                 """, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -208,8 +254,10 @@ public sealed class MeteredAiGateway(
         try
         {
             var month = MonthOf(now);
+            // Keyed by the ceiling too: raising it mid-month means the new
+            // one warns again when reached (Mr. Singh's note on PR 280).
             var sent = await db.AiUsageAlerts.AsNoTracking()
-                .Where(a => a.Month == month)
+                .Where(a => a.Month == month && a.Ceiling == ceiling)
                 .Select(a => a.Level)
                 .ToListAsync(ct);
             if (sent.Contains(level) || (level == 80 && sent.Contains((short)100))) return;
@@ -254,14 +302,14 @@ public sealed class MeteredAiGateway(
             // for the same reason as RecordAsync; ON CONFLICT because two
             // requests can cross the line together.
             await db.Database.ExecuteSqlInterpolatedAsync($"""
-                INSERT INTO core.ai_usage_alerts (tenant_id, month, level)
-                VALUES ({tenant.TenantId}, {month}, {level})
+                INSERT INTO core.ai_usage_alerts (tenant_id, month, level, ceiling)
+                VALUES ({tenant.TenantId}, {month}, {level}, {ceiling})
                 ON CONFLICT DO NOTHING
                 """, ct);
             if (level == 100)
                 await db.Database.ExecuteSqlInterpolatedAsync($"""
-                    INSERT INTO core.ai_usage_alerts (tenant_id, month, level)
-                    VALUES ({tenant.TenantId}, {month}, {(short)80})
+                    INSERT INTO core.ai_usage_alerts (tenant_id, month, level, ceiling)
+                    VALUES ({tenant.TenantId}, {month}, {(short)80}, {ceiling})
                     ON CONFLICT DO NOTHING
                     """, ct);
 

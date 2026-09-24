@@ -108,6 +108,25 @@ export default function SettingsPage() {
     }
   }
 
+  const [aiTestTo, setAiTestTo] = useState('');
+  const [aiTesting, setAiTesting] = useState(false);
+  const [aiTestResult, setAiTestResult] = useState<string | null>(null);
+
+  async function testAiWarning() {
+    setAiTesting(true); setAiTestResult(null);
+    try {
+      const res = await authedFetch('/admin/settings/test-ai-warning', {
+        method: 'POST', body: JSON.stringify({ to: aiTestTo }),
+      });
+      const body = await res.json().catch(() => ({}));
+      setAiTestResult(res.ok && body.sent ? `Sent. ${body.detail ?? ''}` : `Not sent — ${body.detail ?? body.error ?? 'unknown reason'}`);
+    } catch {
+      setAiTestResult('Not sent — the request itself failed.');
+    } finally {
+      setAiTesting(false);
+    }
+  }
+
   async function testSms() {
     setTesting(true); setTestResult(null);
     try {
@@ -211,6 +230,29 @@ export default function SettingsPage() {
                     </div>
                   ))}
                 </div>
+
+                {section.id === 'ai' && (
+                  <div className="mt-2 border-t border-line pt-4">
+                    <div className="font-semibold mb-1">Send a test AI warning email</div>
+                    <div className="mb-2 text-xs text-ink-muted">
+                      The 80% email an organisation&apos;s administrators receive, marked [Test]. Send one to an
+                      outside mailbox (Gmail, for example) and open it before any organisation can trigger a real one.
+                    </div>
+                    <div className="flex gap-2 flex-wrap items-start">
+                      <Input style={{ maxWidth: 300 }} type="email" placeholder="someone@gmail.com"
+                             value={aiTestTo} onChange={(e) => setAiTestTo(e.target.value)} />
+                      <Button variant="secondary" onClick={testAiWarning}
+                              disabled={aiTesting || !aiTestTo.includes('@')}>
+                        {aiTesting ? 'Sending…' : 'Send test email'}
+                      </Button>
+                    </div>
+                    {aiTestResult && (
+                      <Alert tone={aiTestResult.startsWith('Sent') ? 'ok' : 'warn'} className="mt-2 mb-0">
+                        {aiTestResult}
+                      </Alert>
+                    )}
+                  </div>
+                )}
 
                 {section.id === 'sms' && (
                   <div className="mt-2 border-t border-line pt-4">

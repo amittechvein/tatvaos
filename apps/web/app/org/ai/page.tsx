@@ -32,8 +32,10 @@ interface AiUsage {
   tokens: number;
   requests: number;
   refused: number;
-  ceilingTokens: number;
-  perPersonPerHour: number;
+  /** null = no ceiling; 0 = none allowed. */
+  ceilingTokens: number | null;
+  /** null = no hourly limit; 0 = none allowed. */
+  perPersonPerHour: number | null;
   paused: boolean;
   percentOfCeiling: number;
   byFeature: { feature: string; requests: number; tokens: number }[];
@@ -189,19 +191,25 @@ export default function OrgAiPage() {
  * and the ones the administrators are emailed about at 80% and 100%.
  */
 function UsageCard({ usage }: { usage: AiUsage }) {
-  const noCeiling = usage.ceilingTokens === 0;
+  const noCeiling = usage.ceilingTokens === null;
+  const stopped = usage.ceilingTokens === 0;
   const tone = usage.percentOfCeiling >= 100 ? 'bg-danger' : usage.percentOfCeiling >= 80 ? 'bg-warn' : 'bg-ok';
   return (
     <Card title="Use this month" subtitle="Counted from the 1st, India time. Only counts are kept — never the text sent.">
       {usage.paused && (
         <Alert tone="warn">TatvaOS AI is paused across the platform at the moment, so requests are being refused.</Alert>
       )}
-      {noCeiling ? (
+      {stopped ? (
+        <p className="mb-3">
+          The platform has set this organisation&apos;s AI allowance to none, so AI requests are refused.
+          {usage.requests > 0 && ` ${fmt(usage.tokens)} tokens were used earlier this month.`}
+        </p>
+      ) : noCeiling ? (
         <p className="mb-3">{fmt(usage.tokens)} tokens in {fmt(usage.requests)} requests. No monthly ceiling is set.</p>
       ) : (
         <>
           <p className="mb-2">
-            {fmt(usage.tokens)} of {fmt(usage.ceilingTokens)} tokens ({usage.percentOfCeiling}%)
+            {fmt(usage.tokens)} of {fmt(usage.ceilingTokens ?? 0)} tokens ({usage.percentOfCeiling}%)
             in {fmt(usage.requests)} requests.
             {usage.percentOfCeiling >= 100 && ' AI has stopped for this organisation until the 1st.'}
           </p>
@@ -233,7 +241,11 @@ function UsageCard({ usage }: { usage: AiUsage }) {
         </table>
       )}
       <p className="mb-0 text-[0.75rem] text-ink-muted">
-        Each person can make up to {fmt(usage.perPersonPerHour)} AI requests an hour.
+        {usage.perPersonPerHour === null
+          ? 'There is no hourly limit per person.'
+          : usage.perPersonPerHour === 0
+            ? 'Individual AI requests are switched off at the moment.'
+            : `Each person can make up to ${fmt(usage.perPersonPerHour)} AI requests an hour.`}
         {usage.refused > 0 && ` ${fmt(usage.refused)} request${usage.refused === 1 ? ' was' : 's were'} refused this month by a limit or a pause.`}
         {' '}Administrators are emailed at 80% and 100% of the allowance.
       </p>

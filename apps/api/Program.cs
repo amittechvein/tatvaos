@@ -360,11 +360,11 @@ builder.Services.AddHttpClient();
 // SCOPED since 27 Aug 2026: consent is per-organisation, so the gateway
 // reads the current tenant's allow_ai flag (fail-closed) — which needs the
 // scoped TenantContext and AppDbContext. Nothing else changed.
-// The provider gateway is registered as ITSELF, and IAiGateway resolves to
-// the metering wrapper around it (MeteredAiGateway): every module that asks
-// for AI gets usage recorded, the per-person and per-organisation limits, and
-// the operator's pause, with no way to reach the provider around them.
-builder.Services.AddScoped<OpenAiGateway>();
+// IAiGateway resolves to the metering wrapper, and ONLY to it. The provider
+// gateway is deliberately NOT registered: MeteredAiGateway constructs its own
+// private copy, so no module can inject the provider by its concrete type and
+// walk past the meter (Mr. Singh on PR 280). tests/ai/gateway-not-bypassable.sh
+// fails if the provider class is named anywhere else.
 builder.Services.AddScoped<IAiGateway, MeteredAiGateway>();
 
 // Scoped: it writes through the request's AppDbContext and reads its

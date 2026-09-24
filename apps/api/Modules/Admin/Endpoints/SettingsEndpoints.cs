@@ -25,6 +25,7 @@ public static class SettingsEndpoints
         g.MapGet("/", ListAsync);
         g.MapPut("/", SaveAsync);
         g.MapPost("/test-sms", TestSmsAsync);
+        g.MapPost("/test-ai-warning", TestAiWarningAsync);
     }
 
     // ------------------------------------------------------------------
@@ -108,6 +109,38 @@ public static class SettingsEndpoints
     /// mismatch and out-of-credit each look identical from the outside, and
     /// naming which is the entire value of a test button.
     /// </summary>
+    /// <summary>
+    /// Sends ONE real "80% of this month's TatvaOS AI" warning — the email an
+    /// organisation's administrators receive — to an address the operator
+    /// types, subject marked [Test]. Mr. Singh on PR 280: that email goes to
+    /// a customer, so before any organisation can trigger one it is checked
+    /// the way the last three mail faults were: one real send to an outside
+    /// mailbox, opened, read. This is the button for that, so it needs no
+    /// shell and no one else's credentials. The address is not stored.
+    /// </summary>
+    private static async Task<IResult> TestAiWarningAsync(
+        TestAiWarningRequest req, TatvaOS.Api.Shared.Notify.SystemMailer mailer, IConfiguration config,
+        CancellationToken ct)
+    {
+        var to = req.To?.Trim() ?? "";
+        if (to.Length is < 3 or > 320 || !to.Contains('@') || to.Contains(' '))
+            return Results.BadRequest(new { error = "Type the email address to send the test to." });
+
+        var baseUrl = (config["Jwt:Issuer"] ?? "https://core.tatvaos.com").TrimEnd('/');
+        var sent = await mailer.SendHtmlAsync(to,
+            "[Test] " + TatvaOS.Api.Shared.Notify.AiUsageWarningEmail.Subject("Example School", 80),
+            TatvaOS.Api.Shared.Notify.AiUsageWarningEmail.Html("there", "Example School", baseUrl, 80, 80),
+            from: "no_reply@tatvaos.com", ct);
+
+        return Results.Ok(new
+        {
+            sent,
+            detail = sent
+                ? "Handed to the mail server. Check the inbox AND the spam folder, and open it."
+                : "The mail server did not accept it. Check the API log for the SMTP error.",
+        });
+    }
+
     private static async Task<IResult> TestSmsAsync(
         TestSmsRequest req, ISmsSender sms, CancellationToken ct)
     {
@@ -128,3 +161,4 @@ public static class SettingsEndpoints
 }
 
 public sealed record TestSmsRequest(string? Phone);
+public sealed record TestAiWarningRequest(string? To);

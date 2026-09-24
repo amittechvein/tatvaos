@@ -842,7 +842,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             e.ToTable("ai_usage_alerts", "core");
             // Composite key — EF's convention would find none (the
             // ConnectTenantSettings outage of 9 Sept).
-            e.HasKey(a => new { a.TenantId, a.Month, a.Level });
+            e.HasKey(a => new { a.TenantId, a.Month, a.Level, a.Ceiling });
             e.HasQueryFilter(a => a.TenantId == tenant.TenantId);
             e.HasOne<Tenant>().WithMany()
                 .HasForeignKey(a => a.TenantId).OnDelete(DeleteBehavior.Cascade);

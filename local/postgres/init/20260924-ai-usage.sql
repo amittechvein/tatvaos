@@ -17,7 +17,9 @@
 --  The prompt and the answer are the customer's text and are not stored here
 --  or anywhere else (IAiGateway rule 4).
 --
---  Additive only: two new tables in core. Nothing existing changes.
+--  Additive only: two new tables in core, and three new platform_settings
+--  rows (the limits' starting values, ON CONFLICT DO NOTHING). Nothing that
+--  exists is changed.
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS core.ai_usage (
@@ -42,6 +44,12 @@ CREATE TABLE IF NOT EXISTS core.ai_usage (
     tokens_in   integer NOT NULL DEFAULT 0 CHECK (tokens_in  >= 0),
     tokens_out  integer NOT NULL DEFAULT 0 CHECK (tokens_out >= 0),
 
+    -- The model the request went to (or would have). A token's price depends
+    -- on the model, so money can only be computed later if every row says
+    -- which one it was (Mr. Singh on PR 280: "one column now; a painful
+    -- backfill otherwise").
+    model       text NOT NULL DEFAULT '' CHECK (length(model) <= 100),
+
     created_at  timestamptz NOT NULL DEFAULT now()
 );
 
@@ -52,16 +60,21 @@ CREATE INDEX IF NOT EXISTS idx_ai_usage_user_time   ON core.ai_usage(user_id, cr
 
 -- ----------------------------------------------------------------------------
 -- Which ceiling warnings an organisation's administrators have been sent,
--- per month. One row per (organisation, month, level), so each warning goes
--- once — at 80 % and at 100 % — however many requests cross it.
+-- per month. One row per (organisation, month, level, ceiling), so each
+-- warning goes once per ceiling — at 80 % and at 100 % — however many
+-- requests cross it.
 -- ----------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS core.ai_usage_alerts (
     tenant_id   uuid NOT NULL REFERENCES core.tenants(id) ON DELETE CASCADE,
     month       date NOT NULL,          -- first day of the month, India time
     level       smallint NOT NULL CHECK (level IN (80, 100)),
+    -- The ceiling the warning was about. Part of the key so that RAISING the
+    -- ceiling mid-month warns again when the new one is reached (Mr. Singh's
+    -- note on PR 280) — without deleting anything from an append-only table.
+    ceiling     bigint NOT NULL CHECK (ceiling > 0),
     sent_at     timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (tenant_id, month, level)
+    PRIMARY KEY (tenant_id, month, level, ceiling)
 );
 
 -- ----------------------------------------------------------------------------
@@ -83,6 +96,22 @@ BEGIN
             WITH CHECK (tenant_id = nullif(current_setting(''app.tenant_id'', true), '''')::uuid)', t);
     END LOOP;
 END $$;
+
+-- ----------------------------------------------------------------------------
+-- The limits' starting values, written as settings rather than left implicit.
+--
+-- The operator's Settings form submits EVERY field on every save, and an
+-- empty limit means "unlimited" (Mr. Singh on PR 280: zero must mean zero,
+-- so "no limit" is the empty value, never 0). Without a stored value the
+-- field would show empty, and saving any unrelated setting would silently
+-- make AI unlimited. Seeded once; an operator's later change is kept.
+-- ----------------------------------------------------------------------------
+
+INSERT INTO core.platform_settings (key, value, is_secret) VALUES
+    ('ai.limit.per_person_per_hour', '50',      false),
+    ('ai.limit.org_monthly_tokens',  '2000000', false),
+    ('ai.paused',                    'false',   false)
+ON CONFLICT (key) DO NOTHING;
 
 -- ----------------------------------------------------------------------------
 -- Grants. The usage table is a RECORD: the app appends and reads, never

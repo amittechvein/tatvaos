@@ -442,7 +442,7 @@ type CapsAnswer = {
 function AiUsageSection({ orgId }: { orgId: string }) {
   const { authedFetch } = useAuth();
   const [u, setU] = useState<{
-    tokens: number; requests: number; refused: number; ceilingTokens: number; percentOfCeiling: number;
+    tokens: number; requests: number; refused: number; ceilingTokens: number | null; percentOfCeiling: number;
     byFeature: { feature: string; requests: number; tokens: number }[];
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -468,7 +468,9 @@ function AiUsageSection({ orgId }: { orgId: string }) {
       {u && (
         <p className="text-sm mb-1">
           {n(u.tokens)} tokens in {n(u.requests)} requests
-          {u.ceilingTokens > 0 ? ` — ${u.percentOfCeiling}% of the ${n(u.ceilingTokens)} allowance` : ' — no ceiling'}.
+          {u.ceilingTokens === null ? ' — no ceiling'
+            : u.ceilingTokens === 0 ? ' — allowance set to none (AI refused)'
+            : ` — ${u.percentOfCeiling}% of the ${n(u.ceilingTokens)} allowance`}.
           {u.refused > 0 && ` ${n(u.refused)} refused.`}
           {u.byFeature.length > 0 && ` By feature: ${u.byFeature.map((f) => `${f.feature} ${n(f.tokens)}`).join(', ')}.`}
         </p>

@@ -88,12 +88,12 @@ public static class SettingKeys
             "The emergency stop. ON refuses every AI request on the platform at once, with a message "
             + "saying AI is paused. Use it if spend runs away; nothing else changes."),
         new(AiPerPersonPerHour, "ai", "AI requests per person per hour", false,
-            "Leave empty for the default (50). High enough that nobody working normally meets it; "
-            + "it stops a runaway loop or one account running up the bill."),
+            "Started at 50: high enough that nobody working normally meets it, low enough to stop a "
+            + "runaway loop. 0 allows NONE. Empty means NO LIMIT."),
         new(AiOrgMonthlyTokens, "ai", "AI tokens per organisation per month", false,
-            "Leave empty for the default (2,000,000). An organisation's administrators are emailed "
-            + "at 80% and at 100%; at 100% AI stops for that organisation until the month turns "
-            + "(India time). 0 means no ceiling."),
+            "Started at 2,000,000. Administrators are emailed at 80% and at 100%; at 100% AI stops for "
+            + "that organisation until the month turns (India time). 0 allows NONE — AI stopped. "
+            + "Empty means NO CEILING."),
     ];
 
     public static bool IsKnown(string key) => All.Any(d => d.Key == key);
