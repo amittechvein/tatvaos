@@ -286,6 +286,13 @@ jobs:
       - name: "Hire: job openings and the hiring team"
         run: bash tests/hire/test-job-openings.sh
 
+      # The public careers page (decision 0010 §1): the first unauthenticated
+      # read of Hire data. Checks what a stranger must NOT get — other states,
+      # other organisations, private fields — and that both switches fail
+      # closed. Restores the platform switch on exit.
+      - name: "Hire: the public careers page shows only what it may"
+        run: bash tests/hire/test-careers.sh
+
       - name: Install the web app's TypeScript (for the PiP check)
         run: pnpm install --frozen-lockfile
 

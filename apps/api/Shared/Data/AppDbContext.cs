@@ -295,6 +295,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.Hire.HireTeamMember>().HasKey(m => new { m.TenantId, m.UserId });
         b.Entity<TatvaOS.Api.Modules.Hire.HireTeamMember>()
             .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        // 20260924-f: careers sites. No DbSet, like every Hire record.
+        b.Entity<TatvaOS.Api.Modules.Hire.HireCareersSite>().ToTable("careers_sites", "hire");
+        b.Entity<TatvaOS.Api.Modules.Hire.HireCareersSite>().HasKey(s => s.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Hire.HireCareersSite>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<TatvaOS.Api.Modules.Mail.MailApiSend>().ToTable("api_sends", "mail");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>().ToTable("meeting_notes", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingChat>().ToTable("meeting_chat", "connect");

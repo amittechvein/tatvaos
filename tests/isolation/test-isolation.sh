@@ -359,6 +359,36 @@ else fail "LEAK: an ABC School person was put on Techvein's hiring team"; fi
 
 run_as postgres "DELETE FROM hire.team_members WHERE user_id IN ('$T_USER','$S_USER');" >/dev/null 2>&1
 
+hdr "Hire careers sites are isolated, and the public resolver fails closed"
+
+run_as postgres "
+    INSERT INTO hire.careers_sites (tenant_id, slug, display_name, erasure_contact, is_enabled) VALUES
+        ('$TECHVEIN','iso-careers-t','iso-careers-t','p@t.example',true),
+        ('$SCHOOL','iso-careers-s','iso-careers-s','p@s.example',true)
+    ON CONFLICT DO NOTHING;" >/dev/null 2>&1
+
+own=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM hire.careers_sites WHERE slug = 'iso-careers-t'")
+[ "${own:-0}" -eq 1 ] && pass "Techvein sees its own careers site" \
+                      || fail "Techvein cannot see its own careers site (got '${own}') - fixture or RLS too strict"
+leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM hire.careers_sites WHERE tenant_id = '$SCHOOL'")
+[ "${leak:-1}" -eq 0 ] && pass "Techvein cannot see ABC School's careers site" \
+                       || fail "LEAK: ABC School's careers site visible to Techvein"
+n=$(no_context "SELECT count(*) FROM hire.careers_sites")
+[ "${n:-1}" -eq 0 ] && pass "no tenant context returns zero careers sites" \
+                    || fail "DANGEROUS: ${n} careers site(s) visible with no tenant set"
+
+# The resolver is how a stranger reaches a tenant. With the platform switch
+# as the migration leaves it (off), it must answer nothing even for an
+# enabled site.
+sw=$(scalar_as postgres "SELECT coalesce((SELECT value FROM core.platform_settings WHERE key='hire.careers_portal_enabled'),'(missing)')")
+[ "$sw" = "false" ] && pass "the platform switch is off as installed" \
+                    || fail "the platform switch reads '$sw' - it must be installed as false"
+r=$(no_context "SELECT count(*) FROM hire.resolve_careers_site('iso-careers-t')")
+[ "${r:-1}" -eq 0 ] && pass "the public resolver answers nothing while the platform switch is off" \
+                    || fail "DANGEROUS: the careers resolver answered with the platform switch off"
+
+run_as postgres "DELETE FROM hire.careers_sites WHERE slug IN ('iso-careers-t','iso-careers-s');" >/dev/null 2>&1
+
 hdr "Sign-in handoff codes are isolated, and the redeem reaches no further than one row"
 
 # Decision 0003. This table is unusual and so is its test: the REDEEM is
