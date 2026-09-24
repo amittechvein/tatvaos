@@ -152,7 +152,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     // sign-in identities.
     public DbSet<TatvaOS.Api.Modules.Admin.OrgApiKey> OrgApiKeys
         => Set<TatvaOS.Api.Modules.Admin.OrgApiKey>();
-    // Added by 20260924-org-locations-designations. Phase 0 of Hire & People:
+    // Added by 20260924-a-org-locations-designations. Phase 0 of Hire & People:
     // organisation structure a job opening names, read later by People too.
     public DbSet<TatvaOS.Api.Modules.Admin.OrgLocation> OrgLocations
         => Set<TatvaOS.Api.Modules.Admin.OrgLocation>();
