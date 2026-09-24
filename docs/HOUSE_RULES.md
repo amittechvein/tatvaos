@@ -213,6 +213,33 @@ Claude Code session that found the defect, not by Mr. Singh. He asked for the
 correction to be recorded; he has not checked this wording. If it misstates
 him, the error is the transcriber's.*
 
+**A precondition is not the operation — Mr. Singh, 26 Sept 2026.**
+
+> The PR measured that `deploy` can read `.backup-env`. It did not measure
+> that `conf_value` — new code, a subshell sourcing that file and extracting
+> one variable — produces the passphrase from that file's actual contents.
+> Those are different claims. I read "readable by deploy" and treated it as
+> "the new function works on production," which it does not establish.
+
+*The cost.* PR 254 makes `deploy.sh` stop rather than write an unencrypted copy
+of production, so an empty passphrase is fatal by design. The evidence offered
+was that the deploy user can read the file holding it. That is a precondition
+of the parse, not the parse: the new `conf_value` sources the file in a
+subshell, and a file can be perfectly readable and still yield nothing through
+that path. The gap was closed by running the actual mechanism on the server —
+which printed `passphrase resolves via conf_value: yes` and cost one command.
+Had it printed NO, the first deploy after the merge would have stopped dead,
+with the cause three functions from the message.
+
+So: when a check stands in for an operation, say which one you ran. "The file
+is readable", "the endpoint is reachable", "the credential exists" are all
+preconditions. None of them is "it works".
+
+*Everything in this entry except the indented quotation is written by the
+Claude Code session that found the gap, not by Mr. Singh. He asked for the
+pattern to be recorded; he has not checked this wording. If it misstates him,
+the error is the transcriber's.*
+
 ## 6b. A result is about a version. Say which one.
 
 Rule 6 asks whether a check *can* fail. This asks whether its result still
