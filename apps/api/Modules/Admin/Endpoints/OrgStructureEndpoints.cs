@@ -123,7 +123,7 @@ public static class OrgStructureEndpoints
 
         // Refused while a job opening names it, with a sentence rather than
         // the foreign key's 500. Archiving is the way to retire one.
-        var jobs = await db.JobOpenings.CountAsync(j => j.LocationId == id, ct);
+        var jobs = await Hire.HireAccess.OrganisationWide.CountNamingLocationAsync(db, id, ct);
         if (jobs > 0)
             return Results.Conflict(new
             {
@@ -248,7 +248,7 @@ public static class OrgStructureEndpoints
         var row = await db.OrgDesignations.FirstOrDefaultAsync(d => d.Id == id, ct);
         if (row is null) return Results.NotFound();
 
-        var jobs = await db.JobOpenings.CountAsync(j => j.DesignationId == id, ct);
+        var jobs = await Hire.HireAccess.OrganisationWide.CountNamingDesignationAsync(db, id, ct);
         if (jobs > 0)
             return Results.Conflict(new
             {

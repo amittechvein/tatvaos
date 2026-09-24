@@ -14,8 +14,8 @@ namespace TatvaOS.Api.Modules.Hire;
 /// ─────────────────────────────────────────────────────────────────────────
 ///  WHO — HireAccess decides (Amit, 24 Sept 2026). Administrators and
 ///  recruiters see every job; a hiring manager sees only the jobs that name
-///  them, and anything else answers 404. EVERY job lookup here starts from
-///  access.Jobs(level), never from db.JobOpenings — see HireAccess.
+///  them, and anything else answers 404. Every job lookup here starts from
+///  access.Jobs(level); AppDbContext offers no other route (see HireAccess).
 ///
 ///  STATUS IS ITS OWN CALL. Editing a job and publishing it are different
 ///  acts with different consequences — one changes words, the other puts
@@ -181,7 +181,7 @@ public static class JobOpeningEndpoints
         var error = await ApplyAsync(job, req, db, isNew: true, ct);
         if (error is not null) return Results.BadRequest(new { error });
 
-        db.JobOpenings.Add(job);
+        access.Add(job);
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("job.created", "job_opening", job.Id.ToString(),
             after: new { job.Title, job.Status }, ct: ct, productCode: Product);
@@ -261,7 +261,7 @@ public static class JobOpeningEndpoints
             // reaches a URL. Reopening keeps the slug it already has.
             if (job.PublishedAt is null)
             {
-                job.Slug = await NewSlugAsync(db, job.Title, ct);
+                job.Slug = await NewSlugAsync(access, job.Title, ct);
                 job.PublishedAt = now;
             }
             job.ClosedReason = null;
@@ -304,7 +304,7 @@ public static class JobOpeningEndpoints
                       + "anyone who applied must still be able to see what they applied for.",
             });
 
-        db.JobOpenings.Remove(job);
+        access.Remove(job);
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("job.deleted", "job_opening", id.ToString(),
             before: new { job.Title }, ct: ct, productCode: Product);
@@ -455,7 +455,7 @@ public static class JobOpeningEndpoints
     /// else, so it must not be enumerable (Mr. Singh, 24 Sept; it was five).
     /// A title with no latin letters (हिंदी शिक्षक) becomes "job-k3x9qm7rta".
     /// </summary>
-    private static async Task<string> NewSlugAsync(AppDbContext db, string title, CancellationToken ct)
+    private static async Task<string> NewSlugAsync(HireAccess access, string title, CancellationToken ct)
     {
         var stem = Regex.Replace(title.ToLowerInvariant(), "[^a-z0-9]+", "-").Trim('-');
         if (stem.Length > 100) stem = stem[..100].TrimEnd('-');
@@ -467,7 +467,7 @@ public static class JobOpeningEndpoints
             var sb = new StringBuilder(stem).Append('-');
             for (var i = 0; i < 10; i++) sb.Append(alphabet[RandomNumberGenerator.GetInt32(alphabet.Length)]);
             var slug = sb.ToString();
-            if (!await db.JobOpenings.AnyAsync(j => j.Slug == slug, ct)) return slug;
+            if (!await access.SlugTakenAsync(slug, ct)) return slug;
         }
         // Five collisions in a row at 32^10 means something other than
         // chance, and it should be loud.

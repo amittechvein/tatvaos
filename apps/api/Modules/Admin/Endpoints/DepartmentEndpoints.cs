@@ -65,7 +65,6 @@ public static class DepartmentEndpoints
                 d.Id, d.ParentId, d.Name, d.Description, d.DefaultRole,
                 d.DefaultProducts, d.CanSendExternal, d.Colour, d.DefaultQuotaBytes,
                 UserCount = db.Users.Count(u => u.DepartmentId == d.Id && u.Status != "deleted"),
-                JobOpeningCount = db.JobOpenings.Count(j => j.DepartmentId == d.Id),
             })
             .ToListAsync(ct);
 
@@ -76,6 +75,7 @@ public static class DepartmentEndpoints
             .FirstOrDefaultAsync(p => p.TenantId == tenant.TenantId, ct);
         var floor = pool?.PerUserQuotaBytes ?? StorageAllocator.DefaultPerUserQuota;
 
+        var openings = await TatvaOS.Api.Modules.Hire.HireAccess.OrganisationWide.CountsByDepartmentAsync(db, ct);
         var byParent = rows.ToLookup(r => r.ParentId);
 
         // Resolved in one pass down the tree, carrying each level's effective
@@ -99,7 +99,7 @@ public static class DepartmentEndpoints
                     // Includes everyone beneath. "Engineering has 3 people" is
                     // misleading when its four sub-teams hold forty more.
                     DescendantUserCount: r.UserCount + children.Sum(c => c.DescendantUserCount),
-                    JobOpeningCount: r.JobOpeningCount,
+                    JobOpeningCount: openings.GetValueOrDefault(r.Id),
                     Children: children);
             }).ToList();
         }
@@ -285,10 +285,7 @@ public static class DepartmentEndpoints
         // the JOB's history, so the jobs are read first and each one gets its
         // own audit row after (Mr. Singh, 24 Sept) — possibly a published
         // posting, and "why did this lose its department" must be answerable.
-        var jobs = await db.JobOpenings.AsNoTracking()
-            .Where(j => j.DepartmentId == id)
-            .Select(j => new { j.Id, j.Title, j.Status })
-            .ToListAsync(ct);
+        var jobs = await TatvaOS.Api.Modules.Hire.HireAccess.OrganisationWide.NamingDepartmentAsync(db, id, ct);
 
         db.Departments.Remove(dept);
         await db.SaveChangesAsync(ct);

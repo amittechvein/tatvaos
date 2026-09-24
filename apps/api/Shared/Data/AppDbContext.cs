@@ -158,9 +158,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         => Set<TatvaOS.Api.Modules.Admin.OrgLocation>();
     public DbSet<TatvaOS.Api.Modules.Admin.OrgDesignation> OrgDesignations
         => Set<TatvaOS.Api.Modules.Admin.OrgDesignation>();
-    // Added by 20260924-b-hire-job-openings. TatvaOS Hire R1.
-    public DbSet<TatvaOS.Api.Modules.Hire.JobOpening> JobOpenings
-        => Set<TatvaOS.Api.Modules.Hire.JobOpening>();
+    // hire.job_openings (20260924-b) is mapped below but DELIBERATELY has no
+    // DbSet property here: Modules/Hire/HireAccess.cs is the only route to
+    // it, so a hiring manager's view cannot be bypassed by a handler that
+    // reaches for db.JobOpenings. tests/hire/check-job-gate.sh enforces it
+    // (Mr. Singh, 24 Sept). Do not add one.
     // Added by 20260924-c-hire-team. Who besides admins may use Hire.
     public DbSet<TatvaOS.Api.Modules.Hire.HireTeamMember> HireTeamMembers
         => Set<TatvaOS.Api.Modules.Hire.HireTeamMember>();

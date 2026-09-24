@@ -34,11 +34,23 @@ public enum HireLevel { None = 0, HiringManager = 1, Recruiter = 2, Admin = 3 }
 ///                  something they were not given.
 ///  None            403 on every Hire call.
 ///
-///  EVERY JOB READ GOES THROUGH <see cref="Jobs"/>. A handler that queried
-///  db.JobOpenings directly would show a hiring manager every job in the
-///  organisation, and nothing would look wrong — the tenant filter would
-///  still be doing its job. That is the quiet failure to watch for when
-///  adding an endpoint here.
+///  THIS CLASS IS THE ONLY ROUTE TO hire.job_openings — enforced, not asked
+///  (Mr. Singh, 24 Sept: "make the gate structural, not documented").
+///    * AppDbContext has NO JobOpenings property. The table is mapped, so
+///      EF knows it, but nothing outside this file can name it by accident.
+///    * tests/hire/check-job-gate.sh fails CI if Set<JobOpening>(), a DbSet
+///      of it, or SQL on hire.job_openings appears in any other C# file.
+///      That is the backstop for the one route C# cannot close.
+///  Why it matters: a handler reading the table directly would show a hiring
+///  manager every job in the organisation, and nothing would look wrong —
+///  the tenant filter would still be doing its job.
+///
+///  Two kinds of access leave this file, and only these:
+///    * Jobs(level): what THIS person may see. Every Hire screen uses it.
+///    * OrganisationWide: counts and ids for Core's administrative "is this
+///      in use" checks (location, designation, department deletion). They
+///      return numbers and ids, never a query, so they cannot be extended
+///      into a listing.
 /// ─────────────────────────────────────────────────────────────────────────
 /// </summary>
 public sealed class HireAccess(AppDbContext db, TenantContext tenant, IHttpContextAccessor http)
@@ -77,11 +89,60 @@ public sealed class HireAccess(AppDbContext db, TenantContext tenant, IHttpConte
     /// <summary>The job openings this person may see. Always start here.</summary>
     public IQueryable<JobOpening> Jobs(HireLevel level)
     {
-        var q = db.JobOpenings.AsQueryable();
+        var q = db.Set<JobOpening>().AsQueryable();
         if (level >= HireLevel.Recruiter) return q;
         if (level == HireLevel.HiringManager && tenant.UserId is Guid me)
             return q.Where(j => j.HiringManagerId == me);
         return q.Where(_ => false);
+    }
+
+    /// <summary>A new job, for the caller to save. The caller has already checked the level.</summary>
+    public void Add(JobOpening job) => db.Set<JobOpening>().Add(job);
+
+    /// <summary>Removes a job the caller loaded through <see cref="Jobs"/>.</summary>
+    public void Remove(JobOpening job) => db.Set<JobOpening>().Remove(job);
+
+    /// <summary>
+    /// Is this public address taken anywhere in the organisation — including
+    /// by jobs this person cannot see, which is why it is not Jobs(level).
+    /// Answers yes or no only.
+    /// </summary>
+    public Task<bool> SlugTakenAsync(string slug, CancellationToken ct) =>
+        db.Set<JobOpening>().AnyAsync(j => j.Slug == slug, ct);
+
+    /// <summary>
+    /// Organisation-wide facts for Core's administrative checks. Numbers and
+    /// ids only — see the class comment. Still inside the tenant filter.
+    /// </summary>
+    public static class OrganisationWide
+    {
+        public static Task<int> CountNamingLocationAsync(AppDbContext db, Guid locationId, CancellationToken ct) =>
+            db.Set<JobOpening>().CountAsync(j => j.LocationId == locationId, ct);
+
+        public static Task<int> CountNamingDesignationAsync(AppDbContext db, Guid designationId, CancellationToken ct) =>
+            db.Set<JobOpening>().CountAsync(j => j.DesignationId == designationId, ct);
+
+        /// <summary>Per department, how many job openings name it. One query.</summary>
+        public static Task<Dictionary<Guid, int>> CountsByDepartmentAsync(AppDbContext db, CancellationToken ct) =>
+            db.Set<JobOpening>().AsNoTracking()
+                .Where(j => j.DepartmentId != null)
+                .GroupBy(j => j.DepartmentId!.Value)
+                .Select(g => new { g.Key, N = g.Count() })
+                .ToDictionaryAsync(x => x.Key, x => x.N, ct);
+
+        /// <summary>
+        /// The jobs a department's deletion will blank, for their audit rows:
+        /// id, title and status — what an audit entry needs, nothing more.
+        /// </summary>
+        public static async Task<List<(Guid Id, string Title, string Status)>> NamingDepartmentAsync(
+            AppDbContext db, Guid departmentId, CancellationToken ct)
+        {
+            var rows = await db.Set<JobOpening>().AsNoTracking()
+                .Where(j => j.DepartmentId == departmentId)
+                .Select(j => new { j.Id, j.Title, j.Status })
+                .ToListAsync(ct);
+            return rows.Select(r => (r.Id, r.Title, r.Status)).ToList();
+        }
     }
 
     public static string Name(HireLevel level) => level switch
