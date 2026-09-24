@@ -100,8 +100,14 @@ class Db:
         self.psql_bin = os.path.join(os.path.dirname(pgserver.__file__), "pginstall", "bin", "psql")
 
     def run(self, sql=None, path=None):
-        cmd = [self.psql_bin, self.uri, "-v", "ON_ERROR_STOP=1", "-X", "-q", "-t", "-A"]
+        # OPTIONS BEFORE THE CONNECTION STRING. Windows psql does not permute
+        # arguments, so anything after the URI is treated as a positional and
+        # silently "ignored" with a warning — which made every expectation
+        # here return psql's own warning text instead of a value, while the
+        # summary still said "Proved" (24 Sept 2026).
+        cmd = [self.psql_bin, "-v", "ON_ERROR_STOP=1", "-X", "-q", "-t", "-A"]
         cmd += ["-f", path] if path else ["-c", sql]
+        cmd += [self.uri]          # LAST: see the note above
         p = subprocess.run(cmd, capture_output=True, text=True)
         return p.returncode, ((p.stdout or "") + (p.stderr or "")).strip()
 
@@ -191,8 +197,17 @@ def main():
             if not calibrated:
                 failed.append("calibration")
 
-    print("\n  Proved: this file applies and re-applies %s, and the expectations above hold." % (
-        "against the state you arranged" if args.arrange else "against a stubbed schema"))
+    # "Proved" only when there is something proved. This sentence used to
+    # print whatever happened, so a run with four failed expectations still
+    # ended with the word Proved three lines above the word FAILED; the exit
+    # code was right and the prose was not, and prose is what gets pasted
+    # into a pull request (24 Sept 2026).
+    if failed:
+        print("\n  Proved: NOTHING. %d check(s) failed above - read them before" % len(failed))
+        print("              believing any part of this run.")
+    else:
+        print("\n  Proved: this file applies and re-applies %s, and the expectations above hold." % (
+            "against the state you arranged" if args.arrange else "against a stubbed schema"))
     print("  NOT proved: that local/postgres/init builds from nothing (that is")
     print("              verify-migrations.sh, a different guarantee - run it too);")
     print("              nor any behaviour that depends on real column types. This")
