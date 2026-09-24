@@ -1,0 +1,942 @@
+// ============================================================================
+//  TatvaOS Sheets — the live spreadsheet, on Yjs.
+//
+//  THE LAYOUT OF THE Y.Doc
+//
+//    order     Y.Array<sheetId>            tab order
+//    sheets    Y.Map<sheetId, Y.Map>       one map per sheet:
+//                name, tabColor, hidden, frozenRows, frozenCols
+//                rows       Y.Array<rowId>          top to bottom
+//                cols       Y.Array<colId>          left to right
+//                values     Y.Map<"rowId|colId", string>        input as typed
+//                formats    Y.Map<"rowId|colId", CellFormat>
+//                colWidths  Y.Map<colId, px>    rowHeights  Y.Map<rowId, px>
+//                merges     Y.Map<mergeId, { r1, c1, r2, c2 }>  (ids, not positions)
+//    settings  Y.Map                        locale grouping, date order
+//
+//  WHY IDS AND NOT POSITIONS. Cells are keyed by the ids of their row and
+//  column, never by "B7". If Priya inserts a row above row 5 while Amit is
+//  typing into B7, Amit's text still lands in the row he was typing in:
+//  Yjs merges the insertion into the rows array, and his key never
+//  mentioned "7". Keyed by position, one of them would silently overwrite
+//  the wrong cell — the worst failure a shared spreadsheet can have.
+//
+//  WHAT IS STILL LAST-WRITER-WINS. Two people typing into the same cell at
+//  the same moment: one value survives, as in Google Sheets. Values and
+//  formats are separate maps, so one person's typing never undoes another's
+//  bolding of the same cell.
+//
+//  WHAT FORMULAS SEE. Formulas are written in positions (=SUM(B2:B9)), so
+//  on an insert or delete the person doing it rewrites every affected
+//  formula in the same transaction (engine/rewrite.ts). A formula typed by
+//  someone else in the very same instant is not rewritten — the one gap
+//  left, and it needs two people and the same half-second.
+//
+//  UNDO is per person (Y.UndoManager tracking only our own transactions),
+//  so Ctrl+Z never undoes a colleague.
+// ============================================================================
+
+import * as Y from 'yjs';
+import { Engine } from './engine/engine';
+import { parseInput } from './engine/input';
+import { quoteSheet, type Rect, norm } from './engine/address';
+import { INDIA, type Locale, type Scalar, type WorkbookSource } from './engine/types';
+import { compare } from './engine/values';
+import {
+  translateFormula, shiftFormula, renameSheetInFormula, dropSheetInFormula,
+} from './engine/rewrite';
+import {
+  DEFAULT_COLS, DEFAULT_ROWS, cellKey, parseCellKey,
+  type CellFormat, type SheetData, type WorkbookData,
+} from './workbook';
+
+/** Transactions from this tab carry this origin; the undo manager tracks only these. */
+export const LOCAL = { local: true };
+
+export interface SheetMeta {
+  id: string;
+  name: string;
+  tabColor?: string;
+  hidden?: boolean;
+  frozenRows: number;
+  frozenCols: number;
+}
+
+export interface MergeRect extends Rect { id: string }
+
+const newId = () => Math.random().toString(36).slice(2, 10);
+
+/**
+ * The first sheet of a new spreadsheet, built identically by every browser.
+ * Written by a Y.Doc with a fixed clientID and fixed ids, so two people who
+ * open a brand-new spreadsheet at the same moment produce the SAME update —
+ * Yjs sees one sheet, not two "Sheet1"s.
+ */
+function seedUpdate(): Uint8Array {
+  const d = new Y.Doc();
+  d.clientID = 1;
+  d.transact(() => {
+    const sheets = d.getMap<Y.Map<unknown>>('sheets');
+    const s = new Y.Map<unknown>();
+    sheets.set('s1', s);
+    s.set('name', 'Sheet1');
+    s.set('frozenRows', 0);
+    s.set('frozenCols', 0);
+    const rows = new Y.Array<string>();
+    rows.push(Array.from({ length: DEFAULT_ROWS }, (_, i) => `r${i}`));
+    const cols = new Y.Array<string>();
+    cols.push(Array.from({ length: DEFAULT_COLS }, (_, i) => `c${i}`));
+    s.set('rows', rows);
+    s.set('cols', cols);
+    for (const k of ['values', 'formats', 'colWidths', 'rowHeights', 'merges']) s.set(k, new Y.Map());
+    d.getArray<string>('order').push(['s1']);
+  });
+  const u = Y.encodeStateAsUpdate(d);
+  d.destroy();
+  return u;
+}
+
+/** Per-sheet caches rebuilt from the Y structures when they change. */
+interface SheetCache {
+  y: Y.Map<unknown>;
+  rowIds: string[];
+  colIds: string[];
+  rowIndex: Map<string, number>;
+  colIndex: Map<string, number>;
+}
+
+export class SheetsModel {
+  readonly doc: Y.Doc;
+  readonly engine: Engine;
+  readonly undo: Y.UndoManager;
+  private readonly sheetsMap: Y.Map<Y.Map<unknown>>;
+  private readonly order: Y.Array<string>;
+  readonly settings: Y.Map<unknown>;
+  private caches = new Map<string, SheetCache>();
+  private readonly listeners = new Set<(e: ModelChange) => void>();
+
+  constructor(doc: Y.Doc) {
+    this.doc = doc;
+    this.sheetsMap = doc.getMap('sheets');
+    this.order = doc.getArray('order');
+    this.settings = doc.getMap('settings');
+    this.engine = new Engine(this.source(), { locale: this.locale() });
+    this.undo = new Y.UndoManager([this.sheetsMap, this.order, this.settings], {
+      trackedOrigins: new Set([LOCAL]),
+      captureTimeout: 400,
+    });
+    this.sheetsMap.observeDeep(this.onDeep);
+    this.order.observe(this.onOrder);
+    this.settings.observe(this.onSettings);
+  }
+
+  /** Make sure the spreadsheet has a sheet. Safe to call from every browser; see seedUpdate. */
+  ensureSeeded() {
+    if (this.order.length > 0) return;
+    Y.applyUpdate(this.doc, seedUpdate(), LOCAL_SEED);
+  }
+
+  destroy() {
+    this.sheetsMap.unobserveDeep(this.onDeep);
+    this.order.unobserve(this.onOrder);
+    this.settings.unobserve(this.onSettings);
+    this.undo.destroy();
+  }
+
+  subscribe(fn: (e: ModelChange) => void): () => void {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
+
+  private emit(e: ModelChange) {
+    for (const fn of this.listeners) fn(e);
+  }
+
+  // ------------------------------------------------------------------
+  //  Change tracking → engine invalidation
+  // ------------------------------------------------------------------
+
+  private onDeep = (events: Y.YEvent<Y.AbstractType<unknown>>[], tr: Y.Transaction) => {
+    let structural = false;
+    let layout = false;
+    const cells: [string, number, number][] = [];
+    for (const ev of events) {
+      // path: [sheetId, 'values'] for a cell edit, [sheetId, 'rows'] for a row insert, …
+      const path = ev.path as (string | number)[];
+      const sheetId = path[0] as string | undefined;
+      const field = path[1] as string | undefined;
+      if (sheetId === undefined) { structural = true; continue; }
+      if (field === 'values') {
+        const cache = this.cache(sheetId);
+        if (!cache) continue;
+        for (const key of (ev as Y.YMapEvent<unknown>).keysChanged) {
+          const [rid, cid] = key.split('|') as [string, string];
+          const r = cache.rowIndex.get(rid);
+          const c = cache.colIndex.get(cid);
+          if (r !== undefined && c !== undefined) cells.push([sheetId, r, c]);
+        }
+      } else if (field === 'colWidths' || field === 'rowHeights' || field === 'merges') {
+        layout = true;
+      } else if (field === 'rows' || field === 'cols' || field === undefined) {
+        // A sheet's name, its rows or columns: positions or names moved.
+        structural = true;
+        this.caches.delete(sheetId);
+      }
+    }
+    if (structural) this.engine.reset();
+    else if (cells.length > 0) this.engine.invalidateMany(cells);
+    this.engine.tickVolatile();
+    this.emit({ structural, layout: layout || structural, remote: tr.origin !== LOCAL && tr.origin !== LOCAL_SEED, local: tr.origin === LOCAL });
+  };
+
+  private onOrder = (_e: Y.YArrayEvent<string>, tr: Y.Transaction) => {
+    this.engine.reset();
+    this.emit({ structural: true, layout: true, remote: tr.origin !== LOCAL, local: tr.origin === LOCAL });
+  };
+
+  private onSettings = () => {
+    this.engine.locale = this.locale();
+    this.engine.reset();
+    this.emit({ structural: true, layout: true, remote: false, local: false });
+  };
+
+  private cache(sheetId: string): SheetCache | null {
+    const hit = this.caches.get(sheetId);
+    if (hit) return hit;
+    const y = this.sheetsMap.get(sheetId);
+    if (!y) return null;
+    const rowIds = (y.get('rows') as Y.Array<string>).toArray();
+    const colIds = (y.get('cols') as Y.Array<string>).toArray();
+    const c: SheetCache = {
+      y, rowIds, colIds,
+      rowIndex: new Map(rowIds.map((id, i) => [id, i])),
+      colIndex: new Map(colIds.map((id, i) => [id, i])),
+    };
+    this.caches.set(sheetId, c);
+    return c;
+  }
+
+  private sub<T>(sheetId: string, field: string): T {
+    return this.sheetsMap.get(sheetId)!.get(field) as T;
+  }
+
+  // ------------------------------------------------------------------
+  //  Reading
+  // ------------------------------------------------------------------
+
+  locale(): Locale {
+    const g = this.settings.get('grouping');
+    const d = this.settings.get('dateOrder');
+    return {
+      ...INDIA,
+      grouping: g === 'western' ? 'western' : 'indian',
+      dateOrder: d === 'mdy' ? 'mdy' : 'dmy',
+    };
+  }
+
+  sheetIds(): string[] {
+    return this.order.toArray().filter((id) => this.sheetsMap.has(id));
+  }
+
+  sheets(): SheetMeta[] {
+    return this.sheetIds().map((id) => this.meta(id)!);
+  }
+
+  meta(id: string): SheetMeta | null {
+    const y = this.sheetsMap.get(id);
+    if (!y) return null;
+    return {
+      id,
+      name: (y.get('name') as string) ?? 'Sheet',
+      tabColor: y.get('tabColor') as string | undefined,
+      hidden: y.get('hidden') === true,
+      frozenRows: (y.get('frozenRows') as number) ?? 0,
+      frozenCols: (y.get('frozenCols') as number) ?? 0,
+    };
+  }
+
+  size(sheetId: string): { rows: number; cols: number } {
+    const c = this.cache(sheetId);
+    return c ? { rows: c.rowIds.length, cols: c.colIds.length } : { rows: 0, cols: 0 };
+  }
+
+  private key(sheetId: string, r: number, c: number): string | null {
+    const cache = this.cache(sheetId);
+    const rid = cache?.rowIds[r];
+    const cid = cache?.colIds[c];
+    return rid && cid ? `${rid}|${cid}` : null;
+  }
+
+  /** What the person typed into a cell. */
+  input(sheetId: string, r: number, c: number): string | null {
+    const k = this.key(sheetId, r, c);
+    if (!k) return null;
+    return (this.sub<Y.Map<string>>(sheetId, 'values').get(k)) ?? null;
+  }
+
+  value(sheetId: string, r: number, c: number): Scalar {
+    return this.engine.getValue(sheetId, r, c);
+  }
+
+  format(sheetId: string, r: number, c: number): CellFormat | undefined {
+    const k = this.key(sheetId, r, c);
+    if (!k) return undefined;
+    return this.sub<Y.Map<CellFormat>>(sheetId, 'formats').get(k);
+  }
+
+  colWidth(sheetId: string, c: number): number | undefined {
+    const id = this.cache(sheetId)?.colIds[c];
+    return id ? this.sub<Y.Map<number>>(sheetId, 'colWidths').get(id) : undefined;
+  }
+
+  rowHeight(sheetId: string, r: number): number | undefined {
+    const id = this.cache(sheetId)?.rowIds[r];
+    return id ? this.sub<Y.Map<number>>(sheetId, 'rowHeights').get(id) : undefined;
+  }
+
+  /** Every cell with content, as positions. For search, export and AI. */
+  *filled(sheetId: string): Generator<[number, number, string]> {
+    const cache = this.cache(sheetId);
+    if (!cache) return;
+    for (const [k, v] of this.sub<Y.Map<string>>(sheetId, 'values')) {
+      const [rid, cid] = k.split('|') as [string, string];
+      const r = cache.rowIndex.get(rid);
+      const c = cache.colIndex.get(cid);
+      if (r !== undefined && c !== undefined) yield [r, c, v];
+    }
+  }
+
+  /** The last row and column that hold anything, or -1. */
+  extent(sheetId: string): { lastRow: number; lastCol: number } {
+    let lastRow = -1; let lastCol = -1;
+    for (const [r, c] of this.filled(sheetId)) { lastRow = Math.max(lastRow, r); lastCol = Math.max(lastCol, c); }
+    return { lastRow, lastCol };
+  }
+
+  merges(sheetId: string): MergeRect[] {
+    const cache = this.cache(sheetId);
+    if (!cache) return [];
+    const out: MergeRect[] = [];
+    for (const [id, m] of this.sub<Y.Map<{ r1: string; c1: string; r2: string; c2: string }>>(sheetId, 'merges')) {
+      const r1 = cache.rowIndex.get(m.r1); const r2 = cache.rowIndex.get(m.r2);
+      const c1 = cache.colIndex.get(m.c1); const c2 = cache.colIndex.get(m.c2);
+      // A merge whose corner row or column was deleted is gone.
+      if (r1 === undefined || r2 === undefined || c1 === undefined || c2 === undefined) continue;
+      if (r1 > r2 || c1 > c2) continue;
+      out.push({ id, r1, c1, r2, c2 });
+    }
+    return out;
+  }
+
+  /** Stable ids for a position, for presence (a colleague's cursor survives a row insert). */
+  idsAt(sheetId: string, r: number, c: number): { row: string; col: string } | null {
+    const cache = this.cache(sheetId);
+    const row = cache?.rowIds[r]; const col = cache?.colIds[c];
+    return row && col ? { row, col } : null;
+  }
+
+  positionOf(sheetId: string, rowId: string, colId: string): { r: number; c: number } | null {
+    const cache = this.cache(sheetId);
+    const r = cache?.rowIndex.get(rowId); const c = cache?.colIndex.get(colId);
+    return r !== undefined && c !== undefined ? { r, c } : null;
+  }
+
+  private source(): WorkbookSource {
+    return {
+      sheetIdByName: (name) => {
+        const l = name.toLowerCase();
+        for (const id of this.sheetIds()) if (this.meta(id)!.name.toLowerCase() === l) return id;
+        return null;
+      },
+      sheetName: (id) => this.meta(id)?.name ?? null,
+      raw: (sheet, r, c) => this.input(sheet, r, c),
+      size: (sheet) => this.size(sheet),
+    };
+  }
+
+  // ------------------------------------------------------------------
+  //  Writing cells
+  // ------------------------------------------------------------------
+
+  private write(fn: () => void) {
+    this.doc.transact(fn, LOCAL);
+  }
+
+  /**
+   * Set inputs. An input that implies a format ("₹1,500", "85%", a date)
+   * sets that format too, unless the cell already has a number format —
+   * which is how typing a date into a date-formatted column behaves.
+   */
+  setInputs(sheetId: string, entries: { r: number; c: number; input: string | null }[]) {
+    const values = this.sub<Y.Map<string>>(sheetId, 'values');
+    const formats = this.sub<Y.Map<CellFormat>>(sheetId, 'formats');
+    const locale = this.locale();
+    this.write(() => {
+      for (const e of entries) {
+        const k = this.key(sheetId, e.r, e.c);
+        if (!k) continue;
+        if (e.input === null || e.input === '') { values.delete(k); continue; }
+        values.set(k, e.input);
+        const implied = parseInput(e.input, locale).format;
+        if (implied) {
+          const f = formats.get(k);
+          if (!f?.nf) formats.set(k, { ...f, nf: implied });
+        }
+      }
+    });
+  }
+
+  /** Apply a format change to every cell in a rectangle. undefined in the patch clears that field. */
+  setFormat(sheetId: string, rect: Rect, patch: Partial<CellFormat>) {
+    const formats = this.sub<Y.Map<CellFormat>>(sheetId, 'formats');
+    const n = norm(rect);
+    this.write(() => {
+      for (let r = n.r1; r <= n.r2; r += 1) {
+        for (let c = n.c1; c <= n.c2; c += 1) {
+          const k = this.key(sheetId, r, c);
+          if (!k) continue;
+          const next: CellFormat = { ...formats.get(k), ...patch };
+          for (const f of Object.keys(next) as (keyof CellFormat)[]) if (next[f] === undefined) delete next[f];
+          if (Object.keys(next).length === 0) formats.delete(k); else formats.set(k, next);
+        }
+      }
+    });
+  }
+
+  /**
+   * Borders on a rectangle: 'all', 'outer', 'inner', one side, or 'none'.
+   * Each cell keeps its own four sides, as in a .xlsx file.
+   */
+  setBorders(sheetId: string, rect: Rect, which: BorderPreset, side: CellFormat['bt'] | undefined) {
+    const n = norm(rect);
+    const formats = this.sub<Y.Map<CellFormat>>(sheetId, 'formats');
+    this.write(() => {
+      for (let r = n.r1; r <= n.r2; r += 1) {
+        for (let c = n.c1; c <= n.c2; c += 1) {
+          const k = this.key(sheetId, r, c);
+          if (!k) continue;
+          const f: CellFormat = { ...formats.get(k) };
+          const top = r === n.r1; const bottom = r === n.r2; const left = c === n.c1; const right = c === n.c2;
+          const put = (s: 'bt' | 'bb' | 'bl' | 'br', on: boolean) => { if (on) { if (side) f[s] = side; else delete f[s]; } };
+          switch (which) {
+            case 'all': case 'none': put('bt', true); put('bb', true); put('bl', true); put('br', true); break;
+            case 'outer': put('bt', top); put('bb', bottom); put('bl', left); put('br', right); break;
+            case 'inner': put('bt', !top); put('bb', !bottom); put('bl', !left); put('br', !right); break;
+            case 'top': put('bt', top); break;
+            case 'bottom': put('bb', bottom); break;
+            case 'left': put('bl', left); break;
+            case 'right': put('br', right); break;
+          }
+          if (which === 'none') { delete f.bt; delete f.bb; delete f.bl; delete f.br; }
+          if (Object.keys(f).length === 0) formats.delete(k); else formats.set(k, f);
+        }
+      }
+    });
+  }
+
+  /** Clear contents (and optionally formatting) of a rectangle. */
+  clear(sheetId: string, rect: Rect, what: 'values' | 'formats' | 'all' = 'values') {
+    const n = norm(rect);
+    const values = this.sub<Y.Map<string>>(sheetId, 'values');
+    const formats = this.sub<Y.Map<CellFormat>>(sheetId, 'formats');
+    this.write(() => {
+      for (let r = n.r1; r <= n.r2; r += 1) {
+        for (let c = n.c1; c <= n.c2; c += 1) {
+          const k = this.key(sheetId, r, c);
+          if (!k) continue;
+          if (what !== 'formats') values.delete(k);
+          if (what !== 'values') formats.delete(k);
+        }
+      }
+    });
+  }
+
+  // ------------------------------------------------------------------
+  //  Copy, paste, fill
+  // ------------------------------------------------------------------
+
+  /** A rectangle's inputs and formats, for the clipboard. */
+  copy(sheetId: string, rect: Rect): Clip {
+    const n = norm(rect);
+    const cells: Clip['cells'] = [];
+    for (let r = n.r1; r <= n.r2; r += 1) {
+      const row: Clip['cells'][number] = [];
+      for (let c = n.c1; c <= n.c2; c += 1) row.push({ input: this.input(sheetId, r, c), format: this.format(sheetId, r, c) });
+      cells.push(row);
+    }
+    return { sheetId, origin: { r: n.r1, c: n.c1 }, cells };
+  }
+
+  /**
+   * Paste a clip with its top-left at (r, c). Formulas move their relative
+   * references by the distance pasted. mode 'values' pastes calculated
+   * values only; 'formats' only formatting.
+   */
+  paste(sheetId: string, r: number, c: number, clip: Clip, mode: 'all' | 'values' | 'formats' = 'all',
+    valueOf?: (rr: number, cc: number) => Scalar) {
+    const values = this.sub<Y.Map<string>>(sheetId, 'values');
+    const formats = this.sub<Y.Map<CellFormat>>(sheetId, 'formats');
+    this.growTo(sheetId, r + clip.cells.length, c + (clip.cells[0]?.length ?? 0));
+    const dr = r - clip.origin.r;
+    const dc = c - clip.origin.c;
+    this.write(() => {
+      clip.cells.forEach((row, i) => row.forEach((cell, j) => {
+        const k = this.key(sheetId, r + i, c + j);
+        if (!k) return;
+        if (mode !== 'formats') {
+          let input = cell.input;
+          if (mode === 'values' && input?.startsWith('=') && valueOf) {
+            const v = valueOf(clip.origin.r + i, clip.origin.c + j);
+            input = v === null ? null : typeof v === 'object' ? v.code : typeof v === 'boolean' ? (v ? 'TRUE' : 'FALSE') : String(v);
+          } else if (input?.startsWith('=')) {
+            input = translateFormula(input, dr, dc);
+          }
+          if (input === null || input === '') values.delete(k); else values.set(k, input);
+        }
+        if (mode !== 'values') {
+          if (cell.format) formats.set(k, cell.format); else formats.delete(k);
+        }
+      }));
+    });
+  }
+
+  /** Paste plain text from another program: tab-separated rows of values. */
+  pasteText(sheetId: string, r: number, c: number, rows: string[][]) {
+    this.growTo(sheetId, r + rows.length, c + Math.max(0, ...rows.map((x) => x.length)));
+    const entries: { r: number; c: number; input: string | null }[] = [];
+    rows.forEach((row, i) => row.forEach((v, j) => entries.push({ r: r + i, c: c + j, input: v === '' ? null : v })));
+    this.setInputs(sheetId, entries);
+  }
+
+  /**
+   * Drag-fill from `src` across `dest` (which contains src). Numbers in a
+   * single row/column with a steady step continue the series (1, 2 → 3, 4);
+   * everything else repeats, formulas moving their references as they go.
+   */
+  fill(sheetId: string, src: Rect, dest: Rect) {
+    const s = norm(src); const d = norm(dest);
+    const clip = this.copy(sheetId, s);
+    const h = s.r2 - s.r1 + 1; const w = s.c2 - s.c1 + 1;
+    const vertical = d.r1 !== s.r1 || d.r2 !== s.r2;
+    const values = this.sub<Y.Map<string>>(sheetId, 'values');
+    const formats = this.sub<Y.Map<CellFormat>>(sheetId, 'formats');
+    this.growTo(sheetId, d.r2 + 1, d.c2 + 1);
+
+    const series = (line: (string | null)[]): ((i: number) => string | null) | null => {
+      const nums = line.map((x) => (x !== null && !x.startsWith('=') ? Number(x.replace(/,/g, '')) : NaN));
+      if (line.length < 2 || nums.some((n) => Number.isNaN(n))) return null;
+      const step = nums[1]! - nums[0]!;
+      for (let i = 2; i < nums.length; i += 1) if (Math.abs(nums[i]! - nums[i - 1]! - step) > 1e-9) return null;
+      return (i) => String(Number((nums[0]! + step * i).toPrecision(15)));
+    };
+
+    this.write(() => {
+      for (let r = d.r1; r <= d.r2; r += 1) {
+        for (let c = d.c1; c <= d.c2; c += 1) {
+          if (r >= s.r1 && r <= s.r2 && c >= s.c1 && c <= s.c2) continue;
+          const i = vertical ? r - s.r1 : c - s.c1;       // offset along the fill
+          const srcR = vertical ? s.r1 + (((r - s.r1) % h) + h) % h : r;
+          const srcC = vertical ? c : s.c1 + (((c - s.c1) % w) + w) % w;
+          const cell = clip.cells[srcR - s.r1]![srcC - s.c1]!;
+          const line = vertical
+            ? clip.cells.map((row) => row[c - s.c1]!.input)
+            : clip.cells[r - s.r1]!.map((x) => x.input);
+          const ser = series(line);
+          let input = cell.input;
+          if (ser) input = ser(i);
+          else if (input?.startsWith('=')) input = translateFormula(input, r - srcR, c - srcC);
+          const k = this.key(sheetId, r, c);
+          if (!k) continue;
+          if (input === null) values.delete(k); else values.set(k, input);
+          if (cell.format) formats.set(k, cell.format); else formats.delete(k);
+        }
+      }
+    });
+  }
+
+  // ------------------------------------------------------------------
+  //  Rows and columns
+  // ------------------------------------------------------------------
+
+  /** Make sure the sheet has at least this many rows and columns (pasting past the edge). */
+  growTo(sheetId: string, rows: number, cols: number) {
+    const size = this.size(sheetId);
+    if (rows <= size.rows && cols <= size.cols) return;
+    this.write(() => {
+      if (rows > size.rows) {
+        this.sub<Y.Array<string>>(sheetId, 'rows').push(Array.from({ length: rows - size.rows }, newId));
+      }
+      if (cols > size.cols) {
+        this.sub<Y.Array<string>>(sheetId, 'cols').push(Array.from({ length: cols - size.cols }, newId));
+      }
+    });
+  }
+
+  insert(sheetId: string, axis: 'row' | 'col', at: number, count: number) {
+    const name = this.meta(sheetId)!.name;
+    this.write(() => {
+      const arr = this.sub<Y.Array<string>>(sheetId, axis === 'row' ? 'rows' : 'cols');
+      arr.insert(at, Array.from({ length: count }, newId));
+      this.rewriteAll((input, home) => shiftFormula(input, home, name, axis, at, count));
+    });
+  }
+
+  remove(sheetId: string, axis: 'row' | 'col', at: number, count: number) {
+    const name = this.meta(sheetId)!.name;
+    const size = this.size(sheetId);
+    const total = axis === 'row' ? size.rows : size.cols;
+    // A sheet always keeps one row and one column.
+    const n = Math.min(count, total - at, total - 1);
+    if (n <= 0) return;
+    this.write(() => {
+      const arr = this.sub<Y.Array<string>>(sheetId, axis === 'row' ? 'rows' : 'cols');
+      const gone = new Set(arr.slice(at, at + n));
+      arr.delete(at, n);
+      // Drop the content of the deleted cells so it does not linger invisibly in the file.
+      for (const field of ['values', 'formats']) {
+        const m = this.sub<Y.Map<unknown>>(sheetId, field);
+        for (const k of [...m.keys()]) {
+          const [rid, cid] = k.split('|') as [string, string];
+          if (gone.has(axis === 'row' ? rid : cid)) m.delete(k);
+        }
+      }
+      const sizes = this.sub<Y.Map<number>>(sheetId, axis === 'row' ? 'rowHeights' : 'colWidths');
+      for (const id of gone) sizes.delete(id);
+      this.rewriteAll((input, home) => shiftFormula(input, home, name, axis, at, -n));
+    });
+  }
+
+  setColWidth(sheetId: string, cols: number[], px: number | null) {
+    const ids = this.cache(sheetId)!.colIds;
+    const m = this.sub<Y.Map<number>>(sheetId, 'colWidths');
+    this.write(() => { for (const c of cols) { const id = ids[c]; if (id) { if (px === null) m.delete(id); else m.set(id, Math.max(8, Math.round(px))); } } });
+  }
+
+  setRowHeight(sheetId: string, rows: number[], px: number | null) {
+    const ids = this.cache(sheetId)!.rowIds;
+    const m = this.sub<Y.Map<number>>(sheetId, 'rowHeights');
+    this.write(() => { for (const r of rows) { const id = ids[r]; if (id) { if (px === null) m.delete(id); else m.set(id, Math.max(8, Math.round(px))); } } });
+  }
+
+  freeze(sheetId: string, rows: number | null, cols: number | null) {
+    const y = this.sheetsMap.get(sheetId)!;
+    this.write(() => {
+      if (rows !== null) y.set('frozenRows', Math.max(0, rows));
+      if (cols !== null) y.set('frozenCols', Math.max(0, cols));
+    });
+  }
+
+  merge(sheetId: string, rect: Rect, how: 'all' | 'horizontal' | 'vertical') {
+    const n = norm(rect);
+    const cache = this.cache(sheetId)!;
+    const m = this.sub<Y.Map<unknown>>(sheetId, 'merges');
+    this.write(() => {
+      this.unmergeIn(sheetId, n);
+      const add = (r1: number, c1: number, r2: number, c2: number) => {
+        if (r1 === r2 && c1 === c2) return;
+        m.set(newId(), { r1: cache.rowIds[r1], c1: cache.colIds[c1], r2: cache.rowIds[r2], c2: cache.colIds[c2] });
+      };
+      if (how === 'all') add(n.r1, n.c1, n.r2, n.c2);
+      else if (how === 'horizontal') for (let r = n.r1; r <= n.r2; r += 1) add(r, n.c1, r, n.c2);
+      else for (let c = n.c1; c <= n.c2; c += 1) add(n.r1, c, n.r2, c);
+    });
+  }
+
+  unmergeIn(sheetId: string, rect: Rect) {
+    const n = norm(rect);
+    const m = this.sub<Y.Map<unknown>>(sheetId, 'merges');
+    this.write(() => {
+      for (const mr of this.merges(sheetId)) {
+        const overlaps = mr.r1 <= n.r2 && mr.r2 >= n.r1 && mr.c1 <= n.c2 && mr.c2 >= n.c1;
+        if (overlaps) m.delete(mr.id);
+      }
+    });
+  }
+
+  /**
+   * Sort the rows of a rectangle by one or more of its columns. Values are
+   * compared as calculated (a formula sorts by its result); empty cells go
+   * last either way, as in Sheets. Formulas move with their row.
+   */
+  sortRange(sheetId: string, rect: Rect, keys: { col: number; desc: boolean }[]) {
+    const n = norm(rect);
+    const rows: { r: number; cells: { input: string | null; format?: CellFormat }[]; keys: Scalar[] }[] = [];
+    for (let r = n.r1; r <= n.r2; r += 1) {
+      const cells = [];
+      for (let c = n.c1; c <= n.c2; c += 1) cells.push({ input: this.input(sheetId, r, c), format: this.format(sheetId, r, c) });
+      rows.push({ r, cells, keys: keys.map((k) => this.value(sheetId, r, k.col)) });
+    }
+    rows.sort((a, b) => {
+      for (let i = 0; i < keys.length; i += 1) {
+        const x = a.keys[i]!; const y = b.keys[i]!;
+        const ex = x === null || x === ''; const ey = y === null || y === '';
+        if (ex !== ey) return ex ? 1 : -1;
+        const c = typeof x === 'object' || typeof y === 'object' ? 0 : compare(x, y);
+        if (c !== 0) return keys[i]!.desc ? -c : c;
+      }
+      return a.r - b.r; // stable
+    });
+    const values = this.sub<Y.Map<string>>(sheetId, 'values');
+    const formats = this.sub<Y.Map<CellFormat>>(sheetId, 'formats');
+    this.write(() => {
+      rows.forEach((row, i) => {
+        const r = n.r1 + i;
+        row.cells.forEach((cell, j) => {
+          const k = this.key(sheetId, r, n.c1 + j);
+          if (!k) return;
+          const input = cell.input?.startsWith('=') ? translateFormula(cell.input, r - row.r, 0) : cell.input;
+          if (input === null) values.delete(k); else values.set(k, input);
+          if (cell.format) formats.set(k, cell.format); else formats.delete(k);
+        });
+      });
+    });
+  }
+
+  // ------------------------------------------------------------------
+  //  Sheets (tabs)
+  // ------------------------------------------------------------------
+
+  private uniqueName(base: string): string {
+    const taken = new Set(this.sheets().map((s) => s.name.toLowerCase()));
+    if (!taken.has(base.toLowerCase())) return base;
+    for (let i = 2; ; i += 1) if (!taken.has(`${base} ${i}`.toLowerCase())) return `${base} ${i}`;
+  }
+
+  /** A new, empty sheet after `afterId` (or at the end). Returns its id. */
+  addSheet(afterId?: string, name?: string, rows = DEFAULT_ROWS, cols = DEFAULT_COLS): string {
+    const id = `s${newId()}`;
+    let n = this.sheets().length + 1;
+    let nm = name ?? `Sheet${n}`;
+    while (!name && this.sheets().some((s) => s.name.toLowerCase() === nm.toLowerCase())) { n += 1; nm = `Sheet${n}`; }
+    nm = this.uniqueName(nm);
+    this.write(() => {
+      const s = new Y.Map<unknown>();
+      this.sheetsMap.set(id, s);
+      s.set('name', nm);
+      s.set('frozenRows', 0);
+      s.set('frozenCols', 0);
+      const ry = new Y.Array<string>(); ry.push(Array.from({ length: rows }, newId));
+      const cy = new Y.Array<string>(); cy.push(Array.from({ length: cols }, newId));
+      s.set('rows', ry);
+      s.set('cols', cy);
+      for (const k of ['values', 'formats', 'colWidths', 'rowHeights', 'merges']) s.set(k, new Y.Map());
+      const at = afterId ? this.order.toArray().indexOf(afterId) + 1 : this.order.length;
+      this.order.insert(at > 0 ? at : this.order.length, [id]);
+    });
+    return id;
+  }
+
+  renameSheet(id: string, name: string): string | null {
+    const clean = name.trim().replace(/[[\]:*?/\\]/g, '').slice(0, 100);
+    if (!clean) return 'A sheet needs a name.';
+    const old = this.meta(id)!.name;
+    if (clean === old) return null;
+    if (this.sheets().some((s) => s.id !== id && s.name.toLowerCase() === clean.toLowerCase())) {
+      return `A sheet named "${clean}" already exists.`;
+    }
+    this.write(() => {
+      this.sheetsMap.get(id)!.set('name', clean);
+      this.rewriteAll((input) => renameSheetInFormula(input, old, clean));
+    });
+    return null;
+  }
+
+  deleteSheet(id: string): string | null {
+    if (this.sheets().filter((s) => !s.hidden).length <= 1 && !this.meta(id)?.hidden) {
+      return 'A spreadsheet must keep at least one visible sheet.';
+    }
+    const name = this.meta(id)!.name;
+    this.write(() => {
+      const i = this.order.toArray().indexOf(id);
+      if (i >= 0) this.order.delete(i, 1);
+      this.sheetsMap.delete(id);
+      this.rewriteAll((input) => dropSheetInFormula(input, name));
+    });
+    return null;
+  }
+
+  duplicateSheet(id: string): string {
+    const src = this.meta(id)!;
+    const size = this.size(id);
+    const copyId = this.addSheet(id, this.uniqueName(`Copy of ${src.name}`), size.rows, size.cols);
+    const merges = this.merges(id);
+    this.write(() => {
+      const values = this.sub<Y.Map<string>>(copyId, 'values');
+      const formats = this.sub<Y.Map<CellFormat>>(copyId, 'formats');
+      for (const [r, c, v] of this.filled(id)) {
+        const k = this.key(copyId, r, c)!;
+        // A formula that named its own sheet keeps naming the original, as in Sheets.
+        values.set(k, v);
+      }
+      const srcCache = this.cache(id)!;
+      const fm = this.sub<Y.Map<CellFormat>>(id, 'formats');
+      for (const [k, f] of fm) {
+        const [rid, cid] = k.split('|') as [string, string];
+        const r = srcCache.rowIndex.get(rid); const c = srcCache.colIndex.get(cid);
+        if (r !== undefined && c !== undefined) formats.set(this.key(copyId, r, c)!, f);
+      }
+      for (let c = 0; c < size.cols; c += 1) { const w = this.colWidth(id, c); if (w) this.setColWidth(copyId, [c], w); }
+      for (let r = 0; r < size.rows; r += 1) { const h = this.rowHeight(id, r); if (h) this.setRowHeight(copyId, [r], h); }
+      for (const m of merges) this.merge(copyId, m, 'all');
+      this.freeze(copyId, src.frozenRows, src.frozenCols);
+      if (src.tabColor) this.sheetsMap.get(copyId)!.set('tabColor', src.tabColor);
+    });
+    return copyId;
+  }
+
+  moveSheet(id: string, delta: number) {
+    const arr = this.order.toArray();
+    const i = arr.indexOf(id);
+    const j = Math.max(0, Math.min(arr.length - 1, i + delta));
+    if (i < 0 || i === j) return;
+    this.write(() => {
+      this.order.delete(i, 1);
+      this.order.insert(j, [id]);
+    });
+  }
+
+  setSheetProp(id: string, prop: 'tabColor' | 'hidden', value: string | boolean | null) {
+    this.write(() => {
+      const y = this.sheetsMap.get(id)!;
+      if (value === null || value === false) y.delete(prop); else y.set(prop, value);
+    });
+  }
+
+  setLocale(grouping: 'indian' | 'western', dateOrder: 'dmy' | 'mdy') {
+    this.write(() => {
+      this.settings.set('grouping', grouping);
+      this.settings.set('dateOrder', dateOrder);
+    });
+  }
+
+  /** Rewrite every formula in the workbook (inside the caller's transaction). */
+  private rewriteAll(fn: (input: string, homeSheetName: string) => string) {
+    for (const id of this.sheetIds()) {
+      const home = this.meta(id)!.name;
+      const values = this.sub<Y.Map<string>>(id, 'values');
+      for (const [k, v] of values) {
+        if (!v.startsWith('=')) continue;
+        const next = fn(v, home);
+        if (next !== v) values.set(k, next);
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------
+  //  Snapshots: import and export
+  // ------------------------------------------------------------------
+
+  /** The workbook as plain data, with calculated values — for .xlsx, .csv and the Space copy. */
+  snapshot(): WorkbookData {
+    return {
+      sheets: this.sheetIds().map((id) => {
+        const meta = this.meta(id)!;
+        const size = this.size(id);
+        const cells: SheetData['cells'] = new Map();
+        for (const [r, c, input] of this.filled(id)) {
+          cells.set(cellKey(r, c), { input, value: this.value(id, r, c) });
+        }
+        const cache = this.cache(id)!;
+        for (const [k, f] of this.sub<Y.Map<CellFormat>>(id, 'formats')) {
+          const [rid, cid] = k.split('|') as [string, string];
+          const r = cache.rowIndex.get(rid); const c = cache.colIndex.get(cid);
+          if (r === undefined || c === undefined) continue;
+          const ck = cellKey(r, c);
+          const cell = cells.get(ck) ?? { input: null };
+          cells.set(ck, { ...cell, format: f });
+        }
+        const colWidths: Record<number, number> = {};
+        for (let c = 0; c < size.cols; c += 1) { const w = this.colWidth(id, c); if (w) colWidths[c] = w; }
+        const rowHeights: Record<number, number> = {};
+        for (let r = 0; r < size.rows; r += 1) { const h = this.rowHeight(id, r); if (h) rowHeights[r] = h; }
+        return {
+          name: meta.name, rows: size.rows, cols: size.cols, cells, colWidths, rowHeights,
+          merges: this.merges(id).map(({ r1, c1, r2, c2 }) => ({ r1, c1, r2, c2 })),
+          frozenRows: meta.frozenRows, frozenCols: meta.frozenCols,
+          tabColor: meta.tabColor, hidden: meta.hidden,
+        };
+      }),
+    };
+  }
+
+  /**
+   * Bring sheets from a file in. 'replace' swaps the whole workbook (File >
+   * Import > Replace spreadsheet); 'append' adds them as new tabs. Returns
+   * the id of the first sheet brought in.
+   */
+  load(data: WorkbookData, mode: 'replace' | 'append'): string | null {
+    let first: string | null = null;
+    this.write(() => {
+      const oldIds = mode === 'replace' ? this.sheetIds() : [];
+      const renames: [string, string][] = [];
+      for (const s of data.sheets) {
+        const want = s.name || 'Sheet';
+        // Names from the file must not collide with sheets we are keeping.
+        const nm = mode === 'append' ? this.uniqueName(want) : want;
+        if (nm !== want) renames.push([want, nm]);
+        const id = this.addSheet(undefined, `__import_${newId()}`, Math.max(s.rows, 1), Math.max(s.cols, 1));
+        this.sheetsMap.get(id)!.set('name', nm);
+        first ??= id;
+        const values = this.sub<Y.Map<string>>(id, 'values');
+        const formats = this.sub<Y.Map<CellFormat>>(id, 'formats');
+        for (const [ck, cell] of s.cells) {
+          const [r, c] = parseCellKey(ck);
+          const k = this.key(id, r, c);
+          if (!k) continue;
+          if (cell.input !== null && cell.input !== '') values.set(k, cell.input);
+          if (cell.format && Object.keys(cell.format).length > 0) formats.set(k, cell.format);
+        }
+        const cw = this.sub<Y.Map<number>>(id, 'colWidths');
+        const cache = this.cache(id)!;
+        for (const [c, w] of Object.entries(s.colWidths)) { const cid = cache.colIds[Number(c)]; if (cid) cw.set(cid, w); }
+        const rh = this.sub<Y.Map<number>>(id, 'rowHeights');
+        for (const [r, h] of Object.entries(s.rowHeights)) { const rid = cache.rowIds[Number(r)]; if (rid) rh.set(rid, h); }
+        const mm = this.sub<Y.Map<unknown>>(id, 'merges');
+        for (const m of s.merges) {
+          const r1 = cache.rowIds[m.r1]; const r2 = cache.rowIds[m.r2]; const c1 = cache.colIds[m.c1]; const c2 = cache.colIds[m.c2];
+          if (r1 && r2 && c1 && c2) mm.set(newId(), { r1, c1, r2, c2 });
+        }
+        const y = this.sheetsMap.get(id)!;
+        y.set('frozenRows', s.frozenRows);
+        y.set('frozenCols', s.frozenCols);
+        if (s.tabColor) y.set('tabColor', s.tabColor);
+        if (s.hidden) y.set('hidden', true);
+      }
+      for (const id of oldIds) {
+        const i = this.order.toArray().indexOf(id);
+        if (i >= 0) this.order.delete(i, 1);
+        this.sheetsMap.delete(id);
+      }
+      // A file's formulas name its own sheets; follow any we had to rename.
+      for (const [from, to] of renames) {
+        this.rewriteAll((input) => renameSheetInFormula(input, from, to));
+      }
+    });
+    return first;
+  }
+}
+
+/** Seeding is not an edit anyone should be able to undo. */
+const LOCAL_SEED = { seed: true };
+
+export type BorderPreset = 'all' | 'outer' | 'inner' | 'top' | 'bottom' | 'left' | 'right' | 'none';
+
+export interface Clip {
+  sheetId: string;
+  origin: { r: number; c: number };
+  cells: { input: string | null; format?: CellFormat }[][];
+}
+
+export interface ModelChange {
+  /** Rows, columns, sheets or names moved: everything positional must be re-read. */
+  structural: boolean;
+  /** Sizes or merges changed (or anything structural): geometry must be rebuilt. */
+  layout: boolean;
+  /** The change came from someone else. */
+  remote: boolean;
+  /** The change came from this tab (and so is undoable here). */
+  local: boolean;
+}
+
+/** A sheet name as it would appear in a formula ("'Fee 2026'!"). */
+export const sheetPrefix = (name: string) => `${quoteSheet(name)}!`;

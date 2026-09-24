@@ -15,21 +15,42 @@ public static class DocsFormat
 {
     public const string MimeType = "application/vnd.tatvaos.document";
 
+    /// <summary>
+    /// A TatvaOS spreadsheet (Sheets). Same storage, same live channel, same
+    /// versions and comments as a document — docs.* holds its Yjs state
+    /// exactly as it holds a document's; only the browser editor differs.
+    /// Its blob is an .xlsx the editor writes at each checkpoint, so a
+    /// download from Space opens in Excel.
+    /// </summary>
+    public const string SpreadsheetMimeType = "application/vnd.tatvaos.spreadsheet";
+
+    public const string XlsxMimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
     public const string DefaultTitle = "Untitled document";
+    public const string DefaultSpreadsheetTitle = "Untitled spreadsheet";
+
+    /// <summary>Is this a file the live editors own (a document or a spreadsheet)?</summary>
+    public static bool IsLive(string? mimeType) =>
+        mimeType is MimeType or SpreadsheetMimeType;
 
     /// <summary>
     /// How a Space file is named and typed when it is DOWNLOADED from Space. A
     /// document's blob is its HTML rendering, so it downloads as "Title.html",
-    /// text/html; every other file is untouched.
+    /// text/html; a spreadsheet's is an .xlsx; every other file is untouched.
     ///
-    /// NOT for mail. Mr. Singh, 24 Sept, on PR 274: HTML attachments are a
-    /// phishing carrier that corporate gateways quarantine and Gmail distrusts,
-    /// and this domain is still earning its reputation. A document leaving by
-    /// mail must be a PDF; until the server can make one, documents are not
-    /// attachable at all (SpaceContentGateway, NotAttachable below).
+    /// NOT for a document going by mail. Mr. Singh, 24 Sept, on PR 274: HTML
+    /// attachments are a phishing carrier that corporate gateways quarantine
+    /// and Gmail distrusts, and this domain is still earning its reputation.
+    /// A document leaving by mail must be a PDF; until the server can make
+    /// one, documents are not attachable at all (SpaceContentGateway,
+    /// NotAttachable below).
     /// </summary>
-    public static (string Name, string MimeType) AsDownload(string name, string mimeType) =>
-        mimeType == MimeType ? (name + ".html", "text/html; charset=utf-8") : (name, mimeType);
+    public static (string Name, string MimeType) AsDownload(string name, string mimeType) => mimeType switch
+    {
+        MimeType => (name + ".html", "text/html; charset=utf-8"),
+        SpreadsheetMimeType => (name + ".xlsx", XlsxMimeType),
+        _ => (name, mimeType),
+    };
 
     /// <summary>What a person is told when they try to attach a document to mail.</summary>
     public const string NotAttachable =

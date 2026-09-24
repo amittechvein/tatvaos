@@ -13,6 +13,7 @@ import { ShareDialog } from '@/components/space/ShareDialog';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { docsApi, docHref, isDocument } from '@/lib/docs';
+import { sheetsApi, sheetHref, isSpreadsheet } from '@/lib/sheets/api';
 import { Spinner } from '@/components/ui/Kit';
 
 /**
@@ -187,6 +188,13 @@ export default function SpacePage({ params }: { params: Promise<{ view: string }
             className="min-w-0 flex-1 truncate text-sm font-medium text-ink hover:underline">
             {item.name}
           </Link>
+        ) : file && docsOn && isSpreadsheet(file) && !trashed ? (
+          // A TatvaOS spreadsheet opens in Sheets. Download saves the .xlsx
+          // its editor writes at every checkpoint.
+          <Link href={sheetHref(file.id)}
+            className="min-w-0 flex-1 truncate text-sm font-medium text-ink hover:underline">
+            {item.name}
+          </Link>
         ) : (
           <span className="min-w-0 flex-1 truncate text-sm text-ink">{item.name}</span>
         )}
@@ -322,6 +330,13 @@ export default function SpacePage({ params }: { params: Promise<{ view: string }
                   .catch((e: Error) => setError(e.message))}
                 className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink-muted transition hover:bg-canvas hover:text-ink">
                 New document
+              </button>}
+              {docsOn && <button type="button"
+                onClick={() => void sheetsApi.create(authedFetch, undefined, folderId, scope)
+                  .then((d) => router.push(sheetHref(d.id)))
+                  .catch((e: Error) => setError(e.message))}
+                className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink-muted transition hover:bg-canvas hover:text-ink">
+                New spreadsheet
               </button>}
               <button type="button" onClick={() => fileInput.current?.click()}
                 className="rounded-lg bg-brand-600 px-4 py-1.5 text-sm font-semibold text-white transition hover:bg-brand-700">

@@ -104,9 +104,11 @@ public static class DocsEndpoints
     //  Shapes
     // ------------------------------------------------------------------
 
-    public sealed record CreateRequest(string? Title, Guid? FolderId, string? Scope);
+    /// <summary>Kind: "document" (default) or "spreadsheet".</summary>
+    public sealed record CreateRequest(string? Title, Guid? FolderId, string? Scope, string? Kind = null);
     public sealed record RenameRequest(string? Title);
-    public sealed record CheckpointRequest(string? State, long UpToSeq, string? Html, string? Text);
+    /// <summary>Xlsx: a spreadsheet's Space copy, base64. Required for spreadsheets, refused for documents.</summary>
+    public sealed record CheckpointRequest(string? State, long UpToSeq, string? Html, string? Text, string? Xlsx = null);
     public sealed record VersionRequest(string? Kind, string? Name, string? State, string? Html);
     public sealed record NameVersionRequest(string? Name);
     public sealed record CommentRequest(string? Body, string? Anchor, string? Quote);
@@ -143,13 +145,16 @@ public static class DocsEndpoints
     /// wants to look (Space lets a trashed file be opened; Docs lets it be
     /// read, not changed).
     /// </summary>
-    private static async Task<(IResult? Error, SpaceFile File, string Perm, Guid Uid)> LoadAsync(
+    internal static async Task<(IResult? Error, SpaceFile File, string Perm, Guid Uid)> LoadAsync(
         AppDbContext db, TenantContext tenant, Guid id, bool tracked, bool forChange, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return (Results.Unauthorized(), null!, "", default);
         if (!await DocsSwitch.EnabledAsync(db, ct)) return (DocsSwitch.Off(), null!, "", uid);
 
-        var q = db.SpaceFiles.Where(f => f.Id == id && f.MimeType == DocsFormat.MimeType);
+        // Documents and spreadsheets alike: everything below — live channel,
+        // versions, comments — is the same for both (DocsFormat.IsLive).
+        var q = db.SpaceFiles.Where(f => f.Id == id
+            && (f.MimeType == DocsFormat.MimeType || f.MimeType == DocsFormat.SpreadsheetMimeType));
         var file = await (tracked ? q : q.AsNoTracking()).FirstOrDefaultAsync(ct);
         if (file is null) return (Error(404, "No such document."), null!, "", uid);
         if (forChange && file.DeletedAt is not null)
@@ -171,14 +176,17 @@ public static class DocsEndpoints
 
     private static async Task<IResult> ListAsync(
         AppDbContext db, TenantContext tenant, CancellationToken ct,
-        string? view = "recent", string? q = null, int page = 1, int pageSize = 50)
+        string? view = "recent", string? q = null, int page = 1, int pageSize = 50, string? kind = null)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
         if (!await DocsSwitch.EnabledAsync(db, ct)) return DocsSwitch.Off();
         if (page < 1) page = 1;
         pageSize = Math.Clamp(pageSize, 1, 200);
 
-        var files = db.SpaceFiles.AsNoTracking().Where(f => f.MimeType == DocsFormat.MimeType);
+        // Docs' home lists documents, Sheets' lists spreadsheets; absent kind
+        // is "document" so the Docs client is unchanged.
+        var mime = kind == "spreadsheet" ? DocsFormat.SpreadsheetMimeType : DocsFormat.MimeType;
+        var files = db.SpaceFiles.AsNoTracking().Where(f => f.MimeType == mime);
         files = view switch
         {
             "trash" => files.Where(f => f.DeletedAt != null
@@ -239,14 +247,20 @@ public static class DocsEndpoints
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
         if (!await DocsSwitch.EnabledAsync(db, ct)) return DocsSwitch.Off();
 
-        var title = CleanTitle(req.Title) ?? DocsFormat.DefaultTitle;
+        if (req.Kind is not (null or "document" or "spreadsheet"))
+            return Error(400, "kind must be document or spreadsheet.");
+        var sheet = req.Kind == "spreadsheet";
+        var title = CleanTitle(req.Title) ?? (sheet ? DocsFormat.DefaultSpreadsheetTitle : DocsFormat.DefaultTitle);
 
         // Where it lands and who owns it: Space's rule, not a copy of it.
         var (err, folderId, ownership, owner) =
             await SpaceEndpoints.ResolveDestinationAsync(db, uid, req.FolderId, req.Scope ?? "personal", ct);
         if (err is not null) return err;
 
-        var html = DocsFormat.RenderHtml(title, "");
+        // A new spreadsheet's Space copy is empty until its first checkpoint
+        // writes the .xlsx; zero bytes is honest ("nothing yet") where a
+        // made-up placeholder file would not be.
+        var html = sheet ? Array.Empty<byte>() : DocsFormat.RenderHtml(title, "");
         var verdict = await SpaceEndpoints.EvaluateStorageAsync(db, allocator, tenant.TenantId,
             ownership, owner, uid, html.Length, html.Length, SpaceEndpoints.MaxFileBytes(config), ct);
         if (!verdict.Ok)
@@ -264,7 +278,7 @@ public static class DocsEndpoints
             OwnershipType = ownership,
             OwnerUserId = owner,
             Name = title,
-            MimeType = DocsFormat.MimeType,
+            MimeType = sheet ? DocsFormat.SpreadsheetMimeType : DocsFormat.MimeType,
             BlobKey = key,
             SizeBytes = html.Length,
         };
@@ -426,6 +440,26 @@ public static class DocsEndpoints
         var text = req.Text ?? "";
         if (text.Length > 2_000_000) text = text[..2_000_000];
 
+        // A spreadsheet's Space copy is the .xlsx its editor wrote; a
+        // document's is the HTML page. Each refuses the other's, so a
+        // hand-made request cannot give a spreadsheet an HTML blob that Space
+        // would then hand out named ".xlsx".
+        var isSheet = file.MimeType == DocsFormat.SpreadsheetMimeType;
+        byte[]? xlsx = null;
+        if (isSheet)
+        {
+            if (!TryDecode(req.Xlsx, MaxStateBytes, out var x) || x.Length == 0)
+                return Error(400, "A spreadsheet checkpoint needs its .xlsx copy (base64, within the size limit).");
+            // PK\x03\x04: the start of every zip file, which is what an .xlsx is.
+            if (x.Length < 4 || x[0] != 0x50 || x[1] != 0x4B || x[2] != 0x03 || x[3] != 0x04)
+                return Error(400, "The .xlsx copy is not a zip file.");
+            xlsx = x;
+        }
+        else if (req.Xlsx is not null)
+        {
+            return Error(400, "Only a spreadsheet has an .xlsx copy.");
+        }
+
         string? oldKey = null;
         using (await hub.LockAsync(id, ct))
         {
@@ -454,14 +488,14 @@ public static class DocsEndpoints
             doc.CheckpointByUserId = uid;
             doc.UpdatedAt = now;
 
-            var htmlBytes = DocsFormat.RenderHtml(file.Name, html);
+            var blobBytes = xlsx ?? DocsFormat.RenderHtml(file.Name, html);
             var key = blobs.NewKey(tenant.TenantId);
-            await using (var ms = new MemoryStream(htmlBytes))
-                await blobs.WriteAsync(key, ms, htmlBytes.Length, ct);
+            await using (var ms = new MemoryStream(blobBytes))
+                await blobs.WriteAsync(key, ms, blobBytes.Length, ct);
             oldKey = file.BlobKey;
             file.BlobKey = key;
             var imageBytes = await db.DocsImages.Where(i => i.FileId == id).SumAsync(i => (long?)i.SizeBytes, ct) ?? 0;
-            file.SizeBytes = htmlBytes.Length + imageBytes;
+            file.SizeBytes = blobBytes.Length + imageBytes;
             file.UpdatedAt = now;
 
             var latest = await db.DocsVersions.AsNoTracking()

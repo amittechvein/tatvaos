@@ -234,7 +234,7 @@ public sealed class DocsLiveHub(IServiceScopeFactory scopes, DocsInstanceGuard g
         tenant.Set(ticket.TenantId, ticket.UserId, ticket.Role);
 
         var file = await db.SpaceFiles.AsNoTracking().FirstOrDefaultAsync(f => f.Id == fileId, ct);
-        if (file is null || file.MimeType != DocsFormat.MimeType || file.DeletedAt is not null)
+        if (file is null || !DocsFormat.IsLive(file.MimeType) || file.DeletedAt is not null)
         {
             http.Response.StatusCode = StatusCodes.Status404NotFound;
             return;

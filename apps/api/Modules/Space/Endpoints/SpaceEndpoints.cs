@@ -905,8 +905,10 @@ public static class SpaceEndpoints
         // A TatvaOS document's blob is a rendering Docs rewrites on every
         // checkpoint; its content lives in docs.documents. Replacing the blob
         // would be silently undone by the next checkpoint, so refuse it.
-        if (file.MimeType == TatvaOS.Api.Modules.Docs.DocsFormat.MimeType)
-            return Error(409, "This is a TatvaOS document. Open it in Docs to change it.");
+        if (TatvaOS.Api.Modules.Docs.DocsFormat.IsLive(file.MimeType))
+            return Error(409, file.MimeType == TatvaOS.Api.Modules.Docs.DocsFormat.SpreadsheetMimeType
+                ? "This is a TatvaOS spreadsheet. Open it in Sheets to change it."
+                : "This is a TatvaOS document. Open it in Docs to change it.");
 
         var oldKey = file.BlobKey;
         var oldSize = file.SizeBytes;
