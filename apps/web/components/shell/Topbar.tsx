@@ -29,8 +29,11 @@ export const HEADER_LINK =
 function MailSearchSlot() {
   const { query, setQuery, folders, hosted, inputRef } = useMailSearch();
   if (!hosted) return null;
+  // It takes the width between the rail toggle and the icon cluster, as
+  // Gmail's does. Until 24 September 2026 it sat at 176px with an empty
+  // spacer filling the rest of the bar (Amit's screenshot, outlined).
   return (
-    <div className="min-w-0 flex-1 md:flex-none">
+    <div className="min-w-0 flex-1">
       <SearchBox value={query} onChange={setQuery} folders={folders} inputRef={inputRef} />
     </div>
   );
@@ -46,6 +49,7 @@ export function Topbar({ scope, pinned, onToggle }: {
   const { mode, setMode } = useAppearance();
   const [anchor, setAnchor] = useState<null | HTMLElement>(null);
   const selfPhoto = useSelfPhoto();
+  const { hosted: searchHosted } = useMailSearch();
 
   const initial = (user?.displayName ?? '?').charAt(0).toUpperCase();
 
@@ -86,7 +90,10 @@ export function Topbar({ scope, pinned, onToggle }: {
           </span>
         )}
 
-        <div className="flex-1" />
+        {/* The search grows to fill the bar when present; this spacer only
+            pushes the icons right when it is not. Two flex-1s would split
+            the bar in half. */}
+        {!searchHosted && <div className="flex-1" />}
 
         {/* App launcher — its own trigger + popover */}
         <AppLauncher />
