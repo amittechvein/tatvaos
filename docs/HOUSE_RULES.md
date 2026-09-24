@@ -173,6 +173,46 @@ changed to the migration with the new index removed, which is the mistake
 actually worth catching: the one that lets two organisations both hold a
 verified claim. Two expectations then went red, and the greens meant something.
 
+**Two signals that agree are not corroboration — Mr. Singh, 25 Sept 2026.**
+
+> A compound failure gets past every reader, because the two things they would
+> cross-check against each other agree.
+
+*The cost.* `verify-one-migration.py` had two defects at once, and they
+propped each other up. It passed psql's connection URI before its options;
+Windows psql does not permute arguments, so every option was discarded with a
+warning — and psql then **exits 0 having applied nothing**, for a real
+migration and for `this is not sql at all;` alike. Meanwhile the summary
+printed `Proved: … the expectations above hold` whatever had happened. So a
+run could report
+
+```
+  PASS  run 1 of 2 applies cleanly
+  PASS  run 2 of 2 applies cleanly
+ALL CHECKS PASSED                      (exit 0)
+```
+
+on a file that was not SQL. The usual defence — *don't trust the prose, check
+the exit status* — was useless here, because the exit status was wrong in the
+same direction as the prose. Only `--expect` made a noise, and only because it
+compares text; both runs in the tool's fourteen-day life happened to use it,
+which is luck and not design. The tool now aborts on any ignored option (#279).
+
+*And the ruling that was wrong.* Mr. Singh first called this defect
+"embarrassing but not dangerous — it fails loudly". It does not fail loudly;
+with `--expect` absent it does not fail at all. In his own words, 25 Sept:
+
+> I reasoned that from the symptom you'd described, and I didn't measure it.
+
+> I called something safe that wasn't, on reasoning rather than evidence.
+> That's the same error I've been holding everyone else to. Put the correction
+> in the record next to the incident.
+
+*Everything in this entry except the indented quotations is written by the
+Claude Code session that found the defect, not by Mr. Singh. He asked for the
+correction to be recorded; he has not checked this wording. If it misstates
+him, the error is the transcriber's.*
+
 ## 6b. A result is about a version. Say which one.
 
 Rule 6 asks whether a check *can* fail. This asks whether its result still
