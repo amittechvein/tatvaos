@@ -108,8 +108,26 @@ class Db:
         cmd = [self.psql_bin, "-v", "ON_ERROR_STOP=1", "-X", "-q", "-t", "-A"]
         cmd += ["-f", path] if path else ["-c", sql]
         cmd += [self.uri]          # LAST: see the note above
-        p = subprocess.run(cmd, capture_output=True, text=True)
-        return p.returncode, ((p.stdout or "") + (p.stderr or "")).strip()
+        p = subprocess.run(cmd, capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL)
+        out = ((p.stdout or "") + (p.stderr or "")).strip()
+
+        # If psql ever ignores an option again, STOP. Measured 25 Sept 2026:
+        # with the arguments in the old order psql exits 0 having applied
+        # NOTHING - it does that for a valid migration and for "this is not
+        # sql at all;" alike - so every apply check passes while the file was
+        # never run. That is a silent green, which is this codebase's most
+        # expensive failure shape. Only --expect made a noise, and only
+        # because it compares text. A run with no --expect was entirely
+        # fictional. Never let it be a warning again.
+        if "extra command-line argument" in out:
+            sys.exit(
+                "psql ignored an option, so nothing this tool reports would be real:\n"
+                "  " + out + "\n"
+                "Options must come BEFORE the connection URI. Fix the order in Db.run."
+            )
+
+        return p.returncode, out
 
 
 def split_expectation(raw):
