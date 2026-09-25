@@ -49,8 +49,10 @@ public static class OrgAiEndpoints
 
     private static async Task<IResult> GetAsync(
         AppDbContext db, TenantContext tenant, IAiGateway ai,
-        TatvaOS.Api.Shared.Settings.SettingsReader settings, CancellationToken ct)
+        TatvaOS.Api.Shared.Settings.SettingsReader settings, ILoggerFactory logs, CancellationToken ct)
     {
+        // Mail AI may be held back for this organisation (ai.mail.organisations).
+        var mailOffered = await AiProductSwitch.MailOfferedToAsync(db, tenant.TenantId, logs.CreateLogger("OrgAi"), ct);
         var row = await db.Tenants.AsNoTracking()
             .Where(t => t.Id == tenant.TenantId)
             .Select(t => new { t.AllowAi, t.AllowMailAi, t.MailAiTriageSince, t.Type })
@@ -78,7 +80,11 @@ public static class OrgAiEndpoints
                 : "TatvaOS AI is not configured on this platform. Nothing is sent.",
             // Mail's own switch. Meaningful only while `enabled` is on — the
             // gateway needs both — and the screen says so.
-            mailEnabled = row.AllowMailAi,
+            mailEnabled = row.AllowMailAi && mailOffered,
+            // False while Mail AI is held to a list of organisations and this
+            // one is not on it; the screen shows the sentence, not the switches.
+            mailOffered,
+            mailNotOffered = mailOffered ? null : AiProductSwitch.MailNotOffered,
             // What Mail sends, in the API's words for the same reason as
             // `disclosure`. Kept SEPARATE from it: that sentence is asserted
             // word for word by tests/ai/disclosure-matches-host.sh and mirrored
@@ -99,7 +105,7 @@ public static class OrgAiEndpoints
             // Sorting incoming mail (step 3): its own consent, because it
             // sends mail nobody clicked on. `since` is when it was turned on;
             // only mail that arrived after it is ever sent.
-            mailTriageEnabled = row.MailAiTriageSince != null && AiProductSwitch.TriageOfferedTo(row.Type),
+            mailTriageEnabled = row.MailAiTriageSince != null && AiProductSwitch.TriageOfferedTo(row.Type) && mailOffered,
             // Not offered to hospitals and clinics yet (Amit, 25 Sept 2026);
             // the screen shows this sentence instead of a switch.
             mailTriageOffered = AiProductSwitch.TriageOfferedTo(row.Type),
@@ -125,7 +131,7 @@ public static class OrgAiEndpoints
 
     private static async Task<IResult> PutAsync(
         PutRequest req, AppDbContext db, TenantContext tenant,
-        AuditWriter audit, CancellationToken ct)
+        AuditWriter audit, ILoggerFactory logs, CancellationToken ct)
     {
         if (req?.Enabled is null && req?.Mail is null && req?.MailTriage is null)
             return Results.BadRequest(new { error = "Say on or off." });
@@ -133,6 +139,12 @@ public static class OrgAiEndpoints
         var row = await db.Tenants
             .FirstOrDefaultAsync(t => t.Id == tenant.TenantId, ct);
         if (row is null) return Results.NotFound();
+
+        // Mail AI (and so sorting) cannot be switched ON for an organisation
+        // it is not offered to yet (ai.mail.organisations). OFF always works.
+        if ((req.Mail == true || req.MailTriage == true)
+            && !await AiProductSwitch.MailOfferedToAsync(db, tenant.TenantId, logs.CreateLogger("OrgAi"), ct))
+            return Results.BadRequest(new { error = AiProductSwitch.MailNotOffered });
 
         // Sorting cannot be switched ON for a kind of organisation it is not
         // offered to. OFF always works.

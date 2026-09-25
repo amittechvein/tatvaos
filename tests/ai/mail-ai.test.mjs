@@ -386,6 +386,53 @@ try {
   }
   check('the organisation type is back as found', psql(`select type from core.tenants where id='${TENANT}'`) === typeWas, typeWas);
 
+  // ── 10. Mail AI held to a list of organisations (Mr. Singh, 25 Sept) ──────
+  //  ai.mail.organisations: empty = everyone; ids = only those; nothing that
+  //  parses = nobody. Checked in the gateway, so every mail.* feature obeys.
+  {
+    const ORG = '11111111-1111-1111-1111-111111111111';
+    const gate = (v) => call('PUT', '/admin/settings', { 'ai.mail.organisations': v });
+    await setAi({ enabled: true, mail: false, mailTriage: false });
+
+    await gate('00000000-0000-0000-0000-00000000abcd');
+    const held = (await call('GET', '/org/ai')).body;
+    check('another organisation on the list: this one is told Mail AI is not available yet',
+      held.mailOffered === false && String(held.mailNotOffered ?? '').includes('not available for your organisation yet'),
+      JSON.stringify({ o: held.mailOffered, t: held.mailNotOffered }));
+    r = await setAi({ mail: true });
+    check('…and cannot switch Mail AI on (400)', r.status === 400 && String(r.body.error ?? '').includes('not available'), JSON.stringify(r.body));
+    r = await setAi({ mailTriage: true });
+    check('…nor sorting (400)', r.status === 400, JSON.stringify(r.body));
+
+    // Switched on BEFORE the gate (as Techvein was): the gate still holds.
+    psql(`update core.tenants set allow_mail_ai = true where id='${ORG}'`);
+    check('Mail AI already on but not on the list: the screen does not say it is on', (await call('GET', '/org/ai')).body.mailEnabled === false);
+    s = await ownerCall('GET', '/mail/ai/status');
+    check('…the composer gets no AI button (status unavailable)', s.body.available === false, JSON.stringify(s.body));
+    h0 = await hits();
+    r = await rewrite(DRAFT);
+    check('…Help me write is refused by the gateway, nothing sent', typeof r.body.error === 'string' && (await hits()) === h0, JSON.stringify(r.body));
+    r = await suggest(ids.normal);
+    check('…suggested replies are withheld, nothing sent', r.body.skipped === 'off' && (await hits()) === h0, JSON.stringify(r.body));
+
+    await gate(`not-an-id, ${ORG}`);
+    check('this organisation on the list (a bad entry beside it is ignored): offered', (await call('GET', '/org/ai')).body.mailOffered === true);
+    h0 = await hits();
+    r = await rewrite(DRAFT);
+    check('…and Help me write works', typeof r.body.text === 'string' && (await hits()) === h0 + 1, JSON.stringify(r.body).slice(0, 100));
+
+    await gate('not-an-id');
+    h0 = await hits();
+    r = await rewrite(DRAFT);
+    check('a list where NOTHING parses lets nobody in (a typo does not open the gate)',
+      (await call('GET', '/org/ai')).body.mailOffered === false && typeof r.body.error === 'string' && (await hits()) === h0, JSON.stringify(r.body));
+
+    await gate('');
+    check('an empty list: every organisation may', (await call('GET', '/org/ai')).body.mailOffered === true);
+    r = await setAi({ mail: false });
+    check('…and switching Mail AI off works whatever the list says', r.status === 200 && r.body.mailEnabled === false, JSON.stringify(r.body));
+  }
+
   // ── 6. Validation of the switch itself ────────────────────────────────────
   r = await setAi({});
   check('PUT with neither switch is 400', r.status === 400, `status ${r.status}`);

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using TatvaOS.Api.Shared.Data;
+using TatvaOS.Api.Shared.Settings;
 using TatvaOS.Api.Shared.Tenancy;
 
 namespace TatvaOS.Api.Shared.Ai;
@@ -83,6 +84,60 @@ public static class AiProductSwitch
         }
     }
 
+    // ── WHICH ORGANISATIONS MAY USE MAIL AI AT ALL ───────────────────────────
+    //
+    //  Mr. Singh, 25 Sept 2026, after Mail AI shipped ahead of its privacy
+    //  text: "Until they're live, either show the Mail AI switches only to
+    //  Techvein's organisation, or tell me why that's harder than I think."
+    //  It is a platform setting (ai.mail.organisations), not code, so it is
+    //  lifted by emptying it on the Settings page — no deploy.
+    //
+    //  Checked HERE, inside MailAllowedAsync, which every mail.* request
+    //  already passes through in the gateway — so Help me write, suggested
+    //  replies and sorting are all behind it without a line in any of them.
+    //
+    //    row missing / empty  → every organisation may (no gate)
+    //    a list of ids        → only those
+    //    unreadable           → nobody (fail-closed, like every switch here)
+    //    ids that do not parse are ignored and logged; a list with NONE that
+    //    parses allows nobody — a typo must not open the gate.
+
+    public const string MailNotOffered =
+        "TatvaOS AI in Mail is not available for your organisation yet. It will be offered once our "
+        + "privacy policy has been updated to describe it.";
+
+    /// <summary>Whether this organisation is on the Mail AI list (or there is no list). Fail-closed.</summary>
+    public static async Task<bool> MailOfferedToAsync(AppDbContext db, Guid tenantId, ILogger log, CancellationToken ct)
+    {
+        try
+        {
+            var all = await new SettingsReader(db).GetAsync(ct);
+            if (!all.TryGetValue(SettingKeys.AiMailOrganisations, out var raw) || string.IsNullOrWhiteSpace(raw))
+                return true;
+            var ids = ParseOrganisations(raw, log);
+            return ids.Contains(tenantId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            log.LogWarning(ex, "Could not read {Key}; Mail AI refused fail-closed for tenant {Tenant}.",
+                SettingKeys.AiMailOrganisations, tenantId);
+            return false;
+        }
+    }
+
+    /// <summary>The ids in the setting. Bad entries are logged and skipped.</summary>
+    public static HashSet<Guid> ParseOrganisations(string raw, ILogger? log = null)
+    {
+        var ids = new HashSet<Guid>();
+        foreach (var part in raw.Split([',', ';', ' ', '\n', '\r', '\t'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (Guid.TryParse(part, out var id)) ids.Add(id);
+            else log?.LogWarning("{Key} has an entry that is not an organisation id: '{Entry}' (ignored).",
+                SettingKeys.AiMailOrganisations, part);
+        }
+        return ids;
+    }
+
     public static bool IsMail(string feature) =>
         feature.StartsWith(MailPrefix, StringComparison.Ordinal);
 
@@ -96,10 +151,12 @@ public static class AiProductSwitch
         if (!tenant.HasTenant) return false;
         try
         {
-            return await db.Tenants.AsNoTracking()
+            var on = await db.Tenants.AsNoTracking()
                 .Where(t => t.Id == tenant.TenantId)
                 .Select(t => t.AllowMailAi)
                 .FirstOrDefaultAsync(ct);
+            // Switched on AND on the Mail AI list (or there is no list).
+            return on && await MailOfferedToAsync(db, tenant.TenantId, log, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
