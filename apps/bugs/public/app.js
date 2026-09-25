@@ -355,6 +355,17 @@ async function issuesView(params) {
     dlg.addEventListener('bt-closed', () => { render(); resolve(done); });
   });
 
+  // Due date from the table: admin, or the developer it is assigned to.
+  // Clearing the box removes the date; the history records every change.
+  const dueCell = (i) => i.can && i.can.due
+    ? h('input', { type: 'date', class: 'cell-date' + (i.overdue ? ' late' : ''), value: i.due_date || '', 'aria-label': 'Due date of ' + i.key, onclick: stop,
+        onchange: async (e) => {
+          const v = e.target.value || null;
+          if (v === (i.due_date || null)) return;
+          e.target.disabled = true;
+          try { await post(i, { action: 'due', due_date: v }); } catch (err) { toast(err.message, true); render(); }
+        } })
+    : (i.due_date ? fmtDay(i.due_date) : h('span', { class: 'muted' }, '—'));
   const typeCell = (i) => i.can && i.can.edit
     ? cellSelect('Type of ' + i.key, [['bug', 'Bug'], ['feature', 'Feature']], i.type, (v) => post(i, { action: 'edit', type: v }))
     : typeBadge(i.type);
@@ -389,7 +400,7 @@ async function issuesView(params) {
           h('td', { 'data-label': 'Priority' }, priorityCell(i)),
           h('td', { 'data-label': 'Status' }, statusCell(i)),
           h('td', { 'data-label': 'Developer' }, devCell(i)),
-          h('td', { class: 'nowrap' + (i.overdue ? ' due-late' : ''), 'data-label': 'Due' }, i.due_date ? fmtDay(i.due_date) : h('span', { class: 'muted' }, '—')),
+          h('td', { class: 'nowrap' + (i.overdue ? ' due-late' : ''), 'data-label': 'Due' }, dueCell(i)),
           h('td', { 'data-label': 'Reported by' }, i.reporter_name || i.reporter_email),
           h('td', { class: 'muted nowrap', 'data-label': 'Updated' }, fmtDate(i.updated_at)))))))
     : h('div', { class: 'empty' }, 'No issues match.');

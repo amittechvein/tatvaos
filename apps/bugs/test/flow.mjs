@@ -260,6 +260,21 @@ try {
   check('once assigned, the developer gets status moves in the table', rc2.moves.includes('under_review') && rc2.edit === false, JSON.stringify(rc2));
   check('tester cannot edit once it is Under Review', (await rahul.req('POST', `/api/issues/${t1}/actions`, { action: 'status', to: 'under_review' })).status === 200 && (await tbl(priya))[t1].edit === false);
 
+  console.log('Due date from the table');
+  check('assigned developer gets the date picker', (await tbl(rahul))[t1].due === true);
+  check('another developer does not', (await tbl(dev2))[t1].due === false);
+  check('the tester does not', (await tbl(priya))[t1].due === false);
+  check('admin does', (await tbl(amit))[t1].due === true);
+  check('another developer cannot set it', (await dev2.req('POST', `/api/issues/${t1}/actions`, { action: 'due', due_date: '2031-01-01' })).status === 403);
+  check('assigned developer sets it', (await rahul.req('POST', `/api/issues/${t1}/actions`, { action: 'due', due_date: '2031-01-01' })).status === 200);
+  check('bad date refused', (await rahul.req('POST', `/api/issues/${t1}/actions`, { action: 'due', due_date: '01/02/2031' })).status === 400);
+  await rahul.req('POST', `/api/issues/${t1}/actions`, { action: 'due', due_date: null });
+  const dh = (await amit.req('GET', '/api/issues/' + t1)).json;
+  const dues = dh.activity.filter((a) => a.kind === 'due');
+  check('both changes recorded with who, role, from and to', dues.length === 2 && dues[0].actor_name === 'Rahul' && dues[0].actor_role === 'developer' && dues[0].meta.to === '2031-01-01' && dues[1].meta.from === '2031-01-01' && dues[1].meta.to === null, JSON.stringify(dues.map((d) => d.meta)));
+  check('cleared date is gone from the issue', dh.issue.due_date === null);
+  check('closed issue offers no date picker', (await tbl(amit))[shut].due === false);
+
   console.log('Rules that protect history');
   check('module with reports cannot be deleted', (await amit.req('DELETE', '/api/modules/' + mail)).status === 409);
   check('sub-module with reports cannot be deleted', (await amit.req('DELETE', '/api/submodules/' + search)).status === 409);

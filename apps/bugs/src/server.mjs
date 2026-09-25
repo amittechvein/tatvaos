@@ -292,6 +292,7 @@ function rowCan(s, issue) {
     edit: canEdit(s, issue),
     assign: s.mode === 'admin' || (s.mode === 'developer' && issue.assignee_id === s.user.id),
     take: s.mode === 'developer' && issue.assignee_id === null && issue.status !== 'closed',
+    due: actsAsDeveloper(s, issue) && issue.status !== 'closed',
   };
 }
 
