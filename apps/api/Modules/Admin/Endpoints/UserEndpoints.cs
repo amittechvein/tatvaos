@@ -67,6 +67,9 @@ public static class UserEndpoints
             .RequireAuthorization("User")
             .WithTags("Organisation administration");
         avatars.MapGet("/{id:guid}/avatar", AvatarAsync);
+        // POST, not GET: a mail list asks about up to 200 addresses at once,
+        // and that many in a query string passes Kestrel's 8 KB request line.
+        avatars.MapPost("/photos", PhotoLookupAsync);
         avatars.MapPut("/{id:guid}/avatar", SetAvatarAsync);
         avatars.MapDelete("/{id:guid}/avatar", DeleteAvatarAsync);
 
@@ -1505,13 +1508,109 @@ public static class UserEndpoints
         tenant.UserId == targetUserId ||
         tenant.Role is "org_owner" or "org_admin" or "super_admin";
 
-    private static async Task<IResult> AvatarAsync(Guid id, AppDbContext db, CancellationToken ct)
+    /// <summary>
+    /// A person's photo. With ?v= equal to the photo's CURRENT version (its
+    /// UpdatedAt, in ms — the number PhotoLookupAsync hands out) the response
+    /// is cacheable for a year: that URL can only ever mean that picture, and
+    /// a mail list of fifty senders then costs no photo requests on the second
+    /// visit. Any other v, or none, must be re-checked every time, or a
+    /// changed photo would stay stale in someone's browser indefinitely.
+    /// </summary>
+    private static async Task<IResult> AvatarAsync(
+        Guid id, long? v, HttpContext http, AppDbContext db, CancellationToken ct)
     {
         var a = await db.UserAvatars.AsNoTracking()
             .Where(x => x.UserId == id)
-            .Select(x => new { x.Image, x.Mime })
+            .Select(x => new { x.Image, x.Mime, x.UpdatedAt })
             .FirstOrDefaultAsync(ct);
-        return a is null ? Results.NotFound() : Results.File(a.Image, a.Mime);
+        if (a is null) return Results.NotFound();
+
+        http.Response.Headers.CacheControl =
+            v == a.UpdatedAt.ToUnixTimeMilliseconds()
+                ? "private, max-age=31536000, immutable"
+                : "private, no-cache";
+        return Results.File(a.Image, a.Mime);
+    }
+
+    private const int MaxPhotoLookup = 200;
+
+    /// <summary>
+    /// Which of these people are colleagues in THIS organisation with a photo,
+    /// and at what version.
+    ///
+    /// ── WHY ────────────────────────────────────────────────────────────────
+    ///  Amit, 25 Sept 2026: "if any user photo updated in tatvaos app show
+    ///  photo in all apps like email and connect people section". A photo was
+    ///  shown in three places (admin People page, header, account menu); Mail
+    ///  knows people only by address and Connect only by participant identity,
+    ///  so both drew initials. This is the one question both can ask.
+    ///
+    /// ── TENANCY (rule 7) ──────────────────────────────────────────────────
+    ///  Every table read here — users, mailboxes, aliases, user_avatars — has
+    ///  the tenant query filter (AppDbContext), so a colleague is someone in
+    ///  the CALLER'S organisation by construction, not by a WHERE written here.
+    ///  An address from anywhere else simply does not match, and the caller
+    ///  draws initials. Nothing but user id and a version leaves: no name, no
+    ///  address the caller did not already send, no image bytes.
+    ///
+    ///  By address, a person is matched on their sign-in email, any PERSONAL
+    ///  mailbox (shared ones have no person, UserId is null), or an alias of
+    ///  one — mail arrives from whichever of those they sent from. Compared
+    ///  lower-cased on both sides: users.email is citext, and citext = text[]
+    ///  resolves to a case-SENSITIVE text comparison.
+    /// </summary>
+    private static async Task<IResult> PhotoLookupAsync(
+        PhotoLookupRequest req, AppDbContext db, CancellationToken ct)
+    {
+        var emails = (req.Emails ?? [])
+            .Where(e => !string.IsNullOrWhiteSpace(e) && e.Length <= 320)
+            .Select(e => e.Trim().ToLowerInvariant())
+            .Distinct().Take(MaxPhotoLookup).ToList();
+        var ids = (req.UserIds ?? []).Distinct().Take(MaxPhotoLookup).ToList();
+        if (emails.Count == 0 && ids.Count == 0) return Results.Ok(new { people = Array.Empty<object>() });
+
+        // address -> person, from the three places an address can belong to one.
+        var byAddress = new Dictionary<string, Guid>(StringComparer.Ordinal);
+        if (emails.Count > 0)
+        {
+            var viaUser = await db.Users.AsNoTracking()
+                .Where(u => emails.Contains(u.Email.ToLower()))
+                .Select(u => new { Address = u.Email.ToLower(), u.Id })
+                .ToListAsync(ct);
+            var viaMailbox = await db.Mailboxes.AsNoTracking()
+                .Where(m => m.UserId != null && m.IsActive && emails.Contains(m.Address.ToLower()))
+                .Select(m => new { Address = m.Address.ToLower(), Id = m.UserId!.Value })
+                .ToListAsync(ct);
+            var viaAlias = await (
+                from al in db.Aliases.AsNoTracking()
+                join m in db.Mailboxes.AsNoTracking() on al.TargetMailboxId equals m.Id
+                where al.IsActive && m.IsActive && m.UserId != null && emails.Contains(al.Address.ToLower())
+                select new { Address = al.Address.ToLower(), Id = m.UserId!.Value })
+                .ToListAsync(ct);
+
+            // Sign-in email first, then mailbox, then alias: TryAdd keeps the
+            // first, so an address that is somebody's login is that person.
+            foreach (var x in viaUser) byAddress.TryAdd(x.Address, x.Id);
+            foreach (var x in viaMailbox) byAddress.TryAdd(x.Address, x.Id);
+            foreach (var x in viaAlias) byAddress.TryAdd(x.Address, x.Id);
+        }
+
+        var candidates = byAddress.Values.Concat(ids).Distinct().ToList();
+        var versions = await db.UserAvatars.AsNoTracking()
+            .Where(a => candidates.Contains(a.UserId))
+            .Select(a => new { a.UserId, a.UpdatedAt })
+            .ToDictionaryAsync(a => a.UserId, a => a.UpdatedAt.ToUnixTimeMilliseconds(), ct);
+
+        // Only people WITH a photo come back: "not in the answer" means
+        // initials, whether that is an outsider, a shared mailbox, or a
+        // colleague who has not set one.
+        var people = new List<object>();
+        foreach (var (address, userId) in byAddress)
+            if (versions.TryGetValue(userId, out var ver)) people.Add(new { email = address, userId, v = ver });
+        foreach (var userId in ids)
+            if (versions.TryGetValue(userId, out var ver)) people.Add(new { userId, v = ver });
+
+        return Results.Ok(new { people });
     }
 
     private static async Task<IResult> SetAvatarAsync(

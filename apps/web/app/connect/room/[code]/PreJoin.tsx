@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Centre, initialOf } from './RoomChrome';
+import { useSelfPhoto } from '@/components/ui/UserPhoto';
 
 // ============================================================================
 //  The pre-join screen — see yourself before anybody else does.
@@ -39,6 +40,7 @@ export default function PreJoin({ title, name, onJoin }: {
   name: string;
   onJoin: (prefs: JoinPrefs) => void;
 }) {
+  const selfPhoto = useSelfPhoto();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -199,7 +201,12 @@ export default function PreJoin({ title, name, onJoin }: {
             <video ref={videoRef} autoPlay playsInline muted className="cx-preview-video" />
           ) : (
             <div className="cx-preview-off">
-              <div className="cx-initial">{initialOf(name)}</div>
+              {/* You, before you join: your photo if you have one (a guest has
+                  no account, so useSelfPhoto gives null and the initial stays). */}
+              <div className="cx-initial">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                {selfPhoto ? <img className="cx-photo" src={selfPhoto} alt="" /> : initialOf(name)}
+              </div>
             </div>
           )}
           <div className="cx-meter" title="Microphone level" aria-hidden="true">
