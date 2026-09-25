@@ -23,7 +23,7 @@ import {
   videoPipSupported,
   type PipHandles, type PipTile,
 } from '@/lib/pip';
-import { CSS, Centre, Spinner, initialOf } from './RoomChrome';
+import { CSS, Centre, PersonMark, Spinner, initialOf } from './RoomChrome';
 
 const LOBBY_POLL_MS = 3000;
 
@@ -3251,7 +3251,7 @@ export default function Stage({ seat, meeting, prefs }: {
                 && p.identity.startsWith('user:');
               return (
                 <div className="cx-row cx-row--person" key={p.identity}>
-                  <span className="cx-av">{initialOf(nm)}</span>
+                  <PersonMark as="span" className="cx-av" identity={p.identity} name={nm} />
                   <div className="cx-grow">
                     {/* Wraps rather than ellipsises. The controls used to sit
                         on this line and squeezed it to about eight characters,
@@ -3944,7 +3944,7 @@ function Tile({ p, big, local, showScreen, hand, canHost, pinned, mirror = true,
 
       {camOff && (
         <div className="cx-off">
-          <div className="cx-initial">{initialOf(name)}</div>
+          <PersonMark className="cx-initial" identity={p.identity} name={name} />
         </div>
       )}
 

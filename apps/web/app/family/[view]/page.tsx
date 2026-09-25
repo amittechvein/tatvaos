@@ -9,6 +9,7 @@ import { Badge, Button, Card, Empty, Spinner, Table, Td } from '@/components/ui/
 import { Alert } from '@/components/ui/Page';
 import { Modal, Field } from '@/components/ui/Modal';
 import { useAuth } from '@/lib/auth';
+import { usePhotoUrl } from '@/lib/peoplePhotos';
 import { Input, Select } from '@/components/ui/Form';
 import {
   DuplicateContactError, familyApi, isAutoSaved, sourceLabel,
@@ -108,6 +109,35 @@ const FILTERS: [Filter, string][] = [
   ['favourite', 'Starred'],
   ['auto', 'Saved from mail'],
 ];
+
+/**
+ * A contact's circle: their profile photo when they are a colleague who has
+ * one (lib/peoplePhotos — colleagues in your organisation only), their
+ * initials otherwise. Amit, 25 Sept 2026: a photo set once should show in
+ * every app, and this list drew initials for everyone.
+ */
+function ContactMark({ email, name }: { email: string | null; name: string }) {
+  const photo = usePhotoUrl({ email });
+  if (photo) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img src={photo} alt="" width={36} height={36}
+           className="flex-shrink-0 rounded-full object-cover" style={{ width: 36, height: 36 }} />
+    );
+  }
+  return (
+    <span
+      aria-hidden
+      className="grid rounded-full flex-shrink-0 text-white"
+      style={{
+        width: 36, height: 36, placeItems: 'center',
+        fontSize: 13, fontWeight: 700, background: '#6C3CE9',
+      }}
+    >
+      {initials(name)}
+    </span>
+  );
+}
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -608,16 +638,7 @@ export default function FamilyViewPage() {
                 )}
                 <Td>
                   <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
-                    <span
-                      aria-hidden
-                      className="grid rounded-full flex-shrink-0 text-white"
-                      style={{
-                        width: 36, height: 36, placeItems: 'center',
-                        fontSize: 13, fontWeight: 700, background: '#6C3CE9',
-                      }}
-                    >
-                      {initials(c.displayName)}
-                    </span>
+                    <ContactMark email={c.primaryEmail} name={c.displayName} />
                     <div style={{ minWidth: 0 }}>
                       <div className="text-[0.875rem] font-semibold">
                         {c.isFavourite && <span aria-label="Starred" title="Starred">★ </span>}

@@ -30,6 +30,12 @@ export interface HelpMeWriteProps {
   undo: () => void;
   /** True once the person has typed since the last replace; hides Undo. */
   editedSinceReplace: boolean;
+  /**
+   * A sentence if this draft must not be rewritten, else null. Pictures: the
+   * rewrite is plain text, so replacing a draft with a picture in it would
+   * delete the picture (the composer took pictures on 25 Sept, PR 296).
+   */
+  refuseReason?: () => string | null;
 }
 
 type Phase =
@@ -76,6 +82,7 @@ export function HelpMeWritePanel({
   replace,
   undo,
   editedSinceReplace,
+  refuseReason,
 }: HelpMeWriteProps & { open: boolean; onClose: () => void }) {
   const { authedFetch } = useAuth();
   const [phase, setPhase] = useState<Phase>({ kind: 'menu' });
@@ -95,6 +102,11 @@ export function HelpMeWritePanel({
   if (!open) return null;
 
   async function run(style: RewriteStyle) {
+    const refused = refuseReason?.();
+    if (refused) {
+      setPhase({ kind: 'error', style: null, message: refused });
+      return;
+    }
     const draft = readDraft();
     if (!draft.trim()) {
       setPhase({ kind: 'error', style: null, message: 'Write something first, then choose how to rewrite it.' });

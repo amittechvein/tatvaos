@@ -25,7 +25,8 @@ real restore.** The paper copy was verified against a live object on 9 Sept
 
 ## What is backed up
 
-`infra/scripts/backup.sh`, **every six hours** (02:30, 08:30, 14:30, 20:30):
+`infra/scripts/backup.sh`, **every six hours** (02:30, 08:30, 14:30, 20:30) —
+or **every two hours** once the tiered schedule below is switched on:
 
 | artefact | why losing it hurts |
 |---|---|
@@ -35,12 +36,16 @@ real restore.** The paper copy was verified against a live object on 9 Sept
 | `dkimkeys.tar.gz` | small; losing them means re-publishing DNS for every customer domain |
 | `env.txt` | the uncommitted secrets, without which none of the above starts |
 
-So up to **six hours** can be lost, not twenty-four.
+So up to **six hours** can be lost (two, on the tiered schedule), not
+twenty-four.
 
 ## Where the copies live
 
-**Local** — `/srv/backups/tatvaos/<stamp>/`, kept 14 days (`BACKUP_KEEP_DAYS`).
-Unencrypted. Fine for "someone deleted a mailbox", useless for "the server is
+**Local** — `/srv/backups/tatvaos/<stamp>/`, kept `BACKUP_KEEP_DAYS` days:
+the script's default is 14, and **production sets 3** (measured 24 Sept
+2026) — or, when `BACKUP_LOCAL_KEEP` is set (the tiered schedule below), only
+the newest that many sets, and only after the run's own set is proven in the
+bucket. Unencrypted. Fine for "someone deleted a mailbox", useless for "the server is
 gone". The directory is mode 700: the sets contain the whole database and
 everyone's mail in the clear.
 
@@ -51,8 +56,109 @@ Configured in `/srv/backups/tatvaos/.backup-env`:
 ```bash
 BACKUP_S3_REMOTE='linode:tatvaos-backups'
 BACKUP_ENC_PASSPHRASE='...'                # also on paper, offline
-BACKUP_S3_KEEP_DAYS=30
+BACKUP_S3_KEEP_DAYS=7                      # production's real value; ignored when BACKUP_S3_TIERED=1
+BACKUP_KEEP_DAYS=3                         # local sets AND pre-deploy copies
 ```
+
+**Off-box copies are kept 7 days, not 30.** This page said 30 until 24 Sept
+2026; the server's own config says 7, and the server is what happens. Measure
+it (`BACKUP_S3_KEEP_DAYS` only — never print the file) before quoting a
+number to anyone.
+
+**Pre-deploy copies** — `/srv/tatvaos-production/backups/pre-deploy-<stamp>.sql.gz.enc`,
+one per deploy, written by `deploy.sh` before it touches anything (PR 254,
+Mr. Singh's ruling of 25 Sept 2026):
+
+- **Encrypted** with the same scheme and the same `BACKUP_ENC_PASSPHRASE` as
+  the off-box objects. On production a missing passphrase **stops the
+  deploy** — it will not write a plain copy.
+- **Locked down**: directory 700, each file 600, created that way.
+- **Kept by days, the same `BACKUP_KEEP_DAYS` as the local sets** — one
+  number. With production's 3, a pre-deploy copy older than 3 days is gone;
+  anything older comes from the off-box objects (7 days).
+- **Checked whole** before the deploy carries on: decrypted, gunzipped, and
+  checked for `pg_dumpall`'s end-of-dump marker.
+
+Restore one (it is a whole-cluster `pg_dumpall`; restore into a scratch
+container first unless the live database is already lost):
+
+```bash
+set -a; . /srv/backups/tatvaos/.backup-env; set +a
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:BACKUP_ENC_PASSPHRASE \
+    -in backups/pre-deploy-<stamp>.sql.gz.enc | gunzip | psql -U postgres
+```
+
+**Read this during an incident, not after it: a pre-deploy copy lives only
+3 days.** A bad deploy noticed on day four has no pre-deploy copy to go back
+to. Use the newest off-box object from before that deploy instead (kept 7
+days; six-hourly, or two-hourly for the last day on the tiered schedule). Check `ls -l backups/` for
+the dates before you plan the restore.
+
+**Rotating `BACKUP_ENC_PASSPHRASE`: keep the old one until everything written
+with it has aged out.** That is 3 days for local and pre-deploy copies and 7
+days for off-box objects. Rotate and throw away the old passphrase on the same
+day, and a week of backups can no longer be opened.
+
+**The old plain copies** (`pre-deploy-*.sql`, `pre-deploy-*.sql.gz`, 323 of
+them, 31 GB, 4 Aug to 24 Sept 2026) are **never deleted by a deploy**; each
+deploy counts them aloud. They were chmod-ed 700/600 by hand on 25 Sept. Mr.
+Singh's order for removing them: (a) prove a restore into a scratch database;
+(b) PR 254 live; (c) one explicit deletion run by a person, logged with the
+count, the date range and who authorised it.
+
+### The tiered schedule (Amit, 24 Sept 2026)
+
+Off until these two lines are added to `.backup-env` **and** `--install` is
+re-run (it rewrites the cron line to match):
+
+```bash
+BACKUP_S3_TIERED=1
+BACKUP_LOCAL_KEEP=2
+```
+
+| age | kept in the bucket |
+|---|---|
+| under 24 hours | every set (one every 2 hours — 12) |
+| 24 to 48 hours | one per 6-hour slot (about 4) |
+| 2 to 7 days | one per day (about 5) |
+| over 7 days | none |
+
+About 21 sets. Which to delete is decided by `infra/scripts/backup-tiers.sh`
+from the **names** of the objects, and each is deleted by name — never a
+recursive delete, so anything else in the bucket is left alone. It deletes
+nothing on a run whose own upload failed or whose bucket listing does not show
+the set just uploaded, and it never deletes the newest three sets
+(`BACKUP_S3_MIN_KEEP`), so a week-long outage followed by one good run does not
+empty the bucket.
+
+`BACKUP_LOCAL_KEEP` is not optional here: twelve full sets a day would fill the
+server's disk within days. `--install` refuses the two-hourly cron line without
+it. A run takes a lock (`.backup.lock`), so a slow run and the next one never
+overlap — the second says so in the log and does nothing.
+
+Tests, no server needed: `bash infra/scripts/backup-tiers-test.sh` (the rule —
+fourteen simulated days) and `bash infra/scripts/backup-sh-test.sh` (the
+deleting, end to end with fakes; Linux or WSL, it needs `flock`).
+
+**Restoring from more than four hours ago means a download first.** With
+`BACKUP_LOCAL_KEEP=2` the server holds only the last two sets — about four
+hours. Anything older is a 4 GB object in the bucket (`rclone copy`) that
+has to come down before the restore command above can start. **The download
+has not been timed.** What is known: a whole backup run — dump, tars, encrypt
+and the 4 GB upload — finishes in about 9 minutes (log, 25 Sept 2026), so a
+download within the same datacentre should be of that order; the 9 Sept drill
+pulled a 0.6 GB object. Time it in the next drill and write the number here.
+Budget for it in the incident, not during it.
+
+The pre-deploy copies are not touched by this prune: they are **files** in a
+**different directory** (`/srv/tatvaos-production/backups/`), and the prune
+removes only **directories** named `YYYYmmdd-HHMMSS` inside
+`/srv/backups/tatvaos/`. `backup-sh-test.sh` puts a pre-deploy copy in the
+sets directory anyway and checks it survives.
+
+`linode:tatvaos-backups-hold` is a **separate** bucket holding one set set
+aside by hand on 24 Sept 2026 (the last set before the mail import). Nothing
+in `backup.sh` touches it.
 
 **`BACKUP_REMOTE` is the legacy rsync hook and is deprecated.** The script
 labels it `Off-box copy — rsync (legacy hook)` and it copies *unencrypted*.
@@ -98,7 +204,13 @@ Two starting points. Pick the one that matches your disaster.
 
 ### A — the box is fine, you need an older set
 
-The local sets are already on disk and already decrypted.
+The local sets are already on disk and already decrypted — **but on the tiered
+schedule only the newest two are here, about four hours' worth.** `ls
+/srv/backups/tatvaos/` first. If the set you want is not there, it is a 4 GB
+download from the bucket before anything else can happen (untimed as of 25
+Sept 2026; a full backup run including the 4 GB upload takes ~9 minutes, so
+expect that order — see *The tiered schedule* above). Then follow **B** with
+the object you fetched.
 
 ```bash
 SET=/srv/backups/tatvaos/20260909-083001    # the set you are restoring
@@ -244,10 +356,14 @@ tests them.
 
 ## Not covered
 
-- **Point-in-time recovery.** These are six-hourly snapshots; up to six hours
-  can be lost. WAL archiving is the upgrade when that stops being acceptable.
-- **Rotation and old secrets.** A rotated credential survives in local sets for
-  14 days and in off-box objects for `BACKUP_S3_KEEP_DAYS`. Rotation is not
+- **Point-in-time recovery.** These are six-hourly (two-hourly, tiered) snapshots;
+  up to that much can be lost. WAL archiving is the upgrade when that stops being acceptable.
+- **Rotation and old secrets.** A rotated credential survives in local sets and
+  pre-deploy copies for `BACKUP_KEEP_DAYS` (local sets: the newest
+  `BACKUP_LOCAL_KEEP` when tiered) and in off-box objects for
+  `BACKUP_S3_KEEP_DAYS` (seven days when tiered). **Changing `BACKUP_ENC_PASSPHRASE` does not re-encrypt
+  anything already written** — keep the old one until the last copy made with
+  it has aged out of every window. Rotation is not
   finished when the new secret is live; it is finished when the old one is out
   of reach.
 - **Restoring onto a bare machine.** See the drill section above.

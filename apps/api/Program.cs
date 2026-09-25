@@ -28,6 +28,11 @@ using TatvaOS.Api.Shared.Tenancy;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Development-only operator sign-in (Mr. Singh, 24 Sept 2026): refuse to boot
+// when its switch is on anywhere but Development. First, before anything else
+// is built. See Modules/Auth/Endpoints/DevOperatorGate.cs.
+DevOperatorGate.RefuseToStartOutsideDevelopment(builder.Environment, builder.Configuration);
+
 // ---------------------------------------------------------------------------
 //  `TatvaOS.Api --oidc-rotate` — the key-rotation runbook's one step. Runs in
 //  the API container against the same key directory, generates a new signing
@@ -634,6 +639,31 @@ builder.Services.AddRateLimiter(o =>
             });
     });
 
+    // The public careers pages (decision 0010 §5): 120 reads a minute per
+    // address, keyed on the rightmost X-Forwarded-For like every limiter here.
+    //
+    // ⚠ CDN WARNING (Mr. Singh, 24 Sept 2026). Rightmost XFF is the real client
+    // ONLY because Caddy is the one proxy in front. Put Cloudflare or any CDN
+    // in front of the careers pages — the natural next step for a public page
+    // — and the rightmost entry becomes the CDN's own address: every visitor
+    // on earth then shares one 120-a-minute bucket and the page is down for
+    // all of them. Whoever adds a CDN must reconfigure every limiter here IN
+    // THE SAME CHANGE (the CDN's client-IP header, trusted only from its
+    // published ranges). Also in docs/DEPLOY_RUNBOOK.md §4.
+    o.AddPolicy("careers-read", httpContext =>
+    {
+        var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();
+        var client = string.IsNullOrEmpty(xff)
+            ? httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"
+            : xff.Split(',')[^1].Trim();
+        return RateLimitPartition.GetFixedWindowLimiter($"careers:{client}",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 120,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            });
+    });
     o.AddPolicy("space-public-links", httpContext =>
     {
         var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();
@@ -755,6 +785,8 @@ app.UseRateLimiter();
 TatvaOS.Api.Modules.Auth.Endpoints.AuthEndpoints.ConfigureCookies(app.Configuration);
 
 app.MapAuthEndpoints();
+// Maps nothing unless Development AND DevOperatorSignIn__Enabled — see the file.
+app.MapDevOperatorSignIn();
 app.MapMfaEndpoints();
 app.MapOrganisationEndpoints();
 app.MapUserEndpoints();
@@ -769,6 +801,8 @@ app.MapOrgStructureEndpoints();
 // TatvaOS Hire R1: job openings (24 Sept 2026).
 TatvaOS.Api.Modules.Hire.JobOpeningEndpoints.MapJobOpeningEndpoints(app);
 TatvaOS.Api.Modules.Hire.HireTeamEndpoints.MapHireTeamEndpoints(app);
+// The public careers page and its admin setup (decision 0010, switched off).
+TatvaOS.Api.Modules.Hire.CareersEndpoints.MapCareersEndpoints(app);
 app.MapStorageEndpoints();
 app.MapAuditEndpoints();
 // Shared mailboxes are PROVISIONING — the same act as creating a person, so
