@@ -75,7 +75,9 @@ public sealed class MailTriageWorker(
             var db0 = probe.ServiceProvider.GetRequiredService<AppDbContext>();
             // core.tenants has no RLS: this is the one cross-organisation read.
             orgs = (await db0.Tenants.IgnoreQueryFilters().AsNoTracking()
-                    .Where(t => t.AllowAi && t.AllowMailAi && t.MailAiTriageSince != null && t.SuspendedAt == null)
+                    .Where(t => t.AllowAi && t.AllowMailAi && t.MailAiTriageSince != null && t.SuspendedAt == null
+                                // Not offered to clinics yet (AiProductSwitch.TriageNotOfferedTo).
+                                && !AiProductSwitch.TriageNotOfferedTo.Contains(t.Type))
                     .Select(t => new { t.Id, Since = t.MailAiTriageSince!.Value })
                     .ToListAsync(ct))
                 .Select(t => (t.Id, t.Since)).ToList();

@@ -348,6 +348,44 @@ try {
   check('sorting off: new mail is not labelled', labelOf(t2.person) === '-:false' && labelOf(t2.robot) === '-:false', `${labelOf(t2.person)} ${labelOf(t2.robot)}`);
   check('sorting off: nothing sent', (await triageLog()).length === logOff);
 
+  // ── 9. Not offered to hospitals and clinics (Amit, 25 Sept 2026) ──────────
+  //  The organisation is made a hospital in the database (only the operator
+  //  can change a type in the product), and put back afterwards.
+  const TENANT = '11111111-1111-1111-1111-111111111111';
+  const typeWas = psql(`select type from core.tenants where id='${TENANT}'`);
+  try {
+    psql(`update core.tenants set type='hospital' where id='${TENANT}'`);
+    await setAi({ enabled: true, mail: true });
+    const hosp = (await call('GET', '/org/ai')).body;
+    check('a hospital is told sorting is not offered, in words',
+      hosp.mailTriageOffered === false && typeof hosp.mailTriageNotOffered === 'string'
+        && hosp.mailTriageNotOffered.includes('hospitals and clinics'), JSON.stringify({ o: hosp.mailTriageOffered, t: hosp.mailTriageNotOffered }));
+    r = await setAi({ mailTriage: true });
+    check('a hospital cannot switch sorting on (400, the same sentence)', r.status === 400 && String(r.body.error ?? '').includes('hospitals and clinics'), JSON.stringify(r.body));
+    check('…and nothing was switched on', psql(`select mail_ai_triage_since is null from core.tenants where id='${TENANT}'`) === 't');
+
+    // Sorting already on when the type became hospital: nothing is sent.
+    psql(`update core.tenants set mail_ai_triage_since = now() - interval '1 minute' where id='${TENANT}'`);
+    check('sorting "on" but hospital: the screen does not claim it is on', (await call('GET', '/org/ai')).body.mailTriageEnabled === false);
+    s = await ownerCall('GET', '/mail/ai/status');
+    check('sorting "on" but hospital: the inbox shows no sorting tabs', s.body.triage === false, JSON.stringify(s.body));
+    const logH = (await triageLog()).length;
+    const th = runTriageFixtures();
+    await sleep(12000);
+    check('sorting "on" but hospital: new mail is not labelled', labelOf(th.person) === '-:false' && labelOf(th.robot) === '-:false', `${labelOf(th.person)} ${labelOf(th.robot)}`);
+    check('sorting "on" but hospital: nothing sent', (await triageLog()).length === logH);
+
+    h0 = await hits();
+    r = await rewrite(DRAFT);
+    check('a hospital still has Help me write', typeof r.body.text === 'string' && (await hits()) === h0 + 1, JSON.stringify(r.body).slice(0, 120));
+
+    r = await setAi({ mailTriage: false });
+    check('a hospital can always switch sorting OFF', r.status === 200 && psql(`select mail_ai_triage_since is null from core.tenants where id='${TENANT}'`) === 't', JSON.stringify(r.body));
+  } finally {
+    psql(`update core.tenants set type='${typeWas}', mail_ai_triage_since=null where id='${TENANT}'`);
+  }
+  check('the organisation type is back as found', psql(`select type from core.tenants where id='${TENANT}'`) === typeWas, typeWas);
+
   // ── 6. Validation of the switch itself ────────────────────────────────────
   r = await setAi({});
   check('PUT with neither switch is 400', r.status === 400, `status ${r.status}`);

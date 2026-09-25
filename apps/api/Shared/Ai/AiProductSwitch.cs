@@ -39,6 +39,25 @@ public static class AiProductSwitch
         "Sorting incoming mail with TatvaOS AI is not switched on for this organisation.";
 
     /// <summary>
+    /// Organisation types sorting is NOT offered to. Amit, 25 Sept 2026:
+    /// "Don't offer sorting to clinics yet" — sorting sends every new email,
+    /// patients' included, to a provider in the United States with nobody
+    /// clicking, and that waits for an India-region provider (the move
+    /// OpenAiGateway's header already ties to "the moment a hospital asks").
+    /// Clinics sign up as "hospital"; after sign-up only the platform operator
+    /// can change a type, so an organisation cannot relabel itself round this.
+    /// Help me write and suggested replies stay available to them.
+    /// </summary>
+    public static readonly string[] TriageNotOfferedTo = ["hospital"];
+
+    public const string MailTriageNotOffered =
+        "Sorting incoming mail is not available for hospitals and clinics yet. It will be offered once "
+        + "TatvaOS AI runs on a service in India.";
+
+    public static bool TriageOfferedTo(string? orgType) =>
+        !TriageNotOfferedTo.Contains((orgType ?? "").Trim().ToLowerInvariant());
+
+    /// <summary>
     /// Whether the CURRENT tenant has sorting on (mail_ai_triage_since set).
     /// Fail-closed, like the Mail switch.
     /// </summary>
@@ -48,10 +67,13 @@ public static class AiProductSwitch
         if (!tenant.HasTenant) return false;
         try
         {
-            return await db.Tenants.AsNoTracking()
+            // Switched on AND offered to this kind of organisation: a type
+            // changed to hospital after sorting was on stops it here too.
+            var row = await db.Tenants.AsNoTracking()
                 .Where(t => t.Id == tenant.TenantId)
-                .Select(t => t.MailAiTriageSince != null)
+                .Select(t => new { On = t.MailAiTriageSince != null, t.Type })
                 .FirstOrDefaultAsync(ct);
+            return row is not null && row.On && TriageOfferedTo(row.Type);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

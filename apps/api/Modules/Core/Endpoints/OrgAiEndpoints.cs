@@ -53,7 +53,7 @@ public static class OrgAiEndpoints
     {
         var row = await db.Tenants.AsNoTracking()
             .Where(t => t.Id == tenant.TenantId)
-            .Select(t => new { t.AllowAi, t.AllowMailAi, t.MailAiTriageSince })
+            .Select(t => new { t.AllowAi, t.AllowMailAi, t.MailAiTriageSince, t.Type })
             .FirstOrDefaultAsync(ct);
         if (row is null) return Results.NotFound();
 
@@ -99,7 +99,11 @@ public static class OrgAiEndpoints
             // Sorting incoming mail (step 3): its own consent, because it
             // sends mail nobody clicked on. `since` is when it was turned on;
             // only mail that arrived after it is ever sent.
-            mailTriageEnabled = row.MailAiTriageSince != null,
+            mailTriageEnabled = row.MailAiTriageSince != null && AiProductSwitch.TriageOfferedTo(row.Type),
+            // Not offered to hospitals and clinics yet (Amit, 25 Sept 2026);
+            // the screen shows this sentence instead of a switch.
+            mailTriageOffered = AiProductSwitch.TriageOfferedTo(row.Type),
+            mailTriageNotOffered = AiProductSwitch.TriageOfferedTo(row.Type) ? null : AiProductSwitch.MailTriageNotOffered,
             mailTriageSince = row.MailAiTriageSince,
             //
             // Mr. Singh, 25 Sept 2026: the customers include clinics and
@@ -129,6 +133,11 @@ public static class OrgAiEndpoints
         var row = await db.Tenants
             .FirstOrDefaultAsync(t => t.Id == tenant.TenantId, ct);
         if (row is null) return Results.NotFound();
+
+        // Sorting cannot be switched ON for a kind of organisation it is not
+        // offered to. OFF always works.
+        if (req.MailTriage == true && !AiProductSwitch.TriageOfferedTo(row.Type))
+            return Results.BadRequest(new { error = AiProductSwitch.MailTriageNotOffered });
 
         var before = new { allowAi = row.AllowAi, allowMailAi = row.AllowMailAi, triage = row.MailAiTriageSince != null };
         if (req.Enabled is bool enabled) row.AllowAi = enabled;

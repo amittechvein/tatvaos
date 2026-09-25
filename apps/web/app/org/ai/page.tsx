@@ -53,6 +53,9 @@ interface AiState {
   mailTriageEnabled: boolean;
   mailTriageSince: string | null;
   mailTriageDisclosure: string;
+  /** False for hospitals and clinics (Amit, 25 Sept 2026); the sentence says why. */
+  mailTriageOffered: boolean;
+  mailTriageNotOffered: string | null;
   usage: AiUsage;
 }
 
@@ -314,7 +317,9 @@ function MailAiCard({
                   : 'Labels new inbox mail Needs reply, FYI, Updates or Promotions, with tabs to filter by them. Sends each new message in the background.'}
               </p>
             </div>
-            {state.mailTriageEnabled ? (
+            {!state.mailTriageOffered ? (
+              <p className="mb-0 max-w-xs text-[0.75rem] text-ink-muted">{state.mailTriageNotOffered}</p>
+            ) : state.mailTriageEnabled ? (
               <Button variant="danger" disabled={saving} onClick={onTriageOff}>
                 {saving ? 'Turning off…' : 'Turn off sorting'}
               </Button>
