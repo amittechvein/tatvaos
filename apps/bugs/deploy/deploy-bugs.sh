@@ -42,7 +42,9 @@ if ! flock -n 9; then
   die "a deploy holds the lock — held by: $(cat "$LOCKFILE" 2>/dev/null || echo unknown). Nothing changed."
 fi
 printf 'tatvaos-bugs deploy %s pid %s user %s from %s\n' "$(date -u +%FT%TZ)" "$$" "$(id -un)" "${SSH_CONNECTION:-local}" > "$LOCKFILE"
-if pgrep -f "infra/scripts/deploy.sh" >/dev/null; then die "a product deploy.sh is running (outside the lock?) — refusing"; fi
+# Only a real run: the command line STARTS with bash + deploy.sh. A looser
+# match found a shell that merely mentioned the name (25 Sept) and refused.
+if pgrep -f '^(/usr/bin/)?bash (\./|/srv/tatvaos-production/)?infra/scripts/deploy\.sh' >/dev/null; then die "a product deploy.sh is running (outside the lock?) — refusing"; fi
 echo "held"
 
 counts() { docker exec tatvaos-bugs node -e '
