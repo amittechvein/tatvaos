@@ -223,6 +223,21 @@ try {
   await amit.req('POST', `/api/issues/${shut}/actions`, { action: 'status', to: 'closed', body: 'Will not do.' });
   check('a closed issue cannot be taken', (await dev2.req('POST', `/api/issues/${shut}/actions`, { action: 'assign', assignee_id: dev2Me })).status === 403);
 
+  console.log('Sort by due date');
+  // Dates: amitIssue 2020-01-01, free = +3 days, id / shut = no date.
+  await amit.req('POST', `/api/issues/${free}/actions`, { action: 'due', due_date: '2030-06-01' });
+  const order = async (q) => (await amit.req('GET', '/api/issues?' + q)).json.map((x) => x.id);
+  const asc = await order('sort=due_asc');
+  const desc = await order('sort=due_desc');
+  const noDate = [id, shut].sort().join();
+  check('soonest first: 2020 then 2030, no-date last', asc[0] === amitIssue.id && asc[1] === free && asc.slice(2).sort().join() === noDate, asc.join());
+  check('latest first: 2030 then 2020, no-date still last', desc[0] === free && desc[1] === amitIssue.id && desc.slice(2).sort().join() === noDate, desc.join());
+  const upd = (await amit.req('GET', '/api/issues')).json;
+  check('default stays "last updated first"', upd.every((x, k) => k === 0 || upd[k - 1].updated_at >= x.updated_at));
+  check('sort works with a filter', (await order('sort=due_asc&due=set')).join() === [amitIssue.id, free].join());
+  check('unknown sort refused', (await amit.req('GET', '/api/issues?sort=title;DROP')).status === 400);
+  check('sort key from the object prototype refused', (await amit.req('GET', '/api/issues?sort=constructor')).status === 400);
+
   console.log('Rules that protect history');
   check('module with reports cannot be deleted', (await amit.req('DELETE', '/api/modules/' + mail)).status === 409);
   check('sub-module with reports cannot be deleted', (await amit.req('DELETE', '/api/submodules/' + search)).status === 409);

@@ -221,6 +221,8 @@ async function filterBar(params, target, { full }) {
     sel('type', 'Type', [['bug', 'Bug'], ['feature', 'Feature request']]),
     sel('status', 'Status', STATUS_ORDER.map((s) => [s, state.me.statuses[s]])),
     sel('priority', 'Priority', PRIORITIES.map((p) => [p, cap(p)])),
+    target === '/issues' && h('label', {}, h('span', {}, 'Sort'), h('select', { name: 'sort' },
+      [['', 'Last updated'], ['due_asc', 'Due date — soonest first'], ['due_desc', 'Due date — latest first']].map(([v, t]) => h('option', { value: v, selected: (params.get('sort') || '') === v }, t)))),
     sel('due', 'Due', [['overdue', 'Overdue'], ['today', 'Due today'], ['week', 'Due in next 7 days'], ['set', 'Has a due date'], ['none', 'No due date']]),
     full && sel('assignee', 'Developer', [['none', '(unassigned)'], ...devs.map((u) => [u.id, u.name])]),
     full && sel('reporter', 'Tester', testers.map((u) => [u.id, u.name])),
@@ -230,7 +232,7 @@ async function filterBar(params, target, { full }) {
     params.get('scope') && h('input', { type: 'hidden', name: 'scope', value: params.get('scope') }),
     h('div', { class: 'filter-actions' }, h('button', { class: 'btn primary', type: 'submit' }, 'Apply'), h('a', { class: 'btn', href: '#' + target }, 'Clear'))].filter(Boolean));
   // Folded on phones unless a filter is in use; always open on a wide screen.
-  const active = [...params.keys()].filter((k) => !['r', 'mine', 'scope'].includes(k)).length;
+  const active = [...params.keys()].filter((k) => !['r', 'mine', 'scope', 'sort'].includes(k)).length;
   return h('details', { class: 'filter-box', open: active > 0 || window.matchMedia('(min-width: 701px)').matches },
     h('summary', {}, 'Filters', active ? ` (${active} in use)` : ''), form);
 }
@@ -302,6 +304,14 @@ async function issuesView(params) {
     } catch (err) { toast(err.message, true); el.disabled = false; render(); }
   };
   const stop = (e) => e.stopPropagation();
+  // Clicking "Due" sorts soonest first, then latest first, then back.
+  const sort = params.get('sort') || '';
+  const dueHeader = () => {
+    const next = sort === 'due_asc' ? 'due_desc' : sort === 'due_desc' ? '' : 'due_asc';
+    const q = new URLSearchParams(params); if (next) q.set('sort', next); else q.delete('sort');
+    return h('th', { class: 'sortable' + (sort.startsWith('due') ? ' sorted' : '') },
+      h('a', { href: '#/issues' + (q.toString() ? '?' + q : ''), title: 'Sort by due date' }, 'Due', sort === 'due_asc' ? ' ▲' : sort === 'due_desc' ? ' ▼' : ' ↕'));
+  };
   const devCell = (i) => {
     const name = i.assignee_name || i.assignee_email;
     if (mode === 'admin' && i.status !== 'closed') {
@@ -317,7 +327,7 @@ async function issuesView(params) {
   };
   const table = rows.length
     ? h('div', { class: 'table-wrap' }, h('table', { class: 'issues cards' },
-        h('thead', {}, h('tr', {}, ['ID', 'Title', 'Type', 'Module', 'Priority', 'Status', 'Developer', 'Due', 'Reported by', 'Updated'].map((c) => h('th', {}, c)))),
+        h('thead', {}, h('tr', {}, ['ID', 'Title', 'Type', 'Module', 'Priority', 'Status', 'Developer', 'Due', 'Reported by', 'Updated'].map((c) => c === 'Due' ? dueHeader() : h('th', {}, c)))),
         h('tbody', {}, rows.map((i) => h('tr', { onclick: () => { location.hash = '#/issue/' + i.id; } },
           h('td', { class: 'mono' }, h('a', { href: '#/issue/' + i.id }, i.key)),
           h('td', { class: 'title-cell' }, i.title, i.overdue && h('span', { class: 'badge overdue' }, 'Overdue')),

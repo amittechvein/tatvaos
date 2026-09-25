@@ -606,6 +606,19 @@ route('PATCH', /^\/api\/users\/(\d+)$/, async (req, res, s, [id]) => {
 });
 
 // ---- Issues ----------------------------------------------------------------
+// List order (Amit, 25 Sept: sort by due date). A fixed whitelist, never the
+// raw parameter. Issues without a due date always go last, whichever way.
+const LIST_ORDER = {
+  updated: 'i.updated_at DESC',
+  due_asc: 'i.due_date IS NULL, i.due_date ASC, i.updated_at DESC',
+  due_desc: 'i.due_date IS NULL, i.due_date DESC, i.updated_at DESC',
+};
+function listOrder(sort) {
+  if (!sort) return LIST_ORDER.updated;
+  if (!Object.hasOwn(LIST_ORDER, sort)) throw bad('Unknown sort.');
+  return LIST_ORDER[sort];
+}
+
 route('GET', /^\/api\/issues$/, (req, res, s, _, url) => {
   const { where, params } = issueQuery(s, url.searchParams, { scopeMine: url.searchParams.get('mine') === '1' });
   const rows = db.prepare(`
@@ -614,7 +627,7 @@ route('GET', /^\/api\/issues$/, (req, res, s, _, url) => {
            r.name reporter_name, r.email reporter_email, a.name assignee_name, a.email assignee_email
       FROM issues i JOIN modules m ON m.id = i.module_id JOIN submodules sm ON sm.id = i.submodule_id
       JOIN users r ON r.id = i.reporter_id LEFT JOIN users a ON a.id = i.assignee_id
-      ${where} ORDER BY i.updated_at DESC LIMIT 1000`).all(...params);
+      ${where} ORDER BY ${listOrder(url.searchParams.get('sort'))} LIMIT 1000`).all(...params);
   send(res, 200, rows.map(presentIssue));
 });
 
