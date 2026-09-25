@@ -292,3 +292,13 @@ th.sorted a { color: var(--brand); }
 .meter { height: 8px; border-radius: 99px; background: var(--bg); border: 1px solid var(--line); overflow: hidden; margin: 6px 0; }
 .meter-fill { height: 100%; background: var(--brand); }
 .meter-fill.full { background: var(--bad); }
+.dupes { margin-top: -6px; }
+.dupes:empty { display: none; }
+.dupes-head { font-weight: 600; color: var(--warn); }
+.dupes ul { margin: 6px 0; padding-left: 18px; }
+.dupes li { margin: 3px 0; }
+.ai-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: -6px; }
+.ai-row:empty { display: none; }
+.ai-btn { border-color: var(--brand); color: var(--brand); }
+.callout ul { margin: 6px 0 0; padding-left: 18px; font-weight: 400; }
+.warn-text { color: var(--warn); font-weight: 600; }

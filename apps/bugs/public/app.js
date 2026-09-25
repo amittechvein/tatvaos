@@ -435,6 +435,76 @@ async function newIssueView() {
   const files = h('input', { type: 'file', name: 'files', multiple: true });
   const status = h('p', { class: 'muted' });
   const submit = h('button', { class: 'btn primary', type: 'submit' }, 'Submit report');
+  const titleIn = h('input', { name: 'title', required: true, maxlength: 200, placeholder: 'e.g. Search button is not visible' });
+  const detailsTa = h('textarea', { name: 'details', required: true, rows: 7, placeholder: 'What happened, what you expected, and the steps to see it again.' });
+  const prioritySel = h('select', { name: 'priority', required: true }, PRIORITIES.map((p) => h('option', { value: p, selected: p === 'medium' }, cap(p))));
+  let aiAssisted = false;
+
+  // ---- Possible duplicates: plain text matching on the server, no AI. ----
+  const dupes = h('div', { class: 'dupes', 'aria-live': 'polite' });
+  let dupeTimer = null, dupeSeq = 0;
+  const checkDupes = () => {
+    clearTimeout(dupeTimer);
+    dupeTimer = setTimeout(async () => {
+      const seq = ++dupeSeq;
+      const q = new URLSearchParams({ title: titleIn.value, details: detailsTa.value.slice(0, 1500) });
+      if (modSelect.value) q.set('module', modSelect.value);
+      if (subSelect.value) q.set('submodule', subSelect.value);
+      let rows = [];
+      try { rows = await api('GET', '/api/similar?' + q); } catch { return; }
+      if (seq !== dupeSeq) return; // a newer keystroke already asked
+      dupes.replaceChildren(...(rows.length ? [
+        h('div', { class: 'dupes-head' }, 'Possible duplicates — please check these before submitting:'),
+        h('ul', {}, rows.map((r) => h('li', {},
+          h('a', { href: '#/issue/' + r.id, target: '_blank', rel: 'noopener' }, r.key), ' ', r.title, ' ',
+          statusBadge(r.status, r.status_label), h('span', { class: 'muted small' }, ' ' + r.module_name + ' › ' + r.submodule_name)))),
+        h('div', { class: 'muted small' }, 'If one of these is your problem, open it and add a comment instead of a new report.'),
+      ] : []));
+    }, 450);
+  };
+  titleIn.addEventListener('input', checkDupes);
+  subSelect.addEventListener('change', checkDupes);
+
+  // ---- Improve my report: AI, only when an admin has switched it on. ----
+  const aiRow = h('div', { class: 'ai-row' });
+  api('GET', '/api/ai/status').then((st) => {
+    if (!st.ready) return;
+    const btn = h('button', { class: 'btn ai-btn', type: 'button', onclick: async () => {
+      if ((titleIn.value + detailsTa.value).trim().length < 10) return toast('Write a few words about the problem first.', true);
+      btn.disabled = true; btn.textContent = 'Improving…';
+      try {
+        const type = form.querySelector('input[name=type]:checked')?.value || 'bug';
+        const r = await api('POST', '/api/ai/improve', { title: titleIn.value, details: detailsTa.value, type, submodule_id: subSelect.value ? Number(subSelect.value) : null });
+        showSuggestion(r.suggestion, r.data_location);
+      } catch (err) { toast(err.message, true); }
+      btn.disabled = false; btn.textContent = '✨ Improve my report';
+    } }, '✨ Improve my report');
+    aiRow.replaceChildren(btn, h('span', { class: 'muted small' },
+      ' Sends only the title and details you typed (never files or names) to the AI provider in ' + st.data_location + '. You check every word before submitting. ' + st.remaining_today + ' left today.'));
+  }).catch(() => {});
+
+  const showSuggestion = (sg, where) => {
+    const t = h('input', { value: sg.title, maxlength: 200 });
+    const d = h('textarea', { rows: 12 }); d.value = sg.details;
+    modal('Suggested report — check and edit before using it', h('div', {},
+      h('label', {}, h('span', {}, 'Title'), t),
+      h('label', {}, h('span', {}, 'Details'), d),
+      h('p', { class: 'small' }, 'Type: ', h('b', {}, sg.type === 'bug' ? 'Bug' : 'Feature request'),
+        sg.priority ? [' · Priority: ', h('b', {}, cap(sg.priority))] : '',
+        sg.area ? [' · Area: ', h('b', {}, sg.area.label)] : ''),
+      sg.missing.length ? h('div', { class: 'callout' }, 'Please also answer:', h('ul', {}, sg.missing.map((m) => h('li', {}, m)))) : null,
+      h('p', { class: 'muted small' }, 'Written by AI (provider in ' + where + ') from your text. It can be wrong, and it must not add anything that did not happen.')),
+      (dlg) => h('button', { class: 'btn primary', type: 'button', onclick: () => {
+        titleIn.value = t.value; detailsTa.value = d.value;
+        const radio = form.querySelector('input[name=type][value=' + sg.type + ']'); if (radio) radio.checked = true;
+        if (sg.priority) prioritySel.value = sg.priority;
+        if (sg.area && mods.some((m) => m.id === sg.area.module_id)) {
+          modSelect.value = String(sg.area.module_id); modSelect.dispatchEvent(new Event('change'));
+          subSelect.value = String(sg.area.submodule_id);
+        }
+        aiAssisted = true; dlg.close(); checkDupes(); toast('Filled in. Read it through, then submit.');
+      } }, 'Use this'));
+  };
   const form = h('form', { class: 'card form', onsubmit: async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
@@ -443,6 +513,7 @@ async function newIssueView() {
       const r = await api('POST', '/api/issues', {
         module_id: Number(fd.get('module_id')), submodule_id: Number(fd.get('submodule_id')),
         type: fd.get('type'), title: fd.get('title'), details: fd.get('details'), priority: fd.get('priority'),
+        ai_assisted: aiAssisted,
       });
       if (files.files.length) await uploadAll(r.id, r.activity_id, [...files.files], status);
       toast(`${r.key} submitted.`);
@@ -455,10 +526,12 @@ async function newIssueView() {
     h('fieldset', { class: 'radios' }, h('legend', {}, '3. Type'),
       h('label', {}, h('input', { type: 'radio', name: 'type', value: 'bug', checked: true, required: true }), ' Bug'),
       h('label', {}, h('input', { type: 'radio', name: 'type', value: 'feature' }), ' Feature request')),
-    h('label', {}, h('span', {}, '4. Title'), h('input', { name: 'title', required: true, maxlength: 200, placeholder: 'e.g. Search button is not visible' })),
-    h('label', {}, h('span', {}, 'Details'), h('textarea', { name: 'details', required: true, rows: 7, placeholder: 'What happened, what you expected, and the steps to see it again.' })),
+    h('label', {}, h('span', {}, '4. Title'), titleIn),
+    dupes,
+    h('label', {}, h('span', {}, 'Details'), detailsTa),
+    aiRow,
     h('div', { class: 'grid2' },
-      h('label', {}, h('span', {}, 'Priority'), h('select', { name: 'priority', required: true }, PRIORITIES.map((p) => h('option', { value: p, selected: p === 'medium' }, cap(p))))),
+      h('label', {}, h('span', {}, 'Priority'), prioritySel),
       h('label', {}, h('span', {}, 'Attachments (screenshots, screen recordings — up to 100 MB each)'), files)),
     h('p', { class: 'privacy-note' }, '⚠ Do not upload screenshots or recordings that show real customers’ mail or personal data. Crop or blur it first, or describe it in words.'),
     h('p', { class: 'muted small' }, `Reported by ${state.me.user.name} as ${ROLE_LABEL[mode]}.`),
@@ -606,7 +679,7 @@ function activityItem(a) {
   const role = ROLE_LABEL[a.actor_role] || a.actor_role;
   const st = state.me.statuses;
   const text = {
-    created: () => `Created by ${who} · role: ${role}` + (a.meta ? ` · ${a.meta.module} › ${a.meta.submodule}` : ''),
+    created: () => `Created by ${who} · role: ${role}` + (a.meta ? ` · ${a.meta.module} › ${a.meta.submodule}` : '') + (a.meta?.ai_assisted ? ' · written with AI help' : ''),
     comment: () => `${who} commented`,
     reply: () => `${who} replied with the information requested`,
     info_request: () => `${who} requested more information`,
@@ -797,7 +870,32 @@ async function settingsView() {
     h('div', { class: 'meter' }, h('div', { class: 'meter-fill' + (pct >= 90 ? ' full' : ''), style: null, 'data-pct': pct })),
     h('p', { class: 'muted small' }, 'Screenshots and recordings share this budget. When it is full, new files are refused with a message; reports and comments still work.'));
   const fill = storageCard.querySelector('.meter-fill'); fill.style.width = pct + '%';
-  return h('div', {}, h('div', { class: 'page-head' }, h('h1', {}, 'Settings')), mine, mailCard, storageCard, log);
+  // ---- AI: "Improve my report". Off until an admin turns it on. ----
+  const ai = s.ai;
+  const aiOn = h('input', { type: 'checkbox', checked: ai.enabled });
+  const aiUrl = h('input', { value: ai.base_url, placeholder: 'https://api.openai.com/v1' });
+  const aiModel = h('input', { value: ai.model, placeholder: 'e.g. gpt-4o-mini' });
+  const aiLoc = h('input', { value: ai.data_location, placeholder: 'e.g. United States' });
+  const aiLimit = h('input', { type: 'number', min: 0, max: 10000, value: ai.daily_limit });
+  const aiKey = h('input', { type: 'password', autocomplete: 'off', placeholder: ai.key_set ? 'A key is saved — paste a new one to replace it' : 'Paste the key' });
+  const aiCard = h('section', { class: 'card form' }, h('h3', {}, 'AI: Improve my report'),
+    h('p', { class: 'muted small' }, 'When on, testers get an "Improve my report" button. It sends only the title and details they typed (never files, names or other issues) to the AI provider below, and they check every word before submitting. Use a key made only for this tracker.'),
+    h('p', { class: ai.ready ? 'small' : 'small warn-text' }, ai.ready ? 'Ready. Used ' + ai.used_today + ' of ' + ai.daily_limit + ' times today.' : 'Not in use: ' + ai.problem),
+    h('label', { class: 'check' }, aiOn, ' Turn on Improve my report'),
+    h('div', { class: 'grid2' },
+      h('label', {}, h('span', {}, 'AI address (OpenAI-compatible)'), aiUrl),
+      h('label', {}, h('span', {}, 'Model'), aiModel)),
+    h('div', { class: 'grid2' },
+      h('label', {}, h('span', {}, 'Where the data goes (shown to testers)'), aiLoc),
+      h('label', {}, h('span', {}, 'Uses per day, whole team'), aiLimit)),
+    h('label', {}, h('span', {}, 'AI key ' + (ai.key_set ? '(saved)' : '(not set)')), aiKey),
+    h('div', {}, h('button', { class: 'btn primary', onclick: async () => {
+      try {
+        await api('PUT', '/api/settings', { ai: { enabled: aiOn.checked, base_url: aiUrl.value, model: aiModel.value, data_location: aiLoc.value, daily_limit: Number(aiLimit.value), api_key: aiKey.value || undefined } });
+        aiKey.value = ''; toast('Saved.'); render();
+      } catch (e) { toast(e.message, true); }
+    } }, 'Save AI settings')));
+  return h('div', {}, h('div', { class: 'page-head' }, h('h1', {}, 'Settings')), mine, mailCard, aiCard, storageCard, log);
 }
 
 // ---------------------------------------------------------------------------
