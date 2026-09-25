@@ -110,7 +110,7 @@ try {
   check('unsigned visitor still cannot open the attachment', (await outsider.req('GET', '/api/attachments/' + up.json.id)).status === 401);
 
   console.log('Assign and work (developer)');
-  check('developer mode cannot assign an unassigned issue', (await rahul.req('POST', `/api/issues/${id}/actions`, { action: 'assign', assignee_id: 2 })).status === 403);
+  check('developer cannot hand an unassigned issue to someone else', (await rahul.req('POST', `/api/issues/${id}/actions`, { action: 'assign', assignee_id: 4 /* Dev Two */ })).status === 403);
   const users = (await amit.req('GET', '/api/users')).json;
   const rahulId = users.find((u) => u.email === 'rahul@techvein.com').id;
   const dev2Id = users.find((u) => u.email === 'dev2@techvein.com').id;
@@ -189,6 +189,22 @@ try {
   check('tester cannot read reports', (await priya.req('GET', '/api/reports?group=module')).status === 403);
   const csv = await amit.req('GET', '/api/issues.csv');
   check('CSV export', csv.status === 200 && csv.text.includes('TV-000001'));
+
+  console.log('Assign to me');
+  const free = (await priya.req('POST', '/api/issues', { module_id: mail, submodule_id: search, type: 'bug', title: 'Nobody has this yet', details: 'x', priority: 'low' })).json.id;
+  const dev2Me = (await dev2.req('GET', '/api/me')).json.user.id;
+  check('developer is offered Assign to me on a free issue', (await dev2.req('GET', '/api/issues/' + free)).json.can.take === true);
+  check('developer cannot hand a free issue to someone else', (await dev2.req('POST', `/api/issues/${free}/actions`, { action: 'assign', assignee_id: rahulId })).status === 403);
+  check('tester cannot take an issue', (await priya.req('POST', `/api/issues/${free}/actions`, { action: 'assign', assignee_id: priyaId })).status === 403);
+  check('developer takes it', (await dev2.req('POST', `/api/issues/${free}/actions`, { action: 'assign', assignee_id: dev2Me })).status === 200);
+  const took = (await dev2.req('GET', '/api/issues/' + free)).json;
+  check('…now assigned to him, recorded as Developer', took.issue.assignee_id === dev2Me && took.activity.at(-1).kind === 'assigned' && took.activity.at(-1).actor_role === 'developer');
+  check('…and he can work on it', took.can.moves.includes('under_review'));
+  check('Rahul cannot take it from him', (await rahul.req('POST', `/api/issues/${free}/actions`, { action: 'assign', assignee_id: rahulId })).status === 403);
+  check('…and is not offered the button', (await rahul.req('GET', '/api/issues/' + free)).json.can.take === false);
+  const shut = (await priya.req('POST', '/api/issues', { module_id: mail, submodule_id: search, type: 'feature', title: 'Declined idea', details: 'x', priority: 'low' })).json.id;
+  await amit.req('POST', `/api/issues/${shut}/actions`, { action: 'status', to: 'closed', body: 'Will not do.' });
+  check('a closed issue cannot be taken', (await dev2.req('POST', `/api/issues/${shut}/actions`, { action: 'assign', assignee_id: dev2Me })).status === 403);
 
   console.log('Rules that protect history');
   check('module with reports cannot be deleted', (await amit.req('DELETE', '/api/modules/' + mail)).status === 409);

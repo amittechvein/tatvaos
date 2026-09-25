@@ -663,6 +663,7 @@ route('GET', /^\/api\/issues\/(\d+)$/, (req, res, s, [id]) => {
       moves: allowedMoves(s, issue),
       comment: true,
       assign: s.mode === 'admin' || (s.mode === 'developer' && issue.assignee_id === s.user.id),
+      take: s.mode === 'developer' && issue.assignee_id === null && issue.status !== 'closed',
       due: actsAsDeveloper(s, issue),
       edit: s.mode === 'admin' || (s.mode === 'tester' && issue.reporter_id === s.user.id && ['pending', 'more_info'].includes(issue.status)),
       request_info: actsAsDeveloper(s, issue) && ['pending', 'under_review', 'under_dev', 'reopened'].includes(issue.status),
@@ -717,8 +718,11 @@ route('POST', /^\/api\/issues\/(\d+)\/actions$/, async (req, res, s, [id]) => {
       break;
     }
     case 'assign': {
-      if (!(s.mode === 'admin' || (s.mode === 'developer' && issue.assignee_id === s.user.id))) throw forbidden();
       const to = b.assignee_id === null ? null : int(b.assignee_id);
+      // "Assign to me" (Amit, 25 Sept): a developer may take an issue nobody
+      // has. Only for themselves, never over someone else's, never a closed one.
+      const takingFree = s.mode === 'developer' && issue.assignee_id === null && to === s.user.id && issue.status !== 'closed';
+      if (!(s.mode === 'admin' || (s.mode === 'developer' && issue.assignee_id === s.user.id) || takingFree)) throw forbidden();
       if (to !== null && !db.prepare('SELECT 1 FROM users WHERE id = ? AND active = 1 AND is_developer = 1').get(to)) throw bad('Choose an active developer.');
       if (to === issue.assignee_id) throw bad('The issue is already with that person.');
       const toUser = to && db.prepare('SELECT * FROM users WHERE id = ?').get(to);

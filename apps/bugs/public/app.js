@@ -466,7 +466,13 @@ async function issueView(id) {
         h('p', { class: 'mono muted' }, h('a', { href: '#/issues' }, '← Issues'), '  ·  ', i.key),
         h('h1', {}, i.title),
         h('div', { class: 'row' }, typeBadge(i.type), statusBadge(i.status, i.status_label), priorityBadge(i.priority), i.overdue && h('span', { class: 'badge overdue' }, 'Overdue'))),
-      h('div', { class: 'row wrap' }, moveButtons, can.request_info && !can.moves.includes('more_info') && h('button', { class: 'btn', onclick: requestInfo }, 'Ask for information'))),
+      h('div', { class: 'row wrap' },
+        can.take && h('button', { class: 'btn primary', onclick: async (e) => {
+          e.target.disabled = true;
+          try { await act({ action: 'assign', assignee_id: state.me.user.id }); toast(`${i.key} is now assigned to you.`); }
+          catch (err) { toast(err.message, true); e.target.disabled = false; }
+        } }, 'Assign to me'),
+        moveButtons, can.request_info && !can.moves.includes('more_info') && h('button', { class: 'btn', onclick: requestInfo }, 'Ask for information'))),
     h('div', { class: 'issue-grid' },
       h('div', {},
         h('section', { class: 'card' }, h('h3', {}, 'Details'), h('div', { class: 'prose' }, i.details)),
@@ -501,7 +507,7 @@ function activityItem(a) {
     comment: () => `${who} commented`,
     reply: () => `${who} replied with the information requested`,
     info_request: () => `${who} requested more information`,
-    assigned: () => a.meta?.to ? `${who} assigned it to ${a.meta.to}` : `${who} removed the developer`,
+    assigned: () => a.meta?.to ? (a.meta.to === who ? `${who} assigned it to themselves` : `${who} assigned it to ${a.meta.to}`) : `${who} removed the developer`,
     status: () => `${who} changed status: ${st[a.from_status]} → ${st[a.to_status]}`,
     fixed: () => `${who} added fix details and marked it Fixed`,
     closed: () => a.meta?.closed_without_fix ? `${who} closed it without a fix` : `${who} verified the fix and closed it`,
