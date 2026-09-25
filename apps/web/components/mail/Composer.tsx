@@ -11,6 +11,8 @@ import { linkApi } from '@/lib/space';
 import { fetchMyStorage } from '@/lib/myStorage';
 import { cleanPastedHtml } from '@/lib/pasteHtml';
 import { cleanSignatureHtml } from '@/lib/signatureHtml';
+import { splitPlainDraft, textToHtml, typedRange, typedText } from '@/lib/mailAi';
+import { HelpMeWriteButton, HelpMeWritePanel, useMailAiAvailable } from './HelpMeWrite';
 import { cleanComposeHtml, formatHtmlSource } from '@/lib/composeHtml';
 import { PictureRefused, pictureTag, pictureToDataUrl } from '@/lib/composeImage';
 import { FormatBar } from './FormatBar';
@@ -721,6 +723,72 @@ export function Composer({
     // Our own escaped and sanitised output — see quoteHtml. Never message HTML.
     if (block) block.outerHTML = quoteHtml(replyTo, mode);
   }, [mode, replyTo, plain]);
+
+  // ── HELP ME WRITE (TatvaOS AI, 25 Sept 2026). ───────────────────────────
+  //
+  //  Only the person's own words go: typedRange / splitPlainDraft stop at the
+  //  signature and the quote. The rewrite goes in through execCommand, like
+  //  paste, so ctrl+Z undoes it — and execCommand fires this editor's input
+  //  event synchronously, which is why `aiReplacing` exists: without it the
+  //  replace itself would count as "typed since", and Undo would vanish the
+  //  instant it appeared.
+  const aiAvailable = useMailAiAvailable();
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiEdited, setAiEdited] = useState(true);
+  const aiReplacing = useRef(false);
+  const aiPlainBefore = useRef<string | null>(null);
+
+  function aiReadDraft(): string {
+    if (plain) return splitPlainDraft(plainBody, [seededPlainSig.current, plainQuote.current]).typed;
+    return editorRef.current ? typedText(editorRef.current) : '';
+  }
+
+  /** Pictures in the typed part would be lost to a plain-text rewrite. */
+  function aiRefuseReason(): string | null {
+    if (plain || !editorRef.current) return null;
+    return typedRange(editorRef.current).cloneContents().querySelector('img')
+      ? 'Help me write cannot rewrite a draft with a picture in it yet — the picture would be lost. Move the picture below your signature, or rewrite the text first and add the picture after.'
+      : null;
+  }
+
+  function aiReplace(text: string) {
+    if (plain) {
+      const { tail } = splitPlainDraft(plainBody, [seededPlainSig.current, plainQuote.current]);
+      aiPlainBefore.current = plainBody;
+      setPlainBody(text + tail);
+      setAiEdited(false);
+      return;
+    }
+    const el = editorRef.current;
+    if (!el) return;
+    const range = typedRange(el);
+    el.focus({ preventScroll: true });
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    aiReplacing.current = true;
+    try {
+      // Escaped text with <br>s — see textToHtml. Never the model's markup.
+      document.execCommand('insertHTML', false, textToHtml(text));
+    } finally {
+      aiReplacing.current = false;
+    }
+    setBodyEdits((n) => n + 1);
+    setAiEdited(false);
+  }
+
+  function aiUndo() {
+    if (plain) {
+      if (aiPlainBefore.current !== null) setPlainBody(aiPlainBefore.current);
+      aiPlainBefore.current = null;
+    } else {
+      editorRef.current?.focus({ preventScroll: true });
+      aiReplacing.current = true;
+      try { document.execCommand('undo'); } finally { aiReplacing.current = false; }
+      setBodyEdits((n) => n + 1);
+    }
+    setAiEdited(true);
+  }
 
   const moreRef = useRef<HTMLDivElement>(null);
   const emojiBtnRef = useRef<HTMLSpanElement>(null);
@@ -1523,7 +1591,7 @@ export function Composer({
         {plain ? (
           <textarea
             value={plainBody}
-            onChange={(e) => setPlainBody(e.target.value)}
+            onChange={(e) => { setPlainBody(e.target.value); setAiEdited(true); }}
             spellCheck={spell}
             placeholder="Write your message"
             // grow shrink-0 for the same spill bug as the rich editor below —
@@ -1549,7 +1617,10 @@ export function Composer({
             suppressContentEditableWarning
             spellCheck={spell}
             data-placeholder="Write your message"
-            onInput={() => { setBodyEdits((n) => n + 1); detectMention(); }}
+            onInput={() => {
+              setBodyEdits((n) => n + 1);
+              if (!aiReplacing.current) { setAiEdited(true); detectMention(); }
+            }}
             onKeyDown={onEditorKeyDown}
             onPaste={onEditorPaste}
             // The popup is positioned at the caret; a scrolled editor moves
@@ -1798,6 +1869,18 @@ export function Composer({
           <div className="border-t border-line bg-danger/5 px-4 py-2 text-sm text-danger">{error}</div>
         )}
 
+        {aiAvailable && htmlSource === null && (
+          <HelpMeWritePanel
+            open={aiOpen}
+            onClose={() => setAiOpen(false)}
+            readDraft={aiReadDraft}
+            replace={aiReplace}
+            undo={aiUndo}
+            editedSinceReplace={aiEdited}
+            refuseReason={aiRefuseReason}
+          />
+        )}
+
         {/* Formatting options (FormatBar explains why a row of its own). Kept
             on screen while the HTML view is open, because its </> button is
             the way back out of it. */}
@@ -1849,6 +1932,9 @@ export function Composer({
           <span ref={emojiBtnRef} className="inline-flex">
             <ToolBtn label="Emoji" onClick={() => setEmoji((v) => !v)}><Icon name="emoji" className="h-4 w-4" /></ToolBtn>
           </span>
+          {/* Not in the HTML view: there the rich editor is hidden and stale,
+              and Help me write reads the editor, not the source being edited. */}
+          {aiAvailable && htmlSource === null && <HelpMeWriteButton open={aiOpen} onToggle={() => setAiOpen((v) => !v)} />}
 
           {/* Drive, Schedule send and Confidential are not backed by a product
               yet. They sat here as three greyed icons until 21 Sept 2026, when

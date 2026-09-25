@@ -8,7 +8,7 @@ type IconName =
   | 'bookmark' | 'settings' | 'plus-circle'
   | 'expand' | 'collapse' | 'minimise' | 'list-ul' | 'list-ol' | 'link' | 'emoji'
   | 'split-v' | 'split-h' | 'split-none' | 'chevron-down'
-  | 'drive' | 'clock' | 'lock' | 'print' | 'spellcheck' | 'image';
+  | 'drive' | 'clock' | 'lock' | 'print' | 'spellcheck' | 'image' | 'sparkle';
 
 const PATHS: Record<IconName, string> = {
   inbox: 'M4 13h4l2 3h4l2-3h4M4 13l2-8h12l2 8M4 13v6h16v-6',
@@ -57,6 +57,8 @@ const PATHS: Record<IconName, string> = {
   lock: 'M6 10V8a6 6 0 0112 0v2M5 10h14v10H5z',
   print: 'M6 9V3h12v6M6 18H4v-6h16v6h-2M8 14h8v6H8z',
   spellcheck: 'M5 15l3-8 3 8M6 12h4M14 9a3 3 0 013 3v3M20 12a3 3 0 00-3 3',
+  // TatvaOS AI. A four-point star and a small one — the sign people already read as "AI".
+  sparkle: 'M10 3l1.8 4.7L16.5 9.5l-4.7 1.8L10 16l-1.8-4.7L3.5 9.5l4.7-1.8L10 3zM18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9L18 14z',
 };
 
 export function Icon({

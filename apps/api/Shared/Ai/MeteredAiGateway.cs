@@ -23,6 +23,8 @@ namespace TatvaOS.Api.Shared.Ai;
 ///  ORDER OF CHECKS, and what each costs the customer:
 ///    1. not configured / no consent → the inner gateway's own refusal,
 ///       NOT metered (nothing was about to be sent)
+///   1b. a product switch that is off (mail.* needs allow_mail_ai —
+///       AiProductSwitch) → refused, NOT metered, for the same reason
 ///    2. the operator's pause        → refused_paused
 ///    3. the person's hourly limit   → refused_person_limit
 ///    4. the organisation's month    → refused_org_limit
@@ -151,6 +153,12 @@ public sealed class MeteredAiGateway(
         //    refusal, unmetered.
         if (!inner.IsConfigured || !tenant.HasTenant || !await inner.EnabledForTenantAsync(ct))
             return await inner.CompleteAsync(instruction, input, ct, feature);
+
+        // 1b. The product's own switch, where it has one (Mail, 25 Sept 2026).
+        //     Same standing as consent: nothing was about to be sent, so not
+        //     metered — and refused here so no Mail caller can forget it.
+        if (AiProductSwitch.IsMail(feature) && !await AiProductSwitch.MailAllowedAsync(db, tenant, log, ct))
+            return AiResult.Failed(AiProductSwitch.MailOff);
 
         var now = DateTimeOffset.UtcNow;
         var user = tenant.UserId;

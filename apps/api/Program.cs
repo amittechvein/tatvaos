@@ -828,6 +828,9 @@ app.MapMailEndpoints();
 // Mail categories - the colour system. A name and a colour somebody made for
 // themselves; filters apply them, nothing infers them (see the endpoint header).
 app.MapMailCategoryEndpoints();
+// TatvaOS AI in Mail — Help me write. Governed by allow_ai AND allow_mail_ai,
+// both enforced inside the AI gateway (AiProductSwitch).
+app.MapMailAiEndpoints();
 app.MapFamilyEndpoints();
 app.MapSpaceEndpoints();
 app.MapSpaceDriveEndpoints();

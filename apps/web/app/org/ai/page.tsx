@@ -46,6 +46,9 @@ interface AiState {
   platformConfigured: boolean;
   model: string | null;
   disclosure: string;
+  /** Mail's own switch (allow_mail_ai). Works only while `enabled` is on. */
+  mailEnabled: boolean;
+  mailDisclosure: string;
   usage: AiUsage;
 }
 
@@ -53,6 +56,7 @@ const FEATURE_NAMES: Record<string, string> = {
   'connect.minutes': 'Meeting minutes',
   docs: 'Docs',
   'platform.probe': 'Platform check',
+  'mail.rewrite': 'Mail — Help me write',
 };
 
 const fmt = (n: number) => n.toLocaleString('en-IN');
@@ -64,6 +68,7 @@ export default function OrgAiPage() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmOn, setConfirmOn] = useState(false);
+  const [confirmMail, setConfirmMail] = useState(false);
 
   const load = useCallback(() => {
     setError(null);
@@ -77,15 +82,16 @@ export default function OrgAiPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  async function save(next: boolean) {
+  async function save(change: { enabled?: boolean; mail?: boolean }) {
     setSaving(true);
     setError(null);
     try {
       const r = await authedFetch('/org/ai', {
-        method: 'PUT', body: JSON.stringify({ enabled: next }),
+        method: 'PUT', body: JSON.stringify(change),
       });
       if (!r.ok) throw new Error('Could not change the AI setting.');
       setConfirmOn(false);
+      setConfirmMail(false);
       load();
     } catch (e) {
       setError((e as Error).message);
@@ -108,10 +114,10 @@ export default function OrgAiPage() {
 
       <Card
         title="TatvaOS AI"
-        subtitle="Meeting minutes today; mail summaries and drafting later"
+        subtitle="Meeting minutes, and Mail when switched on below"
         actions={
           !state ? undefined : !state.platformConfigured ? undefined : state.enabled ? (
-            <Button variant="danger" disabled={saving} onClick={() => save(false)}>
+            <Button variant="danger" disabled={saving} onClick={() => save({ enabled: false })}>
               {saving ? 'Turning off…' : 'Turn off for this organisation'}
             </Button>
           ) : (
@@ -159,7 +165,39 @@ export default function OrgAiPage() {
         )}
       </Card>
 
+      {state?.platformConfigured && (
+        <MailAiCard
+          state={state}
+          saving={saving}
+          onOff={() => save({ mail: false })}
+          onOn={() => setConfirmMail(true)}
+        />
+      )}
+
       {state?.platformConfigured && <UsageCard usage={state.usage} />}
+
+      {confirmMail && state && (
+        <Modal
+          onClose={() => !saving && setConfirmMail(false)}
+          title="Turn on TatvaOS AI in Mail?"
+          busy={saving}
+        >
+          <p>{state.mailDisclosure}</p>
+          <p className="text-ink-muted">
+            People will see Help me write in the mail composer. It rewrites only the
+            text they typed and only when they ask; it never reads the message they
+            are replying to. Turning it off again is one click and takes effect at once.
+          </p>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="ghost" disabled={saving} onClick={() => setConfirmMail(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" disabled={saving} onClick={() => save({ mail: true })}>
+              {saving ? 'Turning on…' : 'I agree — turn it on for Mail'}
+            </Button>
+          </div>
+        </Modal>
+      )}
 
       {confirmOn && state && (
         <Modal
@@ -176,13 +214,67 @@ export default function OrgAiPage() {
             <Button variant="ghost" disabled={saving} onClick={() => setConfirmOn(false)}>
               Cancel
             </Button>
-            <Button variant="primary" disabled={saving} onClick={() => save(true)}>
+            <Button variant="primary" disabled={saving} onClick={() => save({ enabled: true })}>
               {saving ? 'Turning on…' : 'I agree — turn it on'}
             </Button>
           </div>
         </Modal>
       )}
     </AdminShell>
+  );
+}
+
+/**
+ * Mail's own switch (allow_mail_ai). Separate from the organisation's consent
+ * above because an organisation may want AI meeting notes and still keep
+ * every email off the provider — the reason Translate stays on our own server.
+ * Same asymmetry as above: ON asks first, OFF is immediate.
+ */
+function MailAiCard({
+  state, saving, onOn, onOff,
+}: { state: AiState; saving: boolean; onOn: () => void; onOff: () => void }) {
+  const live = state.enabled && state.mailEnabled;
+  return (
+    <Card
+      title="TatvaOS AI in Mail"
+      subtitle="Help me write in the composer"
+      actions={
+        state.mailEnabled ? (
+          <Button variant="danger" disabled={saving} onClick={onOff}>
+            {saving ? 'Turning off…' : 'Turn off for Mail'}
+          </Button>
+        ) : (
+          <Button variant="primary" disabled={saving || !state.enabled} onClick={onOn}>
+            Turn on for Mail
+          </Button>
+        )
+      }
+    >
+      {live && (
+        <>
+          <p className="mb-2">
+            <Badge tone="ok">On</Badge>{' '}
+            People can ask TatvaOS AI to rewrite a draft. Only the text they typed is
+            sent, and only when they ask.
+          </p>
+          <p className="text-ink-muted text-[0.75rem] mb-0">{state.mailDisclosure}</p>
+        </>
+      )}
+      {state.mailEnabled && !state.enabled && (
+        <p className="mb-0">
+          <Badge tone="neutral">Waiting</Badge>{' '}
+          Mail is switched on, but TatvaOS AI is off for the organisation above, so
+          nothing from Mail is sent.
+        </p>
+      )}
+      {!state.mailEnabled && (
+        <p className="mb-0">
+          <Badge tone="neutral">Off</Badge>{' '}
+          Nothing from Mail is sent to TatvaOS AI, and the composer shows no AI button.
+          {!state.enabled && ' Turn on TatvaOS AI for the organisation first.'}
+        </p>
+      )}
+    </Card>
   );
 }
 
