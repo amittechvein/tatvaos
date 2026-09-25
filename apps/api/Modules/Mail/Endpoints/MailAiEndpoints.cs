@@ -115,6 +115,8 @@ public static class MailAiEndpoints
         return Results.Ok(new
         {
             available = true,
+            // Whether the inbox should show the sorting tabs and labels (step 3).
+            triage = await AiProductSwitch.TriageAllowedAsync(db, tenant, logs.CreateLogger("MailAi"), ct),
             maxCharacters = MaxRewriteCharacters,
             styles = Styles.Keys,
         });

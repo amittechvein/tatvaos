@@ -70,6 +70,14 @@ public class Tenant
     /// </summary>
     public bool AllowMailAi { get; set; }
 
+    /// <summary>
+    /// TatvaOS AI sorts incoming inbox mail since this moment; null = off.
+    /// Needs AllowAi and AllowMailAi too. Only mail that ARRIVED after it is
+    /// ever sent. Enforced in the gateway on "mail.triage" (AiProductSwitch).
+    /// Column: 20260925-b-mail-ai-triage.sql.
+    /// </summary>
+    public DateTimeOffset? MailAiTriageSince { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? SuspendedAt { get; set; }
     public DateTimeOffset? TrialEndsAt { get; set; }
@@ -824,6 +832,16 @@ public class Message : TatvaOS.Api.Modules.Mail.IMailSortable
     /// attachment blobs: a large index full of matches nobody is looking for.
     /// </summary>
     public string? BodyText { get; set; }
+
+    /// <summary>
+    /// TatvaOS AI's guess at what kind of mail this is — needs_reply, fyi,
+    /// updates, promotions (MailTriage.Labels). NOT a category: categories are
+    /// made by people. Null until sorted, and cleared when sorting is off.
+    /// </summary>
+    public string? AiLabel { get; set; }
+
+    /// <summary>When the sorter claimed this message; with no label = looked at, left alone.</summary>
+    public DateTimeOffset? AiLabelledAt { get; set; }
 
     /// <summary>
     /// Where the maildir file lives, relative to the vmail root, with the

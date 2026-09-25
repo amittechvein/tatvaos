@@ -23,8 +23,9 @@ namespace TatvaOS.Api.Shared.Ai;
 ///  ORDER OF CHECKS, and what each costs the customer:
 ///    1. not configured / no consent → the inner gateway's own refusal,
 ///       NOT metered (nothing was about to be sent)
-///   1b. a product switch that is off (mail.* needs allow_mail_ai —
-///       AiProductSwitch) → refused, NOT metered, for the same reason
+///   1b. a product switch that is off (mail.* needs allow_mail_ai;
+///       mail.triage also needs mail_ai_triage_since — AiProductSwitch)
+///       → refused, NOT metered, for the same reason
 ///    2. the operator's pause        → refused_paused
 ///    3. the person's hourly limit   → refused_person_limit
 ///    4. the organisation's month    → refused_org_limit
@@ -159,6 +160,11 @@ public sealed class MeteredAiGateway(
         //     metered — and refused here so no Mail caller can forget it.
         if (AiProductSwitch.IsMail(feature) && !await AiProductSwitch.MailAllowedAsync(db, tenant, log, ct))
             return AiResult.Failed(AiProductSwitch.MailOff);
+        //     Sorting incoming mail has a switch of its own on top (step 3):
+        //     it sends mail nobody clicked on.
+        if (feature == AiProductSwitch.MailTriageFeature
+            && !await AiProductSwitch.TriageAllowedAsync(db, tenant, log, ct))
+            return AiResult.Failed(AiProductSwitch.MailTriageOff);
 
         var now = DateTimeOffset.UtcNow;
         var user = tenant.UserId;

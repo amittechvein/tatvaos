@@ -16,6 +16,8 @@ import { MessageList, type MailListRow } from '@/components/mail/MessageList';
 import { MessageView } from '@/components/mail/MessageView';
 import { Composer, type ComposeMode } from '@/components/mail/Composer';
 import { SuggestedReplies } from '@/components/mail/SuggestedReplies';
+import { useMailAiStatus } from '@/components/mail/HelpMeWrite';
+import { AI_LABELS } from '@/lib/mailAi';
 import { dockHasRoom, layoutDock } from '@/lib/composerDock';
 import { useMailbox } from '@/components/mail/MailboxSwitcher';
 import { SearchChips } from '@/components/mail/SearchChips';
@@ -114,6 +116,10 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   // a field that was never really there.
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [view, setView] = useState<ListView>('conversations');
+  // TatvaOS AI's inbox tab (Mail AI step 3): null = All. Filtered by the
+  // server, so the total and the paging describe the tab.
+  const [aiTab, setAiTab] = useState<string | null>(null);
+  const aiStatus = useMailAiStatus();
   /**
    * Which open is the current one. Incremented on every row click; a fetch
    * that lands holding an older number is from a row the person has already
@@ -284,7 +290,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
           // far more mail than the message list's equivalent page.
           const take = size === 'all' ? SERVER_MAX_TAKE : size;
           const page = await mailApi.folderThreads(
-            authedFetch, folderId, { skip: skipTo, take, mailboxId },
+            authedFetch, folderId, { skip: skipTo, take, mailboxId, aiLabel: aiTab },
           );
           setThreads(page.threads);
           setMessages([]);
@@ -336,7 +342,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
         setLoadingAll(false);
       }
     },
-    [authedFetch, mailboxId, view],
+    [authedFetch, mailboxId, view, aiTab],
   );
 
   const loadMessages = useCallback(
@@ -391,6 +397,8 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   //  "click three times to open a mail" bug. Only an actual navigation to a
   //  different folder should reset the view.
   const folderId = folder?.id;
+  // A TatvaOS AI tab belongs to one inbox; another folder or mailbox starts at All.
+  useEffect(() => { setAiTab(null); }, [folderId, mailboxId]);
   useEffect(() => {
     if (!folderId) return;
     setOpen(null);
@@ -422,8 +430,10 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
         // still moved the total, so "Showing 1-3 of 7" appeared under three
         // rows and looked like paging had broken.
         if (view === 'conversations') {
+          // The tab too: a tick without it would put the whole inbox back
+          // under a "Needs reply" heading.
           const page = await mailApi.folderThreads(
-            authedFetch, folderId, { skip, take: pageSize, mailboxId },
+            authedFetch, folderId, { skip, take: pageSize, mailboxId, aiLabel: aiTab },
           );
           setThreads(page.threads);
           setTotal(page.total);
@@ -463,7 +473,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
       clearInterval(t);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [folderId, skip, query, authedFetch, refreshFolders, mailboxId, pageSize, view]);
+  }, [folderId, skip, query, authedFetch, refreshFolders, mailboxId, pageSize, view, aiTab]);
 
   // ---- Search ---------------------------------------------------------
   //
@@ -517,6 +527,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
       isFlagged: t.isFlagged,
       hasAttachments: t.hasAttachments,
       count: t.count,
+      aiLabel: t.aiLabel,
     })),
     [threads],
   );
@@ -1144,6 +1155,31 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
             so it moves the list down instead of covering it — and absent
             entirely for a search that is only words. */}
         <SearchChips value={query} onChange={setQuery} />
+
+        {/* TatvaOS AI's inbox tabs (Mail AI step 3). Inbox only, conversation
+            view only (the server filters conversations), never over a search,
+            and only while the organisation has sorting on. */}
+        {aiStatus?.triage && folder?.slug === 'inbox' && inConversationView && !query && (
+          <div className="flex flex-wrap items-center gap-1 px-4 pt-1" role="tablist" aria-label="Sorted by TatvaOS AI">
+            {[{ label: null as string | null, name: 'All' }, ...AI_LABELS].map((t) => (
+              <button
+                key={t.label ?? 'all'}
+                type="button"
+                role="tab"
+                aria-selected={aiTab === t.label}
+                onClick={() => setAiTab(t.label)}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                  aiTab === t.label ? 'bg-brand-600 text-white' : 'text-ink-muted hover:bg-surface hover:text-ink'
+                }`}
+              >
+                {t.name}
+              </button>
+            ))}
+            <span className="ml-1 inline-flex items-center gap-1 text-[10px] text-ink-faint" title="These labels are TatvaOS AI's guesses">
+              <Icon name="sparkle" className="h-3 w-3" /> TatvaOS AI
+            </span>
+          </div>
+        )}
 
         {/* Sub-bar: bulk actions or paging */}
         <div className="flex items-center gap-1 px-4 py-1 text-xs text-ink-muted">

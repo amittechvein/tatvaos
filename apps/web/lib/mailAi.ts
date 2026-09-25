@@ -57,6 +57,8 @@ export interface MailAiStatus {
   available: boolean;
   /** Why not: 'platform' (no AI key), 'organisation' (no consent), 'mail' (Mail AI off). */
   reason?: 'platform' | 'organisation' | 'mail';
+  /** Sorting incoming mail is on (step 3): show the inbox tabs and labels. */
+  triage?: boolean;
   maxCharacters?: number;
 }
 
@@ -86,6 +88,20 @@ export async function mailAiRewrite(f: AuthedFetch, text: string, style: Rewrite
   }
   return body.text;
 }
+
+// ── Sorting incoming mail (step 3) ──────────────────────────────────────────
+
+export type AiLabel = 'needs_reply' | 'fyi' | 'updates' | 'promotions';
+
+/** The four labels, in tab order, with the words shown. The API's MailTriage.Labels holds the same four. */
+export const AI_LABELS: { label: AiLabel; name: string }[] = [
+  { label: 'needs_reply', name: 'Needs reply' },
+  { label: 'fyi', name: 'FYI' },
+  { label: 'updates', name: 'Updates' },
+  { label: 'promotions', name: 'Promotions' },
+];
+
+export const aiLabelName = (l: string | null | undefined) => AI_LABELS.find((x) => x.label === l)?.name ?? null;
 
 // ── Suggested replies (step 2) ──────────────────────────────────────────────
 
