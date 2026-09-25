@@ -21,7 +21,8 @@ It lives in **two** places:
 In the disaster this backup exists for — the server is gone — copy 1 is gone
 with it. **Copy 2 is the one that matters, and phoning Amit is step zero of any
 real restore.** The paper copy was verified against a live object on 9 Sept
-2026; it works.
+2026; it works. **Confirmed again on 25 September 2026: Amit holds the
+paper copy. It is not yet in a password manager; he is adding it.**
 
 ## What is backed up
 
