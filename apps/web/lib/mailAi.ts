@@ -87,6 +87,35 @@ export async function mailAiRewrite(f: AuthedFetch, text: string, style: Rewrite
   return body.text;
 }
 
+// ── Suggested replies (step 2) ──────────────────────────────────────────────
+
+export interface MailSuggestions {
+  suggestions: string[];
+  /** The message was longer than what was sent; the chips say "from the start of a long message". */
+  partial?: boolean;
+  /** Not eligible, or Mail AI off — nothing was sent. */
+  skipped?: string;
+  error?: string;
+}
+
+/**
+ * Three short replies to one message. The SERVER reads the message (from the
+ * mailbox this person may read) — the browser sends only its id, so it cannot
+ * be used to push other text to the provider. Never throws: a failure is no
+ * chips, because suggestions are an offer, not something anyone asked for.
+ */
+export async function mailAiSuggest(f: AuthedFetch, messageId: string, mailboxId?: string): Promise<MailSuggestions> {
+  const q = mailboxId ? `?mailboxId=${encodeURIComponent(mailboxId)}` : '';
+  try {
+    const r = await f(`/mail/ai/messages/${messageId}/suggestions${q}`, { method: 'POST' });
+    if (!r.ok) return { suggestions: [] };
+    const b = (await r.json()) as MailSuggestions;
+    return { ...b, suggestions: Array.isArray(b.suggestions) ? b.suggestions.filter((x) => typeof x === 'string') : [] };
+  } catch {
+    return { suggestions: [] };
+  }
+}
+
 // ── What the person typed ───────────────────────────────────────────────────
 
 /** The composer's markers for the blocks that are not the person's own words. */

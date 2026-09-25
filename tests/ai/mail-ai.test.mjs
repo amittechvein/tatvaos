@@ -5,12 +5,17 @@
 //  Uses a FAKE provider, never a real key:
 //    - the API with Ai__BaseUrl=http://127.0.0.1:5199/v1 and any
 //      Ai__ApiKey/Model/DataLocation;
-//    - tests/ai/fake-ai-rewrite.mjs running on :5199 (node tests/ai/fake-ai-rewrite.mjs). It answers "REWRITTEN: <INPUT>" and
+//    - tests/ai/fake-ai-mail.mjs running on :5199 (node tests/ai/fake-ai-mail.mjs). It answers "REWRITTEN: <INPUT>" and
 //      keeps the last request it received at GET /last — the independent
 //      witness for WHAT WAS SENT — and a count at GET /hits, the witness that
 //      a refused request never reached the provider.
 //
 //    node tests/ai/mail-ai.test.mjs
+//
+//  The suggested-replies checks also need: WSL Postgres reachable as
+//  `wsl -u postgres -e psql -d $MAILAI_DB`, an owner with a mailbox whose
+//  phone is $OWNER_PHONE, and sms.show_otp_on_screen on. Wait 60 seconds
+//  between runs (the OTP resend gap).
 //
 //  Environment: MAILAI_API (default http://localhost:5171/api), FAKE (default
 //  http://127.0.0.1:5199), AI_ADMIN "email,password" (default the local
@@ -24,7 +29,14 @@
 //  exactly the text sent.
 // ============================================================================
 
+import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+
 const API = process.env.MAILAI_API ?? 'http://localhost:5171/api';
+// Suggestions need a mailbox: the owner, signed in by phone code, and the
+// local WSL database the fixtures are written into.
+const OWNER_PHONE = process.env.OWNER_PHONE ?? '+919999900001';
+const DB = process.env.MAILAI_DB ?? 'tatvaos_mailai';
 const FAKE = process.env.FAKE ?? 'http://127.0.0.1:5199';
 const [EMAIL, PASSWORD] = (process.env.AI_ADMIN ?? 'platform@docs.local,dev-only-platform-pass').split(',');
 
@@ -165,6 +177,88 @@ try {
   h0 = await hits();
   r = await rewrite(DRAFT);
   check('mail on but organisation off: refused, nothing sent', typeof r.body.error === 'string' && (await hits()) === h0, JSON.stringify(r.body));
+
+  // ── 7. Suggested replies (step 2) ─────────────────────────────────────────
+  //  As the organisation OWNER, who has a mailbox (the operator has none).
+  //  Messages come from tests/ai/mail-ai-fixtures.sql, fresh ids every run.
+  const ownerLogin = async () => {
+    const req = await (await fetch(`${API}/auth/otp/request`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: OWNER_PHONE }),
+    })).json();
+    // devCode only on the FIRST request inside the 60-second resend gap.
+    if (!req.devCode) { console.log('  owner OTP was throttled: wait 60 seconds and run again'); process.exit(2); }
+    const v = await (await fetch(`${API}/auth/otp/verify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: OWNER_PHONE, code: req.devCode }),
+    })).json();
+    return v.accessToken;
+  };
+  const ownerToken = await ownerLogin();
+  check('the owner signed in', typeof ownerToken === 'string');
+  const OH = { 'Content-Type': 'application/json', Authorization: `Bearer ${ownerToken}` };
+  const suggest = async (msgId, headers = OH) => {
+    const res = await fetch(`${API}/mail/ai/messages/${msgId}/suggestions`, { method: 'POST', headers });
+    const t = await res.text();
+    let bd; try { bd = JSON.parse(t); } catch { bd = t; }
+    return { status: res.status, body: bd };
+  };
+  const fx = spawnSync('wsl', ['-u', 'postgres', '-e', 'psql', '-d', DB, '-v', `phone=${OWNER_PHONE}`, '-f', '-'], {
+    input: readFileSync(new URL('./mail-ai-fixtures.sql', import.meta.url)), encoding: 'utf8',
+  });
+  const ids = Object.fromEntries((fx.stdout ?? '').split('\n').filter((l) => l.includes('|')).map((l) => l.trim().split('|')));
+  check('fixtures made eight messages', Object.keys(ids).length === 8, (fx.stderr ?? '').slice(0, 200));
+
+  await setAi({ enabled: false, mail: false });
+  h0 = await hits();
+  r = await suggest(ids.normal);
+  check('suggestions with Mail AI off: skipped "off", nothing sent', r.body.skipped === 'off' && r.body.suggestions?.length === 0 && (await hits()) === h0, JSON.stringify(r.body));
+
+  await setAi({ enabled: true, mail: true });
+  h0 = await hits();
+  r = await suggest(ids.normal);
+  check('a normal message gets three suggestions', JSON.stringify(r.body.suggestions) === JSON.stringify(
+    ['Yes, that works for me.', 'Could you share more details?', 'I will get back to you tomorrow.']), JSON.stringify(r.body));
+  check('exactly one provider call for it', (await hits()) === h0 + 1);
+  const sent = await last();
+  check('the provider saw the sender NAME, the subject and the new text',
+    sent.user.includes('From: Priya Shah') && sent.user.includes('Subject: [mail-ai-test] normal') && sent.user.includes('move the admissions review'),
+    JSON.stringify(sent.user).slice(0, 200));
+  check('the provider did NOT see the quoted history', !sent.user.includes('OLD-QUOTED-HISTORY') && !sent.user.includes('wrote:'), JSON.stringify(sent.user));
+  check('the provider did NOT see the sender address', !sent.user.includes('priya@example.com'));
+  check('the suggestion instruction went as the system message', sent.system.includes('suggest short replies'));
+
+  h0 = await hits();
+  r = await suggest(ids.normal);
+  check('reopening the message: remembered, nothing sent again', r.body.cached === true && r.body.suggestions?.length === 3 && (await hits()) === h0, JSON.stringify(r.body));
+
+  h0 = await hits();
+  for (const [k, why] of [['noreply', 'automated'], ['sent', 'folder'], ['own', 'own'], ['empty', 'empty']]) {
+    r = await suggest(ids[k]);
+    check(`${k}: skipped "${why}"`, r.body.skipped === why && r.body.suggestions?.length === 0, JSON.stringify(r.body));
+  }
+  check('none of the skipped messages reached the provider', (await hits()) === h0);
+
+  r = await suggest(ids.lines);
+  check('a numbered-list answer is parsed; the repeat and the over-long line are dropped',
+    JSON.stringify(r.body.suggestions) === JSON.stringify(['Yes, that works for me.', 'Can we talk tomorrow?', 'Thanks, noted.']), JSON.stringify(r.body));
+  r = await suggest(ids.markup);
+  check('markup in an answer comes back as TEXT for the page to escape', r.body.suggestions?.[0] === '<b>Sure</b> <img src=x onerror=alert(1)>', JSON.stringify(r.body));
+
+  r = await suggest(ids.long);
+  const longSent = (await last()).user;
+  check('a long message is cut and flagged partial', r.body.partial === true && longSent.includes('START') && !longSent.includes('END-MARKER'), JSON.stringify(r.body));
+  check('what was sent of it is at most 4,000 characters of body', longSent.length <= 4000 + 200, `length ${longSent.length}`);
+
+  r = await suggest(ids.normal, H);
+  check('someone without that mailbox gets 404 (the operator)', r.status === 404, `status ${r.status}`);
+  r = await suggest('00000000-0000-0000-0000-000000000001');
+  check('an unknown message is 404', r.status === 404, `status ${r.status}`);
+
+  check('suggestions are metered under mail.suggest', (await call('GET', '/org/ai')).body.usage.byFeature.some((f) => f.feature === 'mail.suggest'));
+
+  await setAi({ mail: false });
+  h0 = await hits();
+  r = await suggest(ids.normal);
+  check('Mail AI off again: even the remembered answer is withheld', r.body.skipped === 'off' && r.body.suggestions?.length === 0 && (await hits()) === h0, JSON.stringify(r.body));
 
   // ── 6. Validation of the switch itself ────────────────────────────────────
   r = await setAi({});
