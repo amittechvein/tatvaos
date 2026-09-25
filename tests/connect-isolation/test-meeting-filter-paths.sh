@@ -14,6 +14,8 @@
 #      THE TRAP: the webhook catches every exception and still answers 200.
 #      A filter that broke it would be silent, so the checks read the meeting's
 #      status in the database AND the log for the handler's "threw" line.
+#   1b. the egress (recording) callback on that meeting: a recording in
+#      progress finishes, and the row says ready with its file - not dropped.
 #   2. the guest waiting room: knock, wait, admitted by the host, and the
 #      admitted poll (which reads the meeting's policies) hands over a token.
 #
@@ -148,7 +150,13 @@ PYEOF
 SIGNER="$SCRATCH/sign.py"
 command -v cygpath >/dev/null 2>&1 && SIGNER="$(cygpath -w "$SIGNER")"
 
-# webhook EVENT MEETING_ID -> HTTP status of a LiveKit-signed event
+# signed BODY -> HTTP status of a LiveKit-signed event carrying exactly BODY
+signed() {
+    local body="$1" jwt
+    jwt=$(BODY="$body" SECRET="$LK_SECRET" KEY="$LK_KEY" "$PY" "$SIGNER" | tr -d "")
+    curl -s -o /dev/null -w "%{http_code}" -X POST "$API/api/connect/webhooks/livekit"         -H "Authorization: $jwt" -H "Content-Type: application/webhook+json" --data-binary "$body"
+}
+# webhook EVENT MEETING_ID -> HTTP status of a signed room event
 webhook() {
     local body="{\"event\":\"$1\",\"id\":\"iso-$RUN-$1\",\"createdAt\":\"$(date +%s)\",\"room\":{\"name\":\"m-$2\"}}"
     local jwt
@@ -171,6 +179,18 @@ same "...and the School's meeting is now active (the filtered read found it)" "$
 same "room_finished, signed, answered" "$(webhook room_finished "$MS")" "200"
 same "...and the meeting has ended" "$(mstatus)" "ended"
 same "both events were recorded against it" "$(PG "SELECT count(*) FROM connect.meeting_events WHERE meeting_id='$MS' AND webhook_id LIKE 'iso-$RUN-%'")" "2"
+step "2b. The egress callback: a recording on the School's meeting finishes"
+# Mr. Singh's ruling on 0007: "a webhook returning nothing is a silently dropped
+# recording". The egress event carries no room object; the meeting is found from
+# egressInfo.roomName, the tenant entered, the (filtered) meeting read, and the
+# recording row updated by egress id.
+EG="EG_iso_$RUN"
+PG "INSERT INTO connect.recordings (meeting_id, egress_id, mode, status) VALUES ('$MS', '$EG', 'audio', 'recording')" >/dev/null
+same "a School recording is in progress" "$(PG "SELECT status FROM connect.recordings WHERE egress_id='$EG'")" "recording"
+EBODY="{\"event\":\"egress_ended\",\"id\":\"iso-$RUN-egress\",\"createdAt\":\"$(date +%s)\",\"egressInfo\":{\"egressId\":\"$EG\",\"roomName\":\"m-$MS\",\"status\":\"EGRESS_COMPLETE\",\"fileResults\":[{\"filename\":\"/out/iso-$RUN.ogg\",\"size\":\"12345\",\"duration\":\"5000000000\"}]}}"
+same "egress_ended, signed, answered" "$(signed "$EBODY")" "200"
+same "...and the recording is ready, with the file and its size (the callback was not dropped)"     "$(PG "SELECT status || '/' || coalesce(file_name,'-') || '/' || size_bytes FROM connect.recordings WHERE egress_id='$EG'")" "ready/iso-$RUN.ogg/12345"
+
 if grep -q "LiveKit webhook handler threw" "$LOG"; then
     fail "the webhook handler threw (its 200 hid it): $(grep -m1 -A2 "handler threw" "$LOG" | tr '\n' ' ' | head -c 300)"
 else

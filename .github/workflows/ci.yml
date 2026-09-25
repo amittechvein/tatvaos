@@ -116,6 +116,13 @@ jobs:
       - name: "Hire check: the job-openings gate has no way around it"
         run: bash tests/hire/check-job-gate.sh
 
+      # Every tenant-owned entity carries an EF query filter, or this fails.
+      # Mr. Singh's ruling on 0007, 24 Sept 2026: "The rule lives in a test,
+      # not a comment." Builds the EF model offline (no database). Today's
+      # gaps are listed by name in the test and can only shrink.
+      - name: "Tenancy check: every tenant-owned entity has a query filter"
+        run: dotnet run --project tests/tenant-filters
+
   isolation:
     name: Tenant isolation
     runs-on: ubuntu-latest
