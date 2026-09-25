@@ -40,3 +40,39 @@ container, its own SQLite file, no npm dependencies, sign-in through
 fragment: `infra/docker/caddy/conf.d/bug.caddy` (tracked, so deploy.sh keeps it).
 Data: docker volume `tatvaos-bugs_bugsdata` (`bugs.db` + `files/`). **Backed up every 6 h**
 by `deploy/backup-bugs.sh` (encrypted, read back, uploaded to the product bucket under `bugs/`, 7 days); restore proof: `deploy/restore-drill.sh`.
+
+## Deploying (Mr. Singh, PR 301 condition 4)
+
+A second route by which code reaches the production server, so it shares the
+product's deploy lock. **Every run needs Amit's go.**
+
+1. From the laptop, folder `tatvaos-bugs`, upload to a staging folder (nothing
+   live changes):
+
+       (cd apps/bugs && tar --exclude=.data -czf - .) | ssh deploy@<server> 'rm -rf ~/tatvaos-bugs-incoming && mkdir ~/tatvaos-bugs-incoming && tar -xzf - -C ~/tatvaos-bugs-incoming'
+
+2. Run the deploy from the staging folder:
+
+       ssh deploy@<server> 'bash ~/tatvaos-bugs-incoming/deploy/deploy-bugs.sh < /dev/null'
+
+   It takes `/tmp/tatvaos-deploy-production.lock` (the same `flock` as
+   `infra/scripts/deploy.sh`) and holds it through build and restart, so the two
+   can never overlap; it refuses if the lock is held or a `deploy.sh` is running.
+   It keeps `deploy/.env` and the data volume, tags the running image
+   `:previous`, waits for healthy, and fails if any row count goes down.
+
+Rollback: `docker tag tatvaos-bugs-bugs:previous tatvaos-bugs-bugs:latest`, then
+`docker compose up -d --no-build` in `~/tatvaos-bugs/deploy`.
+
+## Storage and privacy (condition 2)
+
+All uploads together are capped by `BUGS_STORAGE_LIMIT_MB` (default 2048); a
+full budget refuses new files with a message, reports still work. Usage shows in
+Settings, and `deploy.sh` prints the volume size on every product deploy. The
+report and comment forms say: do not upload screenshots or recordings that show
+real customers' mail or personal data.
+
+## Mail key (condition 3)
+
+The key in Settings must be the tracker's own, allowed to send only as the
+tracker's address — never a key another system uses.

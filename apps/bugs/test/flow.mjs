@@ -25,7 +25,7 @@ let pass = 0, fail = 0;
 const check = (name, cond, extra = '') => { if (cond) { pass++; console.log('  PASS', name); } else { fail++; console.log('  FAIL', name, extra); } };
 
 const srv = spawn(process.execPath, [path.join(HERE, '..', 'src', 'server.mjs')], {
-  env: { ...process.env, PORT: String(PORT), DATA_DIR: DATA, PUBLIC_URL: BASE, DEV_LOGIN: '1', BOOTSTRAP_ADMIN_EMAILS: 'amit@techvein.com', OIDC_CLIENT_ID: 'test' },
+  env: { ...process.env, PORT: String(PORT), DATA_DIR: DATA, PUBLIC_URL: BASE, DEV_LOGIN: '1', BOOTSTRAP_ADMIN_EMAILS: 'amit@techvein.com', OIDC_CLIENT_ID: 'test', BUGS_STORAGE_LIMIT_MB: '0.05' },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 let srvErr = '';
@@ -274,6 +274,28 @@ try {
   check('both changes recorded with who, role, from and to', dues.length === 2 && dues[0].actor_name === 'Rahul' && dues[0].actor_role === 'developer' && dues[0].meta.to === '2031-01-01' && dues[1].meta.from === '2031-01-01' && dues[1].meta.to === null, JSON.stringify(dues.map((d) => d.meta)));
   check('cleared date is gone from the issue', dh.issue.due_date === null);
   check('closed issue offers no date picker', (await tbl(amit))[shut].due === false);
+
+  console.log('Account bound to its TatvaOS sub (Mr. Singh, condition 1)');
+  const newRahul = client();
+  const nr = await newRahul.req('GET', '/auth/dev?email=rahul@techvein.com&sub=another-tatvaos-account');
+  check('same address, different TatvaOS account: refused', nr.text.includes('sub-mismatch') && !nr.headers.get('set-cookie'));
+  check('…and gets no session', (await newRahul.req('GET', '/api/me')).status === 401);
+  const oldRahul = client();
+  const or = await oldRahul.req('GET', '/auth/dev?email=rahul@techvein.com');
+  check('the original account still signs in', !!or.headers.get('set-cookie') && (await oldRahul.req('GET', '/api/me')).json.user.email === 'rahul@techvein.com');
+  check('upper-case address is the same address', (await client().req('GET', '/auth/dev?email=RAHUL@techvein.com&sub=x2')).text.includes('sub-mismatch'));
+
+  console.log('Storage budget (Mr. Singh, condition 2) — test budget is 50 KB');
+  const before = (await amit.req('GET', '/api/settings')).json.storage;
+  check('settings report storage used and limit', before.limit === Math.round(0.05 * 1048576) || before.limit === 0.05 * 1048576, JSON.stringify(before));
+  const act1 = (await priya.req('POST', `/api/issues/${id}/actions`, { action: 'attach' })).json.activity_id;
+  const big = new Uint8Array(50 * 1024); // ~2 KB is already stored, so this cannot fit in 50 KB
+  const tooBig = await priya.req('POST', `/api/issues/${id}/attachments?activity=${act1}&name=big.bin`, big);
+  check('an upload that would pass the budget is refused (507) with a clear message', tooBig.status === 507 && /storage is full/.test(tooBig.json.error) && /MB of/.test(tooBig.json.error), tooBig.text);
+  check('…and nothing was stored', (await amit.req('GET', '/api/settings')).json.storage.used === before.used);
+  const small = await priya.req('POST', `/api/issues/${id}/attachments?activity=${act1}&name=small.bin`, new Uint8Array(1024));
+  check('a file that fits is still accepted', small.status === 201);
+  check('usage grows by exactly that file', (await amit.req('GET', '/api/settings')).json.storage.used === before.used + 1024);
 
   console.log('Rules that protect history');
   check('module with reports cannot be deleted', (await amit.req('DELETE', '/api/modules/' + mail)).status === 409);

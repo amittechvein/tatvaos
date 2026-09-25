@@ -460,6 +460,7 @@ async function newIssueView() {
     h('div', { class: 'grid2' },
       h('label', {}, h('span', {}, 'Priority'), h('select', { name: 'priority', required: true }, PRIORITIES.map((p) => h('option', { value: p, selected: p === 'medium' }, cap(p))))),
       h('label', {}, h('span', {}, 'Attachments (screenshots, screen recordings — up to 100 MB each)'), files)),
+    h('p', { class: 'privacy-note' }, '⚠ Do not upload screenshots or recordings that show real customers’ mail or personal data. Crop or blur it first, or describe it in words.'),
     h('p', { class: 'muted small' }, `Reported by ${state.me.user.name} as ${ROLE_LABEL[mode]}.`),
     status,
     h('div', { class: 'row' }, submit, h('a', { class: 'btn', href: '#/' }, 'Cancel')));
@@ -580,7 +581,7 @@ async function issueView(id) {
         h('section', { class: 'card' }, h('h3', {}, 'Details'), h('div', { class: 'prose' }, i.details)),
         i.fix_details && h('section', { class: 'card fix' }, h('h3', {}, 'Fix details'), h('div', { class: 'prose' }, i.fix_details)),
         h('section', { class: 'card' }, h('h3', {}, 'History'), h('ol', { class: 'timeline' }, activity.map(activityItem))),
-        h('section', { class: 'card' }, h('h3', {}, 'Comment'), cText, h('div', { class: 'row between' }, cFiles, cBtn), cStatus)),
+        h('section', { class: 'card' }, h('h3', {}, 'Comment'), cText, h('div', { class: 'row between' }, cFiles, cBtn), h('p', { class: 'privacy-note' }, '⚠ Do not upload screenshots or recordings that show real customers’ mail or personal data. Crop or blur it first, or describe it in words.'), cStatus)),
       h('aside', { class: 'card side' },
         field('Module', i.module_name),
         field('Sub-module', i.submodule_name),
@@ -771,7 +772,7 @@ async function settingsView() {
   const key = h('input', { type: 'password', autocomplete: 'off', placeholder: s.mail_api_key_set ? 'A key is saved — paste a new one to replace it' : 'tvos_…' });
   const result = h('p', { class: 'small' });
   const mailCard = h('section', { class: 'card form' }, h('h3', {}, 'Email sending'),
-    h('p', { class: 'muted small' }, 'Emails go out through TatvaOS Mail. Create a Mail API key in TatvaOS (Organisation → API keys → Mail API) that is allowed to send from the address below, and paste it here. The key is never shown again.'),
+    h('p', { class: 'muted small' }, 'Emails go out through TatvaOS Mail. In TatvaOS (Organisation → API keys → Mail API) create a NEW key used only by this tracker, allowed to send only from the address below, and paste it here. Never reuse a key another system uses: if this one leaks it can then only send as the tracker, and revoking it breaks nothing else. The key is never shown again.'),
     h('label', {}, h('span', {}, 'Send from'), from),
     h('label', {}, h('span', {}, 'Mail API key ' + (s.mail_api_key_set ? '(saved)' : '(not set)')), key),
     h('div', { class: 'row' },
@@ -790,7 +791,13 @@ async function settingsView() {
     s.mail_log.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'issues' }, h('tbody', {}, s.mail_log.map((l) => h('tr', {},
       h('td', { class: 'nowrap muted small' }, fmtDate(l.at)), h('td', {}, l.user_name || l.user_email || ''), h('td', {}, l.subject),
       h('td', {}, l.ok ? h('span', { class: 'badge st-closed' }, 'Sent') : h('span', { class: 'badge st-reopened', title: l.detail }, 'Failed')), h('td', { class: 'muted small' }, l.ok ? '' : l.detail)))))) : h('p', { class: 'muted' }, 'None yet.'));
-  return h('div', {}, h('div', { class: 'page-head' }, h('h1', {}, 'Settings')), mine, mailCard, log);
+  const st = s.storage; const pct = Math.min(100, Math.round((st.used / st.limit) * 100));
+  const storageCard = h('section', { class: 'card' }, h('h3', {}, 'File storage'),
+    h('p', {}, `${fmtSize(st.used)} of ${fmtSize(st.limit)} used (${pct}%).`),
+    h('div', { class: 'meter' }, h('div', { class: 'meter-fill' + (pct >= 90 ? ' full' : ''), style: null, 'data-pct': pct })),
+    h('p', { class: 'muted small' }, 'Screenshots and recordings share this budget. When it is full, new files are refused with a message; reports and comments still work.'));
+  const fill = storageCard.querySelector('.meter-fill'); fill.style.width = pct + '%';
+  return h('div', {}, h('div', { class: 'page-head' }, h('h1', {}, 'Settings')), mine, mailCard, storageCard, log);
 }
 
 // ---------------------------------------------------------------------------

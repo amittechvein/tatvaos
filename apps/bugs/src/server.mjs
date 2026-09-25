@@ -29,6 +29,10 @@ const cfg = {
   bootstrapAdmins: (process.env.BOOTSTRAP_ADMIN_EMAILS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
   mailApiUrl: process.env.MAIL_API_URL || 'https://core.tatvaos.com/api/v1/mail/send',
   maxUpload: Number(process.env.MAX_UPLOAD_MB || 100) * 1024 * 1024,
+  // Mr. Singh's condition 2 (PR 301): a budget for ALL uploads together. They
+  // sit on the production disk cleared on 18 and 25 Sept, and every backup
+  // carries them (four sets a day, seven days). Full = refuse, clearly.
+  storageLimit: Number(process.env.BUGS_STORAGE_LIMIT_MB || 2048) * 1024 * 1024,
   // Local testing only. Three conditions, all required: the flag, a loopback
   // PUBLIC_URL, and a loopback caller. Production has none of the three.
   devLogin: process.env.DEV_LOGIN === '1' && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(process.env.PUBLIC_URL || 'http://localhost:3000'),
@@ -208,7 +212,11 @@ async function authCallback(req, res, url) {
   const info = await uiRes.json();
   if (!info.sub || info.sub !== idt.sub) return messagePage(res, 'Sign-in failed', 'The sign-in answer did not match this application.');
 
-  const user = linkUser(info);
+  const { user, refused } = linkUser(info);
+  if (refused === 'sub-mismatch') {
+    return messagePage(res, 'This address belongs to an earlier account',
+      `${info.email} is linked on TatvaOS Bugs to a different TatvaOS account than the one you signed in with. If the address has been given to you, ask an admin to add you as a new person.`);
+  }
   if (!user) {
     return messagePage(res, 'You are not on the tracker yet',
       `You signed in as ${info.email || 'an account without an email'}, but that account has not been added to TatvaOS Bugs. Ask an admin to add you under Users.`);
@@ -221,9 +229,23 @@ async function authCallback(req, res, url) {
 // Find the tracker user for a TatvaOS identity. A person is matched by the
 // stable subject once linked; the FIRST sign-in links by email, and only when
 // TatvaOS vouches that the email is verified.
+//
+// Mr. Singh's condition 1 (PR 301, 25 Sept): after that first sign-in the
+// account belongs to that sub, not to the address. If the address is ever
+// given to someone new (rahul@ leaves, a new Rahul arrives), the newcomer has a
+// different sub and is REFUSED rather than inheriting the old account and its
+// history. An admin re-adds them as a new person.
+// Returns { user } or { refused: 'sub-mismatch' | null }.
 function linkUser(info) {
   let user = db.prepare('SELECT * FROM users WHERE sub = ?').get(info.sub);
   const email = (info.email || '').trim().toLowerCase();
+  if (!user && email) {
+    const owned = db.prepare('SELECT id FROM users WHERE email = ? AND sub IS NOT NULL').get(email);
+    if (owned) {
+      console.warn('sign-in refused: address already bound to another TatvaOS account (tracker user ' + owned.id + ')');
+      return { refused: 'sub-mismatch' };
+    }
+  }
   if (!user && email && info.email_verified === true) {
     user = db.prepare('SELECT * FROM users WHERE email = ? AND sub IS NULL').get(email);
     if (user) db.prepare('UPDATE users SET sub = ?, name = CASE WHEN name = \'\' THEN ? ELSE name END WHERE id = ?').run(info.sub, info.name || '', user.id);
@@ -235,8 +257,8 @@ function linkUser(info) {
     }
     if (user) user = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
   }
-  if (!user || !user.active || !rolesOf(user).length) return null;
-  return user;
+  if (!user || !user.active || !rolesOf(user).length) return { refused: null };
+  return { user };
 }
 
 function messagePage(res, title, text) {
@@ -404,6 +426,14 @@ function sniff(buf) {
   return 'application/octet-stream';
 }
 
+function storageUsed() {
+  return db.prepare('SELECT COALESCE(SUM(size), 0) n FROM attachments').get().n;
+}
+const mb = (n) => Math.round(n / 1048576);
+function storageFullMessage(used) {
+  return `The tracker's file storage is full (${mb(used)} MB of ${mb(cfg.storageLimit)} MB used), so this file was not saved. Describe the problem in words, or ask an admin to make room.`;
+}
+
 async function uploadAttachment(req, res, s, issueId, url) {
   const issue = loadIssue(issueId);
   if (!issue || !canSee(s.user, issue)) throw notFound();
@@ -415,6 +445,8 @@ async function uploadAttachment(req, res, s, issueId, url) {
   const name = str(url.searchParams.get('name'), 200, 'File name', true).replace(/[\\/\u0000-\u001f]/g, '_');
   const len = Number(req.headers['content-length'] || 0);
   if (len > cfg.maxUpload) throw new HttpError(413, `Files can be up to ${cfg.maxUpload / 1048576} MB.`);
+  const used = storageUsed();
+  if (used + len > cfg.storageLimit) throw new HttpError(507, storageFullMessage(used));
 
   const stored = crypto.randomBytes(16).toString('hex');
   const full = path.join(FILES, stored);
@@ -425,6 +457,7 @@ async function uploadAttachment(req, res, s, issueId, url) {
     for await (const chunk of req) {
       size += chunk.length;
       if (size > cfg.maxUpload) throw new HttpError(413, `Files can be up to ${cfg.maxUpload / 1048576} MB.`);
+      if (used + size > cfg.storageLimit) throw new HttpError(507, storageFullMessage(used));
       if (head.length < 16) head = Buffer.concat([head, chunk.subarray(0, 16)]);
       if (!out.write(chunk)) await new Promise((r) => out.once('drain', r));
     }
@@ -861,6 +894,7 @@ route('GET', /^\/api\/settings$/, (req, res, s) => {
   send(res, 200, {
     mail_from: getSetting(db, 'mail_from'),
     mail_api_key_set: !!getSetting(db, 'mail_api_key'),
+    storage: { used: storageUsed(), limit: cfg.storageLimit },
     mail_log: db.prepare('SELECT l.at, l.subject, l.ok, l.detail, u.name user_name, u.email user_email FROM mail_log l LEFT JOIN users u ON u.id = l.user_id ORDER BY l.id DESC LIMIT 50').all(),
   });
 });
@@ -936,7 +970,9 @@ async function handle(req, res) {
   if (cfg.devLogin && req.method === 'GET' && p === '/auth/dev') {
     const ra = req.socket.remoteAddress || '';
     if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(ra)) throw notFound();
-    const user = linkUser({ sub: 'dev:' + url.searchParams.get('email'), email: url.searchParams.get('email'), email_verified: true, name: url.searchParams.get('name') || '' });
+    // ?sub= lets the local test play a second TatvaOS account with the same address.
+    const { user, refused } = linkUser({ sub: url.searchParams.get('sub') || 'dev:' + url.searchParams.get('email'), email: url.searchParams.get('email'), email_verified: true, name: url.searchParams.get('name') || '' });
+    if (refused === 'sub-mismatch') return messagePage(res, 'This address belongs to an earlier account', 'refused: sub-mismatch');
     if (!user) return messagePage(res, 'Not on the tracker', 'That email has not been added.');
     createSession(res, user);
     res.writeHead(302, { Location: '/' });

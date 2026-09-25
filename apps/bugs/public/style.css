@@ -288,3 +288,7 @@ th.sorted a { color: var(--brand); }
 .cell-date { width: auto; padding: 4px 6px; font-size: 13px; }
 .cell-date.late { color: var(--bad); border-color: var(--bad); font-weight: 600; }
 @media (max-width: 700px) { .cell-date { max-width: 60%; padding: 9px 10px; font-size: 16px; } }
+.privacy-note { margin: 4px 0 0; font-size: 12.5px; color: var(--warn); }
+.meter { height: 8px; border-radius: 99px; background: var(--bg); border: 1px solid var(--line); overflow: hidden; margin: 6px 0; }
+.meter-fill { height: 100%; background: var(--brand); }
+.meter-fill.full { background: var(--bad); }
