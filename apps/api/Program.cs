@@ -444,6 +444,10 @@ builder.Services.AddHostedService<VacationReplyWorker>();
 // scheduling in-memory timers that a deploy would silently swallow.
 builder.Services.AddHostedService<CalendarReminderWorker>();
 
+// TatvaOS AI sorts new inbox mail (Mail AI step 3). Does nothing unless an
+// organisation has switched sorting on; see the worker's header for its limits.
+builder.Services.AddHostedService<MailTriageWorker>();
+
 // iMIP: what Mail's ingest calls when a delivered message carries a calendar
 // reply (docs/MAIL_IMIP_SEAM.md §4). Scoped, because it runs inside the
 // ingest worker's own scope and reads its TenantContext and DbContext.

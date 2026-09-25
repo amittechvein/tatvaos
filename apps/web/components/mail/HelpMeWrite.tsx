@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../ui/Icon';
 import { useAuth } from '@/lib/auth';
-import { REWRITE_GROUPS, REWRITE_STYLES, mailAiRewrite, mailAiStatus, type RewriteStyle } from '@/lib/mailAi';
+import { REWRITE_GROUPS, REWRITE_STYLES, mailAiRewrite, mailAiStatus, type MailAiStatus, type RewriteStyle } from '@/lib/mailAi';
 
 // ============================================================================
 //  Help me write — TatvaOS AI in the composer. Step 1 of 3 (Amit, 25 Sept).
@@ -45,6 +45,18 @@ type Phase =
   | { kind: 'result'; style: RewriteStyle; text: string }
   | { kind: 'error'; style: RewriteStyle | null; message: string }
   | { kind: 'replaced' };
+
+/** The whole Mail AI status — `triage` is what the inbox tabs need. Null until known. */
+export function useMailAiStatus(): MailAiStatus | null {
+  const { authedFetch } = useAuth();
+  const [s, setS] = useState<MailAiStatus | null>(null);
+  useEffect(() => {
+    let live = true;
+    void mailAiStatus(authedFetch).then((x) => { if (live) setS(x); });
+    return () => { live = false; };
+  }, [authedFetch]);
+  return s;
+}
 
 export function useMailAiAvailable(): boolean {
   const { authedFetch } = useAuth();

@@ -49,6 +49,13 @@ interface AiState {
   /** Mail's own switch (allow_mail_ai). Works only while `enabled` is on. */
   mailEnabled: boolean;
   mailDisclosure: string;
+  /** Sorting incoming mail (step 3): its own consent, on top of Mail. */
+  mailTriageEnabled: boolean;
+  mailTriageSince: string | null;
+  mailTriageDisclosure: string;
+  /** False for hospitals and clinics (Amit, 25 Sept 2026); the sentence says why. */
+  mailTriageOffered: boolean;
+  mailTriageNotOffered: string | null;
   usage: AiUsage;
 }
 
@@ -57,6 +64,8 @@ const FEATURE_NAMES: Record<string, string> = {
   docs: 'Docs',
   'platform.probe': 'Platform check',
   'mail.rewrite': 'Mail — Help me write',
+  'mail.suggest': 'Mail — Suggested replies',
+  'mail.triage': 'Mail — Sorting incoming mail',
 };
 
 const fmt = (n: number) => n.toLocaleString('en-IN');
@@ -69,6 +78,7 @@ export default function OrgAiPage() {
   const [saving, setSaving] = useState(false);
   const [confirmOn, setConfirmOn] = useState(false);
   const [confirmMail, setConfirmMail] = useState(false);
+  const [confirmTriage, setConfirmTriage] = useState(false);
 
   const load = useCallback(() => {
     setError(null);
@@ -82,7 +92,7 @@ export default function OrgAiPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  async function save(change: { enabled?: boolean; mail?: boolean }) {
+  async function save(change: { enabled?: boolean; mail?: boolean; mailTriage?: boolean }) {
     setSaving(true);
     setError(null);
     try {
@@ -92,6 +102,7 @@ export default function OrgAiPage() {
       if (!r.ok) throw new Error('Could not change the AI setting.');
       setConfirmOn(false);
       setConfirmMail(false);
+      setConfirmTriage(false);
       load();
     } catch (e) {
       setError((e as Error).message);
@@ -171,10 +182,36 @@ export default function OrgAiPage() {
           saving={saving}
           onOff={() => save({ mail: false })}
           onOn={() => setConfirmMail(true)}
+          onTriageOn={() => setConfirmTriage(true)}
+          onTriageOff={() => save({ mailTriage: false })}
         />
       )}
 
       {state?.platformConfigured && <UsageCard usage={state.usage} />}
+
+      {confirmTriage && state && (
+        <Modal
+          onClose={() => !saving && setConfirmTriage(false)}
+          title="Sort incoming mail with TatvaOS AI?"
+          busy={saving}
+        >
+          <p>{state.mailTriageDisclosure}</p>
+          <p className="text-ink-muted">
+            This is the one Mail AI feature that sends mail nobody has clicked on. Automated
+            senders are labelled by a simple rule and are not sent. Labels never change your
+            people&apos;s own categories. Turning it off stops sending at once and deletes every
+            label it made.
+          </p>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="ghost" disabled={saving} onClick={() => setConfirmTriage(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" disabled={saving} onClick={() => save({ mailTriage: true })}>
+              {saving ? 'Turning on…' : 'I agree — sort incoming mail'}
+            </Button>
+          </div>
+        </Modal>
+      )}
 
       {confirmMail && state && (
         <Modal
@@ -184,9 +221,11 @@ export default function OrgAiPage() {
         >
           <p>{state.mailDisclosure}</p>
           <p className="text-ink-muted">
-            People will see Help me write in the mail composer. It rewrites only the
-            text they typed and only when they ask; it never reads the message they
-            are replying to. Turning it off again is one click and takes effect at once.
+            People will see Help me write in the composer, which sends only the text
+            they typed and only when they ask, and suggested replies under a message,
+            which send that message when they open it. Mail they sent, junk and
+            automated senders are never sent. Turning it off again is one click and
+            takes effect at once.
           </p>
           <div className="flex justify-end gap-2 mt-4">
             <Button variant="ghost" disabled={saving} onClick={() => setConfirmMail(false)}>
@@ -231,13 +270,16 @@ export default function OrgAiPage() {
  * Same asymmetry as above: ON asks first, OFF is immediate.
  */
 function MailAiCard({
-  state, saving, onOn, onOff,
-}: { state: AiState; saving: boolean; onOn: () => void; onOff: () => void }) {
+  state, saving, onOn, onOff, onTriageOn, onTriageOff,
+}: {
+  state: AiState; saving: boolean; onOn: () => void; onOff: () => void;
+  onTriageOn: () => void; onTriageOff: () => void;
+}) {
   const live = state.enabled && state.mailEnabled;
   return (
     <Card
       title="TatvaOS AI in Mail"
-      subtitle="Help me write in the composer"
+      subtitle="Help me write, suggested replies, and sorting"
       actions={
         state.mailEnabled ? (
           <Button variant="danger" disabled={saving} onClick={onOff}>
@@ -254,10 +296,39 @@ function MailAiCard({
         <>
           <p className="mb-2">
             <Badge tone="ok">On</Badge>{' '}
-            People can ask TatvaOS AI to rewrite a draft. Only the text they typed is
-            sent, and only when they ask.
+            Help me write rewrites a draft when asked; suggested replies appear under a
+            message when it is opened.
           </p>
           <p className="text-ink-muted text-[0.75rem] mb-0">{state.mailDisclosure}</p>
+
+          {/* Step 3: its own switch, because it is the one that sends mail
+              nobody clicked on. Same asymmetry: ON asks, OFF is one click. */}
+          <div className="mt-4 flex flex-wrap items-start gap-3 border-t border-line pt-3">
+            <div className="min-w-0 flex-1">
+              <p className="mb-1 font-medium">
+                Sort incoming mail{' '}
+                <Badge tone={state.mailTriageEnabled ? 'ok' : 'neutral'}>{state.mailTriageEnabled ? 'On' : 'Off'}</Badge>
+              </p>
+              <p className="mb-0 text-[0.75rem] text-ink-muted">
+                {state.mailTriageEnabled
+                  ? `New inbox mail is labelled Needs reply, FYI, Updates or Promotions${
+                      state.mailTriageSince ? `, since ${new Date(state.mailTriageSince).toLocaleString('en-IN')}` : ''
+                    }. Older mail is never sent.`
+                  : 'Labels new inbox mail Needs reply, FYI, Updates or Promotions, with tabs to filter by them. Sends each new message in the background.'}
+              </p>
+            </div>
+            {!state.mailTriageOffered ? (
+              <p className="mb-0 max-w-xs text-[0.75rem] text-ink-muted">{state.mailTriageNotOffered}</p>
+            ) : state.mailTriageEnabled ? (
+              <Button variant="danger" disabled={saving} onClick={onTriageOff}>
+                {saving ? 'Turning off…' : 'Turn off sorting'}
+              </Button>
+            ) : (
+              <Button variant="primary" disabled={saving} onClick={onTriageOn}>
+                Turn on sorting
+              </Button>
+            )}
+          </div>
         </>
       )}
       {state.mailEnabled && !state.enabled && (

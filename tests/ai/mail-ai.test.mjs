@@ -85,7 +85,7 @@ await call('PUT', '/admin/settings', { 'ai.paused': 'false', 'ai.limit.per_perso
 
 try {
   // ── 1. Both off ───────────────────────────────────────────────────────────
-  await setAi({ enabled: false, mail: false });
+  await setAi({ enabled: false, mail: false, mailTriage: false });
   let s = await status();
   check('both off: status says unavailable because of the organisation',
     s.body.available === false && s.body.reason === 'organisation', JSON.stringify(s.body));
@@ -102,7 +102,7 @@ try {
     put.status === 200 && put.body.enabled === true && put.body.mailEnabled === false, JSON.stringify(put.body));
   const org = (await call('GET', '/org/ai')).body;
   check('GET /org/ai reports mailEnabled false and a mail disclosure naming the place',
-    org.mailEnabled === false && typeof org.mailDisclosure === 'string' && org.mailDisclosure.includes('Nothing is sent unless they ask'),
+    org.mailEnabled === false && typeof org.mailDisclosure === 'string' && org.mailDisclosure.includes('when a person opens it') && org.mailDisclosure.includes('Nothing is sent in the background'),
     JSON.stringify({ mailEnabled: org.mailEnabled, mailDisclosure: org.mailDisclosure }));
   s = await status();
   check('mail off: status says unavailable because of Mail', s.body.available === false && s.body.reason === 'mail', JSON.stringify(s.body));
@@ -207,7 +207,7 @@ try {
   const ids = Object.fromEntries((fx.stdout ?? '').split('\n').filter((l) => l.includes('|')).map((l) => l.trim().split('|')));
   check('fixtures made eight messages', Object.keys(ids).length === 8, (fx.stderr ?? '').slice(0, 200));
 
-  await setAi({ enabled: false, mail: false });
+  await setAi({ enabled: false, mail: false, mailTriage: false });
   h0 = await hits();
   r = await suggest(ids.normal);
   check('suggestions with Mail AI off: skipped "off", nothing sent', r.body.skipped === 'off' && r.body.suggestions?.length === 0 && (await hits()) === h0, JSON.stringify(r.body));
@@ -260,13 +260,139 @@ try {
   r = await suggest(ids.normal);
   check('Mail AI off again: even the remembered answer is withheld', r.body.skipped === 'off' && r.body.suggestions?.length === 0 && (await hits()) === h0, JSON.stringify(r.body));
 
+  // ── 8. Sorting incoming mail (step 3) ────────────────────────────────────
+  //  The worker runs every Mail:TriageIntervalSeconds (5 locally). Labels are
+  //  read straight from the database; what was sent from the fake's /log.
+  const psql = (sql) => (spawnSync('wsl', ['-u', 'postgres', '-e', 'psql', '-d', DB, '-Atc', sql], { encoding: 'utf8' }).stdout ?? '').trim();
+  const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+  const ownerCall = async (method, p, body) => {
+    const res = await fetch(`${API}${p}`, { method, headers: OH, body: body === undefined ? undefined : JSON.stringify(body) });
+    const t = await res.text();
+    let bd; try { bd = JSON.parse(t); } catch { bd = t; }
+    return { status: res.status, body: bd };
+  };
+  const triageLog = async () => (await (await fetch(`${FAKE}/log`)).json()).filter((e) => e.system.includes('sort one incoming email'));
+  const runTriageFixtures = () => {
+    const out = spawnSync('wsl', ['-u', 'postgres', '-e', 'psql', '-d', DB, '-v', `phone=${OWNER_PHONE}`, '-f', '-'], {
+      input: readFileSync(new URL('./mail-ai-triage-fixtures.sql', import.meta.url)), encoding: 'utf8',
+    });
+    return Object.fromEntries((out.stdout ?? '').split('\n').filter((l) => l.includes('|')).map((l) => l.trim().split('|')));
+  };
+  const labelOf = (id) => psql(`select coalesce(ai_label,'-') || ':' || (ai_labelled_at is not null) from mail.messages where id='${id}'`);
+
+  await setAi({ enabled: true, mail: true, mailTriage: false });
+  s = await ownerCall('GET', '/mail/ai/status');
+  check('sorting off: status says triage false', s.body.available === true && s.body.triage === false, JSON.stringify(s.body));
+
+  const onT = await setAi({ mailTriage: true });
+  check('sorting on: PUT answers mailTriageEnabled true', onT.status === 200 && onT.body.mailTriageEnabled === true, JSON.stringify(onT.body));
+  const since1 = (await call('GET', '/org/ai')).body.mailTriageSince;
+  await setAi({ mailTriage: true });
+  const since2 = (await call('GET', '/org/ai')).body;
+  check('sorting on again keeps the first "since" (no re-stamp)', since1 && since2.mailTriageSince === since1, `${since1} vs ${since2.mailTriageSince}`);
+  check('the sorting disclosure names what is sent and that older mail is not',
+    typeof since2.mailTriageDisclosure === 'string'
+      && since2.mailTriageDisclosure.includes('including ones about health, children or money')
+      && since2.mailTriageDisclosure.includes('without anyone clicking anything')
+      && since2.mailTriageDisclosure.includes('never sent'), since2.mailTriageDisclosure);
+  s = await ownerCall('GET', '/mail/ai/status');
+  check('sorting on: status says triage true', s.body.triage === true, JSON.stringify(s.body));
+
+  await sleep(1500);   // fixtures must arrive after "since"
+  const logBefore = (await triageLog()).length;
+  const t = runTriageFixtures();
+  check('triage fixtures made eight messages', Object.keys(t).length === 8, JSON.stringify(Object.keys(t)));
+  const expectDone = ['person', 'promo', 'fyi', 'nolabel', 'robot', 'own'];
+  for (let i = 0; i < 20; i += 1) {
+    if (expectDone.every((k) => labelOf(t[k]).endsWith(':true'))) break;
+    await sleep(1500);
+  }
+  check('a person asking for something → needs_reply', labelOf(t.person) === 'needs_reply:true', labelOf(t.person));
+  check('a promotion → promotions', labelOf(t.promo) === 'promotions:true', labelOf(t.promo));
+  check('a chatty "Category: fyi." answer → fyi', labelOf(t.fyi) === 'fyi:true', labelOf(t.fyi));
+  check('an answer naming no label → looked at, left unlabelled (not retried)', labelOf(t.nolabel) === '-:true', labelOf(t.nolabel));
+  check('an automated sender → updates BY RULE', labelOf(t.robot) === 'updates:true', labelOf(t.robot));
+  check('mail the mailbox sent → looked at, left unlabelled', labelOf(t.own) === '-:true', labelOf(t.own));
+  check('mail that arrived BEFORE sorting was switched on → untouched', labelOf(t.old) === '-:false', labelOf(t.old));
+  check('mail in Sent → untouched', labelOf(t.sent) === '-:false', labelOf(t.sent));
+
+  const sentNow = (await triageLog()).slice(logBefore);
+  check('exactly four messages went to the provider (not the robot, own, old or Sent ones)', sentNow.length === 4,
+    `${sentNow.length}: ${sentNow.map((e) => e.user.split('\n')[1]).join(' | ')}`);
+  check('the rule-labelled and skipped messages were never sent', !sentNow.some((e) => e.user.includes('Your order has shipped')));
+  const personSent = sentNow.find((e) => e.user.includes('Subject: [mail-ai-triage] person'))?.user ?? '';
+  check('sorting sent the sender NAME, not the address', personSent.includes('From: Ravi Kumar') && !personSent.includes('ravi@example.com'), personSent.slice(0, 80));
+  check('sorting did not send the quoted history', personSent.length > 0 && !personSent.includes('TRIAGE-OLD-QUOTE'));
+  check('sorting sent at most the first 1,000 characters of the body', personSent.length > 0 && !personSent.includes('TRIAGE-END-MARKER'), `length ${personSent.length}`);
+
+  const folders = (await ownerCall('GET', '/mail/folders')).body;
+  const inbox = (Array.isArray(folders) ? folders : folders.folders ?? []).find((f) => f.slug === 'inbox' || f.specialUse === '\\Inbox');
+  const tab = await ownerCall('GET', `/mail/folders/${inbox?.id}/threads?aiLabel=needs_reply&take=500`);
+  const tabIds = (tab.body.threads ?? []).map((x) => x.latestMessageId);
+  check('the Needs reply tab lists the person and not the promotion', tabIds.includes(t.person) && !tabIds.includes(t.promo), `${tab.status} ${tabIds.length}`);
+  const all = await ownerCall('GET', `/mail/folders/${inbox?.id}/threads?take=500`);
+  const promoRow = (all.body.threads ?? []).find((x) => x.latestMessageId === t.promo);
+  check('an unfiltered row carries its label', promoRow?.aiLabel === 'promotions', JSON.stringify(promoRow?.aiLabel));
+  const bad = await ownerCall('GET', `/mail/folders/${inbox?.id}/threads?aiLabel=spam`);
+  check('an unknown label is 400', bad.status === 400, `status ${bad.status}`);
+  check('sorting is metered under mail.triage', (await call('GET', '/org/ai')).body.usage.byFeature.some((f) => f.feature === 'mail.triage'));
+
+  const offT = await setAi({ mailTriage: false });
+  check('sorting off: PUT answers mailTriageEnabled false', offT.status === 200 && offT.body.mailTriageEnabled === false, JSON.stringify(offT.body));
+  check('sorting off wipes every label it wrote', psql(`select count(*) from mail.messages where ai_labelled_at is not null or ai_label is not null`) === '0');
+  check('both switch changes were audited', psql(`select count(distinct action) from core.audit_logs where action in ('org.ai.mail_triage.enabled','org.ai.mail_triage.disabled') and occurred_at > now() - interval '10 minutes'`) === '2');
+
+  const t2 = runTriageFixtures();
+  const logOff = (await triageLog()).length;
+  await sleep(12000);   // two ticks and more
+  check('sorting off: new mail is not labelled', labelOf(t2.person) === '-:false' && labelOf(t2.robot) === '-:false', `${labelOf(t2.person)} ${labelOf(t2.robot)}`);
+  check('sorting off: nothing sent', (await triageLog()).length === logOff);
+
+  // ── 9. Not offered to hospitals and clinics (Amit, 25 Sept 2026) ──────────
+  //  The organisation is made a hospital in the database (only the operator
+  //  can change a type in the product), and put back afterwards.
+  const TENANT = '11111111-1111-1111-1111-111111111111';
+  const typeWas = psql(`select type from core.tenants where id='${TENANT}'`);
+  try {
+    psql(`update core.tenants set type='hospital' where id='${TENANT}'`);
+    await setAi({ enabled: true, mail: true });
+    const hosp = (await call('GET', '/org/ai')).body;
+    check('a hospital is told sorting is not offered, in words',
+      hosp.mailTriageOffered === false && typeof hosp.mailTriageNotOffered === 'string'
+        && hosp.mailTriageNotOffered.includes('hospitals and clinics'), JSON.stringify({ o: hosp.mailTriageOffered, t: hosp.mailTriageNotOffered }));
+    r = await setAi({ mailTriage: true });
+    check('a hospital cannot switch sorting on (400, the same sentence)', r.status === 400 && String(r.body.error ?? '').includes('hospitals and clinics'), JSON.stringify(r.body));
+    check('…and nothing was switched on', psql(`select mail_ai_triage_since is null from core.tenants where id='${TENANT}'`) === 't');
+
+    // Sorting already on when the type became hospital: nothing is sent.
+    psql(`update core.tenants set mail_ai_triage_since = now() - interval '1 minute' where id='${TENANT}'`);
+    check('sorting "on" but hospital: the screen does not claim it is on', (await call('GET', '/org/ai')).body.mailTriageEnabled === false);
+    s = await ownerCall('GET', '/mail/ai/status');
+    check('sorting "on" but hospital: the inbox shows no sorting tabs', s.body.triage === false, JSON.stringify(s.body));
+    const logH = (await triageLog()).length;
+    const th = runTriageFixtures();
+    await sleep(12000);
+    check('sorting "on" but hospital: new mail is not labelled', labelOf(th.person) === '-:false' && labelOf(th.robot) === '-:false', `${labelOf(th.person)} ${labelOf(th.robot)}`);
+    check('sorting "on" but hospital: nothing sent', (await triageLog()).length === logH);
+
+    h0 = await hits();
+    r = await rewrite(DRAFT);
+    check('a hospital still has Help me write', typeof r.body.text === 'string' && (await hits()) === h0 + 1, JSON.stringify(r.body).slice(0, 120));
+
+    r = await setAi({ mailTriage: false });
+    check('a hospital can always switch sorting OFF', r.status === 200 && psql(`select mail_ai_triage_since is null from core.tenants where id='${TENANT}'`) === 't', JSON.stringify(r.body));
+  } finally {
+    psql(`update core.tenants set type='${typeWas}', mail_ai_triage_since=null where id='${TENANT}'`);
+  }
+  check('the organisation type is back as found', psql(`select type from core.tenants where id='${TENANT}'`) === typeWas, typeWas);
+
   // ── 6. Validation of the switch itself ────────────────────────────────────
   r = await setAi({});
   check('PUT with neither switch is 400', r.status === 400, `status ${r.status}`);
   r = await setAi({ enabled: false, mail: false });
   check('both off in one PUT is 200', r.status === 200 && r.body.enabled === false && r.body.mailEnabled === false, JSON.stringify(r.body));
 } finally {
-  await setAi({ enabled: false, mail: false });
+  await setAi({ enabled: false, mail: false, mailTriage: false });
   await call('PUT', '/admin/settings', found);
 }
 check('every ai.* setting is back as it was found', JSON.stringify(await settingsNow()) === JSON.stringify(found));
