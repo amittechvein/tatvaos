@@ -291,7 +291,9 @@ try {
   const since2 = (await call('GET', '/org/ai')).body;
   check('sorting on again keeps the first "since" (no re-stamp)', since1 && since2.mailTriageSince === since1, `${since1} vs ${since2.mailTriageSince}`);
   check('the sorting disclosure names what is sent and that older mail is not',
-    typeof since2.mailTriageDisclosure === 'string' && since2.mailTriageDisclosure.includes('in the background')
+    typeof since2.mailTriageDisclosure === 'string'
+      && since2.mailTriageDisclosure.includes('including ones about health, children or money')
+      && since2.mailTriageDisclosure.includes('without anyone clicking anything')
       && since2.mailTriageDisclosure.includes('never sent'), since2.mailTriageDisclosure);
   s = await ownerCall('GET', '/mail/ai/status');
   check('sorting on: status says triage true', s.body.triage === true, JSON.stringify(s.body));

@@ -24,8 +24,9 @@
 --                    a message with a time and no label was looked at and
 --                    deliberately left unlabelled, e.g. mail you sent)
 --
---  Additive only. ADD COLUMN with no default is a catalogue change; the CHECK
---  on an all-NULL new column scans once and passes. Re-runs are no-ops.
+--  Additive only, and measured (see the CHECK below): ADD COLUMN with no
+--  default is a catalogue change, no row is written, the table is not
+--  rewritten, and nothing scans it. Re-runs are no-ops.
 -- ============================================================================
 
 ALTER TABLE core.tenants
@@ -38,9 +39,26 @@ COMMENT ON COLUMN core.tenants.mail_ai_triage_since IS
     '"mail.triage" label.';
 
 ALTER TABLE mail.messages
-    ADD COLUMN IF NOT EXISTS ai_label text
-        CONSTRAINT messages_ai_label_check
-        CHECK (ai_label IN ('needs_reply', 'fyi', 'updates', 'promotions'));
+    ADD COLUMN IF NOT EXISTS ai_label text;
+
+-- The CHECK is added NOT VALID, on its own, once. Measured 25 Sept on a copy
+-- the size of production's mail.messages (355,018 rows, 709 MB): written
+-- inline with ADD COLUMN it cost one full read of the table WHILE HOLDING
+-- the ALTER's exclusive lock — every mail read and delivery waiting on a
+-- scan that checks nothing, because a brand-new column is all NULL. NOT
+-- VALID still checks every row written from now on; it only skips proving
+-- the empty column. Mr. Singh on the Mail AI PRs: the second run must do
+-- almost nothing — here it is a single catalogue lookup.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                   WHERE conname = 'messages_ai_label_check'
+                     AND conrelid = 'mail.messages'::regclass) THEN
+        ALTER TABLE mail.messages
+            ADD CONSTRAINT messages_ai_label_check
+            CHECK (ai_label IN ('needs_reply', 'fyi', 'updates', 'promotions')) NOT VALID;
+    END IF;
+END $$;
 
 ALTER TABLE mail.messages
     ADD COLUMN IF NOT EXISTS ai_labelled_at timestamptz;

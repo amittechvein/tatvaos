@@ -101,11 +101,17 @@ public static class OrgAiEndpoints
             // only mail that arrived after it is ever sent.
             mailTriageEnabled = row.MailAiTriageSince != null,
             mailTriageSince = row.MailAiTriageSince,
+            //
+            // Mr. Singh, 25 Sept 2026: the customers include clinics and
+            // schools, so say plainly what "every new email" includes. His
+            // sentence, with the place read from Ai:DataLocation like the
+            // other two disclosures so a provider move cannot leave it stale.
             mailTriageDisclosure = ai.IsConfigured
-                ? "When sorting is on, every new message that arrives in an inbox in this organisation "
-                  + "is sent in the background — the sender's name, the subject and the start of the "
-                  + $"message — to a third-party service in {ai.DataLocation}, to be labelled Needs reply, "
-                  + "FYI, Updates or Promotions. Mail that arrived before it was switched on is never sent."
+                ? "Every new email that arrives, including ones about health, children or money, will be "
+                  + $"sent to TatvaOS AI on a service in {ai.DataLocation}, without anyone clicking anything. "
+                  + "What is sent is the sender's name, the subject and the start of the message, so that it "
+                  + "can be labelled Needs reply, FYI, Updates or Promotions. Emails that arrived before "
+                  + "sorting was switched on are never sent."
                 : "TatvaOS AI is not configured on this platform. Nothing is sent.",
             // This month's use against the allowance — the number the
             // administrator is emailed about at 80 % and 100 % (MeteredAiGateway).

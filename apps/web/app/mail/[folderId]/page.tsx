@@ -118,6 +118,11 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   const [view, setView] = useState<ListView>('conversations');
   // TatvaOS AI's inbox tab (Mail AI step 3): null = All. Filtered by the
   // server, so the total and the paging describe the tab.
+  //
+  // ALL IS THE DEFAULT AND STAYS IT — never remembered across visits. Mr.
+  // Singh, 25 Sept 2026: there is no way yet to correct a wrong label, so a
+  // real email wrongly called Promotions must not live in a tab nobody opens.
+  // Do not persist this to localStorage until labels can be corrected.
   const [aiTab, setAiTab] = useState<string | null>(null);
   const aiStatus = useMailAiStatus();
   /**
