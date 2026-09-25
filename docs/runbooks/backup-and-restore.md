@@ -188,12 +188,16 @@ until it is 8 days old (see *The tiered schedule*), so the 7 in
 `BACKUP_S3_KEEP_DAYS` is not the number here. Rotate and throw away the old
 passphrase on the same day, and a week of backups can no longer be opened.
 
-**The old plain copies** (`pre-deploy-*.sql`, `pre-deploy-*.sql.gz`, 323 of
-them, 31 GB, 4 Aug to 24 Sept 2026) are **never deleted by a deploy**; each
-deploy counts them aloud. They were chmod-ed 700/600 by hand on 25 Sept. Mr.
-Singh's order for removing them: (a) prove a restore into a scratch database;
-(b) PR 254 live; (c) one explicit deletion run by a person, logged with the
-count, the date range and who authorised it.
+**The old plain copies are gone.** 323 files (`pre-deploy-*.sql` and
+`.sql.gz`, 31 GB, 4 Aug to 24 Sept 2026) were deleted on **25 Sept 2026,
+07:16Z**, by hand, as one logged action, authorised by Amit, after both of
+Mr. Singh's conditions were met: a restore proven on the off-box object
+(24 Sept) and on the new encrypted pre-deploy copy (25 Sept), and PR 254
+live. The record, with every file name, is
+`/home/deploy/predeploy-deletion-2026-09-25.log` on the server (mode 600),
+and the same summary is on PR 254. Nothing older than the windows above
+exists anywhere any more: local sets 3 days, pre-deploy copies 3 days,
+off-box objects 7 days.
 
 ### The tiered schedule (Amit, 24 Sept 2026)
 
