@@ -18,4 +18,5 @@ Format: **symptom → diagnosis → fix → confirm**.
 - [ ] Tenant reports missing mail
 - [ ] Suspected compromised tenant account
 - [ ] Abuse report received at `abuse@`
+- [x] [Capacity and disk — measured numbers, and when to spend money](capacity.md)
 - [ ] Disk full on the mail edge
