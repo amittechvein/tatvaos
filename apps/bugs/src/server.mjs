@@ -344,7 +344,17 @@ function issueQuery(s, q, { scopeMine = false } = {}) {
   eq('i.reporter_id', int(q.get('reporter')));
   if (/^\d{4}-\d{2}-\d{2}$/.test(q.get('from') || '')) { where.push('i.created_at >= ?'); p.push(q.get('from')); }
   if (/^\d{4}-\d{2}-\d{2}$/.test(q.get('to') || '')) { where.push('i.created_at < ?'); p.push(new Date(Date.parse(q.get('to')) + 864e5).toISOString().slice(0, 10)); }
-  if (q.get('overdue') === '1') { where.push("i.due_date IS NOT NULL AND i.due_date < ? AND i.status NOT IN ('fixed','closed')"); p.push(todayIst()); }
+  // Due filter (Amit, 25 Sept). Dates are India dates, like the due date
+  // itself. overdue=1 is the older spelling, still used by the dashboard tile.
+  const due = q.get('due') || (q.get('overdue') === '1' ? 'overdue' : '');
+  const today = todayIst();
+  const plusDays = (n) => new Date(Date.parse(today + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
+  if (due === 'overdue') { where.push("i.due_date IS NOT NULL AND i.due_date < ? AND i.status NOT IN ('fixed','closed')"); p.push(today); }
+  else if (due === 'today') { where.push("i.due_date = ? AND i.status <> 'closed'"); p.push(today); }
+  else if (due === 'week') { where.push("i.due_date BETWEEN ? AND ? AND i.status <> 'closed'"); p.push(today, plusDays(6)); }
+  else if (due === 'set') where.push('i.due_date IS NOT NULL');
+  else if (due === 'none') where.push('i.due_date IS NULL');
+  else if (due) throw bad('Unknown due filter.');
   const text = (q.get('q') || '').trim();
   if (text) {
     const m = /^tv-?0*(\d+)$/i.exec(text);

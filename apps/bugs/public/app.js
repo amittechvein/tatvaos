@@ -221,11 +221,11 @@ async function filterBar(params, target, { full }) {
     sel('type', 'Type', [['bug', 'Bug'], ['feature', 'Feature request']]),
     sel('status', 'Status', STATUS_ORDER.map((s) => [s, state.me.statuses[s]])),
     sel('priority', 'Priority', PRIORITIES.map((p) => [p, cap(p)])),
+    sel('due', 'Due', [['overdue', 'Overdue'], ['today', 'Due today'], ['week', 'Due in next 7 days'], ['set', 'Has a due date'], ['none', 'No due date']]),
     full && sel('assignee', 'Developer', [['none', '(unassigned)'], ...devs.map((u) => [u.id, u.name])]),
     full && sel('reporter', 'Tester', testers.map((u) => [u.id, u.name])),
     h('label', {}, h('span', {}, 'From'), h('input', { type: 'date', name: 'from', value: params.get('from') || '' })),
     h('label', {}, h('span', {}, 'To'), h('input', { type: 'date', name: 'to', value: params.get('to') || '' })),
-    params.get('overdue') && h('input', { type: 'hidden', name: 'overdue', value: '1' }),
     params.get('mine') && h('input', { type: 'hidden', name: 'mine', value: '1' }),
     params.get('scope') && h('input', { type: 'hidden', name: 'scope', value: params.get('scope') }),
     h('div', { class: 'filter-actions' }, h('button', { class: 'btn primary', type: 'submit' }, 'Apply'), h('a', { class: 'btn', href: '#' + target }, 'Clear'))].filter(Boolean));
@@ -245,8 +245,8 @@ async function dashboardView(params) {
   const personal = scope === 'mine';
   const st = state.me.statuses;
   const tiles = {
-    admin: [['total', 'Total issues'], ['bug', 'Bugs', 'type=bug'], ['feature', 'Features', 'type=feature'], ...STATUS_ORDER.map((s) => [s, st[s], 'status=' + s]), ['overdue', 'Overdue', 'overdue=1']],
-    developer: [['total', personal ? 'Assigned issues' : 'All issues'], ['pending', st.pending, 'status=pending'], ['under_review', st.under_review, 'status=under_review'], ['more_info', st.more_info, 'status=more_info'], ['under_dev', st.under_dev, 'status=under_dev'], ['reopened', st.reopened, 'status=reopened'], ['fixed', st.fixed, 'status=fixed'], ['overdue', 'Overdue issues', 'overdue=1']],
+    admin: [['total', 'Total issues'], ['bug', 'Bugs', 'type=bug'], ['feature', 'Features', 'type=feature'], ...STATUS_ORDER.map((s) => [s, st[s], 'status=' + s]), ['overdue', 'Overdue', 'due=overdue']],
+    developer: [['total', personal ? 'Assigned issues' : 'All issues'], ['pending', st.pending, 'status=pending'], ['under_review', st.under_review, 'status=under_review'], ['more_info', st.more_info, 'status=more_info'], ['under_dev', st.under_dev, 'status=under_dev'], ['reopened', st.reopened, 'status=reopened'], ['fixed', st.fixed, 'status=fixed'], ['overdue', 'Overdue issues', 'due=overdue']],
     tester: [['total', personal ? 'My reports' : 'All reports'], ['pending', st.pending, 'status=pending'], ['under_review', st.under_review, 'status=under_review'], ['more_info', st.more_info, 'status=more_info'], ['under_dev', st.under_dev, 'status=under_dev'], ['fixed', st.fixed, 'status=fixed'], ['closed', st.closed, 'status=closed'], ['reopened', st.reopened, 'status=reopened']],
   }[mode];
   const base = new URLSearchParams(params);

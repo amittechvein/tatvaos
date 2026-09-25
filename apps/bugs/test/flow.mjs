@@ -184,6 +184,23 @@ try {
   check('search by issue key', (await amit.req('GET', '/api/issues?q=TV-000001')).json[0]?.id === id);
   await amit.req('POST', `/api/issues/${amitIssue.id}/actions`, { action: 'due', due_date: '2020-01-01' });
   check('overdue counted', (await amit.req('GET', '/api/dashboard')).json.counts.overdue === 1);
+  // Due filter. Two issues now: the closed one (no due date) and amitIssue.
+  const list = async (q) => (await amit.req('GET', '/api/issues?' + q)).json.map((x) => x.id).join(',');
+  const istToday = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  const istPlus = (n) => new Date(Date.parse(istToday + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
+  check('due=overdue lists only the late one', (await list('due=overdue')) === String(amitIssue.id));
+  check('overdue=1 (old link) still works', (await list('overdue=1')) === String(amitIssue.id));
+  check('due=set lists only the one with a date', (await list('due=set')) === String(amitIssue.id));
+  check('due=none lists only the one without', (await list('due=none')) === String(id));
+  check('due=today is empty while nothing is due today', (await list('due=today')) === '');
+  await amit.req('POST', `/api/issues/${amitIssue.id}/actions`, { action: 'due', due_date: istToday });
+  check('due today: in today, in next 7 days, not overdue', (await list('due=today')) === String(amitIssue.id) && (await list('due=week')) === String(amitIssue.id) && (await list('due=overdue')) === '');
+  await amit.req('POST', `/api/issues/${amitIssue.id}/actions`, { action: 'due', due_date: istPlus(6) });
+  check('due in 6 days: in next 7 days, not today', (await list('due=week')) === String(amitIssue.id) && (await list('due=today')) === '');
+  await amit.req('POST', `/api/issues/${amitIssue.id}/actions`, { action: 'due', due_date: istPlus(7) });
+  check('due in 7 days: outside the next 7 days', (await list('due=week')) === '');
+  check('unknown due filter refused', (await amit.req('GET', '/api/issues?due=someday')).status === 400);
+  await amit.req('POST', `/api/issues/${amitIssue.id}/actions`, { action: 'due', due_date: '2020-01-01' });
   const rep = (await amit.req('GET', '/api/reports?group=developer')).json;
   check('developer report groups by developer', rep.some((r) => r.label === 'Rahul' && r.closed === 1), JSON.stringify(rep));
   check('tester cannot read reports', (await priya.req('GET', '/api/reports?group=module')).status === 403);
