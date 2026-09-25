@@ -193,6 +193,25 @@ count, the date range and who authorised it.
 
 ### The tiered schedule (Amit, 24 Sept 2026)
 
+**First, get the two scripts onto the server — WITHOUT moving the checkout.**
+
+```bash
+cd /srv/tatvaos-production
+git fetch origin main
+git checkout origin/main -- infra/scripts/backup.sh infra/scripts/backup-tiers.sh
+```
+
+**Not `git pull`.** On 25 Sept 2026 the server checkout stood at `fdffa9f` —
+the deliberate "stage one" commit, live `b42ffda` plus PR 254's five files —
+while `origin/main` was 38 commits ahead of it, four of them migrations in
+`local/postgres/init/`. `git pull` there would have moved the checkout to all
+38. It would not have deployed anything by itself, and cron would have been
+fine (the tiered schedule is off until the two lines below exist). But the
+next deploy from that checkout would then have shipped all 38 commits and
+applied four migrations, and nobody switching on a backup schedule expects to
+have armed that. Take the two files; leave `HEAD` where the deploy decided it
+should be.
+
 Off until these two lines are added to `.backup-env` **and** `--install` is
 re-run (it rewrites the cron line to match):
 
@@ -220,6 +239,16 @@ nothing on a run whose own upload failed or whose bucket listing does not show
 the set just uploaded, and it never deletes the newest three sets
 (`BACKUP_S3_MIN_KEEP`), so a week-long outage followed by one good run does not
 empty the bucket.
+
+**Measured on production, 25 Sept 2026, before the switch-on:** one set is
+**4.0 GB**; the server held **16 sets, 47 GB**, with **24 GB free** on a 157 GB
+disk; the bucket held **28 sets**; cron ran four times a day (02:30, 08:30,
+14:30, 20:30 UTC). With `BACKUP_LOCAL_KEEP=2` the server keeps about 8 GB
+instead of 47 — roughly **39 GB returned**, which is the answer to a free-space
+figure that had fallen from 32 GB to 24 GB in a day. The bucket goes the same
+way: about 21 sets rather than 28. What does rise is transfer — twelve runs a
+day instead of four, each uploading about 4 GB, so roughly 48 GB a day off the
+box rather than 16. That is a cost question for Amit, not a safety one.
 
 `BACKUP_LOCAL_KEEP` is not optional here: twelve full sets a day would fill the
 server's disk within days. `--install` refuses the two-hourly cron line without
