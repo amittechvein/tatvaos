@@ -36,7 +36,7 @@ export default function HireLayout({ children }: { children: React.ReactNode }) 
         }
       >
         {(me) => (
-          <AppShell scope="hire" brand="TatvaOS" sections={hireNav({ showTeam: me.access !== 'hiring_manager' })}>
+          <AppShell scope="hire" brand="TatvaOS" sections={hireNav({ showTeam: me.access !== 'hiring_manager', showCareers: me.access === 'admin' })}>
             {children}
           </AppShell>
         )}

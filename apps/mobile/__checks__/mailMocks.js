@@ -23,6 +23,7 @@ jest.mock('../lib/mail', () => {
     send: (...a) => mailApi.send(...a),
     suggestRecipients: (...a) => mailApi.suggestRecipients(...a),
     listMailboxes: (...a) => mailApi.listMailboxes(...a),
+    threadMessages: (...a) => (mailApi.threadMessages ? mailApi.threadMessages(...a) : Promise.resolve([])),
   };
 });
 

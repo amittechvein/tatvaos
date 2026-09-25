@@ -96,6 +96,39 @@ public sealed class HireAccess(AppDbContext db, TenantContext tenant, IHttpConte
         return q.Where(_ => false);
     }
 
+    /// <summary>
+    /// What the PUBLIC careers page may list: open jobs, not past their
+    /// closing date, of the organisation the request was scoped to by
+    /// hire.resolve_careers_site(). Drafts, on-hold and closed jobs are never
+    /// in it. The caller projects to the public fields (CareersEndpoints).
+    /// </summary>
+    public IQueryable<JobOpening> PublicJobs(DateOnly today) =>
+        db.Set<JobOpening>().Where(j => j.Status == "open" && j.Slug != null
+                                     && (j.ClosingDate == null || j.ClosingDate >= today));
+
+    /// <summary>This organisation's careers site, or null if not set up.</summary>
+    public Task<HireCareersSite?> CareersSiteAsync(CancellationToken ct) =>
+        db.Set<HireCareersSite>().AsNoTracking().FirstOrDefaultAsync(ct);
+
+    /// <summary>Creates or updates this organisation's careers site (validated by the caller).</summary>
+    public async Task SaveCareersSiteAsync(string slug, string name, string? contact, bool enabled, CancellationToken ct)
+    {
+        var row = await db.Set<HireCareersSite>().FirstOrDefaultAsync(ct);
+        var now = DateTimeOffset.UtcNow;
+        if (row is null)
+        {
+            row = new HireCareersSite { TenantId = tenant.TenantId, CreatedAt = now };
+            db.Set<HireCareersSite>().Add(row);
+        }
+        row.Slug = slug;
+        row.DisplayName = name;
+        row.ErasureContact = contact;
+        row.IsEnabled = enabled;
+        row.UpdatedBy = tenant.UserId;
+        row.UpdatedAt = now;
+        await db.SaveChangesAsync(ct);
+    }
+
     /// <summary>A new job, for the caller to save. The caller has already checked the level.</summary>
     public void Add(JobOpening job) => db.Set<JobOpening>().Add(job);
 
