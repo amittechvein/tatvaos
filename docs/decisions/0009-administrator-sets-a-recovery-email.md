@@ -1,6 +1,6 @@
 # 0009 — An administrator can set a person's recovery email
 
-**Status:** proposed design, for Mr. Singh's sign-in gate. **Nothing is built.**
+**Status:** accepted by Mr. Singh, 24 Sept 2026, option 2 with the corrections in his ruling at the end of this record. **Nothing is built yet.**
 **Date:** 2026-09-21
 **Asked by** Amit through Mr. Singh's ruling of 21 September: "administrators should
 be able to set a recovery email on an existing person, and it is the missing half
@@ -188,3 +188,52 @@ them, the notice goes out, but nothing can undo it.
 5. **The hold on Forgot password → recovery email (B).** Should it be part of
    0009? Recommended yes; without it the hold does not stop the takeover it
    was added for.
+
+---
+
+## Ruling — Mr. Singh, 24 September 2026 (his words, transcribed exactly)
+
+> **Ruling on decision 0009 — an administrator sets a recovery email. Mr. Singh, 24 Sept 2026.**
+>
+> Option 2, with a 48-hour hold. Accepted with three corrections and one further answer.
+>
+> First: during the hold, credential links go to the *old* address if one exists, rather than being refused. That removes the two-day lock-out, and an attacker gains nothing from mail sent to an address they do not control. Where there is no old address, the hold refuses and Reset password remains the fallback, as the record says.
+>
+> Second: point 7 is narrowed. The hold is skipped only when the recovery address is *empty* — null to value — never when it is being replaced. "Has no password" is not the test; a pending account with an existing recovery address is still worth stealing, and replacing that address is always the full-hold path.
+>
+> Third: the "this was not me" link is valid for thirty days, not for the 48 hours of the hold. Someone away for three days must still have a remedy. The link reverts only and never issues a session.
+>
+> On the third question: yes. A change reverted by the person suspends that administrator's ability to change recovery addresses until an owner reviews it. Honest mistake or attempt, the second try should not be possible.
+>
+> The hold covers every email-delivered credential path — reset, sign-in link, invitation — named explicitly. An owner's own recovery address is changeable only by that owner, with MFA where enabled, and the change notifies every other owner and administrator. Where the record says "Mr. Singh's review queue," it means the organisation's owner and the platform operator; I am a reader, not an alert recipient.
+>
+> Status: accepted, with the above attached.
+
+### What the ruling changes in this record (lane's note, not the ruling)
+
+The ruling came before the 24 September addendum above was read. Where they
+differ, **the ruling wins**:
+
+- **Point 4** ("links refused during the hold") → links go to the **old**
+  address during the hold. Refused only where there is no old address.
+- **Point 5**, "this was not me" → valid **30 days**; it reverts only and
+  never signs anyone in.
+- **Point 5**, "tells Mr. Singh's review queue" → tells **the organisation's
+  owner and the platform operator**, and **suspends that administrator's
+  ability to change recovery addresses** until an owner reviews it.
+- **Point 7**, "never signed in and no password" → the hold is skipped **only
+  when the address goes from empty to a value**. Replacing an address is
+  always held.
+- **New:** an owner's own recovery address is changeable only by that owner,
+  with MFA where enabled, and the change notifies every other owner and
+  administrator.
+- **Addendum question 5** (hold Forgot password → recovery email) is
+  **answered by the ruling**: "the hold covers every email-delivered credential
+  path — reset, sign-in link, invitation — named explicitly".
+- **Addendum question 4** (refuse Send sign-in link to an unconfirmed address
+  for someone who has a password) is **still open**. Mr. Singh will answer it
+  on PR 290.
+- **Build plan step 2** becomes one hold check called from reset,
+  forgot-recovery, sign-in link and invitation. During the hold it
+  **redirects** to the old address rather than refusing.
+
