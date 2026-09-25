@@ -81,10 +81,18 @@ function priorityBadge(p) { return h('span', { class: 'badge pr-' + p }, cap(p))
 function typeBadge(t) { return h('span', { class: 'badge ty-' + t }, t === 'bug' ? 'Bug' : 'Feature'); }
 
 function modal(title, body, actions) {
-  const dlg = h('dialog', { class: 'modal' },
+  // The dialog must exist BEFORE actions(dlg) runs: building it in one
+  // expression handed actions() an uninitialised `dlg` and threw, so no
+  // pop-up in the app ever opened (25 Sept, "Add module not working").
+  const dlg = h('dialog', { class: 'modal' });
+  dlg.append(
     h('form', { method: 'dialog', onsubmit: (e) => e.preventDefault() },
       h('h2', {}, title), body,
       h('div', { class: 'modal-actions' }, h('button', { type: 'button', class: 'btn', onclick: () => dlg.close() }, 'Cancel'), actions(dlg))));
+  // Remove on close synchronously. Relying on the 'close' event alone left
+  // closed dialogs in the page (seen with the window in the background), and
+  // the next "find the dialog" then found a dead one.
+  dlg.close = () => { HTMLDialogElement.prototype.close.call(dlg); dlg.remove(); };
   dlg.addEventListener('close', () => dlg.remove());
   document.body.append(dlg);
   dlg.showModal();
