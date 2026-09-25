@@ -177,12 +177,16 @@ function topbar(path) {
         h('select', { onchange: async (e) => { try { await api('POST', '/api/me/mode', { mode: e.target.value }); state.me.mode = e.target.value; location.hash = '#/'; render(); } catch (err) { toast(err.message, true); } } },
           me.user.roles.map((r) => h('option', { value: r, selected: r === mode }, ROLE_LABEL[r]))))
     : h('span', { class: 'mode single' }, ROLE_LABEL[mode]);
-  return h('header', { class: 'topbar' },
+  // On a phone the links fold behind a Menu button; "Working as" stays in
+  // view because it decides what every screen shows.
+  const header = h('header', { class: 'topbar' },
     h('a', { class: 'brand', href: '#/' }, h('span', { class: 'brand-mark small' }, 'TV'), h('span', {}, 'TatvaOS ', h('b', {}, 'Bugs'))),
-    h('nav', {}, nav),
+    h('button', { class: 'btn menu-btn', type: 'button', 'aria-label': 'Menu', onclick: () => header.classList.toggle('open') }, '☰ Menu'),
+    h('nav', { onclick: (e) => { if (e.target.closest('a')) header.classList.remove('open'); } }, nav),
     h('div', { class: 'who' }, modeSel,
       h('span', { class: 'who-name', title: me.user.email }, me.user.name),
       h('form', { method: 'post', action: '/auth/logout' }, h('button', { class: 'btn link', type: 'submit' }, 'Sign out'))));
+  return header;
 }
 
 // ---------------------------------------------------------------------------
@@ -224,7 +228,10 @@ async function filterBar(params, target, { full }) {
     params.get('overdue') && h('input', { type: 'hidden', name: 'overdue', value: '1' }),
     params.get('mine') && h('input', { type: 'hidden', name: 'mine', value: '1' }),
     h('div', { class: 'filter-actions' }, h('button', { class: 'btn primary', type: 'submit' }, 'Apply'), h('a', { class: 'btn', href: '#' + target }, 'Clear'))].filter(Boolean));
-  return form;
+  // Folded on phones unless a filter is in use; always open on a wide screen.
+  const active = [...params.keys()].filter((k) => !['r', 'mine'].includes(k)).length;
+  return h('details', { class: 'filter-box', open: active > 0 || window.matchMedia('(min-width: 701px)').matches },
+    h('summary', {}, 'Filters', active ? ` (${active} in use)` : ''), form);
 }
 
 // ---------------------------------------------------------------------------
@@ -275,18 +282,18 @@ async function issuesView(params) {
   const mine = params.get('mine') === '1';
   const title = mode === 'admin' ? (mine ? 'My issues' : 'All issues') : mode === 'developer' ? 'Assigned to me' : 'My reports';
   const table = rows.length
-    ? h('div', { class: 'table-wrap' }, h('table', { class: 'issues' },
+    ? h('div', { class: 'table-wrap' }, h('table', { class: 'issues cards' },
         h('thead', {}, h('tr', {}, ['ID', 'Title', 'Type', 'Module', 'Priority', 'Status', 'Developer', 'Reported by', 'Updated'].map((c) => h('th', {}, c)))),
         h('tbody', {}, rows.map((i) => h('tr', { onclick: () => { location.hash = '#/issue/' + i.id; } },
           h('td', { class: 'mono' }, h('a', { href: '#/issue/' + i.id }, i.key)),
           h('td', { class: 'title-cell' }, i.title, i.overdue && h('span', { class: 'badge overdue' }, 'Overdue')),
-          h('td', {}, typeBadge(i.type)),
-          h('td', { class: 'muted' }, i.module_name, ' › ', i.submodule_name),
-          h('td', {}, priorityBadge(i.priority)),
-          h('td', {}, statusBadge(i.status, i.status_label)),
-          h('td', {}, i.assignee_name || i.assignee_email || h('span', { class: 'muted' }, '—')),
-          h('td', {}, i.reporter_name || i.reporter_email),
-          h('td', { class: 'muted nowrap' }, fmtDate(i.updated_at)))))))
+          h('td', { 'data-label': 'Type' }, typeBadge(i.type)),
+          h('td', { class: 'muted', 'data-label': 'Module' }, i.module_name, ' › ', i.submodule_name),
+          h('td', { 'data-label': 'Priority' }, priorityBadge(i.priority)),
+          h('td', { 'data-label': 'Status' }, statusBadge(i.status, i.status_label)),
+          h('td', { 'data-label': 'Developer' }, i.assignee_name || i.assignee_email || h('span', { class: 'muted' }, '—')),
+          h('td', { 'data-label': 'Reported by' }, i.reporter_name || i.reporter_email),
+          h('td', { class: 'muted nowrap', 'data-label': 'Updated' }, fmtDate(i.updated_at)))))))
     : h('div', { class: 'empty' }, 'No issues match.');
   return h('div', {},
     h('div', { class: 'page-head' }, h('div', {}, h('h1', {}, title), h('p', { class: 'muted' }, `${rows.length} issue${rows.length === 1 ? '' : 's'}${rows.length === 1000 ? ' (first 1000)' : ''}`)),
@@ -571,7 +578,7 @@ async function usersView() {
   return h('div', {},
     h('div', { class: 'page-head' }, h('div', {}, h('h1', {}, 'Users & roles'), h('p', { class: 'muted' }, 'Add people by their TatvaOS email. One account can hold any mix of Admin, Developer and Tester; they switch with "Working as" at the top.'))),
     add,
-    h('div', { class: 'table-wrap' }, h('table', { class: 'issues users' },
+    h('div', { class: 'table-wrap' }, h('table', { class: 'issues users cards' },
       h('thead', {}, h('tr', {}, ['Name', 'Email', 'Admin', 'Developer', 'Tester', 'Signed in', 'Status', ''].map((c) => h('th', {}, c)))),
       h('tbody', {}, users.map((u) => {
         const cb = (r) => h('input', { type: 'checkbox', checked: u.roles.includes(r), onchange: (e) => {
@@ -580,10 +587,10 @@ async function usersView() {
         } });
         return h('tr', { class: u.active ? '' : 'inactive' },
           h('td', {}, u.name),
-          h('td', { class: 'muted' }, u.email),
-          h('td', { class: 'center' }, cb('admin')), h('td', { class: 'center' }, cb('developer')), h('td', { class: 'center' }, cb('tester')),
-          h('td', { class: 'muted small nowrap' }, u.last_seen_at ? fmtDate(u.last_seen_at) : 'Not yet'),
-          h('td', {}, u.active ? 'Active' : h('span', { class: 'badge off' }, 'Disabled')),
+          h('td', { class: 'muted', 'data-label': 'Email' }, u.email),
+          h('td', { class: 'center', 'data-label': 'Admin' }, cb('admin')), h('td', { class: 'center', 'data-label': 'Developer' }, cb('developer')), h('td', { class: 'center', 'data-label': 'Tester' }, cb('tester')),
+          h('td', { class: 'muted small nowrap', 'data-label': 'Signed in' }, u.last_seen_at ? fmtDate(u.last_seen_at) : 'Not yet'),
+          h('td', { 'data-label': 'Status' }, u.active ? 'Active' : h('span', { class: 'badge off' }, 'Disabled')),
           h('td', { class: 'nowrap right' },
             h('button', { class: 'btn small', onclick: () => { const n = prompt('Name', u.name); if (n !== null) run(() => api('PATCH', '/api/users/' + u.id, { name: n }), 'Saved.'); } }, 'Rename'),
             h('button', { class: 'btn small' + (u.active ? ' danger' : ''), onclick: () => run(() => api('PATCH', '/api/users/' + u.id, { active: !u.active }), u.active ? 'Disabled.' : 'Enabled.') }, u.active ? 'Disable' : 'Enable')));
@@ -614,7 +621,7 @@ async function reportsView(params) {
   return h('div', {},
     h('div', { class: 'page-head' }, h('h1', {}, 'Reports')),
     h('div', { class: 'tabs' }, REPORTS.map(([k, label]) => h('a', { class: k === which[0] ? 'active' : '', href: '#/reports?r=' + k }, label))),
-    await filterBar(new URLSearchParams([...keep]), '/reports', { full: true }).then((f) => { f.append(h('input', { type: 'hidden', name: 'r', value: which[0] })); return f; }),
+    await filterBar(new URLSearchParams([...keep]), '/reports', { full: true }).then((f) => { f.querySelector('form').append(h('input', { type: 'hidden', name: 'r', value: which[0] })); return f; }),
     rows.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'issues report' },
       h('thead', {}, h('tr', {}, h('th', {}, which[2] === 'submodule' ? 'Module › Sub-module' : cap(which[2])), h('th', {}, 'Total'), STATUS_ORDER.map((s) => h('th', {}, st[s])))),
       h('tbody', {}, rows.map((r) => h('tr', {}, h('td', {}, cap(r.label)), h('td', { class: 'num' }, h('b', {}, r.total)), STATUS_ORDER.map((s) => h('td', { class: 'num' + (r[s] ? '' : ' muted') }, r[s]))))),

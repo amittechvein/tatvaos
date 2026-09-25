@@ -84,6 +84,13 @@ label > span { display: block; font-size: 12.5px; font-weight: 600; color: var(-
 .inline { display: flex; gap: 6px; }
 
 /* Filters */
+.menu-btn { display: none; }
+.filter-box { margin-bottom: 16px; }
+.filter-box > summary { cursor: pointer; font-weight: 600; color: var(--muted); padding: 6px 2px; list-style: none; }
+.filter-box > summary::-webkit-details-marker { display: none; }
+.filter-box > summary::before { content: '▸ '; }
+.filter-box[open] > summary::before { content: '▾ '; }
+.filter-box .filters { margin-bottom: 0; }
 .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 16px; }
 .filters label { flex: 0 1 150px; }
 .filters label.grow { flex: 1 1 220px; }
@@ -188,7 +195,82 @@ body.signin { min-height: 100vh; display: grid; place-items: center; background:
   .issue-grid { grid-template-columns: 1fr; }
   .side { position: static; }
   .grid2 { grid-template-columns: 1fr; }
-  .topbar { padding: 10px 16px; gap: 10px; }
   .content { padding: 16px 16px 60px; }
   .filters label { flex: 1 1 140px; }
+}
+
+/* ---- Phones ------------------------------------------------------------ */
+@media (max-width: 700px) {
+  /* Top bar: one short row; links fold behind Menu. Not sticky, so it never
+     eats the screen while reading an issue. */
+  .topbar { position: static; padding: 8px 16px; gap: 8px; }
+  .brand > span:last-child { display: none; }
+  .menu-btn { display: inline-flex; order: 3; margin-left: auto; }
+  .who { order: 2; gap: 6px; }
+  .who-name, .who form { display: none; }
+  .mode > span { display: none; }
+  .topbar nav { display: none; order: 4; flex-basis: 100%; flex-direction: column; gap: 2px; }
+  .topbar.open nav { display: flex; }
+  .topbar.open .who form { display: block; }
+  .topbar.open .who { flex-basis: 100%; order: 5; justify-content: space-between; }
+  .topbar.open .who-name { display: inline; }
+  .topbar nav a { padding: 11px 12px; font-size: 15px; }
+
+  h1 { font-size: 20px; }
+  .issue h1 { font-size: 20px; }
+  .page-head { align-items: stretch; }
+  .page-head > .row, .page-head > .btn { width: 100%; }
+  .row.wrap .btn { flex: 1 1 auto; justify-content: center; }
+
+  /* Comfortable tap targets; 16px inputs stop iPhone zooming in on focus. */
+  .btn { padding: 10px 14px; }
+  .btn.small { padding: 8px 12px; font-size: 13px; }
+  input, select, textarea { font-size: 16px; padding: 10px; }
+  input[type=checkbox], input[type=radio] { width: 20px; height: 20px; }
+
+  .filters { padding: 10px; }
+  .filters label, .filters label.grow { flex: 1 1 100%; }
+  .filter-actions { flex: 1 1 100%; }
+  .filter-actions .btn { flex: 1; justify-content: center; }
+
+  .tiles { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .tile { padding: 12px; }
+  .tile-n { font-size: 24px; }
+
+  /* Wide tables become one card per row. */
+  .table-wrap:has(table.cards) { background: none; border: 0; box-shadow: none; overflow: visible; }
+  table.cards, table.cards tbody, table.cards tr, table.cards td { display: block; width: 100%; }
+  table.cards thead { display: none; }
+  table.cards tr { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 10px; box-shadow: var(--shadow); }
+  table.cards td { border: 0 !important; padding: 3px 0; text-align: left; white-space: normal; }
+  table.cards td[data-label] { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+  table.cards td[data-label]::before { content: attr(data-label); color: var(--muted); font-size: 12px; font-weight: 600; flex: none; }
+  table.cards td.title-cell { font-size: 15px; min-width: 0; padding-bottom: 6px; }
+  table.cards td.mono { font-size: 12px; }
+  table.cards td.right { display: flex; gap: 6px; padding-top: 8px; }
+  table.cards td.right .btn { flex: 1; justify-content: center; }
+  table.users.cards td:first-child { font-weight: 600; font-size: 15px; }
+
+  table.subs td { display: block; border-top: 0; padding: 2px 0; }
+  table.subs tr { display: block; border-top: 1px solid var(--line); padding: 8px 0; }
+  table.subs td .btn { margin: 4px 4px 0 0; }
+  .module .row.between { flex-direction: column; align-items: stretch; }
+  .module .row.between .row { flex-wrap: wrap; }
+
+  /* Issue page: the facts (developer, due date) first, as a compact list. */
+  .issue-grid { display: flex; flex-direction: column; gap: 0; }
+  .issue-grid > aside { order: -1; }
+  .field { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 6px 0; }
+  .field-v { text-align: right; margin: 0; }
+  .field .inline { flex-wrap: wrap; justify-content: flex-end; }
+  .field .inline select, .field .inline input { width: auto; max-width: 180px; }
+  .row.between { flex-direction: column; align-items: stretch; }
+  .file.thumb img { width: 140px; height: 96px; }
+  .ev-head { flex-direction: column; gap: 0; }
+  .card { padding: 14px; }
+  .form.row input { flex: 1 1 100%; }
+  .tabs { flex-wrap: nowrap; overflow-x: auto; }
+  .tabs a { white-space: nowrap; }
+  .modal form { padding: 16px; }
+  .modal-actions .btn { flex: 1; justify-content: center; }
 }
