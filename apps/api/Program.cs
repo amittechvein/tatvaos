@@ -28,6 +28,11 @@ using TatvaOS.Api.Shared.Tenancy;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Development-only operator sign-in (Mr. Singh, 24 Sept 2026): refuse to boot
+// when its switch is on anywhere but Development. First, before anything else
+// is built. See Modules/Auth/Endpoints/DevOperatorGate.cs.
+DevOperatorGate.RefuseToStartOutsideDevelopment(builder.Environment, builder.Configuration);
+
 // ---------------------------------------------------------------------------
 //  `TatvaOS.Api --oidc-rotate` — the key-rotation runbook's one step. Runs in
 //  the API container against the same key directory, generates a new signing
@@ -772,6 +777,8 @@ app.UseRateLimiter();
 TatvaOS.Api.Modules.Auth.Endpoints.AuthEndpoints.ConfigureCookies(app.Configuration);
 
 app.MapAuthEndpoints();
+// Maps nothing unless Development AND DevOperatorSignIn__Enabled — see the file.
+app.MapDevOperatorSignIn();
 app.MapMfaEndpoints();
 app.MapOrganisationEndpoints();
 app.MapUserEndpoints();

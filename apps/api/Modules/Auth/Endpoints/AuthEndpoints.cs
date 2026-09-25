@@ -572,7 +572,7 @@ public static class AuthEndpoints
     /// Null when the second factor has ALREADY been checked — the MFA verify
     /// endpoint passes null so it does not challenge the person twice.
     /// </param>
-    private static async Task<IResult> CompleteSignInAsync(
+    internal static async Task<IResult> CompleteSignInAsync(
         User user, Tenant? org, AppDbContext db, TokenIssuer tokens,
         HttpContext http, IServiceScopeFactory scopeFactory, IConfiguration config,
         CancellationToken ct, TotpService? totp = null)

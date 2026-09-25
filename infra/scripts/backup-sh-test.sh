@@ -13,6 +13,9 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 REPO=$(pwd)
+# India time on purpose: backup.sh must stamp in UTC whatever the zone, and
+# the local prune must sort those stamps the same way. See backup-tiers.sh.
+export TZ=Asia/Kolkata
 
 command -v flock >/dev/null || { echo "needs flock (util-linux) — run on Linux or in WSL"; exit 2; }
 
@@ -67,7 +70,7 @@ export PATH="$T/bin:$PATH"
 export FAKE_CRON="$T/crontab"
 
 H=3600
-stamp() { date -d "@$1" +%Y%m%d-%H%M%S; }
+stamp() { date -u -d "@$1" +%Y%m%d-%H%M%S; }
 
 # A fresh world: a bucket with 10 days of 2-hourly sets plus one foreign file,
 # and a backup directory holding five old sets and one directory that is not a set.
@@ -82,6 +85,13 @@ fresh() {
     echo keep > "$FAKE_BUCKET/notes.txt"
     for k in 1 2 3 4 5; do mkdir -p "$BACKUP_DIR/$(stamp $((now - k * 2 * H)))"; done
     mkdir -p "$BACKUP_DIR/not-a-set"
+    # Things that share the directory and must survive the local prune —
+    # Mr. Singh's condition two (25 Sept): a pre-deploy copy, as deploy.sh
+    # names it (it really lives elsewhere, but the prune must not care), a
+    # directory with that name, the log, the config.
+    echo x > "$BACKUP_DIR/pre-deploy-$(stamp $((now - 10 * 24 * H))).sql.gz.enc"
+    mkdir -p "$BACKUP_DIR/pre-deploy-$(stamp $((now - 10 * 24 * H)))"
+    echo x > "$BACKUP_DIR/backup.log"
     cat > "$BACKUP_DIR/.backup-env" <<ENV
 BACKUP_S3_REMOTE='fake:tatvaos-backups'
 BACKUP_ENC_PASSPHRASE='test-only'
@@ -97,7 +107,7 @@ run() { out=$(bash "$REPO/infra/scripts/backup.sh" 2>&1); rc=$?; }
 echo "== a normal tiered run"
 fresh
 before=$(sets_in_bucket)
-run
+pre=$(date -u +%Y%m%d-%H%M); run; post=$(date -u +%Y%m%d-%H%M)
 same  "exit code"                             "$rc" 0
 same  "120 sets before the run"               "$before" 120
 n=$(sets_in_bucket)
@@ -113,6 +123,16 @@ same  "two sets left on this disk"            "$(sets_on_disk)" 2
                                           || { fail=$((fail+1)); echo "  FAIL  the newest local set was deleted"; }
 [ -d "$BACKUP_DIR/not-a-set" ] && { pass=$((pass+1)); echo "  ok    a directory that is not a set is left alone"; } \
                                || { fail=$((fail+1)); echo "  FAIL  not-a-set was deleted"; }
+same  "the pre-deploy copy (10 days old) survives"  "$(ls "$BACKUP_DIR" | grep -c '^pre-deploy-.*\.sql\.gz\.enc$')" 1
+same  "a pre-deploy-named directory survives"       "$(find "$BACKUP_DIR" -maxdepth 1 -type d -name 'pre-deploy-*' | wc -l)" 1
+same  "the log survives"                            "$(cat "$BACKUP_DIR/backup.log")" x
+[ -f "$BACKUP_DIR/.backup-env" ] && { pass=$((pass+1)); echo "  ok    the config survives"; } \
+                                 || { fail=$((fail+1)); echo "  FAIL  .backup-env was deleted"; }
+# The minute may tick during the run, so either end of it is accepted.
+if printf '%s
+' "$out" | grep -qE "uploaded ($pre|$post)"; then pass=$((pass+1)); echo "  ok    this run's stamp is UTC, not IST"
+else fail=$((fail+1)); echo "  FAIL  the stamp is not UTC (wanted $pre or $post): $(printf '%s
+' "$out" | grep -o 'uploaded [0-9-]*')"; fi
 
 echo "== the upload fails: nothing is thinned, anywhere"
 fresh

@@ -12,7 +12,11 @@
 
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
-export TZ=UTC
+# The TEST runs in India time on purpose. The stamps it feeds in are UTC (as
+# backup.sh writes them); if the rule read them in the machine's zone, the
+# 6-hour slots and the day lines would land 5½ hours off and the counts
+# below would drift. Passing here proves the rule pins UTC itself.
+export TZ=Asia/Kolkata
 
 # Overridable so a deliberately broken copy can be run through the same test
 # — the way to prove each check can fail.
@@ -22,9 +26,9 @@ same()  { if [ "$2" = "$3" ]; then pass=$((pass+1)); echo "  ok    $1"; else fai
 has()   { if printf '%s\n' "$2" | grep -qxF -- "$3"; then pass=$((pass+1)); echo "  ok    $1"; else fail=$((fail+1)); echo "  FAIL  $1: [$3] missing"; fi; }
 hasnt() { if printf '%s\n' "$2" | grep -qxF -- "$3"; then fail=$((fail+1)); echo "  FAIL  $1: [$3] present"; else pass=$((pass+1)); echo "  ok    $1"; fi; }
 
-stamp() { date -d "@$1" +%Y%m%d-%H%M%S; }
+stamp() { date -u -d "@$1" +%Y%m%d-%H%M%S; }
 H=3600
-T0=$(date -d "2026-09-01 00:30:00" +%s)
+T0=$(date -u -d "2026-09-01 00:30:00" +%s)
 
 echo "== simulation: every 2 hours for 14 days, rule applied after each upload"
 bucket=""
@@ -54,7 +58,7 @@ echo "  bucket after 14 days: $count sets (deleted $deleted_total over the run)"
 
 ages=$(printf '%s\n' "$bucket" | while read -r n; do
     s=${n%.tar.gz.enc}
-    e=$(date -d "${s:0:4}-${s:4:2}-${s:6:2} ${s:9:2}:${s:11:2}:${s:13:2}" +%s)
+    e=$(date -u -d "${s:0:4}-${s:4:2}-${s:6:2} ${s:9:2}:${s:11:2}:${s:13:2}" +%s)
     echo $(( (last - e) / H ))
 done)
 in_day1=$(printf '%s\n' "$ages" | awk '$1<24' | wc -l)
@@ -83,7 +87,7 @@ if [ "${gaps:-0}" -ge 4 ]; then pass=$((pass+1)); echo "  ok    smallest gap pas
 else fail=$((fail+1)); echo "  FAIL  two sets past a day are only ${gaps}h apart"; fi
 
 echo "== things it must never delete"
-now=$(date -d "2026-09-20 12:00:00" +%s)
+now=$(date -u -d "2026-09-20 12:00:00" +%s)
 old1="20260801-003000.tar.gz.enc"   # 50 days old
 old2="20260802-003000.tar.gz.enc"
 old3="20260803-003000.tar.gz.enc"
@@ -113,6 +117,19 @@ hasnt "future set kept" "$out" "$fut"
 echo "== Windows line endings in the listing"
 out=$(printf '%s\r\n%s\r\n%s\r\n%s\r\n' "$old1" "$old2" "$old3" "$old4" | "$TIERS" "$now" 2>/dev/null)
 same "CRLF read the same as LF" "$out" "$old1"
+
+echo "== the zone the script runs in does not change the answer"
+# A set at 23:00 UTC on day D is "day D" in UTC and "day D+1" in IST. Two sets
+# 3 days old, one at 22:00 and one at 23:00 UTC: same UTC day, so the older is
+# deleted. Read in IST, 23:00 becomes 04:30 next day — a different day — and
+# both would be kept.
+n3=$(date -u -d "2026-09-20 12:00:00" +%s)
+a="20260917-220000.tar.gz.enc"; b="20260917-230000.tar.gz.enc"
+k1="20260920-100000.tar.gz.enc"; k2="20260920-080000.tar.gz.enc"; k3="20260920-060000.tar.gz.enc"
+out_ist=$(printf '%s\n' "$k1" "$k2" "$k3" "$b" "$a" | TZ=Asia/Kolkata "$TIERS" "$n3" 2>/dev/null)
+out_utc=$(printf '%s\n' "$k1" "$k2" "$k3" "$b" "$a" | TZ=UTC "$TIERS" "$n3" 2>/dev/null)
+same "same answer under IST and UTC" "$out_ist" "$out_utc"
+same "and it is the UTC answer (older of the two goes)" "$out_utc" "$a"
 
 echo "== empty listing"
 out=$(printf '' | "$TIERS" "$now" 2>&1)

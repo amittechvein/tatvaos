@@ -84,7 +84,13 @@ fi
 # Empty means local only — which is a single point of failure, loudly.
 REMOTE="${BACKUP_REMOTE:-}"
 
-STAMP=$(date +%Y%m%d-%H%M%S)
+# UTC BY NAME, not by the machine's default. backup-tiers.sh reads this stamp
+# back to decide what to delete, and it reads it as UTC. If the server's zone
+# is ever set to IST (the metering counts months in IST; someone will), a
+# stamp written in local time would be read 5½ hours off, the 6-hour slots
+# would shift, and nothing would say so. Production is UTC today, so this
+# changes nothing there — it stops it changing later. (Mr. Singh, 25 Sept.)
+STAMP=$(date -u +%Y%m%d-%H%M%S)
 OUT="${DEST}/${STAMP}"
 
 # ---------------------------------------------------------------------------
@@ -264,7 +270,10 @@ step "Off-box copy — object storage"
 #  Expected in ${DEST}/.backup-env:
 #      BACKUP_S3_REMOTE='linode:tatvaos-backups'   # rclone remote:bucket
 #      BACKUP_ENC_PASSPHRASE='...'                 # also on paper, offline
-#      BACKUP_S3_KEEP_DAYS=30                      # optional; not used when tiered
+#      BACKUP_S3_KEEP_DAYS=7                       # optional; default 30, production sets 7.
+#                                                  # Not used when BACKUP_S3_TIERED=1.
+#      BACKUP_KEEP_DAYS=3                          # optional; default 14, production sets 3.
+#                                                  # deploy.sh's pre-deploy copies use it too.
 #      BACKUP_S3_TIERED=1                          # optional: the 2h/6h/daily schedule
 #      BACKUP_LOCAL_KEEP=2                         # required with BACKUP_S3_TIERED
 # ---------------------------------------------------------------------------

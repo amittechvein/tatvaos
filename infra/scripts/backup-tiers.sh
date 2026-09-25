@@ -23,6 +23,11 @@
 #  bucket's modification time, so the answer does not change if an object is
 #  ever copied or re-uploaded.
 #
+#  THE STAMPS ARE UTC, AND ARE READ AS UTC — pinned here, not left to the
+#  machine's zone. backup.sh writes them with `date -u`; this script sets
+#  TZ=UTC before reading one. If the server's zone ever changes, neither side
+#  moves. (The test runs under Asia/Kolkata to prove it.)
+#
 #  Slots and days are fixed to the clock (00-06, 06-12, ...; midnight), not
 #  counted back from now — a slot that moved with every run would pick a
 #  different set to keep each time and eventually keep none of them. A slot
@@ -40,6 +45,7 @@
 # ─────────────────────────────────────────────────────────────────────────
 
 set -uo pipefail
+export TZ=UTC
 
 NOW="${1:-$(date +%s)}"
 MIN_KEEP="${BACKUP_S3_MIN_KEEP:-3}"
@@ -60,8 +66,8 @@ done
 
 [ "${#names[@]}" -eq 0 ] && exit 0
 
-# Every stamp read by ONE date call (in the machine's own time zone, the zone
-# backup.sh wrote it in). One call per name took minutes over a long listing.
+# Every stamp read by ONE date call, as UTC (TZ above). One call per name
+# took minutes over a long listing.
 # date -f skips a line it cannot read, which would shift every answer after
 # it by one — so if the count comes back short, read them one at a time.
 mapfile -t parsed < <(printf '%s\n' "${stamps[@]}" | date -f - '+%s %Y%m%d' 2>/dev/null)
