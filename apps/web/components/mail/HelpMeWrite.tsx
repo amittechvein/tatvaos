@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../ui/Icon';
 import { useAuth } from '@/lib/auth';
-import { REWRITE_STYLES, mailAiRewrite, mailAiStatus, type RewriteStyle } from '@/lib/mailAi';
+import { REWRITE_GROUPS, REWRITE_STYLES, mailAiRewrite, mailAiStatus, type RewriteStyle } from '@/lib/mailAi';
 
 // ============================================================================
 //  Help me write — TatvaOS AI in the composer. Step 1 of 3 (Amit, 25 Sept).
@@ -130,16 +130,25 @@ export function HelpMeWritePanel({
 
       {(phase.kind === 'menu' || phase.kind === 'error') && (
         <>
-          <div className="flex flex-wrap gap-1.5">
-            {REWRITE_STYLES.map(({ style, label: l }) => (
-              <button
-                key={style}
-                type="button"
-                onClick={() => void run(style)}
-                className="rounded-full border border-line bg-surface px-3 py-1 text-xs text-ink transition hover:border-brand-400"
-              >
-                {l}
-              </button>
+          <div className="space-y-1.5">
+            {REWRITE_GROUPS.map((g) => (
+              <div key={g.title} className="flex items-start gap-2">
+                {/* The chips wrap in their own box, so a second line lines up
+                    under the first chip rather than under the row's title. */}
+                <span className="w-14 shrink-0 pt-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-faint">{g.title}</span>
+                <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+                {g.styles.map(({ style, label: l }) => (
+                  <button
+                    key={style}
+                    type="button"
+                    onClick={() => void run(style)}
+                    className="rounded-full border border-line bg-surface px-3 py-1 text-xs text-ink transition hover:border-brand-400"
+                  >
+                    {l}
+                  </button>
+                ))}
+                </div>
+              </div>
             ))}
           </div>
           {phase.kind === 'error' && <p className="mb-0 mt-2 text-xs text-danger">{phase.message}</p>}

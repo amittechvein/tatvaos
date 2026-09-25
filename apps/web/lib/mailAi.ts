@@ -11,16 +11,47 @@
 
 type AuthedFetch = (path: string, init?: RequestInit) => Promise<Response>;
 
-export type RewriteStyle = 'polish' | 'formal' | 'friendly' | 'shorter' | 'grammar';
+export type RewriteStyle =
+  | 'polish' | 'formal' | 'friendly' | 'soft' | 'confident' | 'apologetic'
+  | 'shorter' | 'longer'
+  | 'grammar' | 'simple' | 'bullets';
 
-/** The order and the words the menu shows. The API holds what each one means. */
-export const REWRITE_STYLES: { style: RewriteStyle; label: string }[] = [
-  { style: 'polish', label: 'Polish' },
-  { style: 'formal', label: 'More formal' },
-  { style: 'friendly', label: 'Friendlier' },
-  { style: 'shorter', label: 'Shorter' },
-  { style: 'grammar', label: 'Fix spelling and grammar' },
+/**
+ * The words the menu shows, in the rows it shows them. The API holds what each
+ * one means (MailAiEndpoints.Styles) — the browser only ever sends the key.
+ * Grouped because eleven chips in one wrap read as a wall (Amit, 25 Sept:
+ * "add some more button like soft tone").
+ */
+export const REWRITE_GROUPS: { title: string; styles: { style: RewriteStyle; label: string }[] }[] = [
+  {
+    title: 'Tone',
+    styles: [
+      { style: 'polish', label: 'Polish' },
+      { style: 'formal', label: 'More formal' },
+      { style: 'friendly', label: 'Friendlier' },
+      { style: 'soft', label: 'Softer tone' },
+      { style: 'confident', label: 'More confident' },
+      { style: 'apologetic', label: 'Apologetic' },
+    ],
+  },
+  {
+    title: 'Length',
+    styles: [
+      { style: 'shorter', label: 'Shorter' },
+      { style: 'longer', label: 'More detailed' },
+    ],
+  },
+  {
+    title: 'Clarity',
+    styles: [
+      { style: 'grammar', label: 'Fix spelling and grammar' },
+      { style: 'simple', label: 'Simpler words' },
+      { style: 'bullets', label: 'As bullet points' },
+    ],
+  },
 ];
+
+export const REWRITE_STYLES = REWRITE_GROUPS.flatMap((g) => g.styles);
 
 export interface MailAiStatus {
   available: boolean;

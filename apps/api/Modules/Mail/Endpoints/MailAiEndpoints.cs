@@ -46,7 +46,8 @@ public static class MailAiEndpoints
     public const string RewriteFeature = "mail.rewrite";
 
     /// <summary>
-    /// The styles on offer. A fixed list, chosen here: the person picks a
+    /// The styles on offer — eleven since 25 Sept (tone, length, clarity; the
+    /// composer groups them the same way). A fixed list, chosen here: the person picks a
     /// word, never writes the instruction, so what the model is told to do is
     /// the product's decision and cannot be steered from the browser.
     /// </summary>
@@ -57,6 +58,13 @@ public static class MailAiEndpoints
         ["friendly"] = "Make it warmer and friendlier while staying professional.",
         ["shorter"] = "Make it shorter and more direct. Keep every fact, request and date; drop only repetition and filler.",
         ["grammar"] = "Correct spelling, grammar and punctuation ONLY. Do not change the wording, tone or length otherwise.",
+        // Added 25 Sept 2026 (Amit: "add some more button like soft tone").
+        ["soft"] = "Make the tone softer and gentler: polite, tactful and considerate, so nothing reads as blunt or demanding. Keep every request and fact.",
+        ["confident"] = "Make it more confident and assertive: direct, clear statements without hedging or over-apologising, while staying courteous.",
+        ["apologetic"] = "Make it sincerely apologetic and understanding, acknowledging the inconvenience, without inventing reasons or promises that are not in the draft.",
+        ["longer"] = "Expand it into a fuller, more complete message: smoother sentences and connecting phrases. Do not add new facts, dates, promises or requests.",
+        ["simple"] = "Rewrite it in simple, plain words and short sentences that anyone can understand easily, including someone reading in a second language.",
+        ["bullets"] = "Reorganise it as a short opening line followed by a list of points, one per line, each starting with \"- \". Keep every fact and request.",
     };
 
     private const string Instruction = """
@@ -123,7 +131,7 @@ public static class MailAiEndpoints
             return Results.Ok(new
             {
                 error = $"This draft is {text.Length:N0} characters; Help me write takes up to "
-                        + $"{MaxRewriteCharacters:N0}. Select less, or shorten it first.",
+                        + $"{MaxRewriteCharacters:N0}. Shorten it first, or rewrite it in parts.",
             });
 
         var result = await ai.CompleteAsync(Instruction + " " + change, text, ct, RewriteFeature);

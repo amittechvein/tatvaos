@@ -105,8 +105,8 @@ try {
   const again = await setAi({ mail: true });
   check('mail on again: idempotent 200', again.status === 200 && again.body.mailEnabled === true, JSON.stringify(again.body));
   s = await status();
-  check('both on: status available, with the cap and the five styles',
-    s.body.available === true && s.body.maxCharacters === 8000 && Array.isArray(s.body.styles) && s.body.styles.length === 5,
+  check('both on: status available, with the cap and the eleven styles',
+    s.body.available === true && s.body.maxCharacters === 8000 && Array.isArray(s.body.styles) && s.body.styles.length === 11,
     JSON.stringify(s.body));
   h0 = await hits();
   r = await rewrite(`  ${DRAFT}\r\n`);
@@ -120,12 +120,14 @@ try {
   check('the success is metered under mail.rewrite', (await mailRows()) >= 1);
 
   // Every style is accepted and changes the instruction.
-  for (const st of ['formal', 'friendly', 'shorter', 'grammar']) {
+  for (const st of ['formal', 'friendly', 'soft', 'confident', 'apologetic', 'shorter', 'longer', 'simple', 'bullets', 'grammar']) {
     r = await rewrite(DRAFT, st);
     check(`style ${st} accepted`, typeof r.body.text === 'string', JSON.stringify(r.body));
   }
   const grammar = await last();
   check('style grammar reached the instruction', grammar.system.includes('spelling, grammar and punctuation ONLY'));
+  r = await rewrite(DRAFT, 'soft');
+  check('style soft reached the instruction', (await last()).system.includes('softer and gentler'));
 
   // ── 4. Refused BEFORE the provider ────────────────────────────────────────
   h0 = await hits();
