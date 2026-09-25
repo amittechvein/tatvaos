@@ -539,11 +539,21 @@ export function MessageView({
                       <span className="min-w-0 flex-1 truncate text-xs text-ink-faint">
                         {t.snippet}
                       </span>
-                      <span className="shrink-0 text-xs text-ink-faint">
-                        {new Date(t.sentAt).toLocaleDateString(undefined,
-                          { day: 'numeric', month: 'short' })}
+                      {/* Date AND time. Amit, 25 Sept 2026: two replies on the
+                          same day both read "Sep 23", so the strip could not say
+                          which came first or how far apart they were — the open
+                          message showed its time and the collapsed ones did not.
+                          The year appears only when it is not this year, so the
+                          row stays short for the common case. */}
+                      <time dateTime={t.sentAt} className="shrink-0 text-xs text-ink-faint">
+                        {new Date(t.sentAt).toLocaleString(undefined, {
+                          day: 'numeric', month: 'short',
+                          ...(new Date(t.sentAt).getFullYear() !== new Date().getFullYear()
+                            ? { year: 'numeric' } : {}),
+                          hour: 'numeric', minute: '2-digit',
+                        })}
                         {t.folderName ? ` · ${t.folderName}` : ''}
-                      </span>
+                      </time>
                     </button>
                   </li>
                 );
