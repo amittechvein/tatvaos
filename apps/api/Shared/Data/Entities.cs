@@ -62,6 +62,14 @@ public class Tenant
     /// </summary>
     public bool AllowAi { get; set; }
 
+    /// <summary>
+    /// May Mail use TatvaOS AI for this organisation? Needs AllowAi too —
+    /// consenting to the provider for meeting notes is not consenting to it
+    /// reading mail. FALSE BY DEFAULT; enforced in the gateway on the "mail."
+    /// feature label (AiProductSwitch). Column: 20260925-mail-ai-switch.sql.
+    /// </summary>
+    public bool AllowMailAi { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? SuspendedAt { get; set; }
     public DateTimeOffset? TrialEndsAt { get; set; }
