@@ -103,6 +103,13 @@ public sealed record UpdateUserRequest(
 /// </summary>
 public sealed record SetAvatarRequest(string DataUrl);
 
+/// <summary>
+/// "Which of these people are colleagues with a photo?" — by email address
+/// (Mail, Contacts) or by user id (Connect, whose participants carry one).
+/// See UserEndpoints.PhotoLookupAsync.
+/// </summary>
+public sealed record PhotoLookupRequest(List<string>? Emails, List<Guid>? UserIds);
+
 public sealed record BulkCreateUserRequest(
     // The fallback domain, for a file of bare usernames. NULL is normal: a CSV
     // exported from another system carries whole addresses, and each row picks

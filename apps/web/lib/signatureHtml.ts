@@ -78,25 +78,41 @@ const NOT_URIS = [
   'cellpadding', 'cellspacing', 'border', 'bgcolor', 'color', 'size', 'face',
 ];
 
-let hooked = false;
+// ── ITS OWN DOMPurify INSTANCE, NOT THE SHARED DEFAULT ──────────────────
+//  DOMPurify's hooks are GLOBAL to an instance. Until 25 Sept 2026 this file
+//  and lib/pasteHtml.ts both added an afterSanitizeAttributes hook to the one default
+//  instance, and each ran on EVERY sanitise in the tab after it was first
+//  used — including the other's, SafeHtml's rendering of received mail, and
+//  the mail page's own calls. Proven in a browser on the real modules: a
+//  pasted screenshot survived cleanPastedHtml until cleanSignatureHtml had
+//  run once (which inserting a signature does), and was silently deleted
+//  after. The comment that said running both hooks "is harmless" was true of
+//  styles and false of images. A separate instance per purpose makes that
+//  class of leak impossible rather than something to reason about.
+// ─────────────────────────────────────────────────────────────────────────
+let purify: ReturnType<typeof DOMPurify> | null = null;
+/** Filled by the hook during cleanSignatureHtmlReport(); null otherwise. */
+let collecting: Set<string> | null = null;
 
 /**
- * Registers the CSS scrub once. DOMPurify keeps hooks globally, so adding
- * this on every call would stack handlers.
+ * This file's DOMPurify instance, with the signature scrub registered on it
+ * once. Built on first use because `window` exists only in the browser.
  *
- * The hook is named in the node check below so it cannot fight the one
- * pasteHtml installs: both read the same `style` attribute and both only
- * ever remove from it, so running both is harmless and running either
- * alone is still correct.
+ * Until 25 Sept 2026 this said the hook "cannot fight the one pasteHtml
+ * installs … running both is harmless". Both were registered on the SHARED
+ * default instance, and this one deletes data: images — so it deleted them
+ * from every composer paste too. See the note above `purify`.
  */
-function ensureHook(): void {
-  if (hooked) return;
-  hooked = true;
+function instance(): ReturnType<typeof DOMPurify> {
+  if (purify) return purify;
+  purify = DOMPurify(window);
 
-  DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  purify.addHook('afterSanitizeAttributes', (node) => {
     if (!(node instanceof HTMLElement)) return;
 
-    for (const attr of BANNED_ATTRS) node.removeAttribute(attr);
+    for (const attr of BANNED_ATTRS) {
+      if (node.hasAttribute(attr)) { node.removeAttribute(attr); collecting?.add(`${attr}="…"`); }
+    }
 
     // ── data: images, removed HERE rather than by ALLOWED_URI_REGEXP ────
     //
@@ -113,7 +129,10 @@ function ensureHook(): void {
       const value = node.getAttribute(attr);
       if (!value) continue;
       if (/^\s*data:/i.test(value)) {
-        if (node.tagName === 'IMG') node.remove();
+        if (node.tagName === 'IMG') {
+          node.remove();
+          collecting?.add('an embedded picture (a signature picture needs a web address starting https://)');
+        }
         else node.removeAttribute(attr);
       }
     }
@@ -127,12 +146,16 @@ function ensureHook(): void {
       .filter((d) => {
         const prop = d.split(':')[0]?.trim().toLowerCase();
         if (!prop) return false;
-        return !BANNED_CSS.some((b) => prop === b || prop.startsWith(`${b}-`));
+        const banned = BANNED_CSS.some((b) => prop === b || prop.startsWith(`${b}-`));
+        if (banned) collecting?.add(`style: ${prop}`);
+        return !banned;
       });
 
     if (kept.length) node.setAttribute('style', `${kept.join('; ')};`);
     else node.removeAttribute('style');
   });
+
+  return purify;
 }
 
 /**
@@ -141,10 +164,8 @@ function ensureHook(): void {
  * Returns an empty string when nothing survives, which the caller should
  * treat as "no signature" rather than as a save of blank HTML.
  */
-export function cleanSignatureHtml(html: string): string {
-  ensureHook();
-
-  return DOMPurify.sanitize(html, {
+function sanitizeSignature(html: string): string {
+  return instance().sanitize(html, {
     ALLOWED_TAGS: [
       'a', 'b', 'strong', 'i', 'em', 'u', 's', 'br', 'p', 'div', 'span',
       'ul', 'ol', 'li', 'blockquote', 'pre', 'code',
@@ -171,6 +192,38 @@ export function cleanSignatureHtml(html: string): string {
     // signature logo has to be a real https URL to work in real mail.
     ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|tel:)/i,
   }).trim();
+}
+
+/**
+ * DOMPurify lists its OWN document wrapper in `removed` — measured 25 Sept
+ * 2026: every clean reported "<body>", so the HTML view, which stays open
+ * while anything was removed, could never be left. Their contents are always
+ * kept; only the wrapper goes, and nobody typed it.
+ */
+const WRAPPERS = new Set(['HTML', 'HEAD', 'BODY']);
+
+export function cleanSignatureHtml(html: string): string {
+  return sanitizeSignature(html);
+}
+
+/**
+ * The same clean, saying what it took out — for the signature's HTML editor,
+ * where code that vanishes without a word reads as an editor that is broken.
+ */
+export function cleanSignatureHtmlReport(html: string): { html: string; removed: string[] } {
+  collecting = new Set<string>();
+  try {
+    const out = sanitizeSignature(html);
+    for (const r of instance().removed as Array<{ element?: Node; attribute?: Attr | null }>) {
+      if (r.attribute) collecting.add(r.attribute.name);
+      else if (r.element && r.element.nodeType === 1 && !WRAPPERS.has(r.element.nodeName)) {
+        collecting.add(`<${r.element.nodeName.toLowerCase()}>`);
+      }
+    }
+    return { html: out, removed: [...collecting] };
+  } finally {
+    collecting = null;
+  }
 }
 
 /**
