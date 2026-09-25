@@ -165,7 +165,7 @@ function topbar(path) {
   const link = (href, label, match) => h('a', { href: '#' + href, class: (match ? match(path) : path === href) ? 'active' : '' }, label);
   const nav = [
     link('/', 'Dashboard'),
-    link('/issues', mode === 'admin' ? 'All issues' : mode === 'developer' ? 'Assigned to me' : 'My reports', (p) => p === '/issues' || p.startsWith('/issue/')),
+    link('/issues', 'All issues', (p) => p === '/issues' || p.startsWith('/issue/')),
     (mode === 'tester' || mode === 'admin') && link('/new', 'Create issue'),
     mode === 'admin' && link('/modules', 'Modules'),
     mode === 'admin' && link('/users', 'Users'),
@@ -227,9 +227,10 @@ async function filterBar(params, target, { full }) {
     h('label', {}, h('span', {}, 'To'), h('input', { type: 'date', name: 'to', value: params.get('to') || '' })),
     params.get('overdue') && h('input', { type: 'hidden', name: 'overdue', value: '1' }),
     params.get('mine') && h('input', { type: 'hidden', name: 'mine', value: '1' }),
+    params.get('scope') && h('input', { type: 'hidden', name: 'scope', value: params.get('scope') }),
     h('div', { class: 'filter-actions' }, h('button', { class: 'btn primary', type: 'submit' }, 'Apply'), h('a', { class: 'btn', href: '#' + target }, 'Clear'))].filter(Boolean));
   // Folded on phones unless a filter is in use; always open on a wide screen.
-  const active = [...params.keys()].filter((k) => !['r', 'mine'].includes(k)).length;
+  const active = [...params.keys()].filter((k) => !['r', 'mine', 'scope'].includes(k)).length;
   return h('details', { class: 'filter-box', open: active > 0 || window.matchMedia('(min-width: 701px)').matches },
     h('summary', {}, 'Filters', active ? ` (${active} in use)` : ''), form);
 }
@@ -240,30 +241,35 @@ async function filterBar(params, target, { full }) {
 async function dashboardView(params) {
   const mode = state.me.mode;
   const qs = params.toString();
-  const { counts } = await api('GET', '/api/dashboard' + (qs ? '?' + qs : ''));
+  const { counts, scope } = await api('GET', '/api/dashboard' + (qs ? '?' + qs : ''));
+  const personal = scope === 'mine';
   const st = state.me.statuses;
   const tiles = {
     admin: [['total', 'Total issues'], ['bug', 'Bugs', 'type=bug'], ['feature', 'Features', 'type=feature'], ...STATUS_ORDER.map((s) => [s, st[s], 'status=' + s]), ['overdue', 'Overdue', 'overdue=1']],
-    developer: [['total', 'Assigned issues'], ['pending', st.pending, 'status=pending'], ['under_review', st.under_review, 'status=under_review'], ['more_info', st.more_info, 'status=more_info'], ['under_dev', st.under_dev, 'status=under_dev'], ['reopened', st.reopened, 'status=reopened'], ['fixed', st.fixed, 'status=fixed'], ['overdue', 'Overdue issues', 'overdue=1']],
-    tester: [['total', 'My reports'], ['pending', st.pending, 'status=pending'], ['under_review', st.under_review, 'status=under_review'], ['more_info', st.more_info, 'status=more_info'], ['under_dev', st.under_dev, 'status=under_dev'], ['fixed', st.fixed, 'status=fixed'], ['closed', st.closed, 'status=closed'], ['reopened', st.reopened, 'status=reopened']],
+    developer: [['total', personal ? 'Assigned issues' : 'All issues'], ['pending', st.pending, 'status=pending'], ['under_review', st.under_review, 'status=under_review'], ['more_info', st.more_info, 'status=more_info'], ['under_dev', st.under_dev, 'status=under_dev'], ['reopened', st.reopened, 'status=reopened'], ['fixed', st.fixed, 'status=fixed'], ['overdue', 'Overdue issues', 'overdue=1']],
+    tester: [['total', personal ? 'My reports' : 'All reports'], ['pending', st.pending, 'status=pending'], ['under_review', st.under_review, 'status=under_review'], ['more_info', st.more_info, 'status=more_info'], ['under_dev', st.under_dev, 'status=under_dev'], ['fixed', st.fixed, 'status=fixed'], ['closed', st.closed, 'status=closed'], ['reopened', st.reopened, 'status=reopened']],
   }[mode];
   const base = new URLSearchParams(params);
+  base.delete('scope');
+  if (personal) base.set('mine', '1');
   const title = { admin: 'Admin dashboard', developer: 'Developer dashboard', tester: 'Tester dashboard' }[mode];
-  const hint = {
-    admin: 'Every issue in the tracker.',
-    developer: 'Issues assigned to you.',
-    tester: 'Reports you filed.',
-  }[mode];
-  const attention = mode === 'tester' && counts.fixed
-    ? h('div', { class: 'callout' }, `${counts.fixed} of your reports ${counts.fixed === 1 ? 'is' : 'are'} marked Fixed and waiting for you to verify. `, h('a', { href: '#/issues?status=fixed' }, 'Verify now'))
-    : mode === 'tester' && counts.more_info
-      ? h('div', { class: 'callout' }, `${counts.more_info} of your reports need${counts.more_info === 1 ? 's' : ''} more information from you. `, h('a', { href: '#/issues?status=more_info' }, 'Answer now'))
+  const hint = !personal ? 'Every issue in the tracker.' : { admin: 'Issues you reported or are working on.', developer: 'Issues assigned to you.', tester: 'Reports you filed.' }[mode];
+  const scopeLink = (sc, label) => {
+    const q = new URLSearchParams(params); q.set('scope', sc);
+    return h('a', { class: 'btn small' + ((sc === 'mine') === personal ? ' primary' : ''), href: '#/?' + q }, label);
+  };
+  const scopeSwitch = h('div', { class: 'row scope-switch' }, scopeLink('mine', { admin: 'Mine', developer: 'Assigned to me', tester: 'My reports' }[mode]), scopeLink('all', 'Everyone'));
+  const attention = mode === 'tester' && personal && counts.fixed
+    ? h('div', { class: 'callout' }, `${counts.fixed} of your reports ${counts.fixed === 1 ? 'is' : 'are'} marked Fixed and waiting for you to verify. `, h('a', { href: '#/issues?mine=1&status=fixed' }, 'Verify now'))
+    : mode === 'tester' && personal && counts.more_info
+      ? h('div', { class: 'callout' }, `${counts.more_info} of your reports need${counts.more_info === 1 ? 's' : ''} more information from you. `, h('a', { href: '#/issues?mine=1&status=more_info' }, 'Answer now'))
       : null;
   return h('div', {},
     h('div', { class: 'page-head' }, h('div', {}, h('h1', {}, title), h('p', { class: 'muted' }, hint)),
       (mode === 'tester' || mode === 'admin') && h('a', { class: 'btn primary', href: '#/new' }, '+ Create issue')),
+    scopeSwitch,
     attention,
-    mode === 'admin' ? await filterBar(params, '/', { full: true }) : null,
+    await filterBar(params, '/', { full: true }),
     h('div', { class: 'tiles' }, tiles.map(([k, label, filter]) => {
       const q = new URLSearchParams(base);
       if (filter) { const [fk, fv] = filter.split('='); q.set(fk, fv); }
@@ -280,7 +286,8 @@ async function issuesView(params) {
   const qs = params.toString();
   const rows = await api('GET', '/api/issues' + (qs ? '?' + qs : ''));
   const mine = params.get('mine') === '1';
-  const title = mode === 'admin' ? (mine ? 'My issues' : 'All issues') : mode === 'developer' ? 'Assigned to me' : 'My reports';
+  const MINE_LABEL = { admin: 'My issues', developer: 'Assigned to me', tester: 'My reports' };
+  const title = mine ? MINE_LABEL[mode] : 'All issues';
   const table = rows.length
     ? h('div', { class: 'table-wrap' }, h('table', { class: 'issues cards' },
         h('thead', {}, h('tr', {}, ['ID', 'Title', 'Type', 'Module', 'Priority', 'Status', 'Developer', 'Reported by', 'Updated'].map((c) => h('th', {}, c)))),
@@ -298,10 +305,10 @@ async function issuesView(params) {
   return h('div', {},
     h('div', { class: 'page-head' }, h('div', {}, h('h1', {}, title), h('p', { class: 'muted' }, `${rows.length} issue${rows.length === 1 ? '' : 's'}${rows.length === 1000 ? ' (first 1000)' : ''}`)),
       h('div', { class: 'row' },
-        mode === 'admin' && h('a', { class: 'btn' + (mine ? ' primary' : ''), href: mine ? '#/issues' : '#/issues?mine=1' }, mine ? 'Show all issues' : 'My issues'),
+        h('a', { class: 'btn' + (mine ? ' primary' : ''), href: mine ? '#/issues' : '#/issues?mine=1' }, mine ? 'Show all issues' : MINE_LABEL[mode]),
         h('a', { class: 'btn', href: '/api/issues.csv' + (qs ? '?' + qs : '') }, 'Export CSV'),
         (mode === 'tester' || mode === 'admin') && h('a', { class: 'btn primary', href: '#/new' }, '+ Create issue'))),
-    await filterBar(params, '/issues', { full: mode === 'admin' }),
+    await filterBar(params, '/issues', { full: true }),
     table);
 }
 

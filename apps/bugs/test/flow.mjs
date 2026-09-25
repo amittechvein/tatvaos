@@ -100,12 +100,17 @@ try {
   check('HTML upload stored as a download, not a page', up2.json.mime === 'application/octet-stream');
   const dl = await priya.req('GET', '/api/attachments/' + up2.json.id);
   check('HTML attachment served as attachment + nosniff + sandbox', /attachment/.test(dl.headers.get('content-disposition')) && dl.headers.get('x-content-type-options') === 'nosniff' && /sandbox/.test(dl.headers.get('content-security-policy')));
-  check("Rahul (not assigned) cannot see it", (await rahul.req('GET', '/api/issues/' + id)).status === 404);
-  check("Rahul cannot fetch its attachment", (await rahul.req('GET', '/api/attachments/' + up.json.id)).status === 404);
-  check("Rahul cannot attach to Priya's entry", (await rahul.req('POST', `/api/issues/${id}/attachments?activity=${created.activity_id}&name=x.png`, png)).status === 404);
+  // Amit 25 Sept: everyone sees every issue; changing stays limited by role.
+  const rv = await rahul.req('GET', '/api/issues/' + id);
+  check('Rahul (not assigned) CAN see it', rv.status === 200);
+  check('…but is offered no status moves', rv.json.can.moves.length === 0 && rv.json.can.assign === false, JSON.stringify(rv.json.can));
+  check('…and cannot move it', (await rahul.req('POST', `/api/issues/${id}/actions`, { action: 'status', to: 'under_review' })).status === 403);
+  check('Rahul can open its attachment', (await rahul.req('GET', '/api/attachments/' + up.json.id)).status === 200);
+  check("Rahul cannot attach to Priya's entry", (await rahul.req('POST', `/api/issues/${id}/attachments?activity=${created.activity_id}&name=x.png`, png)).status === 400);
+  check('unsigned visitor still cannot open the attachment', (await outsider.req('GET', '/api/attachments/' + up.json.id)).status === 401);
 
   console.log('Assign and work (developer)');
-  check('developer mode cannot assign an unassigned issue', (await rahul.req('POST', `/api/issues/${id}/actions`, { action: 'assign', assignee_id: 2 })).status === 404);
+  check('developer mode cannot assign an unassigned issue', (await rahul.req('POST', `/api/issues/${id}/actions`, { action: 'assign', assignee_id: 2 })).status === 403);
   const users = (await amit.req('GET', '/api/users')).json;
   const rahulId = users.find((u) => u.email === 'rahul@techvein.com').id;
   const dev2Id = users.find((u) => u.email === 'dev2@techvein.com').id;
@@ -113,7 +118,8 @@ try {
   check('cannot assign to a tester', (await amit.req('POST', `/api/issues/${id}/actions`, { action: 'assign', assignee_id: priyaId })).status === 400);
   check('admin assigns to Rahul', (await amit.req('POST', `/api/issues/${id}/actions`, { action: 'assign', assignee_id: rahulId })).status === 200);
   check('Rahul now sees it', (await rahul.req('GET', '/api/issues/' + id)).status === 200);
-  check('Dev Two (other developer) still cannot', (await dev2.req('GET', '/api/issues/' + id)).status === 404);
+  check('Dev Two (other developer) sees it', (await dev2.req('GET', '/api/issues/' + id)).status === 200);
+  check('…but cannot move it', (await dev2.req('POST', `/api/issues/${id}/actions`, { action: 'status', to: 'under_review' })).status === 403);
   check('tester cannot move Pending → Under Review', (await priya.req('POST', `/api/issues/${id}/actions`, { action: 'status', to: 'under_review' })).status === 403);
   check('Pending → Under Review', (await rahul.req('POST', `/api/issues/${id}/actions`, { action: 'status', to: 'under_review' })).status === 200);
   check('cannot jump Under Review → Fixed', (await rahul.req('POST', `/api/issues/${id}/actions`, { action: 'status', to: 'fixed', fix_details: 'x' })).status === 403);
@@ -128,6 +134,8 @@ try {
   check('More Information Required → Under Development', (await rahul.req('POST', `/api/issues/${id}/actions`, { action: 'status', to: 'under_dev' })).status === 200);
   check('Fixed needs fix details', (await rahul.req('POST', `/api/issues/${id}/actions`, { action: 'status', to: 'fixed' })).status === 400);
   check('developer marks Fixed with details', (await rahul.req('POST', `/api/issues/${id}/actions`, { action: 'status', to: 'fixed', fix_details: 'Made the search button 40px and high-contrast.' })).status === 200);
+  check("another tester cannot close Priya's report", (await amit.req('POST', '/api/me/mode', { mode: 'tester' })).status === 200 && (await amit.req('POST', `/api/issues/${id}/actions`, { action: 'status', to: 'closed' })).status === 403);
+  await amit.req('POST', '/api/me/mode', { mode: 'admin' });
   check('developer cannot close their own fix', (await rahul.req('POST', `/api/issues/${id}/actions`, { action: 'status', to: 'closed' })).status === 403);
 
   console.log('Verify (tester)');
@@ -163,9 +171,15 @@ try {
   const d1 = (await amit.req('GET', '/api/dashboard')).json.counts;
   check('admin dashboard counts everything', d1.total === 2 && d1.bug === 1 && d1.feature === 1 && d1.closed === 1 && d1.under_review === 1, JSON.stringify(d1));
   const d2 = (await priya.req('GET', '/api/dashboard')).json.counts;
-  check('tester dashboard counts only her reports', d2.total === 1);
+  check('tester dashboard opens on her own reports', d2.total === 1);
+  check('tester dashboard "Everyone" counts all', (await priya.req('GET', '/api/dashboard?scope=all')).json.counts.total === 2);
   const d3 = (await dev2.req('GET', '/api/dashboard')).json.counts;
-  check('other developer sees nothing', d3.total === 0);
+  check('other developer: nothing assigned to him', d3.total === 0);
+  check('other developer: All issues lists both', (await dev2.req('GET', '/api/issues')).json.length === 2);
+  check('other developer: "Assigned to me" lists none', (await dev2.req('GET', '/api/issues?mine=1')).json.length === 0);
+  check('tester: "My reports" lists only hers', (await priya.req('GET', '/api/issues?mine=1')).json.length === 1);
+  const names = (await priya.req('GET', '/api/users')).json;
+  check('non-admins get names, never emails', names.length >= 4 && names.every((u) => !('email' in u)));
   check('filter by module', (await amit.req('GET', '/api/issues?module=' + core)).json.length === 1);
   check('search by issue key', (await amit.req('GET', '/api/issues?q=TV-000001')).json[0]?.id === id);
   await amit.req('POST', `/api/issues/${amitIssue.id}/actions`, { action: 'due', due_date: '2020-01-01' });

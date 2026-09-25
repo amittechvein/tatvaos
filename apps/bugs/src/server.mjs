@@ -249,8 +249,12 @@ function messagePage(res, title, text) {
 //  Issue access and the status flow
 // ============================================================================
 
+// Amit, 25 Sept 2026: developers and testers see EVERY reported bug and
+// feature request, not only their own. Seeing is open to everyone on the
+// tracker (a session already requires an active user with a role); CHANGING
+// an issue is still limited by mode — see actsAsDeveloper / actsAsTester.
 function canSee(user, issue) {
-  return !!(user.is_admin || issue.reporter_id === user.id || (user.is_developer && issue.assignee_id === user.id));
+  return !!(user && user.active && issue);
 }
 
 // What the person may do in their CURRENT mode. Admin mode can do everything
@@ -318,15 +322,16 @@ function presentIssue(i) {
 }
 
 // The list a person sees in their current mode, plus filters.
+// Everyone sees all issues; "mine" narrows to the person's own work in their
+// current mode: assigned to them (developer), reported by them (tester),
+// either (admin).
 function issueQuery(s, q, { scopeMine = false } = {}) {
   const where = [];
   const p = [];
-  if (s.mode === 'admin') {
-    if (scopeMine) { where.push('(i.assignee_id = ? OR i.reporter_id = ?)'); p.push(s.user.id, s.user.id); }
-  } else if (s.mode === 'developer') {
-    where.push('i.assignee_id = ?'); p.push(s.user.id);
-  } else {
-    where.push('i.reporter_id = ?'); p.push(s.user.id);
+  if (scopeMine) {
+    if (s.mode === 'admin') { where.push('(i.assignee_id = ? OR i.reporter_id = ?)'); p.push(s.user.id, s.user.id); }
+    else if (s.mode === 'developer') { where.push('i.assignee_id = ?'); p.push(s.user.id); }
+    else { where.push('i.reporter_id = ?'); p.push(s.user.id); }
   }
   const eq = (col, v) => { if (v !== null && v !== undefined && v !== '') { where.push(`${col} = ?`); p.push(v); } };
   eq('i.module_id', int(q.get('module')));
@@ -545,14 +550,14 @@ route('DELETE', /^\/api\/submodules\/(\d+)$/, (req, res, s, [id]) => {
 
 // ---- Users -----------------------------------------------------------------
 route('GET', /^\/api\/users$/, (req, res, s) => {
-  // Everyone may read the developer list (to see who an issue is with);
-  // only admins get the full list with emails and state.
+  // Everyone may read names and roles (the Developer / Tester filters need
+  // both now that everyone sees all issues); only admins get emails and state.
   if (s.user.is_admin) {
     return send(res, 200, db.prepare('SELECT * FROM users ORDER BY active DESC, name, email').all().map((u) => ({
       ...publicUser(u), linked: !!u.sub, last_seen_at: u.last_seen_at, daily_summary: !!u.daily_summary,
     })));
   }
-  send(res, 200, db.prepare('SELECT * FROM users WHERE active = 1 AND is_developer = 1 ORDER BY name').all().map((u) => ({ id: u.id, name: u.name || u.email, roles: rolesOf(u), active: true })));
+  send(res, 200, db.prepare('SELECT * FROM users WHERE active = 1 ORDER BY name').all().map((u) => ({ id: u.id, name: u.name || u.email.split('@')[0], roles: rolesOf(u), active: true })));
 });
 
 function rolesFrom(b) {
@@ -766,14 +771,18 @@ route('GET', /^\/api\/attachments\/(\d+)$/, (req, res, s, [id]) => serveAttachme
 
 // ---- Dashboard and reports -------------------------------------------------
 route('GET', /^\/api\/dashboard$/, (req, res, s, _, url) => {
-  const { where, params } = issueQuery(s, url.searchParams);
+  // Personal numbers by default for developer and tester, everything for admin;
+  // ?scope=all or ?scope=mine switches.
+  const scope = url.searchParams.get("scope");
+  const mine = scope ? scope === "mine" : s.mode !== "admin";
+  const { where, params } = issueQuery(s, url.searchParams, { scopeMine: mine });
   const rows = db.prepare(`SELECT i.status, i.type, COUNT(*) n FROM issues i ${where} GROUP BY i.status, i.type`).all(...params);
   const counts = { total: 0, bug: 0, feature: 0 };
   for (const st of STATUSES) counts[st] = 0;
   for (const r of rows) { counts.total += r.n; counts[r.type] += r.n; counts[r.status] += r.n; }
-  const od = issueQuery(s, new URLSearchParams([...url.searchParams, ['overdue', '1']]));
+  const od = issueQuery(s, new URLSearchParams([...url.searchParams, ['overdue', '1']]), { scopeMine: mine });
   counts.overdue = db.prepare(`SELECT COUNT(*) n FROM issues i ${od.where}`).get(...od.params).n;
-  send(res, 200, { mode: s.mode, counts });
+  send(res, 200, { mode: s.mode, scope: mine ? 'mine' : 'all', counts });
 });
 
 route('GET', /^\/api\/reports$/, (req, res, s, _, url) => {

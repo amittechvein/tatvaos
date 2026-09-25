@@ -274,3 +274,5 @@ body.signin { min-height: 100vh; display: grid; place-items: center; background:
   .modal form { padding: 16px; }
   .modal-actions .btn { flex: 1; justify-content: center; }
 }
+
+.scope-switch { margin-bottom: 12px; gap: 6px; }
