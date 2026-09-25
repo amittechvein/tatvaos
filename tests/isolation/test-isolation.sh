@@ -577,6 +577,23 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+hdr "AI usage is private to each organisation"
+
+# The metering record (20260924-ai-usage.sql): what an organisation spent on
+# AI, per person and feature — commercially private. One fixture row per
+# tenant, inserted as postgres and removed at the end.
+run_as postgres "
+    INSERT INTO core.ai_usage (tenant_id, feature, outcome, tokens_in, tokens_out)
+    VALUES ('$TECHVEIN', 'isolation.fixture', 'ok', 1, 1), ('$SCHOOL', 'isolation.fixture', 'ok', 1, 1);
+" >/dev/null 2>&1
+n=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM core.ai_usage WHERE feature = 'isolation.fixture'")
+[ "${n:-0}" -eq 1 ] && pass "an organisation sees exactly its own AI usage"                    || fail "an organisation sees ${n:-?} fixture usage rows (want exactly its own 1)"
+n=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM core.ai_usage WHERE tenant_id = '$SCHOOL'")
+[ "${n:-1}" -eq 0 ] && pass "another organisation's AI usage is invisible"                     || fail "LEAK: another tenant's AI usage visible ($n rows)"
+n=$(no_context "SELECT count(*) FROM core.ai_usage")
+[ "${n:-1}" -eq 0 ] && pass "no context sees no AI usage"                     || fail "DANGEROUS: ${n} AI usage row(s) visible with no tenant set"
+run_as postgres "DELETE FROM core.ai_usage WHERE feature = 'isolation.fixture';" >/dev/null 2>&1
+
 hdr "Append-only tables refuse rewrites from the app"
 
 # Every schema re-grants the app UPDATE and DELETE on all its tables on every
@@ -595,7 +612,7 @@ for stmt in \
     "DELETE FROM mail.api_keys WHERE false" \
     "DELETE FROM mail.app_passwords WHERE false" \
     "DELETE FROM mail.api_sends WHERE false" \
-    "DELETE FROM family.contact_audit_logs WHERE false"
+    "DELETE FROM family.contact_audit_logs WHERE false"     "DELETE FROM core.ai_usage WHERE false"     "UPDATE core.ai_usage SET tokens_in = tokens_in WHERE false"     "DELETE FROM core.ai_usage_alerts WHERE false"
 do
     if run_as tatvaos_app "$stmt" >/dev/null 2>&1; then
         fail "app can still run: $stmt"
@@ -612,7 +629,7 @@ for stmt in \
     "INSERT INTO connect.meeting_events (meeting_id, kind, occurred_at) SELECT meeting_id, kind, occurred_at FROM connect.meeting_events WHERE false" \
     "INSERT INTO connect.recording_access_log (tenant_id, recording_id, level) SELECT tenant_id, recording_id, level FROM connect.recording_access_log WHERE false" \
     "UPDATE mail.api_keys SET revoked_at = revoked_at WHERE false" \
-    "UPDATE mail.app_passwords SET revoked_at = revoked_at WHERE false"
+    "UPDATE mail.app_passwords SET revoked_at = revoked_at WHERE false"     "INSERT INTO core.ai_usage (tenant_id, feature, outcome) SELECT tenant_id, feature, outcome FROM core.ai_usage WHERE false"
 do
     if run_as tatvaos_app "$stmt" >/dev/null 2>&1; then
         pass "app can still run: $stmt"

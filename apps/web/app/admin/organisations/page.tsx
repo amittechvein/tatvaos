@@ -403,6 +403,10 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
       <hr className="my-6" />
 
       <InvitationCaps orgId={org.id} />
+
+      <hr className="my-6" />
+
+      <AiUsageSection orgId={org.id} />
     </Modal>
   );
 }
@@ -429,6 +433,54 @@ type CapsAnswer = {
   defaultPerMeeting: number;
   ceiling: number;
 };
+
+/**
+ * This organisation's AI use this month — the same summary its own TatvaOS AI
+ * page shows (AiUsageReport). The limits are platform settings, so this is
+ * read-only; change them on the Settings page.
+ */
+function AiUsageSection({ orgId }: { orgId: string }) {
+  const { authedFetch } = useAuth();
+  const [u, setU] = useState<{
+    tokens: number; requests: number; refused: number; ceilingTokens: number | null; percentOfCeiling: number;
+    byFeature: { feature: string; requests: number; tokens: number }[];
+  } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let gone = false;
+    authedFetch(`/admin/organisations/${orgId}/ai-usage`)
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error ?? 'Could not load AI use.');
+        if (!gone) setU(body);
+      })
+      .catch((e) => { if (!gone) setError(e instanceof Error ? e.message : 'Could not load AI use.'); });
+    return () => { gone = true; };
+  }, [authedFetch, orgId]);
+
+  const n = (x: number) => x.toLocaleString('en-IN');
+  return (
+    <>
+      <h6 className="font-semibold mb-2">TatvaOS AI — use this month</h6>
+      {error && <Alert tone="danger">{error}</Alert>}
+      {!u && !error && <p className="text-[0.75rem] text-ink-muted">Loading…</p>}
+      {u && (
+        <p className="text-sm mb-1">
+          {n(u.tokens)} tokens in {n(u.requests)} requests
+          {u.ceilingTokens === null ? ' — no ceiling'
+            : u.ceilingTokens === 0 ? ' — allowance set to none (AI refused)'
+            : ` — ${u.percentOfCeiling}% of the ${n(u.ceilingTokens)} allowance`}.
+          {u.refused > 0 && ` ${n(u.refused)} refused.`}
+          {u.byFeature.length > 0 && ` By feature: ${u.byFeature.map((f) => `${f.feature} ${n(f.tokens)}`).join(', ')}.`}
+        </p>
+      )}
+      <p className="text-[0.75rem] text-ink-muted mb-0">
+        Limits and the platform-wide pause are on the Settings page.
+      </p>
+    </>
+  );
+}
 
 function InvitationCaps({ orgId }: { orgId: string }) {
   const { authedFetch } = useAuth();

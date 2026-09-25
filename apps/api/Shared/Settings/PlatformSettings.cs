@@ -36,6 +36,13 @@ public static class SettingKeys
     // Mail identity
     public const string SmtpFrom = "mail.smtp_from";
 
+    // AI — the operator's controls over spend (MeteredAiGateway). Mr. Singh,
+    // 24 Sept 2026: metering first, then limits, and "one lever that stops
+    // all spend, not a tour of per-organisation toggles".
+    public const string AiPaused = "ai.paused";
+    public const string AiPerPersonPerHour = "ai.limit.per_person_per_hour";
+    public const string AiOrgMonthlyTokens = "ai.limit.org_monthly_tokens";
+
     public sealed record Def(string Key, string Section, string Label, bool Secret, string Help);
 
     /// <summary>What the settings screen renders, in order.</summary>
@@ -76,6 +83,17 @@ public static class SettingKeys
 
         new(SmtpFrom, "mail", "System mail from-address", false,
             "OTP codes and invoices are sent as this address, through our own mail server on the tatvaos.com domain."),
+
+        new(AiPaused, "ai", "Pause all AI (every organisation)", false,
+            "The emergency stop. ON refuses every AI request on the platform at once, with a message "
+            + "saying AI is paused. Use it if spend runs away; nothing else changes."),
+        new(AiPerPersonPerHour, "ai", "AI requests per person per hour", false,
+            "Started at 50: high enough that nobody working normally meets it, low enough to stop a "
+            + "runaway loop. 0 allows NONE. Empty means NO LIMIT."),
+        new(AiOrgMonthlyTokens, "ai", "AI tokens per organisation per month", false,
+            "Started at 2,000,000. Administrators are emailed at 80% and at 100%; at 100% AI stops for "
+            + "that organisation until the month turns (India time). 0 allows NONE — AI stopped. "
+            + "Empty means NO CEILING."),
     ];
 
     public static bool IsKnown(string key) => All.Any(d => d.Key == key);

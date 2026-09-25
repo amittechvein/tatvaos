@@ -27,12 +27,35 @@ import { useAuth } from '@/lib/auth';
 //  meet a confirmation dialog.
 // ============================================================================
 
+interface AiUsage {
+  from: string;
+  tokens: number;
+  requests: number;
+  refused: number;
+  /** null = no ceiling; 0 = none allowed. */
+  ceilingTokens: number | null;
+  /** null = no hourly limit; 0 = none allowed. */
+  perPersonPerHour: number | null;
+  paused: boolean;
+  percentOfCeiling: number;
+  byFeature: { feature: string; requests: number; tokens: number }[];
+}
+
 interface AiState {
   enabled: boolean;
   platformConfigured: boolean;
   model: string | null;
   disclosure: string;
+  usage: AiUsage;
 }
+
+const FEATURE_NAMES: Record<string, string> = {
+  'connect.minutes': 'Meeting minutes',
+  docs: 'Docs',
+  'platform.probe': 'Platform check',
+};
+
+const fmt = (n: number) => n.toLocaleString('en-IN');
 
 export default function OrgAiPage() {
   const { authedFetch } = useAuth();
@@ -136,6 +159,8 @@ export default function OrgAiPage() {
         )}
       </Card>
 
+      {state?.platformConfigured && <UsageCard usage={state.usage} />}
+
       {confirmOn && state && (
         <Modal
           onClose={() => !saving && setConfirmOn(false)}
@@ -158,5 +183,72 @@ export default function OrgAiPage() {
         </Modal>
       )}
     </AdminShell>
+  );
+}
+
+/**
+ * This month's use against the allowance. The same numbers the operator sees,
+ * and the ones the administrators are emailed about at 80% and 100%.
+ */
+function UsageCard({ usage }: { usage: AiUsage }) {
+  const noCeiling = usage.ceilingTokens === null;
+  const stopped = usage.ceilingTokens === 0;
+  const tone = usage.percentOfCeiling >= 100 ? 'bg-danger' : usage.percentOfCeiling >= 80 ? 'bg-warn' : 'bg-ok';
+  return (
+    <Card title="Use this month" subtitle="Counted from the 1st, India time. Only counts are kept — never the text sent.">
+      {usage.paused && (
+        <Alert tone="warn">TatvaOS AI is paused across the platform at the moment, so requests are being refused.</Alert>
+      )}
+      {stopped ? (
+        <p className="mb-3">
+          The platform has set this organisation&apos;s AI allowance to none, so AI requests are refused.
+          {usage.requests > 0 && ` ${fmt(usage.tokens)} tokens were used earlier this month.`}
+        </p>
+      ) : noCeiling ? (
+        <p className="mb-3">{fmt(usage.tokens)} tokens in {fmt(usage.requests)} requests. No monthly ceiling is set.</p>
+      ) : (
+        <>
+          <p className="mb-2">
+            {fmt(usage.tokens)} of {fmt(usage.ceilingTokens ?? 0)} tokens ({usage.percentOfCeiling}%)
+            in {fmt(usage.requests)} requests.
+            {usage.percentOfCeiling >= 100 && ' AI has stopped for this organisation until the 1st.'}
+          </p>
+          <div className="mb-3 h-2 w-full overflow-hidden rounded-full bg-canvas" role="meter"
+               aria-valuemin={0} aria-valuemax={100} aria-valuenow={usage.percentOfCeiling}
+               aria-label="Share of this month's AI allowance used">
+            <div className={`h-full ${tone}`} style={{ width: `${usage.percentOfCeiling}%` }} />
+          </div>
+        </>
+      )}
+      {usage.byFeature.length > 0 && (
+        <table className="mb-3 w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-ink-muted">
+              <th className="py-1 font-medium">Feature</th>
+              <th className="py-1 text-right font-medium">Requests</th>
+              <th className="py-1 text-right font-medium">Tokens</th>
+            </tr>
+          </thead>
+          <tbody>
+            {usage.byFeature.map((f) => (
+              <tr key={f.feature} className="border-t border-line/70">
+                <td className="py-1">{FEATURE_NAMES[f.feature] ?? f.feature}</td>
+                <td className="py-1 text-right">{fmt(f.requests)}</td>
+                <td className="py-1 text-right">{fmt(f.tokens)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <p className="mb-0 text-[0.75rem] text-ink-muted">
+        {usage.perPersonPerHour === null
+          ? 'There is no hourly limit per person.'
+          : usage.perPersonPerHour === 0
+            ? 'Individual AI requests are switched off at the moment.'
+            : `Each person can make up to ${fmt(usage.perPersonPerHour)} AI requests an hour.`}
+        {usage.refused > 0 && ` ${fmt(usage.refused)} request${usage.refused === 1 ? ' was' : 's were'} refused this month by a limit or a pause.`}
+        {' '}Administrators are emailed at 80% and 100% of the allowance.
+      </p>
+    </Card>
   );
 }
