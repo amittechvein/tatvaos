@@ -350,35 +350,48 @@ fi
 
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
-step "Off-box copy — meeting recordings (incremental mirror)"
+step "Off-box copy — meeting recordings (copy and age out)"
 #
 #  Recordings are the one artefact the six-hourly set leaves out: at ~10 GB
 #  they would triple every upload (Mr. Singh, 24 Sept 2026). Losing the box
 #  today loses up to 30 days of them — for a school, lessons. So they are
-#  MIRRORED, not bundled: `rclone sync` uploads only what is new since the
-#  last run and deletes in the bucket what the 30-day age-off deleted on the
-#  volume. Cost at 10 GB: about twenty cents a month.
+#  COPIED, never mirrored: `rclone copy` uploads only what is new and never
+#  deletes, so a recording removed on the server — by the age-off, a bug, a
+#  user or a mistaken command — stays recoverable in the bucket for the rest
+#  of its 31 days. A separate prune by AGE alone (`--min-age 31d`) keeps the
+#  bucket from outliving the product's own retention. (Mr. Singh, 25 Sept:
+#  "a pure mirror isn't a backup against deletion.") Cost at 10 GB: about
+#  twenty cents a month.
 #
 #  ENCRYPTED WITH THE SAME PAPER PASSPHRASE, NO NEW SECRET. rclone's crypt
-#  backend is configured here, in the environment, for this one command:
+#  backend is configured here, in the environment, for these commands only:
 #  its password is BACKUP_ENC_PASSPHRASE obscured, so the passphrase that
-#  opens the sets also opens the recordings. Filenames are encrypted too
-#  (a recording's name carries a meeting id). Nothing is written to
-#  rclone.conf and nothing is printed.
+#  opens the sets also opens the recordings. Filenames are encrypted too (a
+#  recording's name carries a meeting id). Nothing is written to rclone.conf
+#  and nothing is printed.
 #
-#  THE RECEIPT IS A COUNT. `rclone sync` returning zero after copying nothing
-#  is the false-pass shape this project keeps finding, so the number of
-#  files in the bucket is compared with the number on the volume; they must
-#  be equal, or this step FAILS the run. A mirror that is short is not a
-#  mirror.
+#  THE RECEIPT: EVERY FILE ON THE VOLUME IS ALSO IN THE BUCKET. Counts can no
+#  longer be equal — the bucket keeps files the age-off has removed — so the
+#  check is set difference, not arithmetic: the volume's file list minus the
+#  bucket's must be empty. Extra files in the bucket are fine; one missing is
+#  the failure. `rclone copy` exiting 0 after copying nothing is the
+#  false-pass shape this project keeps finding; the listing is the receipt.
+#
+#  THIS STEP CANNOT FAIL THE MAIN SET. It runs after the set has been built
+#  and uploaded, keeps its own verdict in rec_failed, and never sets `failed`.
+#  Losing a recording is bad; losing last night's mail backup because a
+#  recording upload failed would be worse. Its failure is printed in capitals
+#  and repeated in the summary, so it is loud without being fatal.
 #
 #  Off by default until Amit's go lands in .backup-env:
 #      BACKUP_RECORDINGS_REMOTE='linode:tatvaos-recordings'
+#      BACKUP_RECORDINGS_KEEP_DAYS=31                      # optional
 # ---------------------------------------------------------------------------
+rec_failed=0
 if [ -n "${BACKUP_RECORDINGS_REMOTE:-}" ] && [ -n "${BACKUP_S3_REMOTE:-}" ] && [ -n "${BACKUP_ENC_PASSPHRASE:-}" ]; then
     if ! command -v rclone >/dev/null 2>&1; then
-        bad "rclone is not installed — recordings were NOT mirrored"
-        failed=1
+        bad "RECORDINGS: rclone is not installed — recordings were NOT copied off the box"
+        rec_failed=1
     else
         # A crypt remote that exists only for this process.
         export RCLONE_CONFIG_RECCRYPT_TYPE=crypt
@@ -388,32 +401,46 @@ if [ -n "${BACKUP_RECORDINGS_REMOTE:-}" ] && [ -n "${BACKUP_S3_REMOTE:-}" ] && [
         RCLONE_CONFIG_RECCRYPT_PASSWORD=$(rclone obscure "$BACKUP_ENC_PASSPHRASE")
         export RCLONE_CONFIG_RECCRYPT_PASSWORD
         RC_ENV="-e RCLONE_CONFIG_RECCRYPT_TYPE -e RCLONE_CONFIG_RECCRYPT_REMOTE -e RCLONE_CONFIG_RECCRYPT_FILENAME_ENCRYPTION -e RCLONE_CONFIG_RECCRYPT_DIRECTORY_NAME_ENCRYPTION -e RCLONE_CONFIG_RECCRYPT_PASSWORD"
+        RC_IMG="rclone/rclone:1.68"
+        rc() { docker run --rm $RC_ENV -v "$HOME/.config/rclone:/config/rclone:ro" "$@"; }
+        REC_TMP=$(mktemp -d)
         # The volume is read only, through a throwaway container, the same
-        # way the other volumes are read above. The bytes go from the volume
-        # straight to the bucket; nothing lands on the root disk.
-        on_volume=$(docker run --rm -v tatvaos_connectrec:/src:ro alpine sh -c "find /src -type f | wc -l" 2>/dev/null)
-        if [ -z "$on_volume" ]; then
-            bad "could not read the recordings volume — recordings were NOT mirrored"
-            failed=1
-        elif docker run --rm -v tatvaos_connectrec:/src:ro $RC_ENV \
-                 -v "$HOME/.config/rclone:/config/rclone:ro" \
-                 rclone/rclone:1.68 sync /src reccrypt: --delete-after --transfers 2 2>&1 | sed 's/^/   /'; then
-            in_bucket=$(docker run --rm $RC_ENV -v "$HOME/.config/rclone:/config/rclone:ro" \
-                 rclone/rclone:1.68 lsf -R --files-only reccrypt: 2>/dev/null | wc -l)
-            if [ "$in_bucket" -eq "$on_volume" ]; then
-                ok "recordings mirrored — ${in_bucket} files in the bucket, ${on_volume} on the volume, encrypted"
+        # way the other volumes are read above. Bytes stream from the volume
+        # to the bucket; nothing lands on the root disk.
+        if docker run --rm -v tatvaos_connectrec:/src:ro alpine sh -c 'cd /src && find . -type f | sed "s#^\./##" | sort' > "$REC_TMP/volume" 2>/dev/null; then
+            on_volume=$(wc -l < "$REC_TMP/volume")
+            if rc -v tatvaos_connectrec:/src:ro "$RC_IMG" copy /src reccrypt: --transfers 2 2>&1 | sed 's/^/   /'; then
+                rc "$RC_IMG" lsf -R --files-only reccrypt: 2>/dev/null | sort > "$REC_TMP/bucket"
+                # Set difference: on the volume but not in the bucket.
+                missing=$(comm -23 "$REC_TMP/volume" "$REC_TMP/bucket" | wc -l)
+                in_bucket=$(wc -l < "$REC_TMP/bucket")
+                if [ "$missing" -eq 0 ] && [ "$in_bucket" -ge "$on_volume" ]; then
+                    ok "recordings copied — every one of the ${on_volume} files on the volume is in the bucket (${in_bucket} there, encrypted)"
+                    # Prune by age alone, never by what the volume has.
+                    rc "$RC_IMG" delete --min-age "${BACKUP_RECORDINGS_KEEP_DAYS:-31}d" reccrypt: 2>/dev/null
+                    note "bucket keeps recordings ${BACKUP_RECORDINGS_KEEP_DAYS:-31} days, whatever the volume does"
+                else
+                    bad "RECORDINGS: ${missing} file(s) on the volume are NOT in the bucket (${in_bucket} there, ${on_volume} on the volume)"
+                    rec_failed=1
+                fi
             else
-                bad "recordings mirror is SHORT: ${in_bucket} files in the bucket, ${on_volume} on the volume"
-                failed=1
+                bad "RECORDINGS: copy FAILED — the bucket may be behind the volume"
+                rec_failed=1
             fi
         else
-            bad "recordings sync FAILED — the bucket may be behind the volume"
-            failed=1
+            bad "RECORDINGS: could not read the recordings volume — nothing was copied"
+            rec_failed=1
         fi
+        rm -rf "$REC_TMP"
         unset RCLONE_CONFIG_RECCRYPT_PASSWORD
     fi
 else
-    note "recordings mirror not configured (BACKUP_RECORDINGS_REMOTE unset) — recordings exist only on this machine"
+    note "recordings copy not configured (BACKUP_RECORDINGS_REMOTE unset) — recordings exist only on this machine"
+fi
+# The main set's verdict is untouched by the above. Say so if it went wrong,
+# loudly, where the summary will be read.
+if [ "$rec_failed" -ne 0 ]; then
+    printf '\n   %s%sRECORDINGS WERE NOT FULLY COPIED OFF THE BOX — see above. The main backup set is unaffected.%s\n\n' "$B" "$R" "$X"
 fi
 
 step "Off-box copy — rsync (legacy hook)"
