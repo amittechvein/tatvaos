@@ -33,8 +33,14 @@ export interface JoinPrefs {
   camId?: string;
 }
 
-export default function PreJoin({ title, name, onJoin }: {
+export default function PreJoin({ title, name, onJoin, awaitingHost = false }: {
   title: string;
+  /**
+   * The host has not let this person in yet. Join still works — it moves to
+   * the waiting screen with these choices, and admission then opens the
+   * meeting directly — so the person is told that here, before pressing it.
+   */
+  awaitingHost?: boolean;
   /** Shown on the placeholder tile when the camera is off or denied. */
   name: string;
   onJoin: (prefs: JoinPrefs) => void;
@@ -259,6 +265,11 @@ export default function PreJoin({ title, name, onJoin }: {
         )}
 
         <button type="button" className="cx-cta" onClick={join}>Join now</button>
+        {awaitingHost && (
+          <p className="cx-sub" style={{ marginTop: 10, marginBottom: 0, textAlign: 'center' }}>
+            The host will let you in. You will join the moment they do.
+          </p>
+        )}
       </div>
     </Centre>
   );
