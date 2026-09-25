@@ -290,7 +290,7 @@ async function issuesView(params) {
   const title = mine ? MINE_LABEL[mode] : 'All issues';
   const table = rows.length
     ? h('div', { class: 'table-wrap' }, h('table', { class: 'issues cards' },
-        h('thead', {}, h('tr', {}, ['ID', 'Title', 'Type', 'Module', 'Priority', 'Status', 'Developer', 'Reported by', 'Updated'].map((c) => h('th', {}, c)))),
+        h('thead', {}, h('tr', {}, ['ID', 'Title', 'Type', 'Module', 'Priority', 'Status', 'Developer', 'Due', 'Reported by', 'Updated'].map((c) => h('th', {}, c)))),
         h('tbody', {}, rows.map((i) => h('tr', { onclick: () => { location.hash = '#/issue/' + i.id; } },
           h('td', { class: 'mono' }, h('a', { href: '#/issue/' + i.id }, i.key)),
           h('td', { class: 'title-cell' }, i.title, i.overdue && h('span', { class: 'badge overdue' }, 'Overdue')),
@@ -299,6 +299,7 @@ async function issuesView(params) {
           h('td', { 'data-label': 'Priority' }, priorityBadge(i.priority)),
           h('td', { 'data-label': 'Status' }, statusBadge(i.status, i.status_label)),
           h('td', { 'data-label': 'Developer' }, i.assignee_name || i.assignee_email || h('span', { class: 'muted' }, '—')),
+          h('td', { class: 'nowrap' + (i.overdue ? ' due-late' : ''), 'data-label': 'Due' }, i.due_date ? fmtDay(i.due_date) : h('span', { class: 'muted' }, '—')),
           h('td', { 'data-label': 'Reported by' }, i.reporter_name || i.reporter_email),
           h('td', { class: 'muted nowrap', 'data-label': 'Updated' }, fmtDate(i.updated_at)))))))
     : h('div', { class: 'empty' }, 'No issues match.');
