@@ -92,8 +92,12 @@ function modal(title, body, actions) {
   // Remove on close synchronously. Relying on the 'close' event alone left
   // closed dialogs in the page (seen with the window in the background), and
   // the next "find the dialog" then found a dead one.
-  dlg.close = () => { HTMLDialogElement.prototype.close.call(dlg); dlg.remove(); };
-  dlg.addEventListener('close', () => dlg.remove());
+  // 'bt-closed' fires exactly once, synchronously, however the dialog ends
+  // (Save, Cancel or Escape), so callers can undo a half-made choice.
+  let ended = false;
+  const end = () => { if (ended) return; ended = true; dlg.remove(); dlg.dispatchEvent(new Event('bt-closed')); };
+  dlg.close = () => { HTMLDialogElement.prototype.close.call(dlg); end(); };
+  dlg.addEventListener('close', end);
   document.body.append(dlg);
   dlg.showModal();
   return dlg;
@@ -312,6 +316,55 @@ async function issuesView(params) {
     return h('th', { class: 'sortable' + (sort.startsWith('due') ? ' sorted' : '') },
       h('a', { href: '#/issues' + (q.toString() ? '?' + q : ''), title: 'Sort by due date' }, 'Due', sort === 'due_asc' ? ' ▲' : sort === 'due_desc' ? ' ▼' : ' ↕'));
   };
+  // Change type, priority and status straight from the table (Amit, 25
+  // Sept). Every change goes through the same actions as the issue page, so
+  // the history records who changed what, from what to what, and in which role.
+  const post = async (i, payload) => {
+    await api('POST', `/api/issues/${i.id}/actions`, payload);
+    toast(`${i.key} updated.`);
+    render();
+  };
+  const cellSelect = (label, options, current, onPick) => h('select', {
+    class: 'cell-select', 'aria-label': label, onclick: stop,
+    onchange: async (e) => {
+      const v = e.target.value;
+      e.target.disabled = true;
+      try { await onPick(v); } catch (err) { toast(err.message, true); render(); }
+    },
+  }, options.map(([v, t]) => h('option', { value: v, selected: v === current }, t)));
+
+  // Status moves that need words open a small box; the others apply at once.
+  const moveStatus = (i, to) => new Promise((resolve) => {
+    const closeNoFix = to === 'closed' && i.status !== 'fixed';
+    const needs = to === 'more_info' || to === 'fixed' || to === 'reopened' || closeNoFix;
+    if (!needs) return resolve(post(i, { action: 'status', to }));
+    const fix = h('textarea', { rows: 4, placeholder: 'What was changed, where, and how to check it' });
+    const note = h('textarea', { rows: 3, placeholder: to === 'more_info' ? 'What do you need from the tester?' : to === 'reopened' ? 'What is still wrong?' : closeNoFix ? 'Why close without a fix? (duplicate, will not do…)' : 'Note to the tester (optional)' });
+    let done = false;
+    const dlg = modal(`${i.key}: ${state.me.statuses[i.status]} → ${state.me.statuses[to]}`, h('div', {},
+      to === 'fixed' && h('label', {}, h('span', {}, 'Fix details'), fix),
+      h('label', {}, h('span', {}, to === 'more_info' ? 'Question' : to === 'fixed' ? 'Note (optional)' : 'Reason'), note)),
+      (d) => h('button', { class: 'btn primary', type: 'button', onclick: async (e) => {
+        e.target.disabled = true;
+        try {
+          if (to === 'more_info') await api('POST', `/api/issues/${i.id}/actions`, { action: 'request_info', body: note.value });
+          else await api('POST', `/api/issues/${i.id}/actions`, { action: 'status', to, fix_details: fix.value, body: note.value });
+          done = true; d.close(); toast(`${i.key} updated.`);
+        } catch (err) { toast(err.message, true); e.target.disabled = false; }
+      } }, 'Save'));
+    dlg.addEventListener('bt-closed', () => { render(); resolve(done); });
+  });
+
+  const typeCell = (i) => i.can && i.can.edit
+    ? cellSelect('Type of ' + i.key, [['bug', 'Bug'], ['feature', 'Feature']], i.type, (v) => post(i, { action: 'edit', type: v }))
+    : typeBadge(i.type);
+  const priorityCell = (i) => i.can && i.can.edit
+    ? cellSelect('Priority of ' + i.key, PRIORITIES.map((p) => [p, cap(p)]), i.priority, (v) => post(i, { action: 'edit', priority: v }))
+    : priorityBadge(i.priority);
+  const statusCell = (i) => i.can && i.can.moves.length
+    ? cellSelect('Status of ' + i.key, [[i.status, state.me.statuses[i.status]], ...i.can.moves.map((m) => [m, (m === 'closed' && i.status !== 'fixed' ? 'Close without fix' : m === 'closed' ? 'Verify & close' : '→ ' + state.me.statuses[m])])], i.status, (v) => (v === i.status ? null : moveStatus(i, v)))
+    : statusBadge(i.status, i.status_label);
+
   const devCell = (i) => {
     const name = i.assignee_name || i.assignee_email;
     if (mode === 'admin' && i.status !== 'closed') {
@@ -331,10 +384,10 @@ async function issuesView(params) {
         h('tbody', {}, rows.map((i) => h('tr', { onclick: () => { location.hash = '#/issue/' + i.id; } },
           h('td', { class: 'mono' }, h('a', { href: '#/issue/' + i.id }, i.key)),
           h('td', { class: 'title-cell' }, i.title, i.overdue && h('span', { class: 'badge overdue' }, 'Overdue')),
-          h('td', { 'data-label': 'Type' }, typeBadge(i.type)),
+          h('td', { 'data-label': 'Type' }, typeCell(i)),
           h('td', { class: 'muted', 'data-label': 'Module' }, i.module_name, ' › ', i.submodule_name),
-          h('td', { 'data-label': 'Priority' }, priorityBadge(i.priority)),
-          h('td', { 'data-label': 'Status' }, statusBadge(i.status, i.status_label)),
+          h('td', { 'data-label': 'Priority' }, priorityCell(i)),
+          h('td', { 'data-label': 'Status' }, statusCell(i)),
           h('td', { 'data-label': 'Developer' }, devCell(i)),
           h('td', { class: 'nowrap' + (i.overdue ? ' due-late' : ''), 'data-label': 'Due' }, i.due_date ? fmtDay(i.due_date) : h('span', { class: 'muted' }, '—')),
           h('td', { 'data-label': 'Reported by' }, i.reporter_name || i.reporter_email),
@@ -551,13 +604,18 @@ function activityItem(a) {
     closed: () => a.meta?.closed_without_fix ? `${who} closed it without a fix` : `${who} verified the fix and closed it`,
     reopened: () => `${who} reopened it: ${st[a.from_status]} → Reopened`,
     due: () => a.meta?.to ? `${who} set the due date to ${fmtDay(a.meta.to)}` : `${who} removed the due date`,
-    edited: () => `${who} edited ${Object.keys(a.meta || {}).join(', ')}`,
+    edited: () => {
+      const m = a.meta || {};
+      const short = ['priority', 'type'].filter((k) => m[k]).map((k) => `${k} ${k === 'type' ? (m[k].from === 'bug' ? 'Bug' : 'Feature') : cap(m[k].from)} → ${k === 'type' ? (m[k].to === 'bug' ? 'Bug' : 'Feature') : cap(m[k].to)}`);
+      const long = ['title', 'details'].filter((k) => m[k]);
+      return `${who} changed ` + [...short, ...long].join(', ');
+    },
     attachment: () => `${who} added files`,
   }[a.kind] || (() => `${who}: ${a.kind}`);
   const edits = a.kind === 'edited' && a.meta && h('details', { class: 'small' }, h('summary', {}, 'Show previous values'),
     Object.entries(a.meta).map(([k, v]) => h('div', { class: 'prev' }, h('b', {}, cap(k) + ' was: '), String(v.from))));
   return h('li', { class: 'ev ev-' + a.kind },
-    h('div', { class: 'ev-head' }, h('span', {}, text()), h('span', { class: 'muted nowrap' }, fmtDate(a.at))),
+    h('div', { class: 'ev-head' }, h('span', {}, text(), a.kind !== 'created' && h('span', { class: 'muted' }, ' · as ' + role)), h('span', { class: 'muted nowrap' }, fmtDate(a.at))),
     a.body && h('div', { class: 'prose ev-body' }, a.body),
     edits,
     a.files.length ? h('div', { class: 'files' }, a.files.map(fileView)) : null);

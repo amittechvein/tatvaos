@@ -278,6 +278,23 @@ const DEV_FLOW = {
 };
 const TESTER_FLOW = { fixed: ['closed', 'reopened'] };
 
+// Title, details, priority and type: admins, and the reporting tester while
+// the issue still waits on them (Pending / More Information Required).
+function canEdit(s, issue) {
+  return s.mode === 'admin' || (s.mode === 'tester' && issue.reporter_id === s.user.id && ['pending', 'more_info'].includes(issue.status));
+}
+
+// What the person may do from the list (Amit, 25 Sept: change type, status,
+// priority and developer straight in the table). Same rules as the issue page.
+function rowCan(s, issue) {
+  return {
+    moves: allowedMoves(s, issue),
+    edit: canEdit(s, issue),
+    assign: s.mode === 'admin' || (s.mode === 'developer' && issue.assignee_id === s.user.id),
+    take: s.mode === 'developer' && issue.assignee_id === null && issue.status !== 'closed',
+  };
+}
+
 function allowedMoves(s, issue) {
   const out = new Set();
   if (actsAsDeveloper(s, issue)) (DEV_FLOW[issue.status] || []).forEach((x) => out.add(x));
@@ -628,7 +645,7 @@ route('GET', /^\/api\/issues$/, (req, res, s, _, url) => {
       FROM issues i JOIN modules m ON m.id = i.module_id JOIN submodules sm ON sm.id = i.submodule_id
       JOIN users r ON r.id = i.reporter_id LEFT JOIN users a ON a.id = i.assignee_id
       ${where} ORDER BY ${listOrder(url.searchParams.get('sort'))} LIMIT 1000`).all(...params);
-  send(res, 200, rows.map(presentIssue));
+  send(res, 200, rows.map((i) => ({ ...presentIssue(i), can: rowCan(s, i) })));
 });
 
 route('GET', /^\/api\/issues\.csv$/, (req, res, s, _, url) => {
@@ -688,7 +705,7 @@ route('GET', /^\/api\/issues\/(\d+)$/, (req, res, s, [id]) => {
       assign: s.mode === 'admin' || (s.mode === 'developer' && issue.assignee_id === s.user.id),
       take: s.mode === 'developer' && issue.assignee_id === null && issue.status !== 'closed',
       due: actsAsDeveloper(s, issue),
-      edit: s.mode === 'admin' || (s.mode === 'tester' && issue.reporter_id === s.user.id && ['pending', 'more_info'].includes(issue.status)),
+      edit: canEdit(s, issue),
       request_info: actsAsDeveloper(s, issue) && ['pending', 'under_review', 'under_dev', 'reopened'].includes(issue.status),
     },
   });
@@ -763,19 +780,21 @@ route('POST', /^\/api\/issues\/(\d+)\/actions$/, async (req, res, s, [id]) => {
       break;
     }
     case 'edit': {
-      const canEdit = s.mode === 'admin' || (s.mode === 'tester' && issue.reporter_id === s.user.id && ['pending', 'more_info'].includes(issue.status));
-      if (!canEdit) throw forbidden();
+      if (!canEdit(s, issue)) throw forbidden();
       const changes = {};
       const title = b.title !== undefined ? str(b.title, 200, 'Title', true) : issue.title;
       const details = b.details !== undefined ? str(b.details, 20000, 'Details', true) : issue.details;
       const priority = b.priority !== undefined ? b.priority : issue.priority;
       if (!PRIORITIES.includes(priority)) throw bad('Choose a priority.');
+      const type = b.type !== undefined ? b.type : issue.type;
+      if (!TYPES.includes(type)) throw bad('Choose Bug or Feature Request.');
       if (title !== issue.title) changes.title = { from: issue.title, to: title };
       if (details !== issue.details) changes.details = { from: issue.details, to: details };
       if (priority !== issue.priority) changes.priority = { from: issue.priority, to: priority };
+      if (type !== issue.type) changes.type = { from: issue.type, to: type };
       if (!Object.keys(changes).length) throw bad('Nothing changed.');
       activityId = addActivity(id, s, 'edited', { body, meta: changes });
-      db.prepare('UPDATE issues SET title = ?, details = ?, priority = ?, updated_at = ? WHERE id = ?').run(title, details, priority, now(), id);
+      db.prepare('UPDATE issues SET title = ?, details = ?, priority = ?, type = ?, updated_at = ? WHERE id = ?').run(title, details, priority, type, now(), id);
       break;
     }
     case 'attach': {

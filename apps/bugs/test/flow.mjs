@@ -238,6 +238,28 @@ try {
   check('unknown sort refused', (await amit.req('GET', '/api/issues?sort=title;DROP')).status === 400);
   check('sort key from the object prototype refused', (await amit.req('GET', '/api/issues?sort=constructor')).status === 400);
 
+  console.log('Change from the table');
+  const tbl = async (c, q = '') => Object.fromEntries((await c.req('GET', '/api/issues' + q)).json.map((x) => [x.id, x.can]));
+  const t1 = (await priya.req('POST', '/api/issues', { module_id: mail, submodule_id: search, type: 'bug', title: 'Table edit target', details: 'x', priority: 'low' })).json.id;
+  const pc = (await tbl(priya))[t1];
+  check('reporter (tester) gets type/priority on her Pending issue, no status moves', pc.edit === true && pc.moves.length === 0, JSON.stringify(pc));
+  const rc = (await tbl(rahul))[t1];
+  check('unassigned developer gets nothing but Assign to me', rc.edit === false && rc.moves.length === 0 && rc.assign === false && rc.take === true, JSON.stringify(rc));
+  check('admin gets type, priority, moves and assign', (await tbl(amit))[t1].edit === true && (await tbl(amit))[t1].moves.length > 0 && (await tbl(amit))[t1].assign === true);
+  check('tester changes type Bug -> Feature', (await priya.req('POST', `/api/issues/${t1}/actions`, { action: 'edit', type: 'feature' })).status === 200);
+  check('unknown type refused', (await priya.req('POST', `/api/issues/${t1}/actions`, { action: 'edit', type: 'wish' })).status === 400);
+  check('developer cannot change type', (await rahul.req('POST', `/api/issues/${t1}/actions`, { action: 'edit', type: 'bug' })).status === 403);
+  await amit.req('POST', `/api/issues/${t1}/actions`, { action: 'edit', priority: 'critical' });
+  const th = (await amit.req('GET', '/api/issues/' + t1)).json;
+  const ed = th.activity.filter((a) => a.kind === 'edited');
+  check('type change recorded: who, role, from, to', ed[0].actor_name === 'Priya' && ed[0].actor_role === 'tester' && ed[0].meta.type.from === 'bug' && ed[0].meta.type.to === 'feature', JSON.stringify(ed[0]));
+  check('priority change recorded: who, role, from, to', ed[1].actor_role === 'admin' && ed[1].meta.priority.from === 'low' && ed[1].meta.priority.to === 'critical');
+  check('issue now Feature + Critical', th.issue.type === 'feature' && th.issue.priority === 'critical');
+  await amit.req('POST', `/api/issues/${t1}/actions`, { action: 'assign', assignee_id: rahulId });
+  const rc2 = (await tbl(rahul))[t1];
+  check('once assigned, the developer gets status moves in the table', rc2.moves.includes('under_review') && rc2.edit === false, JSON.stringify(rc2));
+  check('tester cannot edit once it is Under Review', (await rahul.req('POST', `/api/issues/${t1}/actions`, { action: 'status', to: 'under_review' })).status === 200 && (await tbl(priya))[t1].edit === false);
+
   console.log('Rules that protect history');
   check('module with reports cannot be deleted', (await amit.req('DELETE', '/api/modules/' + mail)).status === 409);
   check('sub-module with reports cannot be deleted', (await amit.req('DELETE', '/api/submodules/' + search)).status === 409);
