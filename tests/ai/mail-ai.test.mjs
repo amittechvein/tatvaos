@@ -14,8 +14,9 @@
 //
 //  Environment: MAILAI_API (default http://localhost:5171/api), FAKE (default
 //  http://127.0.0.1:5199), AI_ADMIN "email,password" (default the local
-//  BOOTSTRAP_ADMIN_* values). Leaves the organisation's AI consent and Mail AI
-//  switch OFF, whatever it found.
+//  BOOTSTRAP_ADMIN_* values; must be the platform operator, because the run
+//  lifts the ai.* limits and restores them). Leaves the organisation's AI
+//  consent and Mail AI switch OFF, whatever it found.
 //
 //  What would make this wrong: a refusal asserted only by the absence of
 //  text. Every refusal here asserts the provider's hit count did not move AND
@@ -60,6 +61,15 @@ const mailRows = async () => {
 console.log(`Mail AI against ${API} (fake provider ${FAKE})\n`);
 
 const DRAFT = 'hi priya, can we move the review to 3 oct at 4pm? thanks';
+
+// The limits from PR 280 count this test's own requests too: a few runs in an
+// hour hit the 50-per-person ceiling and every "success" check turns red for a
+// reason that has nothing to do with Mail (seen 25 Sept, 9 false REDs). So:
+// remember every ai.* setting, lift the limits for the run, put them back.
+const settingsNow = async () => Object.fromEntries((await call('GET', '/admin/settings')).body
+  .filter((i) => i.key.startsWith('ai.')).map((i) => [i.key, i.value ?? '']));
+const found = await settingsNow();
+await call('PUT', '/admin/settings', { 'ai.paused': 'false', 'ai.limit.per_person_per_hour': '', 'ai.limit.org_monthly_tokens': '' });
 
 try {
   // ── 1. Both off ───────────────────────────────────────────────────────────
@@ -163,7 +173,9 @@ try {
   check('both off in one PUT is 200', r.status === 200 && r.body.enabled === false && r.body.mailEnabled === false, JSON.stringify(r.body));
 } finally {
   await setAi({ enabled: false, mail: false });
+  await call('PUT', '/admin/settings', found);
 }
+check('every ai.* setting is back as it was found', JSON.stringify(await settingsNow()) === JSON.stringify(found));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
