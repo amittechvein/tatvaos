@@ -38,5 +38,5 @@ container, its own SQLite file, no npm dependencies, sign-in through
 `~/tatvaos-bugs` (deploy user) on the server, its own compose project
 (`deploy/docker-compose.yml`), joined to the product's Caddy network. Caddy
 fragment: `infra/docker/caddy/conf.d/bug.caddy` (tracked, so deploy.sh keeps it).
-Data: docker volume `tatvaos-bugs_bugsdata` (`bugs.db` + `files/`). **Not yet in
-the product's backup schedule.**
+Data: docker volume `tatvaos-bugs_bugsdata` (`bugs.db` + `files/`). **Backed up every 6 h**
+by `deploy/backup-bugs.sh` (encrypted, read back, uploaded to the product bucket under `bugs/`, 7 days); restore proof: `deploy/restore-drill.sh`.
