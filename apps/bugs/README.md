@@ -35,7 +35,7 @@ container, its own SQLite file, no npm dependencies, sign-in through
 
 ## Production
 
-`/srv/tatvaos-bugs` on the server, its own compose project
+`~/tatvaos-bugs` (deploy user) on the server, its own compose project
 (`deploy/docker-compose.yml`), joined to the product's Caddy network. Caddy
 fragment: `infra/docker/caddy/conf.d/bug.caddy` (tracked, so deploy.sh keeps it).
 Data: docker volume `tatvaos-bugs_bugsdata` (`bugs.db` + `files/`). **Not yet in

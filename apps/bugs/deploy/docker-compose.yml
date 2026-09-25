@@ -1,5 +1,5 @@
 # TatvaOS Bugs on the production server — its OWN compose project
-# (/srv/tatvaos-bugs, project name "tatvaos-bugs"), so the product's
+# (~/tatvaos-bugs, project name "tatvaos-bugs"), so the product's
 # deploy.sh never builds, restarts or prunes it, and this never touches theirs.
 #
 # It joins the product's Caddy network (external) so Caddy can reach
