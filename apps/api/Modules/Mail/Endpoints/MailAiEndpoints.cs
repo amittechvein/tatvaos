@@ -1,3 +1,5 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using TatvaOS.Api.Shared.Ai;
 using TatvaOS.Api.Shared.Data;
 using TatvaOS.Api.Shared.Tenancy;
@@ -90,6 +92,9 @@ public static class MailAiEndpoints
 
         g.MapGet("/status", StatusAsync);
         g.MapPost("/rewrite", RewriteAsync);
+        // Step 2 (25 Sept 2026): suggested replies. See MailSuggestions for
+        // what leaves and what never does.
+        g.MapPost("/messages/{id:guid}/suggestions", SuggestAsync);
     }
 
     /// <summary>
@@ -148,6 +153,81 @@ public static class MailAiEndpoints
             return Results.Ok(new { error = "TatvaOS AI returned nothing for this draft. Please try again." });
 
         return Results.Ok(new { text = rewritten });
+    }
+
+    /// <summary>What a message's suggestions were, kept in memory only.</summary>
+    private sealed record CachedSuggestions(List<string> Suggestions, bool Partial);
+
+    /// <summary>
+    /// How long a message's suggestions are remembered. In PROCESS MEMORY ONLY
+    /// — never the database, never disk, gone on restart — so reopening a
+    /// message does not send it to the provider again, and does not spend the
+    /// person's hourly AI allowance (50 by default, shared with Help me write)
+    /// a second time.
+    /// </summary>
+    public static readonly TimeSpan SuggestionLifetime = TimeSpan.FromHours(6);
+
+    /// <summary>
+    /// Three short replies to one message. Always 200: `suggestions` (possibly
+    /// empty), and `skipped` when the message was not eligible or Mail AI is
+    /// off — in which case NOTHING was sent — or `error` when the gateway said
+    /// no. The reading pane shows chips or nothing; it never nags.
+    /// </summary>
+    private static async Task<IResult> SuggestAsync(
+        Guid id, Guid? mailboxId, IAiGateway ai, AppDbContext db, TenantContext tenant,
+        IMemoryCache cache, ILoggerFactory logs, CancellationToken ct)
+    {
+        // Switches first, before the cache: a remembered answer must not keep
+        // showing after an administrator turned Mail AI off.
+        if (!ai.IsConfigured || !await ai.EnabledForTenantAsync(ct)
+            || !await AiProductSwitch.MailAllowedAsync(db, tenant, logs.CreateLogger("MailAi"), ct))
+            return Results.Ok(new { suggestions = Array.Empty<string>(), skipped = "off" });
+
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Read, ct);
+        if (box is null) return Results.NotFound();
+        var m = await db.Messages.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == id && x.MailboxId == box.Id, ct);
+        if (m is null) return Results.NotFound();
+
+        var folder = await db.Folders.AsNoTracking().FirstOrDefaultAsync(f => f.Id == m.FolderId, ct);
+        if (MailSuggestions.SkipReason(m, folder, box) is string why)
+            return Results.Ok(new { suggestions = Array.Empty<string>(), skipped = why });
+
+        // Tenant in the key as well as the id: ids are unique, but a key that
+        // cannot collide across organisations does not depend on that.
+        var key = $"mail.suggest:{tenant.TenantId}:{m.Id}";
+        if (cache.TryGetValue(key, out CachedSuggestions? hit) && hit is not null)
+            return Results.Ok(new { suggestions = hit.Suggestions, partial = hit.Partial, cached = true });
+
+        // The stored plain text; failing that, the text part of the raw
+        // message; failing that, the preview. Never the HTML (as Translate).
+        var source = m.BodyText;
+        if (string.IsNullOrWhiteSpace(source) && !string.IsNullOrEmpty(m.RawBody))
+        {
+            try { source = MailContent.Parse(m.RawBody).TextBody; }
+            catch { source = null; }
+        }
+        source ??= m.Snippet;
+
+        var (body, partial) = MailSuggestions.NewPart(source);
+        if (body.Length == 0)
+            return Results.Ok(new { suggestions = Array.Empty<string>(), skipped = "empty" });
+
+        // The sender's NAME, not their address: the model needs to know who is
+        // writing, not where they can be reached.
+        var from = string.IsNullOrWhiteSpace(m.FromName) ? "the sender" : m.FromName.Trim();
+        var input = $"From: {from}\nSubject: {m.Subject ?? "(no subject)"}\n\n{body}";
+
+        var result = await ai.CompleteAsync(MailSuggestions.Instruction, input, ct,
+            MailSuggestions.Feature);
+        if (result.Error is string failure)
+            return Results.Ok(new { suggestions = Array.Empty<string>(), error = failure });
+
+        var list = MailSuggestions.Parse(result.Text);
+        partial = partial || result.Truncated;
+        if (list.Count > 0)
+            cache.Set(key, new CachedSuggestions(list, partial), SuggestionLifetime);
+        return Results.Ok(new { suggestions = list, partial });
     }
 
     /// <summary>

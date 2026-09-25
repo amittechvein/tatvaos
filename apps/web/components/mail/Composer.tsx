@@ -353,6 +353,7 @@ export function Composer({
   minimised: minimisedProp,
   onMinimisedChange,
   placement = 'docked',
+  initialText,
 }: {
   replyTo?: Message | null;
   mode?: ComposeMode;
@@ -410,6 +411,12 @@ export function Composer({
    * is a placement prop and not a second component to keep in step.
    */
   placement?: 'docked' | 'inline';
+  /**
+   * Text to start the body with — a suggested reply the person clicked
+   * (TatvaOS AI, step 2). Seeded ONCE, above the signature and the quote, as
+   * escaped text, with the caret after it. Theirs to edit; never sent as is.
+   */
+  initialText?: string;
 }) {
   const editorRef = useRef<HTMLDivElement>(null);
   const shell = useRef<HTMLDivElement>(null);
@@ -462,6 +469,15 @@ export function Composer({
     const id = window.setTimeout(() => {
       shell.current?.scrollIntoView({ block: 'end' });
       editorRef.current?.focus({ preventScroll: true });
+      // A suggested reply is already in the body: the caret goes after it,
+      // where the person will carry on typing, not before it.
+      if (initialText && editorRef.current) {
+        const r = typedRange(editorRef.current);
+        r.collapse(false);
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(r);
+      }
     }, 60);   // after the first paint, or there is nothing to scroll to
     return () => window.clearTimeout(id);
     // Mount only: switching reply → reply all must not yank the page again.
@@ -1239,11 +1255,12 @@ export function Composer({
       // carried only the signature — the message being forwarded was simply
       // not in it.
       const q = replyTo && mode !== 'new' ? quoteText(replyTo, mode) : '';
-      if (!sigText && !q) return;
+      const lead = initialText ?? '';
+      if (!sigText && !q && !lead) return;
       plainQuote.current = q;
       // Functional update so an already-typed body is never overwritten — this
       // effect re-runs on a mode change, and the body may not be empty by then.
-      setPlainBody((b) => (b.trim() === '' ? `${sigText}${q ? `\n\n${q}` : ''}` : b));
+      setPlainBody((b) => (b.trim() === '' ? `${lead}${sigText}${q ? `\n\n${q}` : ''}` : b));
       seededPlainSig.current = withSig && signature ? signature.bodyText : '';
       seeded.current = true;
       return;
@@ -1276,13 +1293,17 @@ export function Composer({
     // EVERY reply and forward, not only a forward — see quoteHtml for the
     // spam verdict and the script hole this used to be.
     const quote = replyTo && mode !== 'new' ? `<br><br>${quoteHtml(replyTo, mode)}` : '';
-    if (!sig && !quote) return;
+    // A clicked suggestion goes first, ESCAPED (textToHtml) — it is model
+    // output, and a model can be talked into writing markup.
+    const lead = initialText ? textToHtml(initialText) : '';
+    if (!sig && !quote && !lead) return;
 
     // Only our own output reaches innerHTML: the signature through
-    // cleanSignatureHtml, the quote through quoteHtml's sanitiser and escapes.
-    el.innerHTML = sig + quote;
+    // cleanSignatureHtml, the quote through quoteHtml's sanitiser and escapes,
+    // a suggestion through textToHtml.
+    el.innerHTML = lead + sig + quote;
     seeded.current = true;
-  }, [mode, replyTo, plain, signature]);
+  }, [mode, replyTo, plain, signature, initialText]);
 
   /** Current contents, in the shape autosave and send both want. */
   function draftFields(): DraftFields {

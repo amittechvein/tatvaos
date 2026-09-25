@@ -371,6 +371,9 @@ builder.Services.AddHttpClient();
 // walk past the meter (Mr. Singh on PR 280). tests/ai/gateway-not-bypassable.sh
 // fails if the provider class is named anywhere else.
 builder.Services.AddScoped<IAiGateway, MeteredAiGateway>();
+// Process memory only. First user: Mail's suggested replies, so reopening a
+// message does not send it to the AI provider again (MailAiEndpoints).
+builder.Services.AddMemoryCache();
 
 // Scoped: it writes through the request's AppDbContext and reads its
 // TenantContext. A singleton holding either would serve one tenant's scope to

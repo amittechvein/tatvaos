@@ -15,6 +15,7 @@ import DOMPurify from 'dompurify';
 import { MessageList, type MailListRow } from '@/components/mail/MessageList';
 import { MessageView } from '@/components/mail/MessageView';
 import { Composer, type ComposeMode } from '@/components/mail/Composer';
+import { SuggestedReplies } from '@/components/mail/SuggestedReplies';
 import { dockHasRoom, layoutDock } from '@/lib/composerDock';
 import { useMailbox } from '@/components/mail/MailboxSwitcher';
 import { SearchChips } from '@/components/mail/SearchChips';
@@ -191,7 +192,9 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
   const [composers, setComposers] = useState<
     // `min` is what the PERSON chose. Windows minimised only to make room are
     // worked out at render (layoutDock), so they reopen when room comes back.
-    { key: number; replyTo: Message | null; mode: ComposeMode; min: boolean }[]
+    // `initialText` is a suggested reply the person clicked (TatvaOS AI,
+    // step 2): typed into the new reply for them to edit, never sent as is.
+    { key: number; replyTo: Message | null; mode: ComposeMode; min: boolean; initialText?: string }[]
   >([]);
   const composerKey = useRef(0);
   // The window that stays open when room runs short: the last one opened or
@@ -837,7 +840,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     w.print();
   }
 
-  function startCompose(m: Message | null, m2: ComposeMode) {
+  function startCompose(m: Message | null, m2: ComposeMode, initialText?: string) {
     if (isShared && !canSend) {
       setListError('You have read access to this mailbox, not permission to send from it.');
       return;
@@ -886,7 +889,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
       if (!inline({ mode: m2, replyTo: m })
         && !dockHasRoom(prev.filter((c) => !inline(c)).length, viewportW)) return prev;
       composerKey.current += 1;
-      return [...prev, { key: composerKey.current, replyTo: m, mode: m2, min: false }];
+      return [...prev, { key: composerKey.current, replyTo: m, mode: m2, min: false, initialText }];
     });
     // The newest window is the one kept open; a restore elsewhere moves it.
     setDockFocus(null);
@@ -1389,10 +1392,23 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
               // "currently its divided in two sections"). Replies to some
               // OTHER message stay docked below; they have nothing on screen
               // to sit under.
-              footer={inlineComposers.map((c) => (
+              // No reply open yet: offer suggested replies instead (TatvaOS AI,
+              // step 2 — shows nothing unless Mail AI is on). Not in folders
+              // whose mail nobody answers; the server refuses those anyway,
+              // this only saves the request.
+              footer={inlineComposers.length === 0
+                ? (!['sent', 'drafts', 'junk', 'trash'].includes(folder?.slug ?? '') && (
+                    <SuggestedReplies
+                      message={open}
+                      mailboxId={mailboxId}
+                      onPick={(text) => startCompose(open, 'reply', text)}
+                    />
+                  ))
+                : inlineComposers.map((c) => (
                 <Composer
                   key={c.key}
                   placement="inline"
+                  initialText={c.initialText}
                   replyTo={c.replyTo}
                   mode={c.mode}
                   selfAddress={mailbox.address}
