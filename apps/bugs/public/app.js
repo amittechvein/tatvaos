@@ -288,6 +288,33 @@ async function issuesView(params) {
   const mine = params.get('mine') === '1';
   const MINE_LABEL = { admin: 'My issues', developer: 'Assigned to me', tester: 'My reports' };
   const title = mine ? MINE_LABEL[mode] : 'All issues';
+
+  // Assign from the table (Amit, 25 Sept): admins pick the developer in the
+  // Developer column; developers take a free issue with "Assign to me". The
+  // server applies the same rules as on the issue page.
+  const devs = mode === 'admin' ? (await people(true)).filter((u) => u.roles.includes('developer') && u.active !== false) : [];
+  const assign = async (i, to, el) => {
+    el.disabled = true;
+    try {
+      await api('POST', `/api/issues/${i.id}/actions`, { action: 'assign', assignee_id: to });
+      toast(to === null ? `${i.key} unassigned.` : `${i.key} assigned to ${to === state.me.user.id ? 'you' : (devs.find((d) => d.id === to) || {}).name}.`);
+      render();
+    } catch (err) { toast(err.message, true); el.disabled = false; render(); }
+  };
+  const stop = (e) => e.stopPropagation();
+  const devCell = (i) => {
+    const name = i.assignee_name || i.assignee_email;
+    if (mode === 'admin' && i.status !== 'closed') {
+      return h('select', { class: 'assign-select', 'aria-label': 'Developer for ' + i.key, onclick: stop,
+        onchange: (e) => assign(i, e.target.value ? Number(e.target.value) : null, e.target) },
+        h('option', { value: '' }, '— Assign —'),
+        devs.map((u) => h('option', { value: u.id, selected: u.id === i.assignee_id }, u.name)));
+    }
+    if (mode === 'developer' && !i.assignee_id && i.status !== 'closed') {
+      return h('button', { class: 'btn small primary', onclick: (e) => { stop(e); assign(i, state.me.user.id, e.target); } }, 'Assign to me');
+    }
+    return name || h('span', { class: 'muted' }, '—');
+  };
   const table = rows.length
     ? h('div', { class: 'table-wrap' }, h('table', { class: 'issues cards' },
         h('thead', {}, h('tr', {}, ['ID', 'Title', 'Type', 'Module', 'Priority', 'Status', 'Developer', 'Due', 'Reported by', 'Updated'].map((c) => h('th', {}, c)))),
@@ -298,7 +325,7 @@ async function issuesView(params) {
           h('td', { class: 'muted', 'data-label': 'Module' }, i.module_name, ' › ', i.submodule_name),
           h('td', { 'data-label': 'Priority' }, priorityBadge(i.priority)),
           h('td', { 'data-label': 'Status' }, statusBadge(i.status, i.status_label)),
-          h('td', { 'data-label': 'Developer' }, i.assignee_name || i.assignee_email || h('span', { class: 'muted' }, '—')),
+          h('td', { 'data-label': 'Developer' }, devCell(i)),
           h('td', { class: 'nowrap' + (i.overdue ? ' due-late' : ''), 'data-label': 'Due' }, i.due_date ? fmtDay(i.due_date) : h('span', { class: 'muted' }, '—')),
           h('td', { 'data-label': 'Reported by' }, i.reporter_name || i.reporter_email),
           h('td', { class: 'muted nowrap', 'data-label': 'Updated' }, fmtDate(i.updated_at)))))))
