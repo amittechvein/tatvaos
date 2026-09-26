@@ -51,7 +51,15 @@ public sealed record UpsertPlanRequest(
     // Optional so an older form that does not send them leaves them alone.
     string? AiCreditModel = null,         // "per_user" | "pooled"
     int? AiCreditsPerUser = null,
-    int? AiCreditsPooled = null);
+    int? AiCreditsPooled = null,
+    // Plan features (26 Sept 2026). All three null = leave the features as
+    // they are. AllFeatures true = "everything in the included modules" (the
+    // column goes back to NULL); otherwise IncludedFeatures is the list.
+    // FeatureLimits replaces the plan's limits when sent; a missing code =
+    // no limit.
+    string[]? IncludedFeatures = null,
+    bool? AllFeatures = null,
+    Dictionary<string, long>? FeatureLimits = null);
 
 /// <summary>
 /// Edit an organisation's identity and owner contact. Every field optional —

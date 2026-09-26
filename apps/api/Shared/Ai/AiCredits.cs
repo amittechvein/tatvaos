@@ -45,7 +45,13 @@ public static class AiCredits
     /// <param name="Source">"override", "plan" or "none".</param>
     /// <param name="Model">"pooled" or "per_user" (when from a plan).</param>
     public sealed record Allowance(int? Credits, string Source, string? PlanName, string? Model,
-        int? PerUser, int? Users);
+        int? PerUser, int? Users)
+    {
+        /// <summary>What the plan or override gives, before this month's top-ups. Null = no limit.</summary>
+        public int? Base { get; init; }
+        /// <summary>This month's live top-up credits (counted in Credits only when there is a limit).</summary>
+        public int TopUp { get; init; }
+    }
 
     /// <summary>
     /// The CURRENT tenant's allowance (the caller's DbContext is tenant-scoped).
@@ -53,6 +59,18 @@ public static class AiCredits
     /// Per-user: the subscription's seats when set, otherwise the active users.
     /// </summary>
     public static async Task<Allowance> AllowanceAsync(AppDbContext db, Guid tenantId, CancellationToken ct)
+    {
+        // Plan or override first, then this month's top-ups on top (26 Sept 2026).
+        var a = await BaseAllowanceAsync(db, tenantId, ct);
+        var month = MeteredAiGateway.MonthOf(DateTimeOffset.UtcNow);
+        var topUp = await db.AiCreditTopups.IgnoreQueryFilters().AsNoTracking()
+            .Where(t => t.TenantId == tenantId && t.Month == month && t.WithdrawnAt == null)
+            .SumAsync(t => (int?)t.Credits, ct) ?? 0;
+        // No limit stays no limit: a top-up adds to a limit, it cannot create one.
+        return a with { Credits = a.Credits is int c ? checked(c + topUp) : null, Base = a.Credits, TopUp = topUp };
+    }
+
+    private static async Task<Allowance> BaseAllowanceAsync(AppDbContext db, Guid tenantId, CancellationToken ct)
     {
         var over = await db.Tenants.AsNoTracking()
             .Where(t => t.Id == tenantId).Select(t => t.AiCreditsOverride).FirstOrDefaultAsync(ct);

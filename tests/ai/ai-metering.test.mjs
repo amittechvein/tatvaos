@@ -222,6 +222,22 @@ check('control: an address never sent to is not in the trail',
 const refused = await call('POST', '/admin/settings/test-ai-warning', { to: 'not an address' });
 check('a malformed address is refused before anything is sent', refused.status === 400);
 
+console.log('The test SMS: the same two rules, and the number masked in the trail');
+// A made-up number unique to this run; locally the sender only logs the code.
+const SMS_TO = `+9170${String(Date.now()).slice(-8)}`;
+const smsOwner = await fetch(`${API}/admin/settings/test-sms`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${owner?.accessToken}` },
+  body: JSON.stringify({ phone: SMS_TO }) });
+check('an organisation owner is refused the test SMS (403)', smsOwner.status === 403, `status ${smsOwner.status}`);
+const smsSent = await call('POST', '/admin/settings/test-sms', { phone: SMS_TO });
+check('the operator\'s test SMS is answered', smsSent.status === 200, JSON.stringify(smsSent.body));
+const smsTrail = (await call('GET', '/org/audit?action=settings.test_sms')).body.entries ?? [];
+const masked = `${SMS_TO.slice(0, 3)}•••••${SMS_TO.slice(-4)}`;
+const smsRows = smsTrail.filter((e) => (e.afterState ?? '').includes(masked));
+// Exactly one row: the operator's send is recorded, the owner's refused one is not.
+check('the send is audited once, with the number masked', smsRows.length === 1 && smsRows[0].actorUserId
+  && JSON.parse(smsRows[0].afterState).sent === smsSent.body.sent, JSON.stringify(smsTrail.slice(0, 3)));
+check('the full number appears nowhere in the trail', !smsTrail.some((e) => JSON.stringify(e).includes(SMS_TO.slice(1))));
 // ---- leave everything as found -------------------------------------------------
 await settings(found);
 await consent(false);

@@ -28,6 +28,79 @@ public static class OrgAiUsageEndpoints
         app.MapGet("/api/admin/organisations/{id:guid}/ai-credits", GetCreditsAsync)
             .RequireAuthorization("SuperAdmin")
             .WithTags("Platform administration");
+        // Top-ups (26 Sept 2026): extra credits for this month, sold on top of the plan.
+        app.MapPost("/api/admin/organisations/{id:guid}/ai-credits/topups", AddTopupAsync)
+            .RequireAuthorization("SuperAdmin")
+            .WithTags("Platform administration");
+        app.MapPost("/api/admin/organisations/{id:guid}/ai-credits/topups/{topupId:guid}/withdraw", WithdrawTopupAsync)
+            .RequireAuthorization("SuperAdmin")
+            .WithTags("Platform administration");
+    }
+
+    public sealed record TopupRequest(int? Credits, decimal? PriceInr, string? Reason);
+    public sealed record WithdrawRequest(string? Reason);
+
+    /// <summary>The largest single top-up — a typo guard, not a business rule.</summary>
+    public const int MaxTopup = 10_000_000;
+
+    private static async Task<IResult> AddTopupAsync(
+        Guid id, TopupRequest req, AppDbContext db, TenantContext tenant, HttpContext http,
+        TatvaOS.Api.Modules.Admin.AuditWriter audit, CancellationToken ct)
+    {
+        if (req.Credits is not int credits || credits <= 0 || credits > MaxTopup)
+            return Results.BadRequest(new { error = "Credits must be a whole number above 0." });
+        if (req.PriceInr is < 0)
+            return Results.BadRequest(new { error = "The price cannot be negative." });
+        var reason = (req.Reason ?? "").Trim();
+        if (reason.Length == 0)
+            return Results.BadRequest(new { error = "Say why — for example the invoice number or \"goodwill\"." });
+        if (!await db.Tenants.AsNoTracking().AnyAsync(t => t.Id == id, ct)) return Results.NotFound();
+
+        var actor = Guid.TryParse(http.User.FindFirst("sub")?.Value, out var uid) ? uid : Guid.Empty;
+        tenant.EnterPlatformScope(id, actor);
+        await db.SyncTenantAsync(ct);
+
+        var row = new AiCreditTopup
+        {
+            TenantId = id,
+            Month = MeteredAiGateway.MonthOf(DateTimeOffset.UtcNow),
+            Credits = credits,
+            PriceInr = req.PriceInr,
+            Reason = reason.Length > 300 ? reason[..300] : reason,
+            AddedBy = actor,
+        };
+        db.AiCreditTopups.Add(row);
+        await db.SaveChangesAsync(ct);
+
+        await audit.WriteAsync("org.ai.credits_topup.added", "core.ai_credit_topup", row.Id.ToString(),
+            after: new { row.Credits, row.PriceInr, row.Month, row.Reason }, ct: ct);
+        return Results.Created($"/api/admin/organisations/{id}/ai-credits", new { row.Id, row.Credits, row.Month });
+    }
+
+    private static async Task<IResult> WithdrawTopupAsync(
+        Guid id, Guid topupId, WithdrawRequest req, AppDbContext db, TenantContext tenant, HttpContext http,
+        TatvaOS.Api.Modules.Admin.AuditWriter audit, CancellationToken ct)
+    {
+        var reason = (req?.Reason ?? "").Trim();
+        if (reason.Length == 0)
+            return Results.BadRequest(new { error = "Say why it is being withdrawn." });
+
+        var actor = Guid.TryParse(http.User.FindFirst("sub")?.Value, out var uid) ? uid : Guid.Empty;
+        tenant.EnterPlatformScope(id, actor);
+        await db.SyncTenantAsync(ct);
+
+        var row = await db.AiCreditTopups.FirstOrDefaultAsync(t => t.Id == topupId && t.TenantId == id, ct);
+        if (row is null) return Results.NotFound();
+        if (row.WithdrawnAt is not null) return Results.Ok(new { row.Id, withdrawn = true });   // already
+
+        row.WithdrawnAt = DateTimeOffset.UtcNow;
+        row.WithdrawnBy = actor;
+        row.WithdrawReason = reason.Length > 300 ? reason[..300] : reason;
+        await db.SaveChangesAsync(ct);
+
+        await audit.WriteAsync("org.ai.credits_topup.withdrawn", "core.ai_credit_topup", row.Id.ToString(),
+            before: new { row.Credits }, after: new { withdrawn = true, reason = row.WithdrawReason }, ct: ct);
+        return Results.Ok(new { row.Id, withdrawn = true });
     }
 
     private static async Task<IResult> GetCreditsAsync(
@@ -39,7 +112,14 @@ public static class OrgAiUsageEndpoints
         var actor = Guid.TryParse(http.User.FindFirst("sub")?.Value, out var uid) ? uid : Guid.Empty;
         tenant.EnterPlatformScope(id, actor);
         await db.SyncTenantAsync(ct);
-        return Results.Ok(new { credits = await AiUsageReport.CreditsAsync(db, id, ct), @override = over.AiCreditsOverride });
+        // This month's top-ups, withdrawn ones too (a record of what was sold).
+        var month = MeteredAiGateway.MonthOf(DateTimeOffset.UtcNow);
+        var topups = await db.AiCreditTopups.AsNoTracking()
+            .Where(t => t.TenantId == id && t.Month == month)
+            .OrderByDescending(t => t.CreatedAt)
+            .Select(t => new { t.Id, t.Credits, t.PriceInr, t.Reason, t.CreatedAt, t.WithdrawnAt, t.WithdrawReason })
+            .ToListAsync(ct);
+        return Results.Ok(new { credits = await AiUsageReport.CreditsAsync(db, id, ct), @override = over.AiCreditsOverride, topups });
     }
 
     /// <summary>Override: a number = exactly that many credits a month; null = follow the plan.</summary>
