@@ -205,7 +205,7 @@ try {
     input: readFileSync(new URL('./mail-ai-fixtures.sql', import.meta.url)), encoding: 'utf8',
   });
   const ids = Object.fromEntries((fx.stdout ?? '').split('\n').filter((l) => l.includes('|')).map((l) => l.trim().split('|')));
-  check('fixtures made eight messages', Object.keys(ids).length === 8, (fx.stderr ?? '').slice(0, 200));
+  check('fixtures made ten messages', Object.keys(ids).length === 10, (fx.stderr ?? '').slice(0, 200));
 
   await setAi({ enabled: false, mail: false, mailTriage: false });
   h0 = await hits();
@@ -431,6 +431,78 @@ try {
     check('an empty list: every organisation may', (await call('GET', '/org/ai')).body.mailOffered === true);
     r = await setAi({ mail: false });
     check('…and switching Mail AI off works whatever the list says', r.status === 200 && r.body.mailEnabled === false, JSON.stringify(r.body));
+  }
+
+  // ── 11. Each Mail feature's own switch, and Summarise (26 Sept 2026) ─────
+  {
+    const summarise = async (msgId, headers = OH) => {
+      const res = await fetch(`${API}/mail/ai/messages/${msgId}/summary`, { method: 'POST', headers });
+      const t = await res.text();
+      let bd; try { bd = JSON.parse(t); } catch { bd = t; }
+      return { status: res.status, body: bd };
+    };
+    // The DEFAULTS, read from the schema: a run after someone switched a
+    // feature by hand must not be able to hide a wrong default (found 26
+    // Sept: a browser check left Summarise on, and four checks read that).
+    const def = (col) => psql(`select column_default from information_schema.columns where table_schema='core' and table_name='tenants' and column_name='${col}'`);
+    check('defaults: Summarise OFF, Help me write and suggestions ON',
+      def('mail_ai_summary') === 'false' && def('mail_ai_rewrite') === 'true' && def('mail_ai_suggest') === 'true',
+      `${def('mail_ai_summary')} ${def('mail_ai_rewrite')} ${def('mail_ai_suggest')}`);
+    await setAi({ enabled: true, mail: true, mailTriage: false, mailFeatures: { rewrite: true, suggest: true, summary: false } });
+
+    const org = (await call('GET', '/org/ai')).body;
+    check('Summarise off, Help me write and suggestions on (as set)',
+      org.mailFeatures?.summary === false && org.mailFeatures?.rewrite === true && org.mailFeatures?.suggest === true, JSON.stringify(org.mailFeatures));
+    check('each feature says what it sends', typeof org.mailFeatureDisclosure?.summary === 'string'
+      && org.mailFeatureDisclosure.summary.includes('whole conversation'), JSON.stringify(org.mailFeatureDisclosure));
+    s = await ownerCall('GET', '/mail/ai/status');
+    check('status: summary false, rewrite and suggest true', s.body.summary === false && s.body.rewrite === true && s.body.suggest === true, JSON.stringify(s.body));
+    h0 = await hits();
+    r = await summarise(ids.th2);
+    check('Summarise off: skipped, nothing sent', r.body.skipped === 'off' && (await hits()) === h0, JSON.stringify(r.body));
+
+    r = await setAi({ mailFeatures: { summary: true } });
+    check('Summarise switched on (200)', r.status === 200 && r.body.mailFeatures?.summary === true, JSON.stringify(r.body));
+    check('…and audited by name', psql(`select count(*) from core.audit_logs where action = 'org.ai.mail_feature.summary.enabled' and occurred_at > now() - interval '5 minutes'`) !== '0');
+    h0 = await hits();
+    r = await summarise(ids.th2);
+    check('a two-message conversation is summarised', typeof r.body.summary === 'string' && r.body.messages === 2 && (await hits()) === h0 + 1, JSON.stringify(r.body));
+    check('Markdown bold from the model is stripped', typeof r.body.summary === 'string' && !r.body.summary.includes('**') && r.body.summary.includes('Friday'), JSON.stringify(r.body.summary));
+    const sumSent = (await last()).user;
+    check('the provider saw both messages, oldest first, with names and dates', sumSent.indexOf('move the review') >= 0
+      && sumSent.indexOf('move the review') < sumSent.indexOf('Friday works') && sumSent.includes('From: Priya Shah') && sumSent.includes('Date: '), sumSent.slice(0, 160));
+    check('…not the quoted history, not an address', !sumSent.includes('SUMMARY-OLD-QUOTE') && !sumSent.includes('@'), sumSent);
+    check('the summary instruction went as the system message', (await last()).system.includes('summarise an email conversation'));
+    h0 = await hits();
+    r = await summarise(ids.th1);
+    check('asking from the other message of the conversation: remembered, nothing sent', r.body.cached === true && (await hits()) === h0, JSON.stringify(r.body));
+    r = await summarise(ids.normal);
+    check('one short message: skipped as short, nothing sent', r.body.skipped === 'short' && (await hits()) === h0, JSON.stringify(r.body));
+    r = await summarise(ids.th2, H);
+    check('someone without the mailbox gets 404', r.status === 404, `status ${r.status}`);
+
+    // Turning a feature off removes exactly that feature.
+    await setAi({ mailFeatures: { rewrite: false } });
+    s = await ownerCall('GET', '/mail/ai/status');
+    check('Help me write off: status says so, the others stay', s.body.rewrite === false && s.body.suggest === true && s.body.summary === true, JSON.stringify(s.body));
+    h0 = await hits();
+    r = await rewrite(DRAFT);
+    check('Help me write off: the GATEWAY refuses it, nothing sent', typeof r.body.error === 'string' && r.body.error.includes('switched off') && (await hits()) === h0, JSON.stringify(r.body));
+    await setAi({ mailFeatures: { rewrite: true, suggest: false } });
+    h0 = await hits();
+    r = await suggest(ids.lines);
+    check('Suggested replies off: withheld, nothing sent', r.body.skipped === 'off' && (await hits()) === h0, JSON.stringify(r.body));
+    r = await rewrite(DRAFT);
+    check('…while Help me write works again', typeof r.body.text === 'string', JSON.stringify(r.body).slice(0, 80));
+    await setAi({ mailFeatures: { suggest: true } });
+
+    // The Techvein-only list applies to features too.
+    await call('PUT', '/admin/settings', { 'ai.mail.organisations': '00000000-0000-0000-0000-00000000abcd' });
+    r = await setAi({ mailFeatures: { summary: true } });
+    check('not on the Mail AI list: switching a feature ON is refused (400)', r.status === 400, JSON.stringify(r.body));
+    r = await setAi({ mailFeatures: { summary: false } });
+    check('…switching one OFF works', r.status === 200 && r.body.mailFeatures?.summary === false, JSON.stringify(r.body));
+    await call('PUT', '/admin/settings', { 'ai.mail.organisations': '' });
   }
 
   // ── 6. Validation of the switch itself ────────────────────────────────────

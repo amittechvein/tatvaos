@@ -160,6 +160,10 @@ public sealed class MeteredAiGateway(
         //     metered — and refused here so no Mail caller can forget it.
         if (AiProductSwitch.IsMail(feature) && !await AiProductSwitch.MailAllowedAsync(db, tenant, log, ct))
             return AiResult.Failed(AiProductSwitch.MailOff);
+        //     …and that feature's own switch (26 Sept 2026); an unknown mail.*
+        //     label is refused (AiProductSwitch.FeatureOn).
+        if (AiProductSwitch.IsMail(feature) && !await AiProductSwitch.MailAllowedAsync(db, tenant, log, ct, feature))
+            return AiResult.Failed(AiProductSwitch.MailFeatureOff);
         //     Sorting incoming mail has a switch of its own on top (step 3):
         //     it sends mail nobody clicked on.
         if (feature == AiProductSwitch.MailTriageFeature

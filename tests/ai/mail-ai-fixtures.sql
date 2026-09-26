@@ -19,9 +19,11 @@ LIMIT 1;
 DELETE FROM mail.messages WHERE mailbox_id = (SELECT mailbox_id FROM fx) AND subject LIKE '[mail-ai-test]%';
 
 CREATE TEMP TABLE made (key text, id uuid DEFAULT gen_random_uuid());
-INSERT INTO made (key) VALUES ('normal'), ('noreply'), ('sent'), ('lines'), ('markup'), ('long'), ('empty'), ('own');
+INSERT INTO made (key) VALUES ('normal'), ('noreply'), ('sent'), ('lines'), ('markup'), ('long'), ('empty'), ('own'), ('th1'), ('th2');
+-- th1 and th2 are one conversation (Summarise, 26 Sept 2026).
+CREATE TEMP TABLE conv AS SELECT gen_random_uuid() AS thread_id;
 
-INSERT INTO mail.messages (id, tenant_id, mailbox_id, folder_id, imap_uid, from_addr, from_name, to_addrs, subject, body_text, snippet)
+INSERT INTO mail.messages (id, tenant_id, mailbox_id, folder_id, imap_uid, from_addr, from_name, to_addrs, subject, body_text, snippet, thread_id, received_at)
 SELECT m.id, fx.tenant_id, fx.mailbox_id,
        CASE WHEN m.key = 'sent' THEN fx.sent ELSE fx.inbox END,
        (extract(epoch FROM clock_timestamp())::bigint % 1000000) * 10 + row_number() OVER (),
@@ -35,9 +37,13 @@ SELECT m.id, fx.tenant_id, fx.mailbox_id,
          WHEN 'markup' THEN 'Quick question. FAKE:MARKUP'
          WHEN 'long'   THEN 'START ' || repeat('lorem ipsum ', 500) || ' END-MARKER'
          WHEN 'empty'  THEN ''
+         WHEN 'th1'    THEN E'Can we move the review to Friday 3 Oct at 4pm?\n\nOn Mon, Asha wrote:\n> SUMMARY-OLD-QUOTE'
+         WHEN 'th2'    THEN 'Friday works for the team. Please confirm the room.'
          ELSE 'Please confirm the fee receipt for September.'
        END,
-       NULL
+       NULL,
+       CASE WHEN m.key IN ('th1', 'th2') THEN (SELECT thread_id FROM conv) END,
+       CASE m.key WHEN 'th1' THEN now() - interval '2 hours' WHEN 'th2' THEN now() - interval '1 hour' ELSE now() END
 FROM made m CROSS JOIN fx;
 
 SELECT key || '|' || id FROM made;

@@ -41,6 +41,12 @@ interface AiUsage {
   byFeature: { feature: string; requests: number; tokens: number }[];
 }
 
+interface MailFeatureFlags {
+  rewrite: boolean;
+  suggest: boolean;
+  summary: boolean;
+}
+
 interface AiState {
   enabled: boolean;
   platformConfigured: boolean;
@@ -51,6 +57,9 @@ interface AiState {
   /** False while Mail AI is held to a list of organisations and this is not on it. */
   mailOffered: boolean;
   mailNotOffered: string | null;
+  /** Each Mail AI feature's own switch (26 Sept 2026), and what each sends. */
+  mailFeatures: MailFeatureFlags;
+  mailFeatureDisclosure: Record<keyof MailFeatureFlags, string>;
   mailDisclosure: string;
   /** Sorting incoming mail (step 3): its own consent, on top of Mail. */
   mailTriageEnabled: boolean;
@@ -69,6 +78,7 @@ const FEATURE_NAMES: Record<string, string> = {
   'mail.rewrite': 'Mail — Help me write',
   'mail.suggest': 'Mail — Suggested replies',
   'mail.triage': 'Mail — Sorting incoming mail',
+  'mail.summary': 'Mail — Summarise conversation',
 };
 
 const fmt = (n: number) => n.toLocaleString('en-IN');
@@ -95,7 +105,9 @@ export default function OrgAiPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  async function save(change: { enabled?: boolean; mail?: boolean; mailTriage?: boolean }) {
+  async function save(change: {
+    enabled?: boolean; mail?: boolean; mailTriage?: boolean; mailFeatures?: Partial<MailFeatureFlags>;
+  }) {
     setSaving(true);
     setError(null);
     try {
@@ -187,6 +199,7 @@ export default function OrgAiPage() {
           onOn={() => setConfirmMail(true)}
           onTriageOn={() => setConfirmTriage(true)}
           onTriageOff={() => save({ mailTriage: false })}
+          onFeature={(name, on) => save({ mailFeatures: { [name]: on } })}
         />
       )}
 
@@ -273,16 +286,25 @@ export default function OrgAiPage() {
  * Same asymmetry as above: ON asks first, OFF is immediate.
  */
 function MailAiCard({
-  state, saving, onOn, onOff, onTriageOn, onTriageOff,
+  state, saving, onOn, onOff, onTriageOn, onTriageOff, onFeature,
 }: {
   state: AiState; saving: boolean; onOn: () => void; onOff: () => void;
   onTriageOn: () => void; onTriageOff: () => void;
+  onFeature: (name: keyof MailFeatureFlags, on: boolean) => void;
 }) {
+  // This month's use per feature — what an administrator weighs when they
+  // switch one off to save allowance (Amit: "so client able to save tokens").
+  const used = (feature: string) => state.usage.byFeature.find((f) => f.feature === feature)?.requests ?? 0;
+  const features: { name: keyof MailFeatureFlags; label: string; feature: string }[] = [
+    { name: 'rewrite', label: 'Help me write', feature: 'mail.rewrite' },
+    { name: 'suggest', label: 'Suggested replies', feature: 'mail.suggest' },
+    { name: 'summary', label: 'Summarise conversation', feature: 'mail.summary' },
+  ];
   const live = state.enabled && state.mailEnabled;
   return (
     <Card
       title="TatvaOS AI in Mail"
-      subtitle="Help me write, suggested replies, and sorting"
+      subtitle="Help me write, suggested replies, summaries and sorting — each can be turned off"
       actions={
         !state.mailOffered ? undefined : state.mailEnabled ? (
           <Button variant="danger" disabled={saving} onClick={onOff}>
@@ -309,6 +331,37 @@ function MailAiCard({
             message when it is opened.
           </p>
           <p className="text-ink-muted text-[0.75rem] mb-0">{state.mailDisclosure}</p>
+
+          {/* Each feature's own switch (26 Sept 2026). Off saves the
+              organisation's AI allowance and sends nothing for that feature;
+              the button disappears from Mail for everyone at once. */}
+          <ul className="mt-4 mb-0 list-none space-y-2 border-t border-line p-0 pt-3">
+            {features.map((f) => {
+              const on = state.mailFeatures[f.name];
+              return (
+                <li key={f.name} className="flex flex-wrap items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="mb-0.5 font-medium">
+                      {f.label}{' '}
+                      <Badge tone={on ? 'ok' : 'neutral'}>{on ? 'On' : 'Off'}</Badge>
+                    </p>
+                    <p className="mb-0 text-[0.75rem] text-ink-muted">
+                      {state.mailFeatureDisclosure[f.name]}{' '}
+                      {used(f.feature) > 0 && `${fmt(used(f.feature))} request${used(f.feature) === 1 ? '' : 's'} this month.`}
+                    </p>
+                  </div>
+                  <Button
+                    variant={on ? 'ghost' : 'primary'}
+                    disabled={saving}
+                    onClick={() => onFeature(f.name, !on)}
+                    aria-pressed={on}
+                  >
+                    {on ? 'Turn off' : 'Turn on'}
+                  </Button>
+                </li>
+              );
+            })}
+          </ul>
 
           {/* Step 3: its own switch, because it is the one that sends mail
               nobody clicked on. Same asymmetry: ON asks, OFF is one click. */}

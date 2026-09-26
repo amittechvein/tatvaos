@@ -141,12 +141,49 @@ public static class AiProductSwitch
     public static bool IsMail(string feature) =>
         feature.StartsWith(MailPrefix, StringComparison.Ordinal);
 
+    // ── EACH MAIL FEATURE'S OWN SWITCH (26 Sept 2026) ────────────────────────
+    public const string MailRewriteFeature = "mail.rewrite";
+    public const string MailSuggestFeature = "mail.suggest";
+    public const string MailSummaryFeature = "mail.summary";
+
+    public const string MailFeatureOff =
+        "This TatvaOS AI feature is switched off for your organisation. An administrator can turn it on "
+        + "under TatvaOS AI.";
+
+    /// <summary>Which Mail features this organisation has on (each inside Mail AI).</summary>
+    public sealed record MailFeatures(bool Rewrite, bool Suggest, bool Summary);
+
+    public static async Task<MailFeatures> MailFeaturesAsync(AppDbContext db, Guid tenantId, CancellationToken ct)
+    {
+        var f = await db.Tenants.AsNoTracking()
+            .Where(t => t.Id == tenantId)
+            .Select(t => new MailFeatures(t.MailAiRewrite, t.MailAiSuggest, t.MailAiSummary))
+            .FirstOrDefaultAsync(ct);
+        return f ?? new MailFeatures(false, false, false);
+    }
+
+    /// <summary>
+    /// Whether a mail.* feature label is on for this organisation. Sorting
+    /// (mail.triage) has its own check, TriageAllowedAsync. An unknown mail.*
+    /// label is REFUSED: a new Mail feature must be given a switch here, or it
+    /// would ride on the Mail consent without an administrator being able to
+    /// turn it off.
+    /// </summary>
+    public static bool FeatureOn(MailFeatures f, string feature) => feature switch
+    {
+        MailRewriteFeature => f.Rewrite,
+        MailSuggestFeature => f.Suggest,
+        MailSummaryFeature => f.Summary,
+        MailTriageFeature => true,
+        _ => false,
+    };
+
     /// <summary>
     /// Whether the CURRENT tenant has Mail AI on. Says nothing about allow_ai;
     /// the gateway checks that first, and the status endpoint checks both.
     /// </summary>
     public static async Task<bool> MailAllowedAsync(
-        AppDbContext db, TenantContext tenant, ILogger log, CancellationToken ct)
+        AppDbContext db, TenantContext tenant, ILogger log, CancellationToken ct, string? feature = null)
     {
         if (!tenant.HasTenant) return false;
         try
@@ -155,8 +192,10 @@ public static class AiProductSwitch
                 .Where(t => t.Id == tenant.TenantId)
                 .Select(t => t.AllowMailAi)
                 .FirstOrDefaultAsync(ct);
-            // Switched on AND on the Mail AI list (or there is no list).
-            return on && await MailOfferedToAsync(db, tenant.TenantId, log, ct);
+            // Switched on AND on the Mail AI list (or there is no list) AND,
+            // when a feature is named, that feature's own switch is on.
+            if (!on || !await MailOfferedToAsync(db, tenant.TenantId, log, ct)) return false;
+            return feature is null || FeatureOn(await MailFeaturesAsync(db, tenant.TenantId, ct), feature);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

@@ -18,6 +18,11 @@ let hits = 0;
 let last = null;
 const log = [];
 const answer = (system, user) => {
+  // A summary request: the answer carries Markdown bold, which the server
+  // must strip before it reaches anyone.
+  if (system.includes('summarise an email conversation')) {
+    return 'The review is being moved.\nKey points:\n- **Friday** 3 Oct at 4pm\nWaiting on you:\n- Confirm the new time';
+  }
   if (system.includes('sort one incoming email')) {
     if (user.includes('FAKE:PROMO')) return 'promotions';
     if (user.includes('FAKE:FYI')) return 'Category: fyi.';
