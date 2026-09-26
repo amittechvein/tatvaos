@@ -626,6 +626,9 @@ public class Plan
     public string[]? IncludedFeatures { get; set; }
     public decimal? PricePerUserMonthly { get; set; }
     public decimal? PriceMonthly { get; set; }
+    /// <summary>Yearly prices (20260926-d-billing-invoices.sql). Null = 12 × the monthly price.</summary>
+    public decimal? PricePerUserYearly { get; set; }
+    public decimal? PriceYearly { get; set; }
 
     /// <summary>
     /// AI credits (26 Sept 2026) — the same choice as storage: 'pooled' gives
@@ -648,6 +651,8 @@ public class Subscription
     public DateTimeOffset StartedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? RenewsAt { get; set; }
     public DateTimeOffset? CancelledAt { get; set; }
+    /// <summary>monthly | yearly. RenewsAt is when the next period — and its invoice — starts.</summary>
+    [MaxLength(16)] public string BillingCycle { get; set; } = "monthly";
 
     public Plan? Plan { get; set; }
 }

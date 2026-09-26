@@ -33,6 +33,19 @@ public static class SettingKeys
     public const string RazorpayKeyId = "billing.razorpay.key_id";
     public const string RazorpayKeySecret = "billing.razorpay.key_secret";
 
+    // Techvein as the SELLER on every GST invoice (billing part 1, 26 Sept
+    // 2026). No invoice is issued until the legal name, GSTIN, address,
+    // state code and SAC are all set: an invoice without them is not a
+    // valid tax invoice, and it cannot be edited after it is sent.
+    public const string SellerLegalName = "billing.seller.legal_name";
+    public const string SellerGstin = "billing.seller.gstin";
+    public const string SellerAddress = "billing.seller.address";
+    public const string SellerStateCode = "billing.seller.state_code";
+    public const string SellerSac = "billing.seller.sac";
+    public const string InvoicePrefix = "billing.invoice_prefix";
+    public const string PaymentTermsDays = "billing.payment_terms_days";
+    public const string PaymentInstructions = "billing.payment_instructions";
+
     // Mail identity
     public const string SmtpFrom = "mail.smtp_from";
 
@@ -87,6 +100,23 @@ public static class SettingKeys
         new(RazorpayKeyId, "billing", "Razorpay key ID", false,
             "Checkout integration ships with the billing section; keys stored and ready."),
         new(RazorpayKeySecret, "billing", "Razorpay key secret", true, ""),
+        new(SellerLegalName, "billing", "Seller: legal name", false,
+            "Printed on every invoice as the seller, e.g. Techvein IT Solutions Pvt. Ltd."),
+        new(SellerGstin, "billing", "Seller: GSTIN", false,
+            "Techvein's 15-character GSTIN. No invoice can be issued until this is set."),
+        new(SellerAddress, "billing", "Seller: registered address", false,
+            "The address on the GST registration."),
+        new(SellerStateCode, "billing", "Seller: GST state code", false,
+            "Two digits, the first two of the GSTIN (e.g. 10 Bihar, 27 Maharashtra). A customer in the "
+            + "same state is charged CGST 9% + SGST 9%; anywhere else IGST 18%."),
+        new(SellerSac, "billing", "SAC code for the service", false,
+            "The GST service code printed on each invoice line. Confirm with your accountant."),
+        new(InvoicePrefix, "billing", "Invoice number prefix", false,
+            "1-4 letters. Invoices are numbered PREFIX/2026-27/0001, starting again each April."),
+        new(PaymentTermsDays, "billing", "Days to pay", false,
+            "Due date = issue date + this many days. Empty means 15."),
+        new(PaymentInstructions, "billing", "How to pay (bank / UPI)", false,
+            "Printed on the invoice: account name, number, IFSC, UPI id. Never a password or key."),
 
         new(SmtpFrom, "mail", "System mail from-address", false,
             "OTP codes and invoices are sent as this address, through our own mail server on the tatvaos.com domain."),

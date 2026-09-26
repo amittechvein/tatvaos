@@ -82,6 +82,7 @@ public static class OrganisationEndpoints
             p.PerUserQuotaBytes, p.PooledStorageBytes, p.MaxDomains,
             p.IncludedProducts, p.PricePerUserMonthly, p.PriceMonthly,
             p.AiCreditModel, p.AiCreditsPerUser, p.AiCreditsPooled,
+            p.PricePerUserYearly, p.PriceYearly,
             // null = every feature of the included modules (see PlanEntitlements).
             p.IncludedFeatures,
             featureLimits = limits[p.Id].ToDictionary(l => l.FeatureCode, l => l.LimitValue),
@@ -99,6 +100,8 @@ public static class OrganisationEndpoints
             return "A pooled plan needs a pool size.";
         if (req.AiCreditModel is not (null or "per_user" or "pooled"))
             return "AI credit model must be 'per_user' or 'pooled'.";
+        if (req.PricePerUserYearly is < 0 || req.PriceYearly is < 0)
+            return "Yearly prices cannot be negative. Leave empty for twelve times the monthly price.";
         if (req.AiCreditsPerUser is < 0 || req.AiCreditsPooled is < 0)
             return "AI credits cannot be negative. Leave it empty for no limit, or 0 for none.";
         return null;
@@ -152,6 +155,8 @@ public static class OrganisationEndpoints
             IncludedProducts = req.IncludedProducts ?? ["mail"],
             PricePerUserMonthly = req.PricePerUserMonthly,
             PriceMonthly = req.PriceMonthly,
+            PricePerUserYearly = req.PricePerUserMonthly is null ? null : req.PricePerUserYearly,
+            PriceYearly = req.PriceMonthly is null ? null : req.PriceYearly,
         };
         ApplyAiCredits(plan, req);
         db.Plans.Add(plan);
@@ -191,6 +196,8 @@ public static class OrganisationEndpoints
         if (req.IncludedProducts is not null) plan.IncludedProducts = req.IncludedProducts;
         plan.PricePerUserMonthly = req.PricePerUserMonthly;
         plan.PriceMonthly = req.PriceMonthly;
+        plan.PricePerUserYearly = req.PricePerUserMonthly is null ? null : req.PricePerUserYearly;
+        plan.PriceYearly = req.PriceMonthly is null ? null : req.PriceYearly;
         ApplyAiCredits(plan, req);
         if (await ApplyFeaturesAsync(db, plan, req, ct) is string ferr)
             return Results.BadRequest(new { error = ferr });
