@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
-import { Badge, Button, Empty } from '@/components/ui/Kit';
+import { Button, Empty } from '@/components/ui/Kit';
 import { Alert } from '@/components/ui/Page';
 import { Modal } from '@/components/ui/Modal';
+import { Input, Select, Textarea } from '@/components/ui/Form';
 import { Field } from '../../ConnectSkin';
 import {
-  SHARE_EXPOSURE, SHARE_PURPOSE, recordingApi, timeLabel,
+  SHARE_EXPOSURE, SHARE_PURPOSE, SHARE_TONE, recordingApi, timeLabel,
   type Recording, type RecordingShare, type ShareCapability, type ShareLevel,
 } from '@/lib/connect';
 
@@ -251,11 +252,27 @@ export function ShareDialog({
             </p>
           ) : (
             <div className="grid gap-2">
+              {/* COLOUR-CODED BY EXPOSURE (Amit, 26 Sept: the options were
+                  white cards on a white pop-up). Blue → green → amber → red,
+                  least exposure first, the same colour the share keeps once
+                  it exists. The words still carry the meaning; the colour is
+                  there so the eye finds the red one before the finger does. */}
               {offered.filter((l) => !taken.has(l)).map((l) => (
-                <button key={l} type="button" className="cx-choice text-start"
+                <button key={l} type="button"
+                        className={`flex w-full items-start gap-3 rounded-card border border-line p-3 text-start
+                                    transition hover:shadow-card focus-visible:outline-none
+                                    focus-visible:ring-2 focus-visible:ring-brand-500/40 ${SHARE_TONE[l].card}`}
                         onClick={() => setAdding(l)}>
-                  <b>{TITLE[l]}</b>
-                  <span className="cx-note">{SHARE_PURPOSE[l]}</span>
+                  <i className={`${SHARE_TONE[l].icon} ${SHARE_TONE[l].accent} mt-0.5 text-lg leading-none`}
+                     aria-hidden="true" />
+                  <span className="grow">
+                    <span className="flex items-center gap-2">
+                      <b className="text-[0.875rem] text-ink">{TITLE[l]}</b>
+                      <LevelPill level={l} />
+                    </span>
+                    <span className="mt-0.5 block text-[0.75rem] text-ink-muted">{SHARE_PURPOSE[l]}</span>
+                  </span>
+                  <i className="ri-arrow-right-s-line mt-0.5 text-lg leading-none text-ink-faint" aria-hidden="true" />
                 </button>
               ))}
             </div>
@@ -273,7 +290,12 @@ export function ShareDialog({
         </>
       ) : (
         <>
-          <h3 className="text-[0.875rem] font-semibold mb-2">{TITLE[adding]}</h3>
+          <h3 className="mb-2 flex items-center gap-2 text-[0.875rem] font-semibold">
+            <i className={`${SHARE_TONE[adding].icon} ${SHARE_TONE[adding].accent} text-lg leading-none`}
+               aria-hidden="true" />
+            {TITLE[adding]}
+            <LevelPill level={adding} />
+          </h3>
 
           {/* THE SENTENCE THAT MATTERS, AT THE MOMENT OF THE DECISION.
               Not in a tooltip, not after the link is made. The 'public'
@@ -296,7 +318,12 @@ export function ShareDialog({
                   </>
                 }
               >
-                <textarea id="cx-share-people" className="cx-field" rows={3}
+                {/* The kit's controls, NOT className="cx-field". cx-field is
+                    the band AROUND a form row in ConnectSkin, never an input
+                    style; used on the control it left these unstyled — a
+                    borderless box, white-on-white, and in dark mode a white
+                    slab with the text invisible inside it (Amit, 26 Sept). */}
+                <Textarea id="cx-share-people" rows={3}
                           value={emails} onChange={(e) => setEmails(e.target.value)}
                           placeholder={'priya@example.com\nrahul@example.com'} />
               </Field>
@@ -319,10 +346,10 @@ export function ShareDialog({
                 }
               >
                 <div className="flex gap-2">
-                  <input id="cx-share-pass" className="cx-field grow" type="text"
-                         autoComplete="off"
+                  <Input id="cx-share-pass" className="grow font-mono" type="text"
+                         autoComplete="off" spellCheck={false}
                          value={password} onChange={(e) => setPassword(e.target.value)} />
-                  <Button variant="ghost" size="sm" type="button"
+                  <Button variant="secondary" size="sm" type="button"
                           onClick={() => setPassword(suggestPassword())}>
                     Suggest one
                   </Button>
@@ -345,7 +372,7 @@ export function ShareDialog({
                   </>
                 }
               >
-                <select id="cx-share-days" className="cx-field" value={days}
+                <Select id="cx-share-days" value={days}
                         onChange={(e) => setDays(Number(e.target.value))}>
                   {[1, 7, 30, 90].filter((d) => d <= capability.maxDays).map((d) => (
                     <option key={d} value={d}>
@@ -358,7 +385,7 @@ export function ShareDialog({
                       {capability.maxDays} days — as long as the recording lasts
                     </option>
                   )}
-                </select>
+                </Select>
               </Field>
             )}
           </div>
@@ -421,13 +448,14 @@ function ExistingShare({ share, busy, copied, onCopy, onRevoke }: {
   const outside = share.people.filter((p) => p.external);
 
   return (
-    <div className="cx-shared">
-      <div className="flex items-start gap-2">
-        <div className="grow">
+    <div className={`mb-2.5 rounded-card border border-line p-3.5 last:mb-0 ${SHARE_TONE[share.level].card}`}>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+        <div className="min-w-0 grow">
           <div className="flex items-center gap-2 flex-wrap">
-            <b className="text-[0.875rem]">{TITLE[share.level]}</b>
-            {share.level === 'public' && <Badge tone="danger">Public</Badge>}
-            {share.hasPassword && <Badge tone="neutral">Password</Badge>}
+            <i className={`${SHARE_TONE[share.level].icon} ${SHARE_TONE[share.level].accent} text-lg leading-none`}
+               aria-hidden="true" />
+            <b className="text-[0.875rem] text-ink">{TITLE[share.level]}</b>
+            <LevelPill level={share.level} />
           </div>
 
           <div className="text-[0.75rem] text-ink-muted mt-1">
@@ -442,7 +470,7 @@ function ExistingShare({ share, busy, copied, onCopy, onRevoke }: {
             <div className="text-[0.75rem] mt-1">
               {share.people.map((p) => p.name).join(', ')}
               {outside.length > 0 && (
-                <div className="text-warning-emphasis mt-1">
+                <div className="mt-1 font-medium text-warn">
                   {outside.length === 1
                     ? `${outside[0]!.name} is outside your organisation.`
                     : `${outside.length} of these people are outside your organisation.`}
@@ -455,13 +483,13 @@ function ExistingShare({ share, busy, copied, onCopy, onRevoke }: {
               it is this link that has leaked or is being tried, and the host's
               remedy — stop it and make a new one — is the button next to it. */}
           {share.passwordPausedUntil ? (
-            <div className="text-[0.75rem] text-danger mt-1">
+            <div className="mt-1 rounded-md bg-danger/10 px-2 py-1.5 text-[0.75rem] font-medium text-danger">
               Someone has been guessing this link&rsquo;s password. Stop it and
               share a new link to let your viewers back in — otherwise it stays
               paused for everybody until {timeLabel(share.passwordPausedUntil)}.
             </div>
           ) : share.wrongPasswords24h > 0 && (
-            <div className="text-[0.75rem] text-warning-emphasis mt-1">
+            <div className="mt-1 text-[0.75rem] font-medium text-warn">
               {share.wrongPasswords24h === 1
                 ? 'One wrong password was tried on this link in the last day.'
                 : `${share.wrongPasswords24h} wrong passwords were tried on this link in the last day.`}
@@ -480,24 +508,40 @@ function ExistingShare({ share, busy, copied, onCopy, onRevoke }: {
           </div>
 
           {share.url !== null && (
-            <input className="cx-field cx-linkbox mt-2" readOnly value={share.url}
+            <Input className="mt-2 font-mono text-[12px]" readOnly value={share.url}
                    onFocus={(e) => e.currentTarget.select()}
                    aria-label="The share link" />
           )}
         </div>
 
-        <div className="flex flex-col gap-2">
+        {/* Two buttons that look like buttons. Both were ghost buttons —
+            grey text on the card, no edge — and the danger class lost to the
+            ghost variant's own colour, so "Stop sharing" was grey too. */}
+        <div className="flex shrink-0 gap-2 sm:flex-col">
           {share.url !== null && (
-            <Button variant="ghost" size="sm" onClick={onCopy} disabled={busy}>
+            <Button variant="secondary" size="sm" onClick={onCopy} disabled={busy}>
+              <i className={copied ? 'ri-check-line' : 'ri-file-copy-line'} aria-hidden="true" />
               {copied ? 'Copied' : 'Copy link'}
             </Button>
           )}
-          <Button variant="ghost" size="sm" className="text-danger"
+          <Button variant="secondary" size="sm"
+                  className="!border-danger/40 !text-danger hover:!bg-danger/10"
                   disabled={busy} onClick={onRevoke}>
+            <i className="ri-close-circle-line" aria-hidden="true" />
             Stop sharing
           </Button>
         </div>
       </div>
     </div>
+  );
+}
+
+/** The level's colour and a short word — on the choice, the heading of the
+ *  form, and every existing share, so the three always agree. */
+function LevelPill({ level }: { level: ShareLevel }) {
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide ${SHARE_TONE[level].badge}`}>
+      {SHARE_TONE[level].word}
+    </span>
   );
 }

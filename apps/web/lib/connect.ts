@@ -656,6 +656,42 @@ export const SHARE_PURPOSE: Record<ShareLevel, string> = {
   public: 'For a recording that is genuinely meant to be published.',
 };
 
+/**
+ * One colour per level, least exposure to most, using the product's four
+ * status colours (tailwind.config: info, ok, warn, danger) rather than new
+ * ones. Amit, 26 Sept: the four options "not visible" in the dialog — white
+ * cards on a white pop-up. The colour is the level's, everywhere it appears
+ * (the choice, the existing share, the badge), so a red card always means
+ * "anyone on the internet".
+ *
+ * Literal class strings on purpose: Tailwind only generates what it can find
+ * spelled out in source.
+ */
+export const SHARE_TONE: Record<ShareLevel, {
+  /** Left stripe + tint for a card. */ card: string;
+  /** Icon / accent text. */ accent: string;
+  /** Small pill. */ badge: string;
+  /** Remix icon class. */ icon: string;
+  /** Short word for the pill. */ word: string;
+}> = {
+  organisation: {
+    card: 'border-l-4 border-l-info bg-info/5 dark:bg-info/10',
+    accent: 'text-info', badge: 'bg-info/15 text-info', icon: 'ri-building-4-line', word: 'Organisation',
+  },
+  named: {
+    card: 'border-l-4 border-l-ok bg-ok/5 dark:bg-ok/10',
+    accent: 'text-ok', badge: 'bg-ok/15 text-ok', icon: 'ri-user-shared-line', word: 'Named people',
+  },
+  password: {
+    card: 'border-l-4 border-l-warn bg-warn/5 dark:bg-warn/10',
+    accent: 'text-warn', badge: 'bg-warn/15 text-warn', icon: 'ri-lock-password-line', word: 'Password',
+  },
+  public: {
+    card: 'border-l-4 border-l-danger bg-danger/5 dark:bg-danger/10',
+    accent: 'text-danger', badge: 'bg-danger/15 text-danger', icon: 'ri-global-line', word: 'Public',
+  },
+};
+
 export interface ShareCapability {
   /**
    * The levels this organisation permits. 'public' is ABSENT unless an
