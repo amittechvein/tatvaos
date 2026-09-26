@@ -50,12 +50,16 @@ INSERT INTO core.features (code, product_code, name, description, kind, unit, so
   ('connect.public_recording_links', 'connect', 'Public recording links',    'Share a recording with anyone who has the link',    'switch', NULL, 40),
   ('space.public_links',             'drive',   'Public share links',        'Share a file with anyone who has the link',         'switch', NULL, 10),
   ('hire.careers_page',              'hire',    'Careers page',              'A public page listing open jobs',                    'switch', NULL, 10),
-  ('ai.enabled',                     NULL,      'AI',                        'Any TatvaOS AI feature, in any module',              'switch', NULL, 10),
-  ('ai.monthly_tokens',              NULL,      'AI tokens per month',       'Across the whole organisation',                      'limit',  'tokens', 20)
+  ('ai.enabled',                     NULL,      'AI',                        'Any TatvaOS AI feature, in any module',              'switch', NULL, 10)
 ON CONFLICT (code) DO UPDATE SET
   product_code = EXCLUDED.product_code, name = EXCLUDED.name,
   description = EXCLUDED.description, kind = EXCLUDED.kind,
   unit = EXCLUDED.unit, sort_order = EXCLUDED.sort_order;
+
+-- NO AI allowance here. How much AI a plan includes is AI CREDITS
+-- (20260926-b-ai-credits.sql, PR 307: per user or pooled, operator override,
+-- warn 80% / stop 100%). A second number here would be two copies of one
+-- fact (rule 10).
 
 GRANT SELECT ON core.features TO tatvaos_app;
 

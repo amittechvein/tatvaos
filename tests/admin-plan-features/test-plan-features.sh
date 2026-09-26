@@ -137,7 +137,7 @@ MIG="$ROOT/local/postgres/init/20260926-plan-features.sql"
 base="${TATVAOS_PSQL% -Atc}"
 out=$($base -v ON_ERROR_STOP=1 -q < "$MIG" 2>&1 | grep -v "^wsl:" | grep -E "ERROR" )
 [ -z "$out" ] && pass "a re-run reports no error" || fail "the re-run said: $(brief "$out")"
-same "13 features in the catalogue" "$(PG "SELECT count(*) FROM core.features")" "13"
+same "12 features in the catalogue" "$(PG "SELECT count(*) FROM core.features")" "12"
 # A customer who arrives AFTER the migration must not be handed everything by
 # the next deploy's re-run. Make one, re-run, look.
 STRAY=$(PG "SELECT gen_random_uuid()")
@@ -179,14 +179,14 @@ same "an unknown feature code" "$(status "$r")" "400"
 r=$(callm POST "/api/admin/plans" "$OPERATOR" "{\"name\":\"Bad $PTAG\",\"storageModel\":\"per_user\",\"perUserQuotaBytes\":1073741824,\"featureLimits\":{\"mail.ai\":3}}")
 same "a number on a switch" "$(status "$r")" "400"
 same "…neither made a plan" "$(PG "SELECT count(*) FROM core.plans WHERE name='Bad $PTAG'")" "0"
-r=$(callm POST "/api/admin/plans" "$OPERATOR" "{\"name\":\"Lite $PTAG\",\"storageModel\":\"per_user\",\"perUserQuotaBytes\":1073741824,\"includedProducts\":[\"mail\"],\"includedFeatures\":[\"mail.aliases\"],\"featureLimits\":{\"mail.shared_mailboxes.max\":0,\"ai.monthly_tokens\":1000}}")
-same "a plan with Mail + aliases only, 0 shared mailboxes, 1,000 AI tokens" "$(status "$r")" "201"
+r=$(callm POST "/api/admin/plans" "$OPERATOR" "{\"name\":\"Lite $PTAG\",\"storageModel\":\"per_user\",\"perUserQuotaBytes\":1073741824,\"includedProducts\":[\"mail\"],\"includedFeatures\":[\"mail.aliases\"],\"featureLimits\":{\"mail.shared_mailboxes.max\":0}}")
+same "a plan with Mail + aliases only, 0 shared mailboxes" "$(status "$r")" "201"
 TESTPLAN=$(jq_ "$(body "$r")" "d['id']")
 same "…its feature list is stored" "$(PG "SELECT array_to_string(included_features, ',') FROM core.plans WHERE id='$TESTPLAN'")" "mail.aliases"
-same "…and its two limits" "$(PG "SELECT count(*) FROM core.plan_feature_limits WHERE plan_id='$TESTPLAN'")" "2"
+same "…and its one limit" "$(PG "SELECT count(*) FROM core.plan_feature_limits WHERE plan_id='$TESTPLAN'")" "1"
 r=$(callm GET "/api/admin/plans" "$OPERATOR")
 same "the plan list carries the limit back" \
-    "$(jq_ "$(body "$r")" "[p for p in d if p['id']=='$TESTPLAN'][0]['featureLimits']['ai.monthly_tokens']")" "1000"
+    "$(jq_ "$(body "$r")" "[p for p in d if p['id']=='$TESTPLAN'][0]['featureLimits']['mail.shared_mailboxes.max']")" "0"
 
 SUB_PLAN_WAS=$(PG "SELECT plan_id FROM core.subscriptions WHERE tenant_id='$TECHVEIN' ORDER BY started_at DESC LIMIT 1")
 r=$(callm PUT "/api/admin/organisations/$TECHVEIN/plan" "$OPERATOR" "{\"planId\":\"$TESTPLAN\"}")

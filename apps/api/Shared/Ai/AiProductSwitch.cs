@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using TatvaOS.Api.Shared.Data;
+using TatvaOS.Api.Shared.Settings;
 using TatvaOS.Api.Shared.Tenancy;
 
 namespace TatvaOS.Api.Shared.Ai;
@@ -83,23 +84,118 @@ public static class AiProductSwitch
         }
     }
 
+    // ── WHICH ORGANISATIONS MAY USE MAIL AI AT ALL ───────────────────────────
+    //
+    //  Mr. Singh, 25 Sept 2026, after Mail AI shipped ahead of its privacy
+    //  text: "Until they're live, either show the Mail AI switches only to
+    //  Techvein's organisation, or tell me why that's harder than I think."
+    //  It is a platform setting (ai.mail.organisations), not code, so it is
+    //  lifted by emptying it on the Settings page — no deploy.
+    //
+    //  Checked HERE, inside MailAllowedAsync, which every mail.* request
+    //  already passes through in the gateway — so Help me write, suggested
+    //  replies and sorting are all behind it without a line in any of them.
+    //
+    //    row missing / empty  → every organisation may (no gate)
+    //    a list of ids        → only those
+    //    unreadable           → nobody (fail-closed, like every switch here)
+    //    ids that do not parse are ignored and logged; a list with NONE that
+    //    parses allows nobody — a typo must not open the gate.
+
+    public const string MailNotOffered =
+        "TatvaOS AI in Mail is not available for your organisation yet. It will be offered once our "
+        + "privacy policy has been updated to describe it.";
+
+    /// <summary>Whether this organisation is on the Mail AI list (or there is no list). Fail-closed.</summary>
+    public static async Task<bool> MailOfferedToAsync(AppDbContext db, Guid tenantId, ILogger log, CancellationToken ct)
+    {
+        try
+        {
+            var all = await new SettingsReader(db).GetAsync(ct);
+            if (!all.TryGetValue(SettingKeys.AiMailOrganisations, out var raw) || string.IsNullOrWhiteSpace(raw))
+                return true;
+            var ids = ParseOrganisations(raw, log);
+            return ids.Contains(tenantId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            log.LogWarning(ex, "Could not read {Key}; Mail AI refused fail-closed for tenant {Tenant}.",
+                SettingKeys.AiMailOrganisations, tenantId);
+            return false;
+        }
+    }
+
+    /// <summary>The ids in the setting. Bad entries are logged and skipped.</summary>
+    public static HashSet<Guid> ParseOrganisations(string raw, ILogger? log = null)
+    {
+        var ids = new HashSet<Guid>();
+        foreach (var part in raw.Split([',', ';', ' ', '\n', '\r', '\t'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (Guid.TryParse(part, out var id)) ids.Add(id);
+            else log?.LogWarning("{Key} has an entry that is not an organisation id: '{Entry}' (ignored).",
+                SettingKeys.AiMailOrganisations, part);
+        }
+        return ids;
+    }
+
     public static bool IsMail(string feature) =>
         feature.StartsWith(MailPrefix, StringComparison.Ordinal);
+
+    // ── EACH MAIL FEATURE'S OWN SWITCH (26 Sept 2026) ────────────────────────
+    public const string MailRewriteFeature = "mail.rewrite";
+    public const string MailSuggestFeature = "mail.suggest";
+    public const string MailSummaryFeature = "mail.summary";
+
+    public const string MailFeatureOff =
+        "This TatvaOS AI feature is switched off for your organisation. An administrator can turn it on "
+        + "under TatvaOS AI.";
+
+    /// <summary>Which Mail features this organisation has on (each inside Mail AI).</summary>
+    public sealed record MailFeatures(bool Rewrite, bool Suggest, bool Summary);
+
+    public static async Task<MailFeatures> MailFeaturesAsync(AppDbContext db, Guid tenantId, CancellationToken ct)
+    {
+        var f = await db.Tenants.AsNoTracking()
+            .Where(t => t.Id == tenantId)
+            .Select(t => new MailFeatures(t.MailAiRewrite, t.MailAiSuggest, t.MailAiSummary))
+            .FirstOrDefaultAsync(ct);
+        return f ?? new MailFeatures(false, false, false);
+    }
+
+    /// <summary>
+    /// Whether a mail.* feature label is on for this organisation. Sorting
+    /// (mail.triage) has its own check, TriageAllowedAsync. An unknown mail.*
+    /// label is REFUSED: a new Mail feature must be given a switch here, or it
+    /// would ride on the Mail consent without an administrator being able to
+    /// turn it off.
+    /// </summary>
+    public static bool FeatureOn(MailFeatures f, string feature) => feature switch
+    {
+        MailRewriteFeature => f.Rewrite,
+        MailSuggestFeature => f.Suggest,
+        MailSummaryFeature => f.Summary,
+        MailTriageFeature => true,
+        _ => false,
+    };
 
     /// <summary>
     /// Whether the CURRENT tenant has Mail AI on. Says nothing about allow_ai;
     /// the gateway checks that first, and the status endpoint checks both.
     /// </summary>
     public static async Task<bool> MailAllowedAsync(
-        AppDbContext db, TenantContext tenant, ILogger log, CancellationToken ct)
+        AppDbContext db, TenantContext tenant, ILogger log, CancellationToken ct, string? feature = null)
     {
         if (!tenant.HasTenant) return false;
         try
         {
-            return await db.Tenants.AsNoTracking()
+            var on = await db.Tenants.AsNoTracking()
                 .Where(t => t.Id == tenant.TenantId)
                 .Select(t => t.AllowMailAi)
                 .FirstOrDefaultAsync(ct);
+            // Switched on AND on the Mail AI list (or there is no list) AND,
+            // when a feature is named, that feature's own switch is on.
+            if (!on || !await MailOfferedToAsync(db, tenant.TenantId, log, ct)) return false;
+            return feature is null || FeatureOn(await MailFeaturesAsync(db, tenant.TenantId, ct), feature);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

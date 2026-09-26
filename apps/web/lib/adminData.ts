@@ -42,6 +42,10 @@ export interface PlanRow {
   includedProducts: string[];
   pricePerUserMonthly: number | null;
   priceMonthly: number | null;
+  /** AI credits (26 Sept 2026): per user × users, or one pool. Null amount = no limit. */
+  aiCreditModel?: string;
+  aiCreditsPerUser?: number | null;
+  aiCreditsPooled?: number | null;
   /** null = every feature of the included modules (the meaning before 26 Sept). */
   includedFeatures: string[] | null;
   /** Limit feature code -> number. Missing = no limit. */
@@ -109,6 +113,9 @@ export interface UpsertPlanBody {
   includedProducts?: string[];
   pricePerUserMonthly?: number | null;
   priceMonthly?: number | null;
+  aiCreditModel?: 'per_user' | 'pooled';
+  aiCreditsPerUser?: number | null;
+  aiCreditsPooled?: number | null;
   includedFeatures?: string[];
   allFeatures?: boolean;
   featureLimits?: Record<string, number>;

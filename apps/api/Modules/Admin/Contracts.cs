@@ -47,6 +47,11 @@ public sealed record UpsertPlanRequest(
     string[]? IncludedProducts,
     decimal? PricePerUserMonthly,
     decimal? PriceMonthly,
+    // AI credits (26 Sept 2026): the same per-user / pooled choice as storage.
+    // Optional so an older form that does not send them leaves them alone.
+    string? AiCreditModel = null,         // "per_user" | "pooled"
+    int? AiCreditsPerUser = null,
+    int? AiCreditsPooled = null,
     // Plan features (26 Sept 2026). All three null = leave the features as
     // they are. AllFeatures true = "everything in the included modules" (the
     // column goes back to NULL); otherwise IncludedFeatures is the list.

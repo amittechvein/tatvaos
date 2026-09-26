@@ -81,6 +81,7 @@ public static class OrganisationEndpoints
             p.Id, p.Name, p.MaxUsers, p.StorageModel,
             p.PerUserQuotaBytes, p.PooledStorageBytes, p.MaxDomains,
             p.IncludedProducts, p.PricePerUserMonthly, p.PriceMonthly,
+            p.AiCreditModel, p.AiCreditsPerUser, p.AiCreditsPooled,
             // null = every feature of the included modules (see PlanEntitlements).
             p.IncludedFeatures,
             featureLimits = limits[p.Id].ToDictionary(l => l.FeatureCode, l => l.LimitValue),
@@ -96,6 +97,10 @@ public static class OrganisationEndpoints
             return "A per-user plan needs a per-user storage quota.";
         if (req.StorageModel == "pooled" && req.PooledStorageBytes is null or <= 0)
             return "A pooled plan needs a pool size.";
+        if (req.AiCreditModel is not (null or "per_user" or "pooled"))
+            return "AI credit model must be 'per_user' or 'pooled'.";
+        if (req.AiCreditsPerUser is < 0 || req.AiCreditsPooled is < 0)
+            return "AI credits cannot be negative. Leave it empty for no limit, or 0 for none.";
         return null;
     }
 
@@ -148,6 +153,7 @@ public static class OrganisationEndpoints
             PricePerUserMonthly = req.PricePerUserMonthly,
             PriceMonthly = req.PriceMonthly,
         };
+        ApplyAiCredits(plan, req);
         db.Plans.Add(plan);
         if (await ApplyFeaturesAsync(db, plan, req, ct) is string ferr)
             return Results.BadRequest(new { error = ferr });
@@ -167,6 +173,7 @@ public static class OrganisationEndpoints
         var before = new
         {
             plan.Name, plan.MaxUsers, plan.PricePerUserMonthly, plan.PriceMonthly, plan.IncludedFeatures,
+            plan.AiCreditModel, plan.AiCreditsPerUser, plan.AiCreditsPooled,
             featureLimits = await db.PlanFeatureLimits.AsNoTracking().Where(l => l.PlanId == id)
                 .ToDictionaryAsync(l => l.FeatureCode, l => l.LimitValue, ct),
         };
@@ -184,13 +191,28 @@ public static class OrganisationEndpoints
         if (req.IncludedProducts is not null) plan.IncludedProducts = req.IncludedProducts;
         plan.PricePerUserMonthly = req.PricePerUserMonthly;
         plan.PriceMonthly = req.PriceMonthly;
+        ApplyAiCredits(plan, req);
         if (await ApplyFeaturesAsync(db, plan, req, ct) is string ferr)
             return Results.BadRequest(new { error = ferr });
 
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("plan.updated", "plan", id.ToString(),
-            before: before, after: new { plan.Name, plan.MaxUsers, plan.IncludedFeatures, req.FeatureLimits }, ct: ct);
+            before: before, after: new { plan.Name, plan.MaxUsers, plan.IncludedFeatures, req.FeatureLimits,
+                                         plan.AiCreditModel, plan.AiCreditsPerUser, plan.AiCreditsPooled }, ct: ct);
         return Results.Ok(new { plan.Id, plan.Name });
+    }
+
+    /// <summary>
+    /// AI credits on a plan. Only the amount for the chosen model is kept —
+    /// switching a plan from pooled to per-user must not quietly keep the old
+    /// pool (the same rule the storage fields follow). Sent nothing = leave as is.
+    /// </summary>
+    private static void ApplyAiCredits(Plan plan, UpsertPlanRequest req)
+    {
+        if (req.AiCreditModel is null) return;
+        plan.AiCreditModel = req.AiCreditModel;
+        plan.AiCreditsPerUser = req.AiCreditModel == "per_user" ? req.AiCreditsPerUser : null;
+        plan.AiCreditsPooled = req.AiCreditModel == "pooled" ? req.AiCreditsPooled : null;
     }
 
     private static async Task<IResult> DeletePlanAsync(

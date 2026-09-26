@@ -42,6 +42,8 @@ public static class SettingKeys
     public const string AiPaused = "ai.paused";
     public const string AiPerPersonPerHour = "ai.limit.per_person_per_hour";
     public const string AiOrgMonthlyTokens = "ai.limit.org_monthly_tokens";
+    // Which organisations may use TatvaOS AI in Mail at all (AiProductSwitch).
+    public const string AiMailOrganisations = "ai.mail.organisations";
 
     // Amit, 26 Sept 2026: at a plan limit, warn first. The operator always
     // sees the warnings; this decides whether the organisation's own
@@ -99,6 +101,11 @@ public static class SettingKeys
             "Started at 2,000,000. Administrators are emailed at 80% and at 100%; at 100% AI stops for "
             + "that organisation until the month turns (India time). 0 allows NONE — AI stopped. "
             + "Empty means NO CEILING."),
+        new(AiMailOrganisations, "ai", "Organisations that may use TatvaOS AI in Mail", false,
+            "Organisation ids, separated by commas. Only these can switch Mail AI on (Help me write, "
+            + "suggested replies, sorting); every other organisation is told it is not available yet. "
+            + "EMPTY means every organisation may. Set to Techvein alone on 25 Sept 2026 until the "
+            + "privacy policy describes Mail AI (Mr. Singh) — empty it once that text is live."),
 
         new(PlansWarnClients, "plans", "Show plan warnings to organisation administrators", false,
             "true shows each organisation's administrators a notice when they use something their plan "

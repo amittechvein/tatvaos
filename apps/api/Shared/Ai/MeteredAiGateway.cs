@@ -160,6 +160,10 @@ public sealed class MeteredAiGateway(
         //     metered — and refused here so no Mail caller can forget it.
         if (AiProductSwitch.IsMail(feature) && !await AiProductSwitch.MailAllowedAsync(db, tenant, log, ct))
             return AiResult.Failed(AiProductSwitch.MailOff);
+        //     …and that feature's own switch (26 Sept 2026); an unknown mail.*
+        //     label is refused (AiProductSwitch.FeatureOn).
+        if (AiProductSwitch.IsMail(feature) && !await AiProductSwitch.MailAllowedAsync(db, tenant, log, ct, feature))
+            return AiResult.Failed(AiProductSwitch.MailFeatureOff);
         //     Sorting incoming mail has a switch of its own on top (step 3):
         //     it sends mail nobody clicked on.
         if (feature == AiProductSwitch.MailTriageFeature
@@ -170,6 +174,9 @@ public sealed class MeteredAiGateway(
         var user = tenant.UserId;
         Limits limits;
         long monthUsed;
+        AiCredits.Allowance credits;
+        var creditsUsed = 0;
+        var cost = AiCredits.CostOf(feature);
         try
         {
             limits = await ReadLimitsAsync(settings, ct, log);
@@ -210,6 +217,22 @@ public sealed class MeteredAiGateway(
                     "Your organisation has used its TatvaOS AI allowance for this month. It renews on the 1st; " +
                     "an administrator can see the usage on the TatvaOS AI page.");
             }
+
+            // 4b. This organisation's AI CREDITS this month (26 Sept 2026):
+            //     from its plan (pooled, or per user × users) or the operator's
+            //     override. Refused when this request would go past it — so
+            //     100 % is a stop, not a suggestion. Recorded as an org-limit
+            //     refusal (the ai_usage CHECK allows no new outcome word).
+            credits = await AiCredits.AllowanceAsync(db, tenant.TenantId, ct);
+            if (credits.Credits is int allowance && cost > 0)
+            {
+                creditsUsed = (await AiCredits.UsedThisMonthAsync(db, now, ct)).Used;
+                if (creditsUsed + cost > allowance)
+                {
+                    await RecordAsync(feature, "refused_org_limit", 0, 0, ct);
+                    return AiResult.Failed(AiCredits.OutOfCredits);
+                }
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -226,6 +249,9 @@ public sealed class MeteredAiGateway(
 
         if (result.Error is null && limits.OrgMonthlyTokens is long ceiling && ceiling > 0)
             await MaybeWarnAsync(monthUsed + result.TokensIn + result.TokensOut, ceiling, now, ct);
+        // Credits: warn at 80 % and 100 % of the allowance, once each a month.
+        if (result.Error is null && credits.Credits is int creditCap && creditCap > 0 && cost > 0)
+            await MaybeWarnAsync(creditsUsed + cost, creditCap, now, ct, credits: true);
 
         return result;
     }
@@ -260,7 +286,7 @@ public sealed class MeteredAiGateway(
     /// storage warnings are: if mail fails, the next request tries again —
     /// a duplicate warning is better than a silent one.
     /// </summary>
-    private async Task MaybeWarnAsync(long used, long ceiling, DateTimeOffset now, CancellationToken ct)
+    private async Task MaybeWarnAsync(long used, long ceiling, DateTimeOffset now, CancellationToken ct, bool credits = false)
     {
         short level = used >= ceiling ? (short)100 : used * 10 >= ceiling * 8 ? (short)80 : (short)0;
         if (level == 0) return;
@@ -270,10 +296,17 @@ public sealed class MeteredAiGateway(
             var month = MonthOf(now);
             // Keyed by the ceiling too: raising it mid-month means the new
             // one warns again when reached (Mr. Singh's note on PR 280).
-            var sent = await db.AiUsageAlerts.AsNoTracking()
-                .Where(a => a.Month == month && a.Ceiling == ceiling)
-                .Select(a => a.Level)
-                .ToListAsync(ct);
+            // Credits keep their own markers (ai_credit_alerts) so a credit
+            // allowance equal to the token ceiling cannot swallow a warning.
+            var sent = credits
+                ? await db.AiCreditAlerts.AsNoTracking()
+                    .Where(a => a.Month == month && a.Allowance == ceiling)
+                    .Select(a => a.Level)
+                    .ToListAsync(ct)
+                : await db.AiUsageAlerts.AsNoTracking()
+                    .Where(a => a.Month == month && a.Ceiling == ceiling)
+                    .Select(a => a.Level)
+                    .ToListAsync(ct);
             if (sent.Contains(level) || (level == 80 && sent.Contains((short)100))) return;
 
             var org = await db.Tenants.AsNoTracking()
@@ -315,17 +348,21 @@ public sealed class MeteredAiGateway(
             // lesser warning would only arrive after the greater one. Raw SQL
             // for the same reason as RecordAsync; ON CONFLICT because two
             // requests can cross the line together.
-            await db.Database.ExecuteSqlInterpolatedAsync($"""
-                INSERT INTO core.ai_usage_alerts (tenant_id, month, level, ceiling)
-                VALUES ({tenant.TenantId}, {month}, {level}, {ceiling})
-                ON CONFLICT DO NOTHING
-                """, ct);
-            if (level == 100)
-                await db.Database.ExecuteSqlInterpolatedAsync($"""
-                    INSERT INTO core.ai_usage_alerts (tenant_id, month, level, ceiling)
-                    VALUES ({tenant.TenantId}, {month}, {(short)80}, {ceiling})
-                    ON CONFLICT DO NOTHING
-                    """, ct);
+            foreach (var lvl in level == 100 ? new short[] { 100, 80 } : new short[] { level })
+            {
+                if (credits)
+                    await db.Database.ExecuteSqlInterpolatedAsync($"""
+                        INSERT INTO core.ai_credit_alerts (tenant_id, month, level, allowance)
+                        VALUES ({tenant.TenantId}, {month}, {lvl}, {(int)ceiling})
+                        ON CONFLICT DO NOTHING
+                        """, ct);
+                else
+                    await db.Database.ExecuteSqlInterpolatedAsync($"""
+                        INSERT INTO core.ai_usage_alerts (tenant_id, month, level, ceiling)
+                        VALUES ({tenant.TenantId}, {month}, {lvl}, {ceiling})
+                        ON CONFLICT DO NOTHING
+                        """, ct);
+            }
 
             log.LogInformation("Warned {Delivered} of {Count} administrator(s) of tenant {Tenant}: AI allowance {Level}%",
                 delivered, admins.Count, tenant.TenantId, level);

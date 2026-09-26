@@ -186,8 +186,8 @@ public static class PlanEntitlements
 
         Compare("mail.shared_mailboxes.max", "Shared mailboxes", shared, LimitOf("mail.shared_mailboxes.max"));
 
-        var tokens = await aiThisMonth.SumAsync(u => (long)u.TokensIn + u.TokensOut, ct);
-        Compare("ai.monthly_tokens", "AI tokens this month", tokens, LimitOf("ai.monthly_tokens"));
+        // No AI allowance here: AI credits (AiCredits, PR 307) own it and send
+        // their own 80% / 100% warnings.
 
         // The plan's older limits, which already stop growth; said here too so
         // one list holds everything worth a phone call.

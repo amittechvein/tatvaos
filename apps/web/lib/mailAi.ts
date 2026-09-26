@@ -59,6 +59,10 @@ export interface MailAiStatus {
   reason?: 'platform' | 'organisation' | 'mail';
   /** Sorting incoming mail is on (step 3): show the inbox tabs and labels. */
   triage?: boolean;
+  /** Each feature's own switch (26 Sept 2026) — show only the buttons that are on. */
+  rewrite?: boolean;
+  suggest?: boolean;
+  summary?: boolean;
   maxCharacters?: number;
 }
 
@@ -102,6 +106,29 @@ export const AI_LABELS: { label: AiLabel; name: string }[] = [
 ];
 
 export const aiLabelName = (l: string | null | undefined) => AI_LABELS.find((x) => x.label === l)?.name ?? null;
+
+// ── Summarise this conversation (26 Sept 2026) ──────────────────────────────
+
+export interface MailSummaryResult {
+  summary: string | null;
+  messages?: number;
+  partial?: boolean;
+  skipped?: string;
+  error?: string;
+}
+
+/** Summarise the conversation a message belongs to. The server reads it; the browser sends the id. Never throws. */
+export async function mailAiSummary(f: AuthedFetch, messageId: string, mailboxId?: string): Promise<MailSummaryResult> {
+  const q = mailboxId ? `?mailboxId=${encodeURIComponent(mailboxId)}` : '';
+  try {
+    const r = await f(`/mail/ai/messages/${messageId}/summary${q}`, { method: 'POST' });
+    if (!r.ok) return { summary: null, error: 'A summary could not be made just now.' };
+    const b = (await r.json()) as MailSummaryResult;
+    return { ...b, summary: typeof b.summary === 'string' ? b.summary : null };
+  } catch {
+    return { summary: null, error: 'A summary could not be made just now.' };
+  }
+}
 
 // ── Suggested replies (step 2) ──────────────────────────────────────────────
 
