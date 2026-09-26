@@ -34,6 +34,12 @@ export interface OrgRow {
 export interface PlanRow {
   id: string;
   name: string;
+  /**
+   * 'personal' (20260926-z-personal-plans.sql): held by one person in the
+   * personal house, limits ENFORCED. Never offered to an organisation — the
+   * API refuses it too.
+   */
+  audience?: 'organisation' | 'personal';
   maxUsers: number | null;
   storageModel: string;
   perUserQuotaBytes: number | null;

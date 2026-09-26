@@ -627,6 +627,13 @@ public class Plan
     public string[] IncludedProducts { get; set; } = ["mail"];
 
     /// <summary>
+    /// "organisation" or "personal" (20260926-z-personal-plans.sql). A
+    /// personal plan is held by one person in the personal house and its
+    /// limits are enforced (EffectiveSettings); an organisation plan warns.
+    /// </summary>
+    [MaxLength(16)] public string Audience { get; set; } = "organisation";
+
+    /// <summary>
     /// Feature codes (core.features). NULL = every feature of the included
     /// products plus the platform-wide ones - what every plan meant before
     /// 20260926-plan-features.sql. See PlanEntitlements.
@@ -650,6 +657,13 @@ public class Subscription
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid TenantId { get; set; }
+    /// <summary>
+    /// Set for a personal account's plan; null for an organisation's. EVERY
+    /// organisation-level reader filters UserId == null — without it, the
+    /// house tenant's "subscription" would be whichever person's row came
+    /// first. Column: 20260926-z-personal-plans.sql.
+    /// </summary>
+    public Guid? UserId { get; set; }
     public Guid PlanId { get; set; }
     [MaxLength(16)] public string Status { get; set; } = "trial";
     public int Seats { get; set; }

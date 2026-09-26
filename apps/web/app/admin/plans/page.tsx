@@ -87,6 +87,8 @@ type PricingModel = 'per_user' | 'flat' | 'custom';
 interface PlanForm {
   id?: string;
   name: string;
+  /** Read-only here: a plan's audience is chosen at creation and never changes. */
+  audience?: 'organisation' | 'personal';
   maxUsers: string;
   storageModel: StorageModel;
   perUserQuotaGb: string;
@@ -136,6 +138,7 @@ function formFromPlan(p: PlanRow, catalogue: ProductRow[]): PlanForm {
   return {
     id: p.id,
     name: p.name,
+    audience: p.audience,
     maxUsers: p.maxUsers != null ? String(p.maxUsers) : '',
     storageModel: p.storageModel === 'pooled' ? 'pooled' : 'per_user',
     perUserQuotaGb: p.perUserQuotaBytes ? String(Math.round(p.perUserQuotaBytes / GB)) : '30',
@@ -344,17 +347,42 @@ export default function AdminPlansPage() {
           />
         </Card>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {plans.map((p) => (
-            <PlanCard
-              key={p.id}
-              plan={p}
-              features={features}
-              onEdit={() => openEdit(p)}
-              onDelete={() => { setDeleteError(null); setToDelete(p); }}
-            />
-          ))}
-        </div>
+        <>
+          {/* Two audiences, one model (PR 309's features). Organisation plans
+              warn; personal plans are one person each and their limits are
+              ENFORCED — the same edit means different things, so they are
+              never shown mixed. */}
+          {[
+            { audience: 'organisation', title: 'Organisation plans',
+              hint: 'For customers. At a limit the organisation is warned; nothing is stopped.' },
+            { audience: 'personal', title: 'Personal plans',
+              hint: 'One person each, in the personal house. These limits are enforced: a change here applies to everyone on the plan at their next action. Storage is per person.' },
+          ].map((group) => {
+            const inGroup = plans.filter((p) => (p.audience ?? 'organisation') === group.audience);
+            // Personal plans have no price yet, so the API's price order is
+            // arbitrary for them; smallest storage first reads Free, Basic, Premium.
+            if (group.audience === 'personal')
+              inGroup.sort((a, b) => (a.perUserQuotaBytes ?? 0) - (b.perUserQuotaBytes ?? 0));
+            if (inGroup.length === 0) return null;
+            return (
+              <section key={group.audience} className="mb-8">
+                <h2 className="mb-1 text-base font-semibold text-ink">{group.title}</h2>
+                <p className="mb-4 text-sm text-ink-muted">{group.hint}</p>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                  {inGroup.map((p) => (
+                    <PlanCard
+                      key={p.id}
+                      plan={p}
+                      features={features}
+                      onEdit={() => openEdit(p)}
+                      onDelete={() => { setDeleteError(null); setToDelete(p); }}
+                    />
+                  ))}
+                </div>
+              </section>
+            );
+          })}
+        </>
       )}
 
       {form && (
@@ -408,18 +436,24 @@ function PlanCard({ plan: p, features, onEdit, onDelete }: {
             <span className="text-xs text-ink-muted"> / month</span>
           </>
         ) : (
-          <span className="text-xl font-semibold text-ink-muted">Custom pricing</span>
+          <span className="text-xl font-semibold text-ink-muted">
+            {p.audience === 'personal' ? 'Not on sale yet' : 'Custom pricing'}
+          </span>
         )}
       </div>
 
       <ul className="mb-0 list-none space-y-2 p-0 text-[13px]">
-        <Feature>{p.maxUsers ? `Up to ${p.maxUsers} people` : 'Unlimited people'}</Feature>
+        <Feature>{p.audience === 'personal' ? 'One person' : p.maxUsers ? `Up to ${p.maxUsers} people` : 'Unlimited people'}</Feature>
         <Feature>
           {p.storageModel === 'pooled'
             ? `${formatBytes(p.pooledStorageBytes ?? 0)} pooled storage`
             : `${formatBytes(p.perUserQuotaBytes ?? 0)} per user`}
         </Feature>
-        <Feature>{p.maxDomains ? `${p.maxDomains} domain${p.maxDomains > 1 ? 's' : ''}` : 'Unlimited domains'}</Feature>
+        {/* A personal account's address is on the house's domain; a plan
+            limit on domains means nothing there, and 0 read as "unlimited". */}
+        {p.audience !== 'personal' && (
+          <Feature>{p.maxDomains ? `${p.maxDomains} domain${p.maxDomains > 1 ? 's' : ''}` : 'Unlimited domains'}</Feature>
+        )}
         <Feature>
           {p.aiCreditModel === 'per_user'
             ? p.aiCreditsPerUser != null ? `${p.aiCreditsPerUser.toLocaleString('en-IN')} AI credits per user / month` : 'AI credits: no limit'
@@ -559,12 +593,20 @@ function PlanFormModal({
         </>
       }
     >
-      {editing && (
+      {editing && (form.audience === 'personal' ? (
+        // Not "new growth only": a personal account's limits are read fresh
+        // on every action (EffectiveSettings), so a change here is live for
+        // every person on the plan at once. Said plainly, before Save.
+        <Alert tone="warn">
+          A personal plan. Changes apply at once to everyone on it, at their next action —
+          and these limits are enforced, not just warned about.
+        </Alert>
+      ) : (
         <Alert tone="warn">
           Changes apply to new growth only — organisations already on this plan keep the
           limits they were given and are not resized.
         </Alert>
-      )}
+      ))}
 
       {errors.length > 0 && (
         <Alert tone="danger">
@@ -802,8 +844,10 @@ function PlanFeatures({ form, setForm, catalogue, features }: {
         })}
       </div>
       <p className="text-xs text-ink-muted">
-        Limits warn; they never stop anyone. Customers from before 26 Sept keep everything
-        whatever their plan says, until you change that on their page.
+        {form.audience === 'personal'
+          ? 'Personal limits are enforced: at a limit the person is stopped, with a message saying why. Empty means no limit.'
+          : 'Limits warn; they never stop anyone. Customers from before 26 Sept keep everything '
+            + 'whatever their plan says, until you change that on their page.'}
       </p>
     </div>
   );

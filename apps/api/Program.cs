@@ -127,6 +127,8 @@ builder.Services.AddScoped<TatvaOS.Api.Modules.Hire.HireAccess>();
 // and the keyed phone fingerprint (Personal:PhoneHashKey; unset = /join closed).
 builder.Services.AddScoped<TatvaOS.Api.Modules.Personal.PersonalHouse>();
 builder.Services.AddSingleton<TatvaOS.Api.Modules.Personal.PersonalPhone>();
+// The one "what may this person have?" answer (build plan §2.5).
+builder.Services.AddScoped<TatvaOS.Api.Shared.Plans.EffectiveSettings>();
 
 // ---- OpenID Connect provider (decision 0004) — stage 1: the stores -------
 // OpenIddict's core with EF Core storage on our own entities, and the two
@@ -835,6 +837,7 @@ app.MapDomainEndpoints();
 app.MapSignupEndpoints();
 app.MapJoinEndpoints();
 app.MapReservedUsernameEndpoints();
+app.MapPersonalPlanEndpoints();
 app.MapSettingsEndpoints();
 app.MapDepartmentEndpoints();
 // Locations and designations: Phase 0 of Hire & People (24 Sept 2026).
