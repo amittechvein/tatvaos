@@ -79,6 +79,23 @@ public class Tenant
     public DateTimeOffset? MailAiTriageSince { get; set; }
 
     /// <summary>
+    /// Each Mail AI feature's own switch, inside AllowMailAi (Amit, 26 Sept
+    /// 2026: "turn on and off … so client able to save tokens"). Rewrite and
+    /// suggest default on (they were what Mail AI meant when agreed to);
+    /// summary defaults OFF (new, and it sends a whole conversation).
+    /// Column: 20260926-mail-ai-features.sql. Enforced in AiProductSwitch.
+    /// </summary>
+    public bool MailAiRewrite { get; set; } = true;
+    public bool MailAiSuggest { get; set; } = true;
+    public bool MailAiSummary { get; set; }
+
+    /// <summary>
+    /// The operator's exception: exactly this many AI credits a month for this
+    /// organisation, whatever its plan says. Null = follow the plan; 0 = none.
+    /// </summary>
+    public int? AiCreditsOverride { get; set; }
+
+    /// <summary>
     /// "organisation" (every customer) or "personal_house" — the one tenant
     /// personal accounts live in. Never compare it inline: ask PersonalHouse,
     /// so "is this a personal account?" has one answer. Column:
@@ -597,6 +614,16 @@ public class Plan
     public string[] IncludedProducts { get; set; } = ["mail"];
     public decimal? PricePerUserMonthly { get; set; }
     public decimal? PriceMonthly { get; set; }
+
+    /// <summary>
+    /// AI credits (26 Sept 2026) — the same choice as storage: 'pooled' gives
+    /// the organisation AiCreditsPooled a month; 'per_user' gives
+    /// AiCreditsPerUser × its users, shared. A null amount = no credit limit.
+    /// See AiCredits and 20260926-b-ai-credits.sql.
+    /// </summary>
+    [MaxLength(16)] public string AiCreditModel { get; set; } = "pooled";
+    public int? AiCreditsPerUser { get; set; }
+    public int? AiCreditsPooled { get; set; }
 }
 
 public class Subscription

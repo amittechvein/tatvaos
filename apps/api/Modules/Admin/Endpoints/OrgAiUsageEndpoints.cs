@@ -19,6 +19,54 @@ public static class OrgAiUsageEndpoints
         app.MapGet("/api/admin/organisations/{id:guid}/ai-usage", GetAsync)
             .RequireAuthorization("SuperAdmin")
             .WithTags("Platform administration");
+        // The operator's AI-credit exception for one organisation (26 Sept 2026).
+        app.MapPut("/api/admin/organisations/{id:guid}/ai-credits", PutCreditsAsync)
+            .RequireAuthorization("SuperAdmin")
+            .WithTags("Platform administration");
+        // Its own read, beside ai-usage rather than inside it: ai-usage's shape
+        // is read by the metering test and the console, and stays as it was.
+        app.MapGet("/api/admin/organisations/{id:guid}/ai-credits", GetCreditsAsync)
+            .RequireAuthorization("SuperAdmin")
+            .WithTags("Platform administration");
+    }
+
+    private static async Task<IResult> GetCreditsAsync(
+        Guid id, AppDbContext db, TenantContext tenant, HttpContext http, CancellationToken ct)
+    {
+        var over = await db.Tenants.AsNoTracking().Where(t => t.Id == id)
+            .Select(t => new { t.AiCreditsOverride }).FirstOrDefaultAsync(ct);
+        if (over is null) return Results.NotFound();
+        var actor = Guid.TryParse(http.User.FindFirst("sub")?.Value, out var uid) ? uid : Guid.Empty;
+        tenant.EnterPlatformScope(id, actor);
+        await db.SyncTenantAsync(ct);
+        return Results.Ok(new { credits = await AiUsageReport.CreditsAsync(db, id, ct), @override = over.AiCreditsOverride });
+    }
+
+    /// <summary>Override: a number = exactly that many credits a month; null = follow the plan.</summary>
+    public sealed record CreditsRequest(int? Override);
+
+    private static async Task<IResult> PutCreditsAsync(
+        Guid id, CreditsRequest req, AppDbContext db, TenantContext tenant, HttpContext http,
+        TatvaOS.Api.Modules.Admin.AuditWriter audit, CancellationToken ct)
+    {
+        if (req.Override is < 0)
+            return Results.BadRequest(new { error = "Credits cannot be negative. Empty follows the plan; 0 allows none." });
+        var org = await db.Tenants.FirstOrDefaultAsync(t => t.Id == id, ct);
+        if (org is null) return Results.NotFound();
+        var before = org.AiCreditsOverride;
+        if (before == req.Override) return Results.Ok(new { @override = before });
+
+        org.AiCreditsOverride = req.Override;
+        await db.SaveChangesAsync(ct);
+
+        // Audited into the CUSTOMER's own log: an exception to what their plan
+        // gives them is something their administrators may ask about.
+        var actor = Guid.TryParse(http.User.FindFirst("sub")?.Value, out var uid) ? uid : Guid.Empty;
+        tenant.EnterPlatformScope(id, actor);
+        await db.SyncTenantAsync(ct);
+        await audit.WriteAsync("org.ai.credits_override", "core.tenant", id.ToString(),
+            before: new { @override = before }, after: new { @override = req.Override }, ct: ct);
+        return Results.Ok(new { @override = req.Override });
     }
 
     private static async Task<IResult> GetAsync(

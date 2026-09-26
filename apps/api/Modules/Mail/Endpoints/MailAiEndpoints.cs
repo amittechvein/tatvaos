@@ -95,6 +95,8 @@ public static class MailAiEndpoints
         // Step 2 (25 Sept 2026): suggested replies. See MailSuggestions for
         // what leaves and what never does.
         g.MapPost("/messages/{id:guid}/suggestions", SuggestAsync);
+        // 26 Sept 2026: summarise the conversation a message belongs to.
+        g.MapPost("/messages/{id:guid}/summary", SummaryAsync);
     }
 
     /// <summary>
@@ -112,9 +114,15 @@ public static class MailAiEndpoints
         if (!await AiProductSwitch.MailAllowedAsync(db, tenant, logs.CreateLogger("MailAi"), ct))
             return Results.Ok(new { available = false, reason = "mail" });
 
+        // Which features this organisation has on, so the page shows only
+        // those buttons (26 Sept 2026: each has its own switch).
+        var f = await AiProductSwitch.MailFeaturesAsync(db, tenant.TenantId, ct);
         return Results.Ok(new
         {
             available = true,
+            rewrite = f.Rewrite,
+            suggest = f.Suggest,
+            summary = f.Summary,
             // Whether the inbox should show the sorting tabs and labels (step 3).
             triage = await AiProductSwitch.TriageAllowedAsync(db, tenant, logs.CreateLogger("MailAi"), ct),
             maxCharacters = MaxRewriteCharacters,
@@ -182,7 +190,8 @@ public static class MailAiEndpoints
         // Switches first, before the cache: a remembered answer must not keep
         // showing after an administrator turned Mail AI off.
         if (!ai.IsConfigured || !await ai.EnabledForTenantAsync(ct)
-            || !await AiProductSwitch.MailAllowedAsync(db, tenant, logs.CreateLogger("MailAi"), ct))
+            || !await AiProductSwitch.MailAllowedAsync(db, tenant, logs.CreateLogger("MailAi"), ct,
+                   AiProductSwitch.MailSuggestFeature))
             return Results.Ok(new { suggestions = Array.Empty<string>(), skipped = "off" });
 
         var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Read, ct);
@@ -230,6 +239,75 @@ public static class MailAiEndpoints
         if (list.Count > 0)
             cache.Set(key, new CachedSuggestions(list, partial), SuggestionLifetime);
         return Results.Ok(new { suggestions = list, partial });
+    }
+
+    private sealed record CachedSummary(string Summary, int Messages, bool Partial);
+
+    /// <summary>
+    /// Summarise the conversation this message belongs to (MailSummary says
+    /// what is sent). Always 200: `summary`, or `skipped` (off, junk, too
+    /// short — nothing sent), or `error` from the gateway. Remembered in
+    /// process memory for six hours, keyed by the conversation AND its newest
+    /// message, so a new reply gets a fresh summary and a re-open costs nothing.
+    /// </summary>
+    private static async Task<IResult> SummaryAsync(
+        Guid id, Guid? mailboxId, IAiGateway ai, AppDbContext db, TenantContext tenant,
+        IMemoryCache cache, ILoggerFactory logs, CancellationToken ct)
+    {
+        if (!ai.IsConfigured || !await ai.EnabledForTenantAsync(ct)
+            || !await AiProductSwitch.MailAllowedAsync(db, tenant, logs.CreateLogger("MailAi"), ct,
+                   AiProductSwitch.MailSummaryFeature))
+            return Results.Ok(new { summary = (string?)null, skipped = "off" });
+
+        var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Read, ct);
+        if (box is null) return Results.NotFound();
+        var m = await db.Messages.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == id && x.MailboxId == box.Id, ct);
+        if (m is null) return Results.NotFound();
+
+        var junk = await db.Folders.AsNoTracking()
+            .Where(f => f.MailboxId == box.Id && f.SpecialUse == "\\Junk").Select(f => (Guid?)f.Id).FirstOrDefaultAsync(ct);
+        if (junk is Guid j && m.FolderId == j)
+            return Results.Ok(new { summary = (string?)null, skipped = "junk" });
+
+        // The conversation, in this mailbox only, junk left out.
+        var key = m.ThreadId ?? m.Id;
+        var rows = await db.Messages.AsNoTracking()
+            .Where(x => x.MailboxId == box.Id && (x.ThreadId ?? x.Id) == key && (junk == null || x.FolderId != junk))
+            .OrderBy(x => x.ReceivedAt)
+            .Select(x => new { x.Id, x.FromName, x.ReceivedAt, x.BodyText, x.Snippet, x.RawBody })
+            .ToListAsync(ct);
+        if (rows.Count == 0) return Results.NotFound();
+
+        var cacheKey = $"mail.summary:{tenant.TenantId}:{key}:{rows[^1].Id}";
+        if (cache.TryGetValue(cacheKey, out CachedSummary? hit) && hit is not null)
+            return Results.Ok(new { summary = hit.Summary, messages = hit.Messages, partial = hit.Partial, cached = true });
+
+        var parts = rows.Select(r =>
+        {
+            var body = r.BodyText;
+            if (string.IsNullOrWhiteSpace(body) && !string.IsNullOrEmpty(r.RawBody))
+            {
+                try { body = MailContent.Parse(r.RawBody).TextBody; } catch { body = null; }
+            }
+            return new MailSummary.Part(r.FromName, r.ReceivedAt, body ?? r.Snippet);
+        }).ToList();
+
+        var (input, used, partial) = MailSummary.Build(parts);
+        if (used == 0 || (rows.Count == 1 && input.Length < MailSummary.TooShortToSummarise))
+            return Results.Ok(new { summary = (string?)null, skipped = "short" });
+
+        var result = await ai.CompleteAsync(MailSummary.Instruction, input, ct, MailSummary.Feature);
+        if (result.Error is string failure)
+            return Results.Ok(new { summary = (string?)null, error = failure });
+
+        var summary = MailSummary.Clean(result.Text);
+        if (summary.Length == 0)
+            return Results.Ok(new { summary = (string?)null, error = "TatvaOS AI returned nothing for this conversation. Please try again." });
+
+        partial = partial || result.Truncated;
+        cache.Set(cacheKey, new CachedSummary(summary, used, partial), SuggestionLifetime);
+        return Results.Ok(new { summary, messages = used, partial });
     }
 
     /// <summary>

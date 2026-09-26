@@ -78,6 +78,7 @@ public static class OrganisationEndpoints
                 p.Id, p.Name, p.MaxUsers, p.StorageModel,
                 p.PerUserQuotaBytes, p.PooledStorageBytes, p.MaxDomains,
                 p.IncludedProducts, p.PricePerUserMonthly, p.PriceMonthly,
+                p.AiCreditModel, p.AiCreditsPerUser, p.AiCreditsPooled,
             })
             .ToListAsync(ct);
         return Results.Ok(plans);
@@ -92,6 +93,10 @@ public static class OrganisationEndpoints
             return "A per-user plan needs a per-user storage quota.";
         if (req.StorageModel == "pooled" && req.PooledStorageBytes is null or <= 0)
             return "A pooled plan needs a pool size.";
+        if (req.AiCreditModel is not (null or "per_user" or "pooled"))
+            return "AI credit model must be 'per_user' or 'pooled'.";
+        if (req.AiCreditsPerUser is < 0 || req.AiCreditsPooled is < 0)
+            return "AI credits cannot be negative. Leave it empty for no limit, or 0 for none.";
         return null;
     }
 
@@ -112,6 +117,7 @@ public static class OrganisationEndpoints
             PricePerUserMonthly = req.PricePerUserMonthly,
             PriceMonthly = req.PriceMonthly,
         };
+        ApplyAiCredits(plan, req);
         db.Plans.Add(plan);
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("plan.created", "plan", plan.Id.ToString(),
@@ -126,7 +132,8 @@ public static class OrganisationEndpoints
         if (plan is null) return Results.NotFound();
         if (ValidatePlan(req) is string err) return Results.BadRequest(new { error = err });
 
-        var before = new { plan.Name, plan.MaxUsers, plan.PricePerUserMonthly, plan.PriceMonthly };
+        var before = new { plan.Name, plan.MaxUsers, plan.PricePerUserMonthly, plan.PriceMonthly,
+                           plan.AiCreditModel, plan.AiCreditsPerUser, plan.AiCreditsPooled };
 
         // Editing a plan changes it for GROWTH — the seat/domain/quota limits it
         // imposes on new users and domains. It does NOT retroactively resize the
@@ -141,11 +148,26 @@ public static class OrganisationEndpoints
         if (req.IncludedProducts is not null) plan.IncludedProducts = req.IncludedProducts;
         plan.PricePerUserMonthly = req.PricePerUserMonthly;
         plan.PriceMonthly = req.PriceMonthly;
+        ApplyAiCredits(plan, req);
 
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("plan.updated", "plan", id.ToString(),
-            before: before, after: new { plan.Name, plan.MaxUsers }, ct: ct);
+            before: before, after: new { plan.Name, plan.MaxUsers,
+                                         plan.AiCreditModel, plan.AiCreditsPerUser, plan.AiCreditsPooled }, ct: ct);
         return Results.Ok(new { plan.Id, plan.Name });
+    }
+
+    /// <summary>
+    /// AI credits on a plan. Only the amount for the chosen model is kept —
+    /// switching a plan from pooled to per-user must not quietly keep the old
+    /// pool (the same rule the storage fields follow). Sent nothing = leave as is.
+    /// </summary>
+    private static void ApplyAiCredits(Plan plan, UpsertPlanRequest req)
+    {
+        if (req.AiCreditModel is null) return;
+        plan.AiCreditModel = req.AiCreditModel;
+        plan.AiCreditsPerUser = req.AiCreditModel == "per_user" ? req.AiCreditsPerUser : null;
+        plan.AiCreditsPooled = req.AiCreditModel == "pooled" ? req.AiCreditsPooled : null;
     }
 
     private static async Task<IResult> DeletePlanAsync(

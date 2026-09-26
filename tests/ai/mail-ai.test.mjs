@@ -37,6 +37,8 @@ const API = process.env.MAILAI_API ?? 'http://localhost:5171/api';
 // local WSL database the fixtures are written into.
 const OWNER_PHONE = process.env.OWNER_PHONE ?? '+919999900001';
 const DB = process.env.MAILAI_DB ?? 'tatvaos_mailai';
+// The warning-mail catcher (fake-ai-and-mail.mjs), for the AI-credit warnings.
+const MAIL_SINK = process.env.MAIL_SINK ?? 'http://127.0.0.1:5198/mail';
 const FAKE = process.env.FAKE ?? 'http://127.0.0.1:5199';
 const [EMAIL, PASSWORD] = (process.env.AI_ADMIN ?? 'platform@docs.local,dev-only-platform-pass').split(',');
 
@@ -205,7 +207,7 @@ try {
     input: readFileSync(new URL('./mail-ai-fixtures.sql', import.meta.url)), encoding: 'utf8',
   });
   const ids = Object.fromEntries((fx.stdout ?? '').split('\n').filter((l) => l.includes('|')).map((l) => l.trim().split('|')));
-  check('fixtures made eight messages', Object.keys(ids).length === 8, (fx.stderr ?? '').slice(0, 200));
+  check('fixtures made ten messages', Object.keys(ids).length === 10, (fx.stderr ?? '').slice(0, 200));
 
   await setAi({ enabled: false, mail: false, mailTriage: false });
   h0 = await hits();
@@ -385,6 +387,220 @@ try {
     psql(`update core.tenants set type='${typeWas}', mail_ai_triage_since=null where id='${TENANT}'`);
   }
   check('the organisation type is back as found', psql(`select type from core.tenants where id='${TENANT}'`) === typeWas, typeWas);
+
+  // ── 10. Mail AI held to a list of organisations (Mr. Singh, 25 Sept) ──────
+  //  ai.mail.organisations: empty = everyone; ids = only those; nothing that
+  //  parses = nobody. Checked in the gateway, so every mail.* feature obeys.
+  {
+    const ORG = '11111111-1111-1111-1111-111111111111';
+    const gate = (v) => call('PUT', '/admin/settings', { 'ai.mail.organisations': v });
+    await setAi({ enabled: true, mail: false, mailTriage: false });
+
+    await gate('00000000-0000-0000-0000-00000000abcd');
+    const held = (await call('GET', '/org/ai')).body;
+    check('another organisation on the list: this one is told Mail AI is not available yet',
+      held.mailOffered === false && String(held.mailNotOffered ?? '').includes('not available for your organisation yet'),
+      JSON.stringify({ o: held.mailOffered, t: held.mailNotOffered }));
+    r = await setAi({ mail: true });
+    check('…and cannot switch Mail AI on (400)', r.status === 400 && String(r.body.error ?? '').includes('not available'), JSON.stringify(r.body));
+    r = await setAi({ mailTriage: true });
+    check('…nor sorting (400)', r.status === 400, JSON.stringify(r.body));
+
+    // Switched on BEFORE the gate (as Techvein was): the gate still holds.
+    psql(`update core.tenants set allow_mail_ai = true where id='${ORG}'`);
+    check('Mail AI already on but not on the list: the screen does not say it is on', (await call('GET', '/org/ai')).body.mailEnabled === false);
+    s = await ownerCall('GET', '/mail/ai/status');
+    check('…the composer gets no AI button (status unavailable)', s.body.available === false, JSON.stringify(s.body));
+    h0 = await hits();
+    r = await rewrite(DRAFT);
+    check('…Help me write is refused by the gateway, nothing sent', typeof r.body.error === 'string' && (await hits()) === h0, JSON.stringify(r.body));
+    r = await suggest(ids.normal);
+    check('…suggested replies are withheld, nothing sent', r.body.skipped === 'off' && (await hits()) === h0, JSON.stringify(r.body));
+
+    await gate(`not-an-id, ${ORG}`);
+    check('this organisation on the list (a bad entry beside it is ignored): offered', (await call('GET', '/org/ai')).body.mailOffered === true);
+    h0 = await hits();
+    r = await rewrite(DRAFT);
+    check('…and Help me write works', typeof r.body.text === 'string' && (await hits()) === h0 + 1, JSON.stringify(r.body).slice(0, 100));
+
+    await gate('not-an-id');
+    h0 = await hits();
+    r = await rewrite(DRAFT);
+    check('a list where NOTHING parses lets nobody in (a typo does not open the gate)',
+      (await call('GET', '/org/ai')).body.mailOffered === false && typeof r.body.error === 'string' && (await hits()) === h0, JSON.stringify(r.body));
+
+    await gate('');
+    check('an empty list: every organisation may', (await call('GET', '/org/ai')).body.mailOffered === true);
+    r = await setAi({ mail: false });
+    check('…and switching Mail AI off works whatever the list says', r.status === 200 && r.body.mailEnabled === false, JSON.stringify(r.body));
+  }
+
+  // ── 11. Each Mail feature's own switch, and Summarise (26 Sept 2026) ─────
+  {
+    const summarise = async (msgId, headers = OH) => {
+      const res = await fetch(`${API}/mail/ai/messages/${msgId}/summary`, { method: 'POST', headers });
+      const t = await res.text();
+      let bd; try { bd = JSON.parse(t); } catch { bd = t; }
+      return { status: res.status, body: bd };
+    };
+    // The DEFAULTS, read from the schema: a run after someone switched a
+    // feature by hand must not be able to hide a wrong default (found 26
+    // Sept: a browser check left Summarise on, and four checks read that).
+    const def = (col) => psql(`select column_default from information_schema.columns where table_schema='core' and table_name='tenants' and column_name='${col}'`);
+    check('defaults: Summarise OFF, Help me write and suggestions ON',
+      def('mail_ai_summary') === 'false' && def('mail_ai_rewrite') === 'true' && def('mail_ai_suggest') === 'true',
+      `${def('mail_ai_summary')} ${def('mail_ai_rewrite')} ${def('mail_ai_suggest')}`);
+    await setAi({ enabled: true, mail: true, mailTriage: false, mailFeatures: { rewrite: true, suggest: true, summary: false } });
+
+    const org = (await call('GET', '/org/ai')).body;
+    check('Summarise off, Help me write and suggestions on (as set)',
+      org.mailFeatures?.summary === false && org.mailFeatures?.rewrite === true && org.mailFeatures?.suggest === true, JSON.stringify(org.mailFeatures));
+    check('each feature says what it sends', typeof org.mailFeatureDisclosure?.summary === 'string'
+      && org.mailFeatureDisclosure.summary.includes('whole conversation'), JSON.stringify(org.mailFeatureDisclosure));
+    s = await ownerCall('GET', '/mail/ai/status');
+    check('status: summary false, rewrite and suggest true', s.body.summary === false && s.body.rewrite === true && s.body.suggest === true, JSON.stringify(s.body));
+    h0 = await hits();
+    r = await summarise(ids.th2);
+    check('Summarise off: skipped, nothing sent', r.body.skipped === 'off' && (await hits()) === h0, JSON.stringify(r.body));
+
+    r = await setAi({ mailFeatures: { summary: true } });
+    check('Summarise switched on (200)', r.status === 200 && r.body.mailFeatures?.summary === true, JSON.stringify(r.body));
+    check('…and audited by name', psql(`select count(*) from core.audit_logs where action = 'org.ai.mail_feature.summary.enabled' and occurred_at > now() - interval '5 minutes'`) !== '0');
+    h0 = await hits();
+    r = await summarise(ids.th2);
+    check('a two-message conversation is summarised', typeof r.body.summary === 'string' && r.body.messages === 2 && (await hits()) === h0 + 1, JSON.stringify(r.body));
+    check('Markdown bold from the model is stripped', typeof r.body.summary === 'string' && !r.body.summary.includes('**') && r.body.summary.includes('Friday'), JSON.stringify(r.body.summary));
+    const sumSent = (await last()).user;
+    check('the provider saw both messages, oldest first, with names and dates', sumSent.indexOf('move the review') >= 0
+      && sumSent.indexOf('move the review') < sumSent.indexOf('Friday works') && sumSent.includes('From: Priya Shah') && sumSent.includes('Date: '), sumSent.slice(0, 160));
+    check('…not the quoted history, not an address', !sumSent.includes('SUMMARY-OLD-QUOTE') && !sumSent.includes('@'), sumSent);
+    check('the summary instruction went as the system message', (await last()).system.includes('summarise an email conversation'));
+    h0 = await hits();
+    r = await summarise(ids.th1);
+    check('asking from the other message of the conversation: remembered, nothing sent', r.body.cached === true && (await hits()) === h0, JSON.stringify(r.body));
+    r = await summarise(ids.normal);
+    check('one short message: skipped as short, nothing sent', r.body.skipped === 'short' && (await hits()) === h0, JSON.stringify(r.body));
+    r = await summarise(ids.th2, H);
+    check('someone without the mailbox gets 404', r.status === 404, `status ${r.status}`);
+
+    // Turning a feature off removes exactly that feature.
+    await setAi({ mailFeatures: { rewrite: false } });
+    s = await ownerCall('GET', '/mail/ai/status');
+    check('Help me write off: status says so, the others stay', s.body.rewrite === false && s.body.suggest === true && s.body.summary === true, JSON.stringify(s.body));
+    h0 = await hits();
+    r = await rewrite(DRAFT);
+    check('Help me write off: the GATEWAY refuses it, nothing sent', typeof r.body.error === 'string' && r.body.error.includes('switched off') && (await hits()) === h0, JSON.stringify(r.body));
+    await setAi({ mailFeatures: { rewrite: true, suggest: false } });
+    h0 = await hits();
+    r = await suggest(ids.lines);
+    check('Suggested replies off: withheld, nothing sent', r.body.skipped === 'off' && (await hits()) === h0, JSON.stringify(r.body));
+    r = await rewrite(DRAFT);
+    check('…while Help me write works again', typeof r.body.text === 'string', JSON.stringify(r.body).slice(0, 80));
+    await setAi({ mailFeatures: { suggest: true } });
+
+    // The Techvein-only list applies to features too.
+    await call('PUT', '/admin/settings', { 'ai.mail.organisations': '00000000-0000-0000-0000-00000000abcd' });
+    r = await setAi({ mailFeatures: { summary: true } });
+    check('not on the Mail AI list: switching a feature ON is refused (400)', r.status === 400, JSON.stringify(r.body));
+    r = await setAi({ mailFeatures: { summary: false } });
+    check('…switching one OFF works', r.status === 200 && r.body.mailFeatures?.summary === false, JSON.stringify(r.body));
+    await call('PUT', '/admin/settings', { 'ai.mail.organisations': '' });
+  }
+
+  // ── 12. AI credits by plan (26 Sept 2026) ────────────────────────────────
+  //  Plan: pooled or per user × users; the operator's override; warn at 80 %
+  //  and 100 %, stop at 100 %. Warning mail is read from the mail catcher of
+  //  tests/ai (MAIL_SINK, :5198/mail — run .tmp/fake-ai-and-mail.mjs and point
+  //  the API's Smtp__Port at 5871).
+  {
+    const ORG = '11111111-1111-1111-1111-111111111111';
+    const credits = async () => (await call('GET', '/org/ai')).body.credits;
+    const sink = async () => { try { return (await (await fetch(MAIL_SINK)).json()).length; } catch { return -1; } };
+    let planId = null;
+    let subId = null;
+    await setAi({ enabled: true, mail: true, mailFeatures: { rewrite: true, summary: true } });
+    try {
+      // The plan form carries AI credits; switching the model clears the other amount.
+      r = await call('POST', '/admin/plans', {
+        name: 'Mail AI test plan', maxUsers: null, storageModel: 'pooled', perUserQuotaBytes: null,
+        pooledStorageBytes: 1073741824, maxDomains: null, includedProducts: ['mail'],
+        pricePerUserMonthly: null, priceMonthly: 1, aiCreditModel: 'pooled', aiCreditsPooled: 100,
+      });
+      planId = r.body.id;
+      check('a plan is created with pooled AI credits', r.status === 201 && typeof planId === 'string', JSON.stringify(r.body));
+      r = await call('POST', '/admin/plans', { name: 'bad', storageModel: 'pooled', pooledStorageBytes: 1, priceMonthly: 1, aiCreditModel: 'pooled', aiCreditsPooled: -1 });
+      check('negative credits are refused (400)', r.status === 400, JSON.stringify(r.body));
+
+      // First line only: psql -A prints the returned id AND the command tag
+      // ("INSERT 0 1"), and a cleanup keyed on both lines deletes nothing.
+      subId = psql(`insert into core.subscriptions (tenant_id, plan_id, status, seats, started_at) values ('${ORG}', '${planId}', 'active', 3, now() + interval '1 minute') returning id`).split('\n')[0].trim();
+      let c = await credits();
+      check('pooled plan: the organisation gets the pool', c.source === 'plan' && c.model === 'pooled' && c.allowance === 100 && c.planName === 'Mail AI test plan', JSON.stringify(c));
+
+      r = await call('PUT', `/admin/plans/${planId}`, {
+        name: 'Mail AI test plan', maxUsers: null, storageModel: 'pooled', perUserQuotaBytes: null,
+        pooledStorageBytes: 1073741824, maxDomains: null, includedProducts: ['mail'],
+        pricePerUserMonthly: null, priceMonthly: 1, aiCreditModel: 'per_user', aiCreditsPerUser: 10, aiCreditsPooled: 999,
+      });
+      const plan = (await call('GET', '/admin/plans')).body.find((x) => x.id === planId);
+      check('switching to per user keeps only the per-user amount', r.status === 200 && plan.aiCreditModel === 'per_user'
+        && plan.aiCreditsPerUser === 10 && plan.aiCreditsPooled === null, JSON.stringify(plan));
+      c = await credits();
+      check('per user: 10 credits × 3 seats = 30, shared', c.source === 'plan' && c.model === 'per_user' && c.allowance === 30
+        && c.perUser === 10 && c.users === 3, JSON.stringify(c));
+
+      // The operator's override, and the stop at 100 %.
+      r = await call('PUT', `/admin/organisations/${ORG}/ai-credits`, { override: -1 });
+      check('a negative override is refused (400)', r.status === 400, JSON.stringify(r.body));
+      const used0 = (await credits()).used;
+      const cap = used0 + 5;
+      r = await call('PUT', `/admin/organisations/${ORG}/ai-credits`, { override: cap });
+      c = await credits();
+      check('override: exactly that many credits, whatever the plan says', r.status === 200 && c.source === 'override' && c.allowance === cap, JSON.stringify(c));
+      check('…and the change is audited', psql(`select count(*) from core.audit_logs where action like '%org.ai.credits_override' and occurred_at > now() - interval '5 minutes'`) !== '0');
+
+      const mail0 = await sink();
+      h0 = await hits();
+      let answered = 0;
+      for (let i = 0; i < 5; i += 1) { r = await rewrite(DRAFT); if (typeof r.body.text === 'string') answered += 1; }
+      check('five one-credit requests inside the allowance are answered', answered === 5 && (await hits()) === h0 + 5, `answered ${answered}`);
+      c = await credits();
+      check('credits used went up by exactly 5 (Help me write costs 1)', c.used === used0 + 5 && c.percent === 100, JSON.stringify(c));
+      h0 = await hits();
+      r = await rewrite(DRAFT);
+      check('at 100 %: the next request is STOPPED, in words, nothing sent', typeof r.body.error === 'string'
+        && r.body.error.includes('credits') && (await hits()) === h0, JSON.stringify(r.body));
+      check('…a refusal costs no credit', (await credits()).used === used0 + 5);
+      check('warnings recorded at 80 % and 100 % for this allowance',
+        psql(`select string_agg(level::text, ',' order by level) from core.ai_credit_alerts where tenant_id='${ORG}' and allowance=${cap}`) === '80,100',
+        psql(`select string_agg(level::text, ',' order by level) from core.ai_credit_alerts where tenant_id='${ORG}' and allowance=${cap}`));
+      const mail1 = await sink();
+      check('…and the administrators were emailed (mail catcher)', mail0 >= 0 && mail1 > mail0, `${mail0} -> ${mail1}`);
+
+      // A summary costs 2: with 1 credit left it is refused, a rewrite is not.
+      await call('PUT', `/admin/organisations/${ORG}/ai-credits`, { override: used0 + 6 });
+      h0 = await hits();
+      r = await (await fetch(`${API}/mail/ai/messages/${ids.th2}/summary`, { method: 'POST', headers: OH })).json();
+      const summaryRefused = typeof r.error === 'string' || r.cached === true;
+      check('with 1 credit left, a 2-credit summary is refused (or served from memory, free)', summaryRefused && (await hits()) === h0, JSON.stringify(r).slice(0, 120));
+      r = await rewrite(DRAFT);
+      check('…but a 1-credit rewrite still fits', typeof r.body.text === 'string', JSON.stringify(r.body).slice(0, 80));
+
+      r = await call('PUT', `/admin/organisations/${ORG}/ai-credits`, { override: null });
+      c = await credits();
+      check('override cleared: back to the plan', r.status === 200 && c.source === 'plan' && c.allowance === 30, JSON.stringify(c));
+      const op = await call('GET', `/admin/organisations/${ORG}/ai-credits`);
+      check('the operator reads the same numbers', op.status === 200 && op.body.credits?.allowance === 30 && op.body.override === null, JSON.stringify(op.body));
+    } finally {
+      await call('PUT', `/admin/organisations/${ORG}/ai-credits`, { override: null });
+      if (subId) psql(`delete from core.subscriptions where id='${subId}'`);
+      if (planId) await call('DELETE', `/admin/plans/${planId}`);
+      await setAi({ mailFeatures: { summary: false } });
+    }
+    check('test plan and subscription removed', planId !== null
+      && psql(`select count(*) from core.plans where name='Mail AI test plan'`) === '0'
+      && psql(`select count(*) from core.subscriptions where plan_id='${planId}'`) === '0');
+  }
 
   // ── 6. Validation of the switch itself ────────────────────────────────────
   r = await setAi({});

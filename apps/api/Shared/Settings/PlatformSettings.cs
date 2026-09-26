@@ -42,6 +42,8 @@ public static class SettingKeys
     public const string AiPaused = "ai.paused";
     public const string AiPerPersonPerHour = "ai.limit.per_person_per_hour";
     public const string AiOrgMonthlyTokens = "ai.limit.org_monthly_tokens";
+    // Which organisations may use TatvaOS AI in Mail at all (AiProductSwitch).
+    public const string AiMailOrganisations = "ai.mail.organisations";
 
     // Personal accounts (/join) — build plan personal-plans-build-plan.md §1
     // and §3.4. Closed by default: the switch-on waits for the five launch
@@ -100,6 +102,11 @@ public static class SettingKeys
             "Started at 2,000,000. Administrators are emailed at 80% and at 100%; at 100% AI stops for "
             + "that organisation until the month turns (India time). 0 allows NONE — AI stopped. "
             + "Empty means NO CEILING."),
+        new(AiMailOrganisations, "ai", "Organisations that may use TatvaOS AI in Mail", false,
+            "Organisation ids, separated by commas. Only these can switch Mail AI on (Help me write, "
+            + "suggested replies, sorting); every other organisation is told it is not available yet. "
+            + "EMPTY means every organisation may. Set to Techvein alone on 25 Sept 2026 until the "
+            + "privacy policy describes Mail AI (Mr. Singh) — empty it once that text is live."),
 
         new(PersonalSignupOpen, "personal", "Personal signup open (/join)", false,
             "OFF until launch. ON lets anyone create a free personal address at /join. Needs a personal "

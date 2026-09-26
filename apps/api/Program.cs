@@ -865,6 +865,7 @@ app.MapMyStorageEndpoints();
 app.MapOrgAiEndpoints();
 // The operator's read of an organisation's AI use (the limits are settings).
 app.MapOrgAiUsageEndpoints();
+app.MapOrganisationDetailEndpoints();
 // Calendar. Recurrence is expanded at read time, never stored — see
 // Modules/Calendar/Recurrence.cs.
 app.MapCalendarEndpoints();
