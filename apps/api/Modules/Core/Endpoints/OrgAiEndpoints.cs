@@ -148,6 +148,9 @@ public static class OrgAiEndpoints
             // This month's use against the allowance — the number the
             // administrator is emailed about at 80 % and 100 % (MeteredAiGateway).
             usage = await AiUsageReport.ThisMonthAsync(db, settings, ct),
+            // AI credits this month (26 Sept 2026): what the plan (or an
+            // operator's exception) gives, and what each feature has spent.
+            credits = await AiUsageReport.CreditsAsync(db, tenant.TenantId, ct),
         });
     }
 

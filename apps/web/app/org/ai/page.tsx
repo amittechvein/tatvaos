@@ -41,6 +41,19 @@ interface AiUsage {
   byFeature: { feature: string; requests: number; tokens: number }[];
 }
 
+/** AI credits this month (26 Sept 2026) — what customers see instead of tokens. */
+interface AiCreditsState {
+  allowance: number | null;
+  source: 'override' | 'plan' | 'none';
+  planName: string | null;
+  model: 'per_user' | 'pooled' | null;
+  perUser: number | null;
+  users: number | null;
+  used: number;
+  percent: number;
+  byFeature: { feature: string; credits: number }[];
+}
+
 interface MailFeatureFlags {
   rewrite: boolean;
   suggest: boolean;
@@ -69,6 +82,7 @@ interface AiState {
   mailTriageOffered: boolean;
   mailTriageNotOffered: string | null;
   usage: AiUsage;
+  credits: AiCreditsState;
 }
 
 const FEATURE_NAMES: Record<string, string> = {
@@ -203,6 +217,7 @@ export default function OrgAiPage() {
         />
       )}
 
+      {state?.platformConfigured && <CreditsCard credits={state.credits} />}
       {state?.platformConfigured && <UsageCard usage={state.usage} />}
 
       {confirmTriage && state && (
@@ -407,6 +422,50 @@ function MailAiCard({
           {!state.enabled && ' Turn on TatvaOS AI for the organisation first.'}
         </p>
       )}
+    </Card>
+  );
+}
+
+/**
+ * AI credits this month — the number an administrator is sold and manages
+ * (Amit, 26 Sept 2026: "so client able to save tokens"). One credit is one
+ * AI action, weighted by how much work it is; which feature spent them is
+ * listed, so switching one off above is an informed saving. Warned at 80 %,
+ * stopped at 100 % until the 1st.
+ */
+function CreditsCard({ credits: c }: { credits: AiCreditsState }) {
+  const tone = c.percent >= 100 ? 'bg-danger' : c.percent >= 80 ? 'bg-warn' : 'bg-ok';
+  const where = c.source === 'override' ? 'Set for your organisation by TatvaOS.'
+    : c.source === 'plan'
+      ? c.model === 'per_user'
+        ? `From your ${c.planName} plan: ${c.perUser != null ? fmt(c.perUser) : '—'} per user × ${c.users ?? 0} users, shared.`
+        : `From your ${c.planName} plan, shared by everyone in the organisation.`
+      : 'Your plan does not set an AI credit limit.';
+  return (
+    <Card title="AI credits this month" subtitle="One credit is one AI action — Help me write 1, a suggestion 1, a summary 2, sorting one email 1, meeting minutes 5">
+      {c.allowance === null ? (
+        <p className="mb-2">{fmt(c.used)} credits used. No credit limit is set.</p>
+      ) : (
+        <>
+          <p className="mb-2">
+            {fmt(c.used)} of {fmt(c.allowance)} credits ({c.percent}%).
+            {c.percent >= 100 && ' TatvaOS AI has stopped for your organisation until the 1st.'}
+          </p>
+          <div className="mb-3 h-2 w-full overflow-hidden rounded-full bg-canvas" role="meter"
+               aria-valuemin={0} aria-valuemax={100} aria-valuenow={c.percent}
+               aria-label="Share of this month's AI credits used">
+            <div className={`h-full ${tone}`} style={{ width: `${c.percent}%` }} />
+          </div>
+        </>
+      )}
+      {c.byFeature.length > 0 && (
+        <p className="mb-2 text-sm text-ink-muted">
+          {c.byFeature.map((f) => `${FEATURE_NAMES[f.feature] ?? f.feature}: ${fmt(f.credits)}`).join(' · ')}
+        </p>
+      )}
+      <p className="mb-0 text-[0.75rem] text-ink-muted">
+        {where} Administrators are emailed at 80% and 100%. Turning a feature off above stops it spending credits.
+      </p>
     </Card>
   );
 }

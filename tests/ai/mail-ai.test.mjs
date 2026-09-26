@@ -37,6 +37,8 @@ const API = process.env.MAILAI_API ?? 'http://localhost:5171/api';
 // local WSL database the fixtures are written into.
 const OWNER_PHONE = process.env.OWNER_PHONE ?? '+919999900001';
 const DB = process.env.MAILAI_DB ?? 'tatvaos_mailai';
+// The warning-mail catcher (fake-ai-and-mail.mjs), for the AI-credit warnings.
+const MAIL_SINK = process.env.MAIL_SINK ?? 'http://127.0.0.1:5198/mail';
 const FAKE = process.env.FAKE ?? 'http://127.0.0.1:5199';
 const [EMAIL, PASSWORD] = (process.env.AI_ADMIN ?? 'platform@docs.local,dev-only-platform-pass').split(',');
 
@@ -503,6 +505,101 @@ try {
     r = await setAi({ mailFeatures: { summary: false } });
     check('…switching one OFF works', r.status === 200 && r.body.mailFeatures?.summary === false, JSON.stringify(r.body));
     await call('PUT', '/admin/settings', { 'ai.mail.organisations': '' });
+  }
+
+  // ── 12. AI credits by plan (26 Sept 2026) ────────────────────────────────
+  //  Plan: pooled or per user × users; the operator's override; warn at 80 %
+  //  and 100 %, stop at 100 %. Warning mail is read from the mail catcher of
+  //  tests/ai (MAIL_SINK, :5198/mail — run .tmp/fake-ai-and-mail.mjs and point
+  //  the API's Smtp__Port at 5871).
+  {
+    const ORG = '11111111-1111-1111-1111-111111111111';
+    const credits = async () => (await call('GET', '/org/ai')).body.credits;
+    const sink = async () => { try { return (await (await fetch(MAIL_SINK)).json()).length; } catch { return -1; } };
+    let planId = null;
+    let subId = null;
+    await setAi({ enabled: true, mail: true, mailFeatures: { rewrite: true, summary: true } });
+    try {
+      // The plan form carries AI credits; switching the model clears the other amount.
+      r = await call('POST', '/admin/plans', {
+        name: 'Mail AI test plan', maxUsers: null, storageModel: 'pooled', perUserQuotaBytes: null,
+        pooledStorageBytes: 1073741824, maxDomains: null, includedProducts: ['mail'],
+        pricePerUserMonthly: null, priceMonthly: 1, aiCreditModel: 'pooled', aiCreditsPooled: 100,
+      });
+      planId = r.body.id;
+      check('a plan is created with pooled AI credits', r.status === 201 && typeof planId === 'string', JSON.stringify(r.body));
+      r = await call('POST', '/admin/plans', { name: 'bad', storageModel: 'pooled', pooledStorageBytes: 1, priceMonthly: 1, aiCreditModel: 'pooled', aiCreditsPooled: -1 });
+      check('negative credits are refused (400)', r.status === 400, JSON.stringify(r.body));
+
+      // First line only: psql -A prints the returned id AND the command tag
+      // ("INSERT 0 1"), and a cleanup keyed on both lines deletes nothing.
+      subId = psql(`insert into core.subscriptions (tenant_id, plan_id, status, seats, started_at) values ('${ORG}', '${planId}', 'active', 3, now() + interval '1 minute') returning id`).split('\n')[0].trim();
+      let c = await credits();
+      check('pooled plan: the organisation gets the pool', c.source === 'plan' && c.model === 'pooled' && c.allowance === 100 && c.planName === 'Mail AI test plan', JSON.stringify(c));
+
+      r = await call('PUT', `/admin/plans/${planId}`, {
+        name: 'Mail AI test plan', maxUsers: null, storageModel: 'pooled', perUserQuotaBytes: null,
+        pooledStorageBytes: 1073741824, maxDomains: null, includedProducts: ['mail'],
+        pricePerUserMonthly: null, priceMonthly: 1, aiCreditModel: 'per_user', aiCreditsPerUser: 10, aiCreditsPooled: 999,
+      });
+      const plan = (await call('GET', '/admin/plans')).body.find((x) => x.id === planId);
+      check('switching to per user keeps only the per-user amount', r.status === 200 && plan.aiCreditModel === 'per_user'
+        && plan.aiCreditsPerUser === 10 && plan.aiCreditsPooled === null, JSON.stringify(plan));
+      c = await credits();
+      check('per user: 10 credits × 3 seats = 30, shared', c.source === 'plan' && c.model === 'per_user' && c.allowance === 30
+        && c.perUser === 10 && c.users === 3, JSON.stringify(c));
+
+      // The operator's override, and the stop at 100 %.
+      r = await call('PUT', `/admin/organisations/${ORG}/ai-credits`, { override: -1 });
+      check('a negative override is refused (400)', r.status === 400, JSON.stringify(r.body));
+      const used0 = (await credits()).used;
+      const cap = used0 + 5;
+      r = await call('PUT', `/admin/organisations/${ORG}/ai-credits`, { override: cap });
+      c = await credits();
+      check('override: exactly that many credits, whatever the plan says', r.status === 200 && c.source === 'override' && c.allowance === cap, JSON.stringify(c));
+      check('…and the change is audited', psql(`select count(*) from core.audit_logs where action like '%org.ai.credits_override' and occurred_at > now() - interval '5 minutes'`) !== '0');
+
+      const mail0 = await sink();
+      h0 = await hits();
+      let answered = 0;
+      for (let i = 0; i < 5; i += 1) { r = await rewrite(DRAFT); if (typeof r.body.text === 'string') answered += 1; }
+      check('five one-credit requests inside the allowance are answered', answered === 5 && (await hits()) === h0 + 5, `answered ${answered}`);
+      c = await credits();
+      check('credits used went up by exactly 5 (Help me write costs 1)', c.used === used0 + 5 && c.percent === 100, JSON.stringify(c));
+      h0 = await hits();
+      r = await rewrite(DRAFT);
+      check('at 100 %: the next request is STOPPED, in words, nothing sent', typeof r.body.error === 'string'
+        && r.body.error.includes('credits') && (await hits()) === h0, JSON.stringify(r.body));
+      check('…a refusal costs no credit', (await credits()).used === used0 + 5);
+      check('warnings recorded at 80 % and 100 % for this allowance',
+        psql(`select string_agg(level::text, ',' order by level) from core.ai_credit_alerts where tenant_id='${ORG}' and allowance=${cap}`) === '80,100',
+        psql(`select string_agg(level::text, ',' order by level) from core.ai_credit_alerts where tenant_id='${ORG}' and allowance=${cap}`));
+      const mail1 = await sink();
+      check('…and the administrators were emailed (mail catcher)', mail0 >= 0 && mail1 > mail0, `${mail0} -> ${mail1}`);
+
+      // A summary costs 2: with 1 credit left it is refused, a rewrite is not.
+      await call('PUT', `/admin/organisations/${ORG}/ai-credits`, { override: used0 + 6 });
+      h0 = await hits();
+      r = await (await fetch(`${API}/mail/ai/messages/${ids.th2}/summary`, { method: 'POST', headers: OH })).json();
+      const summaryRefused = typeof r.error === 'string' || r.cached === true;
+      check('with 1 credit left, a 2-credit summary is refused (or served from memory, free)', summaryRefused && (await hits()) === h0, JSON.stringify(r).slice(0, 120));
+      r = await rewrite(DRAFT);
+      check('…but a 1-credit rewrite still fits', typeof r.body.text === 'string', JSON.stringify(r.body).slice(0, 80));
+
+      r = await call('PUT', `/admin/organisations/${ORG}/ai-credits`, { override: null });
+      c = await credits();
+      check('override cleared: back to the plan', r.status === 200 && c.source === 'plan' && c.allowance === 30, JSON.stringify(c));
+      const op = await call('GET', `/admin/organisations/${ORG}/ai-credits`);
+      check('the operator reads the same numbers', op.status === 200 && op.body.credits?.allowance === 30 && op.body.override === null, JSON.stringify(op.body));
+    } finally {
+      await call('PUT', `/admin/organisations/${ORG}/ai-credits`, { override: null });
+      if (subId) psql(`delete from core.subscriptions where id='${subId}'`);
+      if (planId) await call('DELETE', `/admin/plans/${planId}`);
+      await setAi({ mailFeatures: { summary: false } });
+    }
+    check('test plan and subscription removed', planId !== null
+      && psql(`select count(*) from core.plans where name='Mail AI test plan'`) === '0'
+      && psql(`select count(*) from core.subscriptions where plan_id='${planId}'`) === '0');
   }
 
   // ── 6. Validation of the switch itself ────────────────────────────────────
