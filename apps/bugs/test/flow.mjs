@@ -339,7 +339,7 @@ try {
     const page = (await priya.req('GET', '/app.js')).text + (await priya.req('GET', '/')).text;
     check('no vendor name anywhere on the page', !/openai|gpt/i.test(page) && /TatvaOS AI/.test(page));
     const fresh = (await amit.req('GET', '/api/settings')).json.ai;
-    check('no address filled in until an admin enters one', fresh.base_url === '' && !/openai/i.test(fresh.problem));
+    check('no address until an admin enters one', fresh.base_url_set === false && !/openai/i.test(fresh.problem));
     check('status says not ready', (await priya.req('GET', '/api/ai/status')).json.ready === false);
     await amit.req('PUT', '/api/settings', { ai: { enabled: true, base_url: fakeUrl, model: 'fake-model', api_key: 'test-key-123', data_location: '' } });
     const noLoc = await improve(priya, draft);
@@ -348,7 +348,12 @@ try {
     const wrongLoc = (await amit.req('GET', '/api/settings')).json.ai;
     check('api.openai.com with location "India" is REFUSED (it is in the US)', wrongLoc.ready === false && /United States/.test(wrongLoc.problem), wrongLoc.problem);
     await amit.req('PUT', '/api/settings', { ai: { base_url: fakeUrl, data_location: 'Test machine (localhost)', daily_limit: 4 } });
-    check('settings never return the key', !JSON.stringify((await amit.req('GET', '/api/settings')).json).includes('test-key-123'));
+    const shown = JSON.stringify((await amit.req('GET', '/api/settings')).json);
+    check('settings never return the key, the address or the model', !shown.includes('test-key-123') && !shown.includes(fakeUrl) && !shown.includes('127.0.0.1') && !shown.includes('fake-model'), shown.slice(0, 300));
+    const s2 = (await amit.req('GET', '/api/settings')).json.ai;
+    check('…but say they are saved', s2.base_url_set === true && s2.model_set === true && s2.key_set === true);
+    await amit.req('PUT', '/api/settings', { ai: { base_url: '', model: '' } });
+    check('an empty box keeps the saved value', (await amit.req('GET', '/api/settings')).json.ai.base_url_set === true && (await amit.req('GET', '/api/settings')).json.ai.model_set === true);
     check('developer mode cannot use it', (await rahul.req('POST', '/api/ai/improve', draft)).status === 403);
     const ok = await improve(priya, draft);
     check('tester gets a suggestion', ok.status === 200 && /Search button too small/.test(ok.json.suggestion.title), ok.text);

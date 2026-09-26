@@ -873,8 +873,9 @@ async function settingsView() {
   // ---- AI: "Improve my report". Off until an admin turns it on. ----
   const ai = s.ai;
   const aiOn = h('input', { type: 'checkbox', checked: ai.enabled });
-  const aiUrl = h('input', { value: ai.base_url, placeholder: 'The TatvaOS AI address you were given' });
-  const aiModel = h('input', { value: ai.model, placeholder: 'The model name you were given' });
+  // Write-only, like the key: the page is never sent the saved values.
+  const aiUrl = h('input', { type: 'password', autocomplete: 'off', placeholder: ai.base_url_set ? 'Saved — type a new one to replace it' : 'The TatvaOS AI address you were given' });
+  const aiModel = h('input', { type: 'password', autocomplete: 'off', placeholder: ai.model_set ? 'Saved — type a new one to replace it' : 'The model name you were given' });
   const aiLoc = h('input', { value: ai.data_location, placeholder: 'e.g. United States' });
   const aiLimit = h('input', { type: 'number', min: 0, max: 10000, value: ai.daily_limit });
   const aiKey = h('input', { type: 'password', autocomplete: 'off', placeholder: ai.key_set ? 'A key is saved — paste a new one to replace it' : 'Paste the key' });
@@ -883,15 +884,15 @@ async function settingsView() {
     h('p', { class: ai.ready ? 'small' : 'small warn-text' }, ai.ready ? 'Ready. Used ' + ai.used_today + ' of ' + ai.daily_limit + ' times today.' : 'Not in use: ' + ai.problem),
     h('label', { class: 'check' }, aiOn, ' Turn on Improve my report'),
     h('div', { class: 'grid2' },
-      h('label', {}, h('span', {}, 'TatvaOS AI address'), aiUrl),
-      h('label', {}, h('span', {}, 'Model name'), aiModel)),
+      h('label', {}, h('span', {}, 'TatvaOS AI address ' + (ai.base_url_set ? '(saved)' : '(not set)')), aiUrl),
+      h('label', {}, h('span', {}, 'Model name ' + (ai.model_set ? '(saved)' : '(not set)')), aiModel)),
     h('div', { class: 'grid2' },
       h('label', {}, h('span', {}, 'Where the data goes (shown to testers)'), aiLoc),
       h('label', {}, h('span', {}, 'Uses per day, whole team'), aiLimit)),
     h('label', {}, h('span', {}, 'TatvaOS AI key ' + (ai.key_set ? '(saved)' : '(not set)')), aiKey),
     h('div', {}, h('button', { class: 'btn primary', onclick: async () => {
       try {
-        await api('PUT', '/api/settings', { ai: { enabled: aiOn.checked, base_url: aiUrl.value, model: aiModel.value, data_location: aiLoc.value, daily_limit: Number(aiLimit.value), api_key: aiKey.value || undefined } });
+        await api('PUT', '/api/settings', { ai: { enabled: aiOn.checked, base_url: aiUrl.value || undefined, model: aiModel.value || undefined, data_location: aiLoc.value, daily_limit: Number(aiLimit.value), api_key: aiKey.value || undefined } });
         aiKey.value = ''; toast('Saved.'); render();
       } catch (e) { toast(e.message, true); }
     } }, 'Save TatvaOS AI settings')));

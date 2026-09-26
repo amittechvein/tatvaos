@@ -939,7 +939,7 @@ route('GET', /^\/api\/settings$/, (req, res, s) => {
   send(res, 200, {
     mail_from: getSetting(db, 'mail_from'),
     mail_api_key_set: !!getSetting(db, 'mail_api_key'),
-    ai: (() => { const c = aiConfig(db); return { enabled: c.enabled, base_url: c.baseUrl, model: c.model, data_location: c.location, daily_limit: c.dailyLimit, key_set: !!c.key, ready: c.ready, problem: c.problem, used_today: aiUsedToday() }; })(),
+    ai: (() => { const c = aiConfig(db); return { enabled: c.enabled, base_url_set: !!c.baseUrl, model_set: !!c.model, data_location: c.location, daily_limit: c.dailyLimit, key_set: !!c.key, ready: c.ready, problem: c.problem, used_today: aiUsedToday() }; })(),
     storage: { used: storageUsed(), limit: cfg.storageLimit },
     mail_log: db.prepare('SELECT l.at, l.subject, l.ok, l.detail, u.name user_name, u.email user_email FROM mail_log l LEFT JOIN users u ON u.id = l.user_id ORDER BY l.id DESC LIMIT 50').all(),
   });
@@ -962,12 +962,12 @@ route('PUT', /^\/api\/settings$/, async (req, res, s) => {
   if (b.ai) {
     const a = b.ai;
     if (a.enabled !== undefined) setSetting(db, 'ai_enabled', a.enabled ? '1' : '');
-    if (a.base_url !== undefined) {
+    if (a.base_url) {
       const u = str(a.base_url, 300, 'TatvaOS AI address');
       if (u && !URL.canParse(u)) throw bad('The TatvaOS AI address must be a web address.');
       setSetting(db, 'ai_base_url', u);
     }
-    if (a.model !== undefined) setSetting(db, 'ai_model', str(a.model, 100, 'Model name'));
+    if (a.model) setSetting(db, 'ai_model', str(a.model, 100, 'Model name'));
     if (a.data_location !== undefined) setSetting(db, 'ai_data_location', str(a.data_location, 100, 'Data location'));
     if (a.daily_limit !== undefined) {
       const n = Number(a.daily_limit);
