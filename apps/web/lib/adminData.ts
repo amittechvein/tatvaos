@@ -42,6 +42,20 @@ export interface PlanRow {
   includedProducts: string[];
   pricePerUserMonthly: number | null;
   priceMonthly: number | null;
+  /** null = every feature of the included modules (the meaning before 26 Sept). */
+  includedFeatures: string[] | null;
+  /** Limit feature code -> number. Missing = no limit. */
+  featureLimits: Record<string, number>;
+}
+
+/** core.features — one feature inside a module. productCode null = platform-wide. */
+export interface FeatureRow {
+  code: string;
+  productCode: string | null;
+  name: string;
+  description: string | null;
+  kind: 'switch' | 'limit';
+  unit: string | null;
 }
 
 type AuthedFetch = (path: string, init?: RequestInit) => Promise<Response>;
@@ -95,6 +109,15 @@ export interface UpsertPlanBody {
   includedProducts?: string[];
   pricePerUserMonthly?: number | null;
   priceMonthly?: number | null;
+  includedFeatures?: string[];
+  allFeatures?: boolean;
+  featureLimits?: Record<string, number>;
+}
+
+export async function fetchFeatures(authedFetch: AuthedFetch): Promise<FeatureRow[]> {
+  const res = await authedFetch('/admin/features');
+  if (!res.ok) throw new Error('Could not load the feature catalogue.');
+  return res.json();
 }
 
 // Surfaces the server's own { error } text when present (the DELETE-in-use case
@@ -209,5 +232,83 @@ export async function fetchOrgMailboxes(
 export async function fetchOrgAiUsage(authedFetch: AuthedFetch, id: string): Promise<OrgAiUsage> {
   const res = await authedFetch(`/admin/organisations/${id}/ai-usage`);
   if (!res.ok) throw new Error('Could not load AI usage.');
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
+//  One organisation's plan, feature by feature (26 Sept 2026). Warn first:
+//  nothing here stops anything.
+// ---------------------------------------------------------------------------
+export interface FeatureState {
+  code: string; productCode: string | null; name: string; description: string | null;
+  kind: 'switch' | 'limit'; unit: string | null;
+  included: boolean; limit: number | null;
+  /** plan | keeps everything | override: granted | override: held | override | not in plan | module not in plan | no plan | plan (no limit) */
+  source: string;
+  overrideId: string | null; overrideExpiresAt: string | null;
+}
+
+export interface PlanWarning { code: string; level: 'not_in_plan' | 'over' | 'near'; message: string }
+
+export interface FeatureOverrideRow {
+  id: string; featureCode: string; mode: 'grant' | 'revoke' | 'limit'; limitValue: number | null;
+  expiresAt: string | null; reason: string; createdAt: string; withdrawnAt: string | null;
+  grantedBy: string | null;
+}
+
+export interface OrgPlan {
+  entitlements: {
+    keepsEverything: boolean; planId: string | null; planName: string | null;
+    planProducts: string[]; planListsFeatures: boolean; features: FeatureState[];
+  };
+  warnings: PlanWarning[];
+  overrides: FeatureOverrideRow[];
+}
+
+async function orgError(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = await res.json();
+    return (body && typeof body.error === 'string' && body.error) || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export async function fetchOrgPlan(authedFetch: AuthedFetch, id: string): Promise<OrgPlan> {
+  const res = await authedFetch(`/admin/organisations/${id}/plan`);
+  if (!res.ok) throw new Error('Could not load this organisation’s plan.');
+  return res.json();
+}
+
+export async function createFeatureOverride(
+  authedFetch: AuthedFetch, id: string,
+  body: { featureCode: string; mode: 'grant' | 'revoke' | 'limit'; limitValue?: number | null; expiresAt?: string | null; reason: string },
+): Promise<void> {
+  const res = await authedFetch(`/admin/organisations/${id}/feature-overrides`, { method: 'POST', body: JSON.stringify(body) });
+  if (!res.ok) throw new Error(await orgError(res, 'Could not save the exception.'));
+}
+
+export async function withdrawFeatureOverride(authedFetch: AuthedFetch, id: string, overrideId: string): Promise<void> {
+  const res = await authedFetch(`/admin/organisations/${id}/feature-overrides/${overrideId}/withdraw`, { method: 'POST' });
+  if (!res.ok) throw new Error(await orgError(res, 'Could not withdraw the exception.'));
+}
+
+export async function setKeepsEverything(
+  authedFetch: AuthedFetch, id: string, keepsEverything: boolean, reason: string,
+): Promise<void> {
+  const res = await authedFetch(`/admin/organisations/${id}/keeps-everything`, {
+    method: 'PUT', body: JSON.stringify({ keepsEverything, reason }),
+  });
+  if (!res.ok) throw new Error(await orgError(res, 'Could not change this.'));
+}
+
+export interface PlanWarningsSummary {
+  organisations: { id: string; name: string; planName: string | null; warnings: PlanWarning[] }[];
+  keepEverything: number;
+}
+
+export async function fetchPlanWarnings(authedFetch: AuthedFetch): Promise<PlanWarningsSummary> {
+  const res = await authedFetch('/admin/plan-warnings');
+  if (!res.ok) throw new Error('Could not load plan warnings.');
   return res.json();
 }

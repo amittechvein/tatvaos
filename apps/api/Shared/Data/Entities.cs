@@ -78,6 +78,19 @@ public class Tenant
     /// </summary>
     public DateTimeOffset? MailAiTriageSince { get; set; }
 
+    /// <summary>
+    /// A customer from before plan features (Amit, 26 Sept 2026: "existing
+    /// customers keep everything"). Every feature, no plan warnings. Set once
+    /// by 20260926-plan-features.sql; the operator can clear it.
+    /// </summary>
+    public bool KeepsEverything { get; set; }
+
+    /// <summary>Connect's organisation switches (20260817-connect.sql,
+    /// 20260818-a-connect-recording.sql). Mapped 26 Sept for the plan
+    /// warnings; the Connect code reads them in SQL and is unchanged.</summary>
+    public bool AllowConnectGuests { get; set; } = true;
+    public bool AllowConnectRecording { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? SuspendedAt { get; set; }
     public DateTimeOffset? TrialEndsAt { get; set; }
@@ -587,6 +600,13 @@ public class Plan
     public long? PooledStorageBytes { get; set; }
     public int? MaxDomains { get; set; }
     public string[] IncludedProducts { get; set; } = ["mail"];
+
+    /// <summary>
+    /// Feature codes (core.features). NULL = every feature of the included
+    /// products plus the platform-wide ones - what every plan meant before
+    /// 20260926-plan-features.sql. See PlanEntitlements.
+    /// </summary>
+    public string[]? IncludedFeatures { get; set; }
     public decimal? PricePerUserMonthly { get; set; }
     public decimal? PriceMonthly { get; set; }
 }

@@ -43,6 +43,11 @@ public static class SettingKeys
     public const string AiPerPersonPerHour = "ai.limit.per_person_per_hour";
     public const string AiOrgMonthlyTokens = "ai.limit.org_monthly_tokens";
 
+    // Amit, 26 Sept 2026: at a plan limit, warn first. The operator always
+    // sees the warnings; this decides whether the organisation's own
+    // administrators see them too. OFF until the wording is approved.
+    public const string PlansWarnClients = "plans.warn_clients";
+
     public sealed record Def(string Key, string Section, string Label, bool Secret, string Help);
 
     /// <summary>What the settings screen renders, in order.</summary>
@@ -94,6 +99,11 @@ public static class SettingKeys
             "Started at 2,000,000. Administrators are emailed at 80% and at 100%; at 100% AI stops for "
             + "that organisation until the month turns (India time). 0 allows NONE — AI stopped. "
             + "Empty means NO CEILING."),
+
+        new(PlansWarnClients, "plans", "Show plan warnings to organisation administrators", false,
+            "true shows each organisation's administrators a notice when they use something their plan "
+            + "does not include, or pass a plan limit. Nothing is ever stopped. You always see the "
+            + "warnings on the organisation's page, whatever this says."),
     ];
 
     public static bool IsKnown(string key) => All.Any(d => d.Key == key);

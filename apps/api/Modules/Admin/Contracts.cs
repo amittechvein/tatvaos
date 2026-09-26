@@ -46,7 +46,15 @@ public sealed record UpsertPlanRequest(
     int? MaxDomains,
     string[]? IncludedProducts,
     decimal? PricePerUserMonthly,
-    decimal? PriceMonthly);
+    decimal? PriceMonthly,
+    // Plan features (26 Sept 2026). All three null = leave the features as
+    // they are. AllFeatures true = "everything in the included modules" (the
+    // column goes back to NULL); otherwise IncludedFeatures is the list.
+    // FeatureLimits replaces the plan's limits when sent; a missing code =
+    // no limit.
+    string[]? IncludedFeatures = null,
+    bool? AllFeatures = null,
+    Dictionary<string, long>? FeatureLimits = null);
 
 /// <summary>
 /// Edit an organisation's identity and owner contact. Every field optional —

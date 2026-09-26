@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { formatBytes } from '@tatvaos/core';
-import { fetchOrganisations, type OrgRow } from '@/lib/adminData';
+import { fetchOrganisations, fetchPlanWarnings, type OrgRow, type PlanWarningsSummary } from '@/lib/adminData';
 import { AdminShell } from '@/components/admin/AdminShell';
 import { StatusBadge } from '@/components/admin/StatusBadge';
 import { Badge, Button, Card, Empty, Meter, Stat, Table, Td } from '@/components/ui/Kit';
@@ -28,12 +28,16 @@ export default function PlatformDashboard() {
   const { user, authedFetch } = useAuth();
   const [orgs, setOrgs] = useState<OrgRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [planWarnings, setPlanWarnings] = useState<PlanWarningsSummary | null>(null);
 
   useEffect(() => {
     fetchOrganisations(authedFetch)
       .then(setOrgs)
       .catch(() => setOrgs([]))
       .finally(() => setLoading(false));
+    // Its own request and its own failure: a warning list that cannot load
+    // must not blank the dashboard.
+    fetchPlanWarnings(authedFetch).then(setPlanWarnings).catch(() => setPlanWarnings(null));
   }, [authedFetch]);
 
   const totals = useMemo(() => {
@@ -134,6 +138,31 @@ export default function PlatformDashboard() {
           icon={<Glyph d="M12 9v4m0 4h.01M10.3 3.9L2.6 17a2 2 0 001.7 3h15.4a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z" />}
         />
       </div>
+
+      {/* Plan warnings (26 Sept 2026): customers using more than their plan
+          includes, or near a limit. Warn first — nothing has been stopped. */}
+      {planWarnings && planWarnings.organisations.length > 0 && (
+        <Card className="mb-5" title="Plan warnings"
+              subtitle={`Using more than their plan includes. Nothing has been stopped.${
+                planWarnings.keepEverything ? ` ${planWarnings.keepEverything} existing ${planWarnings.keepEverything === 1 ? 'customer keeps' : 'customers keep'} everything and ${planWarnings.keepEverything === 1 ? 'is' : 'are'} not checked.` : ''}`}>
+          <ul className="divide-y divide-line">
+            {planWarnings.organisations.map((o) => (
+              <li key={o.id} className="flex flex-wrap items-start justify-between gap-2 py-2.5 text-[13px]">
+                <div className="min-w-0">
+                  <Link href={`/admin/organisations/${o.id}`} className="font-semibold text-ink hover:text-brand-700 hover:underline">
+                    {o.name}
+                  </Link>
+                  <span className="text-ink-muted"> · {o.planName ?? 'no plan'}</span>
+                  <div className="text-ink-muted">{o.warnings.map((w) => w.message).join(' ')}</div>
+                </div>
+                <Badge tone={o.warnings.some((w) => w.level === 'over') ? 'danger' : 'warn'}>
+                  {o.warnings.length} warning{o.warnings.length === 1 ? '' : 's'}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-3">
         {/* Customers by segment */}
