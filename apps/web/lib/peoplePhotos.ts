@@ -167,3 +167,38 @@ export function usePhotoUrl(who: { email?: string | null; userId?: string | null
 
   return state.key === key ? state.url : null;
 }
+
+/**
+ * usePhotoUrl for a whole list at once: user id -> object URL, for those who
+ * have a photo. For code that builds plain data in a loop and cannot call a
+ * hook per person — the picture-in-picture window (lib/pip.ts), which lives in
+ * a separate document and was drawing initials only (Amit, 26 Sept 2026).
+ * The lookups still batch into one request, as for usePhotoUrl.
+ */
+export function usePhotoUrls(userIds: readonly string[]): Record<string, string> {
+  const { user, authedFetch } = useAuth();
+  // A string, so a new array with the same people does not re-run the lookup.
+  const key = [...new Set(userIds.filter(Boolean))].sort().join(',');
+  const [urls, setUrls] = useState<Record<string, string>>({});
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => onAvatarChange(() => setTick((t) => t + 1)), []);
+
+  useEffect(() => {
+    if (!user || !key) { setUrls({}); return; }
+    let alive = true;
+    const ids = key.split(',');
+    void Promise.all(ids.map((id) => photoForUser(authedFetch, id)
+      .then((ref) => (ref ? avatarObjectUrl(authedFetch, ref.userId, ref.v) : null))
+      .then((url) => [id, url] as const)))
+      .then((pairs) => {
+        if (!alive) return;
+        const next: Record<string, string> = {};
+        for (const [id, url] of pairs) if (url) next[id] = url;
+        setUrls(next);
+      });
+    return () => { alive = false; };
+  }, [user, authedFetch, key, tick]);
+
+  return urls;
+}

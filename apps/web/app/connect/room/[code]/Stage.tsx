@@ -23,7 +23,8 @@ import {
   videoPipSupported,
   type PipHandles, type PipTile,
 } from '@/lib/pip';
-import { CSS, Centre, PersonMark, Spinner, initialOf } from './RoomChrome';
+import { CSS, Centre, PersonMark, Spinner, initialOf, userIdOfIdentity } from './RoomChrome';
+import { usePhotoUrls } from '@/lib/peoplePhotos';
 
 const LOBBY_POLL_MS = 3000;
 
@@ -1795,6 +1796,10 @@ export default function Stage({ seat, meeting, prefs }: {
   //  hook that runs on some renders and not others.
   // ---------------------------------------------------------------------
   const pipTiles: PipTile[] = [];
+  // Profile photos for the camera-off tiles — the stage's PersonMark does this
+  // one person at a time; the floating window needs them as plain data.
+  const pipPhotos = usePhotoUrls(
+    participants.map((p) => userIdOfIdentity(p.identity) ?? '').filter(Boolean));
 
   // Screens first, and each sharer gets their own tile — the same rule the
   // stage follows, for the same reason (feature 71).
@@ -1838,6 +1843,7 @@ export default function Stage({ seat, meeting, prefs }: {
       id: p.identity,
       name: who,
       initial: initialOf(who),
+      photo: pipPhotos[userIdOfIdentity(p.identity) ?? ''],
       speaking: p.isSpeaking,
       // No publication at all is not "unmuted" — somebody who never turned a
       // microphone on cannot be heard, and showing them as live is a lie the
@@ -1869,6 +1875,9 @@ export default function Stage({ seat, meeting, prefs }: {
     // floating window is open, and a preference that only takes effect after
     // somebody's camera happens to change is a preference that looks broken.
     t.mirror ? 'r' : '',
+    // The photo arrives a moment after the person does; without it here the
+    // window would keep the initial until something else changed.
+    t.photo ?? '',
   ].join('|')).join(';');
 
   // The freshest tiles, readable from an effect that does not depend on them.
