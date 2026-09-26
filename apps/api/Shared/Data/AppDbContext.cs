@@ -45,6 +45,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<ProductAccess> ProductAccess => Set<ProductAccess>();
     public DbSet<Plan> Plans => Set<Plan>();
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
+    public DbSet<Feature> Features => Set<Feature>();
+    public DbSet<PlanFeatureLimit> PlanFeatureLimits => Set<PlanFeatureLimit>();
+    public DbSet<FeatureOverride> FeatureOverrides => Set<FeatureOverride>();
     public DbSet<StoragePool> StoragePools => Set<StoragePool>();
     public DbSet<StorageAllocation> StorageAllocations => Set<StorageAllocation>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
@@ -844,6 +847,28 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             e.HasOne<User>().WithMany()
                 .HasForeignKey(u => u.UserId).OnDelete(DeleteBehavior.SetNull);
         });
+        // Plan features (20260926-plan-features.sql). The catalogue and the
+        // plan limits are platform reference data like plans (no tenant); the
+        // overrides are per organisation, RLS-forced, and filtered here too.
+        b.Entity<Feature>(e =>
+        {
+            e.ToTable("features", "core");
+            e.HasKey(f => f.Code);
+        });
+        b.Entity<PlanFeatureLimit>(e =>
+        {
+            e.ToTable("plan_feature_limits", "core");
+            e.HasKey(l => new { l.PlanId, l.FeatureCode });
+            // Declared so EF inserts a new plan before its limits; without it
+            // the order is not guaranteed and the FK refuses the limit row.
+            e.HasOne<Plan>().WithMany().HasForeignKey(l => l.PlanId).OnDelete(DeleteBehavior.Cascade);
+        });
+        b.Entity<FeatureOverride>(e =>
+        {
+            e.ToTable("feature_overrides", "core");
+            e.HasQueryFilter(o => o.TenantId == tenant.TenantId);
+        });
+
         // AI credit warnings (26 Sept 2026): same shape and filter as the token
         // warnings below, their own table so the two can never collide.
         // AI credit top-ups (26 Sept 2026): tenant-filtered like every AI table.

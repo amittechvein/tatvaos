@@ -45,6 +45,11 @@ public static class SettingKeys
     // Which organisations may use TatvaOS AI in Mail at all (AiProductSwitch).
     public const string AiMailOrganisations = "ai.mail.organisations";
 
+    // Amit, 26 Sept 2026: at a plan limit, warn first. The operator always
+    // sees the warnings; this decides whether the organisation's own
+    // administrators see them too. OFF until the wording is approved.
+    public const string PlansWarnClients = "plans.warn_clients";
+
     public sealed record Def(string Key, string Section, string Label, bool Secret, string Help);
 
     /// <summary>What the settings screen renders, in order.</summary>
@@ -101,6 +106,11 @@ public static class SettingKeys
             + "suggested replies, sorting); every other organisation is told it is not available yet. "
             + "EMPTY means every organisation may. Set to Techvein alone on 25 Sept 2026 until the "
             + "privacy policy describes Mail AI (Mr. Singh) — empty it once that text is live."),
+
+        new(PlansWarnClients, "plans", "Show plan warnings to organisation administrators", false,
+            "true shows each organisation's administrators a notice when they use something their plan "
+            + "does not include, or pass a plan limit. Nothing is ever stopped. You always see the "
+            + "warnings on the organisation's page, whatever this says."),
     ];
 
     public static bool IsKnown(string key) => All.Any(d => d.Key == key);

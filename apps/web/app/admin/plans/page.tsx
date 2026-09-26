@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { formatBytes } from '@tatvaos/core';
 import {
-  fetchPlans, fetchProducts, createPlan, updatePlan, deletePlan,
-  type PlanRow, type ProductRow, type UpsertPlanBody,
+  fetchPlans, fetchProducts, fetchFeatures, createPlan, updatePlan, deletePlan,
+  type FeatureRow, type PlanRow, type ProductRow, type UpsertPlanBody,
 } from '@/lib/adminData';
 import { useAuth } from '@/lib/auth';
 import { AdminShell } from '@/components/admin/AdminShell';
@@ -98,6 +98,11 @@ interface PlanForm {
   /** AI credits a month — empty = no limit, 0 = none (the same rule as every AI limit). */
   aiCreditModel: StorageModel;
   aiCredits: string;
+  /** true = everything in the ticked modules (the plan's feature list is NULL). */
+  allFeatures: boolean;
+  features: Record<string, boolean>;
+  /** Limit code -> typed number; '' = no limit. */
+  limits: Record<string, string>;
 }
 
 function blankForm(catalogue: ProductRow[]): PlanForm {
@@ -119,6 +124,9 @@ function blankForm(catalogue: ProductRow[]): PlanForm {
       // rest can be ticked once the list is back — better than blocking the
       // operator behind a failed request.
       : { mail: true },
+    allFeatures: true,
+    features: {},
+    limits: {},
   };
 }
 
@@ -148,6 +156,9 @@ function formFromPlan(p: PlanRow, catalogue: ProductRow[]): PlanForm {
       [...new Set([...catalogue.map((x) => x.code), ...p.includedProducts])]
         .map((k) => [k, p.includedProducts.includes(k)] as const),
     ),
+    allFeatures: p.includedFeatures === null,
+    features: Object.fromEntries((p.includedFeatures ?? []).map((c) => [c, true] as const)),
+    limits: Object.fromEntries(Object.entries(p.featureLimits ?? {}).map(([k, v]) => [k, String(v)] as const)),
   };
 }
 
@@ -167,6 +178,11 @@ function validate(f: PlanForm): string[] {
   if (f.pricingModel !== 'custom' && !(Number(f.price) > 0)) {
     errs.push('Enter a price, or switch pricing to Custom.');
   }
+  for (const [code, v] of Object.entries(f.limits)) {
+    if (v.trim() !== '' && !(Number(v) >= 0 && Number.isInteger(Number(v)))) {
+      errs.push(`The limit for ${code} must be a whole number, 0 or more (empty = no limit).`);
+    }
+  }
   return errs;
 }
 
@@ -175,8 +191,25 @@ function validate(f: PlanForm): string[] {
  * left over from a previous edit — otherwise switching a plan from pooled to
  * per-user would quietly keep billing the old pooled figure.
  */
-function toBody(f: PlanForm): UpsertPlanBody {
+function toBody(f: PlanForm, features: FeatureRow[]): UpsertPlanBody {
+  // A ticked feature of an unticked module is not sent: it could not be
+  // used, and keeping it would make the list say more than the plan does.
+  const moduleOn = (x: FeatureRow) => x.productCode === null || Boolean(f.products[x.productCode]);
+  const limits = Object.fromEntries(
+    Object.entries(f.limits).filter(([, v]) => v.trim() !== '').map(([k, v]) => [k, Number(v)] as const),
+  );
   return {
+    ...(features.length === 0
+      // Catalogue failed to load: leave the plan's features exactly as they are.
+      ? {}
+      : f.allFeatures
+        ? { allFeatures: true, featureLimits: limits }
+        : {
+          includedFeatures: features
+            .filter((x) => x.kind === 'switch' && moduleOn(x) && f.features[x.code])
+            .map((x) => x.code),
+          featureLimits: limits,
+        }),
     name: f.name.trim(),
     maxUsers: f.maxUsers.trim() === '' ? null : Number(f.maxUsers),
     storageModel: f.storageModel,
@@ -200,6 +233,7 @@ export default function AdminPlansPage() {
   const { authedFetch } = useAuth();
   const [plans, setPlans] = useState<PlanRow[]>([]);
   const [catalogue, setCatalogue] = useState<ProductRow[]>([]);
+  const [features, setFeatures] = useState<FeatureRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState<{ kind: 'success' | 'danger'; text: string } | null>(null);
 
@@ -219,6 +253,8 @@ export default function AdminPlansPage() {
       .then(([p, c]) => { setPlans(p); setCatalogue(c); })
       .catch(() => { setPlans([]); setCatalogue([]); })
       .finally(() => setLoading(false));
+    // Separately: a feature list that fails to load must not blank the plans.
+    fetchFeatures(authedFetch).then(setFeatures).catch(() => setFeatures([]));
   }, [authedFetch]);
 
   useEffect(() => { reload(); }, [reload]);
@@ -238,7 +274,7 @@ export default function AdminPlansPage() {
     setSaving(true);
     setFormErrors([]);
     try {
-      const body = toBody(form);
+      const body = toBody(form, features);
       if (form.id) {
         await updatePlan(authedFetch, form.id, body);
         setNotice({ kind: 'success', text: `Saved “${body.name}”.` });
@@ -313,6 +349,7 @@ export default function AdminPlansPage() {
             <PlanCard
               key={p.id}
               plan={p}
+              features={features}
               onEdit={() => openEdit(p)}
               onDelete={() => { setDeleteError(null); setToDelete(p); }}
             />
@@ -322,7 +359,7 @@ export default function AdminPlansPage() {
 
       {form && (
         <PlanFormModal
-          form={form} setForm={setForm} catalogue={catalogue}
+          form={form} setForm={setForm} catalogue={catalogue} features={features}
           errors={formErrors} saving={saving}
           onClose={() => setForm(null)} onSave={saveForm}
         />
@@ -344,8 +381,9 @@ export default function AdminPlansPage() {
  * a row of plans with different numbers of features still has its Edit buttons
  * on one line — with Bootstrap's grid they sat wherever the text ended.
  */
-function PlanCard({ plan: p, onEdit, onDelete }: {
+function PlanCard({ plan: p, features, onEdit, onDelete }: {
   plan: PlanRow;
+  features: FeatureRow[];
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -388,6 +426,16 @@ function PlanCard({ plan: p, onEdit, onDelete }: {
             : p.aiCreditsPooled != null ? `${p.aiCreditsPooled.toLocaleString('en-IN')} AI credits pooled / month` : 'AI credits: no limit'}
         </Feature>
         <Feature><span className="capitalize">{p.includedProducts.join(', ') || 'mail'}</span></Feature>
+        <Feature>
+          {p.includedFeatures === null
+            ? 'Every feature in these modules'
+            : `${p.includedFeatures.length} feature${p.includedFeatures.length === 1 ? '' : 's'} chosen`}
+        </Feature>
+        {Object.entries(p.featureLimits ?? {}).map(([code, v]) => (
+          <Feature key={code}>
+            {features.find((x) => x.code === code)?.name ?? code}: {v.toLocaleString('en-IN')}
+          </Feature>
+        ))}
       </ul>
 
       {/* mt-auto is what pins this row to the bottom of the tallest card. */}
@@ -477,11 +525,12 @@ function FieldLabel({ children, htmlFor }: { children: React.ReactNode; htmlFor?
 //  Add / Edit
 // ---------------------------------------------------------------------------
 function PlanFormModal({
-  form, setForm, catalogue, errors, saving, onClose, onSave,
+  form, setForm, catalogue, features, errors, saving, onClose, onSave,
 }: {
   form: PlanForm;
   setForm: (f: PlanForm) => void;
   catalogue: ProductRow[];
+  features: FeatureRow[];
   errors: string[];
   saving: boolean;
   onClose: () => void;
@@ -677,8 +726,86 @@ function PlanFormModal({
             </p>
           )}
         </div>
+
+        {features.length > 0 && (
+          <PlanFeatures form={form} setForm={setForm} catalogue={catalogue} features={features} />
+        )}
       </div>
     </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+/**
+ * Features inside the ticked modules, and the plan's limits (26 Sept 2026).
+ * "Everything" keeps the plan's list empty on the server, which is what every
+ * plan meant before features existed — so leaving it ticked changes nothing.
+ */
+function PlanFeatures({ form, setForm, catalogue, features }: {
+  form: PlanForm;
+  setForm: (f: PlanForm) => void;
+  catalogue: ProductRow[];
+  features: FeatureRow[];
+}) {
+  const groups = [
+    ...catalogue.filter((p) => features.some((f) => f.productCode === p.code))
+      .map((p) => ({ code: p.code as string | null, name: productLabel(p) })),
+    { code: null as string | null, name: 'Across all modules' },
+  ];
+  const box = 'h-4 w-4 cursor-pointer rounded border border-line accent-brand-500 disabled:cursor-not-allowed';
+
+  return (
+    <div className="space-y-3 border-t border-line pt-4 sm:col-span-2">
+      <FieldLabel>Features</FieldLabel>
+      <label className="flex cursor-pointer items-center gap-2 text-sm text-ink">
+        <input type="checkbox" className={box} checked={form.allFeatures}
+               onChange={(e) => setForm({
+                 ...form,
+                 allFeatures: e.target.checked,
+                 // A list started from "everything" starts with everything ticked.
+                 features: e.target.checked ? form.features
+                   : Object.fromEntries(features.filter((f) => f.kind === 'switch').map((f) => [f.code, true] as const)),
+               })} />
+        Everything in the ticked modules
+      </label>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {groups.map((g) => {
+          const moduleOn = g.code === null || Boolean(form.products[g.code]);
+          const items = features.filter((f) => f.productCode === g.code);
+          return (
+            <div key={g.code ?? 'platform'} className={`rounded-lg border border-line p-3 ${moduleOn ? '' : 'opacity-50'}`}>
+              <div className="mb-2 text-[13px] font-semibold text-ink">
+                {g.name}{!moduleOn && <span className="ml-1 font-normal text-ink-muted">(module not ticked)</span>}
+              </div>
+              <div className="space-y-2">
+                {items.map((f) => (f.kind === 'switch' ? (
+                  <label key={f.code} className="flex items-start gap-2 text-[13px] text-ink" title={f.description ?? ''}>
+                    <input type="checkbox" className={`${box} mt-0.5`}
+                           disabled={!moduleOn || form.allFeatures}
+                           checked={moduleOn && (form.allFeatures || Boolean(form.features[f.code]))}
+                           onChange={(e) => setForm({ ...form, features: { ...form.features, [f.code]: e.target.checked } })} />
+                    <span>{f.name}</span>
+                  </label>
+                ) : (
+                  <div key={f.code} className="flex items-center gap-2 text-[13px]">
+                    <label htmlFor={`limit-${f.code}`} className="flex-1 text-ink">{f.name}</label>
+                    <Input id={`limit-${f.code}`} type="number" min={0} className="w-32"
+                           placeholder="No limit" disabled={!moduleOn}
+                           value={form.limits[f.code] ?? ''}
+                           onChange={(e) => setForm({ ...form, limits: { ...form.limits, [f.code]: e.target.value } })} />
+                  </div>
+                )))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <p className="text-xs text-ink-muted">
+        Limits warn; they never stop anyone. Customers from before 26 Sept keep everything
+        whatever their plan says, until you change that on their page.
+      </p>
+    </div>
   );
 }
 

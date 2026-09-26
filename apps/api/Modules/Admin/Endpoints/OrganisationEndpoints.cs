@@ -73,15 +73,19 @@ public static class OrganisationEndpoints
     {
         var plans = await db.Plans.AsNoTracking()
             .OrderBy(p => p.PricePerUserMonthly ?? p.PriceMonthly ?? 0)
-            .Select(p => new
-            {
-                p.Id, p.Name, p.MaxUsers, p.StorageModel,
-                p.PerUserQuotaBytes, p.PooledStorageBytes, p.MaxDomains,
-                p.IncludedProducts, p.PricePerUserMonthly, p.PriceMonthly,
-                p.AiCreditModel, p.AiCreditsPerUser, p.AiCreditsPooled,
-            })
             .ToListAsync(ct);
-        return Results.Ok(plans);
+        var limits = (await db.PlanFeatureLimits.AsNoTracking().ToListAsync(ct))
+            .ToLookup(l => l.PlanId);
+        return Results.Ok(plans.Select(p => new
+        {
+            p.Id, p.Name, p.MaxUsers, p.StorageModel,
+            p.PerUserQuotaBytes, p.PooledStorageBytes, p.MaxDomains,
+            p.IncludedProducts, p.PricePerUserMonthly, p.PriceMonthly,
+            p.AiCreditModel, p.AiCreditsPerUser, p.AiCreditsPooled,
+            // null = every feature of the included modules (see PlanEntitlements).
+            p.IncludedFeatures,
+            featureLimits = limits[p.Id].ToDictionary(l => l.FeatureCode, l => l.LimitValue),
+        }));
     }
 
     private static string? ValidatePlan(UpsertPlanRequest req)
@@ -97,6 +101,38 @@ public static class OrganisationEndpoints
             return "AI credit model must be 'per_user' or 'pooled'.";
         if (req.AiCreditsPerUser is < 0 || req.AiCreditsPooled is < 0)
             return "AI credits cannot be negative. Leave it empty for no limit, or 0 for none.";
+        return null;
+    }
+
+    /// <summary>
+    /// The plan's features and limits, from the request. Codes are checked
+    /// against core.features here for a clear message; the foreign keys would
+    /// refuse them anyway, as a 500.
+    /// </summary>
+    private static async Task<string?> ApplyFeaturesAsync(
+        AppDbContext db, Plan plan, UpsertPlanRequest req, CancellationToken ct)
+    {
+        var catalogue = await db.Features.AsNoTracking().ToDictionaryAsync(f => f.Code, f => f.Kind, ct);
+
+        if (req.AllFeatures == true) plan.IncludedFeatures = null;
+        else if (req.IncludedFeatures is not null)
+        {
+            var unknown = req.IncludedFeatures.Where(c => catalogue.GetValueOrDefault(c) != "switch").ToList();
+            if (unknown.Count > 0) return $"Not a feature that can be included: {string.Join(", ", unknown)}.";
+            plan.IncludedFeatures = req.IncludedFeatures.Distinct().OrderBy(c => c).ToArray();
+        }
+
+        if (req.FeatureLimits is not null)
+        {
+            var bad = req.FeatureLimits.Where(kv => catalogue.GetValueOrDefault(kv.Key) != "limit" || kv.Value < 0)
+                .Select(kv => kv.Key).ToList();
+            if (bad.Count > 0) return $"Not a limit, or a negative number: {string.Join(", ", bad)}.";
+
+            var existing = await db.PlanFeatureLimits.Where(l => l.PlanId == plan.Id).ToListAsync(ct);
+            db.PlanFeatureLimits.RemoveRange(existing);
+            foreach (var (code, value) in req.FeatureLimits)
+                db.PlanFeatureLimits.Add(new PlanFeatureLimit { PlanId = plan.Id, FeatureCode = code, LimitValue = value });
+        }
         return null;
     }
 
@@ -119,9 +155,11 @@ public static class OrganisationEndpoints
         };
         ApplyAiCredits(plan, req);
         db.Plans.Add(plan);
+        if (await ApplyFeaturesAsync(db, plan, req, ct) is string ferr)
+            return Results.BadRequest(new { error = ferr });
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("plan.created", "plan", plan.Id.ToString(),
-            after: new { plan.Name, plan.StorageModel }, ct: ct);
+            after: new { plan.Name, plan.StorageModel, plan.IncludedFeatures, req.FeatureLimits }, ct: ct);
         return Results.Created($"/api/admin/plans/{plan.Id}", new { plan.Id, plan.Name });
     }
 
@@ -132,8 +170,13 @@ public static class OrganisationEndpoints
         if (plan is null) return Results.NotFound();
         if (ValidatePlan(req) is string err) return Results.BadRequest(new { error = err });
 
-        var before = new { plan.Name, plan.MaxUsers, plan.PricePerUserMonthly, plan.PriceMonthly,
-                           plan.AiCreditModel, plan.AiCreditsPerUser, plan.AiCreditsPooled };
+        var before = new
+        {
+            plan.Name, plan.MaxUsers, plan.PricePerUserMonthly, plan.PriceMonthly, plan.IncludedFeatures,
+            plan.AiCreditModel, plan.AiCreditsPerUser, plan.AiCreditsPooled,
+            featureLimits = await db.PlanFeatureLimits.AsNoTracking().Where(l => l.PlanId == id)
+                .ToDictionaryAsync(l => l.FeatureCode, l => l.LimitValue, ct),
+        };
 
         // Editing a plan changes it for GROWTH — the seat/domain/quota limits it
         // imposes on new users and domains. It does NOT retroactively resize the
@@ -149,10 +192,12 @@ public static class OrganisationEndpoints
         plan.PricePerUserMonthly = req.PricePerUserMonthly;
         plan.PriceMonthly = req.PriceMonthly;
         ApplyAiCredits(plan, req);
+        if (await ApplyFeaturesAsync(db, plan, req, ct) is string ferr)
+            return Results.BadRequest(new { error = ferr });
 
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("plan.updated", "plan", id.ToString(),
-            before: before, after: new { plan.Name, plan.MaxUsers,
+            before: before, after: new { plan.Name, plan.MaxUsers, plan.IncludedFeatures, req.FeatureLimits,
                                          plan.AiCreditModel, plan.AiCreditsPerUser, plan.AiCreditsPooled }, ct: ct);
         return Results.Ok(new { plan.Id, plan.Name });
     }
