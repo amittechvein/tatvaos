@@ -48,6 +48,9 @@ interface AiState {
   disclosure: string;
   /** Mail's own switch (allow_mail_ai). Works only while `enabled` is on. */
   mailEnabled: boolean;
+  /** False while Mail AI is held to a list of organisations and this is not on it. */
+  mailOffered: boolean;
+  mailNotOffered: string | null;
   mailDisclosure: string;
   /** Sorting incoming mail (step 3): its own consent, on top of Mail. */
   mailTriageEnabled: boolean;
@@ -281,7 +284,7 @@ function MailAiCard({
       title="TatvaOS AI in Mail"
       subtitle="Help me write, suggested replies, and sorting"
       actions={
-        state.mailEnabled ? (
+        !state.mailOffered ? undefined : state.mailEnabled ? (
           <Button variant="danger" disabled={saving} onClick={onOff}>
             {saving ? 'Turning off…' : 'Turn off for Mail'}
           </Button>
@@ -292,7 +295,13 @@ function MailAiCard({
         )
       }
     >
-      {live && (
+      {!state.mailOffered && (
+        <p className="mb-0">
+          <Badge tone="neutral">Not yet available</Badge>{' '}
+          {state.mailNotOffered}
+        </p>
+      )}
+      {state.mailOffered && live && (
         <>
           <p className="mb-2">
             <Badge tone="ok">On</Badge>{' '}
@@ -331,14 +340,14 @@ function MailAiCard({
           </div>
         </>
       )}
-      {state.mailEnabled && !state.enabled && (
+      {state.mailOffered && state.mailEnabled && !state.enabled && (
         <p className="mb-0">
           <Badge tone="neutral">Waiting</Badge>{' '}
           Mail is switched on, but TatvaOS AI is off for the organisation above, so
           nothing from Mail is sent.
         </p>
       )}
-      {!state.mailEnabled && (
+      {state.mailOffered && !state.mailEnabled && (
         <p className="mb-0">
           <Badge tone="neutral">Off</Badge>{' '}
           Nothing from Mail is sent to TatvaOS AI, and the composer shows no AI button.

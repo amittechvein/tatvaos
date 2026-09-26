@@ -81,6 +81,15 @@ public sealed class MailTriageWorker(
                     .Select(t => new { t.Id, Since = t.MailAiTriageSince!.Value })
                     .ToListAsync(ct))
                 .Select(t => (t.Id, t.Since)).ToList();
+
+            // Only organisations on the Mail AI list, if there is one — the
+            // gateway would refuse the rest anyway; this spares them a claim
+            // and an un-claim every minute.
+            var log0 = probe.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("MailTriage");
+            var kept = new List<(Guid Id, DateTimeOffset Since)>();
+            foreach (var o in orgs)
+                if (await AiProductSwitch.MailOfferedToAsync(db0, o.Id, log0, ct)) kept.Add(o);
+            orgs = kept;
         }
 
         foreach (var org in orgs)
