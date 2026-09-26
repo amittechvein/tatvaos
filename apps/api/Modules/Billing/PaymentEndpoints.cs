@@ -264,8 +264,12 @@ public static class PaymentEndpoints
         var amount = amountPaise >= 0 ? "₹" + (amountPaise / 100m).ToString("N2", System.Globalization.CultureInfo.GetCultureInfo("en-IN")) : "unknown";
         var sent = 0;
         foreach (var to in operators)
+            // From alerts@tatvaos.com (Mr. Singh, 26 Sept): Amit's mail filter
+            // keeps that sender out of Spam, and an alert about money is the
+            // one that must not land there.
             if (await mailer.SendHtmlAsync(to, PaymentProblemEmail.Subject(invoiceNumber),
-                    PaymentProblemEmail.Html(outcome, invoiceNumber, paymentId, amount, $"{ReturnBase(config)}/admin"), ct: ct))
+                    PaymentProblemEmail.Html(outcome, invoiceNumber, paymentId, amount, $"{ReturnBase(config)}/admin"),
+                    from: "alerts@tatvaos.com", ct: ct))
                 sent++;
         if (sent > 0)
             await db.Database.ExecuteSqlAsync($"UPDATE core.razorpay_events SET alerted_at = now() WHERE event_id = {eventId}", ct);

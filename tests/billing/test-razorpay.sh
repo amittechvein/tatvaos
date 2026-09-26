@@ -283,6 +283,7 @@ ALERTS=$(grep -l "needs attention" "$SCRATCH"/mail/*.eml 2>/dev/null)
 [ -n "$ALERTS" ] && pass "…and an alert email went out" || fail "no payment-problem email reached the mail catcher"
 # One email per active operator; the school's principal is one for this run.
 has "…to the platform operator(s), this run's among them" "$(for f in $ALERTS; do head -1 "$f"; done)" "principal@abcschool.local"
+has "…sent from alerts@tatvaos.com (the address Amit's never-Spam filter covers)" "$(grep -h -i '^From:' $ALERTS | head -1)" "alerts@tatvaos.com"
 PID1=$(jq_ "$PROBS" "[x['eventId'] for x in d['problems'] if x['invoiceId']=='$INV1'][0]")
 r=$(callm POST "/api/admin/billing/payment-problems/$PID1/acknowledge" "$OPERATOR")
 same "acknowledged" "$(status "$r")" "200"
