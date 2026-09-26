@@ -37,20 +37,49 @@
 #  number and does not touch the state file, so a rehearsal never masks a
 #  real crossing later.
 #
+#  Read it without sending:  DISK_ALERT_DRYRUN=1 ./disk-alert.sh
+#  prints the message this run WOULD send, with today's real figures, to the
+#  terminal. Nothing is mailed, the state file is untouched, and DISK_ALERT_TO
+#  is not needed. For checking a change to the wording on the real box.
+#
+#  THE ADVICE, AND THE SETTING BESIDE EACH LINE (Mr. Singh, 26 Sept 2026).
+#  The alert that fired at 70% on 25 Sept sent Amit towards buying a volume
+#  before the cheapest step, when scheduled backups were 57 GB — half the
+#  used disk — because four sets a day were kept for three days. So the
+#  first step is now "keep fewer backups on this server" (the same sets are
+#  kept off it), and each backup line shows the setting that decides its
+#  size, read from the config file, so the reader can see WHY a line is big.
+#  Two settings, not one, and the difference matters: with the tiered
+#  schedule on, scheduled sets follow BACKUP_LOCAL_KEEP (a count) while the
+#  pre-deploy copies still follow BACKUP_KEEP_DAYS (days) — lowering the
+#  latter to shrink the former would shorten the wrong thing.
+#
 #  Cost: one df and one stat per run; an email a month when nothing is wrong.
 # ============================================================================
 set -u
 
-TO="${DISK_ALERT_TO:?DISK_ALERT_TO must be set, to an address that is NOT on this server}"
+TO="${DISK_ALERT_TO:-}"
+DRYRUN="${DISK_ALERT_DRYRUN:-0}"
+if [ "$DRYRUN" != "1" ] && [ -z "$TO" ]; then
+    echo "DISK_ALERT_TO must be set, to an address that is NOT on this server" >&2; exit 2
+fi
 FROM="${DISK_ALERT_FROM:-alerts@tatvaos.com}"
 WARN=70
 CRIT=85
 STATE="${DISK_ALERT_STATE:-/srv/tatvaos-production/.disk-alert-state}"
+# backup.sh's and deploy.sh's shared settings. READ ONE KEY AT A TIME, never
+# sourced: the same file holds the off-server encryption passphrase, and a
+# script that sources it would have that secret in its environment.
+BACKUP_CONF="${DISK_ALERT_BACKUP_CONF:-/srv/backups/tatvaos/.backup-env}"
 POSTFIX="${DISK_ALERT_POSTFIX:-tatvaos-postfix-1}"
 HOST=$(hostname)
 NOW() { date -u +%FT%TZ; }
 
 send() {  # $1 subject, $2 body — returns non-zero if Postfix did not take it
+    if [ "$DRYRUN" = "1" ]; then
+        printf 'DRY RUN — nothing sent, state file untouched\nSubject: %s\n\n%s\n' "$1" "$2"
+        return 0
+    fi
     printf 'From: TatvaOS server <%s>\nTo: %s\nSubject: %s\nContent-Type: text/plain; charset=utf-8\n\n%s\n' \
         "$FROM" "$TO" "$1" "$2" \
         | docker exec -i "$POSTFIX" sendmail -t -f "$FROM"
@@ -80,18 +109,51 @@ read -r total used avail pct < <(df -B1 --output=size,used,avail,pcent / | tail 
 [[ "$pct" =~ ^[0-9]+$ ]] && [[ "$total" =~ ^[0-9]+$ ]] || { false; }   # trips the ERR trap
 gb() { awk -v b="$1" 'BEGIN{printf "%.1f", b/1e9}'; }
 
+# One setting from the backup config, or empty. sed, not `source` — see
+# BACKUP_CONF above. A missing file or key gives empty, and the callers fall
+# back to the scripts' own defaults, so a wording problem can never trip the
+# ERR trap and turn a disk alert into a "monitor broken" mail.
+conf() {
+    sed -nE "s/^[[:space:]]*(export[[:space:]]+)?$1=[\"']?([^\"'#[:space:]]*).*/\2/p" "$BACKUP_CONF" 2>/dev/null | tail -1
+}
+
+# The rules as the scripts will apply them, in words.
+retention() {
+    KEEP_DAYS=$(conf BACKUP_KEEP_DAYS)
+    # Not set means the scripts' own default — said as a default, not as if
+    # someone had chosen 14 (the dry run with no config file showed it that way).
+    if [ -n "$KEEP_DAYS" ]; then KEEP_SRC="BACKUP_KEEP_DAYS=${KEEP_DAYS}"
+    else KEEP_DAYS=14; KEEP_SRC="BACKUP_KEEP_DAYS not set, default 14"; fi
+    TIERED=$(conf BACKUP_S3_TIERED)
+    LOCAL_KEEP=$(conf BACKUP_LOCAL_KEEP)
+    if [ "$TIERED" = "1" ] && [ -n "$LOCAL_KEEP" ]; then
+        SCHED_RULE="newest ${LOCAL_KEEP} kept (BACKUP_LOCAL_KEEP=${LOCAL_KEEP}, tiered)"
+        SCHED_KNOB="BACKUP_LOCAL_KEEP"
+    else
+        SCHED_RULE="${KEEP_DAYS} days kept (${KEEP_SRC})"
+        SCHED_KNOB="BACKUP_KEEP_DAYS"
+    fi
+    PRE_RULE="${KEEP_DAYS} days kept (${KEEP_SRC})"
+}
+
 # ── The breakdown, built ONLY when a message is being sent. ──────────────────
 breakdown() {
-    printf '  pre-deploy dumps (deploy.sh)   %6.1f GB  %s files\n' \
+    retention
+    printf '  scheduled backups (backup.sh)  %6.1f GB  %s sets  — %s\n' \
+        "$(du -sb /srv/backups/tatvaos 2>/dev/null | awk '{print $1/1e9}')" \
+        "$(ls -1d /srv/backups/tatvaos/*/ 2>/dev/null | wc -l)" "$SCHED_RULE"
+    printf '  pre-deploy copies (deploy.sh)  %6.1f GB  %s files — %s\n' \
         "$(du -sb /srv/tatvaos-production/backups 2>/dev/null | awk '{print $1/1e9}')" \
-        "$(ls -1 /srv/tatvaos-production/backups 2>/dev/null | wc -l)"
-    printf '  scheduled backups (backup.sh)  %6.1f GB\n' \
-        "$(du -sb /srv/backups/tatvaos 2>/dev/null | awk '{print $1/1e9}')"
+        "$(ls -1 /srv/tatvaos-production/backups 2>/dev/null | wc -l)" "$PRE_RULE"
     docker system df --format '{{.Type}}\t{{.Size}}' 2>/dev/null \
         | awk -F'\t' '$1=="Build Cache"||$1=="Images"||$1=="Local Volumes"{printf "  docker %-24s %s\n", tolower($1), $2}'
 }
 
 body() {  # $1 the situation sentence
+    # Here, not only inside breakdown(): $(breakdown) runs in a SUBSHELL, so the
+    # rules it works out never reach this heredoc. Found by the dry run on the
+    # real box, 26 Sept 2026 — "SCHED_RULE: unbound variable".
+    retention
     cat <<EOF
 Production disk is at ${pct}% — $(gb "$used") GB used of $(gb "$total") GB, $(gb "$avail") GB free.
 
@@ -102,14 +164,28 @@ $(breakdown)
   (customer data — mail, files, recordings, database — is inside "local volumes")
 
 What to do, cheapest first:
-  1. Pre-deploy dumps: deploy.sh keeps the last 10; if there are more, the retention rule is not running.
-  2. Still above the line: add a Linode volume (about \$0.10 per GB a month) for recordings and backups.
-  3. Only if CPU or RAM are also short — they were not when this alert was written — a bigger server.
+  1. Keep fewer scheduled backups ON THIS SERVER — ${SCHED_RULE}.
+     The same sets are kept off the server too (encrypted, object storage), so
+     the copies here are only for a fast restore. Lower ${SCHED_KNOB} in
+     ${BACKUP_CONF} and let backup.sh remove the rest on its next run.
+     Never delete sets by hand.
+  2. Pre-deploy copies — ${PRE_RULE}. $( [ "$SCHED_KNOB" = "BACKUP_KEEP_DAYS" ] \
+       && echo "The SAME setting as step 1: lowering it shortens both." \
+       || echo "A DIFFERENT setting from step 1: lowering this shortens only these." )
+     A copy older than the window means deploy.sh's pruning is not running.
+  3. Still above the line: add a Linode volume (about \$0.10 per GB a month) for recordings and backups.
+  4. Only if CPU or RAM are also short — they were not when this alert was written — a bigger server.
 
 Sent once per crossing, with one reminder a day while it stays above.
 — disk-alert.sh on ${HOST}, $(NOW)
 EOF
 }
+
+if [ "$DRYRUN" = "1" ]; then
+    send "(would send if a line were crossed) TatvaOS disk at ${pct}%" \
+         "$(body "DRY RUN: the message this alert would send today, with today's figures.")"
+    exit 0
+fi
 
 if [ "${DISK_ALERT_FORCE:-0}" = "1" ]; then
     send "[TEST] TatvaOS disk alert — a rehearsal, not a crossing" \
