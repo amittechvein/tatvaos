@@ -43,6 +43,12 @@ public static class SettingKeys
     public const string AiPerPersonPerHour = "ai.limit.per_person_per_hour";
     public const string AiOrgMonthlyTokens = "ai.limit.org_monthly_tokens";
 
+    // Personal accounts (/join) — build plan personal-plans-build-plan.md §1
+    // and §3.4. Closed by default: the switch-on waits for the five launch
+    // gates, and a deploy must never open it.
+    public const string PersonalSignupOpen = "personal.signup_open";
+    public const string PersonalCodesPerHour = "personal.signup_codes_per_hour";
+
     public sealed record Def(string Key, string Section, string Label, bool Secret, string Help);
 
     /// <summary>What the settings screen renders, in order.</summary>
@@ -94,6 +100,14 @@ public static class SettingKeys
             "Started at 2,000,000. Administrators are emailed at 80% and at 100%; at 100% AI stops for "
             + "that organisation until the month turns (India time). 0 allows NONE — AI stopped. "
             + "Empty means NO CEILING."),
+
+        new(PersonalSignupOpen, "personal", "Personal signup open (/join)", false,
+            "OFF until launch. ON lets anyone create a free personal address at /join. Needs a personal "
+            + "house organisation with a verified domain and the phone-hash key as well, or /join stays "
+            + "closed whatever this says."),
+        new(PersonalCodesPerHour, "personal", "Signup SMS codes per hour (whole platform)", false,
+            "A ceiling on SMS codes sent by /join across everyone, so the form cannot run up an SMS bill. "
+            + "Empty means 200. Per number (3 an hour) and per address (10 an hour) are fixed in code."),
     ];
 
     public static bool IsKnown(string key) => All.Any(d => d.Key == key);

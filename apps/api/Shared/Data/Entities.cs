@@ -78,6 +78,14 @@ public class Tenant
     /// </summary>
     public DateTimeOffset? MailAiTriageSince { get; set; }
 
+    /// <summary>
+    /// "organisation" (every customer) or "personal_house" — the one tenant
+    /// personal accounts live in. Never compare it inline: ask PersonalHouse,
+    /// so "is this a personal account?" has one answer. Column:
+    /// 20260926-a-personal-join.sql.
+    /// </summary>
+    [MaxLength(16)] public string Kind { get; set; } = "organisation";
+
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? SuspendedAt { get; set; }
     public DateTimeOffset? TrialEndsAt { get; set; }
