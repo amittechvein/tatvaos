@@ -57,8 +57,10 @@ public sealed class InvoiceIssuer(AppDbContext db, SettingsReader settings)
         if (state is not null && !BillingRules.IsStateCode(state)) missing.Add("seller state code is not a GST state code");
         if (gstin is not null && state is not null && !gstin.StartsWith(state, StringComparison.Ordinal))
             missing.Add("seller GSTIN does not start with the seller state code");
-        if (prefix is not null && !System.Text.RegularExpressions.Regex.IsMatch(prefix, "^[A-Z]{1,4}$"))
-            missing.Add("invoice prefix must be 1-4 capital letters");
+        // GST caps the invoice number at 16 characters: ABC/2026-27/0001 is
+        // exactly 16, so the prefix is at most 3 letters (Mr. Singh, 26 Sept).
+        if (prefix is not null && !System.Text.RegularExpressions.Regex.IsMatch(prefix, "^[A-Z]{1,3}$"))
+            missing.Add("invoice prefix must be 1-3 capital letters (GST allows 16 characters in an invoice number)");
 
         var terms = int.TryParse(Get(SettingKeys.PaymentTermsDays), out var t) && t is >= 0 and <= 365 ? t : 15;
         var seller = missing.Count == 0
@@ -159,10 +161,17 @@ public sealed class InvoiceIssuer(AppDbContext db, SettingsReader settings)
             RETURNING last_seq AS "Value"
             """).ToListAsync(ct);
 
+        var number = InvoiceMath.Number(prefix, fy, seq[0]);
+        // More than 9,999 invoices in a year would make a 17-character number.
+        // Refused here (the transaction rolls back, so no number is used);
+        // the database refuses it too.
+        if (number.Length > InvoiceMath.MaxNumberLength)
+            throw new InvoiceNumberTooLongException(number);
+
         var inv = new Invoice
         {
             TenantId = tenantId,
-            Number = InvoiceMath.Number(prefix, fy, seq[0]),
+            Number = number,
             FinancialYear = fy,
             Seq = seq[0],
             IssuedOn = d.IssuedOn,
@@ -205,6 +214,9 @@ public sealed class InvoiceIssuer(AppDbContext db, SettingsReader settings)
         return inv;
     }
 }
+
+public sealed class InvoiceNumberTooLongException(string number)
+    : Exception($"The next invoice number, {number}, would be longer than GST's 16 characters. Use a shorter prefix.");
 
 /// <summary>GSTIN and state-code shape checks, shared by the endpoints and the issuer.</summary>
 public static class BillingRules

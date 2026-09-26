@@ -260,7 +260,9 @@ public static class BillingEndpoints
         var (draft, error) = await issuer.ComposeAsync(id, req, ct);
         if (draft is null) return Results.BadRequest(new { error });
 
-        var inv = await issuer.IssueAsync(id, draft, CurrentUserId(http), ct);
+        Invoice inv;
+        try { inv = await issuer.IssueAsync(id, draft, CurrentUserId(http), ct); }
+        catch (InvoiceNumberTooLongException ex) { return Results.BadRequest(new { error = ex.Message }); }
         // Emailed to the billing contact at once (billing part 2). A failed
         // send does not undo the invoice; the Billing tab shows it was not
         // sent and offers to send it again.
