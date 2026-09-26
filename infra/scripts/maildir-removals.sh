@@ -41,6 +41,15 @@
 #  Docker CLI on this host. It needs no secret — psql runs as postgres inside
 #  the Postgres container, as backup.sh does.
 #
+#  ONE ADDRESS, NEVER EVERYONE (Mr. Singh, 26 Sept 2026). doveadm's
+#  all-users flag, or its user flag followed by an empty value, reaches every
+#  mailbox on the server, and an empty variable is the classic way that
+#  happens. So: the address travels as its OWN argument in an array — never
+#  through a shell string; an empty or whitespace address is refused before
+#  anything runs, in the loop AND again inside run_expunge; the all-users flag
+#  appears nowhere in this file (the test greps for it); --dry-run prints the
+#  exact command it would run.
+#
 #  TESTED LOCALLY with the database and the two commands overridden (MR_PSQL,
 #  MR_EXPUNGE, MR_COUNT — tests/personal-maildir-removal). doveadm itself has
 #  NOT been run by this script yet: that is the first thing to do on the
@@ -69,25 +78,48 @@ if [ "${1:-}" = "--install" ]; then
     exit 0
 fi
 
-# ---- The three things this script does, each overridable for the local test.
+# ---- The containers, and the three things this script does ------------------
+#  Each is overridable for the local test (no Docker on the laptop).
 PG=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -m1 postgres || true)
-DOVECOT=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -m1 dovecot || true)
+DOVECOT="${MR_DOVECOT:-$(docker ps --format '{{.Names}}' 2>/dev/null | grep -m1 dovecot || true)}"
 DB="${MR_DB:-tatvaos_mail}"
 
 sql() { # one statement, values passed as psql variables, never pasted in
     if [ -n "${MR_PSQL:-}" ]; then $MR_PSQL "$@"
     else docker exec -i "$PG" psql -U postgres -d "$DB" -Atq -v ON_ERROR_STOP=1 "$@"; fi
 }
-expunge() { # address
-    if [ -n "${MR_EXPUNGE:-}" ]; then $MR_EXPUNGE "$1"
-    else docker exec -u vmail "$DOVECOT" doveadm expunge -u "$1" mailbox '*' all; fi
+
+# Is this exactly one plain address? Empty, whitespace anywhere, or anything a
+# path or an option could be made of: no.
+one_address() {
+    local a="${1-}"
+    [ -n "$a" ] || return 1
+    case "$a" in *[[:space:]]*|-*|*..*|*/*) return 1 ;; esac
+    printf '%s' "$a" | grep -Eq -- '^[a-z][a-z0-9.-]{2,62}[a-z0-9]@[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
 }
-count_files() { # address -> number of message files left
+
+# The one doveadm command, as an array: the address is one argument, whatever
+# it contains. Printed by --dry-run exactly as it would run.
+expunge_cmd() { EXPUNGE=(docker exec -u vmail "$DOVECOT" doveadm expunge -u "$1" mailbox '*' all); }
+run_expunge() {
+    # The last guard, where it matters: nothing reaches doveadm but one address.
+    if ! one_address "${1-}"; then say "REFUSED at doveadm: [${1-}] is not one address"; return 99; fi
+    if [ -n "${MR_EXPUNGE:-}" ]; then $MR_EXPUNGE "$1"; return; fi
+    expunge_cmd "$1"; "${EXPUNGE[@]}"
+}
+
+# Message files left under the address's maildir. No shell string: two plain
+# docker exec calls with the path as one argument. "Cannot tell" (Docker
+# failed) prints "?", which is never "0" — so the address stays held.
+count_files() {
     if [ -n "${MR_COUNT:-}" ]; then $MR_COUNT "$1"; return; fi
-    local local_part="${1%@*}" domain="${1#*@}"
-    docker exec -u vmail "$DOVECOT" sh -c \
-        'd="/var/mail/vhosts/$1/$2"; [ -d "$d" ] || { echo 0; exit; }; find "$d" -type f \( -path "*/cur/*" -o -path "*/new/*" -o -path "*/tmp/*" \) | wc -l' \
-        _ "$domain" "$local_part"
+    local d="/var/mail/vhosts/${1#*@}/${1%@*}" rc out
+    docker exec -u vmail "$DOVECOT" test -d "$d"; rc=$?
+    if [ $rc -eq 1 ]; then echo 0; return; fi        # no maildir at all
+    if [ $rc -ne 0 ]; then echo "?"; return; fi       # docker itself failed
+    out=$(docker exec -u vmail "$DOVECOT" find "$d" -type f \( -path '*/cur/*' -o -path '*/new/*' -o -path '*/tmp/*' \)) \
+        || { echo "?"; return; }
+    [ -z "$out" ] && echo 0 || printf '%s\n' "$out" | wc -l
 }
 
 if [ -z "${MR_PSQL:-}" ] && { [ -z "$PG" ] || [ -z "$DOVECOT" ]; }; then
@@ -95,21 +127,23 @@ if [ -z "${MR_PSQL:-}" ] && { [ -z "$PG" ] || [ -z "$DOVECOT" ]; }; then
 fi
 
 # ---- The queue ---------------------------------------------------------------
-mapfile -t QUEUE < <(sql -v n="$BATCH" <<'SQL'
-SELECT ref FROM core.personal_purge_leftovers WHERE kind = 'maildir' ORDER BY id LIMIT :n;
+#  id|ref, so an EMPTY ref is still a line of its own (and is refused below)
+#  rather than looking like an empty queue.
+mapfile -t QUEUE < <(sql -v n="$BATCH" <<'SQL' | tr -d '\r'
+SELECT id || '|' || ref FROM core.personal_purge_leftovers WHERE kind = 'maildir' ORDER BY id LIMIT :n;
 SQL
 )
-[ "${#QUEUE[@]}" -eq 0 ] || [ -z "${QUEUE[0]}" ] && { say "nothing queued"; exit 0; }
+[ "${#QUEUE[@]}" -eq 0 ] && { say "nothing queued"; exit 0; }
 say "${#QUEUE[@]} address(es) queued$([ $DRY = 1 ] && echo ' (dry run)')"
 
 done_n=0; left_n=0; refused_n=0
-for addr in "${QUEUE[@]}"; do
-    addr=$(printf '%s' "$addr" | tr -d '\r[:space:]')
+for row in "${QUEUE[@]}"; do
+    id="${row%%|*}"; addr="${row#*|}"            # nothing stripped: a space is refused, not tidied
 
-    # 1a. The shape of an address, and nothing a path could be made of.
-    if ! printf '%s' "$addr" | grep -Eq '^[a-z][a-z0-9.-]{2,62}[a-z0-9]@[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$' \
-       || printf '%s' "$addr" | grep -q '\.\.'; then
-        say "REFUSED [$addr]: not a plain address"; refused_n=$((refused_n+1)); continue
+    # 1a. Exactly one plain address, before anything else runs.
+    if ! one_address "$addr"; then
+        say "REFUSED [$addr] (row $id): not one plain address (empty, whitespace, or not an address)"
+        refused_n=$((refused_n+1)); continue
     fi
 
     # 1b-d. Safe to touch? One query, the address as a variable.
@@ -127,23 +161,27 @@ SQL
     why=$(printf '%s' "$why" | tr -d '\r')
     if [ "$why" != "ok" ]; then say "REFUSED [$addr]: $why"; refused_n=$((refused_n+1)); continue; fi
 
-    if [ $DRY = 1 ]; then say "would expunge [$addr] ($(count_files "$addr") file(s) now)"; continue; fi
+    if [ $DRY = 1 ]; then
+        expunge_cmd "$addr"
+        say "would run: $(printf '%q ' "${EXPUNGE[@]}")($(count_files "$addr") message file(s) now)"
+        continue
+    fi
 
     # 2. The mail server removes the messages, for this one user.
-    out=$(expunge "$addr" 2>&1); rc=$?
+    out=$(run_expunge "$addr" 2>&1); rc=$?
     [ $rc -ne 0 ] && say "doveadm for [$addr] exited $rc: $(printf '%s' "$out" | head -c 300)"
 
     # 3. Seen gone → the row goes, and with it the hold's last reason.
     n=$(count_files "$addr" | tr -d '\r[:space:]')
     if [ "$n" = "0" ]; then
-        sql -v a="$addr" <<'SQL' >/dev/null
-DELETE FROM core.personal_purge_leftovers WHERE kind = 'maildir' AND ref = :'a';
+        sql -v i="$id" <<'SQL' >/dev/null
+DELETE FROM core.personal_purge_leftovers WHERE kind = 'maildir' AND id = :i;
 SQL
         say "done [$addr]: no message files remain; its hold now ends on its date"
         done_n=$((done_n+1))
     else
-        sql -v a="$addr" -v e="${n:-?} message file(s) remain after doveadm" <<'SQL' >/dev/null
-UPDATE core.personal_purge_leftovers SET attempts = attempts + 1, last_error = :'e' WHERE kind = 'maildir' AND ref = :'a';
+        sql -v i="$id" -v e="${n:-?} message file(s) remain after doveadm" <<'SQL' >/dev/null
+UPDATE core.personal_purge_leftovers SET attempts = attempts + 1, last_error = :'e' WHERE kind = 'maildir' AND id = :i;
 SQL
         say "NOT DONE [$addr]: ${n:-?} message file(s) remain; the address stays held"
         left_n=$((left_n+1))

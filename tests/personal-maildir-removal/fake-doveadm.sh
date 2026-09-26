@@ -12,6 +12,9 @@ VMAIL="${TATVAOS_VMAIL:-.tmp/vmail}"
 local_part="${2%@*}"; domain="${2#*@}"; d="$VMAIL/$domain/$local_part"
 case "$1" in
     expunge)
+        # Every call is written down, so a test can say "never called for that".
+        [ -n "${MR_FAKE_LOG:-}" ] && printf 'expunge [%s]
+' "${2-}" >> "$MR_FAKE_LOG"
         [ "${MR_FAKE_STUCK:-0}" = "1" ] && exit 0
         [ -d "$d" ] && find "$d" -type f \( -path '*/cur/*' -o -path '*/new/*' -o -path '*/tmp/*' \) -delete
         exit 0 ;;

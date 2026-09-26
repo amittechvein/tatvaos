@@ -18,7 +18,13 @@
 #   5. REFUSED: an address shaped like a path
 #   6. the tool "succeeds" but files remain: the row stays, attempts counted,
 #      the address stays held; next pass, removed
-#   7. --dry-run changes nothing
+#   7. --dry-run changes nothing, and prints the exact doveadm command
+#   8. ONE ADDRESS, NEVER EVERYONE (Mr. Singh's condition before the first
+#      run): no all-users flag and no shell string anywhere in the job; an
+#      empty, a blank and a spaced address are refused and never reach doveadm;
+#      the guard inside run_expunge holds even with every earlier check cut out
+#      (calibrated: with that one cut too, doveadm IS called with an empty user).
+#      Red first: the same conditions run against the job as it was (c94761e).
 #
 #   bash tests/personal-maildir-removal/test-maildir-removal.sh
 # ---------------------------------------------------------------------------
@@ -31,6 +37,8 @@ export MR_PSQL="${TATVAOS_MR_PSQL:-wsl -e env PGPASSWORD=devpass psql -h localho
 export MR_EXPUNGE="bash tests/personal-maildir-removal/fake-doveadm.sh expunge"
 export MR_COUNT="bash tests/personal-maildir-removal/fake-doveadm.sh count"
 export MR_BATCH=100
+export MR_DOVECOT=tatvaos-dovecot-1
+export MR_FAKE_LOG=".tmp/mr-fake-$$.log"
 JOB=infra/scripts/maildir-removals.sh
 RUN=$(date +%s)
 
@@ -81,7 +89,7 @@ if docker ps >/dev/null 2>&1; then pass "(docker present here — skipped)"; els
 step "7. --dry-run changes nothing"
 mail_for "$GONE" 3; queue "$GONE" held
 out=$(bash "$JOB" --dry-run 2>&1 | tr -d '\r')
-has "it says what it would do" "$out" "would expunge [$GONE] (4 file(s) now)"
+has "it prints the exact command it would run" "$out" "would run: docker exec -u vmail tatvaos-dovecot-1 doveadm expunge -u $GONE mailbox \* all (4 message file(s) now)"
 same "…and the files are all still there" "$(files "$GONE")" "4"
 same "…and the row is still queued" "$(queued "$GONE")" "1"
 
@@ -101,7 +109,7 @@ has  "3. no hold: refused" "$out" "REFUSED [$UNHELD]: not held by a purge"
 same "…files untouched" "$(files "$UNHELD")" "3"
 has  "4. an organisation's domain: refused" "$out" "REFUSED [$ORGX]: not on the personal house's domain"
 same "…files untouched" "$(files "$ORGX")" "3"
-has  "5. a path: refused" "$out" "REFUSED [$BAD]: not a plain address"
+has  "5. a path: refused" "$out" "REFUSED [$BAD] (row"
 has  "the pass reports its totals" "$out" "pass finished: done=1 not_done=0 refused=4"
 
 step "2 calibrated: the mailbox check is what saved that mailbox"
@@ -120,6 +128,56 @@ same "the row stays, the attempt counted" "$(PG "SELECT attempts||' '||last_erro
 same "…so the address stays held (the API's check reads this row)" "$(queued "$STUCK")" "1"
 out=$(bash "$JOB" 2>&1 | tr -d '\r')
 same "the next pass removes them" "$(files "$STUCK")|$(queued "$STUCK")" "0|0"
+
+step "8. One address, never everyone"
+# Mr. Singh's condition, as a set of checks that can be run against any copy
+# of the job — so the same checks can be shown RED on the job as it was.
+never_everyone() { # $1 = the job to check
+    local job="$1" o
+    same "no all-users flag anywhere in the job" "$(grep -cE -- '(^|[^[:alnum:]])-A([^[:alnum:]]|$)' "$job")" "0"
+    same "no shell string (sh -c) anywhere in the job" "$(grep -c 'sh -c' "$job")" "0"
+    same "doveadm appears in exactly one command" "$(grep -v '^[[:space:]]*#' "$job" | grep -c 'doveadm expunge')" "1"
+    PG "DELETE FROM core.personal_purge_leftovers WHERE kind='maildir'" >/dev/null
+    for a in "" " " "sp ace.$RUN@personal.local" "-A"; do
+        PG "INSERT INTO core.personal_purge_leftovers(kind, ref, address) VALUES ('maildir', \$q\$$a\$q\$, NULL)" >/dev/null
+        PG "INSERT INTO core.address_holds(address, held_until, reason) VALUES (\$q\$$a\$q\$, now()+interval '90 days', 'test $RUN') ON CONFLICT DO NOTHING" >/dev/null
+    done
+    : > "$MR_FAKE_LOG"
+    o=$(bash "$job" --dry-run 2>&1 | tr -d '')
+    same "dry run: all four queued (none mistaken for an empty queue)" "$(printf '%s' "$o" | grep -c 'address(es) queued')|$(printf '%s' "$o" | grep -o '[0-9]* address(es)')" "1|4 address(es)"
+    same "dry run: empty, blank, spaced and '-A' are all REFUSED" "$(printf '%s' "$o" | grep -c 'not one plain address')" "4"
+    same "dry run: no command offered for any of them" "$(printf '%s' "$o" | grep -c 'would run:')" "0"
+    o=$(bash "$job" 2>&1 | tr -d '')
+    same "real run: all four REFUSED" "$(printf '%s' "$o" | grep -c 'not one plain address')" "4"
+    same "…and doveadm was never called" "$(wc -l < "$MR_FAKE_LOG" | tr -d ' ')" "0"
+    PG "DELETE FROM core.personal_purge_leftovers WHERE kind='maildir'" >/dev/null
+}
+never_everyone "$JOB"
+
+# Red first: the same checks against the job before this condition.
+git show c94761e:infra/scripts/maildir-removals.sh > "infra/scripts/.mr-old-$RUN.sh"
+before=$FAILED; bp=$PASSED
+never_everyone "infra/scripts/.mr-old-$RUN.sh" > ".tmp/mr-old-$RUN.out" 2>&1
+red=$((FAILED-before)); FAILED=$before; PASSED=$bp
+sed 's/^/     (old job) /' ".tmp/mr-old-$RUN.out" | grep '✗' | sed 's/ — .*//'
+if [ "$red" -gt 0 ]; then pass "RED FIRST: the job as it was (c94761e) fails $red of these checks"
+else fail "the old job passes every check — they prove nothing"; fi
+rm -f "infra/scripts/.mr-old-$RUN.sh" ".tmp/mr-old-$RUN.out"
+
+# The last guard, inside run_expunge, with every earlier check cut out.
+sed -e 's/if ! one_address "\$addr"; then/if false; then/' -e 's/if \[ "\$why" != "ok" \]; then/if false; then/'     "$JOB" > "infra/scripts/.mr-cut-$RUN.sh"
+same "(the copy has the loop's shape check and database checks cut)" "$(grep -c 'if false; then' "infra/scripts/.mr-cut-$RUN.sh")" "2"
+PG "INSERT INTO core.personal_purge_leftovers(kind, ref) VALUES ('maildir', '')" >/dev/null
+: > "$MR_FAKE_LOG"
+o=$(bash "infra/scripts/.mr-cut-$RUN.sh" 2>&1 | tr -d '')
+has  "an empty address reaching run_expunge: refused there" "$o" "REFUSED at doveadm: [] is not one address"
+same "…doveadm never called" "$(wc -l < "$MR_FAKE_LOG" | tr -d ' ')" "0"
+sed -i 's/if ! one_address "\${1-}"; then/if false; then/' "infra/scripts/.mr-cut-$RUN.sh"
+: > "$MR_FAKE_LOG"
+bash "infra/scripts/.mr-cut-$RUN.sh" >/dev/null 2>&1
+same "calibrated: with that guard cut too, doveadm IS called with an empty user" "$(cat "$MR_FAKE_LOG")" "expunge []"
+rm -f "infra/scripts/.mr-cut-$RUN.sh"
+PG "DELETE FROM core.personal_purge_leftovers WHERE kind='maildir'" >/dev/null
 
 step "An empty queue"
 PG "DELETE FROM core.personal_purge_leftovers WHERE kind='maildir'" >/dev/null
