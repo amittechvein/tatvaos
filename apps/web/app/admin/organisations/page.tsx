@@ -129,7 +129,7 @@ export default function AdminOrganisations() {
                         {initial}
                       </div>
                       <div className="min-w-0">
-                        <div className="truncate font-semibold text-ink">{o.name}</div>
+                        <Link href={`/admin/organisations/${o.id}`} className="block truncate font-semibold text-ink hover:text-brand-700 hover:underline">{o.name}</Link>
                         <div className="truncate text-[12px] text-ink-muted">
                           {hasDomain ? o.primaryDomain : `${TYPE_LABEL[o.type] ?? o.type}`}
                         </div>
@@ -166,7 +166,8 @@ export default function AdminOrganisations() {
                   </Td>
                   <Td><StatusBadge status={o.status} /></Td>
                   <Td>
-                    <div className="flex justify-end">
+                    <div className="flex justify-end gap-2">
+                      <Button variant="secondary" href={`/admin/organisations/${o.id}`}>Details</Button>
                       <Button variant="secondary" onClick={() => setChanging(o)}>Manage</Button>
                     </div>
                   </Td>
