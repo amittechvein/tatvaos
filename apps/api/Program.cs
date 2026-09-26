@@ -129,6 +129,7 @@ builder.Services.AddScoped<TatvaOS.Api.Modules.Personal.PersonalHouse>();
 builder.Services.AddSingleton<TatvaOS.Api.Modules.Personal.PersonalPhone>();
 // The one "what may this person have?" answer (build plan §2.5).
 builder.Services.AddScoped<TatvaOS.Api.Shared.Plans.EffectiveSettings>();
+builder.Services.AddScoped<TatvaOS.Api.Modules.Personal.PersonalAiService>();
 
 // ---- OpenID Connect provider (decision 0004) — stage 1: the stores -------
 // OpenIddict's core with EF Core storage on our own entities, and the two
@@ -475,6 +476,10 @@ builder.Services.AddScoped<TatvaOS.Api.Modules.Calendar.ICalendarImipSink,
 // finished telling us about is asked about directly, so a lost webhook costs
 // a delay rather than a recording that never appears.
 builder.Services.AddHostedService<ConnectNotesWorker>();
+// Personal accounts (build plan §4.5, §5): a personal host's meeting ends at
+// their plan's time; the AI trial's day-12 reminder and end note.
+builder.Services.AddHostedService<PersonalMeetingLimitWorker>();
+builder.Services.AddHostedService<PersonalTrialWorker>();
 
 // The public-link resolve is the one anonymous, internet-reachable route
 // on the platform. Per-IP fixed window. Behind Caddy the peer address is

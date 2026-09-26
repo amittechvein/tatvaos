@@ -69,6 +69,38 @@ public class AiTrial
     public Guid? UserId { get; set; }
     public DateTimeOffset StartedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset EndsAt { get; set; }
+    /// <summary>The day-12 reminder went out (§5). Set once.</summary>
+    public DateTimeOffset? RemindedAt { get; set; }
+    /// <summary>The "your trial has ended" note went out. Set once.</summary>
+    public DateTimeOffset? EndedNoticeAt { get; set; }
+}
+
+/// <summary>
+/// One person turned away because a personal host's meeting was full (build
+/// plan §4.5). Read by the host's lobby poll. Table:
+/// connect.capacity_refusals (20260926-zzz-personal-limits.sql).
+/// </summary>
+public class ConnectCapacityRefusal
+{
+    public long Id { get; set; }
+    public Guid MeetingId { get; set; }
+    public Guid TenantId { get; set; }
+    public int Allowed { get; set; }
+    public DateTimeOffset RefusedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// A personal account's OWN AI switch (build plan D3). The house has no
+/// organisation-level AI; this is the consent. ConfirmedAt is when they
+/// confirmed that content goes to a service in the United States — kept when
+/// they switch off. Table: 20260926-zzz-personal-limits.sql.
+/// </summary>
+public class PersonalAiConsent
+{
+    public Guid UserId { get; set; }
+    public bool Enabled { get; set; }
+    public DateTimeOffset? ConfirmedAt { get; set; }
+    public DateTimeOffset ChangedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
 /// <summary>

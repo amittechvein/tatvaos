@@ -28,7 +28,7 @@
 set -uo pipefail
 
 PY="${TATVAOS_PYTHON:-python}"
-API="${TATVAOS_API:-http://localhost:5141}"
+API="${TATVAOS_API:-http://localhost:5297}"
 PSQL="${TATVAOS_PSQL:-wsl -e env PGPASSWORD=devpass psql -h localhost -U postgres -d tatvaos_personal -Atc}"
 APPSQL="${TATVAOS_APP_PSQL:-wsl -e env PGPASSWORD=dev_app_pw psql -h localhost -U tatvaos_app -d tatvaos_personal -Atc}"
 HOUSE="99999999-9999-9999-9999-999999999999"

@@ -96,6 +96,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<PersonalAccount> PersonalAccounts => Set<PersonalAccount>();
     /// <summary>Platform-wide by design: one trial per phone, across every account ever.</summary>
     public DbSet<AiTrial> AiTrials => Set<AiTrial>();
+    /// <summary>A personal account's own AI switch; keyed by the person.</summary>
+    public DbSet<PersonalAiConsent> PersonalAi => Set<PersonalAiConsent>();
+    /// <summary>RLS-scoped by tenant, like every connect.* table.</summary>
+    public DbSet<ConnectCapacityRefusal> ConnectCapacityRefusals => Set<ConnectCapacityRefusal>();
 
     // ---- mail ----
     public DbSet<Mailbox> Mailboxes => Set<Mailbox>();
@@ -253,6 +257,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<PersonalAccount>().HasKey(a => a.UserId);
         b.Entity<AiTrial>().ToTable("ai_trials", "core");
         b.Entity<AiTrial>().HasKey(t => t.PhoneHash);
+        b.Entity<PersonalAiConsent>().ToTable("personal_ai", "core");
+        b.Entity<PersonalAiConsent>().HasKey(a => a.UserId);
+        b.Entity<ConnectCapacityRefusal>().ToTable("capacity_refusals", "connect");
         // Declared so EF orders the INSERTs: the user and this row are saved
         // in one SaveChanges, and an undeclared FK lets EF write this first.
         b.Entity<PersonalAccount>().HasOne<User>().WithOne()

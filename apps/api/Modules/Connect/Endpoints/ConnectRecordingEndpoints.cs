@@ -172,7 +172,7 @@ public static class ConnectRecordingEndpoints
     private static async Task<IResult> StartAsync(
         Guid id, StartRecordingRequest? req, AppDbContext db, TenantContext tenant,
         LiveKitEgressClient egress, LiveKitRoomClient rooms, ConnectRecordingOptions options,
-        AuditWriter audit, CancellationToken ct)
+        AuditWriter audit, TatvaOS.Api.Shared.Plans.EffectiveSettings plans, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
         var tid = tenant.TenantId;
@@ -201,16 +201,29 @@ public static class ConnectRecordingEndpoints
         if (!meeting.MediaIsReadable)
             return Results.Json(new { error = ConnectModes.MediaRefusal }, statusCode: 409);
 
-        // Gate 1 — the organisation, re-read every time.
-        var allowed = await db.Database
-            .SqlQuery<bool>($"""SELECT connect.recording_allowed({tid}) AS "Value" """)
-            .FirstOrDefaultAsync(ct);
-        if (!allowed)
-            return Results.Json(new
-            {
-                error = "Recording is switched off for your organisation. "
-                      + "An administrator can turn it on.",
-            }, statusCode: 403);
+        // Gate 1 — who decides. For a personal host (build plan §4.5), the
+        // HOST'S PLAN: Premium records, Free and Basic do not, whatever the
+        // browser sends. The house's organisation switch is not consulted —
+        // it has no administrator to switch it, and it is not a stranger's
+        // decision. For an organisation, its switch, re-read every time.
+        var hostPlan = await TatvaOS.Api.Modules.Personal.PersonalMeetingRules.HostPlanAsync(db, plans, meeting, ct);
+        if (hostPlan is not null)
+        {
+            if (TatvaOS.Api.Modules.Personal.PersonalMeetingRules.RecordingRefusal(hostPlan) is string premium)
+                return Results.Json(new { error = premium, premium = true }, statusCode: 403);
+        }
+        else
+        {
+            var allowed = await db.Database
+                .SqlQuery<bool>($"""SELECT connect.recording_allowed({tid}) AS "Value" """)
+                .FirstOrDefaultAsync(ct);
+            if (!allowed)
+                return Results.Json(new
+                {
+                    error = "Recording is switched off for your organisation. "
+                          + "An administrator can turn it on.",
+                }, statusCode: 403);
+        }
 
         // A meeting somebody has deliberately finished is not recordable, and
         // that IS worth reading from our own row: the status only says

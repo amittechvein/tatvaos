@@ -35,7 +35,7 @@
 set -uo pipefail
 
 PY="${TATVAOS_PYTHON:-python}"
-API="${TATVAOS_API:-http://localhost:5141}"
+API="${TATVAOS_API:-http://localhost:5297}"
 LOG="${TATVAOS_API_LOG:-.tmp/api.log}"
 PSQL="${TATVAOS_PSQL:-wsl -e env PGPASSWORD=devpass psql -h localhost -U postgres -d tatvaos_personal -Atc}"
 MIGRATION="local/postgres/init/20260926-a-personal-join.sql"

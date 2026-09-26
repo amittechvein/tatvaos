@@ -105,6 +105,8 @@ export interface Meeting {
   mode: MeetingMode;
   createdByUserId: string | null;
   myRole: MeetingRole | null;
+  /** A personal host's limits; null for an organisation's meeting. */
+  planLimits?: MeetingPlanLimits | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -132,6 +134,30 @@ export interface LobbyEntry {
   displayName: string;
   isGuest: boolean;
   requestedAt: string;
+}
+
+/**
+ * Someone was turned away because a personal host's meeting was full (build
+ * plan §4.5). Rides on the host's lobby poll; null when nobody was.
+ */
+export interface LobbyCapacity {
+  turnedAway: number;
+  lastAt: string;
+  allowed: number;
+  notice: string;
+}
+
+/**
+ * A personal host's plan limits for this meeting (build plan §4.5), or null
+ * for an organisation's meeting. The server enforces them regardless; the
+ * room uses them to warn before the end and to label the Record button.
+ */
+export interface MeetingPlanLimits {
+  maxMinutes: number | null;
+  maxPeople: number | null;
+  recording: boolean;
+  aiMinutes: boolean;
+  plan: string | null;
 }
 
 /** Somebody a host removed from this meeting, and who therefore cannot rejoin. */
@@ -458,7 +484,15 @@ export const connectApi = {
       method: 'POST',
       body: JSON.stringify(password ? { password } : {}),
     });
-    if (res.status === 403) throw new WrongPasswordError();
+    // A wrong password is a BARE 403. Any 403 that carries a sentence is some
+    // other refusal (a removed person, a meeting that only admits people the
+    // host invited) and must be shown as itself — reading every 403 as "wrong
+    // password" sent people hunting for a password that did not exist.
+    if (res.status === 403) {
+      const body = await res.clone().json().catch(() => null) as { error?: string } | null;
+      if (body?.error) throw new Error(body.error);
+      throw new WrongPasswordError();
+    }
     const out = await json<JoinResult>(res, 'Could not join that meeting.');
     if (out.status !== 'waiting') out.wsUrl = assertOrigin(out.wsUrl);
     return out;
@@ -466,7 +500,7 @@ export const connectApi = {
 
   lobby: (f: AuthedFetch, id: string) =>
     f(`/connect/meetings/${id}/lobby`)
-      .then((r) => json<{ waiting: LobbyEntry[] }>(r, 'Could not load the waiting room.')),
+      .then((r) => json<{ waiting: LobbyEntry[]; capacity?: LobbyCapacity | null }>(r, 'Could not load the waiting room.')),
 
   admit: (f: AuthedFetch, id: string, requestId: string) =>
     f(`/connect/meetings/${id}/lobby/${requestId}/admit`, { method: 'POST' })
@@ -1048,9 +1082,10 @@ export const guestApi = {
   },
 
   /** Polled every couple of seconds while parked. */
-  wait: async (waitToken: string): Promise<JoinResult | { status: 'denied' }> => {
+  wait: async (waitToken: string): Promise<JoinResult | { status: 'denied' } | { status: 'full'; error: string }> => {
     const res = await fetch(`${API}/connect/g/wait/${encodeURIComponent(waitToken)}`);
-    const out = await guestJson<JoinResult | { status: 'denied' }>(res);
+    // 'full': admitted, but a personal host's meeting filled while they waited.
+    const out = await guestJson<JoinResult | { status: 'denied' } | { status: 'full'; error: string }>(res);
     if (out.status === 'admitted') out.wsUrl = assertOrigin(out.wsUrl);
     return out;
   },

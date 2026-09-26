@@ -150,10 +150,30 @@ public sealed class MeteredAiGateway(
             return AiResult.Failed("This AI request could not be sent (it did not say which feature it was for).");
         }
 
+        // 0b. A personal account has no organisation and no administrator,
+        //     so the provider gateway's refusal ("an administrator can switch
+        //     it on") would be wrong words. Its own, here, unmetered.
+        var personal = tenant.HasTenant && await services.GetRequiredService<TatvaOS.Api.Modules.Personal.PersonalHouse>()
+            .IsPersonalHouseAsync(tenant.TenantId, ct);
+        if (personal && inner.IsConfigured && !await inner.EnabledForTenantAsync(ct))
+            return AiResult.Failed("Switch AI on in your Account settings first.");
+
         // 1. Nothing will be sent: let the provider gateway give its own
         //    refusal, unmetered.
         if (!inner.IsConfigured || !tenant.HasTenant || !await inner.EnabledForTenantAsync(ct))
             return await inner.CompleteAsync(instruction, input, ct, feature);
+
+        // 1a. A PERSONAL account (build plan §4.5, §5): consent was the
+        //     person's own switch (OpenAiGateway). Here, what their PLAN allows:
+        //     AI meeting minutes only, on Premium or during their trial. Mail
+        //     AI is out of scope for personal plans. Refused unmetered, like
+        //     the product switches below: nothing was about to be sent.
+        if (personal)
+        {
+            var refusal = await TatvaOS.Api.Modules.Personal.PersonalAiService.PlanRefusalAsync(
+                services.GetRequiredService<TatvaOS.Api.Shared.Plans.EffectiveSettings>(), tenant.UserId, feature, ct);
+            if (refusal is not null) return AiResult.Failed(refusal);
+        }
 
         // 1b. The product's own switch, where it has one (Mail, 25 Sept 2026).
         //     Same standing as consent: nothing was about to be sent, so not

@@ -26,6 +26,11 @@ public static class PersonalPlanEndpoints
     {
         app.MapGet("/api/me/plan", MineAsync)
             .RequireAuthorization("User").WithTags("Account");
+        // A personal account's own AI switch (D3) and trial (D6).
+        app.MapGet("/api/me/ai", MyAiAsync)
+            .RequireAuthorization("User").WithTags("Account");
+        app.MapPut("/api/me/ai", SetMyAiAsync)
+            .RequireAuthorization("User").WithTags("Account");
 
         var g = app.MapGroup("/api/admin/personal-accounts")
             .RequireAuthorization("SuperAdmin").WithTags("Platform administration");
@@ -53,6 +58,39 @@ public static class PersonalPlanEndpoints
         if (tenant.UserId is not Guid me) return Results.Unauthorized();
         var answer = await settings.ForUserAsync(me, ct);
         return answer is null ? Results.NotFound() : Results.Ok(Shape(answer));
+    }
+
+    // ------------------------------------------------------------------
+    private static readonly object OrganisationAi = new
+    {
+        error = "AI for your account is switched on by your organisation's administrator.",
+    };
+
+    private static async Task<IResult> MyAiAsync(
+        TenantContext tenant, PersonalHouse houses, PersonalAiService ai, CancellationToken ct)
+    {
+        if (tenant.UserId is not Guid me) return Results.Unauthorized();
+        if (!await houses.IsPersonalHouseAsync(tenant.TenantId, ct)) return Results.NotFound(OrganisationAi);
+        var s = await ai.GetAsync(me, ct);
+        return Results.Ok(new
+        {
+            s.Enabled, s.Confirmed, included = s.Included, s.ConfirmSentence,
+            trial = s.Trial is null ? null : new
+            {
+                s.Trial.StartedAt, s.Trial.EndsAt, s.Trial.Active,
+                daysLeft = s.Trial.Active ? (int)Math.Ceiling((s.Trial.EndsAt - DateTimeOffset.UtcNow).TotalDays) : 0,
+            },
+        });
+    }
+
+    private static async Task<IResult> SetMyAiAsync(
+        SetMyAiRequest req, TenantContext tenant, PersonalHouse houses, PersonalAiService ai, CancellationToken ct)
+    {
+        if (tenant.UserId is not Guid me) return Results.Unauthorized();
+        if (!await houses.IsPersonalHouseAsync(tenant.TenantId, ct)) return Results.NotFound(OrganisationAi);
+        if (await ai.SetAsync(me, req.On, req.Confirm, ct) is string refused)
+            return Results.BadRequest(new { error = refused, needsConfirm = true });
+        return await MyAiAsync(tenant, houses, ai, ct);
     }
 
     // ------------------------------------------------------------------
@@ -132,3 +170,5 @@ public static class PersonalPlanEndpoints
 }
 
 public sealed record ChangePersonalPlanRequest(Guid PlanId, string? Reason);
+
+public sealed record SetMyAiRequest(bool On, bool Confirm);
