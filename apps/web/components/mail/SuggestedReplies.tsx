@@ -40,7 +40,7 @@ export function SuggestedReplies({
   onPick: (text: string) => void;
 }) {
   const { authedFetch } = useAuth();
-  const available = useMailAiAvailable();
+  const available = useMailAiAvailable('suggest');
   const [state, setState] = useState<{ id: string; list: string[]; partial: boolean } | null>(null);
 
   useEffect(() => {

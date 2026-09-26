@@ -78,6 +78,17 @@ public class Tenant
     /// </summary>
     public DateTimeOffset? MailAiTriageSince { get; set; }
 
+    /// <summary>
+    /// Each Mail AI feature's own switch, inside AllowMailAi (Amit, 26 Sept
+    /// 2026: "turn on and off … so client able to save tokens"). Rewrite and
+    /// suggest default on (they were what Mail AI meant when agreed to);
+    /// summary defaults OFF (new, and it sends a whole conversation).
+    /// Column: 20260926-mail-ai-features.sql. Enforced in AiProductSwitch.
+    /// </summary>
+    public bool MailAiRewrite { get; set; } = true;
+    public bool MailAiSuggest { get; set; } = true;
+    public bool MailAiSummary { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? SuspendedAt { get; set; }
     public DateTimeOffset? TrialEndsAt { get; set; }

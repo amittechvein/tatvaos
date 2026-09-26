@@ -45,7 +45,14 @@ public static class OrgAiEndpoints
     /// Either or both. Enabled is the organisation's consent (allow_ai);
     /// Mail is Mail's own switch on top of it (allow_mail_ai, 25 Sept 2026).
     /// </summary>
-    public sealed record PutRequest(bool? Enabled, bool? Mail = null, bool? MailTriage = null);
+    public sealed record PutRequest(
+        bool? Enabled, bool? Mail = null, bool? MailTriage = null, MailFeaturesRequest? MailFeatures = null);
+
+    /// <summary>
+    /// Each Mail AI feature's own switch (Amit, 26 Sept 2026: "turn on and off …
+    /// so client able to save tokens"). Any subset; the rest are left as they are.
+    /// </summary>
+    public sealed record MailFeaturesRequest(bool? Rewrite = null, bool? Suggest = null, bool? Summary = null);
 
     private static async Task<IResult> GetAsync(
         AppDbContext db, TenantContext tenant, IAiGateway ai,
@@ -55,7 +62,8 @@ public static class OrgAiEndpoints
         var mailOffered = await AiProductSwitch.MailOfferedToAsync(db, tenant.TenantId, logs.CreateLogger("OrgAi"), ct);
         var row = await db.Tenants.AsNoTracking()
             .Where(t => t.Id == tenant.TenantId)
-            .Select(t => new { t.AllowAi, t.AllowMailAi, t.MailAiTriageSince, t.Type })
+            .Select(t => new { t.AllowAi, t.AllowMailAi, t.MailAiTriageSince, t.Type,
+                               t.MailAiRewrite, t.MailAiSuggest, t.MailAiSummary })
             .FirstOrDefaultAsync(ct);
         if (row is null) return Results.NotFound();
 
@@ -85,6 +93,20 @@ public static class OrgAiEndpoints
             // one is not on it; the screen shows the sentence, not the switches.
             mailOffered,
             mailNotOffered = mailOffered ? null : AiProductSwitch.MailNotOffered,
+            // Each feature inside Mail AI (26 Sept 2026). What each sends is
+            // in its own sentence, so turning one on is an informed choice.
+            mailFeatures = new
+            {
+                rewrite = row.MailAiRewrite,
+                suggest = row.MailAiSuggest,
+                summary = row.MailAiSummary,
+            },
+            mailFeatureDisclosure = new
+            {
+                rewrite = "Sends only the text a person typed, when they ask for a rewrite.",
+                suggest = "Sends the sender's name, the subject and the new text of an email when a person opens it.",
+                summary = "Sends the sender names, dates and new text of a whole conversation when a person asks for a summary.",
+            },
             // What Mail sends, in the API's words for the same reason as
             // `disclosure`. Kept SEPARATE from it: that sentence is asserted
             // word for word by tests/ai/disclosure-matches-host.sh and mirrored
@@ -133,7 +155,7 @@ public static class OrgAiEndpoints
         PutRequest req, AppDbContext db, TenantContext tenant,
         AuditWriter audit, ILoggerFactory logs, CancellationToken ct)
     {
-        if (req?.Enabled is null && req?.Mail is null && req?.MailTriage is null)
+        if (req?.Enabled is null && req?.Mail is null && req?.MailTriage is null && req?.MailFeatures is null)
             return Results.BadRequest(new { error = "Say on or off." });
 
         var row = await db.Tenants
@@ -142,7 +164,8 @@ public static class OrgAiEndpoints
 
         // Mail AI (and so sorting) cannot be switched ON for an organisation
         // it is not offered to yet (ai.mail.organisations). OFF always works.
-        if ((req.Mail == true || req.MailTriage == true)
+        var featureOn = req.MailFeatures is { } mf && (mf.Rewrite == true || mf.Suggest == true || mf.Summary == true);
+        if ((req.Mail == true || req.MailTriage == true || featureOn)
             && !await AiProductSwitch.MailOfferedToAsync(db, tenant.TenantId, logs.CreateLogger("OrgAi"), ct))
             return Results.BadRequest(new { error = AiProductSwitch.MailNotOffered });
 
@@ -160,8 +183,20 @@ public static class OrgAiEndpoints
             row.MailAiTriageSince = triage ? row.MailAiTriageSince ?? DateTimeOffset.UtcNow : null;
         var triageNow = row.MailAiTriageSince != null;
 
-        if (row.AllowAi == before.allowAi && row.AllowMailAi == before.allowMailAi && triageNow == before.triage)
-            return Results.Ok(new { enabled = row.AllowAi, mailEnabled = row.AllowMailAi, mailTriageEnabled = triageNow });   // idempotent, no audit noise
+        var featuresBefore = new { rewrite = row.MailAiRewrite, suggest = row.MailAiSuggest, summary = row.MailAiSummary };
+        if (req.MailFeatures is { } set)
+        {
+            if (set.Rewrite is bool rw) row.MailAiRewrite = rw;
+            if (set.Suggest is bool sg) row.MailAiSuggest = sg;
+            if (set.Summary is bool sm) row.MailAiSummary = sm;
+        }
+        var featuresChanged = featuresBefore.rewrite != row.MailAiRewrite
+            || featuresBefore.suggest != row.MailAiSuggest || featuresBefore.summary != row.MailAiSummary;
+        object FeaturesNow() => new { rewrite = row.MailAiRewrite, suggest = row.MailAiSuggest, summary = row.MailAiSummary };
+
+        if (row.AllowAi == before.allowAi && row.AllowMailAi == before.allowMailAi && triageNow == before.triage && !featuresChanged)
+            return Results.Ok(new { enabled = row.AllowAi, mailEnabled = row.AllowMailAi, mailTriageEnabled = triageNow,
+                                    mailFeatures = FeaturesNow() });   // idempotent, no audit noise
 
         await db.SaveChangesAsync(ct);
 
@@ -205,6 +240,23 @@ public static class OrgAiEndpoints
                 after: new { mailTriage = triageNow, since = row.MailAiTriageSince, labelsCleared = cleared },
                 ct: ct, productCode: "mail");
 
-        return Results.Ok(new { enabled = row.AllowAi, mailEnabled = row.AllowMailAi, mailTriageEnabled = triageNow });
+        // One row per feature that moved, named for it: "who turned summaries
+        // on" must be answerable on its own.
+        foreach (var (name, was, now) in new[]
+                 {
+                     ("rewrite", featuresBefore.rewrite, row.MailAiRewrite),
+                     ("suggest", featuresBefore.suggest, row.MailAiSuggest),
+                     ("summary", featuresBefore.summary, row.MailAiSummary),
+                 })
+        {
+            if (was == now) continue;
+            await audit.WriteAsync($"org.ai.mail_feature.{name}." + (now ? "enabled" : "disabled"),
+                "core.tenant", row.Id.ToString(),
+                before: new { feature = name, on = was }, after: new { feature = name, on = now },
+                ct: ct, productCode: "mail");
+        }
+
+        return Results.Ok(new { enabled = row.AllowAi, mailEnabled = row.AllowMailAi, mailTriageEnabled = triageNow,
+                                mailFeatures = FeaturesNow() });
     }
 }

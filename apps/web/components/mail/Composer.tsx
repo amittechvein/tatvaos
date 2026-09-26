@@ -748,7 +748,7 @@ export function Composer({
   //  event synchronously, which is why `aiReplacing` exists: without it the
   //  replace itself would count as "typed since", and Undo would vanish the
   //  instant it appeared.
-  const aiAvailable = useMailAiAvailable();
+  const aiAvailable = useMailAiAvailable('rewrite');
   const [aiOpen, setAiOpen] = useState(false);
   const [aiEdited, setAiEdited] = useState(true);
   const aiReplacing = useRef(false);
