@@ -58,14 +58,19 @@ export function useMailAiStatus(): MailAiStatus | null {
   return s;
 }
 
-export function useMailAiAvailable(): boolean {
+/**
+ * Mail AI is available AND the named feature's own switch is on (26 Sept
+ * 2026). Each button asks for its own feature, so an administrator switching
+ * one off removes exactly that button.
+ */
+export function useMailAiAvailable(feature: 'rewrite' | 'suggest' | 'summary'): boolean {
   const { authedFetch } = useAuth();
   const [ok, setOk] = useState(false);
   useEffect(() => {
     let live = true;
-    void mailAiStatus(authedFetch).then((s) => { if (live) setOk(s.available); });
+    void mailAiStatus(authedFetch).then((s) => { if (live) setOk(s.available && s[feature] === true); });
     return () => { live = false; };
-  }, [authedFetch]);
+  }, [authedFetch, feature]);
   return ok;
 }
 

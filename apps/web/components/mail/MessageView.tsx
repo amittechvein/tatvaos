@@ -108,6 +108,7 @@ export function MessageView({
   onMove,
   canArchive = true,
   footer,
+  aboveBody,
 }: {
   message: Message;
   bodyLoading?: boolean;
@@ -153,6 +154,11 @@ export function MessageView({
    * See the note where it is placed.
    */
   footer?: React.ReactNode;
+  /**
+   * Shown above the conversation — the TatvaOS AI summary button and panel
+   * (26 Sept 2026). The caller decides whether there is one.
+   */
+  aboveBody?: React.ReactNode;
   /**
    * The rest of this conversation, oldest first, INCLUDING the open message.
    *
@@ -513,6 +519,7 @@ export function MessageView({
           furniture. The conversation IS the content, so it gets the pane.
       ------------------------------------------------------------------ */}
       <div className="scroll-thin flex-1 overflow-y-auto">
+        {aboveBody}
         {isThread && threadTotal && threadTotal > ordered.length ? (
           <p className="border-b border-line bg-canvas/50 px-4 py-1.5 text-xs text-ink-muted">
             Showing the most recent {ordered.length} of {threadTotal} messages.

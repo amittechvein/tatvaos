@@ -16,6 +16,7 @@ import { MessageList, type MailListRow } from '@/components/mail/MessageList';
 import { MessageView } from '@/components/mail/MessageView';
 import { Composer, type ComposeMode } from '@/components/mail/Composer';
 import { SuggestedReplies } from '@/components/mail/SuggestedReplies';
+import { ConversationSummary } from '@/components/mail/ConversationSummary';
 import { useMailAiStatus } from '@/components/mail/HelpMeWrite';
 import { AI_LABELS } from '@/lib/mailAi';
 import { dockHasRoom, layoutDock } from '@/lib/composerDock';
@@ -1427,6 +1428,12 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
               expanded={wide}
               onToggleExpand={() => setWide((v) => !v)}
               autoLoadImages={folder?.slug !== 'junk'}
+              // Summarise this conversation (TatvaOS AI, 26 Sept 2026). Not in
+              // Junk; the server refuses there too. Shows nothing unless the
+              // organisation has the summary feature on.
+              aboveBody={folder?.slug !== 'junk' && (
+                <ConversationSummary message={open} mailboxId={mailboxId} count={thread?.length} />
+              )}
               // THE REPLY, IN THE CONVERSATION — and now INSIDE the message's
               // own scroll container rather than beside it, so opening one
               // no longer squeezes the message into a sliver (Amit, 23 Sept:

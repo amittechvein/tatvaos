@@ -23,6 +23,25 @@ public static class AiUsageReport
         long? CeilingTokens, int? PerPersonPerHour, bool Paused, int PercentOfCeiling,
         List<FeatureLine> ByFeature, List<ModelLine> ByModel);
 
+    /// <summary>This month's AI CREDITS for a screen: allowance, where it comes from, used, per feature.</summary>
+    public sealed record Credits(int? Allowance, string Source, string? PlanName, string? Model, int? PerUser, int? Users,
+        int Used, int Percent, List<CreditLine> ByFeature);
+    public sealed record CreditLine(string Feature, int Credits);
+
+    public static async Task<Credits> CreditsAsync(AppDbContext db, Guid tenantId, CancellationToken ct)
+    {
+        var a = await AiCredits.AllowanceAsync(db, tenantId, ct);
+        var (used, by) = await AiCredits.UsedThisMonthAsync(db, DateTimeOffset.UtcNow, ct);
+        var percent = a.Credits switch
+        {
+            null => 0,
+            0 => 100,
+            int cap => (int)Math.Min(100, (long)used * 100 / cap),
+        };
+        return new Credits(a.Credits, a.Source, a.PlanName, a.Model, a.PerUser, a.Users, used, percent,
+            by.Select(x => new CreditLine(x.Feature, x.Credits)).ToList());
+    }
+
     public static async Task<Month> ThisMonthAsync(AppDbContext db, SettingsReader settings, CancellationToken ct)
     {
         var now = DateTimeOffset.UtcNow;

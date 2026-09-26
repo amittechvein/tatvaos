@@ -95,6 +95,9 @@ interface PlanForm {
   pricingModel: PricingModel;
   price: string;
   products: Record<string, boolean>;
+  /** AI credits a month — empty = no limit, 0 = none (the same rule as every AI limit). */
+  aiCreditModel: StorageModel;
+  aiCredits: string;
 }
 
 function blankForm(catalogue: ProductRow[]): PlanForm {
@@ -107,6 +110,8 @@ function blankForm(catalogue: ProductRow[]): PlanForm {
     maxDomains: '',
     pricingModel: 'per_user',
     price: '',
+    aiCreditModel: 'pooled',
+    aiCredits: '',
     products: catalogue.length
       ? Object.fromEntries(catalogue.map((p) => [p.code, p.code === 'mail'] as const))
       // The catalogue failed to load. Mail is the one product every plan has
@@ -129,6 +134,9 @@ function formFromPlan(p: PlanRow, catalogue: ProductRow[]): PlanForm {
     pooledStorageGb: p.pooledStorageBytes ? String(Math.round(p.pooledStorageBytes / GB)) : '2048',
     maxDomains: p.maxDomains != null ? String(p.maxDomains) : '',
     pricingModel,
+    aiCreditModel: p.aiCreditModel === 'per_user' ? 'per_user' : 'pooled',
+    aiCredits: (p.aiCreditModel === 'per_user' ? p.aiCreditsPerUser : p.aiCreditsPooled) != null
+      ? String(p.aiCreditModel === 'per_user' ? p.aiCreditsPerUser : p.aiCreditsPooled) : '',
     price:
       pricingModel === 'per_user' ? String(p.pricePerUserMonthly)
       : pricingModel === 'flat' ? String(p.priceMonthly)
@@ -152,6 +160,9 @@ function validate(f: PlanForm): string[] {
   }
   if (f.storageModel === 'pooled' && !(Number(f.pooledStorageGb) > 0)) {
     errs.push('Pooled storage must be greater than 0 GB.');
+  }
+  if (f.aiCredits.trim() !== '' && !(Number(f.aiCredits) >= 0 && Number.isInteger(Number(f.aiCredits)))) {
+    errs.push('AI credits must be a whole number — or empty for no limit.');
   }
   if (f.pricingModel !== 'custom' && !(Number(f.price) > 0)) {
     errs.push('Enter a price, or switch pricing to Custom.');
@@ -177,6 +188,10 @@ function toBody(f: PlanForm): UpsertPlanBody {
     includedProducts: Object.entries(f.products).filter(([, on]) => on).map(([k]) => k),
     pricePerUserMonthly: f.pricingModel === 'per_user' ? Number(f.price) : null,
     priceMonthly: f.pricingModel === 'flat' ? Number(f.price) : null,
+    // Only the amount for the chosen model is sent, like storage above.
+    aiCreditModel: f.aiCreditModel,
+    aiCreditsPerUser: f.aiCreditModel === 'per_user' && f.aiCredits.trim() !== '' ? Number(f.aiCredits) : null,
+    aiCreditsPooled: f.aiCreditModel === 'pooled' && f.aiCredits.trim() !== '' ? Number(f.aiCredits) : null,
   };
 }
 
@@ -367,6 +382,11 @@ function PlanCard({ plan: p, onEdit, onDelete }: {
             : `${formatBytes(p.perUserQuotaBytes ?? 0)} per user`}
         </Feature>
         <Feature>{p.maxDomains ? `${p.maxDomains} domain${p.maxDomains > 1 ? 's' : ''}` : 'Unlimited domains'}</Feature>
+        <Feature>
+          {p.aiCreditModel === 'per_user'
+            ? p.aiCreditsPerUser != null ? `${p.aiCreditsPerUser.toLocaleString('en-IN')} AI credits per user / month` : 'AI credits: no limit'
+            : p.aiCreditsPooled != null ? `${p.aiCreditsPooled.toLocaleString('en-IN')} AI credits pooled / month` : 'AI credits: no limit'}
+        </Feature>
         <Feature><span className="capitalize">{p.includedProducts.join(', ') || 'mail'}</span></Feature>
       </ul>
 
@@ -541,6 +561,31 @@ function PlanFormModal({
                      onChange={(e) => set('pooledStorageGb', e.target.value)} />
             </>
           )}
+        </div>
+
+        {/* AI credits — the same per-user / pooled choice as storage, so a
+            plan is explained one way (Amit, 26 Sept 2026). What a credit buys
+            is on each organisation's TatvaOS AI page. */}
+        <div className="sm:col-span-2">
+          <FieldLabel>AI credits</FieldLabel>
+          <Segmented
+            label="AI credits"
+            value={form.aiCreditModel}
+            onChange={(v) => set('aiCreditModel', v)}
+            options={[
+              { value: 'per_user', label: 'Per user × users' },
+              { value: 'pooled', label: 'Pooled' },
+            ]}
+          />
+        </div>
+
+        <div>
+          <FieldLabel htmlFor="plan-ai-credits">
+            {form.aiCreditModel === 'per_user' ? 'AI credits per user / month' : 'AI credits for the organisation / month'}
+          </FieldLabel>
+          <Input id="plan-ai-credits" type="number" min={0}
+                 placeholder="No limit" value={form.aiCredits}
+                 onChange={(e) => set('aiCredits', e.target.value)} />
         </div>
 
         <div>

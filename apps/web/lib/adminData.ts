@@ -42,6 +42,10 @@ export interface PlanRow {
   includedProducts: string[];
   pricePerUserMonthly: number | null;
   priceMonthly: number | null;
+  /** AI credits (26 Sept 2026): per user × users, or one pool. Null amount = no limit. */
+  aiCreditModel?: string;
+  aiCreditsPerUser?: number | null;
+  aiCreditsPooled?: number | null;
 }
 
 type AuthedFetch = (path: string, init?: RequestInit) => Promise<Response>;
@@ -95,6 +99,9 @@ export interface UpsertPlanBody {
   includedProducts?: string[];
   pricePerUserMonthly?: number | null;
   priceMonthly?: number | null;
+  aiCreditModel?: 'per_user' | 'pooled';
+  aiCreditsPerUser?: number | null;
+  aiCreditsPooled?: number | null;
 }
 
 // Surfaces the server's own { error } text when present (the DELETE-in-use case
