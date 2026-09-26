@@ -371,6 +371,11 @@ services:
       # is shown. Set CONNECT_RECORDING_SHARING_OFFERED=true in .env and
       # recreate the api container to switch it on.
       Connect__RecordingSharingOffered: ${CONNECT_RECORDING_SHARING_OFFERED:-false}
+      # While the switch above is off, CREATING a share is refused too —
+      # except for the organisations listed here (comma-separated tenant ids),
+      # which is how §3's matrix runs on this server before anyone else can
+      # share. Empty by default; empty again once the matrix is done.
+      Connect__RecordingSharingTestTenants: ${CONNECT_RECORDING_SHARING_TEST_TENANTS:-}
       # Both containers mount the same volume; the two settings exist because
       # they are free to mount it at different paths, and assuming they match
       # is the kind of assumption that survives review and fails at 3 a.m.

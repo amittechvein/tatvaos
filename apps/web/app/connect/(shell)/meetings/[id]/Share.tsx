@@ -57,6 +57,24 @@ import {
  */
 const ORDER: ShareLevel[] = ['organisation', 'named', 'password', 'public'];
 
+/** The server's rule (ConnectShareEndpoints.MinSharePassword), repeated so
+ *  the Share button can say no before a round trip. The server decides. */
+const MIN_SHARE_PASSWORD = 8;
+
+/**
+ * A password nobody has to invent: 12 characters from an alphabet with no
+ * look-alikes (no 0/O, 1/l/I), so it survives being read out on a phone call —
+ * which is how a host sends it "by a different route to the link".
+ * crypto.getRandomValues, never Math.random.
+ */
+function suggestPassword(): string {
+  const alphabet = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  const bytes = new Uint32Array(12);
+  crypto.getRandomValues(bytes);
+  const chars = Array.from(bytes, (b) => alphabet[b % alphabet.length]);
+  return `${chars.slice(0, 4).join('')}-${chars.slice(4, 8).join('')}-${chars.slice(8).join('')}`;
+}
+
 const TITLE: Record<ShareLevel, string> = {
   organisation: 'People in my organisation',
   named: 'Only the people I list',
@@ -179,7 +197,7 @@ export function ShareDialog({
   }
 
   const valid = adding === null ? false
-    : adding === 'password' ? password.length >= 4 && password.length <= 100
+    : adding === 'password' ? password.length >= MIN_SHARE_PASSWORD && password.length <= 100
     : adding === 'named' ? emails.trim().length > 0
     : true;
 
@@ -288,19 +306,27 @@ export function ShareDialog({
               <Field
                 label="Password"
                 htmlFor="cx-share-pass"
-                hint="4 to 100 characters. Send it separately from the link."
+                hint={`At least ${MIN_SHARE_PASSWORD} characters. Copy it now — it cannot be shown again. Send it separately from the link.`}
                 why={
                   <>
-                    Stored the same way a meeting password is — hashed, never
-                    readable, not even by us. That also means it cannot be
-                    shown back to you later: if you forget it, revoke the link
-                    and make a new one.
+                    Longer than a meeting password on purpose: a meeting
+                    password guards an hour, and this guards a recording for
+                    weeks. It is stored hashed, never readable, not even by us,
+                    so it cannot be shown back to you later. After ten wrong
+                    tries in an hour the link pauses for everybody, and you
+                    will see that here.
                   </>
                 }
               >
-                <input id="cx-share-pass" className="cx-field" type="text"
-                       autoComplete="off"
-                       value={password} onChange={(e) => setPassword(e.target.value)} />
+                <div className="flex gap-2">
+                  <input id="cx-share-pass" className="cx-field grow" type="text"
+                         autoComplete="off"
+                         value={password} onChange={(e) => setPassword(e.target.value)} />
+                  <Button variant="ghost" size="sm" type="button"
+                          onClick={() => setPassword(suggestPassword())}>
+                    Suggest one
+                  </Button>
+                </div>
               </Field>
             )}
 
@@ -422,6 +448,23 @@ function ExistingShare({ share, busy, copied, onCopy, onRevoke }: {
                     : `${outside.length} of these people are outside your organisation.`}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Somebody guessing the password. Said beside THIS share, because
+              it is this link that has leaked or is being tried, and the host's
+              remedy — stop it and make a new one — is the button next to it. */}
+          {share.passwordPausedUntil ? (
+            <div className="text-[0.75rem] text-danger mt-1">
+              Someone has been guessing this link&rsquo;s password. It is paused for
+              everybody until {timeLabel(share.passwordPausedUntil)}. If you did not
+              expect this, stop sharing and make a new link.
+            </div>
+          ) : share.wrongPasswords24h > 0 && (
+            <div className="text-[0.75rem] text-warning-emphasis mt-1">
+              {share.wrongPasswords24h === 1
+                ? 'One wrong password was tried on this link in the last day.'
+                : `${share.wrongPasswords24h} wrong passwords were tried on this link in the last day.`}
             </div>
           )}
 

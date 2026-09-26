@@ -720,6 +720,11 @@ export interface RecordingShare {
   /** On a create or a change of people only: set when somebody named could
    *  not be emailed. They still have access; the host should send the link. */
   mailNote?: string | null;
+  /** Password links only: set while the link refuses everybody after ten
+   *  wrong passwords in an hour. Somebody has been guessing. */
+  passwordPausedUntil?: string | null;
+  /** Wrong passwords tried on this link in the last day. */
+  wrongPasswords24h: number;
 }
 
 /**
@@ -742,6 +747,9 @@ export interface RecordingViewing {
   meetingId: string | null;
   ticket: string;
 }
+
+/** A password link paused after too many wrong passwords. */
+export class SharePausedError extends Error {}
 
 /** A link that wants a password, or got the wrong one. */
 export class SharePasswordError extends Error {
@@ -954,6 +962,10 @@ export const sharedLinkApi = {
     if (r.status === 401) {
       const b = await r.json().catch(() => ({})) as { error?: string };
       throw new SharePasswordError(b.error ?? 'This recording needs a password.', Boolean(b.error));
+    }
+    if (r.status === 429) {
+      const b = await r.json().catch(() => ({})) as { error?: string };
+      throw new SharePausedError(b.error ?? 'Too many attempts. Try again later.');
     }
     return json<RecordingViewing>(r, 'This link does not work. It may have expired or been stopped by the person who shared it.');
   },

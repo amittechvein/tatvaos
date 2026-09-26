@@ -165,10 +165,21 @@ GRANT EXECUTE ON FUNCTION connect.resolve_share_token(text) TO tatvaos_app;
 --  This returns what the caller needs to go on — the share, its level, and
 --  the recording's meeting and organisation — only to somebody the share
 --  actually covers. The narrower share wins, as before.
+--
+--  THE READER'S ORGANISATION IS READ HERE, FROM core.users, NOT TAKEN FROM
+--  THE CALLER (Mr. Singh, 26 September). The first version took it as a
+--  parameter, and ViewAsync was safe only because it captured the value
+--  before switching the request into the recording's scope. An edit that
+--  moved that line below the switch would have passed the RECORDING's
+--  organisation as the reader's, and every signed-in person anywhere would
+--  have matched an organisation share. A definer function should not take
+--  the fact it is checking from its caller when it can read it — which is
+--  what share_still_allows() already does.
+DROP FUNCTION IF EXISTS connect.share_access_for_user(uuid, uuid, uuid);
+
 CREATE OR REPLACE FUNCTION connect.share_access_for_user(
     p_recording_id uuid,
-    p_user_id      uuid,
-    p_user_tenant  uuid)
+    p_user_id      uuid)
 RETURNS TABLE (
     share_id   uuid,
     level      text,
@@ -177,14 +188,16 @@ RETURNS TABLE (
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = connect, pg_catalog
+SET search_path = connect, core, pg_temp
 AS $$
     SELECT s.id, s.level, s.meeting_id, s.tenant_id
       FROM connect.recording_shares s
      WHERE s.recording_id = p_recording_id
        AND connect.share_is_live(s.id)
        AND (
-             (s.level = 'organisation' AND s.tenant_id = p_user_tenant)
+             (s.level = 'organisation' AND EXISTS (
+                SELECT 1 FROM core.users u
+                 WHERE u.id = p_user_id AND u.tenant_id = s.tenant_id))
           OR (s.level = 'named' AND EXISTS (
                 SELECT 1 FROM connect.recording_share_grants g
                  WHERE g.share_id = s.id
@@ -195,10 +208,12 @@ AS $$
      LIMIT 1;
 $$;
 
-REVOKE ALL ON FUNCTION connect.share_access_for_user(uuid, uuid, uuid) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION connect.share_access_for_user(uuid, uuid, uuid) TO tatvaos_app;
+REVOKE ALL ON FUNCTION connect.share_access_for_user(uuid, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION connect.share_access_for_user(uuid, uuid) TO tatvaos_app;
 
 -- Kept for anything that still calls it, now built on the same definition.
+-- p_user_tenant is IGNORED, for the reason above; the signature stays because
+-- the function has existed in production since 20260908-b.
 CREATE OR REPLACE FUNCTION connect.share_for_user(
     p_recording_id uuid,
     p_user_id      uuid,
@@ -210,7 +225,7 @@ SECURITY DEFINER
 SET search_path = connect, pg_catalog
 AS $$
     SELECT a.share_id
-      FROM connect.share_access_for_user(p_recording_id, p_user_id, p_user_tenant) a;
+      FROM connect.share_access_for_user(p_recording_id, p_user_id) a;
 $$;
 
 REVOKE ALL ON FUNCTION connect.share_for_user(uuid, uuid, uuid) FROM PUBLIC;
@@ -263,6 +278,84 @@ REVOKE ALL ON FUNCTION connect.share_still_allows(uuid, uuid, uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION connect.share_still_allows(uuid, uuid, uuid) TO tatvaos_app;
 
 
+-- ----------------------------------------------------------------------------
+--  6. Wrong passwords, counted PER LINK (Mr. Singh, 26 September).
+-- ----------------------------------------------------------------------------
+--
+--  The only limit on guessing was connect-shared-links: 20 a minute PER
+--  ADDRESS. Guessing from many addresses walks around that — a 4-digit
+--  password falls in an afternoon — and a recording link lives for weeks,
+--  not the hour a meeting password was written for.
+--
+--  So wrong passwords are counted against the LINK, whoever sends them. Ten
+--  in any rolling hour and the link refuses everybody, the right password
+--  included, until the oldest of those ten is an hour old. The host is shown
+--  that somebody has been guessing.
+--
+--  A row per wrong guess rather than a counter on the share: a fixed window
+--  lets ten guesses land at the end of one hour and ten more at the start of
+--  the next, and a log answers "when did this start" for the host too.
+--
+--  Written only through the definer below, which takes the tenant from the
+--  share row: the guesser is anonymous and supplies nothing but the id the
+--  token already resolved to.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS connect.recording_share_password_failures (
+    id          bigserial PRIMARY KEY,
+    tenant_id   uuid NOT NULL,
+    share_id    uuid NOT NULL REFERENCES connect.recording_shares(id) ON DELETE CASCADE,
+    created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS ix_recording_share_password_failures_share
+    ON connect.recording_share_password_failures (share_id, created_at DESC);
+
+ALTER TABLE connect.recording_share_password_failures ENABLE ROW LEVEL SECURITY;
+ALTER TABLE connect.recording_share_password_failures FORCE  ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON connect.recording_share_password_failures;
+CREATE POLICY tenant_isolation ON connect.recording_share_password_failures
+    USING      (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)
+    WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);
+
+-- SELECT only: the host's list counts them under RLS. Writes go through the
+-- definer; nothing updates or deletes them.
+GRANT SELECT ON connect.recording_share_password_failures TO tatvaos_app;
+
+CREATE OR REPLACE FUNCTION connect.record_share_password_failure(p_share_id uuid)
+RETURNS void
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = connect, pg_catalog
+AS $$
+    INSERT INTO connect.recording_share_password_failures (tenant_id, share_id)
+    SELECT s.tenant_id, s.id FROM connect.recording_shares s WHERE s.id = p_share_id;
+$$;
+
+REVOKE ALL ON FUNCTION connect.record_share_password_failure(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION connect.record_share_password_failure(uuid) TO tatvaos_app;
+
+-- When this link opens again, or NULL when it is not paused. Exactly a
+-- rolling hour: the tenth most recent failure inside the last hour, plus an
+-- hour, is the moment the count drops back to nine.
+CREATE OR REPLACE FUNCTION connect.share_password_paused_until(p_share_id uuid)
+RETURNS timestamptz
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = connect, pg_catalog
+AS $$
+    SELECT f.created_at + interval '1 hour'
+      FROM connect.recording_share_password_failures f
+     WHERE f.share_id = p_share_id
+       AND f.created_at > now() - interval '1 hour'
+     ORDER BY f.created_at DESC
+    OFFSET 9
+     LIMIT 1;
+$$;
+
+REVOKE ALL ON FUNCTION connect.share_password_paused_until(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION connect.share_password_paused_until(uuid) TO tatvaos_app;
+
 DO $$
 BEGIN
     RAISE NOTICE 'connect recording sharing, read side:';
@@ -271,4 +364,5 @@ BEGIN
     RAISE NOTICE '    resolve_share_token()        — now executable by tatvaos_app';
     RAISE NOTICE '    share_access_for_user()      — cross-organisation named readers';
     RAISE NOTICE '    share_still_allows()         — the per-request ticket re-check';
+    RAISE NOTICE '    recording_share_password_failures — 10 wrong in a rolling hour pauses a link';
 END $$;

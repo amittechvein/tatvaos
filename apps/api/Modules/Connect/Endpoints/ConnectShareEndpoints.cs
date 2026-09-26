@@ -219,6 +219,35 @@ public static class ConnectShareEndpoints
     internal sealed record Capability(string[] Levels, int DefaultDays, int MaxDays);
 
     /// <summary>
+    /// May this organisation CREATE shares at all? (Mr. Singh, 26 September.)
+    ///
+    /// "Dark" has to mean the routes refuse, not only that the button is
+    /// hidden: with the button off, a host who knows the API could still have
+    /// made organisation, named and password shares in production before
+    /// §3's condition was met. So while Connect:RecordingSharingOffered is
+    /// off, creating a share (or adding people to one) is refused — except
+    /// for the organisations named in Connect:RecordingSharingTestTenants, a
+    /// comma-separated list of tenant ids, which is how the production matrix
+    /// runs before anybody else can share.
+    ///
+    /// Reading, revoking and opening are NOT gated: none of them can make a
+    /// share exist, and revoking must always work.
+    /// </summary>
+    internal static bool SharingOpenFor(IConfiguration config, Guid tenantId)
+    {
+        if (string.Equals(config["Connect:RecordingSharingOffered"], "true", StringComparison.OrdinalIgnoreCase))
+            return true;
+        var list = config["Connect:RecordingSharingTestTenants"] ?? "";
+        return list.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(x => Guid.TryParse(x, out var g) && g == tenantId);
+    }
+
+    private static IResult SharingNotOpen() => Results.Json(new
+    {
+        error = "Sharing recordings is not switched on for this server yet.",
+    }, statusCode: 403);
+
+    /// <summary>
     /// What the recordings list tells THIS caller about sharing, or null for
     /// "do not offer it".
     ///
@@ -242,7 +271,7 @@ public static class ConnectShareEndpoints
         AppDbContext db, TenantContext tenant, IConfiguration config,
         Guid meetingId, Guid userId, CancellationToken ct)
     {
-        if (!string.Equals(config["Connect:RecordingSharingOffered"], "true", StringComparison.OrdinalIgnoreCase))
+        if (!SharingOpenFor(config, tenant.TenantId))
             return null;
 
         if (await ConnectRecordingEndpoints.RoleOfAsync(db, meetingId, userId, ct) != "host")
@@ -321,7 +350,8 @@ public static class ConnectShareEndpoints
         int opens,
         string createdBy,
         string publicBase,
-        string? mailNote = null)
+        string? mailNote = null,
+        Guessing? guessing = null)
         => new
         {
             s.Id,
@@ -349,7 +379,28 @@ public static class ConnectShareEndpoints
             // either way; this is the sentence telling the host to send the
             // link themselves.
             mailNote,
+            // Password links only. Set while the link is refusing everybody
+            // after ten wrong passwords in an hour; the host is told somebody
+            // has been guessing, and can stop the link or wait it out.
+            passwordPausedUntil = guessing?.PausedUntil,
+            // Wrong passwords in the last day, paused or not — a steady
+            // trickle under the limit is worth a host knowing about too.
+            wrongPasswords24h = guessing?.Last24h ?? 0,
         };
+
+    internal sealed record Guessing(DateTimeOffset? PausedUntil, int Last24h);
+
+    /// <summary>Read under the host's own RLS: the failures table is scoped
+    /// to the recording's organisation, which is the host's.</summary>
+    private static async Task<Guessing?> GuessingOfAsync(
+        AppDbContext db, ConnectRecordingShare s, CancellationToken ct)
+    {
+        if (s.PasswordHash is null) return null;
+        var since = DateTimeOffset.UtcNow.AddDays(-1);
+        var count = await db.Set<ConnectRecordingSharePasswordFailure>().AsNoTracking()
+            .CountAsync(f => f.ShareId == s.Id && f.CreatedAt > since, ct);
+        return new Guessing(await PasswordPausedUntilAsync(db, s.Id, ct), count);
+    }
 
     // ==================================================================
     //  Listing
@@ -381,7 +432,8 @@ public static class ConnectShareEndpoints
                 await PeopleOfAsync(db, s, ct),
                 await OpensOfAsync(db, s, ct),
                 await NameOfAsync(db, s.CreatedByUserId, ct),
-                publicBase));
+                publicBase,
+                guessing: await GuessingOfAsync(db, s, ct)));
         }
 
         return Results.Ok(new { shares = result });
@@ -407,6 +459,8 @@ public static class ConnectShareEndpoints
         //  already host-only for exactly this reason.
         if (await ConnectRecordingEndpoints.RoleOfAsync(db, id, uid, ct) != "host")
             return ConnectRecordingEndpoints.Forbidden();
+
+        if (!SharingOpenFor(config, tenant.TenantId)) return SharingNotOpen();
 
         var level = (req.Level ?? "").Trim().ToLowerInvariant();
         if (!ConnectShareLevels.IsValid(level))
@@ -499,12 +553,14 @@ public static class ConnectShareEndpoints
         if (level == ConnectShareLevels.Password)
         {
             var pw = req.Password ?? "";
-            // The same rule as a meeting password, word for word, because two
-            // password rules in one product is two things to explain.
-            if (pw.Length is < 4 or > 100)
+            // EIGHT, not the meeting password's four — the one exception to
+            // "one password rule in the product" (Mr. Singh, 26 September;
+            // the reason is in docs/CONNECT_DECISIONS.md §3). A meeting
+            // password guards an hour; this guards a recording for weeks.
+            if (pw.Length is < MinSharePassword or > 100)
                 return Results.BadRequest(new
                 {
-                    error = "A share password is between 4 and 100 characters.",
+                    error = $"A share password is between {MinSharePassword} and 100 characters.",
                 });
             hash = hasher.Hash(pw);
         }
@@ -523,12 +579,18 @@ public static class ConnectShareEndpoints
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow,
         };
-        db.Set<ConnectRecordingShare>().Add(share);
 
         // ── NAMED PEOPLE ─────────────────────────────────────────────────
+        //
+        //  Resolved BEFORE the share is added to the context. Every lookup now
+        //  writes an audit row, and AuditWriter saves at once — so a share
+        //  added first would be saved by the first lookup, and a request then
+        //  refused for an unknown address would leave a share behind.
+        List<ConnectRecordingShareGrant> named = [];
         if (level == ConnectShareLevels.Named)
         {
-            var (grants, unknown) = await ResolveAsync(db, share, req.UserIds ?? [], ct);
+            var (grants, unknown, limited, _) = await ResolveAsync(db, audit, uid, share, req.UserIds ?? [], ct);
+            if (limited) return LookupLimit();
             if (unknown.Count > 0)
                 return Results.BadRequest(new
                 {
@@ -540,9 +602,11 @@ public static class ConnectShareEndpoints
                 });
             if (grants.Count == 0)
                 return Results.BadRequest(new { error = "Name at least one person." });
-            db.Set<ConnectRecordingShareGrant>().AddRange(grants);
+            named = grants;
         }
 
+        db.Set<ConnectRecordingShare>().Add(share);
+        db.Set<ConnectRecordingShareGrant>().AddRange(named);
         await db.SaveChangesAsync(ct);
 
         // EVERY GRANT AUDITED, per Core. The token is NOT in the audit row:
@@ -561,8 +625,7 @@ public static class ConnectShareEndpoints
         var mailNote = level == ConnectShareLevels.Named
             ? await NotifyNamedAsync(db, tenant, config, audit, autoSave,
                 logs.CreateLogger("Connect.RecordingShares"), share,
-                [.. db.Set<ConnectRecordingShareGrant>().Local
-                    .Where(g => g.ShareId == share.Id).Select(g => g.SubjectUserId)], ct)
+                [.. named.Select(g => g.SubjectUserId)], ct)
             : null;
 
         return Results.Ok(Shape(share,
@@ -633,7 +696,10 @@ public static class ConnectShareEndpoints
                 error = "Only a share with named people has a list to change.",
             });
 
-        var (wanted, unknown) = await ResolveAsync(db, share, req.UserIds ?? [], ct);
+        var (wanted, unknown, limited, gated) = await ResolveAsync(db, audit, uid, share, req.UserIds ?? [], ct,
+            mayLookUp: SharingOpenFor(config, tenant.TenantId));
+        if (gated) return SharingNotOpen();
+        if (limited) return LookupLimit();
         if (unknown.Count > 0)
             return Results.BadRequest(new
             {
@@ -661,6 +727,9 @@ public static class ConnectShareEndpoints
         var have = existing.Where(x => x.RevokedAt is null)
             .Select(x => x.SubjectUserId).ToHashSet();
         var added = wanted.Where(w => !have.Contains(w.SubjectUserId)).ToList();
+        // Adding somebody is giving access, so it is gated like creating a
+        // share. Removing people never is.
+        if (added.Count > 0 && !SharingOpenFor(config, tenant.TenantId)) return SharingNotOpen();
         db.Set<ConnectRecordingShareGrant>().AddRange(added);
 
         share.UpdatedAt = now;
@@ -722,15 +791,77 @@ public static class ConnectShareEndpoints
     /// prefix), and the host learns nothing else about the account.
     /// Deleted and suspended accounts are treated as unknown.
     /// </summary>
-    private static async Task<(List<ConnectRecordingShareGrant> Grants, List<string> Unknown)>
-        ResolveAsync(AppDbContext db, ConnectRecordingShare share, string[] raw, CancellationToken ct)
+    ///
+    /// LIMITED AND AUDITED (Mr. Singh, 26 September). Because a lookup says
+    /// whether an account exists, each host may look up at most
+    /// <see cref="LookupsPerHour"/> NEW addresses in any rolling hour, and
+    /// every lookup — found or not — is written to the HOST's organisation's
+    /// audit log as connect.recording.share_lookup, target = the address.
+    /// That log is also the counter, so the limit cannot drift from the
+    /// record of what was asked. People already on this share are not looked
+    /// up again and cost nothing: the host knows them already.
+    /// </summary>
+    /// <param name="mayLookUp">False while sharing is dark for this
+    /// organisation: then anybody not already on the share is refused BEFORE
+    /// any lookup, so a dark server cannot be used to ask whether an address
+    /// has an account.</param>
+    private static async Task<(List<ConnectRecordingShareGrant> Grants, List<string> Unknown, bool Limited, bool Gated)>
+        ResolveAsync(AppDbContext db, AuditWriter audit, Guid hostId, ConnectRecordingShare share,
+            string[] raw, CancellationToken ct, bool mayLookUp = true)
     {
         var grants = new List<ConnectRecordingShareGrant>();
         var unknown = new List<string>();
         var seen = new HashSet<Guid>();
 
-        foreach (var entry in raw.Select(x => x.Trim()).Where(x => x.Length > 0).Distinct())
+        var entries = raw.Select(x => x.Trim()).Where(x => x.Length > 0)
+            .DistinctBy(x => x.ToLowerInvariant()).ToList();
+
+        // Already on this share: resolved from the grant rows, not looked up.
+        var current = await db.Set<ConnectRecordingShareGrant>().AsNoTracking()
+            .Where(g => g.ShareId == share.Id && g.RevokedAt == null)
+            .Select(g => new { g.SubjectUserId, g.SubjectTenantId })
+            .ToListAsync(ct);
+        var currentIds = current.Select(c => c.SubjectUserId).ToList();
+        var known = (await db.Users.IgnoreQueryFilters().AsNoTracking()
+                .Where(u => currentIds.Contains(u.Id))
+                .Select(u => new { u.Id, u.Email })
+                .ToListAsync(ct))
+            .SelectMany(u => new[] { (Key: u.Id.ToString(), u.Id), (Key: u.Email.ToLowerInvariant(), u.Id) })
+            .ToDictionary(k => k.Key, k => k.Id);
+
+        var toLookUp = entries.Where(e => !known.ContainsKey(e.ToLowerInvariant())).ToList();
+        if (toLookUp.Count > 0 && !mayLookUp)
+            return (grants, unknown, false, true);
+
+        // ── THE LIMIT, counted from the audit log itself. ────────────────
+        var since = DateTimeOffset.UtcNow.AddHours(-1);
+        var recent = (await db.AuditLogs.AsNoTracking()
+                .Where(a => a.Action == LookupAction && a.ActorUserId == hostId && a.OccurredAt > since)
+                .Select(a => a.TargetId)
+                .ToListAsync(ct))
+            .Where(t => t is not null).Select(t => t!).ToHashSet();
+        var fresh = toLookUp.Count(e => !recent.Contains(Target(e)));
+        if (recent.Count + fresh > LookupsPerHour)
+            return (grants, unknown, true, false);
+
+        foreach (var entry in entries)
         {
+            if (known.TryGetValue(entry.ToLowerInvariant(), out var knownId))
+            {
+                if (!seen.Add(knownId)) continue;
+                var c = current.First(x => x.SubjectUserId == knownId);
+                grants.Add(new ConnectRecordingShareGrant
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = share.TenantId,
+                    ShareId = share.Id,
+                    SubjectUserId = knownId,
+                    SubjectTenantId = c.SubjectTenantId,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                });
+                continue;
+            }
+
             var user = Guid.TryParse(entry, out var byId)
                 ? await db.Users.IgnoreQueryFilters().AsNoTracking()
                     .Where(u => u.Id == byId && u.Status != "deleted" && u.Status != "suspended")
@@ -740,6 +871,12 @@ public static class ConnectShareEndpoints
                     .Where(u => u.Email == entry && u.Status != "deleted" && u.Status != "suspended")
                     .Select(u => new { u.Id, u.TenantId })
                     .FirstOrDefaultAsync(ct);
+
+            // Every lookup, found or not — "not found" is half of what a
+            // lookup reveals, so it is half of what the log must show.
+            await audit.WriteAsync(LookupAction, "connect.address", Target(entry),
+                after: new { found = user is not null, outside = user is not null && user.TenantId != share.TenantId },
+                ct: ct, productCode: "connect");
 
             if (user is null) { unknown.Add(entry); continue; }
             if (!seen.Add(user.Id)) continue;
@@ -755,8 +892,27 @@ public static class ConnectShareEndpoints
             });
         }
 
-        return (grants, unknown);
+        return (grants, unknown, false, false);
     }
+
+    /// <summary>New addresses one host may look up in any rolling hour.</summary>
+    internal const int LookupsPerHour = 30;
+
+    internal const string LookupAction = "connect.recording.share_lookup";
+
+    /// <summary>The audit target for an address: lower-cased, so "A@x" and
+    /// "a@x" are one lookup, and cut to the column's 128 characters.</summary>
+    private static string Target(string entry)
+    {
+        var t = entry.Trim().ToLowerInvariant();
+        return t.Length <= 128 ? t : t[..128];
+    }
+
+    private static IResult LookupLimit() => Results.Json(new
+    {
+        error = $"You have looked up {LookupsPerHour} new people in the last hour, which is the limit. "
+              + "Try again later, or share with your organisation or by link instead.",
+    }, statusCode: 429);
 
     /// <summary>
     /// The named people on a share, with the ones who are NOT colleagues
@@ -864,10 +1020,14 @@ public static class ConnectShareEndpoints
     /// Returns null for "no", which is also the answer for a revoked share,
     /// an expired one, a suspended organisation, and a recording nobody ever
     /// shared.
+    ///
+    /// No tenant argument, on purpose: the function reads the reader's
+    /// organisation from core.users itself (Mr. Singh, 26 September), so no
+    /// caller — including one that has already switched scope — can hand it
+    /// the wrong one.
     /// </summary>
     internal static async Task<ShareAccess?> AllowedAsync(
-        AppDbContext db, Guid recordingId, Guid userId, Guid userTenantId,
-        CancellationToken ct)
+        AppDbContext db, Guid recordingId, Guid userId, CancellationToken ct)
     {
         var rows = await db.Database
             .SqlQuery<ShareAccessRow>($"""
@@ -875,7 +1035,7 @@ public static class ConnectShareEndpoints
                        level      AS "Level",
                        meeting_id AS "MeetingId",
                        tenant_id  AS "TenantId"
-                  FROM connect.share_access_for_user({recordingId}, {userId}, {userTenantId})
+                  FROM connect.share_access_for_user({recordingId}, {userId})
                 """)
             .ToListAsync(ct);
 
@@ -884,9 +1044,27 @@ public static class ConnectShareEndpoints
             : null;
     }
 
-    internal enum LinkOutcome { None, NeedsPassword, WrongPassword, Open }
+    internal enum LinkOutcome { None, NeedsPassword, WrongPassword, Paused, Open }
 
-    internal sealed record LinkResult(LinkOutcome Outcome, ShareAccess? Access, Guid RecordingId);
+    internal sealed record LinkResult(LinkOutcome Outcome, ShareAccess? Access, Guid RecordingId,
+        DateTimeOffset? PausedUntil = null);
+
+    /// <summary>Shortest share password. See CreateAsync.</summary>
+    internal const int MinSharePassword = 8;
+
+    /// <summary>
+    /// When this link opens again after too many wrong passwords, or null.
+    /// Ten in a rolling hour, counted per LINK in the database, whoever sent
+    /// them — see section 6 of 20260926-c.
+    /// </summary>
+    internal static async Task<DateTimeOffset?> PasswordPausedUntilAsync(
+        AppDbContext db, Guid shareId, CancellationToken ct)
+    {
+        var until = await db.Database
+            .SqlQuery<DateTimeOffset?>($"SELECT connect.share_password_paused_until({shareId}) AS \"Value\"")
+            .ToListAsync(ct);
+        return until.FirstOrDefault();
+    }
 
     /// <summary>
     /// Turn a share LINK into the recording it names, for a holder with no
@@ -945,6 +1123,13 @@ public static class ConnectShareEndpoints
             if (string.IsNullOrEmpty(password))
                 return new LinkResult(LinkOutcome.NeedsPassword, null, row.RecordingId);
 
+            // PAUSED BEFORE THE PASSWORD IS EVEN LOOKED AT, and for the right
+            // password too. Checking after would tell a guesser which of their
+            // guesses was right the moment the pause lifted; refusing everyone
+            // is what makes guessing from a thousand addresses pointless.
+            if (await PasswordPausedUntilAsync(db, row.ShareId, ct) is { } until)
+                return new LinkResult(LinkOutcome.Paused, null, row.RecordingId, until);
+
             // The hash is NOT returned by the definer function, on purpose.
             // Read here, scoped to the share we already hold.
             var hash = await db.Set<ConnectRecordingShare>().AsNoTracking()
@@ -957,7 +1142,14 @@ public static class ConnectShareEndpoints
             // never lets anybody in.
             if (hash is null) return none;
             if (!hasher.Verify(password, hash))
+            {
+                // Counted against the LINK, through the definer, which takes
+                // the tenant from the share row. Not best-effort: a guess that
+                // could not be counted must not be a free guess.
+                await db.Database.ExecuteSqlAsync(
+                    $"SELECT connect.record_share_password_failure({row.ShareId}::uuid)", ct);
                 return new LinkResult(LinkOutcome.WrongPassword, null, row.RecordingId);
+            }
         }
 
         return new LinkResult(LinkOutcome.Open, access, row.RecordingId);
@@ -1077,7 +1269,7 @@ public static class ConnectShareEndpoints
         }
 
         // ── 2. A SHARE. ──────────────────────────────────────────────────
-        if (await AllowedAsync(db, recordingId, uid, userTenant, ct) is not { } access)
+        if (await AllowedAsync(db, recordingId, uid, ct) is not { } access)
             return RecordingGone();
 
         // A reader in another organisation cannot see the recording row under
@@ -1130,6 +1322,16 @@ public static class ConnectShareEndpoints
                     needsPassword = true,
                     error = "That password did not open this recording.",
                 }, statusCode: 401);
+            case LinkOutcome.Paused:
+                // 429, and said plainly. The holder already knows this link
+                // has a password; "paused" tells them nothing new, and "does
+                // not work" would send the real recipient away for good.
+                return Results.Json(new
+                {
+                    paused = true,
+                    error = "Too many wrong passwords have been tried on this link, so it is paused "
+                          + "for up to an hour. Try again later.",
+                }, statusCode: 429);
             case LinkOutcome.None:
                 return Results.NotFound(new { error = LinkDead });
         }

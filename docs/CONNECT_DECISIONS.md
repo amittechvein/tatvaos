@@ -250,6 +250,46 @@ Share button has its own switch, `Connect:RecordingSharingOffered`
 deployed dark, the matrix run against production — none of it needs the
 button — and only then is the button switched on, by configuration.
 
+### Mr. Singh's ruling on PR 312, 26 September 2026
+
+Accepted, with two fixes before merge and three changes, all now in the PR:
+
+- **Wrong passwords are counted per link.** Ten in any rolling hour and the
+  link refuses everybody, the right password included, until the oldest of
+  the ten is an hour old; the host sees "Someone has been guessing this
+  link's password" beside the share. The per-address rate limit alone was
+  walked around by guessing from many addresses — proved: with the count
+  removed, 25 guesses from 25 addresses were all merely "wrong" and the right
+  password then opened the recording.
+- **A share password is at least 8 characters, and the dialog offers to
+  generate one.** This is the one exception to "one password rule in the
+  product", and the reason is the lifetime: a meeting password guards an
+  hour; a share password guards a recording for weeks, against guessing
+  that has all of that time.
+- **Dark means the routes refuse.** With `RecordingSharingOffered` off,
+  creating a share or adding people to one is refused — before any address is
+  looked up — except for organisations in `Connect:RecordingSharingTestTenants`
+  (`CONNECT_RECORDING_SHARING_TEST_TENANTS`). Reading, revoking and opening are
+  never gated.
+- **Looking people up is limited and audited:** 30 new addresses per host per
+  rolling hour, exact match only, every lookup (found or not) written to the
+  host organisation's audit log as `connect.recording.share_lookup`. That log
+  is also the counter. People already on the share cost nothing.
+- **`share_access_for_user()` reads the reader's organisation from
+  `core.users` itself** rather than trusting a parameter.
+- The public-links switch now says a school's recording can show children,
+  and that anyone with a public link can save a copy stopping it won't recall.
+
+**The production matrix, as ruled:** fixtures created through the product,
+never by writing to the production database; Techvein and a second test
+organisation on the allow-list; a real short meeting with a real recording;
+Amit's Gmail as the outside named reader (which also shows where the email
+lands); reads only on Amit's go. Afterwards every test share is revoked, the
+result is written here, and the button is switched on by configuration.
+Order: fixes → Mr. Singh reads → merge → Amit's go + no live meeting → hand
+deploy, dark → production matrix → switch on. The deploy report says "not
+purely additive: replaces unused definer functions".
+
 ---
 
 ## 4. Guest removal does not remove a guest

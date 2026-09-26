@@ -250,7 +250,9 @@ function ConnectRecordingLinks() {
               A meeting&rsquo;s host can make a link that anyone on the internet
               can use to watch its recording, with no sign-in. Every link
               expires, at the latest when the recording is deleted, and the
-              host can stop it at any time.
+              host can stop it at any time. A recording can show children, and
+              anyone with a public link can save a copy that stopping the link
+              does not take back.
             </p>
             <p className="text-ink-muted text-[0.75rem] mb-0">
               Turning this off stops every public recording link immediately,
@@ -274,6 +276,15 @@ function ConnectRecordingLinks() {
                 lets <strong>anyone on the internet</strong> watch a meeting
                 recording, with no sign-in and no password. A link can be
                 forwarded, and there is no way to tell who has watched through it.
+              </p>
+              {/* Mr. Singh's addition, 26 Sept: the administrator decides, but
+                  decides knowing this. Not softened, and not in a tooltip. */}
+              <p>
+                A recording shows everybody who was in the meeting — in a school,
+                that can mean <strong>children</strong>. Once a link is public,
+                anyone who has it can watch the recording and <strong>save their
+                own copy</strong>. Stopping the link later does not take back a
+                copy somebody has already saved.
               </p>
               <p className="text-ink-muted">
                 Only a meeting&rsquo;s host can make one, each link expires, and

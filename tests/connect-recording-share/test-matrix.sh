@@ -81,9 +81,15 @@ hasnt() {
     elif printf "%s" "$2" | grep -qF -- "$3"; then fail "$1 — found [$3]"
     else pass "$1"; fi
 }
+CALLS=0
 call() {   # METHOD PATH TOKEN [JSON]
     local auth=()
     [ -n "$3" ] && auth=(-H "Authorization: Bearer $3")
+    # A fresh client address per request, so connect-shared-links (20/min
+    # per address) never stands in for the check a case is really making.
+    # The limiter itself is checked on its own, in section 10.
+    CALLS=$((CALLS + 1))
+    auth+=(-H "X-Forwarded-For: 192.0.2.$((CALLS % 250 + 1))")
     if [ -n "${4:-}" ]; then
         curl -s -w "\n%{http_code}" -X "$1" "$API$2" "${auth[@]}" -H "Content-Type: application/json" -d "$4"
     else
@@ -94,6 +100,19 @@ call() {   # METHOD PATH TOKEN [JSON]
 fetch() { curl -s -w " %{http_code}" "$API/api/connect/recordings/file?t=$1"; }
 fetch_status() { fetch "$1" | awk '{print $NF}'; }
 signin() {
+    # Up to three tries. The OTP request intermittently answers without a
+    # devCode on a local stack (seen twice in ~15 runs, cause not found — it is
+    # Core's code, outside this test). Each retry is SAID, on stderr, so a
+    # stack where it never works still shows up rather than hiding behind this.
+    local t tok
+    for t in 1 2 3; do
+        tok=$(signin_once "$1")
+        [ -n "$tok" ] && { printf "%s" "$tok"; return; }
+        printf "    sign-in for %s: retry %s\n" "$1" "$t" >&2
+        sleep 2
+    done
+}
+signin_once() {
     PG "UPDATE core.users SET login_otp_sent_at=NULL, login_otp_attempts=0 WHERE phone='$1'" >/dev/null
     local code req ver
     req=$(curl -s -X POST "$API/api/auth/otp/request" -H "Content-Type: application/json" -d "{\"phone\":\"$1\"}")
@@ -119,9 +138,12 @@ export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=$DB
 export Smtp__Host=127.0.0.1 Smtp__Port=$SMTP_PORT
 export Connect__PublicBaseUrl="http://localhost:3141"
 export Connect__Recording__Enabled=true
-# The Share button's own switch. Off by default in every environment; the
-# matrix runs with it on so the capability checks have something to see.
-export Connect__RecordingSharingOffered="${TATVAOS_SHARING_OFFERED:-true}"
+# Sharing's own switch, OFF — the way production will be when the matrix
+# runs there — with this run's organisation on the test allow-list, which is
+# what lets it share at all (Mr. Singh's fix 2). The last section restarts the
+# API with the allow-list empty and checks the routes refuse.
+export Connect__RecordingSharingOffered="${TATVAOS_SHARING_OFFERED:-false}"
+export Connect__RecordingSharingTestTenants="${TATVAOS_SHARING_TEST_TENANTS-$TECHVEIN}"
 export Connect__Recording__OutputDirectory="$(winpath "$SCRATCH/recordings")"
 export Connect__Recording__ReadDirectory="$(winpath "$SCRATCH/recordings")"
 export Oidc__KeyDirectory="$(winpath "$SCRATCH")\\keys"
@@ -135,7 +157,7 @@ cleanup() {
     for p in "$API_PID" "$SINK_PID"; do [ -n "$p" ] && kill "$p" >/dev/null 2>&1; done
     if command -v powershell.exe >/dev/null 2>&1; then
         for port in "$PORT" "$SMTP_PORT"; do
-            powershell.exe -NoProfile -Command "\$c = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if (\$c) { Stop-Process -Id \$c.OwningProcess -Force }" >/dev/null 2>&1
+            powershell.exe -NoProfile -Command "\$c = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue; foreach (\$x in \$c) { Stop-Process -Id \$x.OwningProcess -Force -ErrorAction SilentlyContinue }" >/dev/null 2>&1
         done
     fi
     [ -n "$WSL_KEEPALIVE" ] && kill "$WSL_KEEPALIVE" >/dev/null 2>&1
@@ -147,10 +169,35 @@ step "0. Set up: the API, four people, one meeting, two recordings"
 # ----------------------------------------------------------------------------
 "$PY" "$HERE/smtp-sink.py" "$SMTP_PORT" "$SCRATCH/mail" &
 SINK_PID=$!
-dotnet run --no-build -c Release --project "$PROJ" > "$LOG" 2>&1 &
-API_PID=$!
-for _ in $(seq 1 150); do curl -s -o /dev/null -w "%{http_code}" "$API/health" 2>/dev/null | grep -q 200 && break; sleep 1; done
-curl -s -o /dev/null -w "%{http_code}" "$API/health" | grep -q 200 && pass "API up" || { fail "API did not start"; tail -20 "$LOG"; exit 1; }
+start_api() {
+    dotnet run --no-build -c Release --project "$PROJ" >> "$LOG" 2>&1 &
+    API_PID=$!
+    for _ in $(seq 1 150); do curl -s -o /dev/null -w "%{http_code}" "$API/health" 2>/dev/null | grep -q 200 && break; sleep 1; done
+    curl -s -o /dev/null -w "%{http_code}" "$API/health" | grep -q 200
+}
+stop_api() {
+    kill "$API_PID" >/dev/null 2>&1
+    if command -v powershell.exe >/dev/null 2>&1; then
+        powershell.exe -NoProfile -Command "\$c = Get-NetTCPConnection -LocalPort $PORT -State Listen -ErrorAction SilentlyContinue; foreach (\$x in \$c) { Stop-Process -Id \$x.OwningProcess -Force -ErrorAction SilentlyContinue }" >/dev/null 2>&1
+    fi
+    for _ in $(seq 1 30); do curl -s -o /dev/null "$API/health" 2>/dev/null || break; sleep 1; done
+}
+# REFUSE TO START ON AN OCCUPIED PORT. A stray API left by an earlier run
+# held this port once (26 Sept): this run's own API could not bind, the old
+# one answered with other settings, and the results — sign-ins failing,
+# "Jwt:SigningKey is required" — pointed everywhere but at the cause.
+if curl -s -o /dev/null --max-time 2 "$API/health" 2>/dev/null; then
+    fail "something is already listening on $PORT — stop it (or set TATVAOS_SHARE_PORT) and run again"
+    trap - EXIT; exit 1
+fi
+start_api && pass "API up" || { fail "API did not start"; tail -20 "$LOG"; exit 1; }
+
+# The lookup limit counts this host's lookups over the last hour from the
+# audit log, so a second run inside the hour would start near the limit. Age
+# earlier runs' rows out of the window — as the database owner; the app role
+# cannot touch the audit log, which is the point of it.
+PG "UPDATE core.audit_logs SET occurred_at = occurred_at - interval '2 hours'
+    WHERE action='connect.recording.share_lookup' AND occurred_at > now() - interval '1 hour'" >/dev/null
 
 PG "UPDATE core.users SET role='org_owner' WHERE email='amit@techvein.local' AND role='owner'" >/dev/null
 PG "UPDATE core.users SET phone='+919999900001' WHERE email='amit@techvein.local' AND phone IS NULL" >/dev/null
@@ -253,6 +300,51 @@ r=$(call POST "/api/connect/shared/AAAAAAAAAAAAAAAAAAAAAA" "")
 same "a well-formed token that names nothing" "$(status "$r")" "404"
 DEAD=$(body "$r")
 
+r=$(call POST "/api/connect/meetings/$MEETING/recordings/$R2/shares" "$HOST" '{"level":"password","days":7,"password":"short77"}')
+same "a 7-character share password is refused" "$(status "$r")" "400"
+has  "…saying eight" "$(body "$r")" "between 8 and 100"
+
+# ----------------------------------------------------------------------------
+step "10. Guessing a password link from many addresses (Mr. Singh, fix 1)"
+# ----------------------------------------------------------------------------
+# Every guess from a DIFFERENT address, so the per-address rate limit
+# (connect-shared-links, 20/min) never sees more than one. Only a count kept
+# against the LINK can stop this. Red first: with that count removed, all 25
+# guesses answer 401 and the right password then opens the recording.
+r=$(call POST "/api/connect/meetings/$MEETING/recordings/$R2/shares" "$HOST" '{"level":"password","days":7,"password":"guess-me-if-you-can"}')
+same "a password link on R2 (8 characters or more is fine)" "$(status "$r")" "200"
+GUESS=$(body "$r"); GUESS_ID=$(jq_ "$GUESS" "d['id']"); GUESS_TOKEN=$(token_of "$GUESS")
+codes=""
+for i in $(seq 1 25); do
+    c=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$API/api/connect/shared/$GUESS_TOKEN" \
+        -H "Content-Type: application/json" -H "X-Forwarded-For: 198.51.100.$i" \
+        -d "{\"password\":\"guess-$i\"}")
+    codes="$codes $c"
+done
+codes="${codes# }"
+same "the first ten wrong guesses are simply wrong" "$(printf "%s" "$codes" | cut -d' ' -f1-10 | tr ' ' '\n' | sort -u)" "401"
+same "the next fifteen, from fifteen new addresses, are refused" "$(printf "%s" "$codes" | cut -d' ' -f11-25 | tr ' ' '\n' | sort -u)" "429"
+r=$(curl -s -w "\n%{http_code}" -X POST "$API/api/connect/shared/$GUESS_TOKEN" -H "Content-Type: application/json" \
+    -H "X-Forwarded-For: 203.0.113.9" -d '{"password":"guess-me-if-you-can"}')
+same "the RIGHT password is refused too, from yet another address" "$(status "$r")" "429"
+has  "…as a pause, not a dead link" "$(body "$r")" "paused"
+same "only the ten guesses that reached the password were counted" "$(PG "SELECT count(*) FROM connect.recording_share_password_failures WHERE share_id='$GUESS_ID'")" "10"
+r=$(call POST "/api/connect/shared/$PW_TOKEN" "" '{"password":"correct-horse"}')
+same "control: another password link, same caller, still opens — the pause is per link" "$(status "$r")" "200"
+r=$(call GET "/api/connect/meetings/$MEETING/recordings/$R2/shares" "$HOST"); b=$(body "$r")
+same "the host is told: paused" "$(jq_ "$b" "str(d['shares'][0]['passwordPausedUntil'] is not None)")" "True"
+same "…and how many wrong passwords" "$(jq_ "$b" "d['shares'][0]['wrongPasswords24h']")" "10"
+last=""
+for i in $(seq 1 21); do
+    last=$(curl -s -w "\n%{http_code}" -X POST "$API/api/connect/shared/AAAAAAAAAAAAAAAAAAAAAA" \
+        -H "X-Forwarded-For: 203.0.113.77" -H "Content-Type: application/json" -d '{}')
+done
+same "the per-address limit still stands: a 21st request in the minute from one address" "$(status "$last")" "429"
+hasnt "…and that refusal is the limiter, not a pause" "$(body "$last") " "paused"
+PG "UPDATE connect.recording_share_password_failures SET created_at = created_at - interval '61 minutes' WHERE share_id='$GUESS_ID'" >/dev/null
+r=$(call POST "/api/connect/shared/$GUESS_TOKEN" "" '{"password":"guess-me-if-you-can"}')
+same "an hour later the right password opens it again" "$(status "$r")" "200"
+
 # ----------------------------------------------------------------------------
 step "9. An anonymous read is logged — once per opening"
 # ----------------------------------------------------------------------------
@@ -305,12 +397,43 @@ same "control: the recording's organisation sees the grant" "$seen" "1"
 
 r=$(call GET "/api/connect/recordings/$R1/view" "$COLLEAGUE"); b=$(body "$r")
 same "the colleague now gets in through the organisation share" "$(status "$r"):$(jq_ "$b" "d['level']")" "200:organisation"
+# Mr. Singh's point 4: the function reads the reader's organisation itself.
+# There is no argument left that could claim the outsider is in Techvein.
+same "the database will not match the outsider to the organisation share" \
+    "$(PG "SELECT count(*) FROM connect.share_access_for_user('$R1', (SELECT id FROM core.users WHERE email='principal@abcschool.local')) WHERE level='organisation'")" "0"
+same "control: …and does match the colleague" \
+    "$(PG "SELECT count(*) FROM connect.share_access_for_user('$R1', (SELECT id FROM core.users WHERE email='hr@techvein.local')) WHERE level='organisation'")" "1"
 
 r=$(call PUT "$SHARES/$NAMED_ID/people" "$HOST" '{"userIds":[]}')
 same "the host removes the outsider from the list" "$(status "$r")" "200"
 same "the outsider's ticket stops at once" "$(fetch_status "$OUT_TICKET")" "404"
 r=$(call GET "/api/connect/recordings/$R1/view" "$OUTSIDER")
 same "…and they can no longer open it" "$(status "$r")" "404"
+
+# ----------------------------------------------------------------------------
+step "11. Looking people up is limited and audited (Mr. Singh, point 2)"
+# ----------------------------------------------------------------------------
+lookups() { PG "SELECT count(DISTINCT target_id) FROM core.audit_logs WHERE action='connect.recording.share_lookup' AND actor_user_id='$HOST_ID' AND occurred_at > now() - interval '1 hour'"; }
+same "the outsider's lookup is in the host organisation's audit log" \
+    "$(PG "SELECT tenant_id||'|'||(after_state::jsonb->>'found') FROM core.audit_logs WHERE action='connect.recording.share_lookup' AND target_id='principal@abcschool.local' AND occurred_at > now() - interval '1 hour' ORDER BY occurred_at DESC LIMIT 1")" "$TECHVEIN|true"
+r=$(call POST "/api/connect/meetings/$MEETING/recordings/$R2/shares" "$HOST" "{\"level\":\"named\",\"userIds\":[\"nobody-$RUN@example.com\"]}")
+same "a named share naming nobody real is refused" "$(status "$r")" "400"
+same "…and left no share behind (lookups save as they go)" "$(PG "SELECT count(*) FROM connect.recording_shares WHERE recording_id='$R2' AND level='named'")" "0"
+same "…but the lookup was recorded, not-found" \
+    "$(PG "SELECT after_state::jsonb->>'found' FROM core.audit_logs WHERE target_id='nobody-$RUN@example.com'")" "false"
+used=$(lookups); need=$((30 - used))
+batch=$("$PY" -c "import json; print(json.dumps({'userIds':['bulk-$RUN-%d@example.com' % i for i in range($need)]}))")
+r=$(call PUT "$SHARES/$NAMED_ID/people" "$HOST" "$batch")
+same "up to thirty new addresses in the hour are looked up (unknown, so 400)" "$(status "$r")" "400"
+same "…thirty now on record" "$(lookups)" "30"
+r=$(call PUT "$SHARES/$NAMED_ID/people" "$HOST" "{\"userIds\":[\"one-more-$RUN@example.com\"]}")
+same "the thirty-first new address is refused" "$(status "$r")" "429"
+same "…before it was looked up" "$(PG "SELECT count(*) FROM core.audit_logs WHERE target_id='one-more-$RUN@example.com'")" "0"
+r=$(call PUT "$SHARES/$NAMED_ID/people" "$HOST" '{"userIds":["principal@abcschool.local"]}')
+same "control: an address already looked up this hour costs nothing" "$(status "$r")" "200"
+r=$(call PUT "$SHARES/$NAMED_ID/people" "$HOST" '{"userIds":["PRINCIPAL@abcschool.local","principal@abcschool.local"]}')
+same "…and neither does somebody already on the share, in any case" "$(status "$r")" "200"
+same "still thirty" "$(lookups)" "30"
 
 # ----------------------------------------------------------------------------
 step "5. A share for one recording never opens another"
@@ -346,7 +469,7 @@ same "public link refused" "$(status "$r")" "404"
 r=$(call POST "/api/connect/shared/$PW_TOKEN" "" '{"password":"correct-horse"}')
 same "password link refused" "$(status "$r")" "404"
 same "a ticket in a player refused" "$(fetch_status "$SUSP")" "404"
-same "the organisation share refused (database)" "$(PG "SELECT count(*) FROM connect.share_access_for_user('$R1', (SELECT id FROM core.users WHERE email='hr@techvein.local'), '$TECHVEIN')")" "0"
+same "the organisation share refused (database)" "$(PG "SELECT count(*) FROM connect.share_access_for_user('$R1', (SELECT id FROM core.users WHERE email='hr@techvein.local'))")" "0"
 PG "UPDATE core.tenants SET status='active' WHERE id='$TECHVEIN'" >/dev/null
 r=$(call POST "/api/connect/shared/$PUB_TOKEN" "")
 same "control: active again, the same link opens" "$(status "$r")" "200"
@@ -382,6 +505,45 @@ r=$(call GET "/api/connect/recordings/$R1/view" "$ATTENDEE")
 same "the attendee still opens it" "$(status "$r"):$(jq_ "$(body "$r")" "d['via']")" "200:meeting"
 r=$(call GET "/api/connect/recordings/$R1/view" "$COLLEAGUE")
 same "control: the colleague's organisation share is gone" "$(status "$r")" "404"
+
+# ----------------------------------------------------------------------------
+step "12. Dark means the routes refuse (Mr. Singh, fix 2)"
+# ----------------------------------------------------------------------------
+# The same API restarted as production will first run: switch off, nobody on
+# the allow-list. Nothing may create a share; nothing that ENDS one may break.
+r=$(call POST "/api/connect/meetings/$MEETING/recordings/$R2/shares" "$HOST" '{"level":"organisation"}')
+same "control: with Techvein on the allow-list, sharing works" "$(status "$r")" "200"
+DARK_ORG=$(jq_ "$(body "$r")" "d['id']")
+r=$(call POST "/api/connect/meetings/$MEETING/recordings/$R2/shares" "$HOST" '{"level":"named","userIds":["principal@abcschool.local"]}')
+same "…and a named share to change once it is dark" "$(status "$r")" "200"
+DARK_NAMED="/api/connect/meetings/$MEETING/recordings/$R2/shares/$(jq_ "$(body "$r")" "d['id']")/people"
+stop_api
+export Connect__RecordingSharingOffered=false Connect__RecordingSharingTestTenants=""
+start_api && pass "API restarted: sharing off, allow-list empty" || { fail "API did not restart"; exit 1; }
+HOST=$(signin "+919999900001")
+r=$(call GET "/api/connect/meetings/$MEETING/recordings" "$HOST")
+same "no Share button for the host" "$(status "$r"):$(jq_ "$(body "$r")" "d.get('sharing')")" "200:None"
+for lvl in organisation named password public; do
+    case $lvl in
+        named)    req='{"level":"named","userIds":["principal@abcschool.local"]}' ;;
+        password) req='{"level":"password","days":7,"password":"long-enough-1"}' ;;
+        public)   req='{"level":"public","days":7}' ;;
+        *)        req='{"level":"organisation"}' ;;
+    esac
+    r=$(call POST "/api/connect/meetings/$MEETING/recordings/$R1/shares" "$HOST" "$req")
+    same "creating a $lvl share is refused" "$(status "$r")" "403"
+done
+has "…in words" "$(body "$r")" "not switched on"
+same "…and none was made" "$(PG "SELECT count(*) FROM connect.recording_shares WHERE recording_id='$R1' AND revoked_at IS NULL")" "0"
+r=$(call PUT "$DARK_NAMED" "$HOST" '{"userIds":["principal@abcschool.local","hr@techvein.local"]}')
+same "adding somebody new to an existing share is refused" "$(status "$r")" "403"
+same "…before they were looked up (a dark server answers no questions about accounts)"     "$(PG "SELECT count(*) FROM core.audit_logs WHERE target_id='hr@techvein.local' AND occurred_at > now() - interval '1 hour'")" "0"
+r=$(call PUT "$DARK_NAMED" "$HOST" '{"userIds":[]}')
+same "control: removing people still works" "$(status "$r")" "200"
+r=$(call DELETE "/api/connect/meetings/$MEETING/recordings/$R2/shares/$DARK_ORG" "$HOST")
+same "control: stopping a share still works" "$(status "$r")" "204"
+r=$(call GET "/api/connect/recordings/$R1/view" "$ATTENDEE")
+same "control: the participant still watches" "$(status "$r")" "200"
 
 printf "\n%s passed, %s failed\n" "$PASSED" "$FAILED"
 [ "$FAILED" -eq 0 ] && { printf "PASS %s\n" "$PASSED"; exit 0; } || exit 1

@@ -4,7 +4,7 @@ import { use, useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Card, Spinner } from '@/components/ui/Kit';
 import { Alert } from '@/components/ui/Page';
 import {
-  SharePasswordError, recordingApi, sharedLinkApi, type RecordingViewing,
+  SharePasswordError, SharePausedError, recordingApi, sharedLinkApi, type RecordingViewing,
 } from '@/lib/connect';
 import { ConnectSkin, Field } from '../../(shell)/ConnectSkin';
 import { RecordingViewer } from '../../(shell)/recordings/Viewer';
@@ -36,6 +36,7 @@ export default function SharedRecordingPage({ params }: { params: Promise<{ toke
   const [dead, setDead] = useState<string | null>(null);
   const [needsPassword, setNeedsPassword] = useState(false);
   const [wrong, setWrong] = useState<string | null>(null);
+  const [paused, setPaused] = useState<string | null>(null);
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(true);
 
@@ -45,6 +46,7 @@ export default function SharedRecordingPage({ params }: { params: Promise<{ toke
   const open = useCallback(async (pw?: string) => {
     setBusy(true);
     setWrong(null);
+    setPaused(null);
     try {
       const v = await sharedLinkApi.open(token, pw);
       ticket.current = v.ticket;
@@ -52,7 +54,11 @@ export default function SharedRecordingPage({ params }: { params: Promise<{ toke
       setNeedsPassword(false);
       setViewing(v);
     } catch (e) {
-      if (e instanceof SharePasswordError) {
+      if (e instanceof SharePausedError) {
+        // Not "dead": the link is fine and will open again within the hour.
+        // Telling the real recipient it does not work would send them away.
+        setPaused(e.message);
+      } else if (e instanceof SharePasswordError) {
         setNeedsPassword(true);
         if (e.wrong) setWrong(e.message);
       } else {
@@ -96,7 +102,8 @@ export default function SharedRecordingPage({ params }: { params: Promise<{ toke
             <Card title="This recording needs a password"
                   subtitle="The person who shared it should have sent the password separately.">
               <form onSubmit={(e) => { e.preventDefault(); void open(password); }}>
-                {wrong && <Alert tone="danger" className="py-2 text-[0.8125rem]">{wrong}</Alert>}
+                {paused && <Alert tone="warn" className="py-2 text-[0.8125rem]">{paused}</Alert>}
+                {wrong && !paused && <Alert tone="danger" className="py-2 text-[0.8125rem]">{wrong}</Alert>}
                 <Field label="Password" htmlFor="cx-link-pass">
                   <input id="cx-link-pass" className="cx-field" type="password" autoFocus
                          autoComplete="off" value={password}

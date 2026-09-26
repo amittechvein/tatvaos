@@ -331,6 +331,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             .HasForeignKey(g => g.ShareId)
             .OnDelete(DeleteBehavior.NoAction);
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingAccess>().ToTable("recording_access_log", "connect");
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingSharePasswordFailure>().ToTable("recording_share_password_failures", "connect");
         // HasKey IS NOT OPTIONAL HERE, and leaving it out took production
         // down on 9 September. This entity's key is TenantId; EF's convention
         // only recognises `Id` or `ConnectTenantSettingsId`, so it found no
