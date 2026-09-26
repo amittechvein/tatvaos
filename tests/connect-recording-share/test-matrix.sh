@@ -341,9 +341,17 @@ for i in $(seq 1 21); do
 done
 same "the per-address limit still stands: a 21st request in the minute from one address" "$(status "$last")" "429"
 hasnt "…and that refusal is the limiter, not a pause" "$(body "$last") " "paused"
+same "a guess at an already-paused link writes nothing (still ten)" "$(PG "SELECT count(*) FROM connect.recording_share_password_failures WHERE share_id='$GUESS_ID'")" "10"
 PG "UPDATE connect.recording_share_password_failures SET created_at = created_at - interval '61 minutes' WHERE share_id='$GUESS_ID'" >/dev/null
 r=$(call POST "/api/connect/shared/$GUESS_TOKEN" "" '{"password":"guess-me-if-you-can"}')
 same "an hour later the right password opens it again" "$(status "$r")" "200"
+# The 30-day sweep. Age five of the ten past it and five just inside it.
+PG "UPDATE connect.recording_share_password_failures SET created_at = now() - interval '31 days'
+     WHERE id IN (SELECT id FROM connect.recording_share_password_failures WHERE share_id='$GUESS_ID' ORDER BY id LIMIT 5)" >/dev/null
+PG "UPDATE connect.recording_share_password_failures SET created_at = now() - interval '29 days'
+     WHERE share_id='$GUESS_ID' AND created_at > now() - interval '30 days'" >/dev/null
+same "the sweep removes what is older than 30 days" "$(PG "SET ROLE tatvaos_app; SELECT connect.sweep_share_password_failures()")" "5"
+same "…and keeps what is not" "$(PG "SELECT count(*) FROM connect.recording_share_password_failures WHERE share_id='$GUESS_ID'")" "5"
 
 # ----------------------------------------------------------------------------
 step "9. An anonymous read is logged — once per opening"
@@ -518,8 +526,11 @@ r=$(call POST "/api/connect/meetings/$MEETING/recordings/$R2/shares" "$HOST" '{"
 same "…and a named share to change once it is dark" "$(status "$r")" "200"
 DARK_NAMED="/api/connect/meetings/$MEETING/recordings/$R2/shares/$(jq_ "$(body "$r")" "d['id']")/people"
 stop_api
-export Connect__RecordingSharingOffered=false Connect__RecordingSharingTestTenants=""
-start_api && pass "API restarted: sharing off, allow-list empty" || { fail "API did not restart"; exit 1; }
+# EMPTY MEANS NOBODY. Set to the empty string, as a blank line in the server's
+# .env produces — not merely unset — so the check covers the value the server
+# will actually carry. TATVAOS_DARK_TENANTS exists only to calibrate this.
+export Connect__RecordingSharingOffered=false Connect__RecordingSharingTestTenants="${TATVAOS_DARK_TENANTS-}"
+start_api && pass "API restarted: sharing off, allow-list set to [$Connect__RecordingSharingTestTenants]" || { fail "API did not restart"; exit 1; }
 HOST=$(signin "+919999900001")
 r=$(call GET "/api/connect/meetings/$MEETING/recordings" "$HOST")
 same "no Share button for the host" "$(status "$r"):$(jq_ "$(body "$r")" "d.get('sharing')")" "200:None"

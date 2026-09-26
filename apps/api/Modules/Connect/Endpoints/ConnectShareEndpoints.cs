@@ -237,6 +237,9 @@ public static class ConnectShareEndpoints
     {
         if (string.Equals(config["Connect:RecordingSharingOffered"], "true", StringComparison.OrdinalIgnoreCase))
             return true;
+        // EMPTY MEANS NOBODY (Mr. Singh asked for it proven, 26 Sept). An unset
+        // or blank value splits to no entries, so Any() is false. Nothing here
+        // may ever read "no list" as "no restriction".
         var list = config["Connect:RecordingSharingTestTenants"] ?? "";
         return list.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Any(x => Guid.TryParse(x, out var g) && g == tenantId);

@@ -356,6 +356,31 @@ $$;
 REVOKE ALL ON FUNCTION connect.share_password_paused_until(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION connect.share_password_paused_until(uuid) TO tatvaos_app;
 
+-- Pruned after 30 days (Mr. Singh, 26 September): past the longest any link
+-- can live — a link cannot outlast its recording, and the default retention
+-- is 30 days — and far past the one hour the pause looks at. Without it the
+-- table only ever grows. Called hourly by ConnectNotesWorker, with no tenant,
+-- hence a definer; it returns how many it removed, for the log line.
+--
+-- It does NOT need to cope with a flood from one paused link: a guess against
+-- a paused link is refused before the password is looked at, and nothing is
+-- written (tests/connect-recording-share, section 10: 25 guesses, 10 rows).
+CREATE OR REPLACE FUNCTION connect.sweep_share_password_failures()
+RETURNS integer
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = connect, pg_catalog
+AS $$
+    WITH gone AS (
+        DELETE FROM connect.recording_share_password_failures
+         WHERE created_at < now() - interval '30 days'
+        RETURNING 1)
+    SELECT count(*)::int FROM gone;
+$$;
+
+REVOKE ALL ON FUNCTION connect.sweep_share_password_failures() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION connect.sweep_share_password_failures() TO tatvaos_app;
+
 DO $$
 BEGIN
     RAISE NOTICE 'connect recording sharing, read side:';

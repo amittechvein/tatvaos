@@ -456,9 +456,9 @@ function ExistingShare({ share, busy, copied, onCopy, onRevoke }: {
               remedy — stop it and make a new one — is the button next to it. */}
           {share.passwordPausedUntil ? (
             <div className="text-[0.75rem] text-danger mt-1">
-              Someone has been guessing this link&rsquo;s password. It is paused for
-              everybody until {timeLabel(share.passwordPausedUntil)}. If you did not
-              expect this, stop sharing and make a new link.
+              Someone has been guessing this link&rsquo;s password. Stop it and
+              share a new link to let your viewers back in — otherwise it stays
+              paused for everybody until {timeLabel(share.passwordPausedUntil)}.
             </div>
           ) : share.wrongPasswords24h > 0 && (
             <div className="text-[0.75rem] text-warning-emphasis mt-1">
