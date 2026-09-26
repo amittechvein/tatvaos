@@ -143,6 +143,27 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT NOT NULL
 );
 
+-- One row per "Improve my report" call: the daily limit and the cost trail.
+-- No text is stored here, only who, when, whether it worked and how long.
+CREATE TABLE IF NOT EXISTS ai_usage (
+  id      INTEGER PRIMARY KEY,
+  at      TEXT NOT NULL,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  feature TEXT NOT NULL,
+  ok      INTEGER NOT NULL,
+  ms      INTEGER NOT NULL DEFAULT 0,
+  detail  TEXT NOT NULL DEFAULT ''
+);
+
+-- The last "Summarise this issue" answer per issue, valid while no newer
+-- history entry exists. Re-asking with nothing new costs no AI call.
+CREATE TABLE IF NOT EXISTS ai_summaries (
+  issue_id         INTEGER PRIMARY KEY REFERENCES issues(id),
+  last_activity_id INTEGER NOT NULL,
+  body             TEXT NOT NULL,
+  at               TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS mail_log (
   id      INTEGER PRIMARY KEY,
   at      TEXT NOT NULL,

@@ -15,6 +15,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb, now, tx, getSetting, setSetting, issueKey, STATUSES, STATUS_LABEL, PRIORITIES, TYPES, ROLES } from './db.mjs';
 import { createMailer } from './mail.mjs';
+import { findSimilar } from './similar.mjs';
+import { aiConfig, improveReport, cleanSuggestion, summaryPayload, summariseIssue, cleanSummary } from './ai.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(HERE, '..', 'public');
@@ -717,7 +719,7 @@ route('POST', /^\/api\/issues$/, async (req, res, s) => {
     const id = Number(r.lastInsertRowid);
     // The names at the time of reporting are kept in the history, so a later
     // rename of a module never rewrites what the report originally said.
-    const activityId = addActivity(id, s, 'created', { to: 'pending', meta: { module: mod.name, submodule: sub.name, type: b.type, priority: b.priority } });
+    const activityId = addActivity(id, s, 'created', { to: 'pending', meta: { module: mod.name, submodule: sub.name, type: b.type, priority: b.priority, ...(b.ai_assisted === true ? { ai_assisted: true } : {}) } });
     return { id, activityId };
   });
   const issue = loadIssue(out.id);
@@ -849,6 +851,76 @@ route('POST', /^\/api\/issues\/(\d+)\/actions$/, async (req, res, s, [id]) => {
 route('POST', /^\/api\/issues\/(\d+)\/attachments$/, (req, res, s, [id], url) => uploadAttachment(req, res, s, Number(id), url));
 route('GET', /^\/api\/attachments\/(\d+)$/, (req, res, s, [id]) => serveAttachment(req, res, s, Number(id)));
 
+// ---- Possible duplicates (no AI) -----------------------------------------
+route('GET', /^\/api\/similar$/, (req, res, s, _, url) => {
+  const q = url.searchParams;
+  const rows = findSimilar(db, {
+    title: str(q.get('title'), 200, 'Title'), details: str(q.get('details'), 2000, 'Details'),
+    moduleId: int(q.get('module')) || null, submoduleId: int(q.get('submodule')) || null,
+    excludeId: int(q.get('exclude')) || null,
+  });
+  send(res, 200, rows.map((r) => ({ id: r.id, key: issueKey(r.id), title: r.title, status: r.status, status_label: STATUS_LABEL[r.status], type: r.type, module_name: r.module_name, submodule_name: r.submodule_name })));
+});
+
+// ---- Improve my report (AI, off by default) --------------------------------
+function aiUsedToday() {
+  const since = new Date(Date.parse(todayIst() + 'T00:00:00+05:30')).toISOString();
+  return db.prepare('SELECT COUNT(*) n FROM ai_usage WHERE at >= ?').get(since).n;
+}
+route('GET', /^\/api\/ai\/status$/, (req, res, s) => {
+  const c = aiConfig(db);
+  send(res, 200, { ready: c.ready, data_location: c.ready ? c.location : null, remaining_today: Math.max(0, c.dailyLimit - aiUsedToday()) });
+});
+route('POST', /^\/api\/ai\/improve$/, async (req, res, s) => {
+  requireMode(s, 'tester', 'admin');
+  const c = aiConfig(db);
+  if (!c.ready) throw new HttpError(409, c.problem);
+  if (aiUsedToday() >= c.dailyLimit) throw new HttpError(429, "Today's limit for Improve my report has been reached. It resets at midnight India time.");
+  const b = await readJson(req, 64 * 1024);
+  const draft = {
+    title: str(b.title, 200, 'Title'), details: str(b.details, 20000, 'Details'),
+    type: TYPES.includes(b.type) ? b.type : 'bug', area: '',
+  };
+  if ((draft.title + draft.details).trim().length < 10) throw bad('Write a few words about the problem first.');
+  const pairs = db.prepare(`SELECT m.id module_id, m.name m, sm.id submodule_id, sm.name sm FROM submodules sm JOIN modules m ON m.id = sm.module_id
+    WHERE m.active = 1 AND sm.active = 1 ORDER BY m.name, sm.name`).all();
+  const areaMap = new Map(pairs.map((p) => [`${p.m} › ${p.sm}`, { module_id: p.module_id, submodule_id: p.submodule_id }]));
+  const cur = pairs.find((p) => p.submodule_id === int(b.submodule_id));
+  if (cur) draft.area = `${cur.m} › ${cur.sm}`;
+  const r = await improveReport(c, draft, [...areaMap.keys()]);
+  db.prepare('INSERT INTO ai_usage(at, user_id, feature, ok, ms, detail) VALUES (?,?,?,?,?,?)')
+    .run(now(), s.user.id, 'improve_report', r.ok ? 1 : 0, r.ms || 0, r.ok ? '' : String(r.status || r.error).slice(0, 100));
+  if (!r.ok) throw new HttpError(502, r.error);
+  send(res, 200, { suggestion: cleanSuggestion(r.raw, draft, areaMap), data_location: c.location });
+});
+
+// ---- Summarise this issue (AI; developers and admins) ----------------------
+const ROLE_WORD = { admin: 'Admin', developer: 'Developer', tester: 'Tester' };
+route('POST', /^\/api\/ai\/summarise\/(\d+)$/, async (req, res, s, [id]) => {
+  requireMode(s, 'developer', 'admin');
+  const issue = loadIssue(id);
+  if (!issue || !canSee(s.user, issue)) throw notFound();
+  const c = aiConfig(db);
+  if (!c.ready) throw new HttpError(409, c.problem);
+  const activity = db.prepare('SELECT * FROM activity WHERE issue_id = ? ORDER BY id').all(id);
+  const lastId = activity.length ? activity[activity.length - 1].id : 0;
+  const cached = db.prepare('SELECT * FROM ai_summaries WHERE issue_id = ?').get(id);
+  if (cached && cached.last_activity_id === lastId) {
+    return send(res, 200, { ...JSON.parse(cached.body), at: cached.at, cached: true });
+  }
+  if (aiUsedToday() >= c.dailyLimit) throw new HttpError(429, "Today's TatvaOS AI limit has been reached. It resets at midnight India time.");
+  const r = await summariseIssue(c, summaryPayload(issue, activity, ROLE_WORD, STATUS_LABEL));
+  db.prepare('INSERT INTO ai_usage(at, user_id, feature, ok, ms, detail) VALUES (?,?,?,?,?,?)')
+    .run(now(), s.user.id, 'summarise_issue', r.ok ? 1 : 0, r.ms || 0, r.ok ? '' : String(r.status || r.error).slice(0, 100));
+  if (!r.ok) throw new HttpError(502, r.error);
+  const out = cleanSummary(r.raw);
+  if (!out.summary) throw new HttpError(502, 'The TatvaOS AI answer could not be read. Try again.');
+  const at = now();
+  db.prepare('INSERT INTO ai_summaries(issue_id, last_activity_id, body, at) VALUES (?,?,?,?) ON CONFLICT(issue_id) DO UPDATE SET last_activity_id = excluded.last_activity_id, body = excluded.body, at = excluded.at')
+    .run(id, lastId, JSON.stringify(out), at);
+  send(res, 200, { ...out, at, cached: false });
+});
+
 // ---- Dashboard and reports -------------------------------------------------
 route('GET', /^\/api\/dashboard$/, (req, res, s, _, url) => {
   // Personal numbers by default for developer and tester, everything for admin;
@@ -894,6 +966,7 @@ route('GET', /^\/api\/settings$/, (req, res, s) => {
   send(res, 200, {
     mail_from: getSetting(db, 'mail_from'),
     mail_api_key_set: !!getSetting(db, 'mail_api_key'),
+    ai: (() => { const c = aiConfig(db); return { enabled: c.enabled, base_url_set: !!c.baseUrl, model_set: !!c.model, data_location: c.location, daily_limit: c.dailyLimit, key_set: !!c.key, ready: c.ready, problem: c.problem, used_today: aiUsedToday() }; })(),
     storage: { used: storageUsed(), limit: cfg.storageLimit },
     mail_log: db.prepare('SELECT l.at, l.subject, l.ok, l.detail, u.name user_name, u.email user_email FROM mail_log l LEFT JOIN users u ON u.id = l.user_id ORDER BY l.id DESC LIMIT 50').all(),
   });
@@ -913,6 +986,24 @@ route('PUT', /^\/api\/settings$/, async (req, res, s) => {
     setSetting(db, 'mail_api_key', k);
   }
   if (b.clear_mail_api_key) setSetting(db, 'mail_api_key', '');
+  if (b.ai) {
+    const a = b.ai;
+    if (a.enabled !== undefined) setSetting(db, 'ai_enabled', a.enabled ? '1' : '');
+    if (a.base_url) {
+      const u = str(a.base_url, 300, 'TatvaOS AI address');
+      if (u && !URL.canParse(u)) throw bad('The TatvaOS AI address must be a web address.');
+      setSetting(db, 'ai_base_url', u);
+    }
+    if (a.model) setSetting(db, 'ai_model', str(a.model, 100, 'Model name'));
+    if (a.data_location !== undefined) setSetting(db, 'ai_data_location', str(a.data_location, 100, 'Data location'));
+    if (a.daily_limit !== undefined) {
+      const n = Number(a.daily_limit);
+      if (!Number.isInteger(n) || n < 0 || n > 10000) throw bad('The daily limit must be a whole number from 0 to 10000.');
+      setSetting(db, 'ai_daily_limit', String(n));
+    }
+    if (a.api_key) setSetting(db, 'ai_api_key', str(a.api_key, 500, 'TatvaOS AI key'));
+    if (a.clear_api_key) setSetting(db, 'ai_api_key', '');
+  }
   send(res, 200, { ok: true });
 });
 
