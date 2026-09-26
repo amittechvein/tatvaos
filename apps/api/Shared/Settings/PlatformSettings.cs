@@ -112,7 +112,8 @@ public static class SettingKeys
         new(SellerSac, "billing", "SAC code for the service", false,
             "The GST service code printed on each invoice line. Confirm with your accountant."),
         new(InvoicePrefix, "billing", "Invoice number prefix", false,
-            "1-4 letters. Invoices are numbered PREFIX/2026-27/0001, starting again each April."),
+            "1-3 capital letters. Invoices are numbered PREFIX/2026-27/0001, starting again each April. "
+            + "GST allows 16 characters in an invoice number, which is why the prefix is short."),
         new(PaymentTermsDays, "billing", "Days to pay", false,
             "Due date = issue date + this many days. Empty means 15."),
         new(PaymentInstructions, "billing", "How to pay (bank / UPI)", false,

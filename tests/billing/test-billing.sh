@@ -257,6 +257,7 @@ same "…the row and its number are still there" "$(PG "SELECT status FROM core.
 PERIOD2=$(PG "SELECT period_start FROM core.invoices WHERE id='$INV2'")
 r=$(callm POST "$SC/invoices" "$OPERATOR" "{\"includePlan\":true,\"periodStart\":\"$PERIOD2\"}"); B=$(body "$r")
 same "the voided period is issued again" "$(status "$r")" "201"
+INV3=$(jq_ "$B" "d['id']")
 same "…with a NEW number, never the voided one's" "$(jq_ "$B" "d['number']")" "TV/$FY/$(printf '%04d' $(( ${SEQ_WAS:-0} + 3 )))"
 
 step "9. The app's database role cannot delete an invoice or edit a line"
@@ -266,9 +267,43 @@ out=$($TATVAOS_PSQL "SET ROLE tatvaos_app; SELECT set_config('app.tenant_id','$T
 has "UPDATE on a line: permission denied" "$out" "permission denied"
 same "the invoice is untouched" "$(PG "SELECT total FROM core.invoices WHERE id='$INV1'")" "1758.20"
 
+step "9b. The DATABASE keeps an issued invoice as issued (Mr. Singh, 26 Sept: not only the code)"
+appsql() { $TATVAOS_PSQL "SET ROLE tatvaos_app; SELECT set_config('app.tenant_id','$1',false); $2" 2>&1 | grep -v "^wsl:" | tr -d '\r'; }
+has "UPDATE of the total: permission denied"  "$(appsql "$TECHVEIN" "UPDATE core.invoices SET total=1 WHERE id='$INV1';")" "permission denied"
+has "UPDATE of the buyer: permission denied"  "$(appsql "$TECHVEIN" "UPDATE core.invoices SET buyer='{}' WHERE id='$INV1';")" "permission denied"
+has "UPDATE of the number: permission denied" "$(appsql "$TECHVEIN" "UPDATE core.invoices SET number='X1' WHERE id='$INV1';")" "permission denied"
+has "a paid invoice cannot go back to unpaid" \
+    "$(appsql "$TECHVEIN" "UPDATE core.invoices SET status='issued', paid_on=NULL, paid_amount=NULL, payment_method=NULL WHERE id='$INV1';")" "paid invoice"
+has "a paid invoice cannot be voided" \
+    "$(appsql "$TECHVEIN" "UPDATE core.invoices SET status='void', voided_at=now(), void_reason='x', paid_on=NULL, paid_amount=NULL WHERE id='$INV1';")" "paid invoice"
+has "a paid invoice's payment record cannot be rewritten" \
+    "$(appsql "$TECHVEIN" "UPDATE core.invoices SET payment_reference='FORGED' WHERE id='$INV1';")" "paid invoice"
+has "nothing on a void invoice can change" \
+    "$(appsql "$SCHOOL" "UPDATE core.invoices SET void_reason='changed later' WHERE id='$INV2';")" "void invoice"
+same "…Techvein's invoice is exactly as it was" \
+    "$(PG "SELECT status||'/'||total||'/'||payment_reference FROM core.invoices WHERE id='$INV1'")" "paid/1758.20/UTR123"
+# The grants are not so tight that paying stops working: the app may still
+# record a payment on an issued invoice (the calibration for the refusals above).
+has "…but an ISSUED invoice can still be marked paid by the app" \
+    "$(appsql "$SCHOOL" "UPDATE core.invoices SET status='paid', paid_on=current_date, paid_amount=total, payment_method='upi' WHERE id='$INV3';")" "UPDATE 1"
+
+step "9c. Invoice numbers never pass GST's 16 characters"
+LONG="INSERT INTO core.invoices (tenant_id, number, financial_year, seq, issued_on, due_on, seller, buyer, place_of_supply, subtotal, total, created_by) VALUES ('$TECHVEIN', 'TATV/$FY/0001', '$FY', 99999, current_date, current_date, '{}', '{}', '10', 0, 0, '$TECHVEIN');"
+out=$($TATVAOS_PSQL "$LONG" 2>&1 | grep -v "^wsl:" | tr -d '\r')
+has "the database refuses a 17-character number, whatever the code does" "$out" "invoices_number_length"
+PG "UPDATE core.platform_settings SET value='TATV' WHERE key='billing.invoice_prefix'" >/dev/null
+r=$(callm POST "$TV/invoices" "$OPERATOR" '{"includePlan":false,"extraLines":[{"description":"x","quantity":1,"unitPrice":1}]}')
+same "a 4-letter prefix: issuing is refused" "$(status "$r")" "400"
+has  "…naming the prefix" "$(body "$r")" "prefix"
+PG "UPDATE core.platform_settings SET value='ABC' WHERE key='billing.invoice_prefix'" >/dev/null
+r=$(callm POST "$TV/invoices" "$OPERATOR" '{"includePlan":false,"extraLines":[{"description":"x","quantity":1,"unitPrice":1}]}')
+same "a 3-letter prefix issues" "$(status "$r")" "201"
+same "…at exactly 16 characters" "$(jq_ "$(body "$r")" "len(d['number'])")" "16"
+PG "UPDATE core.platform_settings SET value='TV' WHERE key='billing.invoice_prefix'" >/dev/null
+
 step "10. Written down"
-same "3 issues, 1 payment, 1 void in the audit trail" \
-    "$(PG "SELECT count(*) FILTER (WHERE action LIKE '%invoice.issued')||'/'||count(*) FILTER (WHERE action LIKE '%invoice.paid')||'/'||count(*) FILTER (WHERE action LIKE '%invoice.voided') FROM core.audit_logs WHERE occurred_at > '$T0'")" "3/1/1"
+same "4 issues, 1 payment, 1 void in the audit trail" \
+    "$(PG "SELECT count(*) FILTER (WHERE action LIKE '%invoice.issued')||'/'||count(*) FILTER (WHERE action LIKE '%invoice.paid')||'/'||count(*) FILTER (WHERE action LIKE '%invoice.voided') FROM core.audit_logs WHERE occurred_at > '$T0'")" "4/1/1"
 
 printf "\n  ═════════════════════════════════════════════\n"
 if [ "$FAILED" -eq 0 ]; then printf "  PASS  %d checks\n\n" "$PASSED"; exit 0

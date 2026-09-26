@@ -255,7 +255,9 @@ public static class BillingEndpoints
         var (draft, error) = await issuer.ComposeAsync(id, req, ct);
         if (draft is null) return Results.BadRequest(new { error });
 
-        var inv = await issuer.IssueAsync(id, draft, CurrentUserId(http), ct);
+        Invoice inv;
+        try { inv = await issuer.IssueAsync(id, draft, CurrentUserId(http), ct); }
+        catch (InvoiceNumberTooLongException ex) { return Results.BadRequest(new { error = ex.Message }); }
         await audit.WriteAsync("invoice.issued", "core.invoice", inv.Id.ToString(),
             after: new { inv.Number, inv.Total, inv.PeriodStart, inv.PeriodEnd, lines = inv.Lines.Count }, ct: ct);
         return Results.Created($"/api/admin/organisations/{id}/invoices/{inv.Id}", InvoiceDto(inv));

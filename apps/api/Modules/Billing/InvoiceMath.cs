@@ -44,7 +44,10 @@ public static class InvoiceMath
         return $"{start}-{(start + 1) % 100:00}";
     }
 
-    /// <summary>PREFIX/2026-27/0001 — 16 characters at most, the GST limit, for a 4-letter prefix.</summary>
+    /// <summary>GST's limit on an invoice number (also a CHECK on core.invoices).</summary>
+    public const int MaxNumberLength = 16;
+
+    /// <summary>PREFIX/2026-27/0001: 16 characters with a 3-letter prefix; more than 9,999 in a year would be 17.</summary>
     public static string Number(string prefix, string fy, int seq) => $"{prefix}/{fy}/{seq:0000}";
 
     public static DateOnly PeriodEnd(DateOnly start, string cycle) =>
