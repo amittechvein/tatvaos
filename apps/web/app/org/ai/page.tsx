@@ -41,18 +41,61 @@ interface AiUsage {
   byFeature: { feature: string; requests: number; tokens: number }[];
 }
 
+/** AI credits this month (26 Sept 2026) — what customers see instead of tokens. */
+interface AiCreditsState {
+  allowance: number | null;
+  source: 'override' | 'plan' | 'none';
+  planName: string | null;
+  model: 'per_user' | 'pooled' | null;
+  perUser: number | null;
+  users: number | null;
+  used: number;
+  percent: number;
+  byFeature: { feature: string; credits: number }[];
+  /** Plan or override before this month's top-ups; top-up credits added this month. */
+  base?: number | null;
+  topUp?: number;
+}
+
+interface MailFeatureFlags {
+  rewrite: boolean;
+  suggest: boolean;
+  summary: boolean;
+}
+
 interface AiState {
   enabled: boolean;
   platformConfigured: boolean;
   model: string | null;
   disclosure: string;
+  /** Mail's own switch (allow_mail_ai). Works only while `enabled` is on. */
+  mailEnabled: boolean;
+  /** False while Mail AI is held to a list of organisations and this is not on it. */
+  mailOffered: boolean;
+  mailNotOffered: string | null;
+  /** Each Mail AI feature's own switch (26 Sept 2026), and what each sends. */
+  mailFeatures: MailFeatureFlags;
+  mailFeatureDisclosure: Record<keyof MailFeatureFlags, string>;
+  mailDisclosure: string;
+  /** Sorting incoming mail (step 3): its own consent, on top of Mail. */
+  mailTriageEnabled: boolean;
+  mailTriageSince: string | null;
+  mailTriageDisclosure: string;
+  /** False for hospitals and clinics (Amit, 25 Sept 2026); the sentence says why. */
+  mailTriageOffered: boolean;
+  mailTriageNotOffered: string | null;
   usage: AiUsage;
+  credits: AiCreditsState;
 }
 
 const FEATURE_NAMES: Record<string, string> = {
   'connect.minutes': 'Meeting minutes',
   docs: 'Docs',
   'platform.probe': 'Platform check',
+  'mail.rewrite': 'Mail — Help me write',
+  'mail.suggest': 'Mail — Suggested replies',
+  'mail.triage': 'Mail — Sorting incoming mail',
+  'mail.summary': 'Mail — Summarise conversation',
 };
 
 const fmt = (n: number) => n.toLocaleString('en-IN');
@@ -64,6 +107,8 @@ export default function OrgAiPage() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmOn, setConfirmOn] = useState(false);
+  const [confirmMail, setConfirmMail] = useState(false);
+  const [confirmTriage, setConfirmTriage] = useState(false);
 
   const load = useCallback(() => {
     setError(null);
@@ -77,15 +122,19 @@ export default function OrgAiPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  async function save(next: boolean) {
+  async function save(change: {
+    enabled?: boolean; mail?: boolean; mailTriage?: boolean; mailFeatures?: Partial<MailFeatureFlags>;
+  }) {
     setSaving(true);
     setError(null);
     try {
       const r = await authedFetch('/org/ai', {
-        method: 'PUT', body: JSON.stringify({ enabled: next }),
+        method: 'PUT', body: JSON.stringify(change),
       });
       if (!r.ok) throw new Error('Could not change the AI setting.');
       setConfirmOn(false);
+      setConfirmMail(false);
+      setConfirmTriage(false);
       load();
     } catch (e) {
       setError((e as Error).message);
@@ -108,10 +157,10 @@ export default function OrgAiPage() {
 
       <Card
         title="TatvaOS AI"
-        subtitle="Meeting minutes today; mail summaries and drafting later"
+        subtitle="Meeting minutes, and Mail when switched on below"
         actions={
           !state ? undefined : !state.platformConfigured ? undefined : state.enabled ? (
-            <Button variant="danger" disabled={saving} onClick={() => save(false)}>
+            <Button variant="danger" disabled={saving} onClick={() => save({ enabled: false })}>
               {saving ? 'Turning off…' : 'Turn off for this organisation'}
             </Button>
           ) : (
@@ -159,7 +208,69 @@ export default function OrgAiPage() {
         )}
       </Card>
 
+      {state?.platformConfigured && (
+        <MailAiCard
+          state={state}
+          saving={saving}
+          onOff={() => save({ mail: false })}
+          onOn={() => setConfirmMail(true)}
+          onTriageOn={() => setConfirmTriage(true)}
+          onTriageOff={() => save({ mailTriage: false })}
+          onFeature={(name, on) => save({ mailFeatures: { [name]: on } })}
+        />
+      )}
+
+      {state?.platformConfigured && <CreditsCard credits={state.credits} />}
       {state?.platformConfigured && <UsageCard usage={state.usage} />}
+
+      {confirmTriage && state && (
+        <Modal
+          onClose={() => !saving && setConfirmTriage(false)}
+          title="Sort incoming mail with TatvaOS AI?"
+          busy={saving}
+        >
+          <p>{state.mailTriageDisclosure}</p>
+          <p className="text-ink-muted">
+            This is the one Mail AI feature that sends mail nobody has clicked on. Automated
+            senders are labelled by a simple rule and are not sent. Labels never change your
+            people&apos;s own categories. Turning it off stops sending at once and deletes every
+            label it made.
+          </p>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="ghost" disabled={saving} onClick={() => setConfirmTriage(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" disabled={saving} onClick={() => save({ mailTriage: true })}>
+              {saving ? 'Turning on…' : 'I agree — sort incoming mail'}
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      {confirmMail && state && (
+        <Modal
+          onClose={() => !saving && setConfirmMail(false)}
+          title="Turn on TatvaOS AI in Mail?"
+          busy={saving}
+        >
+          <p>{state.mailDisclosure}</p>
+          <p className="text-ink-muted">
+            People will see Help me write in the composer, which sends only the text
+            they typed and only when they ask, and suggested replies under a message,
+            which send that message when they open it. Mail they sent, junk and
+            automated senders are never sent. Turning it off again is one click and
+            takes effect at once.
+          </p>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="ghost" disabled={saving} onClick={() => setConfirmMail(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" disabled={saving} onClick={() => save({ mail: true })}>
+              {saving ? 'Turning on…' : 'I agree — turn it on for Mail'}
+            </Button>
+          </div>
+        </Modal>
+      )}
 
       {confirmOn && state && (
         <Modal
@@ -176,13 +287,193 @@ export default function OrgAiPage() {
             <Button variant="ghost" disabled={saving} onClick={() => setConfirmOn(false)}>
               Cancel
             </Button>
-            <Button variant="primary" disabled={saving} onClick={() => save(true)}>
+            <Button variant="primary" disabled={saving} onClick={() => save({ enabled: true })}>
               {saving ? 'Turning on…' : 'I agree — turn it on'}
             </Button>
           </div>
         </Modal>
       )}
     </AdminShell>
+  );
+}
+
+/**
+ * Mail's own switch (allow_mail_ai). Separate from the organisation's consent
+ * above because an organisation may want AI meeting notes and still keep
+ * every email off the provider — the reason Translate stays on our own server.
+ * Same asymmetry as above: ON asks first, OFF is immediate.
+ */
+function MailAiCard({
+  state, saving, onOn, onOff, onTriageOn, onTriageOff, onFeature,
+}: {
+  state: AiState; saving: boolean; onOn: () => void; onOff: () => void;
+  onTriageOn: () => void; onTriageOff: () => void;
+  onFeature: (name: keyof MailFeatureFlags, on: boolean) => void;
+}) {
+  // This month's use per feature — what an administrator weighs when they
+  // switch one off to save allowance (Amit: "so client able to save tokens").
+  const used = (feature: string) => state.usage.byFeature.find((f) => f.feature === feature)?.requests ?? 0;
+  const features: { name: keyof MailFeatureFlags; label: string; feature: string }[] = [
+    { name: 'rewrite', label: 'Help me write', feature: 'mail.rewrite' },
+    { name: 'suggest', label: 'Suggested replies', feature: 'mail.suggest' },
+    { name: 'summary', label: 'Summarise conversation', feature: 'mail.summary' },
+  ];
+  const live = state.enabled && state.mailEnabled;
+  return (
+    <Card
+      title="TatvaOS AI in Mail"
+      subtitle="Help me write, suggested replies, summaries and sorting — each can be turned off"
+      actions={
+        !state.mailOffered ? undefined : state.mailEnabled ? (
+          <Button variant="danger" disabled={saving} onClick={onOff}>
+            {saving ? 'Turning off…' : 'Turn off for Mail'}
+          </Button>
+        ) : (
+          <Button variant="primary" disabled={saving || !state.enabled} onClick={onOn}>
+            Turn on for Mail
+          </Button>
+        )
+      }
+    >
+      {!state.mailOffered && (
+        <p className="mb-0">
+          <Badge tone="neutral">Not yet available</Badge>{' '}
+          {state.mailNotOffered}
+        </p>
+      )}
+      {state.mailOffered && live && (
+        <>
+          <p className="mb-2">
+            <Badge tone="ok">On</Badge>{' '}
+            Help me write rewrites a draft when asked; suggested replies appear under a
+            message when it is opened.
+          </p>
+          <p className="text-ink-muted text-[0.75rem] mb-0">{state.mailDisclosure}</p>
+
+          {/* Each feature's own switch (26 Sept 2026). Off saves the
+              organisation's AI allowance and sends nothing for that feature;
+              the button disappears from Mail for everyone at once. */}
+          <ul className="mt-4 mb-0 list-none space-y-2 border-t border-line p-0 pt-3">
+            {features.map((f) => {
+              const on = state.mailFeatures[f.name];
+              return (
+                <li key={f.name} className="flex flex-wrap items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="mb-0.5 font-medium">
+                      {f.label}{' '}
+                      <Badge tone={on ? 'ok' : 'neutral'}>{on ? 'On' : 'Off'}</Badge>
+                    </p>
+                    <p className="mb-0 text-[0.75rem] text-ink-muted">
+                      {state.mailFeatureDisclosure[f.name]}{' '}
+                      {used(f.feature) > 0 && `${fmt(used(f.feature))} request${used(f.feature) === 1 ? '' : 's'} this month.`}
+                    </p>
+                  </div>
+                  <Button
+                    variant={on ? 'ghost' : 'primary'}
+                    disabled={saving}
+                    onClick={() => onFeature(f.name, !on)}
+                    aria-pressed={on}
+                  >
+                    {on ? 'Turn off' : 'Turn on'}
+                  </Button>
+                </li>
+              );
+            })}
+          </ul>
+
+          {/* Step 3: its own switch, because it is the one that sends mail
+              nobody clicked on. Same asymmetry: ON asks, OFF is one click. */}
+          <div className="mt-4 flex flex-wrap items-start gap-3 border-t border-line pt-3">
+            <div className="min-w-0 flex-1">
+              <p className="mb-1 font-medium">
+                Sort incoming mail{' '}
+                <Badge tone={state.mailTriageEnabled ? 'ok' : 'neutral'}>{state.mailTriageEnabled ? 'On' : 'Off'}</Badge>
+              </p>
+              <p className="mb-0 text-[0.75rem] text-ink-muted">
+                {state.mailTriageEnabled
+                  ? `New inbox mail is labelled Needs reply, FYI, Updates or Promotions${
+                      state.mailTriageSince ? `, since ${new Date(state.mailTriageSince).toLocaleString('en-IN')}` : ''
+                    }. Older mail is never sent.`
+                  : 'Labels new inbox mail Needs reply, FYI, Updates or Promotions, with tabs to filter by them. Sends each new message in the background.'}
+              </p>
+            </div>
+            {!state.mailTriageOffered ? (
+              <p className="mb-0 max-w-xs text-[0.75rem] text-ink-muted">{state.mailTriageNotOffered}</p>
+            ) : state.mailTriageEnabled ? (
+              <Button variant="danger" disabled={saving} onClick={onTriageOff}>
+                {saving ? 'Turning off…' : 'Turn off sorting'}
+              </Button>
+            ) : (
+              <Button variant="primary" disabled={saving} onClick={onTriageOn}>
+                Turn on sorting
+              </Button>
+            )}
+          </div>
+        </>
+      )}
+      {state.mailOffered && state.mailEnabled && !state.enabled && (
+        <p className="mb-0">
+          <Badge tone="neutral">Waiting</Badge>{' '}
+          Mail is switched on, but TatvaOS AI is off for the organisation above, so
+          nothing from Mail is sent.
+        </p>
+      )}
+      {state.mailOffered && !state.mailEnabled && (
+        <p className="mb-0">
+          <Badge tone="neutral">Off</Badge>{' '}
+          Nothing from Mail is sent to TatvaOS AI, and the composer shows no AI button.
+          {!state.enabled && ' Turn on TatvaOS AI for the organisation first.'}
+        </p>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * AI credits this month — the number an administrator is sold and manages
+ * (Amit, 26 Sept 2026: "so client able to save tokens"). One credit is one
+ * AI action, weighted by how much work it is; which feature spent them is
+ * listed, so switching one off above is an informed saving. Warned at 80 %,
+ * stopped at 100 % until the 1st.
+ */
+function CreditsCard({ credits: c }: { credits: AiCreditsState }) {
+  const tone = c.percent >= 100 ? 'bg-danger' : c.percent >= 80 ? 'bg-warn' : 'bg-ok';
+  const where = c.source === 'override' ? 'Set for your organisation by TatvaOS.'
+    : c.source === 'plan'
+      ? c.model === 'per_user'
+        ? `From your ${c.planName} plan: ${c.perUser != null ? fmt(c.perUser) : '—'} per user × ${c.users ?? 0} users, shared.`
+        : `From your ${c.planName} plan, shared by everyone in the organisation.`
+      : 'Your plan does not set an AI credit limit.';
+  // Top-ups are extra credits for this month only, on top of the plan.
+  const topUpLine = (c.topUp ?? 0) > 0 && c.base != null
+    ? ` Includes ${fmt(c.topUp ?? 0)} top-up credits added this month (they end with the month) on top of ${fmt(c.base)}.`
+    : '';
+  return (
+    <Card title="AI credits this month" subtitle="One credit is one AI action — Help me write 1, a suggestion 1, a summary 2, sorting one email 1, meeting minutes 5">
+      {c.allowance === null ? (
+        <p className="mb-2">{fmt(c.used)} credits used. No credit limit is set.</p>
+      ) : (
+        <>
+          <p className="mb-2">
+            {fmt(c.used)} of {fmt(c.allowance)} credits ({c.percent}%).
+            {c.percent >= 100 && ' TatvaOS AI has stopped for your organisation until the 1st.'}
+          </p>
+          <div className="mb-3 h-2 w-full overflow-hidden rounded-full bg-canvas" role="meter"
+               aria-valuemin={0} aria-valuemax={100} aria-valuenow={c.percent}
+               aria-label="Share of this month's AI credits used">
+            <div className={`h-full ${tone}`} style={{ width: `${c.percent}%` }} />
+          </div>
+        </>
+      )}
+      {c.byFeature.length > 0 && (
+        <p className="mb-2 text-sm text-ink-muted">
+          {c.byFeature.map((f) => `${FEATURE_NAMES[f.feature] ?? f.feature}: ${fmt(f.credits)}`).join(' · ')}
+        </p>
+      )}
+      <p className="mb-0 text-[0.75rem] text-ink-muted">
+        {where}{topUpLine} Administrators are emailed at 80% and 100%. Turning a feature off above stops it spending credits.
+      </p>
+    </Card>
   );
 }
 

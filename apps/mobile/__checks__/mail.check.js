@@ -5,7 +5,7 @@
 
 const {
   orderFolders, senderLabel, whenLabel, addressList, quoted, replySubject, forwardSubject,
-  typingTerm, withRecipient, signatureFor,
+  typingTerm, withRecipient, signatureFor, replyAllRecipients, forwardHeader,
 } = require('../lib/mail');
 
 test('folders: Inbox first, then the known places, then the rest by name', () => {
@@ -217,4 +217,49 @@ test('a weekday name never means a week ago: last Saturday evening, seen on Satu
   expect(whenLabel(new Date('2026-09-13T23:50:00').toISOString(), now)).toMatch(/^[A-Z][a-z]{2}$/);
   // Yesterday late, under 24 hours ago, is a weekday and not a time.
   expect(whenLabel(new Date('2026-09-18T23:50:00').toISOString(), now)).toMatch(/^[A-Z][a-z]{2}$/);
+});
+
+// ── REPLY ALL, THE FORWARD HEADER, THE THREAD ───────────────────────────────
+//  Amit, 24 Sept 2026: "reply in reply" — parity with the web's reply work
+//  (PRs 233, 237, 239, 245). Reply all is the rule the web uses; the forward
+//  header is the one the web writes; the thread route has existed since
+//  August and the phone never called it.
+describe('replyAllRecipients', () => {
+  const msg = {
+    from: { name: 'Ravi', email: 'ravi@example.com' },
+    to: [{ email: 'amit@tatvaos.com' }, { email: 'priya@example.com' }],
+    cc: [{ email: 'accounts@example.com' }, { email: 'RAVI@example.com' }],
+  };
+  test('sender goes in To; everyone else in Cc; me and duplicates left out', () => {
+    expect(replyAllRecipients(msg, 'amit@tatvaos.com')).toEqual({
+      to: 'ravi@example.com',
+      cc: 'priya@example.com, accounts@example.com',
+    });
+  });
+  test('me is matched without regard to case, and a shared mailbox address counts as me', () => {
+    expect(replyAllRecipients(msg, 'AMIT@tatvaos.com').cc).not.toMatch(/amit@/i);
+    expect(replyAllRecipients({ ...msg, to: [{ email: 'support@tatvaos.com' }] }, 'support@tatvaos.com').cc).not.toMatch(/support@/);
+  });
+  test('replying to my own message sends to everyone else, in To', () => {
+    const mine = { from: { email: 'amit@tatvaos.com' }, to: [{ email: 'ravi@example.com' }], cc: [{ email: 'priya@example.com' }] };
+    expect(replyAllRecipients(mine, 'amit@tatvaos.com')).toEqual({ to: 'ravi@example.com, priya@example.com', cc: '' });
+  });
+  test('nothing crashes on a bare message', () => {
+    expect(replyAllRecipients({}, 'amit@tatvaos.com')).toEqual({ to: '', cc: '' });
+    expect(replyAllRecipients(null, '')).toEqual({ to: '', cc: '' });
+  });
+});
+
+describe('forwardHeader', () => {
+  test('From, Date, Subject, To — and Cc only when there was one', () => {
+    const h = forwardHeader({ from: { name: 'Ravi Kumar', email: 'ravi@example.com' }, sentAt: '2026-09-23T10:00:00Z',
+      subject: 'Invoice', to: [{ email: 'amit@tatvaos.com' }], cc: [{ email: 'accounts@example.com' }] });
+    expect(h).toMatch(/^---------- Forwarded message ----------\n/);
+    expect(h).toMatch(/\nFrom: Ravi Kumar/);
+    expect(h).toMatch(/\nDate: .+\n/);
+    expect(h).toMatch(/\nSubject: Invoice\n/);
+    expect(h).toMatch(/\nTo: amit@tatvaos.com\n/);
+    expect(h).toMatch(/\nCc: accounts@example.com\n\n$/);
+    expect(forwardHeader({ from: { email: 'r@x.com' }, to: [] })).not.toMatch(/Cc:/);
+  });
 });

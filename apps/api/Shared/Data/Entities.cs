@@ -62,6 +62,39 @@ public class Tenant
     /// </summary>
     public bool AllowAi { get; set; }
 
+    /// <summary>
+    /// May Mail use TatvaOS AI for this organisation? Needs AllowAi too —
+    /// consenting to the provider for meeting notes is not consenting to it
+    /// reading mail. FALSE BY DEFAULT; enforced in the gateway on the "mail."
+    /// feature label (AiProductSwitch). Column: 20260925-mail-ai-switch.sql.
+    /// </summary>
+    public bool AllowMailAi { get; set; }
+
+    /// <summary>
+    /// TatvaOS AI sorts incoming inbox mail since this moment; null = off.
+    /// Needs AllowAi and AllowMailAi too. Only mail that ARRIVED after it is
+    /// ever sent. Enforced in the gateway on "mail.triage" (AiProductSwitch).
+    /// Column: 20260925-b-mail-ai-triage.sql.
+    /// </summary>
+    public DateTimeOffset? MailAiTriageSince { get; set; }
+
+    /// <summary>
+    /// Each Mail AI feature's own switch, inside AllowMailAi (Amit, 26 Sept
+    /// 2026: "turn on and off … so client able to save tokens"). Rewrite and
+    /// suggest default on (they were what Mail AI meant when agreed to);
+    /// summary defaults OFF (new, and it sends a whole conversation).
+    /// Column: 20260926-mail-ai-features.sql. Enforced in AiProductSwitch.
+    /// </summary>
+    public bool MailAiRewrite { get; set; } = true;
+    public bool MailAiSuggest { get; set; } = true;
+    public bool MailAiSummary { get; set; }
+
+    /// <summary>
+    /// The operator's exception: exactly this many AI credits a month for this
+    /// organisation, whatever its plan says. Null = follow the plan; 0 = none.
+    /// </summary>
+    public int? AiCreditsOverride { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? SuspendedAt { get; set; }
     public DateTimeOffset? TrialEndsAt { get; set; }
@@ -573,6 +606,16 @@ public class Plan
     public string[] IncludedProducts { get; set; } = ["mail"];
     public decimal? PricePerUserMonthly { get; set; }
     public decimal? PriceMonthly { get; set; }
+
+    /// <summary>
+    /// AI credits (26 Sept 2026) — the same choice as storage: 'pooled' gives
+    /// the organisation AiCreditsPooled a month; 'per_user' gives
+    /// AiCreditsPerUser × its users, shared. A null amount = no credit limit.
+    /// See AiCredits and 20260926-b-ai-credits.sql.
+    /// </summary>
+    [MaxLength(16)] public string AiCreditModel { get; set; } = "pooled";
+    public int? AiCreditsPerUser { get; set; }
+    public int? AiCreditsPooled { get; set; }
 }
 
 public class Subscription
@@ -816,6 +859,16 @@ public class Message : TatvaOS.Api.Modules.Mail.IMailSortable
     /// attachment blobs: a large index full of matches nobody is looking for.
     /// </summary>
     public string? BodyText { get; set; }
+
+    /// <summary>
+    /// TatvaOS AI's guess at what kind of mail this is — needs_reply, fyi,
+    /// updates, promotions (MailTriage.Labels). NOT a category: categories are
+    /// made by people. Null until sorted, and cleared when sorting is off.
+    /// </summary>
+    public string? AiLabel { get; set; }
+
+    /// <summary>When the sorter claimed this message; with no label = looked at, left alone.</summary>
+    public DateTimeOffset? AiLabelledAt { get; set; }
 
     /// <summary>
     /// Where the maildir file lives, relative to the vmail root, with the

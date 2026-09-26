@@ -190,6 +190,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     // the single "AI usage" block at the end of OnModelCreating.
     public DbSet<AiUsage> AiUsage => Set<AiUsage>();
     public DbSet<AiUsageAlert> AiUsageAlerts => Set<AiUsageAlert>();
+    public DbSet<AiCreditAlert> AiCreditAlerts => Set<AiCreditAlert>();
+    public DbSet<AiCreditTopup> AiCreditTopups => Set<AiCreditTopup>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -299,6 +301,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.Hire.HireTeamMember>().ToTable("team_members", "hire");
         b.Entity<TatvaOS.Api.Modules.Hire.HireTeamMember>().HasKey(m => new { m.TenantId, m.UserId });
         b.Entity<TatvaOS.Api.Modules.Hire.HireTeamMember>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        // 20260924-f: careers sites. No DbSet, like every Hire record.
+        b.Entity<TatvaOS.Api.Modules.Hire.HireCareersSite>().ToTable("careers_sites", "hire");
+        b.Entity<TatvaOS.Api.Modules.Hire.HireCareersSite>().HasKey(s => s.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Hire.HireCareersSite>()
             .HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<TatvaOS.Api.Modules.Mail.MailApiSend>().ToTable("api_sends", "mail");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>().ToTable("meeting_notes", "connect");
@@ -837,6 +844,26 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             e.HasOne<User>().WithMany()
                 .HasForeignKey(u => u.UserId).OnDelete(DeleteBehavior.SetNull);
         });
+        // AI credit warnings (26 Sept 2026): same shape and filter as the token
+        // warnings below, their own table so the two can never collide.
+        // AI credit top-ups (26 Sept 2026): tenant-filtered like every AI table.
+        b.Entity<AiCreditTopup>(e =>
+        {
+            e.ToTable("ai_credit_topups", "core");
+            e.HasQueryFilter(t => t.TenantId == tenant.TenantId);
+            e.HasOne<Tenant>().WithMany()
+                .HasForeignKey(t => t.TenantId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        b.Entity<AiCreditAlert>(e =>
+        {
+            e.ToTable("ai_credit_alerts", "core");
+            e.HasKey(a => new { a.TenantId, a.Month, a.Level, a.Allowance });
+            e.HasQueryFilter(a => a.TenantId == tenant.TenantId);
+            e.HasOne<Tenant>().WithMany()
+                .HasForeignKey(a => a.TenantId).OnDelete(DeleteBehavior.Cascade);
+        });
+
         b.Entity<AiUsageAlert>(e =>
         {
             e.ToTable("ai_usage_alerts", "core");

@@ -28,6 +28,11 @@ using TatvaOS.Api.Shared.Tenancy;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Development-only operator sign-in (Mr. Singh, 24 Sept 2026): refuse to boot
+// when its switch is on anywhere but Development. First, before anything else
+// is built. See Modules/Auth/Endpoints/DevOperatorGate.cs.
+DevOperatorGate.RefuseToStartOutsideDevelopment(builder.Environment, builder.Configuration);
+
 // ---------------------------------------------------------------------------
 //  `TatvaOS.Api --oidc-rotate` — the key-rotation runbook's one step. Runs in
 //  the API container against the same key directory, generates a new signing
@@ -366,6 +371,9 @@ builder.Services.AddHttpClient();
 // walk past the meter (Mr. Singh on PR 280). tests/ai/gateway-not-bypassable.sh
 // fails if the provider class is named anywhere else.
 builder.Services.AddScoped<IAiGateway, MeteredAiGateway>();
+// Process memory only. First user: Mail's suggested replies, so reopening a
+// message does not send it to the AI provider again (MailAiEndpoints).
+builder.Services.AddMemoryCache();
 
 // Scoped: it writes through the request's AppDbContext and reads its
 // TenantContext. A singleton holding either would serve one tenant's scope to
@@ -435,6 +443,10 @@ builder.Services.AddHostedService<VacationReplyWorker>();
 // Calendar reminders. Polls every minute and records every send, rather than
 // scheduling in-memory timers that a deploy would silently swallow.
 builder.Services.AddHostedService<CalendarReminderWorker>();
+
+// TatvaOS AI sorts new inbox mail (Mail AI step 3). Does nothing unless an
+// organisation has switched sorting on; see the worker's header for its limits.
+builder.Services.AddHostedService<MailTriageWorker>();
 
 // iMIP: what Mail's ingest calls when a delivered message carries a calendar
 // reply (docs/MAIL_IMIP_SEAM.md §4). Scoped, because it runs inside the
@@ -631,6 +643,31 @@ builder.Services.AddRateLimiter(o =>
             });
     });
 
+    // The public careers pages (decision 0010 §5): 120 reads a minute per
+    // address, keyed on the rightmost X-Forwarded-For like every limiter here.
+    //
+    // ⚠ CDN WARNING (Mr. Singh, 24 Sept 2026). Rightmost XFF is the real client
+    // ONLY because Caddy is the one proxy in front. Put Cloudflare or any CDN
+    // in front of the careers pages — the natural next step for a public page
+    // — and the rightmost entry becomes the CDN's own address: every visitor
+    // on earth then shares one 120-a-minute bucket and the page is down for
+    // all of them. Whoever adds a CDN must reconfigure every limiter here IN
+    // THE SAME CHANGE (the CDN's client-IP header, trusted only from its
+    // published ranges). Also in docs/DEPLOY_RUNBOOK.md §4.
+    o.AddPolicy("careers-read", httpContext =>
+    {
+        var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();
+        var client = string.IsNullOrEmpty(xff)
+            ? httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"
+            : xff.Split(',')[^1].Trim();
+        return RateLimitPartition.GetFixedWindowLimiter($"careers:{client}",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 120,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            });
+    });
     o.AddPolicy("space-public-links", httpContext =>
     {
         var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();
@@ -752,6 +789,8 @@ app.UseRateLimiter();
 TatvaOS.Api.Modules.Auth.Endpoints.AuthEndpoints.ConfigureCookies(app.Configuration);
 
 app.MapAuthEndpoints();
+// Maps nothing unless Development AND DevOperatorSignIn__Enabled — see the file.
+app.MapDevOperatorSignIn();
 app.MapMfaEndpoints();
 app.MapOrganisationEndpoints();
 app.MapUserEndpoints();
@@ -766,6 +805,8 @@ app.MapOrgStructureEndpoints();
 // TatvaOS Hire R1: job openings (24 Sept 2026).
 TatvaOS.Api.Modules.Hire.JobOpeningEndpoints.MapJobOpeningEndpoints(app);
 TatvaOS.Api.Modules.Hire.HireTeamEndpoints.MapHireTeamEndpoints(app);
+// The public careers page and its admin setup (decision 0010, switched off).
+TatvaOS.Api.Modules.Hire.CareersEndpoints.MapCareersEndpoints(app);
 app.MapStorageEndpoints();
 app.MapAuditEndpoints();
 // Shared mailboxes are PROVISIONING — the same act as creating a person, so
@@ -787,6 +828,7 @@ app.MapMyStorageEndpoints();
 app.MapOrgAiEndpoints();
 // The operator's read of an organisation's AI use (the limits are settings).
 app.MapOrgAiUsageEndpoints();
+app.MapOrganisationDetailEndpoints();
 // Calendar. Recurrence is expanded at read time, never stored — see
 // Modules/Calendar/Recurrence.cs.
 app.MapCalendarEndpoints();
@@ -794,6 +836,9 @@ app.MapMailEndpoints();
 // Mail categories - the colour system. A name and a colour somebody made for
 // themselves; filters apply them, nothing infers them (see the endpoint header).
 app.MapMailCategoryEndpoints();
+// TatvaOS AI in Mail — Help me write. Governed by allow_ai AND allow_mail_ai,
+// both enforced inside the AI gateway (AiProductSwitch).
+app.MapMailAiEndpoints();
 app.MapFamilyEndpoints();
 app.MapSpaceEndpoints();
 app.MapSpaceDriveEndpoints();
