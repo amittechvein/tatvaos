@@ -331,7 +331,7 @@ if [ -n "${BACKUP_S3_REMOTE:-}" ] && [ -n "${BACKUP_ENC_PASSPHRASE:-}" ]; then
                         fi
                     done <<< "$doomed"
                     left=$(rclone lsf --files-only "$BACKUP_S3_REMOTE" 2>/dev/null | grep -c '\.tar\.gz\.enc$')
-                    note "tiered: every set for a day, 6-hourly to two days, daily to a week"
+                    note "tiered: every set for a day, 6-hourly to two days, daily to eight days (never less than seven)"
                     note "deleted ${gone}, ${left} set(s) in the bucket"
                 fi
             elif [ "$offbox_ok" = "1" ]; then
