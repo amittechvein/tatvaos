@@ -38,7 +38,7 @@ namespace TatvaOS.Api.Modules.Personal;
 public sealed class PersonalLifecycle(
     AppDbContext db, TenantContext tenant, PersonalHouse houses, AuditWriter audit,
     IBlobStore blobs, ConnectRecordingOptions recordings, SystemMailer mailer,
-    IConfiguration config, ILogger<PersonalLifecycle> log)
+    ILogger<PersonalLifecycle> log)
 {
     public static readonly TimeSpan SelfDeleteGrace = TimeSpan.FromDays(7);
     public static readonly TimeSpan InactiveAfter = TimeSpan.FromDays(365);
@@ -288,20 +288,15 @@ public sealed class PersonalLifecycle(
                     if (File.Exists(path)) File.Delete(path);
                     return null;
                 case "maildir":
-                    var root = config["Mail:VmailRoot"] ?? "/var/mail/vhosts";
-                    // Could not look ≠ nothing there: without the root, the files
-                    // may well exist, and the address must stay held.
-                    if (!Directory.Exists(root)) return $"maildir root {root} is not visible from here";
-                    var at = reference.IndexOf('@');
-                    if (at <= 0) return "not an address";
-                    var local = reference[..at];
-                    var domain = reference[(at + 1)..];
-                    if (local.Contains('/') || local.Contains('\\') || local.Contains("..")
-                        || domain.Contains('/') || domain.Contains('\\') || domain.Contains(".."))
-                        return "unsafe address for a path";
-                    var dir = Path.Combine(root, domain, local);
-                    if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
-                    return null;
+                    // THE API NEVER TOUCHES MAIL FILES (Mr. Singh, 26 Sept 2026):
+                    // it mounts the maildir read-only, and an API bug able to
+                    // delete a mailbox on disk would have too much reach. The
+                    // mail server deletes, through its own tool, for exactly one
+                    // address: infra/scripts/maildir-removals.sh runs doveadm in
+                    // the Dovecot container and removes this leftover row only
+                    // when it has seen the files gone. Until then the address
+                    // stays held (PersonalAddress.IsTakenAsync).
+                    return MaildirQueued;
                 default:
                     return $"unknown kind {kind}";
             }
@@ -312,9 +307,15 @@ public sealed class PersonalLifecycle(
         }
     }
 
+    /// <summary>The leftover text for a maildir waiting on the mail server's job.</summary>
+    public const string MaildirQueued = "queued for the mail server (infra/scripts/maildir-removals.sh)";
+
     private async Task RecordLeftoverAsync(string kind, string reference, string address, string error, CancellationToken ct)
     {
-        log.LogWarning("Purge could not remove {Kind} for {Address}: {Error}", kind, address, error);
+        if (error == MaildirQueued)
+            log.LogInformation("Purge queued the maildir of {Address} for the mail server", address);
+        else
+            log.LogWarning("Purge could not remove {Kind} for {Address}: {Error}", kind, address, error);
         var row = await db.PurgeLeftovers.FirstOrDefaultAsync(l => l.Kind == kind && l.Ref == reference, ct);
         if (row is null)
             db.PurgeLeftovers.Add(new PurgeLeftover { Kind = kind, Ref = reference, Address = address, LastError = error, Attempts = 1 });
@@ -324,7 +325,9 @@ public sealed class PersonalLifecycle(
 
     private async Task<(int Cleared, int Remaining)> RetryLeftoversAsync(CancellationToken ct)
     {
-        var rows = await db.PurgeLeftovers.OrderBy(l => l.Id).Take(200).ToListAsync(ct);
+        // Maildir leftovers are the mail server's to clear, never retried here.
+        var rows = await db.PurgeLeftovers.Where(l => l.Kind != "maildir")
+            .OrderBy(l => l.Id).Take(200).ToListAsync(ct);
         var cleared = 0;
         foreach (var l in rows)
         {
