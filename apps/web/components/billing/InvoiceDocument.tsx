@@ -101,11 +101,12 @@ export function InvoiceDocument({ inv }: { inv: InvoiceDoc }) {
           Received {inr(inv.paidAmount)} on {fmtDay(inv.paidOn)} by {METHOD[inv.paymentMethod ?? ''] ?? inv.paymentMethod}
           {inv.paymentReference ? ` (reference ${inv.paymentReference})` : ''}. Thank you.
         </p>
-      ) : inv.status === 'issued' && inv.seller.paymentInstructions ? (
+      ) : inv.status === 'issued' ? (
+        // Payment is online only, through Razorpay (Amit, 26 Sept 2026).
         <div className="mt-6">
           <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">How to pay</div>
-          <div className="whitespace-pre-line">{inv.seller.paymentInstructions}</div>
-          <div className="mt-1 text-neutral-600">Please quote {inv.number} with your payment.</div>
+          <div>Online only, by card, UPI or net banking: sign in to TatvaOS, open Billing, and choose Pay now on this invoice.</div>
+          <div className="mt-1 text-neutral-600">TatvaOS never asks for payment into a bank account.</div>
         </div>
       ) : null}
 

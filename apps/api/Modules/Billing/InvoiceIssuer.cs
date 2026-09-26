@@ -62,7 +62,8 @@ public sealed class InvoiceIssuer(AppDbContext db, SettingsReader settings)
 
         var terms = int.TryParse(Get(SettingKeys.PaymentTermsDays), out var t) && t is >= 0 and <= 365 ? t : 15;
         var seller = missing.Count == 0
-            ? new Seller(name!, gstin!, address!, state!, sac!, Get(SettingKeys.PaymentInstructions))
+            // Payment is online only (Razorpay), so there are no bank details to print.
+            ? new Seller(name!, gstin!, address!, state!, sac!, null)
             : null;
         return (seller, missing, prefix ?? "", terms);
 

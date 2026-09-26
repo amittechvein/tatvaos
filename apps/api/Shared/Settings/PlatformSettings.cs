@@ -44,7 +44,10 @@ public static class SettingKeys
     public const string SellerSac = "billing.seller.sac";
     public const string InvoicePrefix = "billing.invoice_prefix";
     public const string PaymentTermsDays = "billing.payment_terms_days";
-    public const string PaymentInstructions = "billing.payment_instructions";
+    // Payment is online only, through Razorpay (Amit, 26 Sept 2026). The
+    // webhook secret is the one set on the Razorpay dashboard's webhook for
+    // https://core.tatvaos.com/api/billing/razorpay/webhook.
+    public const string RazorpayWebhookSecret = "billing.razorpay.webhook_secret";
 
     // Mail identity
     public const string SmtpFrom = "mail.smtp_from";
@@ -115,8 +118,10 @@ public static class SettingKeys
             "1-4 letters. Invoices are numbered PREFIX/2026-27/0001, starting again each April."),
         new(PaymentTermsDays, "billing", "Days to pay", false,
             "Due date = issue date + this many days. Empty means 15."),
-        new(PaymentInstructions, "billing", "How to pay (bank / UPI)", false,
-            "Printed on the invoice: account name, number, IFSC, UPI id. Never a password or key."),
+        new(RazorpayWebhookSecret, "billing", "Razorpay webhook secret", true,
+            "Create a webhook in the Razorpay dashboard for https://core.tatvaos.com/api/billing/razorpay/webhook "
+            + "with the event payment_link.paid, and paste the secret you chose there. Without it, payments are "
+            + "still recorded when the customer returns to TatvaOS, but not if they close the page first."),
 
         new(SmtpFrom, "mail", "System mail from-address", false,
             "OTP codes and invoices are sent as this address, through our own mail server on the tatvaos.com domain."),

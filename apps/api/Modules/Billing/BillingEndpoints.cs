@@ -70,7 +70,7 @@ public static class BillingEndpoints
             .Select(i => new
             {
                 i.Id, i.Number, i.Status, i.IssuedOn, i.DueOn, i.PeriodStart, i.PeriodEnd,
-                i.Subtotal, i.Cgst, i.Sgst, i.Igst, i.Total, i.PaidOn, i.PaymentMethod,
+                i.Subtotal, i.Cgst, i.Sgst, i.Igst, i.Total, i.PaidOn, i.PaymentMethod, i.EmailedAt,
             })
             .ToListAsync(ct);
         var today = InvoiceMath.TodayInIndia(DateTimeOffset.UtcNow);
@@ -84,7 +84,7 @@ public static class BillingEndpoints
             invoices = invoices.Select(i => new
             {
                 i.Id, i.Number, i.Status, i.IssuedOn, i.DueOn, i.PeriodStart, i.PeriodEnd,
-                i.Subtotal, tax = i.Cgst + i.Sgst + i.Igst, i.Total, i.PaidOn, i.PaymentMethod,
+                i.Subtotal, tax = i.Cgst + i.Sgst + i.Igst, i.Total, i.PaidOn, i.PaymentMethod, i.EmailedAt,
                 overdue = i.Status == "issued" && i.DueOn < today,
             }),
             outstanding = invoices.Where(i => i.Status == "issued").Sum(i => i.Total),
@@ -97,17 +97,21 @@ public static class BillingEndpoints
         seller = JsonSerializer.Deserialize<JsonElement>(i.Seller),
         buyer = JsonSerializer.Deserialize<JsonElement>(i.Buyer),
         i.PlaceOfSupply, i.Subtotal, i.Cgst, i.Sgst, i.Igst, i.Total,
-        i.PaidOn, i.PaidAmount, i.PaymentMethod, i.PaymentReference, i.VoidedAt, i.VoidReason,
+        i.PaidOn, i.PaidAmount, i.PaymentMethod, i.PaymentReference, i.VoidedAt, i.VoidReason, i.EmailedAt,
         lines = i.Lines.OrderBy(l => l.LineNo)
             .Select(l => new { l.LineNo, l.Description, l.Sac, l.Quantity, l.UnitPrice, l.Amount }),
     };
 
     private static async Task<IResult> OperatorBillingAsync(
-        Guid id, AppDbContext db, TenantContext tenant, InvoiceIssuer issuer, HttpContext http, CancellationToken ct)
+        Guid id, AppDbContext db, TenantContext tenant, InvoiceIssuer issuer, RazorpayClient razorpay,
+        HttpContext http, CancellationToken ct)
     {
         if (!await Scope(db, tenant, id, http, ct)) return Results.NotFound();
         var (_, missing, _, _) = await issuer.SellerAsync(ct);
-        return Results.Ok(new { summary = await SummaryAsync(db, id, ct), sellerMissing = missing });
+        // Online payment needs the Razorpay keys; say so here rather than on
+        // the customer's first "Pay now".
+        var mode = await razorpay.ModeAsync(ct);
+        return Results.Ok(new { summary = await SummaryAsync(db, id, ct), sellerMissing = missing, razorpayMode = mode });
     }
 
     private static async Task<IResult> OrgBillingAsync(AppDbContext db, TenantContext tenant, CancellationToken ct) =>
@@ -249,15 +253,20 @@ public static class BillingEndpoints
 
     private static async Task<IResult> IssueAsync(
         Guid id, InvoiceIssuer.IssueRequest req, AppDbContext db, TenantContext tenant, InvoiceIssuer issuer,
-        AuditWriter audit, HttpContext http, CancellationToken ct)
+        AuditWriter audit, TatvaOS.Api.Shared.Notify.SystemMailer mailer, IConfiguration config,
+        HttpContext http, CancellationToken ct)
     {
         if (!await Scope(db, tenant, id, http, ct)) return Results.NotFound();
         var (draft, error) = await issuer.ComposeAsync(id, req, ct);
         if (draft is null) return Results.BadRequest(new { error });
 
         var inv = await issuer.IssueAsync(id, draft, CurrentUserId(http), ct);
+        // Emailed to the billing contact at once (billing part 2). A failed
+        // send does not undo the invoice; the Billing tab shows it was not
+        // sent and offers to send it again.
+        var emailed = await PaymentEndpoints.SendInvoiceEmailAsync(db, mailer, config, inv, ct);
         await audit.WriteAsync("invoice.issued", "core.invoice", inv.Id.ToString(),
-            after: new { inv.Number, inv.Total, inv.PeriodStart, inv.PeriodEnd, lines = inv.Lines.Count }, ct: ct);
+            after: new { inv.Number, inv.Total, inv.PeriodStart, inv.PeriodEnd, lines = inv.Lines.Count, emailed }, ct: ct);
         return Results.Created($"/api/admin/organisations/{id}/invoices/{inv.Id}", InvoiceDto(inv));
     }
 
