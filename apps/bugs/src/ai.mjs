@@ -25,28 +25,28 @@ export const AI_KEYS = ['ai_enabled', 'ai_base_url', 'ai_api_key', 'ai_model', '
 export function aiConfig(db) {
   const c = {
     enabled: getSetting(db, 'ai_enabled') === '1',
-    baseUrl: (getSetting(db, 'ai_base_url') || 'https://api.openai.com/v1').replace(/\/+$/, ''),
+    baseUrl: (getSetting(db, 'ai_base_url') || '').replace(/\/+$/, ''),
     key: getSetting(db, 'ai_api_key'),
     model: getSetting(db, 'ai_model'),
     location: getSetting(db, 'ai_data_location'),
     dailyLimit: Number(getSetting(db, 'ai_daily_limit') || 100),
   };
   let problem = '';
-  if (!c.key || !c.model) problem = 'AI is not set up (needs a key and a model).';
-  else if (!c.location) problem = 'AI is refused: say where the data goes (data location) before it can be used.';
+  if (!c.baseUrl || !c.key || !c.model) problem = 'TatvaOS AI is not set up (needs an address, a key and a model name).';
+  else if (!c.location) problem = 'TatvaOS AI is refused: say where the data goes (data location) before it can be used.';
   else {
     let host = '';
-    try { host = new URL(c.baseUrl).host.toLowerCase(); } catch { problem = 'The AI address is not a valid URL.'; }
+    try { host = new URL(c.baseUrl).host.toLowerCase(); } catch { problem = 'The TatvaOS AI address is not a valid web address.'; }
     for (const [h, country] of KNOWN_HOSTS) {
       if (host === h && !c.location.toLowerCase().includes(country.toLowerCase())) {
-        problem = `AI is refused: ${h} is in ${country}, but the data location says "${c.location}".`;
+        problem = `TatvaOS AI is refused: that address is in ${country}, but the data location says "${c.location}".`;
       }
     }
     if (!problem && !/^https:\/\//.test(c.baseUrl) && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//.test(c.baseUrl + '/')) {
-      problem = 'The AI address must use https.';
+      problem = 'The TatvaOS AI address must start with https://.';
     }
   }
-  return { ...c, ready: c.enabled && !problem, problem: c.enabled ? problem : 'AI is switched off in Settings.' };
+  return { ...c, ready: c.enabled && !problem, problem: c.enabled ? problem : 'TatvaOS AI is switched off in Settings.' };
 }
 
 const INSTRUCTION = `You help testers write clear reports for TatvaOS, a workplace software suite (mail, meetings, files, admin).
@@ -82,19 +82,19 @@ export async function improveReport(cfg, draft, areas) {
       signal: AbortSignal.timeout(30000),
     });
   } catch (e) {
-    return { ok: false, ms: Date.now() - started, error: e && e.name === 'TimeoutError' ? 'The AI took too long. Try again.' : 'The AI could not be reached.' };
+    return { ok: false, ms: Date.now() - started, error: e && e.name === 'TimeoutError' ? 'TatvaOS AI took too long. Try again.' : 'TatvaOS AI could not be reached.' };
   }
   const ms = Date.now() - started;
   if (!res.ok) {
     // Status only — the body can echo the report text.
-    const why = res.status === 401 || res.status === 403 ? 'The AI key was refused. An admin should check Settings.'
-      : res.status === 429 ? 'The AI is busy or out of credit. Try again later.' : `The AI answered with an error (${res.status}).`;
+    const why = res.status === 401 || res.status === 403 ? 'The TatvaOS AI key was refused. An admin should check Settings.'
+      : res.status === 429 ? 'TatvaOS AI is busy or out of credit. Try again later.' : `TatvaOS AI answered with an error (${res.status}).`;
     return { ok: false, ms, status: res.status, error: why };
   }
   let text = '';
   try { text = (await res.json())?.choices?.[0]?.message?.content || ''; } catch { /* handled below */ }
   let out;
-  try { out = JSON.parse(text); } catch { return { ok: false, ms, error: 'The AI answer could not be read. Try again.' }; }
+  try { out = JSON.parse(text); } catch { return { ok: false, ms, error: 'The TatvaOS AI answer could not be read. Try again.' }; }
   return { ok: true, ms, raw: out };
 }
 

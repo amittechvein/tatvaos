@@ -480,7 +480,7 @@ async function newIssueView() {
       btn.disabled = false; btn.textContent = '✨ Improve my report';
     } }, '✨ Improve my report');
     aiRow.replaceChildren(btn, h('span', { class: 'muted small' },
-      ' Sends only the title and details you typed (never files or names) to the AI provider in ' + st.data_location + '. You check every word before submitting. ' + st.remaining_today + ' left today.'));
+      ' Sends only the title and details you typed (never files or names) to TatvaOS AI, processed in ' + st.data_location + '. You check every word before submitting. ' + st.remaining_today + ' left today.'));
   }).catch(() => {});
 
   const showSuggestion = (sg, where) => {
@@ -493,7 +493,7 @@ async function newIssueView() {
         sg.priority ? [' · Priority: ', h('b', {}, cap(sg.priority))] : '',
         sg.area ? [' · Area: ', h('b', {}, sg.area.label)] : ''),
       sg.missing.length ? h('div', { class: 'callout' }, 'Please also answer:', h('ul', {}, sg.missing.map((m) => h('li', {}, m)))) : null,
-      h('p', { class: 'muted small' }, 'Written by AI (provider in ' + where + ') from your text. It can be wrong, and it must not add anything that did not happen.')),
+      h('p', { class: 'muted small' }, 'Written by TatvaOS AI (processed in ' + where + ') from your text. It can be wrong, and it must not add anything that did not happen.')),
       (dlg) => h('button', { class: 'btn primary', type: 'button', onclick: () => {
         titleIn.value = t.value; detailsTa.value = d.value;
         const radio = form.querySelector('input[name=type][value=' + sg.type + ']'); if (radio) radio.checked = true;
@@ -679,7 +679,7 @@ function activityItem(a) {
   const role = ROLE_LABEL[a.actor_role] || a.actor_role;
   const st = state.me.statuses;
   const text = {
-    created: () => `Created by ${who} · role: ${role}` + (a.meta ? ` · ${a.meta.module} › ${a.meta.submodule}` : '') + (a.meta?.ai_assisted ? ' · written with AI help' : ''),
+    created: () => `Created by ${who} · role: ${role}` + (a.meta ? ` · ${a.meta.module} › ${a.meta.submodule}` : '') + (a.meta?.ai_assisted ? ' · written with TatvaOS AI' : ''),
     comment: () => `${who} commented`,
     reply: () => `${who} replied with the information requested`,
     info_request: () => `${who} requested more information`,
@@ -873,28 +873,28 @@ async function settingsView() {
   // ---- AI: "Improve my report". Off until an admin turns it on. ----
   const ai = s.ai;
   const aiOn = h('input', { type: 'checkbox', checked: ai.enabled });
-  const aiUrl = h('input', { value: ai.base_url, placeholder: 'https://api.openai.com/v1' });
-  const aiModel = h('input', { value: ai.model, placeholder: 'e.g. gpt-4o-mini' });
+  const aiUrl = h('input', { value: ai.base_url, placeholder: 'The TatvaOS AI address you were given' });
+  const aiModel = h('input', { value: ai.model, placeholder: 'The model name you were given' });
   const aiLoc = h('input', { value: ai.data_location, placeholder: 'e.g. United States' });
   const aiLimit = h('input', { type: 'number', min: 0, max: 10000, value: ai.daily_limit });
   const aiKey = h('input', { type: 'password', autocomplete: 'off', placeholder: ai.key_set ? 'A key is saved — paste a new one to replace it' : 'Paste the key' });
-  const aiCard = h('section', { class: 'card form' }, h('h3', {}, 'AI: Improve my report'),
-    h('p', { class: 'muted small' }, 'When on, testers get an "Improve my report" button. It sends only the title and details they typed (never files, names or other issues) to the AI provider below, and they check every word before submitting. Use a key made only for this tracker.'),
+  const aiCard = h('section', { class: 'card form' }, h('h3', {}, 'TatvaOS AI: Improve my report'),
+    h('p', { class: 'muted small' }, 'When on, testers get an "Improve my report" button. It sends only the title and details they typed (never files, names or other issues) to TatvaOS AI, and they check every word before submitting. Use a key made only for this tracker.'),
     h('p', { class: ai.ready ? 'small' : 'small warn-text' }, ai.ready ? 'Ready. Used ' + ai.used_today + ' of ' + ai.daily_limit + ' times today.' : 'Not in use: ' + ai.problem),
     h('label', { class: 'check' }, aiOn, ' Turn on Improve my report'),
     h('div', { class: 'grid2' },
-      h('label', {}, h('span', {}, 'AI address (OpenAI-compatible)'), aiUrl),
-      h('label', {}, h('span', {}, 'Model'), aiModel)),
+      h('label', {}, h('span', {}, 'TatvaOS AI address'), aiUrl),
+      h('label', {}, h('span', {}, 'Model name'), aiModel)),
     h('div', { class: 'grid2' },
       h('label', {}, h('span', {}, 'Where the data goes (shown to testers)'), aiLoc),
       h('label', {}, h('span', {}, 'Uses per day, whole team'), aiLimit)),
-    h('label', {}, h('span', {}, 'AI key ' + (ai.key_set ? '(saved)' : '(not set)')), aiKey),
+    h('label', {}, h('span', {}, 'TatvaOS AI key ' + (ai.key_set ? '(saved)' : '(not set)')), aiKey),
     h('div', {}, h('button', { class: 'btn primary', onclick: async () => {
       try {
         await api('PUT', '/api/settings', { ai: { enabled: aiOn.checked, base_url: aiUrl.value, model: aiModel.value, data_location: aiLoc.value, daily_limit: Number(aiLimit.value), api_key: aiKey.value || undefined } });
         aiKey.value = ''; toast('Saved.'); render();
       } catch (e) { toast(e.message, true); }
-    } }, 'Save AI settings')));
+    } }, 'Save TatvaOS AI settings')));
   return h('div', {}, h('div', { class: 'page-head' }, h('h1', {}, 'Settings')), mine, mailCard, aiCard, storageCard, log);
 }
 

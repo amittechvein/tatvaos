@@ -335,6 +335,11 @@ try {
     const improve = (c, body) => c.req('POST', '/api/ai/improve', body);
     const draft = { title: 'search btn hard to see', details: 'in mail the search button is very small', type: 'bug', submodule_id: search };
     check('off by default: refused, nothing sent', (await improve(priya, draft)).status === 409 && seen.length === 0);
+    // Amit, 26 Sept: people see "TatvaOS AI", never a vendor name or address.
+    const page = (await priya.req('GET', '/app.js')).text + (await priya.req('GET', '/')).text;
+    check('no vendor name anywhere on the page', !/openai|gpt/i.test(page) && /TatvaOS AI/.test(page));
+    const fresh = (await amit.req('GET', '/api/settings')).json.ai;
+    check('no address filled in until an admin enters one', fresh.base_url === '' && !/openai/i.test(fresh.problem));
     check('status says not ready', (await priya.req('GET', '/api/ai/status')).json.ready === false);
     await amit.req('PUT', '/api/settings', { ai: { enabled: true, base_url: fakeUrl, model: 'fake-model', api_key: 'test-key-123', data_location: '' } });
     const noLoc = await improve(priya, draft);

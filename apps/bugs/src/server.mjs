@@ -963,18 +963,18 @@ route('PUT', /^\/api\/settings$/, async (req, res, s) => {
     const a = b.ai;
     if (a.enabled !== undefined) setSetting(db, 'ai_enabled', a.enabled ? '1' : '');
     if (a.base_url !== undefined) {
-      const u = str(a.base_url, 300, 'AI address');
-      if (u && !URL.canParse(u)) throw bad('The AI address must be a URL.');
+      const u = str(a.base_url, 300, 'TatvaOS AI address');
+      if (u && !URL.canParse(u)) throw bad('The TatvaOS AI address must be a web address.');
       setSetting(db, 'ai_base_url', u);
     }
-    if (a.model !== undefined) setSetting(db, 'ai_model', str(a.model, 100, 'AI model'));
+    if (a.model !== undefined) setSetting(db, 'ai_model', str(a.model, 100, 'Model name'));
     if (a.data_location !== undefined) setSetting(db, 'ai_data_location', str(a.data_location, 100, 'Data location'));
     if (a.daily_limit !== undefined) {
       const n = Number(a.daily_limit);
       if (!Number.isInteger(n) || n < 0 || n > 10000) throw bad('The daily limit must be a whole number from 0 to 10000.');
       setSetting(db, 'ai_daily_limit', String(n));
     }
-    if (a.api_key) setSetting(db, 'ai_api_key', str(a.api_key, 500, 'AI key'));
+    if (a.api_key) setSetting(db, 'ai_api_key', str(a.api_key, 500, 'TatvaOS AI key'));
     if (a.clear_api_key) setSetting(db, 'ai_api_key', '');
   }
   send(res, 200, { ok: true });

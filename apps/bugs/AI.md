@@ -39,6 +39,12 @@ which you read for Mail AI):
 - A **daily limit for the whole team** (Settings, default 100). One row per call
   in `ai_usage`: who, when, worked or not, how long — no text.
 
+**Name on screen (Amit, 26 Sept):** people see **"TatvaOS AI"** everywhere — no
+vendor name, no vendor address filled in, no model example. The admin types the
+address, model and key. The *where the data goes* line (the data location) is
+still shown to testers beside the button, so the brand name never hides the
+place the text is sent. A test fails if a vendor name reappears on the page.
+
 ## What I need from you
 
 1. Is sending report text to the provider acceptable, given that reports can
