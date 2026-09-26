@@ -441,10 +441,17 @@ try {
       let bd; try { bd = JSON.parse(t); } catch { bd = t; }
       return { status: res.status, body: bd };
     };
-    await setAi({ enabled: true, mail: true, mailTriage: false });
+    // The DEFAULTS, read from the schema: a run after someone switched a
+    // feature by hand must not be able to hide a wrong default (found 26
+    // Sept: a browser check left Summarise on, and four checks read that).
+    const def = (col) => psql(`select column_default from information_schema.columns where table_schema='core' and table_name='tenants' and column_name='${col}'`);
+    check('defaults: Summarise OFF, Help me write and suggestions ON',
+      def('mail_ai_summary') === 'false' && def('mail_ai_rewrite') === 'true' && def('mail_ai_suggest') === 'true',
+      `${def('mail_ai_summary')} ${def('mail_ai_rewrite')} ${def('mail_ai_suggest')}`);
+    await setAi({ enabled: true, mail: true, mailTriage: false, mailFeatures: { rewrite: true, suggest: true, summary: false } });
 
     const org = (await call('GET', '/org/ai')).body;
-    check('Summarise starts OFF; Help me write and suggestions start on',
+    check('Summarise off, Help me write and suggestions on (as set)',
       org.mailFeatures?.summary === false && org.mailFeatures?.rewrite === true && org.mailFeatures?.suggest === true, JSON.stringify(org.mailFeatures));
     check('each feature says what it sends', typeof org.mailFeatureDisclosure?.summary === 'string'
       && org.mailFeatureDisclosure.summary.includes('whole conversation'), JSON.stringify(org.mailFeatureDisclosure));
