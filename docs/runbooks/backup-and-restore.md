@@ -354,6 +354,60 @@ into live volumes, and it did not test `deploy.sh` against a restored database.
 Those remain untested, and this section is where to record it when somebody
 tests them.
 
+## What the 24 September 2026 test proved
+
+`~deploy/restore-test.sh`, run on the production host on 24 Sept 2026 (log
+`~deploy/restore-test.log`, 06:22 UTC). Accepted by Mr. Singh on 26 Sept as
+the most important result of that week. Three parts, each proving a
+different thing; `FAIL` lines in the whole log: **0**.
+
+**A. The newest pre-deploy dump restores.** `pre-deploy-20260924-061346.sql`
+(961 MB) into a throwaway `postgres:17-alpine` — created by the script with a
+random name, `--network none`, no volume; its `system_identifier` checked
+DIFFERENT from production's and the cluster checked EMPTY before a byte went
+in, so the dump's role and database statements could not reach live. One
+error, the benign `role "postgres" already exists`; nothing else.
+
+| table | restored | live |
+|---|---|---|
+| core.tenants | 5 | 5 |
+| core.users | 186 | 186 |
+| core.audit_logs | 1077 | 1077 |
+| mail.mailboxes | 193 | 193 |
+| mail.folders | 1158 | 1158 |
+| mail.messages | 40413 | 40415 — two arrived after the dump |
+| connect.meetings | 151 | 151 |
+
+**B. The newest off-box object opens.** `20260924-023001.tar.gz.enc`
+streamed download → decrypt → `tar -t` in one pipe (nothing plaintext on
+disk). Stage exit codes `0 0 0`, all members present. Every stage's code is
+checked, not just the last: before it ran, the same block was fed objects
+cut off at 60%, 16 bytes and **1 byte** short, a dropped download and a
+wrong passphrase, and all went red — the 1- and 16-byte cuts still LISTED
+every member, so a "members present" check alone would have passed a
+truncated backup.
+
+**C. The newest local mail archive is readable.** Set `20260924-023001`:
+30,743 files in `vmail.tar.gz` against 30,811 in the live maildir; the 68
+extra are mail that arrived after the backup.
+
+Clean-up ran on every exit path (tested beforehand: success, failure and
+interrupt, which exits 130 — not 0) and verified the throwaway container and
+temporary folder gone.
+
+**What it did not prove.** It decrypted with the **server's** copy of the
+passphrase, not the paper one, and ran on the production host — so, like the
+9 September drill, it does not cover losing the server. It LISTED the mail
+archive and the off-box object; it did not restore `vmail`, `spaceblobs` or
+`dkimkeys` into live volumes. **The disaster drill — Amit's paper copy, on a
+machine that is not this server — is still to do.**
+
+**Since then (26 Sept):** the tiered settings are in force —
+`BACKUP_S3_TIERED=1`, `BACKUP_LOCAL_KEEP` sets kept here — while cron still
+runs every **six** hours, because `backup.sh --install` has not been re-run.
+`BACKUP_KEEP_DAYS` now governs only the pre-deploy copies (deploy.sh), not
+the scheduled sets.
+
 ## Not covered
 
 - **Point-in-time recovery.** These are six-hourly (two-hourly, tiered) snapshots;
