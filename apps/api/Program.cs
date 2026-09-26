@@ -393,6 +393,7 @@ builder.Services.AddSingleton<SignupVerifier>();
 // credential saved in the console takes effect on the next request with no
 // cache to invalidate and no restart.
 builder.Services.AddHttpClient();
+builder.Services.AddSingleton<SettingsCrypto>();
 builder.Services.AddScoped<SettingsReader>();
 builder.Services.AddScoped<TatvaOS.Api.Modules.Billing.InvoiceIssuer>();
 builder.Services.AddHttpClient<TatvaOS.Api.Modules.Billing.RazorpayClient>();

@@ -81,6 +81,14 @@ public sealed class RazorpayClient(HttpClient http, SettingsReader settings, ICo
         return await SendAsync(req, ct);
     }
 
+    /// <summary>Cancel a link so it can no longer be paid (an invoice was voided).</summary>
+    public async Task<Link> CancelLinkAsync(string linkId, CancellationToken ct)
+    {
+        using var req = await RequestAsync(HttpMethod.Post, $"/v1/payment_links/{Uri.EscapeDataString(linkId)}/cancel", ct);
+        req.Content = new StringContent("{}", Encoding.UTF8, "application/json");
+        return await SendAsync(req, ct);
+    }
+
     public async Task<Link> GetLinkAsync(string linkId, CancellationToken ct)
     {
         using var req = await RequestAsync(HttpMethod.Get, $"/v1/payment_links/{Uri.EscapeDataString(linkId)}", ct);

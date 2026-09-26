@@ -123,9 +123,12 @@ export async function markPaid(f: AuthedFetch, orgId: string, invoiceId: string,
   const res = await f(`/admin/organisations/${orgId}/invoices/${invoiceId}/paid`, { method: 'POST', body: JSON.stringify(body) });
   if (!res.ok) return fail(res, 'Could not record the payment.');
 }
-export async function voidInvoice(f: AuthedFetch, orgId: string, invoiceId: string, reason: string): Promise<void> {
+/** Voids the invoice; returns a warning when its Razorpay link could not be cancelled. */
+export async function voidInvoice(f: AuthedFetch, orgId: string, invoiceId: string, reason: string): Promise<string | null> {
   const res = await f(`/admin/organisations/${orgId}/invoices/${invoiceId}/void`, { method: 'POST', body: JSON.stringify({ reason }) });
   if (!res.ok) return fail(res, 'Could not void the invoice.');
+  const body = await res.json();
+  return typeof body.warning === 'string' ? body.warning : null;
 }
 
 export interface UnpaidSummary {
@@ -198,4 +201,20 @@ export async function emailInvoice(f: AuthedFetch, orgId: string, invoiceId: str
     try { const b = await res.json(); msg = b.error ?? b.detail ?? msg; } catch { /* keep */ }
     throw new Error(msg);
   }
+}
+
+// ---- payment problems (Mr. Singh, 26 Sept: never only in a table) ---------
+export interface PaymentProblem {
+  eventId: string; outcome: string; invoiceId: string | null; invoiceNumber: string | null;
+  tenantId: string | null; organisation: string | null; paymentId: string | null;
+  amount: number | null; receivedAt: string; alertedAt: string | null;
+}
+export async function fetchPaymentProblems(f: AuthedFetch): Promise<PaymentProblem[]> {
+  const res = await f('/admin/billing/payment-problems');
+  if (!res.ok) return fail(res, 'Could not load payment problems.');
+  return (await res.json()).problems;
+}
+export async function acknowledgeProblem(f: AuthedFetch, eventId: string): Promise<void> {
+  const res = await f(`/admin/billing/payment-problems/${encodeURIComponent(eventId)}/acknowledge`, { method: 'POST' });
+  if (!res.ok) return fail(res, 'Could not acknowledge it.');
 }

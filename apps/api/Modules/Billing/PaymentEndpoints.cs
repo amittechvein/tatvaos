@@ -47,6 +47,11 @@ public static class PaymentEndpoints
         op.MapPost("/email", EmailAsync);
 
         app.MapPost("/api/billing/razorpay/webhook", WebhookAsync).AllowAnonymous().WithTags("Billing");
+
+        var problems = app.MapGroup("/api/admin/billing/payment-problems")
+            .RequireAuthorization("SuperAdmin").WithTags("Platform administration");
+        problems.MapGet("/", ProblemsAsync);
+        problems.MapPost("/{eventId}/acknowledge", AcknowledgeAsync);
     }
 
     private static long Paise(decimal rupees) => (long)decimal.Round(rupees * 100m, 0, MidpointRounding.AwayFromZero);
@@ -141,11 +146,24 @@ public static class PaymentEndpoints
     // ------------------------------------------------------------------
     private static async Task<IResult> WebhookAsync(
         HttpRequest request, AppDbContext db, TenantContext tenant, RazorpayClient razorpay, AuditWriter audit,
-        ILoggerFactory logs, CancellationToken ct)
+        SystemMailer mailer, IConfiguration config, ILoggerFactory logs, CancellationToken ct)
     {
         var log = logs.CreateLogger("Billing.Razorpay");
+
+        // Anonymous and public, so the body is capped BEFORE it is read into
+        // memory (Mr. Singh, 26 Sept). A Razorpay event is a few KB; 64 KB is
+        // generous. Checked on the declared length and again while reading,
+        // because a chunked body declares none.
+        const int MaxBody = 64 * 1024;
+        if (request.ContentLength is > MaxBody) return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
         using var ms = new MemoryStream();
-        await request.Body.CopyToAsync(ms, ct);
+        var buffer = new byte[8192];
+        int n;
+        while ((n = await request.Body.ReadAsync(buffer, ct)) > 0)
+        {
+            if (ms.Length + n > MaxBody) return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+            ms.Write(buffer, 0, n);
+        }
         var raw = ms.ToArray();
 
         if (!await razorpay.WebhookSignatureOkAsync(raw, request.Headers["X-Razorpay-Signature"], ct))
@@ -162,13 +180,27 @@ public static class PaymentEndpoints
         var eventId = request.Headers["X-Razorpay-Event-Id"].ToString();
         if (string.IsNullOrWhiteSpace(eventId)) eventId = $"noid:{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(raw))[..32]}";
 
+        string? linkId = null, paymentId = null;
+        long amountPaid = -1;
+        Guid? tenantId = null;
+        string? invoiceNumber = null;
+
         async Task<IResult> Done(string outcome, Guid? invoiceId)
         {
-            await db.Database.ExecuteSqlAsync($"""
-                INSERT INTO core.razorpay_events (event_id, event_type, invoice_id, outcome)
-                VALUES ({eventId}, {type}, {invoiceId}, {outcome}) ON CONFLICT (event_id) DO NOTHING
+            var inserted = await db.Database.ExecuteSqlAsync($"""
+                INSERT INTO core.razorpay_events
+                    (event_id, event_type, invoice_id, outcome, tenant_id, invoice_number, link_id, payment_id, amount_paise)
+                VALUES ({eventId}, {type}, {invoiceId}, {outcome}, {tenantId}, {invoiceNumber}, {linkId}, {paymentId},
+                        {(amountPaid >= 0 ? amountPaid : (long?)null)})
+                ON CONFLICT (event_id) DO NOTHING
                 """, ct);
             log.LogInformation("Razorpay {Type} {Event}: {Outcome}", type, eventId, outcome);
+            // Anything that needs a person is emailed to the platform operators
+            // and stays on the console until acknowledged (Mr. Singh: "a
+            // customer who has paid and is not recorded is the worst kind of
+            // silent failure").
+            if (inserted == 1 && IsProblem(outcome))
+                await AlertOperatorsAsync(db, mailer, config, eventId, outcome, invoiceNumber, paymentId, amountPaid, log, ct);
             return Results.Ok();
         }
 
@@ -179,8 +211,6 @@ public static class PaymentEndpoints
 
         if (type != "payment_link.paid") return await Done("ignored: not payment_link.paid", null);
 
-        string? linkId = null, paymentId = null;
-        long amountPaid = -1;
         try
         {
             var linkEntity = root.GetProperty("payload").GetProperty("payment_link").GetProperty("entity");
@@ -196,10 +226,12 @@ public static class PaymentEndpoints
             """).ToListAsync(ct);
         if (owner.Count == 0) return await Done($"unmatched: no invoice has link {linkId}", null);
 
+        tenantId = owner[0].TenantId;
         tenant.EnterAnonymousScope(owner[0].TenantId, "system");
         await db.SyncTenantAsync(ct);
         var inv = await db.Invoices.FirstOrDefaultAsync(i => i.Id == owner[0].InvoiceId && i.TenantId == owner[0].TenantId, ct);
         if (inv is null) return await Done("unmatched: invoice not visible in its own organisation", owner[0].InvoiceId);
+        invoiceNumber = inv.Number;
         if (inv.Status == "paid") return await Done("already paid", inv.Id);
         if (inv.Status == "void") return await Done("REFUND NEEDED: paid after the invoice was voided", inv.Id);
         if (amountPaid != Paise(inv.Total))
@@ -213,6 +245,73 @@ public static class PaymentEndpoints
     }
 
     private sealed record LinkOwner(Guid TenantId, Guid InvoiceId);
+
+    private static bool IsProblem(string outcome) =>
+        outcome.StartsWith("REVIEW", StringComparison.Ordinal)
+        || outcome.StartsWith("REFUND NEEDED", StringComparison.Ordinal)
+        || outcome.StartsWith("unmatched", StringComparison.Ordinal);
+
+    private static async Task AlertOperatorsAsync(
+        AppDbContext db, SystemMailer mailer, IConfiguration config, string eventId, string outcome,
+        string? invoiceNumber, string? paymentId, long amountPaise, ILogger log, CancellationToken ct)
+    {
+        // core.users has no RLS; the operators belong to Techvein's tenant,
+        // not to the invoice's, so the tenant filter is set aside for this
+        // one read of addresses.
+        var operators = await db.Users.IgnoreQueryFilters().AsNoTracking()
+            .Where(u => u.Role == "super_admin" && u.Status == "active")
+            .Select(u => u.Email).ToListAsync(ct);
+        var amount = amountPaise >= 0 ? "₹" + (amountPaise / 100m).ToString("N2", System.Globalization.CultureInfo.GetCultureInfo("en-IN")) : "unknown";
+        var sent = 0;
+        foreach (var to in operators)
+            if (await mailer.SendHtmlAsync(to, PaymentProblemEmail.Subject(invoiceNumber),
+                    PaymentProblemEmail.Html(outcome, invoiceNumber, paymentId, amount, $"{ReturnBase(config)}/admin"), ct: ct))
+                sent++;
+        if (sent > 0)
+            await db.Database.ExecuteSqlAsync($"UPDATE core.razorpay_events SET alerted_at = now() WHERE event_id = {eventId}", ct);
+        else
+            log.LogError("Razorpay payment problem {Event} ({Outcome}) could not be emailed to any of {Count} operator(s)",
+                eventId, outcome, operators.Count);
+    }
+
+    public sealed record ProblemRow(string EventId, string Outcome, Guid? InvoiceId, string? InvoiceNumber,
+        Guid? TenantId, string? PaymentId, long? AmountPaise, DateTimeOffset ReceivedAt, DateTimeOffset? AlertedAt);
+
+    private static async Task<IResult> ProblemsAsync(AppDbContext db, CancellationToken ct)
+    {
+        var rows = await db.Database.SqlQuery<ProblemRow>($"""
+            SELECT event_id AS "EventId", outcome AS "Outcome", invoice_id AS "InvoiceId",
+                   invoice_number AS "InvoiceNumber", tenant_id AS "TenantId", payment_id AS "PaymentId",
+                   amount_paise AS "AmountPaise", received_at AS "ReceivedAt", alerted_at AS "AlertedAt"
+              FROM core.razorpay_events
+             WHERE acknowledged_at IS NULL
+               AND (outcome LIKE 'REVIEW%' OR outcome LIKE 'REFUND NEEDED%' OR outcome LIKE 'unmatched%')
+             ORDER BY received_at
+            """).ToListAsync(ct);
+        var names = await db.Tenants.AsNoTracking().ToDictionaryAsync(t => t.Id, t => t.Name, ct);
+        return Results.Ok(new
+        {
+            problems = rows.Select(r => new
+            {
+                r.EventId, r.Outcome, r.InvoiceId, r.InvoiceNumber, r.TenantId,
+                organisation = r.TenantId is Guid t ? names.GetValueOrDefault(t) : null,
+                r.PaymentId, amount = r.AmountPaise is long p ? p / 100m : (decimal?)null, r.ReceivedAt, r.AlertedAt,
+            }),
+        });
+    }
+
+    private static async Task<IResult> AcknowledgeAsync(
+        string eventId, AppDbContext db, AuditWriter audit, HttpContext http, CancellationToken ct)
+    {
+        var who = Guid.TryParse(http.User.FindFirst("sub")?.Value, out var u) ? u : (Guid?)null;
+        var n = await db.Database.ExecuteSqlAsync($"""
+            UPDATE core.razorpay_events SET acknowledged_at = now(), acknowledged_by = {who}
+             WHERE event_id = {eventId} AND acknowledged_at IS NULL
+            """, ct);
+        if (n == 0) return Results.NotFound();
+        await audit.WriteAsync("billing.payment_problem_acknowledged", "core.razorpay_event", eventId, ct: ct);
+        return Results.Ok(new { acknowledged = true });
+    }
 
     // ------------------------------------------------------------------
     //  Operator: ask Razorpay directly (a missed webhook), and resend the email

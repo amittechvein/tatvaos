@@ -315,7 +315,7 @@ public static class BillingEndpoints
 
     private static async Task<IResult> VoidAsync(
         Guid id, Guid invoiceId, VoidRequest r, AppDbContext db, TenantContext tenant, AuditWriter audit,
-        HttpContext http, CancellationToken ct)
+        RazorpayClient razorpay, ILoggerFactory logs, HttpContext http, CancellationToken ct)
     {
         var reason = (r.Reason ?? "").Trim();
         if (reason.Length == 0) return Results.BadRequest(new { error = "Say why it is void. It stays on record with its number." });
@@ -329,9 +329,30 @@ public static class BillingEndpoints
         inv.VoidedAt = DateTimeOffset.UtcNow;
         inv.VoidReason = reason;
         await db.SaveChangesAsync(ct);
+        // Cancel its Razorpay link too, so an old invoice email cannot still
+        // pay it (Mr. Singh, 26 Sept). If Razorpay cannot be reached the void
+        // stands, and a payment that arrives anyway is recorded REFUND NEEDED
+        // and alerted; the operator is told here.
+        bool? linkCancelled = null;
+        if (inv.RazorpayLinkId is string linkId)
+        {
+            try { await razorpay.CancelLinkAsync(linkId, ct); linkCancelled = true; }
+            catch (Exception ex) when (ex is RazorpayClient.RazorpayException or HttpRequestException)
+            {
+                linkCancelled = false;
+                logs.CreateLogger("Billing").LogWarning("Invoice {Invoice} voided but its Razorpay link was not cancelled: {Reason}",
+                    inv.Id, ex.Message);
+            }
+        }
         await audit.WriteAsync("invoice.voided", "core.invoice", inv.Id.ToString(),
-            after: new { inv.Number, inv.Total, reason }, ct: ct);
-        return Results.Ok(new { inv.Id, inv.Status });
+            after: new { inv.Number, inv.Total, reason, linkCancelled }, ct: ct);
+        return Results.Ok(new
+        {
+            inv.Id, inv.Status, linkCancelled,
+            warning = linkCancelled == false
+                ? "Voided, but its Razorpay payment link could not be cancelled. If the customer pays it, you will be alerted to refund."
+                : null,
+        });
     }
 
     // ------------------------------------------------------------------

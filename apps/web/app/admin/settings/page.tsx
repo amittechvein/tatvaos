@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { AdminShell } from '@/components/admin/AdminShell';
+import { SealSecretsNotice } from '@/components/admin/SealSecretsNotice';
 import { Badge, Button, Card, Spinner } from '@/components/ui/Kit';
 import { useAuth } from '@/lib/auth';
 import { Input, Select } from '@/components/ui/Form';
@@ -174,6 +175,8 @@ export default function SettingsPage() {
           {notice.text}
         </Alert>
       )}
+
+      <SealSecretsNotice />
 
       {showOtpOn && (
         <Alert tone="warn">

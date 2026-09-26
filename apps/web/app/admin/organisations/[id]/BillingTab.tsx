@@ -275,7 +275,13 @@ function VoidDialog({ orgId, inv, onClose, onDone }: { orgId: string; inv: Invoi
   const [error, setError] = useState<string | null>(null);
   async function save() {
     setBusy(true); setError(null);
-    try { await voidInvoice(authedFetch, orgId, inv.id, reason.trim()); onDone(); }
+    try {
+      const warning = await voidInvoice(authedFetch, orgId, inv.id, reason.trim());
+      // The void stands either way; a link that could not be cancelled is
+      // said out loud, because a customer could still pay it.
+      if (warning) window.alert(warning);
+      onDone();
+    }
     catch (e) { setError(e instanceof Error ? e.message : 'Could not void it.'); setBusy(false); }
   }
   return (

@@ -158,17 +158,33 @@ public static class SettingKeys
 /// which at signup volume is nothing, and it means a saved change takes effect
 /// on the very next request with no cache to invalidate and no restart.
 /// </summary>
-public sealed class SettingsReader(AppDbContext db)
+/// Secret values are stored encrypted (SettingsCrypto) and decrypted here, so
+/// every caller keeps seeing the plain value it always saw. Without a crypto
+/// instance (one caller builds the reader by hand for non-secret keys) an
+/// encrypted value reads as not set, never as its ciphertext.
+public sealed class SettingsReader(AppDbContext db, SettingsCrypto? crypto = null)
 {
-    public async Task<Dictionary<string, string>> GetAsync(CancellationToken ct = default) =>
-        await db.PlatformSettings.AsNoTracking()
-            .ToDictionaryAsync(s => s.Key, s => s.Value, ct);
+    private string? Plain(string stored) =>
+        crypto is not null ? crypto.Open(stored)
+        : stored.StartsWith(SettingsCrypto.Prefix, StringComparison.Ordinal) ? null : stored;
 
-    public async Task<string?> GetAsync(string key, CancellationToken ct = default) =>
-        await db.PlatformSettings.AsNoTracking()
+    public async Task<Dictionary<string, string>> GetAsync(CancellationToken ct = default)
+    {
+        var rows = await db.PlatformSettings.AsNoTracking().ToListAsync(ct);
+        var result = new Dictionary<string, string>();
+        foreach (var r in rows)
+            if (Plain(r.Value) is string v) result[r.Key] = v;
+        return result;
+    }
+
+    public async Task<string?> GetAsync(string key, CancellationToken ct = default)
+    {
+        var stored = await db.PlatformSettings.AsNoTracking()
             .Where(s => s.Key == key)
             .Select(s => s.Value)
             .FirstOrDefaultAsync(ct);
+        return stored is null ? null : Plain(stored);
+    }
 
     public async Task<bool> FlagAsync(string key, bool fallback = false, CancellationToken ct = default)
     {

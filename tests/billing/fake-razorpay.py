@@ -77,6 +77,16 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length") or 0)
         data = json.loads(self.rfile.read(length) or b"{}")
+        if self.path.startswith("/v1/payment_links/") and self.path.endswith("/cancel"):
+            if not self.authed():
+                return
+            link = LINKS.get(self.path.split("/")[3])
+            if not link:
+                return self.reply(404, {"error": {"description": "not found"}})
+            if link["status"] == "paid":
+                return self.reply(400, {"error": {"description": "Payment link cannot be cancelled as it is already paid"}})
+            link["status"] = "cancelled"
+            return self.reply(200, link)
         if self.path.startswith("/_control/pay/"):
             link = LINKS[self.path.rsplit("/", 1)[1]]
             link.update(status="paid", amount_paid=link["amount"],

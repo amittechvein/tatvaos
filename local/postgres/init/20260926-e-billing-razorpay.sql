@@ -24,6 +24,12 @@ ALTER TABLE core.invoices ADD COLUMN IF NOT EXISTS razorpay_link_url   text;
 ALTER TABLE core.invoices ADD COLUMN IF NOT EXISTS razorpay_payment_id text;
 ALTER TABLE core.invoices ADD COLUMN IF NOT EXISTS emailed_at          timestamptz;
 
+-- The app may write these four and nothing else of an invoice beyond part 1's
+-- payment and void columns (20260926-d grants those, and its REVOKE on every
+-- run drops these, which is why they are granted again here, after it).
+GRANT UPDATE (razorpay_link_id, razorpay_link_url, razorpay_payment_id, emailed_at)
+    ON core.invoices TO tatvaos_app;
+
 CREATE UNIQUE INDEX IF NOT EXISTS ux_invoices_razorpay_link
     ON core.invoices (razorpay_link_id) WHERE razorpay_link_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS ux_invoices_razorpay_payment
@@ -39,7 +45,25 @@ CREATE TABLE IF NOT EXISTS core.razorpay_events (
     outcome      text NOT NULL,
     received_at  timestamptz NOT NULL DEFAULT now()
 );
+-- Payment problems (Mr. Singh, 26 Sept: "recorded only in razorpay_events,
+-- where nobody will look"). A REVIEW, REFUND NEEDED or unmatched event emails
+-- the platform operators and stays on the console's dashboard until someone
+-- acknowledges it. The payment id and amount are kept so the email and the
+-- console can say what arrived without anyone opening Razorpay first.
+ALTER TABLE core.razorpay_events ADD COLUMN IF NOT EXISTS tenant_id       uuid;
+ALTER TABLE core.razorpay_events ADD COLUMN IF NOT EXISTS invoice_number  text;
+ALTER TABLE core.razorpay_events ADD COLUMN IF NOT EXISTS link_id         text;
+ALTER TABLE core.razorpay_events ADD COLUMN IF NOT EXISTS payment_id      text;
+ALTER TABLE core.razorpay_events ADD COLUMN IF NOT EXISTS amount_paise    bigint;
+ALTER TABLE core.razorpay_events ADD COLUMN IF NOT EXISTS alerted_at      timestamptz;
+ALTER TABLE core.razorpay_events ADD COLUMN IF NOT EXISTS acknowledged_at timestamptz;
+ALTER TABLE core.razorpay_events ADD COLUMN IF NOT EXISTS acknowledged_by uuid;
+CREATE INDEX IF NOT EXISTS ix_razorpay_events_open ON core.razorpay_events (received_at)
+    WHERE acknowledged_at IS NULL
+      AND (outcome LIKE 'REVIEW%' OR outcome LIKE 'REFUND NEEDED%' OR outcome LIKE 'unmatched%');
+
 GRANT SELECT, INSERT ON core.razorpay_events TO tatvaos_app;
+GRANT UPDATE (alerted_at, acknowledged_at, acknowledged_by) ON core.razorpay_events TO tatvaos_app;
 
 -- Which organisation and invoice a Payment Link belongs to — nothing else.
 CREATE OR REPLACE FUNCTION core.invoice_by_razorpay_link(p_link_id text)

@@ -117,7 +117,8 @@ cleanup() {
     [ -n "$FY" ] && { if [ -n "$SEQ_WAS" ]; then PG "UPDATE core.invoice_sequences SET last_seq=$SEQ_WAS WHERE financial_year='$FY'" >/dev/null
                       else PG "DELETE FROM core.invoice_sequences WHERE financial_year='$FY'" >/dev/null; fi; }
     PG "DELETE FROM core.platform_settings WHERE key LIKE 'billing.%'" >/dev/null
-    for port in "$PORT" "$FAKE_PORT"; do
+    PG "UPDATE core.razorpay_events SET acknowledged_at = now() WHERE acknowledged_at IS NULL" >/dev/null
+    for port in "$PORT" "$FAKE_PORT" 5870; do
         if command -v powershell.exe >/dev/null 2>&1; then
             powershell.exe -NoProfile -Command "\$c = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if (\$c) { Stop-Process -Id \$c.OwningProcess -Force }" >/dev/null 2>&1
         else fuser -k "$port/tcp" >/dev/null 2>&1 || true; fi
@@ -160,6 +161,10 @@ FAKE_PID=$!
 for _ in $(seq 1 20); do curl -s "$FAKE/_control/log" >/dev/null 2>&1 && break; sleep 0.5; done
 same "the fake answers, and has seen nothing" "$(curl -s "$FAKE/_control/log")" "[]"
 
+PG "INSERT INTO core.platform_settings (key, value, is_secret) VALUES ('billing.razorpay.key_secret', 'plain-before-$RUN', true) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value" >/dev/null
+same "a secret saved before encryption existed is in the table as plain text" \
+    "$(PG "SELECT value FROM core.platform_settings WHERE key='billing.razorpay.key_secret'")" "plain-before-$RUN"
+
 step "1. API up; two people; seller and buyer details; invoices issued"
 dotnet run --no-build -c Release --project "$PROJ" > "$LOG" 2>&1 &
 API_PID=$!
@@ -183,7 +188,39 @@ r=$(callm POST "$TV/invoices" "$OPERATOR" '{"includePlan":false,"extraLines":[{"
 same "an invoice issues although the email could not be sent (no mail server here)" "$(status "$r")" "201"
 INV1=$(jq_ "$(body "$r")" "d['id']"); NUM1=$(jq_ "$(body "$r")" "d['number']")
 same "…and it is recorded as NOT emailed, not as sent" "$(PG "SELECT emailed_at IS NULL FROM core.invoices WHERE id='$INV1'")" "t"
+step "1b. Secrets at rest: sealed at start, encrypted when saved, never returned, never logged (Mr. Singh fix 4)"
+same "starting the API does NOT seal it (a rollback must still read it)" \
+    "$(PG "SELECT value FROM core.platform_settings WHERE key='billing.razorpay.key_secret'")" "plain-before-$RUN"
+same "…the operator is told one secret is still in plain text" \
+    "$(jq_ "$(body "$(callm GET "/api/admin/settings/secrets-status" "$OPERATOR")")" "d['plainText']")" "1"
+r=$(callm POST "/api/admin/settings/seal-secrets" "$OWNER")
+same "the owner cannot seal (operator only)" "$(status "$r")" "403"
+r=$(callm POST "/api/admin/settings/seal-secrets" "$OPERATOR")
+same "the operator presses Encrypt stored secrets" "$(status "$r")" "200"
+SEALED=$(PG "SELECT value FROM core.platform_settings WHERE key='billing.razorpay.key_secret'")
+has   "…the plain-text secret is now encrypted" "$SEALED" "enc:v1:"
+hasnt "…and the plain text is gone from the table" "$SEALED" "plain-before-$RUN"
+same "…none left in plain text" "$(jq_ "$(body "$(callm GET "/api/admin/settings/secrets-status" "$OPERATOR")")" "d['plainText']")" "0"
+r=$(callm PUT "/api/admin/settings" "$OPERATOR" "{\"billing.razorpay.webhook_secret\":\"typed-in-$RUN\"}")
+same "the operator saves the webhook secret" "$(status "$r")" "200"
+STORED=$(PG "SELECT value FROM core.platform_settings WHERE key='billing.razorpay.webhook_secret'")
+has   "…it is stored encrypted" "$STORED" "enc:v1:"
+hasnt "…not as typed" "$STORED" "typed-in-$RUN"
+r=$(callm GET "/api/admin/settings" "$OPERATOR"); LIST=$(body "$r")
+same "the settings list says it is set" "$(jq_ "$LIST" "[x['hasValue'] for x in d if x['key']=='billing.razorpay.webhook_secret'][0]")" "True"
+same "…and returns no value for it" "$(jq_ "$LIST" "[x['value'] for x in d if x['key']=='billing.razorpay.webhook_secret'][0]")" "None"
+hasnt "…anywhere in the answer" "$LIST" "typed-in-$RUN"
+PG "DELETE FROM core.platform_settings WHERE key='billing.razorpay.webhook_secret'" >/dev/null
+
 INV2=$(invoice "$TV"); INV3=$(invoice "$TV"); INV4=$(invoice "$TV"); SINV=$(invoice "$SC")
+"$PY" "$ROOT/tests/billing/smtp-sink.py" 5870 "$SCRATCH/mail" > "$SCRATCH/sink.log" 2>&1 &
+for _ in $(seq 1 20); do [ -d "$SCRATCH/mail" ] && break; sleep 0.3; done
+sleep 1
+r=$(callm POST "$TV/invoices" "$OPERATOR" '{"includePlan":false,"extraLines":[{"description":"Mailed","quantity":1,"unitPrice":1}]}')
+MAILED=$(jq_ "$(body "$r")" "d['number']")
+MAILFILE=$(grep -l "Invoice $MAILED" "$SCRATCH"/mail/*.eml 2>/dev/null | head -1)
+[ -n "$MAILFILE" ] && pass "with a mail server, the invoice email really leaves ($MAILED)" || fail "no email for $MAILED reached the mail catcher"
+has "…addressed to the billing contact" "$(head -1 "${MAILFILE:-/dev/null}")" "accounts@techvein.local"
 [ -n "$INV2" ] && [ -n "$INV3" ] && [ -n "$INV4" ] && [ -n "$SINV" ] && pass "four more invoices (three Techvein, one school)" || fail "could not issue the test invoices"
 
 step "2. Pay now without Razorpay keys: a clear refusal, nothing created"
@@ -239,6 +276,17 @@ same "…none of the three recorded anything" "$(events)" "0"
 BAD=$(paid_event "$LINK1" 100000 "pay_short_$RUN")
 same "a genuine event paying the wrong amount is acknowledged" "$(hook "$BAD")" "200"
 same "…the invoice stays unpaid" "$(PG "SELECT status FROM core.invoices WHERE id='$INV1'")" "issued"
+PROBS=$(body "$(callm GET "/api/admin/billing/payment-problems" "$OPERATOR")")
+same "the wrong amount is on the operator's payment-problems list" \
+    "$(jq_ "$PROBS" "sum(1 for x in d['problems'] if x['outcome'].startswith('REVIEW') and x['invoiceId']=='$INV1')")" "1"
+ALERTS=$(grep -l "needs attention" "$SCRATCH"/mail/*.eml 2>/dev/null)
+[ -n "$ALERTS" ] && pass "…and an alert email went out" || fail "no payment-problem email reached the mail catcher"
+# One email per active operator; the school's principal is one for this run.
+has "…to the platform operator(s), this run's among them" "$(for f in $ALERTS; do head -1 "$f"; done)" "principal@abcschool.local"
+PID1=$(jq_ "$PROBS" "[x['eventId'] for x in d['problems'] if x['invoiceId']=='$INV1'][0]")
+r=$(callm POST "/api/admin/billing/payment-problems/$PID1/acknowledge" "$OPERATOR")
+same "acknowledged" "$(status "$r")" "200"
+same "…and off the list" "$(jq_ "$(body "$(callm GET "/api/admin/billing/payment-problems" "$OPERATOR")")" "sum(1 for x in d['problems'] if x['invoiceId']=='$INV1')")" "0"
 same "…and the event is kept for review" \
     "$(PG "SELECT count(*) FROM core.razorpay_events WHERE outcome LIKE 'REVIEW%' AND invoice_id='$INV1'")" "1"
 same "the genuine, full payment" "$(hook "$B" "" "evt_full_$RUN")" "200"
@@ -276,11 +324,27 @@ step "8. Paid after a void: the invoice stays void and a refund is flagged"
 callm POST "/api/org/billing/invoices/$INV4/pay" "$OWNER" >/dev/null
 LINK4=$(PG "SELECT razorpay_link_id FROM core.invoices WHERE id='$INV4'")
 callm POST "$TV/invoices/$INV4/void" "$OPERATOR" "{\"reason\":\"test $TAG\"}" >/dev/null
+AUTH="$(printf '%s:%s' "$KEY_ID" "$KEY_SECRET" | base64 | tr -d '\n')"
+same "voiding cancelled the invoice's Razorpay link, so an old email cannot pay it" \
+    "$(jq_ "$(curl -s -H "Authorization: Basic $AUTH" "$FAKE/v1/payment_links/$LINK4")" "d['status']")" "cancelled"
 same "a paid event for the voided invoice's link is acknowledged" "$(hook "$(paid_event "$LINK4" 116820 "pay_void_$RUN")")" "200"
 same "…the invoice stays void" "$(PG "SELECT status FROM core.invoices WHERE id='$INV4'")" "void"
 same "…and REFUND NEEDED is on record" "$(PG "SELECT count(*) FROM core.razorpay_events WHERE invoice_id='$INV4' AND outcome LIKE 'REFUND NEEDED%'")" "1"
 r=$(callm POST "/api/org/billing/invoices/$INV4/pay" "$OWNER")
 same "Pay now on a voided invoice is refused" "$(status "$r")" "400"
+
+step "8b. The webhook refuses an oversized body before reading it (Mr. Singh fix 3)"
+# From a file: a 70 KB command-line argument is over Windows' limit, and the
+# curl would never run (an empty result, not a refusal).
+# (Python writes through the shell: Windows Python cannot open a /c/... path.)
+"$PY" -c "import sys; sys.stdout.write('{\"pad\":\"' + 'x'*70000 + '\"}')" > "$SCRATCH/big.json"
+BIGSIG=$("$PY" -c "import sys,hmac,hashlib; print(hmac.new(b'$HOOK_SECRET', sys.stdin.buffer.read(), hashlib.sha256).hexdigest())" < "$SCRATCH/big.json")
+same "the oversized body really is over 64 KB" "$(( $(wc -c < "$SCRATCH/big.json") > 65536 ))" "1"
+same "a 70 KB body is refused as too large, even correctly signed" \
+    "$(curl -s -o /dev/null -w "%{http_code}" -X POST "$API/api/billing/razorpay/webhook" -H "Content-Type: application/json" -H "X-Razorpay-Signature: $BIGSIG" --data-binary "@$SCRATCH/big.json")" "413"
+hasnt "no secret ever reached the API's log" "$(cat "$LOG")" "$KEY_SECRET"
+hasnt "…nor the webhook secret" "$(cat "$LOG")" "$HOOK_SECRET"
+hasnt "…nor the one typed into Settings" "$(cat "$LOG")" "typed-in-$RUN"
 
 step "9. Written down"
 same "four payments by Razorpay in the audit trail (return, webhook, webhook, check)" \
