@@ -407,6 +407,7 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
       <hr className="my-6" />
 
       <AiUsageSection orgId={org.id} />
+      <AiCreditsSection orgId={org.id} />
     </Modal>
   );
 }
@@ -478,6 +479,89 @@ function AiUsageSection({ orgId }: { orgId: string }) {
       <p className="text-[0.75rem] text-ink-muted mb-0">
         Limits and the platform-wide pause are on the Settings page.
       </p>
+    </>
+  );
+}
+
+/**
+ * AI credits for this organisation (26 Sept 2026): what its plan gives, what
+ * it has spent, and the operator's exception. Empty follows the plan; a
+ * number is exactly that many credits a month; 0 allows none. Audited.
+ */
+function AiCreditsSection({ orgId }: { orgId: string }) {
+  const { authedFetch } = useAuth();
+  type C = { allowance: number | null; source: string; planName: string | null; model: string | null;
+    perUser: number | null; users: number | null; used: number; percent: number };
+  const [c, setC] = useState<C | null>(null);
+  const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const path = `/admin/organisations/${orgId}/ai-credits`;
+
+  const load = useCallback(() => {
+    authedFetch(path)
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error ?? 'Could not load AI credits.');
+        setC(body.credits);
+        setValue(body.override === null || body.override === undefined ? '' : String(body.override));
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : 'Could not load AI credits.'));
+  }, [authedFetch, path]);
+  useEffect(() => { load(); }, [load]);
+
+  async function save() {
+    setBusy(true); setError(null); setSaved(false);
+    try {
+      const v = value.trim();
+      if (v !== '' && !(Number.isInteger(Number(v)) && Number(v) >= 0)) throw new Error('A whole number, or empty to follow the plan.');
+      const res = await authedFetch(path, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ override: v === '' ? null : Number(v) }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? 'Could not save.');
+      setSaved(true);
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const n = (x: number) => x.toLocaleString('en-IN');
+  return (
+    <>
+      <h6 className="font-semibold mb-2 mt-4">AI credits</h6>
+      {error && <Alert tone="danger">{error}</Alert>}
+      {c && (
+        <p className="text-sm mb-2">
+          {n(c.used)} used this month
+          {c.allowance === null ? ' — no credit limit' : ` of ${n(c.allowance)} (${c.percent}%)`}.{' '}
+          <span className="text-ink-muted">
+            {c.source === 'override' ? 'Set for this organisation by the operator.'
+              : c.source === 'plan'
+                ? c.model === 'per_user'
+                  ? `From the ${c.planName} plan: ${c.perUser != null ? n(c.perUser) : '—'} per user × ${c.users ?? 0} users.`
+                  : `From the ${c.planName} plan (pooled).`
+                : 'No plan sets AI credits for this organisation.'}
+          </span>
+        </p>
+      )}
+      <div className="flex items-end gap-2">
+        <div>
+          <label htmlFor={`ai-credits-${orgId}`} className="mb-1 block text-[0.75rem] text-ink-muted">
+            Override credits / month (empty follows the plan; 0 allows none)
+          </label>
+          <input id={`ai-credits-${orgId}`} type="number" min={0} value={value} placeholder="Follow the plan"
+                 onChange={(e) => { setValue(e.target.value); setSaved(false); }}
+                 className="w-40 rounded-lg border border-line bg-surface px-2 py-1 text-sm text-ink" />
+        </div>
+        <Button variant="ghost" disabled={busy} onClick={() => void save()}>{busy ? 'Saving…' : 'Save'}</Button>
+        {saved && <span className="text-[0.75rem] text-ok">Saved and recorded in the audit trail.</span>}
+      </div>
     </>
   );
 }

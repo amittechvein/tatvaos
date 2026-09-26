@@ -190,6 +190,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     // the single "AI usage" block at the end of OnModelCreating.
     public DbSet<AiUsage> AiUsage => Set<AiUsage>();
     public DbSet<AiUsageAlert> AiUsageAlerts => Set<AiUsageAlert>();
+    public DbSet<AiCreditAlert> AiCreditAlerts => Set<AiCreditAlert>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -842,6 +843,17 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             e.HasOne<User>().WithMany()
                 .HasForeignKey(u => u.UserId).OnDelete(DeleteBehavior.SetNull);
         });
+        // AI credit warnings (26 Sept 2026): same shape and filter as the token
+        // warnings below, their own table so the two can never collide.
+        b.Entity<AiCreditAlert>(e =>
+        {
+            e.ToTable("ai_credit_alerts", "core");
+            e.HasKey(a => new { a.TenantId, a.Month, a.Level, a.Allowance });
+            e.HasQueryFilter(a => a.TenantId == tenant.TenantId);
+            e.HasOne<Tenant>().WithMany()
+                .HasForeignKey(a => a.TenantId).OnDelete(DeleteBehavior.Cascade);
+        });
+
         b.Entity<AiUsageAlert>(e =>
         {
             e.ToTable("ai_usage_alerts", "core");

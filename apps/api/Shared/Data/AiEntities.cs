@@ -22,6 +22,16 @@ public class AiUsage
 }
 
 /// <summary>A ceiling warning already sent to an organisation's administrators this month.</summary>
+/// <summary>An 80 % / 100 % warning about AI CREDITS (not tokens) — see AiCredits.</summary>
+public class AiCreditAlert
+{
+    public Guid TenantId { get; set; }
+    public DateOnly Month { get; set; }
+    public short Level { get; set; }
+    public int Allowance { get; set; }
+    public DateTimeOffset SentAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
 public class AiUsageAlert
 {
     public Guid TenantId { get; set; }

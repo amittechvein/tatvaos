@@ -89,6 +89,12 @@ public class Tenant
     public bool MailAiSuggest { get; set; } = true;
     public bool MailAiSummary { get; set; }
 
+    /// <summary>
+    /// The operator's exception: exactly this many AI credits a month for this
+    /// organisation, whatever its plan says. Null = follow the plan; 0 = none.
+    /// </summary>
+    public int? AiCreditsOverride { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? SuspendedAt { get; set; }
     public DateTimeOffset? TrialEndsAt { get; set; }
@@ -600,6 +606,16 @@ public class Plan
     public string[] IncludedProducts { get; set; } = ["mail"];
     public decimal? PricePerUserMonthly { get; set; }
     public decimal? PriceMonthly { get; set; }
+
+    /// <summary>
+    /// AI credits (26 Sept 2026) — the same choice as storage: 'pooled' gives
+    /// the organisation AiCreditsPooled a month; 'per_user' gives
+    /// AiCreditsPerUser × its users, shared. A null amount = no credit limit.
+    /// See AiCredits and 20260926-b-ai-credits.sql.
+    /// </summary>
+    [MaxLength(16)] public string AiCreditModel { get; set; } = "pooled";
+    public int? AiCreditsPerUser { get; set; }
+    public int? AiCreditsPooled { get; set; }
 }
 
 public class Subscription
