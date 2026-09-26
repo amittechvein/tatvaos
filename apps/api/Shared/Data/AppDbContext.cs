@@ -194,6 +194,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<AiUsage> AiUsage => Set<AiUsage>();
     public DbSet<AiUsageAlert> AiUsageAlerts => Set<AiUsageAlert>();
     public DbSet<AiCreditAlert> AiCreditAlerts => Set<AiCreditAlert>();
+    public DbSet<AiCreditTopup> AiCreditTopups => Set<AiCreditTopup>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -870,6 +871,15 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
 
         // AI credit warnings (26 Sept 2026): same shape and filter as the token
         // warnings below, their own table so the two can never collide.
+        // AI credit top-ups (26 Sept 2026): tenant-filtered like every AI table.
+        b.Entity<AiCreditTopup>(e =>
+        {
+            e.ToTable("ai_credit_topups", "core");
+            e.HasQueryFilter(t => t.TenantId == tenant.TenantId);
+            e.HasOne<Tenant>().WithMany()
+                .HasForeignKey(t => t.TenantId).OnDelete(DeleteBehavior.Cascade);
+        });
+
         b.Entity<AiCreditAlert>(e =>
         {
             e.ToTable("ai_credit_alerts", "core");

@@ -271,6 +271,15 @@ export const CSS = `
   background:radial-gradient(circle at 50% 40%,#1c1c25,#0d0d12)}
 .cx-initial{width:76px;height:76px;border-radius:50%;display:grid;place-items:center;
   font-size:28px;font-weight:700;background:rgba(255,255,255,.08);border:1px solid var(--cx-line)}
+/* Camera off: the circle grows with the tile. A fixed 76px looked like a dot
+   in a lone full-stage tile (Amit, 26 Sept 2026: "make little bigger size
+   photo according to tiles"). 34% of the tile's shorter side, between 40px
+   (tiny filmstrip tiles, which used to overflow) and 220px. Scoped to
+   .cx-off because PreJoin reuses .cx-initial outside any tile, where cq units
+   would fall back to the viewport. Browsers without container units keep 76px. */
+.cx-off{container-type:size}
+.cx-off .cx-initial{width:clamp(40px,34cqmin,220px);height:clamp(40px,34cqmin,220px);
+  font-size:clamp(16px,13cqmin,84px)}
 .cx-name{position:absolute;left:10px;bottom:10px;display:flex;align-items:center;gap:6px;
   background:rgba(0,0,0,.55);backdrop-filter:blur(6px);padding:4px 10px;border-radius:8px;
   font-size:12px;max-width:calc(100% - 20px)}
