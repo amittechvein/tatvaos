@@ -318,7 +318,9 @@ try {
       seen.push({ auth: rq.headers.authorization, path: rq.url, body });
       if (fakeMode === 'fail') { rs.writeHead(500, { 'Content-Type': 'application/json' }); return rs.end(JSON.stringify({ error: 'SECRET-ECHO ' + body.slice(0, 50) })); }
       if (fakeMode === 'garbage') { rs.writeHead(200, { 'Content-Type': 'application/json' }); return rs.end(JSON.stringify({ choices: [{ message: { content: 'not json at all' } }] })); }
-      const content = JSON.stringify({
+      let isSummary = false;
+      try { isSummary = JSON.parse(body).messages[0].content.startsWith('You summarise'); } catch {}
+      const content = isSummary ? JSON.stringify({ summary: 'Search button too small; fixed twice after a reopen; now closed.', next_step: 'Nothing: the Tester verified it.', open_questions: ['Does it also happen on phones?', 7] }) : JSON.stringify({
         title: 'Mail search: Search button too small to see on desktop',
         details: 'Steps to reproduce:\n1. Open Mail\nWhat happened:\nButton is tiny.\nWhat was expected:\nA visible button.\nOther notes:\nNot given — please add.',
         type: 'bug', priority: 'urgent', area: 'TatvaOS Mail › Search', missing: ['Which browser?', 42, 'Which screen size?'],
@@ -377,8 +379,35 @@ try {
     check('daily limit (4) reached: refused, and nothing more sent', lim.status === 429 && seen.length === 4 && /limit/.test(lim.json.error), `${lim.status} sent=${seen.length}`);
     const withAi = (await priya.req('POST', '/api/issues', { module_id: mail, submodule_id: search, type: 'bug', title: 'Mail search: Search button too small', details: 'x', priority: 'high', ai_assisted: true })).json.id;
     check('report records that AI helped', (await amit.req('GET', '/api/issues/' + withAi)).json.activity[0].meta.ai_assisted === true);
+    console.log('Summarise this issue (AI, developers and admins)');
+    await amit.req('PUT', '/api/settings', { ai: { daily_limit: 50 } });
+    const summ = (c) => c.req('POST', '/api/ai/summarise/' + id);
+    check('tester mode cannot summarise', (await summ(priya)).status === 403);
+    const n0 = seen.length;
+    const sm1 = await summ(rahul);
+    check('developer gets a summary', sm1.status === 200 && /fixed twice/.test(sm1.json.summary) && sm1.json.cached === false, sm1.text);
+    const sb = seen.at(-1).body;
+    check('sent: the report and its history', seen.length === n0 + 1 && sb.includes('Search button is not visible') && sb.includes('Chrome 130 on Windows'));
+    check('people appear as roles', sb.includes('Tester') && sb.includes('Developer'));
+    const userMsg = JSON.parse(sb).messages[1].content;
+    check('NOT sent: any name or email address', !/priya|rahul|amit|dev two|techvein.com|@/i.test(userMsg), userMsg.slice(0, 200));
+    check('NOT sent: file names', !/Screenshot\.png|Screen-recording\.mp4|evil\.html/.test(sb));
+    check('non-text questions dropped', sm1.json.open_questions.length === 1);
+    const sm2 = await summ(rahul);
+    check('nothing new: saved summary, no second AI call', sm2.json.cached === true && seen.length === n0 + 1 && sm2.json.summary === sm1.json.summary);
+    await rahul.req('POST', `/api/issues/${id}/actions`, { action: 'comment', body: 'Also seen on tablets.' });
+    const sm3 = await summ(amit);
+    check('after a new comment: a fresh summary (admin may ask too)', sm3.json.cached === false && seen.length === n0 + 2 && seen.at(-1).body.includes('Also seen on tablets.'));
+    fakeMode = 'garbage';
+    await rahul.req('POST', `/api/issues/${id}/actions`, { action: 'comment', body: 'One more note.' });
+    check('unreadable answer: friendly error', (await summ(rahul)).status === 502);
+    fakeMode = 'ok';
+    const sm4 = await summ(rahul);
+    check('…and the bad answer was not saved as the summary', sm4.json.cached === false && /fixed twice/.test(sm4.json.summary));
+    const used = (await amit.req('GET', '/api/settings')).json.ai.used_today;
+    check('summaries count toward the daily limit', used >= 8, String(used));
     await amit.req('PUT', '/api/settings', { ai: { enabled: false } });
-    check('switching off stops it at once', (await improve(priya, draft)).status === 409);
+    check('switching off stops it at once', (await improve(priya, draft)).status === 409 && (await summ(rahul)).status === 409);
   } finally { fake.close(); }
 
   console.log('Rules that protect history');

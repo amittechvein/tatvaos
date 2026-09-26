@@ -68,6 +68,12 @@ export async function improveReport(cfg, draft, areas) {
     AREAS: areas,
     DRAFT: { type: draft.type, area: draft.area || null, title: draft.title, details: draft.details },
   }).slice(0, MAX_INPUT);
+  return chatJson(cfg, INSTRUCTION, user);
+}
+
+// The one call to TatvaOS AI. Status only is reported on failure: the body can
+// echo the text we sent, so it is never logged or passed on.
+async function chatJson(cfg, instruction, user) {
   const started = Date.now();
   let res;
   try {
@@ -76,7 +82,7 @@ export async function improveReport(cfg, draft, areas) {
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + cfg.key },
       body: JSON.stringify({
         model: cfg.model,
-        messages: [{ role: 'system', content: INSTRUCTION }, { role: 'user', content: user }],
+        messages: [{ role: 'system', content: instruction }, { role: 'user', content: user }],
         response_format: { type: 'json_object' },
       }),
       signal: AbortSignal.timeout(30000),
@@ -112,4 +118,60 @@ export function cleanSuggestion(raw, draft, areaMap) {
   };
   if (typeof raw.area === 'string' && areaMap.has(raw.area)) out.area = { label: raw.area, ...areaMap.get(raw.area) };
   return out;
+}
+
+// ---- Summarise this issue (Amit, 26 Sept 2026: "for developers") ----------
+//
+// Sent: title, details, type, status, priority, module, and the history as
+// {when, role, what, from, to, text}. People appear ONLY as their role
+// (Tester / Developer / Admin) — never a name or email; no files; no other
+// issues. Long histories keep the report and the NEWEST entries.
+const SUMMARY_INSTRUCTION = `You summarise one issue from a software bug tracker for the developer who has to act on it.
+RULES:
+- Use only what is in the ISSUE. Never invent facts, causes or fixes.
+- People appear only as roles (Tester, Developer, Admin); refer to them that way.
+- Plain text, no markdown symbols.
+- summary: 2 or 3 short sentences: what the problem is, what has happened so far, and where it stands now.
+- next_step: one sentence saying what should happen next and who (by role) should do it.
+- open_questions: up to 3 questions still unanswered in the history (empty list if none).
+Reply with JSON only: {"summary": "", "next_step": "", "open_questions": []}`;
+
+const MAX_ENTRY = 1500;
+const MAX_SUMMARY_INPUT = 12000;
+
+export function summaryPayload(issue, activity, roleLabel, statusLabel) {
+  const entries = activity.map((a) => ({
+    when: a.at.slice(0, 16).replace('T', ' ') + ' UTC',
+    role: roleLabel[a.actor_role] || a.actor_role,
+    what: a.kind,
+    ...(a.from_status ? { from: statusLabel[a.from_status] } : {}),
+    ...(a.to_status ? { to: statusLabel[a.to_status] } : {}),
+    ...(a.body ? { text: a.body.slice(0, MAX_ENTRY) } : {}),
+  }));
+  const head = {
+    title: issue.title, type: issue.type, status: statusLabel[issue.status], priority: issue.priority,
+    area: issue.module_name + ' › ' + issue.submodule_name, details: issue.details.slice(0, 4000),
+    ...(issue.fix_details ? { fix_details: issue.fix_details.slice(0, 2000) } : {}),
+  };
+  // Keep the first entry (the report) and as many of the newest as fit.
+  let kept = entries.slice();
+  let dropped = 0;
+  const size = () => JSON.stringify({ ISSUE: head, HISTORY: kept }).length;
+  while (size() > MAX_SUMMARY_INPUT && kept.length > 2) { kept.splice(1, 1); dropped++; }
+  const out = { ISSUE: head, HISTORY: kept };
+  if (dropped) out.NOTE = dropped + ' older history entries were left out for length.';
+  return JSON.stringify(out).slice(0, MAX_SUMMARY_INPUT + 200);
+}
+
+export async function summariseIssue(cfg, payload) {
+  return chatJson(cfg, SUMMARY_INSTRUCTION, payload);
+}
+
+export function cleanSummary(raw) {
+  const s = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+  return {
+    summary: s(raw.summary, 1200),
+    next_step: s(raw.next_step, 400),
+    open_questions: Array.isArray(raw.open_questions) ? raw.open_questions.filter((q) => typeof q === 'string' && q.trim()).slice(0, 3).map((q) => q.trim().slice(0, 200)) : [],
+  };
 }

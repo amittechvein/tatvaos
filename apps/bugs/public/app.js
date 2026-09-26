@@ -550,6 +550,27 @@ const MOVE_LABEL = {
 
 async function issueView(id) {
   const { issue: i, activity, can } = await api('GET', '/api/issues/' + id);
+
+  // ---- Summarise this issue: TatvaOS AI, for developers and admins. ----
+  const sumCard = h('section', { class: 'card summary-card' });
+  if (state.me.mode === 'developer' || state.me.mode === 'admin') {
+    const showSummary = (r) => sumCard.replaceChildren(
+      h('h3', {}, '✨ Summary'),
+      h('div', { class: 'prose' }, r.summary),
+      r.next_step && h('p', {}, h('b', {}, 'Next step: '), r.next_step),
+      r.open_questions.length ? h('div', {}, h('b', {}, 'Still open:'), h('ul', {}, r.open_questions.map((q) => h('li', {}, q)))) : null,
+      h('p', { class: 'muted small' }, 'By TatvaOS AI from this issue’s history (people shown only as roles, no files) · ' + fmtDate(r.at)
+        + (r.cached ? ' · nothing new since' : '') + '. Check the history before acting on it.'));
+    api('GET', '/api/ai/status').then((st) => {
+      if (!st.ready) return;
+      const btn = h('button', { class: 'btn ai-btn', type: 'button', onclick: async () => {
+        btn.disabled = true; btn.textContent = 'Summarising…';
+        try { showSummary(await api('POST', '/api/ai/summarise/' + i.id)); }
+        catch (err) { toast(err.message, true); btn.disabled = false; btn.textContent = '✨ Summarise this issue'; }
+      } }, '✨ Summarise this issue');
+      sumCard.replaceChildren(btn, h('span', { class: 'muted small' }, ' Sends this issue’s text and history to TatvaOS AI, processed in ' + st.data_location + '. People appear only as roles.'));
+    }).catch(() => {});
+  }
   const mode = state.me.mode;
   const refresh = () => render();
 
@@ -651,6 +672,7 @@ async function issueView(id) {
         moveButtons, can.request_info && !can.moves.includes('more_info') && h('button', { class: 'btn', onclick: requestInfo }, 'Ask for information'))),
     h('div', { class: 'issue-grid' },
       h('div', {},
+        sumCard,
         h('section', { class: 'card' }, h('h3', {}, 'Details'), h('div', { class: 'prose' }, i.details)),
         i.fix_details && h('section', { class: 'card fix' }, h('h3', {}, 'Fix details'), h('div', { class: 'prose' }, i.fix_details)),
         h('section', { class: 'card' }, h('h3', {}, 'History'), h('ol', { class: 'timeline' }, activity.map(activityItem))),

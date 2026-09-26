@@ -39,6 +39,22 @@ which you read for Mail AI):
 - A **daily limit for the whole team** (Settings, default 100). One row per call
   in `ai_usage`: who, when, worked or not, how long — no text.
 
+## 3. Summarise this issue — AI, developers and admins (Amit, 26 Sept)
+
+On an issue, **✨ Summarise this issue** returns 2–3 sentences on where it
+stands, the next step (by role) and up to three open questions.
+
+**What is sent**: the issue's title, details, type, status, priority, module,
+fix details, and its history — each entry as *when, role, what, from/to status,
+text*. **People appear only as their role** (Tester / Developer / Admin); names,
+emails, files and other issues are never sent. **Caveat:** a comment's own text
+is sent as written, so a name someone *typed into* a comment goes with it.
+Long histories keep the report and the newest entries (12,000 characters).
+
+The answer is **saved per issue until the next history entry**, so pressing it
+again with nothing new costs no call. It shares the daily limit and the switch.
+Testers do not get the button.
+
 **Name on screen (Amit, 26 Sept):** people see **"TatvaOS AI"** everywhere — no
 vendor name, no vendor address filled in, no model example. The admin types the
 address, model and key. The *where the data goes* line (the data location) is

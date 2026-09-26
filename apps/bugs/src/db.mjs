@@ -155,6 +155,15 @@ CREATE TABLE IF NOT EXISTS ai_usage (
   detail  TEXT NOT NULL DEFAULT ''
 );
 
+-- The last "Summarise this issue" answer per issue, valid while no newer
+-- history entry exists. Re-asking with nothing new costs no AI call.
+CREATE TABLE IF NOT EXISTS ai_summaries (
+  issue_id         INTEGER PRIMARY KEY REFERENCES issues(id),
+  last_activity_id INTEGER NOT NULL,
+  body             TEXT NOT NULL,
+  at               TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS mail_log (
   id      INTEGER PRIMARY KEY,
   at      TEXT NOT NULL,

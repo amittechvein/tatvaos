@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { openDb, now, tx, getSetting, setSetting, issueKey, STATUSES, STATUS_LABEL, PRIORITIES, TYPES, ROLES } from './db.mjs';
 import { createMailer } from './mail.mjs';
 import { findSimilar } from './similar.mjs';
-import { aiConfig, improveReport, cleanSuggestion } from './ai.mjs';
+import { aiConfig, improveReport, cleanSuggestion, summaryPayload, summariseIssue, cleanSummary } from './ai.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(HERE, '..', 'public');
@@ -892,6 +892,33 @@ route('POST', /^\/api\/ai\/improve$/, async (req, res, s) => {
     .run(now(), s.user.id, 'improve_report', r.ok ? 1 : 0, r.ms || 0, r.ok ? '' : String(r.status || r.error).slice(0, 100));
   if (!r.ok) throw new HttpError(502, r.error);
   send(res, 200, { suggestion: cleanSuggestion(r.raw, draft, areaMap), data_location: c.location });
+});
+
+// ---- Summarise this issue (AI; developers and admins) ----------------------
+const ROLE_WORD = { admin: 'Admin', developer: 'Developer', tester: 'Tester' };
+route('POST', /^\/api\/ai\/summarise\/(\d+)$/, async (req, res, s, [id]) => {
+  requireMode(s, 'developer', 'admin');
+  const issue = loadIssue(id);
+  if (!issue || !canSee(s.user, issue)) throw notFound();
+  const c = aiConfig(db);
+  if (!c.ready) throw new HttpError(409, c.problem);
+  const activity = db.prepare('SELECT * FROM activity WHERE issue_id = ? ORDER BY id').all(id);
+  const lastId = activity.length ? activity[activity.length - 1].id : 0;
+  const cached = db.prepare('SELECT * FROM ai_summaries WHERE issue_id = ?').get(id);
+  if (cached && cached.last_activity_id === lastId) {
+    return send(res, 200, { ...JSON.parse(cached.body), at: cached.at, cached: true });
+  }
+  if (aiUsedToday() >= c.dailyLimit) throw new HttpError(429, "Today's TatvaOS AI limit has been reached. It resets at midnight India time.");
+  const r = await summariseIssue(c, summaryPayload(issue, activity, ROLE_WORD, STATUS_LABEL));
+  db.prepare('INSERT INTO ai_usage(at, user_id, feature, ok, ms, detail) VALUES (?,?,?,?,?,?)')
+    .run(now(), s.user.id, 'summarise_issue', r.ok ? 1 : 0, r.ms || 0, r.ok ? '' : String(r.status || r.error).slice(0, 100));
+  if (!r.ok) throw new HttpError(502, r.error);
+  const out = cleanSummary(r.raw);
+  if (!out.summary) throw new HttpError(502, 'The TatvaOS AI answer could not be read. Try again.');
+  const at = now();
+  db.prepare('INSERT INTO ai_summaries(issue_id, last_activity_id, body, at) VALUES (?,?,?,?) ON CONFLICT(issue_id) DO UPDATE SET last_activity_id = excluded.last_activity_id, body = excluded.body, at = excluded.at')
+    .run(id, lastId, JSON.stringify(out), at);
+  send(res, 200, { ...out, at, cached: false });
 });
 
 // ---- Dashboard and reports -------------------------------------------------
