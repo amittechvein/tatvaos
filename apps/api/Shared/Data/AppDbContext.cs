@@ -86,6 +86,15 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     /// <summary>Platform-wide, no tenant scope — see the entity's comment.</summary>
     public DbSet<PlatformSetting> PlatformSettings => Set<PlatformSetting>();
 
+    // ---- personal accounts (/join) — 20260926-a-personal-join.sql ----
+    // Reserved names, signups and attempts are platform-wide like
+    // SignupDrafts: they exist before any account does. PersonalAccounts
+    // carries a tenant and is filtered like Users.
+    public DbSet<ReservedUsername> ReservedUsernames => Set<ReservedUsername>();
+    public DbSet<PersonalSignup> PersonalSignups => Set<PersonalSignup>();
+    public DbSet<PersonalSignupAttempt> PersonalSignupAttempts => Set<PersonalSignupAttempt>();
+    public DbSet<PersonalAccount> PersonalAccounts => Set<PersonalAccount>();
+
     // ---- mail ----
     public DbSet<Mailbox> Mailboxes => Set<Mailbox>();
     public DbSet<Alias> Aliases => Set<Alias>();
@@ -234,6 +243,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<SignupDraft>().ToTable("signup_drafts", "core");
         b.Entity<PlatformSetting>().ToTable("platform_settings", "core");
         b.Entity<PlatformSetting>().HasKey(s => s.Key);
+        b.Entity<ReservedUsername>().ToTable("reserved_usernames", "core");
+        b.Entity<ReservedUsername>().HasKey(r => r.Name);
+        b.Entity<PersonalSignup>().ToTable("personal_signups", "core");
+        b.Entity<PersonalSignupAttempt>().ToTable("personal_signup_attempts", "core");
+        b.Entity<PersonalAccount>().ToTable("personal_accounts", "core");
+        b.Entity<PersonalAccount>().HasKey(a => a.UserId);
+        // Declared so EF orders the INSERTs: the user and this row are saved
+        // in one SaveChanges, and an undeclared FK lets EF write this first.
+        b.Entity<PersonalAccount>().HasOne<User>().WithOne()
+            .HasForeignKey<PersonalAccount>(a => a.UserId).OnDelete(DeleteBehavior.Cascade);
 
         b.Entity<Mailbox>().ToTable("mailboxes", "mail");
         b.Entity<Alias>().ToTable("aliases", "mail");
@@ -452,6 +471,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         // Products and Plans are platform-wide catalogue data.
         b.Entity<Domain>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<User>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<PersonalAccount>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Department>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<ProductAccess>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Subscription>().HasQueryFilter(e => e.TenantId == tenant.TenantId);

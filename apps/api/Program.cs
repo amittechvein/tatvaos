@@ -17,6 +17,7 @@ using TatvaOS.Api.Modules.Family.Endpoints;
 using TatvaOS.Api.Modules.Space.Endpoints;
 using TatvaOS.Api.Modules.Calendar.Endpoints;
 using TatvaOS.Api.Modules.Connect.Endpoints;
+using TatvaOS.Api.Modules.Personal;
 using TatvaOS.Api.Workers;
 using TatvaOS.Api.Shared.Auth.Oidc;
 using TatvaOS.Api.Shared.Ai;
@@ -122,6 +123,10 @@ builder.Services.AddScoped<StorageAllocator>();
 builder.Services.AddScoped<AuditWriter>();
 // What the signed-in person may do in Hire (admin / recruiter / hiring manager).
 builder.Services.AddScoped<TatvaOS.Api.Modules.Hire.HireAccess>();
+// Personal accounts (/join): the one "is this the personal house?" answer,
+// and the keyed phone fingerprint (Personal:PhoneHashKey; unset = /join closed).
+builder.Services.AddScoped<TatvaOS.Api.Modules.Personal.PersonalHouse>();
+builder.Services.AddSingleton<TatvaOS.Api.Modules.Personal.PersonalPhone>();
 
 // ---- OpenID Connect provider (decision 0004) — stage 1: the stores -------
 // OpenIddict's core with EF Core storage on our own entities, and the two
@@ -668,6 +673,36 @@ builder.Services.AddRateLimiter(o =>
                 QueueLimit = 0,
             });
     });
+    // /join (personal signup, build plan §3). Anonymous and internet-reachable
+    // like the others, same rightmost-XFF key and the same CDN warning above.
+    // "join": 30 a minute per address across the whole flow — a person makes
+    // a handful of calls. The SMS limits proper are in JoinEndpoints, counted
+    // in the database per number, per address and platform-wide.
+    // "join-address": the availability check answers "does this address
+    // exist", so it is held to 20 a minute to keep it from listing them —
+    // enough for a person typing (the page waits for a pause before asking).
+    o.AddPolicy("join", httpContext =>
+    {
+        var client = TatvaOS.Api.Shared.ClientIp.From(httpContext) ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter($"join:{client}",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 30,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            });
+    });
+    o.AddPolicy("join-address", httpContext =>
+    {
+        var client = TatvaOS.Api.Shared.ClientIp.From(httpContext) ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter($"join-address:{client}",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 20,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            });
+    });
     o.AddPolicy("space-public-links", httpContext =>
     {
         var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();
@@ -798,6 +833,8 @@ app.MapOidcApplicationEndpoints();
 app.MapOidcEndpoints();
 app.MapDomainEndpoints();
 app.MapSignupEndpoints();
+app.MapJoinEndpoints();
+app.MapReservedUsernameEndpoints();
 app.MapSettingsEndpoints();
 app.MapDepartmentEndpoints();
 // Locations and designations: Phase 0 of Hire & People (24 Sept 2026).
