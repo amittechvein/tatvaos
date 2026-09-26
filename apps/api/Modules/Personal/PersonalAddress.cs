@@ -73,10 +73,22 @@ public static partial class PersonalAddress
     /// address freed by a deletion less than 90 days ago (part F; nothing
     /// frees one yet).
     /// </summary>
-    public static async Task<bool> IsTakenAsync(AppDbContext db, string address, CancellationToken ct) =>
-        await db.Users.IgnoreQueryFilters().AnyAsync(u => u.Email == address, ct) ||
-        await db.Mailboxes.IgnoreQueryFilters().AnyAsync(m => m.Address == address, ct) ||
-        await db.Aliases.IgnoreQueryFilters().AnyAsync(a => a.Address == address, ct);
+    public static async Task<bool> IsTakenAsync(AppDbContext db, string address, CancellationToken ct)
+    {
+        if (await db.Users.IgnoreQueryFilters().AnyAsync(u => u.Email == address, ct) ||
+            await db.Mailboxes.IgnoreQueryFilters().AnyAsync(m => m.Address == address, ct) ||
+            await db.Aliases.IgnoreQueryFilters().AnyAsync(a => a.Address == address, ct))
+            return true;
+
+        // Held after a deletion (§8, part F): 90 days — and for as long as the
+        // old mailbox's files may still be on disk, whatever the date says.
+        // The mail importer matches maildir files by ADDRESS, so a new owner
+        // of an address with the old files still there would be handed the
+        // previous owner's mail.
+        var now = DateTimeOffset.UtcNow;
+        return await db.AddressHolds.AnyAsync(h => h.Address == address && h.HeldUntil > now, ct)
+            || await db.PurgeLeftovers.AnyAsync(l => l.Kind == "maildir" && l.Address == address, ct);
+    }
 
     /// <summary>Null if the address can be had, else "unavailable" or a rule sentence.</summary>
     public static async Task<string?> ProblemAsync(

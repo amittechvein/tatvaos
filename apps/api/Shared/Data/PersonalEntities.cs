@@ -119,4 +119,38 @@ public class PersonalAccount
     [MaxLength(32)] public required string PrivacyVersion { get; set; }
     public DateTimeOffset TermsAcceptedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    // ---- Lifecycle (build plan §8; 20260926-zzzz-personal-lifecycle.sql) ----
+    public DateTimeOffset? DeletionRequestedAt { get; set; }
+    /// <summary>When the purge runs. Set by self-delete (+7 days), the operator, or the inactive rule.</summary>
+    public DateTimeOffset? DeleteAfter { get; set; }
+    /// <summary>"self", "operator" or "inactive".</summary>
+    [MaxLength(32)] public string? DeletionReason { get; set; }
+    public DateTimeOffset? InactiveWarnedAt { get; set; }
+    public DateTimeOffset? InactiveFinalWarnedAt { get; set; }
+    /// <summary>Suspended for abuse: can sign in and download, cannot send.</summary>
+    public DateTimeOffset? SuspendedAt { get; set; }
+    public string? SuspendedReason { get; set; }
+    public Guid? SuspendedBy { get; set; }
+}
+
+/// <summary>An address a deleted personal account used, held so nobody receives the old owner's mail.</summary>
+public class AddressHold
+{
+    [MaxLength(320)] public required string Address { get; set; }
+    public DateTimeOffset HeldUntil { get; set; }
+    public required string Reason { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>A file a purge could not remove; retried. A 'maildir' one keeps its address held.</summary>
+public class PurgeLeftover
+{
+    public long Id { get; set; }
+    [MaxLength(16)] public required string Kind { get; set; }
+    public required string Ref { get; set; }
+    [MaxLength(320)] public string? Address { get; set; }
+    public int Attempts { get; set; }
+    public string? LastError { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }

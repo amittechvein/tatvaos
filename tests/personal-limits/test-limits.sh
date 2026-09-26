@@ -194,13 +194,18 @@ if [ "$(jq_ "$(body "$r")" "d.get('premium')")" = "True" ]; then fail "Premium s
 plan_to "$A_ID" "$FREE"
 
 # The 60-minute end. Another Free meeting started 10 minutes ago is the control.
+# Earlier runs' meetings are still "active" past their limit (no media server
+# locally to end them), and every pass retries them all — which made this
+# check slow enough to miss its window. End them first; end ours after.
+PG "UPDATE connect.meetings SET status='ended' WHERE status='active' AND (title LIKE 'Free meet %' OR title LIKE 'Control %') AND id<>'$M_ID'" >/dev/null
 M2=$(jq_ "$(body "$(req POST /api/connect/meetings "$A" "{\"title\":\"Control $RUN\"}")")" "d['id']")
 PG "UPDATE connect.meetings SET status='active', started_at=now()-interval '61 minutes' WHERE id='$M_ID'; UPDATE connect.meetings SET status='active', started_at=now()-interval '10 minutes' WHERE id='$M2'" >/dev/null
 seen=""
-for _ in $(seq 1 25); do grep -qF "Meeting $M_ID reached its host's 60-minute limit" "$LOG" && { seen=yes; break; }; sleep 2; done
-[ -n "$seen" ] && pass "past 60 minutes: the server ends it (asks the media server)" || fail "no end attempted for $M_ID within 50s"
+for _ in $(seq 1 45); do grep -qF "Meeting $M_ID reached its host's 60-minute limit" "$LOG" && { seen=yes; break; }; sleep 2; done
+[ -n "$seen" ] && pass "past 60 minutes: the server ends it (asks the media server)" || fail "no end attempted for $M_ID within 90s"
 grep -qF "Meeting $M2 reached" "$LOG" && fail "the 10-minute meeting was ended too" || pass "calibration: a 10-minute meeting is left alone"
 same "with no media server to agree, it is NOT marked ended (it would still be running)" "$(PG "SELECT status FROM connect.meetings WHERE id='$M_ID'")" "active"
+PG "UPDATE connect.meetings SET status='ended' WHERE id IN ('$M_ID','$M2')" >/dev/null
 
 # ---------------------------------------------------------------------------
 step "4. AI — the person's own switch, the trial, minutes (D3, D6, §5)"

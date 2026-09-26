@@ -88,3 +88,52 @@ export function usePersonal(authedFetch: AuthedFetch, userId: string | undefined
   }, [authedFetch, userId]);
   return personal;
 }
+
+// ---------------------------------------------------------------------------
+//  Lifecycle (build plan §4.2, §8): delete, cancel, download, suspended.
+// ---------------------------------------------------------------------------
+
+export interface MyLifecycle {
+  deleteAfter: string | null;
+  deletionReason: 'self' | 'operator' | 'inactive' | null;
+  canCancel: boolean;
+  suspended: boolean;
+}
+
+export async function fetchLifecycle(f: AuthedFetch): Promise<MyLifecycle> {
+  const res = await f('/me/lifecycle');
+  if (!res.ok) throw new Error('Could not load your account status.');
+  return res.json();
+}
+
+async function sentence(res: Response, fallback: string): Promise<never> {
+  const body = await res.json().catch(() => ({}));
+  throw new Error(typeof body.error === 'string' ? body.error : fallback);
+}
+
+export async function requestDeletion(f: AuthedFetch, password: string): Promise<string> {
+  const res = await f('/me/delete', { method: 'POST', body: JSON.stringify({ password }) });
+  if (!res.ok) return sentence(res, 'Could not schedule the deletion.');
+  return (await res.json()).deleteAfter as string;
+}
+
+export async function cancelDeletion(f: AuthedFetch): Promise<void> {
+  const res = await f('/me/delete/cancel', { method: 'POST' });
+  if (!res.ok) return sentence(res, 'Could not cancel the deletion.');
+}
+
+/**
+ * Download my data. The export is streamed by the server; here it arrives
+ * as one blob, because the API authenticates with a bearer token a plain
+ * link cannot carry. Fine for most accounts; a one-time download link (as
+ * recordings use) is the answer for the largest, and is noted for later.
+ */
+export async function downloadMyData(f: AuthedFetch): Promise<void> {
+  const res = await f('/me/export');
+  if (!res.ok) return sentence(res, 'Could not prepare your data.');
+  const name = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'tatvaos-data.zip';
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}

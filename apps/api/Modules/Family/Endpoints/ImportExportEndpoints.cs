@@ -76,66 +76,7 @@ public static class ImportExportEndpoints
                         "contacts and the shared ones separately.",
                 statusCode: StatusCodes.Status400BadRequest);
 
-        var contacts = await q
-            .Include(c => c.Emails)
-            .Include(c => c.Phones)
-            .Include(c => c.Addresses)
-            .OrderBy(c => c.DisplayName)
-            .ToListAsync(ct);
-
-        // Labels in one query rather than one per contact.
-        var ids = contacts.Select(c => c.Id).ToList();
-        var memberships = await db.ContactGroupMembers
-            .Where(m => ids.Contains(m.ContactId))
-            .Join(db.ContactGroups, m => m.GroupId, x => x.Id,
-                  (m, x) => new { m.ContactId, x.Name })
-            .ToListAsync(ct);
-
-        var labels = memberships
-            .GroupBy(m => m.ContactId)
-            .ToDictionary(x => x.Key, x => x.Select(m => m.Name).OrderBy(n => n).ToList());
-
-        var records = new List<ContactRecord>(contacts.Count);
-        foreach (var c in contacts)
-        {
-            var record = new ContactRecord
-            {
-                DisplayName = c.DisplayName,
-                FirstName = c.FirstName,
-                LastName = c.LastName,
-                Nickname = c.Nickname,
-                JobTitle = c.JobTitle,
-                CompanyName = c.CompanyName,
-                Notes = c.Notes,
-                IsFavourite = c.IsFavourite,
-                Visibility = c.OwnershipType == "organisational" ? "Shared" : "Mine",
-            };
-
-            // Primary first, so the first slot in the file is the one that
-            // matters and a reader that only takes one address takes the right
-            // one.
-            foreach (var e in c.Emails.OrderByDescending(e => e.IsPrimary).ThenBy(e => e.Email))
-                record.Emails.Add(new LabelledValue { Value = e.Email, Type = e.Type });
-
-            foreach (var p in c.Phones.OrderByDescending(p => p.IsPrimary).ThenBy(p => p.Phone))
-                record.Phones.Add(new LabelledValue { Value = p.Phone, Type = p.Type });
-
-            foreach (var a in c.Addresses.OrderByDescending(a => a.IsPrimary))
-                record.Addresses.Add(new PostalRecord
-                {
-                    Type = a.Type,
-                    Street1 = a.StreetLine1,
-                    Street2 = a.StreetLine2,
-                    City = a.City,
-                    Region = a.StateProvince,
-                    Postcode = a.PostalCode,
-                    Country = a.Country,
-                });
-
-            if (labels.TryGetValue(c.Id, out var mine)) record.Labels.AddRange(mine);
-
-            records.Add(record);
-        }
+        var records = await BuildRecordsAsync(db, q, ct);
 
         var stamp = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd");
 
@@ -154,6 +95,78 @@ public static class ImportExportEndpoints
             System.Text.Encoding.UTF8.GetBytes(ContactCsvFormat.Write(records)),
             "text/csv; charset=utf-8",
             $"tatvaos-contacts-{stamp}.csv");
+    }
+
+    /// <summary>
+    /// Contacts as export records, labels included. Shared by the contacts
+    /// export and a personal account's Download my data (build plan §4.2) —
+    /// one shape for "a contact, written out", not two.
+    /// </summary>
+    internal static async Task<List<ContactRecord>> BuildRecordsAsync(
+        AppDbContext db, IQueryable<Contact> q, CancellationToken ct)
+    {
+            var contacts = await q
+                .Include(c => c.Emails)
+                .Include(c => c.Phones)
+                .Include(c => c.Addresses)
+                .OrderBy(c => c.DisplayName)
+                .ToListAsync(ct);
+
+            // Labels in one query rather than one per contact.
+            var ids = contacts.Select(c => c.Id).ToList();
+            var memberships = await db.ContactGroupMembers
+                .Where(m => ids.Contains(m.ContactId))
+                .Join(db.ContactGroups, m => m.GroupId, x => x.Id,
+                      (m, x) => new { m.ContactId, x.Name })
+                .ToListAsync(ct);
+
+            var labels = memberships
+                .GroupBy(m => m.ContactId)
+                .ToDictionary(x => x.Key, x => x.Select(m => m.Name).OrderBy(n => n).ToList());
+
+            var records = new List<ContactRecord>(contacts.Count);
+            foreach (var c in contacts)
+            {
+                var record = new ContactRecord
+                {
+                    DisplayName = c.DisplayName,
+                    FirstName = c.FirstName,
+                    LastName = c.LastName,
+                    Nickname = c.Nickname,
+                    JobTitle = c.JobTitle,
+                    CompanyName = c.CompanyName,
+                    Notes = c.Notes,
+                    IsFavourite = c.IsFavourite,
+                    Visibility = c.OwnershipType == "organisational" ? "Shared" : "Mine",
+                };
+
+                // Primary first, so the first slot in the file is the one that
+                // matters and a reader that only takes one address takes the right
+                // one.
+                foreach (var e in c.Emails.OrderByDescending(e => e.IsPrimary).ThenBy(e => e.Email))
+                    record.Emails.Add(new LabelledValue { Value = e.Email, Type = e.Type });
+
+                foreach (var p in c.Phones.OrderByDescending(p => p.IsPrimary).ThenBy(p => p.Phone))
+                    record.Phones.Add(new LabelledValue { Value = p.Phone, Type = p.Type });
+
+                foreach (var a in c.Addresses.OrderByDescending(a => a.IsPrimary))
+                    record.Addresses.Add(new PostalRecord
+                    {
+                        Type = a.Type,
+                        Street1 = a.StreetLine1,
+                        Street2 = a.StreetLine2,
+                        City = a.City,
+                        Region = a.StateProvince,
+                        Postcode = a.PostalCode,
+                        Country = a.Country,
+                    });
+
+                if (labels.TryGetValue(c.Id, out var mine)) record.Labels.AddRange(mine);
+
+                records.Add(record);
+            }
+
+        return records;
     }
 
     // ==================================================================
