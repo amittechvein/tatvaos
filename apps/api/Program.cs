@@ -132,6 +132,7 @@ builder.Services.AddScoped<TatvaOS.Api.Shared.Plans.EffectiveSettings>();
 builder.Services.AddScoped<TatvaOS.Api.Modules.Personal.PersonalAiService>();
 // A personal account's life after signup: deletion, inactivity, suspension (§8).
 builder.Services.AddScoped<TatvaOS.Api.Modules.Personal.PersonalLifecycle>();
+builder.Services.AddSingleton<TatvaOS.Api.Modules.Personal.PersonalExportLink>();
 
 // ---- OpenID Connect provider (decision 0004) — stage 1: the stores -------
 // OpenIddict's core with EF Core storage on our own entities, and the two

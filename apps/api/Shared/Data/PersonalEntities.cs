@@ -132,6 +132,10 @@ public class PersonalAccount
     public DateTimeOffset? SuspendedAt { get; set; }
     public string? SuspendedReason { get; set; }
     public Guid? SuspendedBy { get; set; }
+    /// <summary>The live Download my data link's nonce, hashed; null when none (PersonalExportLink).</summary>
+    [MaxLength(64)] public string? ExportNonceHash { get; set; }
+    /// <summary>When a download last STARTED — one a day.</summary>
+    public DateTimeOffset? LastExportAt { get; set; }
 }
 
 /// <summary>An address a deleted personal account used, held so nobody receives the old owner's mail.</summary>

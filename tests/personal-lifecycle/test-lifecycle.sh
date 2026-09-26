@@ -37,6 +37,7 @@ PY="${TATVAOS_PYTHON:-python}"
 API="${TATVAOS_API:-http://localhost:5297}"
 VMAIL="${TATVAOS_VMAIL:-.tmp/vmail}"
 BLOBS="${TATVAOS_BLOBS:-.tmp/blobs}"
+SMTP_LOG="${TATVAOS_SMTP_LOG:-.tmp/smtp-sink.log}"
 PSQL="${TATVAOS_PSQL:-wsl -e env PGPASSWORD=devpass psql -h localhost -U postgres -d tatvaos_personal -Atc}"
 TECHVEIN_OWNER="d1111111-1111-1111-1111-111111111111"
 RUN=$(date +%s)
@@ -116,8 +117,17 @@ same "A's trial started" "$(PG "SELECT count(*) FROM core.ai_trials WHERE phone_
 
 # ---------------------------------------------------------------------------
 step "1. Download my data (§4.2)"
-curl -s -o ".tmp/export-$RUN.zip" -w '%{http_code}' "$API/api/me/export" -H "Authorization: Bearer $A" > ".tmp/export-$RUN.status"
-same "the export answers 200" "$(cat ".tmp/export-$RUN.status")" "200"
+# Signed in to get the link; the link itself carries no bearer token.
+r=$(req POST /api/me/export/link "$A")
+same "signed in: a link is issued" "$(status "$r")" "200"
+LINK=$(jq_ "$(body "$r")" "d['url']")
+same "…that expires in 10 minutes" "$(jq_ "$(body "$r")" "__import__('datetime').datetime.fromisoformat(d['expiresAt'].replace('Z','+00:00')).timestamp() - __import__('time').time() < 601")" "True"
+same "no link without signing in" "$(status "$(req POST /api/me/export/link "")")" "401"
+curl -s -o ".tmp/export-$RUN.zip" -w '%{http_code}' "$API$LINK" > ".tmp/export-$RUN.status"
+same "following the link (no token): 200, a zip" "$(cat ".tmp/export-$RUN.status")" "200"
+same "the same link twice: gone (410)" "$(curl -s -o /dev/null -w '%{http_code}' "$API$LINK")" "410"
+same "a second export the same day: refused (429)" "$(status "$(req POST /api/me/export/link "$A")")" "429"
+same "a forged link: gone (410)" "$(curl -s -o /dev/null -w '%{http_code}' "$API${LINK%??}xx")" "410"
 listing=$("$PY" -c "import zipfile,sys; print('\n'.join(zipfile.ZipFile(sys.argv[1]).namelist()))" ".tmp/export-$RUN.zip" 2>&1)
 has "account.json" "$listing" "account.json"
 has "the message, as .eml" "$listing" "Alpha letter $RUN.eml"
@@ -138,6 +148,22 @@ same "the wrong password: refused" "$(status "$r")" "400"
 r=$(req POST /api/me/delete "$A" "{\"password\":\"$PW\"}")
 same "the right password: scheduled" "$(status "$r")" "200"
 same "for 7 days from now" "$(PG "SELECT (delete_after BETWEEN now()+interval '6 days 23 hours' AND now()+interval '7 days 1 minute')::text FROM core.personal_accounts WHERE user_id='$A_ID'")" "true"
+# Mr. Singh's condition: the account is TOLD, so a stolen password cannot
+# delete it in silence. Read from the mail catcher, decoded.
+sleep 2
+notice=$("$PY" - "$SMTP_LOG" "$A_ADDR" <<'PYEOF'
+import re, sys, base64
+log = open(sys.argv[1], encoding='utf-8', errors='replace').read()
+for msg in log.split('---------- MESSAGE FOLLOWS ----------')[1:]:
+    if sys.argv[2] not in msg or 'set to be deleted' not in msg: continue
+    body = msg.split("b''", 1)[1].split('------------ END')[0]
+    chunks = re.findall(r"b'([A-Za-z0-9+/=]+)'", body)
+    try: print(base64.b64decode(''.join(chunks)).decode())
+    except Exception: print(body)
+PYEOF
+)
+has "the account is emailed: 'set to be deleted on …'" "$notice" "is set to be deleted on"
+has "…'If this wasn't you, sign in and choose Keep my account.'" "$notice" "If this wasn't you, sign in and choose Keep my account."
 same "it can be cancelled" "$(jq_ "$(body "$(req GET /api/me/lifecycle "$A")")" "d['canCancel']")" "True"
 same "cancel" "$(status "$(req POST /api/me/delete/cancel "$A")")" "200"
 same "…and it is off" "$(PG "SELECT coalesce(delete_after::text,'none') FROM core.personal_accounts WHERE user_id='$A_ID'")" "none"
@@ -196,7 +222,8 @@ same "suspended" "$(status "$r")" "200"
 same "the reason is kept" "$(PG "SELECT suspended_reason FROM core.personal_accounts WHERE user_id='$C_ID'")" "spam complaints (test)"
 C2=$(login "$C_ADDR")
 [ -n "$C2" ] && pass "a suspended person can still sign in" || fail "suspended sign-in refused"
-same "…and download their data" "$(curl -s -o /dev/null -w '%{http_code}' "$API/api/me/export" -H "Authorization: Bearer $C2")" "200"
+CL=$(jq_ "$(body "$(req POST /api/me/export/link "$C2")")" "d.get('url') or ''")
+same "…and download their data" "$(curl -s -o /dev/null -w '%{http_code}' "$API$CL")" "200"
 r=$(curl -s -X POST "$API/api/mail/send" -H "Authorization: Bearer $C2" -F "to=someone@example.test" -F "subject=hi" -F "bodyText=hi")
 has "…but cannot send" "$r" "can't send mail right now"
 same "resume" "$(status "$(req POST "/api/admin/personal-accounts/$C_ID/resume" "$OP")")" "200"

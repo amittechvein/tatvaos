@@ -100,7 +100,10 @@ public static class PersonalExport
             if (src is null) continue;          // a missing blob is reported by the blob sweep, not fatal here
             var dir = PathOf(f.FolderId);
             var entry = Unique(used, $"space/{(dir.Length > 0 ? dir + "/" : "")}{Safe(f.Name)}");
-            using var dst = zip.CreateEntry(entry, CompressionLevel.Fastest).Open();
+            // Stored, not compressed: most of Space is photos, PDFs and
+            // office files that are compressed already, and squeezing 10 GB
+            // again on a four-core server buys nothing but load.
+            using var dst = zip.CreateEntry(entry, CompressionLevel.NoCompression).Open();
             await src.CopyToAsync(dst, ct);
         }
 

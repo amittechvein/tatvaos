@@ -38,6 +38,9 @@ ALTER TABLE core.personal_accounts ADD COLUMN IF NOT EXISTS inactive_final_warne
 ALTER TABLE core.personal_accounts ADD COLUMN IF NOT EXISTS suspended_at            timestamptz;
 ALTER TABLE core.personal_accounts ADD COLUMN IF NOT EXISTS suspended_reason        text;
 ALTER TABLE core.personal_accounts ADD COLUMN IF NOT EXISTS suspended_by            uuid;
+-- Download my data (Mr. Singh on PR 319): a one-use, ten-minute link, one a day.
+ALTER TABLE core.personal_accounts ADD COLUMN IF NOT EXISTS export_nonce_hash       text;
+ALTER TABLE core.personal_accounts ADD COLUMN IF NOT EXISTS last_export_at          timestamptz;
 
 CREATE INDEX IF NOT EXISTS idx_core_personal_accounts_delete_after
     ON core.personal_accounts (delete_after) WHERE delete_after IS NOT NULL;

@@ -29,7 +29,11 @@ public static class PersonalLifecycleEndpoints
         me.MapGet("/lifecycle", MineAsync);
         me.MapPost("/delete", DeleteMeAsync);
         me.MapPost("/delete/cancel", CancelMineAsync);
-        me.MapGet("/export", ExportAsync);
+        // Download my data: signed in to get a link; the link is one-use and
+        // expires in ten minutes (PersonalExportLink). No direct GET: it
+        // would be a second way in, around the once-a-day rule.
+        me.MapPost("/export/link", ExportLinkAsync);
+        app.MapGet("/api/me/export/file", ExportFileAsync).AllowAnonymous().WithTags("Account");
 
         var op = app.MapGroup("/api/admin/personal-accounts").RequireAuthorization("SuperAdmin")
             .WithTags("Platform administration");
@@ -90,19 +94,57 @@ public static class PersonalLifecycleEndpoints
             : Results.BadRequest(new { error = "There is no deletion to cancel." });
     }
 
-    private static async Task ExportAsync(
-        HttpContext http, TenantContext tenant, PersonalHouse houses, AppDbContext db, IBlobStore blobs,
-        TatvaOS.Api.Modules.Admin.AuditWriter audit, CancellationToken ct)
+    private static async Task<IResult> ExportLinkAsync(
+        TenantContext tenant, PersonalHouse houses, AppDbContext db, PersonalExportLink links, CancellationToken ct)
     {
-        if (tenant.UserId is not Guid uid) { http.Response.StatusCode = 401; return; }
-        if (!await IsPersonalAsync(houses, tenant, ct))
+        if (tenant.UserId is not Guid uid) return Results.Unauthorized();
+        if (!await IsPersonalAsync(houses, tenant, ct)) return Results.NotFound(NotPersonal);
+        var acct = await db.PersonalAccounts.IgnoreQueryFilters().FirstAsync(a => a.UserId == uid, ct);
+        var now = DateTimeOffset.UtcNow;
+        if (acct.LastExportAt is DateTimeOffset last && now - last < PersonalExportLink.OncePer)
+            return Results.Json(new
+            {
+                error = "You can download your data once a day. Try again after "
+                        + (last + PersonalExportLink.OncePer).ToOffset(TimeSpan.FromMinutes(330)).ToString("d MMMM, h:mm tt") + ".",
+            }, statusCode: 429);
+        var (ticket, nonceHash, expires) = links.Issue(uid);
+        acct.ExportNonceHash = nonceHash;       // replaces any earlier, unused link
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(new { url = $"/api/me/export/file?t={Uri.EscapeDataString(ticket)}", expiresAt = expires });
+    }
+
+    /// <summary>
+    /// The link itself. Anonymous (a browser navigation carries no bearer
+    /// token); the signed, unexpired, UNUSED ticket is the permission. Used
+    /// the moment the download starts: the nonce is cleared and the day is
+    /// counted before the first byte.
+    /// </summary>
+    private static async Task ExportFileAsync(
+        HttpContext http, string? t, AppDbContext db, IBlobStore blobs, PersonalExportLink links,
+        TenantContext tenant, TatvaOS.Api.Modules.Admin.AuditWriter audit, CancellationToken ct)
+    {
+        const string Dead = "This link has expired or been used. Ask for a new one from Account settings.";
+        if (links.Verify(t) is not { } claim)
         {
-            http.Response.StatusCode = 404;
-            await http.Response.WriteAsJsonAsync(NotPersonal, ct);
+            http.Response.StatusCode = 410;
+            await http.Response.WriteAsJsonAsync(new { error = Dead }, ct);
             return;
         }
-        await audit.WriteAsync("personal.data_exported", "user", uid.ToString(), ct: ct);
-        await PersonalExport.WriteAsync(http, db, blobs, uid, ct);
+        var acct = await db.PersonalAccounts.IgnoreQueryFilters().FirstOrDefaultAsync(a => a.UserId == claim.UserId, ct);
+        if (acct is null || acct.ExportNonceHash != PersonalExportLink.HashNonce(claim.Nonce))
+        {
+            http.Response.StatusCode = 410;
+            await http.Response.WriteAsJsonAsync(new { error = Dead }, ct);
+            return;
+        }
+        acct.ExportNonceHash = null;
+        acct.LastExportAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+
+        tenant.Set(acct.TenantId, acct.UserId, "employee");
+        await db.SyncTenantAsync(ct);
+        await audit.WriteAsync("personal.data_exported", "user", acct.UserId.ToString(), ct: ct);
+        await PersonalExport.WriteAsync(http, db, blobs, acct.UserId, ct);
     }
 
     // ------------------------------------------------------------------

@@ -46,11 +46,13 @@ public sealed class PersonalLifecycle(
     public static readonly TimeSpan DeleteAfterFirstWarning = TimeSpan.FromDays(90);
 
     // DRAFT wording — customer-facing, for Mr. Singh and Amit (build plan §10).
-    public const string DeletionScheduledSubject = "Your TatvaOS account will be deleted";
+    // Mr. Singh's condition on PR 319: someone who has stolen the password
+    // could otherwise delete an account in silence. Sent to the account AND
+    // its confirmed recovery address, the moment the deletion is scheduled.
+    public const string DeletionScheduledSubject = "Your TatvaOS account is set to be deleted";
     public const string DeletionScheduledBody =
-        "You asked to delete your TatvaOS account {0}. It will be deleted on {1}, with everything in it: "
-        + "mail, files, calendars, contacts and meetings you hosted.\n\n"
-        + "Changed your mind? Sign in before then and cancel it from Account settings.";
+        "Your account {0} is set to be deleted on {1}. "
+        + "If this wasn't you, sign in and choose Keep my account.";
     public const string InactiveSubject = "Your TatvaOS account will be deleted if it stays unused";
     public const string InactiveBody =
         "Nobody has signed in to {0} for a year. If nobody signs in by {1}, the account and everything "

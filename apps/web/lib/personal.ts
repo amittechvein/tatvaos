@@ -123,17 +123,16 @@ export async function cancelDeletion(f: AuthedFetch): Promise<void> {
 }
 
 /**
- * Download my data. The export is streamed by the server; here it arrives
- * as one blob, because the API authenticates with a bearer token a plain
- * link cannot carry. Fine for most accounts; a one-time download link (as
- * recordings use) is the answer for the largest, and is noted for later.
+ * Download my data. Signed in, the page asks for a link; the link is
+ * one-use and lasts ten minutes (the server's PersonalExportLink), and the
+ * browser simply follows it — so even a 10 GB zip streams to disk rather than
+ * being gathered in this page's memory. Once a day: the server says when.
  */
 export async function downloadMyData(f: AuthedFetch): Promise<void> {
-  const res = await f('/me/export');
+  const res = await f('/me/export/link', { method: 'POST' });
   if (!res.ok) return sentence(res, 'Could not prepare your data.');
-  const name = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'tatvaos-data.zip';
-  const url = URL.createObjectURL(await res.blob());
-  const a = document.createElement('a');
-  a.href = url; a.download = name; a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  const { url } = await res.json() as { url: string };
+  // NEXT_PUBLIC_API_URL ends in /api; the link is a path from the API's root.
+  const api = (process.env.NEXT_PUBLIC_API_URL ?? '/api').replace(/\/api\/?$/, '');
+  window.location.assign(`${api}${url}`);
 }
