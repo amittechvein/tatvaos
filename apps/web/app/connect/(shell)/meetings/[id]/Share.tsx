@@ -88,6 +88,10 @@ export function ShareDialog({
   // copy that gives no feedback is a copy people do three times.
   const [copied, setCopied] = useState<string | null>(null);
 
+  // Named people who have access but could not be emailed. The share worked;
+  // this is the sentence telling the host to send the link themselves.
+  const [mailNote, setMailNote] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     try {
       const r = await recordingApi.shares(authedFetch, meetingId, recording.id);
@@ -125,8 +129,9 @@ export function ShareDialog({
     if (adding === null) return;
     setBusy(true);
     setError(null);
+    setMailNote(null);
     try {
-      await recordingApi.share(authedFetch, meetingId, recording.id, {
+      const made = await recordingApi.share(authedFetch, meetingId, recording.id, {
         level: adding,
         days: adding === 'password' || adding === 'public' ? days : undefined,
         password: adding === 'password' ? password : undefined,
@@ -138,6 +143,7 @@ export function ShareDialog({
           ? emails.split(/[,\n]/).map((s) => s.trim()).filter((s) => s.length > 0)
           : undefined,
       });
+      setMailNote(made.mailNote ?? null);
       reset();
       await load();
     } catch (e) {
@@ -196,6 +202,7 @@ export function ShareDialog({
       </p>
 
       {error && <Alert tone="danger" className="py-2 text-[0.8125rem]">{error}</Alert>}
+      {mailNote && <Alert tone="warn" className="py-2 text-[0.8125rem]">{mailNote}</Alert>}
 
       {/* ── WHAT ALREADY EXISTS ────────────────────────────────────────── */}
       {shares === null ? (
@@ -235,6 +242,16 @@ export function ShareDialog({
               ))}
             </div>
           )}
+          {/* Said, rather than the option silently missing: a host looking for
+              "anyone with the link" should learn it is the organisation's
+              decision and who makes it, not assume the product cannot. */}
+          {!capability.levels.includes('public') && (
+            <p className="text-[0.75rem] text-ink-muted mt-3 mb-0">
+              Links that anyone can open without a password are switched off
+              for your organisation. An administrator can allow them under
+              Organisation&nbsp;→&nbsp;Sharing.
+            </p>
+          )}
         </>
       ) : (
         <>
@@ -251,7 +268,7 @@ export function ShareDialog({
               <Field
                 label="Who"
                 htmlFor="cx-share-people"
-                hint="TatvaOS accounts, one per line. They can be in another organisation."
+                hint="TatvaOS accounts, one per line. They can be in another organisation. Each of them is emailed a link from your mailbox."
                 why={
                   <>
                     Only people who already have a TatvaOS account, for now.

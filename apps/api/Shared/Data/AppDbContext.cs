@@ -320,6 +320,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         // of throws, it does not invent a table.
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingShare>().ToTable("recording_shares", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingShareGrant>().ToTable("recording_share_grants", "connect");
+        // Declared so EF inserts the share BEFORE its grants. Without it EF
+        // knows of no dependency between the two and ordered the grant first:
+        // the first named share ever made failed on
+        // recording_share_grants_share_id_fkey (26 Sept, §3 case 7). No
+        // navigation property — the relationship exists only to order writes.
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingShareGrant>()
+            .HasOne<TatvaOS.Api.Modules.Connect.ConnectRecordingShare>()
+            .WithMany()
+            .HasForeignKey(g => g.ShareId)
+            .OnDelete(DeleteBehavior.NoAction);
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingAccess>().ToTable("recording_access_log", "connect");
         // HasKey IS NOT OPTIONAL HERE, and leaving it out took production
         // down on 9 September. This entity's key is TenantId; EF's convention

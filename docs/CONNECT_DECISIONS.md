@@ -215,6 +215,41 @@ in `recording_access_log`.
   default **false**, no backfill. A missing row reads as off.
 - Client, already shipped and waiting: `Recordings.tsx`, `list.sharing`
 
+### Update, 26 September 2026 — the read side is built, the matrix is a script
+
+Amit asked for recording sharing with all four levels, and for named people to
+be emailed. Building the reader's half (the part that was never written: the
+routes and pages a person who was *given* a share uses) and running the matrix
+against a database built from nothing found **six defects in the code above,
+every one of which would have broken the feature the day it was switched on**:
+
+| # | Defect | What it would have done |
+|---|---|---|
+| 1 | `recording_shares_cap_expiry()` read `r.tenant_id`; recordings has none | Every share with an expiry failed — no password or public link could ever be made |
+| 2 | `resolve_share_token()` revoked from PUBLIC, never granted to `tatvaos_app` | Every link holder: 500 |
+| 3 | Password hash read with no tenant scope on the anonymous path | Every password link refused its own password |
+| 4 | `AllowedAsync` read the share's level under the *reader's* RLS | Named readers in another organisation always refused (case 7) |
+| 5 | `User` carries an EF tenant query filter; named lookup did not bypass it | Naming anyone outside the organisation: "does not have a TatvaOS account" |
+| 6 | No EF relationship between share and grant | The first named share ever made failed on the foreign key |
+
+Plus case 4 (suspension), now implemented as `t.status IN ('active','trial')`,
+the same clause `resolve_meeting_code` uses; and the access log now writes
+through `log_recording_access()` — the EF insert it used would have been
+refused by `WITH CHECK` for exactly the readers it exists to record, and the
+failure was swallowed (case 9).
+
+**Where it stands.** The nine cases are `tests/connect-recording-share/test-matrix.sh`
+(86 checks, each refusal beside a control that succeeds). They pass locally.
+Calibrated: removing the suspension clause turns exactly the 4 case-4 checks
+red; removing the per-request ticket re-check turns exactly the 4 "a ticket in
+a player stops at once" checks red.
+
+**That is not yet the condition above**, which says a *deployed* system. So the
+Share button has its own switch, `Connect:RecordingSharingOffered`
+(`CONNECT_RECORDING_SHARING_OFFERED`, default **false**). The code can be
+deployed dark, the matrix run against production — none of it needs the
+button — and only then is the button switched on, by configuration.
+
 ---
 
 ## 4. Guest removal does not remove a guest

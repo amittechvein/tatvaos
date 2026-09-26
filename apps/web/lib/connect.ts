@@ -591,6 +591,12 @@ export interface RecordingListItem {
      *  of a generic line, never alongside one. */
     error: string | null;
   } | null;
+  /**
+   * Host only: whole days before THIS recording is deleted, which is the
+   * longest a link to it may last. Per recording, because a "keep" hold on
+   * one does not lengthen another. Absent for everybody else.
+   */
+  shareDaysLeft?: number | null;
 }
 
 export interface RecordingList {
@@ -693,8 +699,12 @@ export interface RecordingShare {
   id: string;
   recordingId: string;
   level: ShareLevel;
-  /** The full link to hand somebody. Null for the two levels that have no
-   *  link — those are reached by signing in, not by holding a URL. */
+  /**
+   * The full link to hand somebody. For 'password' and 'public' it carries
+   * the secret token. For 'organisation' and 'named' it is the recording's
+   * own page, which opens only after signing in as somebody the share covers
+   * — the same address the named people are emailed.
+   */
   url: string | null;
   hasPassword: boolean;
   /** Null only for the levels where expiry is optional; never null on
@@ -707,6 +717,35 @@ export interface RecordingShare {
   opens: number;
   createdAt: string;
   createdBy: string;
+  /** On a create or a change of people only: set when somebody named could
+   *  not be emailed. They still have access; the host should send the link. */
+  mailNote?: string | null;
+}
+
+/**
+ * One recording, opened for watching — the same shape whether the viewer was
+ * in the meeting, was given a share, or is holding a link.
+ */
+export interface RecordingViewing {
+  recordingId: string;
+  title: string;
+  mode: RecordingMode;
+  durationMs: number | null;
+  sizeBytes: number | null;
+  startedAt: string | null;
+  /** meeting = they were in it; share = organisation/named; link = password/public. */
+  via: 'meeting' | 'share' | 'link';
+  level: ShareLevel | null;
+  /** Links only: when it stops working. */
+  expiresAt: string | null;
+  /** Participants only: the way back to the meeting page. */
+  meetingId: string | null;
+  ticket: string;
+}
+
+/** A link that wants a password, or got the wrong one. */
+export class SharePasswordError extends Error {
+  constructor(message: string, readonly wrong: boolean) { super(message); }
 }
 
 export interface NewShare {
@@ -881,6 +920,12 @@ export const recordingApi = {
       method: 'PUT', body: JSON.stringify({ userIds }),
     }).then((r) => json<RecordingShare>(r, 'Could not change who this is shared with.')),
 
+  /** Open a recording by id, signed in: as a participant, or through an
+   *  organisation or named share. 404 means neither. */
+  view: (f: AuthedFetch, recordingId: string) =>
+    f(`/connect/recordings/${recordingId}/view`)
+      .then((r) => json<RecordingViewing>(r, 'That recording does not exist, or it has not been shared with you.')),
+
   notes: (f: AuthedFetch, meetingId: string) =>
     f(`/connect/meetings/${meetingId}/notes`)
       .then((r) => json<NotesPayload>(r, 'Could not load the notes.')),
@@ -888,6 +933,53 @@ export const recordingApi = {
   regenerate: (f: AuthedFetch, meetingId: string) =>
     f(`/connect/meetings/${meetingId}/notes/regenerate`, { method: 'POST' })
       .then((r) => { if (!r.ok) throw new Error('Could not ask for the notes again.'); }),
+};
+
+// ---------------------------------------------------------------------------
+//  A share LINK, opened with no session. Plain fetch, never authedFetch: the
+//  holder may have no account, and a stale session must not change what a
+//  link does.
+// ---------------------------------------------------------------------------
+export const sharedLinkApi = {
+  /**
+   * POST, so a password never sits in a URL — and so a chat app unfurling the
+   * link does not count as somebody opening it.
+   */
+  open: async (token: string, password?: string): Promise<RecordingViewing> => {
+    const r = await fetch(`${API}/connect/shared/${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: password ?? null }),
+    });
+    if (r.status === 401) {
+      const b = await r.json().catch(() => ({})) as { error?: string };
+      throw new SharePasswordError(b.error ?? 'This recording needs a password.', Boolean(b.error));
+    }
+    return json<RecordingViewing>(r, 'This link does not work. It may have expired or been stopped by the person who shared it.');
+  },
+
+  /** A fresh ticket for a playback in progress. Share tickets only. */
+  renew: async (ticket: string): Promise<string> => {
+    const r = await fetch(`${API}/connect/shared/renew`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticket }),
+    });
+    return (await json<{ ticket: string }>(r, 'This recording has stopped being shared.')).ticket;
+  },
+};
+
+// ---------------------------------------------------------------------------
+//  The organisation's switch for 'Anyone with the link'. Reading is open to
+//  anybody signed in; changing it is an administrator's (the server says so).
+// ---------------------------------------------------------------------------
+export const connectSettingsApi = {
+  get: (f: AuthedFetch) =>
+    f('/connect/settings')
+      .then((r) => json<{ allowPublicRecordingLinks: boolean }>(r, 'Could not load the Connect sharing setting.')),
+  set: (f: AuthedFetch, allowPublicRecordingLinks: boolean) =>
+    f('/connect/settings', { method: 'PUT', body: JSON.stringify({ allowPublicRecordingLinks }) })
+      .then((r) => json<{ allowPublicRecordingLinks: boolean }>(r, 'Could not change the Connect sharing setting.')),
 };
 
 // ---------------------------------------------------------------------------

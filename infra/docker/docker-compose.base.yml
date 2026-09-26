@@ -363,6 +363,14 @@ services:
       # false every recording endpoint answers "not switched on for this
       # server" rather than failing somewhere deeper.
       Connect__Recording__Enabled: ${CONNECT_RECORDING_ENABLED:-false}
+      # Whether hosts are OFFERED the Share button on a recording. OFF by
+      # default, and meant to stay off until docs/CONNECT_DECISIONS.md §3's
+      # nine cases have been run against this server
+      # (tests/connect-recording-share/). The routes behind it answer either
+      # way — the matrix needs them — this only decides whether the button
+      # is shown. Set CONNECT_RECORDING_SHARING_OFFERED=true in .env and
+      # recreate the api container to switch it on.
+      Connect__RecordingSharingOffered: ${CONNECT_RECORDING_SHARING_OFFERED:-false}
       # Both containers mount the same volume; the two settings exist because
       # they are free to mount it at different paths, and assuming they match
       # is the kind of assumption that survives review and fails at 3 a.m.
