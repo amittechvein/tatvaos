@@ -44,7 +44,9 @@ const SECTIONS: { id: string; title: string; blurb: string }[] = [
   {
     id: 'billing',
     title: 'Billing (Razorpay)',
-    blurb: 'Stored and ready. Checkout wiring ships with the billing section.',
+    blurb: 'Techvein as the seller on every GST invoice, and how customers pay. No invoice can be issued '
+      + 'until the legal name, GSTIN, address, state code, SAC and prefix are set: an issued invoice cannot '
+      + 'be edited. The Razorpay keys are used by online payment (billing part 2).',
   },
   {
     id: 'ai',

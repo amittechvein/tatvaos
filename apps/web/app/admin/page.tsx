@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { formatBytes } from '@tatvaos/core';
 import { fetchOrganisations, fetchPlanWarnings, type OrgRow, type PlanWarningsSummary } from '@/lib/adminData';
+import { fetchUnpaid, fmtDay, inr, type UnpaidSummary } from '@/lib/billing';
 import { AdminShell } from '@/components/admin/AdminShell';
 import { StatusBadge } from '@/components/admin/StatusBadge';
 import { Badge, Button, Card, Empty, Meter, Stat, Table, Td } from '@/components/ui/Kit';
@@ -29,6 +30,7 @@ export default function PlatformDashboard() {
   const [orgs, setOrgs] = useState<OrgRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [planWarnings, setPlanWarnings] = useState<PlanWarningsSummary | null>(null);
+  const [unpaid, setUnpaid] = useState<UnpaidSummary | null>(null);
 
   useEffect(() => {
     fetchOrganisations(authedFetch)
@@ -38,6 +40,7 @@ export default function PlatformDashboard() {
     // Its own request and its own failure: a warning list that cannot load
     // must not blank the dashboard.
     fetchPlanWarnings(authedFetch).then(setPlanWarnings).catch(() => setPlanWarnings(null));
+    fetchUnpaid(authedFetch).then(setUnpaid).catch(() => setUnpaid(null));
   }, [authedFetch]);
 
   const totals = useMemo(() => {
@@ -138,6 +141,29 @@ export default function PlatformDashboard() {
           icon={<Glyph d="M12 9v4m0 4h.01M10.3 3.9L2.6 17a2 2 0 001.7 3h15.4a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z" />}
         />
       </div>
+
+      {/* Unpaid invoices (billing part 1, 26 Sept 2026): what is owed, overdue first. */}
+      {unpaid && unpaid.invoices.length > 0 && (
+        <Card className="mb-5" title="Unpaid invoices"
+              subtitle={`${inr(unpaid.outstanding)} owed, of which ${inr(unpaid.overdue)} is past its due date.`}>
+          <ul className="divide-y divide-line">
+            {unpaid.invoices.slice(0, 8).map((i) => (
+              <li key={i.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-[13px]">
+                <div className="min-w-0">
+                  <Link href={`/admin/organisations/${i.organisationId}`} className="font-semibold text-ink hover:text-brand-700 hover:underline">
+                    {i.organisation}
+                  </Link>
+                  <span className="text-ink-muted"> · <span className="font-mono">{i.number}</span> · due {fmtDay(i.dueOn)}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">{inr(i.total)}</span>
+                  {i.overdue ? <Badge tone="danger">Overdue</Badge> : <Badge tone="warn">Unpaid</Badge>}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       {/* Plan warnings (26 Sept 2026): customers using more than their plan
           includes, or near a limit. Warn first — nothing has been stopped. */}
