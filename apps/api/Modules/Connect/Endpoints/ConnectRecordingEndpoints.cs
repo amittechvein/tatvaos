@@ -709,13 +709,24 @@ public static class ConnectRecordingEndpoints
     {
         var meeting = await db.ConnectMeetings.AsNoTracking()
             .Where(m => m.Id == meetingId)
-            .Select(m => new { m.Id, m.CreatedByUserId })
+            .Select(m => new { m.Id, m.CreatedByUserId, m.TenantId })
             .FirstOrDefaultAsync(ct);
         if (meeting is null) return false;
         if (meeting.CreatedByUserId == userId) return true;
 
-        return await db.ConnectParticipants.AsNoTracking()
+        var hasRow = await db.ConnectParticipants.AsNoTracking()
             .AnyAsync(p => p.MeetingId == meetingId && p.UserId == userId, ct);
+        if (!hasRow) return false;
+
+        // The personal house (build plan §6): the row is written when a
+        // stranger KNOCKS, before the host has said yes - so "has a row" alone
+        // would let someone waiting (or refused) read the chat, minutes and
+        // recordings of a stranger's meeting. There, the row counts only once
+        // the host has admitted them (or they never waited). Organisations
+        // are unchanged: a colleague is a colleague.
+        if (!await TatvaOS.Api.Modules.Personal.PersonalHouse.IsHouseTenantAsync(db, meeting.TenantId, ct))
+            return true;
+        return !await ConnectEndpoints.StillKnockingAsync(db, meetingId, userId, ct);
     }
 
     /// <summary>

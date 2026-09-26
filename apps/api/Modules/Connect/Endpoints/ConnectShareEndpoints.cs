@@ -307,6 +307,12 @@ public static class ConnectShareEndpoints
                 error = "Share with your organisation, with named people, "
                       + "with a password, or with anyone holding the link.",
             });
+        // "Anyone signed in to your organisation" is, in the personal house,
+        // every stranger with a personal account (build plan §6). Named
+        // people, a password or a public link are still there.
+        if (level == ConnectShareLevels.Organisation
+            && await TatvaOS.Api.Modules.Personal.PersonalHouse.IsHouseTenantAsync(db, tenant.TenantId, ct))
+            return Results.Json(new { error = TatvaOS.Api.Modules.Personal.PersonalGuard.Sentence }, statusCode: 403);
 
         // A recording with no file cannot be shared. Sharing one that is still
         // being written would hand somebody a link that 404s for ten minutes
