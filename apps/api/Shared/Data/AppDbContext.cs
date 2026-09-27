@@ -468,6 +468,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         // Products and Plans are platform-wide catalogue data.
         b.Entity<Domain>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<User>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        // No RLS on core.personal_accounts (like core.users). Exactly two reads
+        // bypass this filter, both the platform-wide "one personal account per
+        // number": JoinEndpoints.StartAsync and JoinEndpoints.CompleteAsync.
         b.Entity<PersonalAccount>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Department>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<ProductAccess>().HasQueryFilter(e => e.TenantId == tenant.TenantId);

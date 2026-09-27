@@ -127,6 +127,9 @@ builder.Services.AddScoped<TatvaOS.Api.Modules.Hire.HireAccess>();
 // and the keyed phone fingerprint (Personal:PhoneHashKey; unset = /join closed).
 builder.Services.AddScoped<TatvaOS.Api.Modules.Personal.PersonalHouse>();
 builder.Services.AddSingleton<TatvaOS.Api.Modules.Personal.PersonalPhone>();
+// Signup's prune, hourly: an abandoned signup's plain phone number lives a
+// day at most even while /join is shut and nobody starts one (PR 311).
+builder.Services.AddHostedService<TatvaOS.Api.Modules.Personal.PersonalSignupPruneWorker>();
 
 // ---- OpenID Connect provider (decision 0004) — stage 1: the stores -------
 // OpenIddict's core with EF Core storage on our own entities, and the two
@@ -758,6 +761,21 @@ using (var startupScope = app.Services.CreateScope())
             $"ASPNETCORE_ENVIRONMENT is '{app.Environment.EnvironmentName}'. That logging prints every " +
             "query parameter — hashed secrets and token hashes included — and is only ever meant for " +
             "Development. Fix the environment on this box, or the code that enabled it.");
+
+    // The key that fingerprints phone numbers decides whether one phone can
+    // get a second personal account and a second AI trial (Mr. Singh on
+    // PR 311: protect it like the backup passphrase). Missing outside
+    // Development = refuse to start, not run with /join quietly shut. It is
+    // generated once, lives in infra/docker/.env (so in every backup's
+    // env.txt), and must NEVER change: docs/runbooks/backup-and-restore.md,
+    // "Keys that must never change".
+    if (!app.Environment.IsDevelopment()
+        && !startupScope.ServiceProvider.GetRequiredService<TatvaOS.Api.Modules.Personal.PersonalPhone>().Configured)
+        throw new InvalidOperationException(
+            "Refusing to start: Personal:PhoneHashKey is missing or shorter than 32 characters, and " +
+            $"ASPNETCORE_ENVIRONMENT is '{app.Environment.EnvironmentName}'. Set PERSONAL_PHONE_HASH_KEY in " +
+            "infra/docker/.env to the key already in use — NEVER a new one if personal accounts exist: " +
+            "a changed key lets every phone sign up again.");
 }
 
 // ---------------------------------------------------------------------------

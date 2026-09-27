@@ -40,7 +40,11 @@
 --
 --  No RLS on 3-5, like core.users and core.signup_drafts: signup runs before
 --  any tenant exists, and the uniqueness checks are platform-wide by design.
---  personal_accounts carries tenant_id and an EF query filter.
+--  personal_accounts carries tenant_id and an EF query filter, which exactly
+--  TWO reads bypass (IgnoreQueryFilters), both "one personal account per
+--  number" across every tenant: JoinEndpoints.StartAsync (before a code is
+--  sent) and JoinEndpoints.CompleteAsync (again, just before the account is
+--  created). Mr. Singh accepted this on PR 311; a third bypass needs a reason.
 --
 --  Additive only. Re-runs on every deploy; the second run changes nothing.
 -- ============================================================================
