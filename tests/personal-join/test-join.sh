@@ -357,8 +357,13 @@ r=$(call POST "http://localhost:5299/api/join/start" "$(start_body "fixed.$RUN" 
 ' "$(status "$r")" "$(body "$r" | head -c 200)"
 H2=$(PG "SELECT phone_hash FROM core.personal_signups WHERE id='$(jq_ "$(body "$r")" "d.get('signupId') or ''")'")
 same "the fresh process gives the SAME fingerprint (restart-stable)" "$H2" "$H1"
-pid=$(powershell -NoProfile -Command "(Get-NetTCPConnection -LocalPort 5299 -State Listen -ErrorAction SilentlyContinue).OwningProcess" 2>/dev/null | tr -d '\r')
+# Stop the fresh process. The port is listed more than once (IPv4, IPv6), so
+# take ONE id — and check it is gone, rather than leave it holding the
+# build's exe (the next build then fails, MSB3027).
+pid=$(powershell -NoProfile -Command "(Get-NetTCPConnection -LocalPort 5299 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess" 2>/dev/null | tr -d '\r' | head -1)
 [ -n "$pid" ] && powershell -NoProfile -Command "Stop-Process -Id $pid -Force" >/dev/null 2>&1
+sleep 2
+same "the fresh process is stopped again" "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:5299/health)" "000"
 rm -f .tmp/run-api-5299.sh .tmp/run-api-5299-nokey.sh
 
 # ---------------------------------------------------------------------------
