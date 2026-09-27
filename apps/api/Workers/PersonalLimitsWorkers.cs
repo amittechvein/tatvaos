@@ -176,3 +176,35 @@ public sealed class PersonalTrialWorker(IServiceScopeFactory scopes, ILogger<Per
         }
     }
 }
+
+/// <summary>
+/// The personal account lifecycle, hourly (build plan §8): the inactive rule's
+/// warnings and deletion, due purges (self-delete after 7 days, operator,
+/// inactive), and retrying files a purge could not remove. PersonalLifecycle
+/// holds the rules; this only runs them.
+/// </summary>
+public sealed class PersonalLifecycleWorker(IServiceScopeFactory scopes, ILogger<PersonalLifecycleWorker> log)
+    : BackgroundService
+{
+    private static readonly TimeSpan Every = TimeSpan.FromHours(1);
+
+    protected override async Task ExecuteAsync(CancellationToken stop)
+    {
+        while (!stop.IsCancellationRequested)
+        {
+            try
+            {
+                using var scope = scopes.CreateScope();
+                var report = await scope.ServiceProvider.GetRequiredService<PersonalLifecycle>().RunPassAsync(stop);
+                if (report.Warned + report.FinalWarned + report.Scheduled + report.Purged + report.LeftoversCleared > 0
+                    || report.LeftoversRemaining > 0)
+                    log.LogInformation("Personal lifecycle pass: {Report}", report);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                log.LogError(ex, "Personal lifecycle pass failed; next pass in an hour");
+            }
+            try { await Task.Delay(Every, stop); } catch (OperationCanceledException) { return; }
+        }
+    }
+}

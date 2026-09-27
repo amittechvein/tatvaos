@@ -158,6 +158,17 @@ export function platformNav(): NavSection[] {
         // domain verification defensible.
         { href: '/admin/drafts', label: 'Signups in progress', icon: <Icon d={PATHS.inbox} /> },
         { href: '/admin/plans', label: 'Plans', icon: <Icon d={PATHS.card} /> },
+        // Personal accounts (build plan §9): the list and its actions, and
+        // the names nobody may sign up for.
+        {
+          href: '/admin/personal',
+          label: 'Personal accounts',
+          icon: <Icon d={PATHS.users} />,
+          children: [
+            { href: '/admin/personal', label: 'All personal accounts' },
+            { href: '/admin/reserved-names', label: 'Reserved names' },
+          ],
+        },
         { href: '/admin/storage', label: 'Storage', icon: <Icon d={PATHS.database} /> },
         { href: '/admin/settings', label: 'Settings', icon: <Icon d={PATHS.gear} /> },
       ],

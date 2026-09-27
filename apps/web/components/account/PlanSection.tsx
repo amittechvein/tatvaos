@@ -7,6 +7,7 @@ import { Alert } from '@/components/ui/Page';
 import { useAuth } from '@/lib/auth';
 import { formatBytes } from '@/lib/myStorage';
 import { feature, fetchMyAi, fetchMyPlan, setMyAi, type MyAi, type MyPlan } from '@/lib/personal';
+import { YourDataCard } from '@/components/account/YourDataCard';
 
 // ============================================================================
 //  Account → Plan, for a personal account (build plan §4.2).
@@ -142,6 +143,8 @@ export function PlanSection({ onOpenStorage }: { onOpenStorage: () => void }) {
           ))}
         </div>
       </Card>
+
+      <YourDataCard />
     </div>
   );
 }

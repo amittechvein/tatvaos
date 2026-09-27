@@ -100,6 +100,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<PersonalAiConsent> PersonalAi => Set<PersonalAiConsent>();
     /// <summary>RLS-scoped by tenant, like every connect.* table.</summary>
     public DbSet<ConnectCapacityRefusal> ConnectCapacityRefusals => Set<ConnectCapacityRefusal>();
+    /// <summary>Platform-wide: an address is held across every tenant.</summary>
+    public DbSet<AddressHold> AddressHolds => Set<AddressHold>();
+    public DbSet<PurgeLeftover> PurgeLeftovers => Set<PurgeLeftover>();
 
     // ---- mail ----
     public DbSet<Mailbox> Mailboxes => Set<Mailbox>();
@@ -261,6 +264,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<PersonalAiConsent>().ToTable("personal_ai", "core");
         b.Entity<PersonalAiConsent>().HasKey(a => a.UserId);
         b.Entity<ConnectCapacityRefusal>().ToTable("capacity_refusals", "connect");
+        b.Entity<AddressHold>().ToTable("address_holds", "core");
+        b.Entity<AddressHold>().HasKey(h => h.Address);
+        b.Entity<PurgeLeftover>().ToTable("personal_purge_leftovers", "core");
         // Declared so EF orders the INSERTs: the user and this row are saved
         // in one SaveChanges, and an undeclared FK lets EF write this first.
         b.Entity<PersonalAccount>().HasOne<User>().WithOne()
