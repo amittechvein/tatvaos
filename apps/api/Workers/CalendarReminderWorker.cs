@@ -151,6 +151,7 @@ public sealed class CalendarReminderWorker(
                 // event.
                 db.CalendarReminderSends.Add(new CalendarReminderSend
                 {
+                    TenantId = tenantId,
                     ReminderId = reminder.Id,
                     OccurrenceStartsAt = occ,
                 });
