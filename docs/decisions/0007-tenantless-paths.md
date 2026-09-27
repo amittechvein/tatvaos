@@ -118,3 +118,51 @@ functions omit `pg_temp` and were assigned to this lane.
 
    This row belongs in section 1 once the path is walked.
 
+
+## 5. Every background worker (sweep of 27 September, on Mr. Singh's instruction)
+
+> "This is a class, not an instance. The shape is: a worker runs without a
+> tenant, the database correctly shows it nothing, and the worker treats an
+> empty result as a quiet day. […] sweep every background worker: does it
+> enter a tenant before reading a forced-RLS table?" (Mr. Singh, 27 Sept)
+
+All eleven hosted services registered in `Program.cs` on `main` (c7cb110,
+27 Sept) are listed below. "Finds its work in" is the first read, made
+**before** any tenant is entered.
+
+| Worker | Finds its work in (no tenant) | That source's protection | Then | Verdict |
+|---|---|---|---|---|
+| **CalendarReminderWorker** | `calendar.event_reminders`, `calendar.events`, `calendar.reminder_sends`, with `IgnoreQueryFilters()` | **RLS forced, strict**: with no tenant, nothing is visible | never enters a tenant | **BROKEN.** It sees nothing, sends nothing, and reports nothing. **Confirmed on production 27 Sept:** 7 reminders set, 1 due in the past week, `reminder_sends` = 0, ever |
+| ConnectNotesWorker | definer functions (`pending_notes`, `pending_transcription`, `pending_minutes_email`, `expired_recordings`, `stuck_recordings`, …) | definer: sees across tenants by design | `EnterAnonymousScope` + `SyncTenantAsync` per item (10 sites) | correct pattern; **no test drives it** |
+| AttachmentScanWorker | `mail.mailboxes` | **no RLS** (routing table) | `EnterPlatformScope(box.TenantId)` + sync, then attachments and messages (RLS forced) | correct pattern |
+| MaildirIngestWorker | `mail.mailboxes` | no RLS | enters per mailbox, then messages, folders and filter rules | correct pattern |
+| ThreadBackfillWorker | `mail.mailboxes` | no RLS | enters per mailbox | correct pattern |
+| VacationReplyWorker | `mail.mailboxes`; later `mail.mailboxes` / `mail.aliases` cross-tenant to decide "inside the organisation" | no RLS | enters per mailbox for responders, messages and sends | correct pattern; the cross-tenant audience read is by design, on unprotected routing tables |
+| MailTriageWorker | `core.tenants` | no RLS | `EnterAnonymousScope(tenantId)` + sync per organisation | correct pattern |
+| StorageReconcileWorker | `core.tenants`; trash purge via `space.purgeable_files()` / `space.purge_trash()` | no RLS; definer | enters per organisation for pools and users | correct pattern |
+| PostfixPolicyWorker | `mail.mailboxes`, `mail.aliases`, then `core.users` | no RLS | enters per mailbox; storage via `core.user_storage()` (definer) | correct pattern |
+| SpaceBlobSweepWorker | `space.blob_keys_present()`, `core.sweep_handoff_codes()` | definer | no tenant needed | correct pattern |
+| BounceIntakeWorker | `mail.record_bounce()` | definer | no tenant needed | correct pattern |
+
+**How this was checked:**
+- the order of reads against tenant entry in each file on `main`;
+- `relrowsecurity` / `relforcerowsecurity` and the policy text for each first-read table;
+- `prosecdef` for each function.
+
+The RLS and definer readings are from the **local** database built from the
+init files; production was read only for the reminder counts.
+
+**The class, named.** Two shapes let a worker cross organisations, and only
+one of them fails:
+1. **An unprotected routing table** (`mail.mailboxes`, `mail.aliases`,
+   `core.users`, `core.tenants` have no RLS at all). This works, and it is
+   *isolation bypassed by design*. Those tables are the mail edge's
+   exemption, and any worker can read every organisation's rows in them.
+2. **A definer function.** This works; the function body is the only guard
+   (section 3).
+
+A worker that uses **neither**, and reads a forced-RLS table without a
+tenant, sees nothing and says nothing. CalendarReminderWorker is the only
+one today. **A new worker must name which of the two it uses, and a test must
+drive it with a real row due.** That is the only thing that would have caught
+this one.
