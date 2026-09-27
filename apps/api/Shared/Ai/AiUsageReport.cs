@@ -25,7 +25,13 @@ public static class AiUsageReport
 
     /// <summary>This month's AI CREDITS for a screen: allowance, where it comes from, used, per feature.</summary>
     public sealed record Credits(int? Allowance, string Source, string? PlanName, string? Model, int? PerUser, int? Users,
-        int Used, int Percent, List<CreditLine> ByFeature);
+        int Used, int Percent, List<CreditLine> ByFeature)
+    {
+        /// <summary>Plan or override before top-ups; null = no limit.</summary>
+        public int? Base { get; init; }
+        /// <summary>This month's live top-up credits.</summary>
+        public int TopUp { get; init; }
+    }
     public sealed record CreditLine(string Feature, int Credits);
 
     public static async Task<Credits> CreditsAsync(AppDbContext db, Guid tenantId, CancellationToken ct)
@@ -39,7 +45,7 @@ public static class AiUsageReport
             int cap => (int)Math.Min(100, (long)used * 100 / cap),
         };
         return new Credits(a.Credits, a.Source, a.PlanName, a.Model, a.PerUser, a.Users, used, percent,
-            by.Select(x => new CreditLine(x.Feature, x.Credits)).ToList());
+            by.Select(x => new CreditLine(x.Feature, x.Credits)).ToList()) { Base = a.Base, TopUp = a.TopUp };
     }
 
     public static async Task<Month> ThisMonthAsync(AppDbContext db, SettingsReader settings, CancellationToken ct)

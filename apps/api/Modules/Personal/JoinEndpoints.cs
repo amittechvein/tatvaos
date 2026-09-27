@@ -294,7 +294,14 @@ public static class JoinEndpoints
         draft.CodeHash = null;          // single use
         draft.UpdatedAt = now;
         await db.SaveChangesAsync(ct);
-        return Results.Ok(new { verified = true });
+        // Told only AFTER the code proves they hold the number, so this is not
+        // a way to ask "does this number have a work account?" (Mr. Singh on
+        // PR 311: say so on the page rather than refuse the signup).
+        return Results.Ok(new
+        {
+            verified = true,
+            numberOnWorkAccount = draft.Phone is not null && await NumberInUseAsync(db, draft.Phone, ct),
+        });
     }
 
     // ------------------------------------------------------------------
@@ -355,10 +362,11 @@ public static class JoinEndpoints
         // account per number (AuthEndpoints), so giving it to a second
         // account would silently break both for the first. The personal
         // account still holds the fingerprint, so "one per number" holds.
-        var spellings = Spellings(draft.Phone);
-        var numberInUse = await db.Users.IgnoreQueryFilters()
-            .AnyAsync(u => u.Phone != null && spellings.Contains(u.Phone)
-                           && u.Status != "deleted" && u.Status != "suspended", ct);
+        //
+        // NOTHING here writes to that other account: it is read, never
+        // changed — its phone, and its SMS sign-in, stay exactly as they were
+        // (tests/personal-join proves it, red first).
+        var numberInUse = await NumberInUseAsync(db, draft.Phone, ct);
 
         var ip = ClientIp.From(http);
         await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -536,17 +544,33 @@ public static class JoinEndpoints
     }
 
     /// <summary>
-    /// No sweeper: each new start clears what has expired. Abandoned signups
-    /// (and the plain-text numbers in them) after a day; attempts after 90.
+    /// The ONE prune for both tables: abandoned signups (and the plain-text
+    /// numbers in them) after a day; attempts after 90. Run by each new start
+    /// AND hourly by PersonalSignupPruneWorker — while signup is shut nobody
+    /// starts one, and a number must not outlive its day for want of a visitor.
     /// </summary>
-    private static async Task PruneAsync(AppDbContext db, DateTimeOffset now, CancellationToken ct)
+    internal static async Task<(int Signups, int Attempts)> PruneAsync(AppDbContext db, DateTimeOffset now, CancellationToken ct)
     {
         var dayAgo = now.AddDays(-1);
-        await db.PersonalSignups.Where(s => s.CompletedAt == null && s.UpdatedAt < dayAgo)
+        var signups = await db.PersonalSignups.Where(s => s.CompletedAt == null && s.UpdatedAt < dayAgo)
             .ExecuteDeleteAsync(ct);
         var ninetyDaysAgo = now.AddDays(-90);
-        await db.PersonalSignupAttempts.Where(a => a.OccurredAt < ninetyDaysAgo)
+        var attempts = await db.PersonalSignupAttempts.Where(a => a.OccurredAt < ninetyDaysAgo)
             .ExecuteDeleteAsync(ct);
+        return (signups, attempts);
+    }
+
+    /// <summary>
+    /// Is this number already on another live account (a work account)? Read
+    /// across every tenant, as CreatePersonAsync reads core.users. READ ONLY:
+    /// nothing in signup ever writes another account's phone.
+    /// </summary>
+    private static async Task<bool> NumberInUseAsync(AppDbContext db, string canonical, CancellationToken ct)
+    {
+        var spellings = Spellings(canonical);
+        return await db.Users.IgnoreQueryFilters()
+            .AnyAsync(u => u.Phone != null && spellings.Contains(u.Phone)
+                           && u.Status != "deleted" && u.Status != "suspended", ct);
     }
 
     /// <summary>The ways the same Indian number may already be stored on core.users.</summary>
