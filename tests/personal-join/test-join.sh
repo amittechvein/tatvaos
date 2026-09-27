@@ -22,6 +22,15 @@
 #   8. a removed reserved name stays removed after the migration re-runs
 #   9. NO PHONE NUMBER IN THE API'S LOG, any spelling — and the log is proven
 #      to be the right one (it holds this run's signup ids)
+#  10. (Mr. Singh, PR 311) a work account's number: a personal signup with it
+#      never removes or reassigns the work account's phone, whose SMS sign-in
+#      still works; the personal account gets no phone, and the page is told
+#      (after the code). RED FIRST: the number copied onto the personal
+#      account makes the work account's SMS sign-in fail.
+#  11. (Mr. Singh, PR 311) the phone-hash key: a fixed number's fingerprint is
+#      HMAC-SHA256(key, "phone:"+number), computed independently; a FRESH
+#      Production process without the key refuses to start, and with it gives
+#      the same fingerprint (stable across restarts)
 #
 # RED FIRST, recorded in the PR: 9 was run once with a temporary
 # LogInformation of the number in StartAsync and failed on exactly that line.
@@ -177,6 +186,7 @@ r=$(call POST "$API/api/join/$SID/complete" "{\"password\":\"$PW\",\"acceptTerms
 same "complete before verifying: refused" "$(status "$r")" "400"
 r=$(call POST "$API/api/join/$SID/verify" "{\"code\":\"$CODE\"}")
 same "right code: verified" "$(jq_ "$(body "$r")" "d['verified']")" "True"
+same "…a number on no other account: no work-account notice" "$(jq_ "$(body "$r")" "d.get('numberOnWorkAccount')")" "False"
 r=$(call POST "$API/api/join/$SID/verify" "{\"code\":\"$CODE\"}")
 same "verifying again is harmless" "$(jq_ "$(body "$r")" "d['verified']")" "True"
 r=$(call POST "$API/api/join/$SID/complete" "{\"password\":\"$PW\",\"acceptTerms\":true,\"acceptPrivacy\":false}")
@@ -267,6 +277,91 @@ r=$(call GET "$API/api/admin/reserved-usernames")
 same "the operator list needs a sign-in (401)" "$(status "$r")" "401"
 
 # ---------------------------------------------------------------------------
+step "10. A work account's number: its phone and SMS sign-in are never touched (Mr. Singh, PR 311)"
+# SMS sign-in codes are shown on screen only by a Development API, so the
+# work account's sign-in runs there; both APIs share this database.
+DEV_API="${TATVAOS_DEV_API:-http://localhost:5297}"
+WORK_ID="d1111111-1111-1111-1111-111111111111"; WORK_PHONE="+919999900001"
+PG "UPDATE core.users SET phone='$WORK_PHONE', status='active' WHERE id='$WORK_ID'; UPDATE core.users SET phone=NULL WHERE phone='$WORK_PHONE' AND id<>'$WORK_ID'" >/dev/null
+work_sms_signin() { # -> the signed-in account's id, or empty
+    PG "UPDATE core.users SET login_otp_sent_at=NULL WHERE id='$WORK_ID'" >/dev/null
+    local c t
+    c=$(jq_ "$(curl -s -X POST "$DEV_API/api/auth/otp/request" -H 'Content-Type: application/json' -d "{\"phone\":\"$WORK_PHONE\"}")" "d.get('devCode') or ''")
+    [ -n "$c" ] || return 0
+    t=$(jq_ "$(curl -s -X POST "$DEV_API/api/auth/otp/verify" -H 'Content-Type: application/json' -d "{\"phone\":\"$WORK_PHONE\",\"code\":\"$c\"}")" "d.get('accessToken') or ''")
+    [ -n "$t" ] || return 0
+    printf '%s' "$t" | cut -d. -f2 | "$PY" -c "import sys,base64,json; s=sys.stdin.read().strip(); s+='='*(-len(s)%4); print(json.loads(base64.urlsafe_b64decode(s)).get('sub',''))" 2>/dev/null | tr -d '\r'
+}
+same "before: the work account signs in by SMS" "$(work_sms_signin)" "$WORK_ID"
+reset_attempts
+# Re-runnable: an earlier run's personal account on this number would (rightly)
+# refuse a second one — "one personal account per number". Forget its row.
+PG "DELETE FROM core.personal_accounts WHERE user_id IN (SELECT id FROM core.users WHERE email LIKE 'work.%@$DOMAIN')" >/dev/null
+WNAME="work.$RUN"; WADDR="$WNAME@$DOMAIN"
+r=$(call POST "$API/api/join/start" "$(start_body "$WNAME" 'Work Number' "${WORK_PHONE:3:5} ${WORK_PHONE:8}" "$ADULT_DOB" true '' "$TOKEN")")
+same "a personal signup with the SAME number (typed another way) may start" "$(status "$r")" "200"
+WSID=$(jq_ "$(body "$r")" "d['signupId']"); WCODE=$(jq_ "$(body "$r")" "d.get('devCode') or ''")
+r=$(call POST "$API/api/join/$WSID/verify" "{\"code\":\"$WCODE\"}")
+same "after the code: the page is told the number is on a work account" "$(jq_ "$(body "$r")" "d.get('numberOnWorkAccount')")" "True"
+r=$(call POST "$API/api/join/$WSID/complete" "{\"password\":\"$PW\",\"recoveryEmail\":\"work.$RUN@example.test\",\"acceptTerms\":true,\"acceptPrivacy\":true}")
+same "the personal account is created" "$(status "$r")" "200"
+WUID=$(PG "SELECT id FROM core.users WHERE email='$WADDR'")
+same "…WITHOUT the number (no SMS recovery for it)" "$(PG "SELECT coalesce(phone,'<null>') FROM core.users WHERE id='$WUID'")" "<null>"
+same "the WORK account still has its phone, unchanged" "$(PG "SELECT phone FROM core.users WHERE id='$WORK_ID'")" "$WORK_PHONE"
+same "…and still signs in by SMS" "$(work_sms_signin)" "$WORK_ID"
+# RED FIRST: the check above goes red if signup ever gave the number away.
+PG "UPDATE core.users SET phone='$WORK_PHONE' WHERE id='$WUID'" >/dev/null
+r=$(work_sms_signin)
+if [ "$r" != "$WORK_ID" ]; then pass "RED FIRST: with the number copied onto the personal account, the work account's SMS sign-in FAILS (got [${r:-nothing}])"
+else fail "calibration: the work account still signed in with its number on two accounts — the check could not see the harm"; fi
+PG "UPDATE core.users SET phone=NULL WHERE id='$WUID'" >/dev/null
+same "…restored, it works again" "$(work_sms_signin)" "$WORK_ID"
+# And the plain number of the signup row is gone, as for any signup.
+same "the signup row keeps no plain number" "$(PG "SELECT coalesce(phone,'<null>') FROM core.personal_signups WHERE id='$WSID'")" "<null>"
+
+# ---------------------------------------------------------------------------
+step "11. The phone-hash key: required outside Development, and the fingerprint is stable"
+# A fixed number's fingerprint must equal HMAC-SHA256(key, "phone:" + canonical)
+# — a pure function of the key and the number, nothing per-process. Computed
+# here independently; the key is read from the launcher and never printed.
+KEYFILE="${TATVAOS_PROD_LAUNCHER:-.tmp/run-api-prod.sh}"
+FIXED="+917000000001"
+reset_attempts
+PG "DELETE FROM core.personal_signups WHERE phone_hash IS NOT NULL AND local_part LIKE 'fixed.%'" >/dev/null
+r=$(call POST "$API/api/join/start" "$(start_body "fixed.$RUN" 'Fixed Number' "$FIXED" "$ADULT_DOB" true '' "$TOKEN")")
+H1=$(PG "SELECT phone_hash FROM core.personal_signups WHERE id='$(jq_ "$(body "$r")" "d['signupId']")'")
+EXPECT=$("$PY" - "$KEYFILE" "$FIXED" <<'PYEOF'
+import sys, re, hmac, hashlib
+m = re.search(r"Personal__PhoneHashKey='([^']+)'", open(sys.argv[1], encoding='utf-8').read())
+print(hmac.new(m.group(1).strip().encode(), ("phone:" + sys.argv[2]).encode(), hashlib.sha256).hexdigest() if m else '')
+PYEOF
+)
+same "the stored fingerprint = HMAC-SHA256(key, 'phone:+91…'), computed independently" "$H1" "$EXPECT"
+
+# A second, FRESH API process (Production) on its own port: once without the
+# key — it must refuse to start — and once with it — same fingerprint.
+sed -e "s/5298/5299/g" -e "s/10326/10327/g" "$KEYFILE" > .tmp/run-api-5299.sh
+grep -v "Personal__PhoneHashKey" .tmp/run-api-5299.sh > .tmp/run-api-5299-nokey.sh
+timeout 90 bash .tmp/run-api-5299-nokey.sh > .tmp/api-5299-nokey.log 2>&1; rc=$?
+if [ "$rc" != "0" ] && [ "$rc" != "124" ]; then pass "without the key, a Production API EXITS (code $rc)"; else fail "without the key the API did not exit (rc $rc)"; fi
+has "…saying why" "$(cat .tmp/api-5299-nokey.log)" "Refusing to start: Personal:PhoneHashKey is missing"
+bash .tmp/run-api-5299.sh > .tmp/api-5299.log 2>&1 &
+for _ in $(seq 1 45); do [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:5299/health)" = "200" ] && break; sleep 2; done
+same "with the key, the fresh process starts" "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:5299/health)" "200"
+reset_attempts
+# The run's own form token, issued by the OTHER process minutes ago: a fresh
+# token would be refused as "filled too fast", and accepting this one shows
+# the same key signs across processes too.
+r=$(call POST "http://localhost:5299/api/join/start" "$(start_body "fixed.$RUN" 'Fixed Number' "0${FIXED:3}" "$ADULT_DOB" true '' "$TOKEN")")
+[ "$(status "$r")" = "200" ] || printf '     start on the fresh process: %s %s
+' "$(status "$r")" "$(body "$r" | head -c 200)"
+H2=$(PG "SELECT phone_hash FROM core.personal_signups WHERE id='$(jq_ "$(body "$r")" "d.get('signupId') or ''")'")
+same "the fresh process gives the SAME fingerprint (restart-stable)" "$H2" "$H1"
+pid=$(powershell -NoProfile -Command "(Get-NetTCPConnection -LocalPort 5299 -State Listen -ErrorAction SilentlyContinue).OwningProcess" 2>/dev/null | tr -d '\r')
+[ -n "$pid" ] && powershell -NoProfile -Command "Stop-Process -Id $pid -Force" >/dev/null 2>&1
+rm -f .tmp/run-api-5299.sh .tmp/run-api-5299-nokey.sh
+
+# ---------------------------------------------------------------------------
 step "9. No phone number in the API's log"
 # MUST be an API running as Production. In Development, EF's sensitive-data
 # logging prints every saved value — numbers included — by design, and the
@@ -278,7 +373,7 @@ fi
 sleep 1
 grep -qF -- "$SID" "$LOG" && pass "the log is this API's (holds signup $SID)" || fail "signup $SID not in $LOG — wrong log?"
 leaks=0
-for n in $ALL_NUMBERS $(num 6) $(num 7) $(num 8); do
+for n in $ALL_NUMBERS $(num 6) $(num 7) $(num 8) 9999900001 7000000001; do
     for s in "$n" "91$n" "+91$n" "${n:0:5} ${n:5}"; do
         if grep -qF -- "$s" "$LOG"; then leaks=$((leaks+1)); fail "'$s' appears in the log"; fi
     done
