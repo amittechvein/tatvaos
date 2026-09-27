@@ -1,6 +1,6 @@
 # 0009 — An administrator can set a person's recovery email
 
-**Status:** accepted by Mr. Singh, 24 Sept 2026, option 2 with the corrections in his ruling at the end of this record. **Nothing is built yet.**
+**Status:** accepted by Mr. Singh, 24 Sept 2026, option 2 with the corrections in his ruling at the end of this record. **Built 27 Sept 2026 in PR 290**, not merged, not deployed; `tests/recovery-admin/test-admin-recovery-email.sh` is its proof.
 **Date:** 2026-09-21
 **Asked by** Amit through Mr. Singh's ruling of 21 September: "administrators should
 be able to set a recovery email on an existing person, and it is the missing half

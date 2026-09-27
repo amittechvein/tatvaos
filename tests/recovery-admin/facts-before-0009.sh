@@ -18,8 +18,11 @@
 #      address is kept nowhere. 0009's "this was not me" restores the previous
 #      address, so it needs somewhere to keep it.
 #
-# When 0009 is built, A and B flip: this file then asserts the OLD behaviour and
-# is the red-first half of 0009's own test (EXPECT=old on main must pass).
+# 0009 IS BUILT (27 Sept 2026, PR 290). This file now asserts the OLD
+# behaviour and is the red half of the evidence: it passes on main (c7cb110)
+# and its step A FAILS on the 0009 branch by design - a sign-in link to an
+# unconfirmed address is now refused. Run it with TATVAOS_ROOT pointing at a
+# main checkout. The test of the built feature is test-admin-recovery-email.sh.
 #
 # Needs the local SMTP sink (tatvaos-ai-metering/.tmp/fake-ai-and-mail.mjs:
 # SMTP :5871, recipients at http://127.0.0.1:5198/mail).
