@@ -135,6 +135,9 @@ MB_INSERT="INSERT INTO mail.mailboxes (tenant_id, domain_id, address, local_part
 r=$(PGE "$MB_INSERT")
 has "a MAILBOX at a held address: refused by the trigger (23505, constraint retired_address_held)" "$r" "CONSTRAINT NAME:  retired_address_held"
 has "…saying why" "$r" "is retired (mailbox_deleted"
+# citext: the rule must not be dodged by case. (A narrowed search_path in the
+# trigger would compare as text and let this through.)
+has "…and in CAPITALS too" "$(PGE "${MB_INSERT//boss@$TD/BOSS@${TD^^}}")" "CONSTRAINT NAME:  retired_address_held"
 r=$(PGE "BEGIN; DROP TRIGGER refuse_retired_address ON mail.mailboxes; $MB_INSERT; SELECT 'inserted:'||count(*) FROM mail.mailboxes WHERE address='boss@$TD'; ROLLBACK;")
 has "RED FIRST: with the trigger dropped, the same mailbox IS created" "$r" "inserted:1"
 same "…(rolled back: the trigger is still there)" "$(PG "SELECT count(*) FROM pg_trigger WHERE tgname='refuse_retired_address'")" "2"
