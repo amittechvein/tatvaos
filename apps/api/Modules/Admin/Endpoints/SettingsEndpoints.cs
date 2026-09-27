@@ -149,13 +149,27 @@ public static class SettingsEndpoints
         });
     }
 
+    /// <summary>
+    /// Sends the OTP template with code 123456 to a number the operator types.
+    /// Operator-only through the group's SuperAdmin guard, and every send is
+    /// audited — like the AI warning test email beside it (Mr. Singh on PR
+    /// 280: a button that sends to any recipient typed is a relay unless it is
+    /// guarded AND recorded). The number is audited masked, the way recovery
+    /// number changes are (+91•••••3210): enough to match a complaint, not a
+    /// list of numbers. The provider's detail is NOT audited — providers echo
+    /// the recipient back in it.
+    /// </summary>
     private static async Task<IResult> TestSmsAsync(
-        TestSmsRequest req, ISmsSender sms, CancellationToken ct)
+        TestSmsRequest req, ISmsSender sms, AuditWriter audit, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(req.Phone))
             return Results.BadRequest(new { error = "A phone number is required." });
 
-        var result = await sms.SendOtpAsync(req.Phone.Trim(), "123456", ct);
+        var phone = req.Phone.Trim();
+        var result = await sms.SendOtpAsync(phone, "123456", ct);
+
+        await audit.WriteAsync("settings.test_sms_sent", "sms", null,
+            after: new { to = TatvaOS.Api.Shared.Mask.Phone(phone), sent = result.Sent, provider = result.Provider }, ct: ct);
 
         return Results.Ok(new
         {

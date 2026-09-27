@@ -137,6 +137,19 @@ public sealed class ConnectRecordingAccess
 }
 
 /// <summary>
+/// One wrong password on a share link. Read-only from here — rows are written
+/// by connect.record_share_password_failure(), and counted by
+/// connect.share_password_paused_until(). See section 6 of 20260926-c.
+/// </summary>
+public sealed class ConnectRecordingSharePasswordFailure
+{
+    public long Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid ShareId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+}
+
+/// <summary>
 /// The four levels, in the order they give away more.
 ///
 /// Shaped like ConnectShare and ConnectChat — one idea to learn, not three —
