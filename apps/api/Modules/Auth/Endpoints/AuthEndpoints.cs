@@ -1493,6 +1493,67 @@ public static class AuthEndpoints
     /// verified recovery address. Best effort and off the request path, exactly
     /// like the sign-in alert; SystemMailer logs its own failures.
     /// </summary>
+    // ---- Decision 0009: an owner's own recovery address ---------------------
+    //
+    //  Mr. Singh, 24 Sept: "An owner's own recovery address is changeable only
+    //  by that owner, with MFA where enabled, and the change notifies every
+    //  other owner and administrator." The password gate above still applies;
+    //  this is the second factor on top of it, and only for owners who have one.
+    private static IResult? RequireOwnerMfa(User user, string? code, TotpService totp)
+    {
+        if (user.Role != "org_owner" || !user.MfaEnabled || user.MfaSecretRef is null) return null;
+        if (string.IsNullOrWhiteSpace(code))
+            return Results.Json(new
+            {
+                error = "Enter the code from your authenticator app to change an owner's recovery email.",
+                mfaRequired = true,
+            }, statusCode: 400);
+        var secret = totp.Unprotect(user.MfaSecretRef);
+        var step = secret is null ? null : totp.Verify(secret, code.Trim(), user.MfaLastStep);
+        if (step is null)
+            return Results.Json(new { error = "That code was not accepted.", mfaRequired = true }, statusCode: 400);
+        user.MfaLastStep = step;   // saved with the change: the code cannot be replayed
+        return null;
+    }
+
+    /// <summary>An owner changed their own recovery address: tell every other owner and admin.</summary>
+    private static void NotifyOtherOwnersAndAdmins(IServiceScopeFactory scopeFactory, User owner, string what)
+    {
+        if (owner.Role != "org_owner") return;
+        var tenantId = owner.TenantId;
+        var ownerId = owner.Id;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var scope = scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var mailer = scope.ServiceProvider.GetRequiredService<SystemMailer>();
+                // core.users carries no RLS; the tenant condition is spelled out.
+                var to = await db.Users.AsNoTracking().IgnoreQueryFilters()
+                    .Where(u => u.TenantId == tenantId && u.Id != ownerId && u.Status == "active"
+                             && (u.Role == "org_owner" || u.Role == "org_admin"))
+                    .Select(u => u.Email).ToListAsync();
+                foreach (var address in to)
+                {
+                    try
+                    {
+                        await mailer.SendAsync(address, "An owner changed their recovery email",
+                            what + "\n\nIf you did not expect this, ask them.");
+                    }
+                    catch { /* one bad address must not stop the rest */ }
+                }
+            }
+            catch { /* best effort, like NotifyRecoveryChanged */ }
+        });
+    }
+
+    /// <summary>The person's own change overtakes an administrator's change in flight.</summary>
+    private static Task SupersedeAdminChangesAsync(AppDbContext db, Guid userId, CancellationToken ct) =>
+        db.RecoveryEmailChanges
+            .Where(c => c.UserId == userId && (c.Status == "pending" || c.Status == "held"))
+            .ExecuteUpdateAsync(x => x.SetProperty(c => c.Status, "superseded"), ct);
+
     private static void NotifyRecoveryChanged(
         IServiceScopeFactory scopeFactory, IConfiguration config,
         string displayName, string primaryEmail, string? previousVerifiedRecoveryEmail, string what)
@@ -1536,13 +1597,16 @@ public static class AuthEndpoints
         // and must get the "enter your password" reply, not a framework 400.
         [Microsoft.AspNetCore.Mvc.FromBody] ConfirmPasswordRequest? req,
         AppDbContext db, TenantContext tenant, IPasswordHasher hasher, AuditWriter audit,
-        IServiceScopeFactory scopeFactory, IConfiguration config, CancellationToken ct)
+        IServiceScopeFactory scopeFactory, IConfiguration config, TotpService totp, CancellationToken ct)
     {
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == tenant.UserId, ct);
         if (user is null) return Results.NotFound();
         var refused = await RequireCurrentPasswordAsync(user, req?.CurrentPassword, hasher, db, ct);
         if (refused is not null) return refused;
         if (user.RecoveryEmail is null) return Results.Ok(new { removed = true });
+        var noMfa = RequireOwnerMfa(user, req?.MfaCode, totp);
+        if (noMfa is not null) return noMfa;
+        await SupersedeAdminChangesAsync(db, user.Id, ct);
 
         var previous = user.RecoveryEmail;
         var previousVerified = user.RecoveryEmailVerifiedAt is not null ? user.RecoveryEmail : null;
@@ -1558,6 +1622,8 @@ public static class AuthEndpoints
             after: new { kind = "recovery_email", value = (string?)null }, ct: ct);
         NotifyRecoveryChanged(scopeFactory, config, user.DisplayName, user.Email, previousVerified,
             $"the recovery email {MaskEmail(previous)} was removed from your account.");
+        NotifyOtherOwnersAndAdmins(scopeFactory, user,
+            $"{user.DisplayName}, an owner, removed their own recovery email ({MaskEmail(previous)}).");
         return Results.Ok(new { removed = true });
     }
 
@@ -1734,7 +1800,7 @@ public static class AuthEndpoints
     private static async Task<IResult> SetRecoveryEmailAsync(
         SetRecoveryEmailRequest req, AppDbContext db, TenantContext tenant,
         SystemMailer mailer, IConfiguration config, IPasswordHasher hasher, AuditWriter audit,
-        IServiceScopeFactory scopeFactory, CancellationToken ct)
+        IServiceScopeFactory scopeFactory, TotpService totp, CancellationToken ct)
     {
         var email = req.Email?.Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(email) || !System.Net.Mail.MailAddress.TryCreate(email, out _))
@@ -1751,6 +1817,8 @@ public static class AuthEndpoints
         {
             var refused = await RequireCurrentPasswordAsync(user, req.CurrentPassword, hasher, db, ct);
             if (refused is not null) return refused;
+            var noMfa = RequireOwnerMfa(user, req.MfaCode, totp);
+            if (noMfa is not null) return noMfa;
         }
 
         if (string.Equals(email, user.Email, StringComparison.OrdinalIgnoreCase))
@@ -1768,6 +1836,8 @@ public static class AuthEndpoints
 
         var previous = user.RecoveryEmail;
         var previousVerified = user.RecoveryEmailVerifiedAt is not null ? user.RecoveryEmail : null;
+        // Decision 0009: the person's own change overtakes an administrator's.
+        await SupersedeAdminChangesAsync(db, user.Id, ct);
         var token = TokenIssuer.GenerateRefreshToken();
         user.RecoveryEmail = email;
         user.RecoveryEmailVerifiedAt = null;          // a changed address must be re-proven
@@ -1792,6 +1862,8 @@ public static class AuthEndpoints
             NotifyRecoveryChanged(scopeFactory, config, user.DisplayName, user.Email, previousVerified,
                 $"a recovery email, {MaskEmail(email)}, was added to your account. It starts working only "
                 + "after someone opens the confirmation link sent to it.");
+            NotifyOtherOwnersAndAdmins(scopeFactory, user,
+                $"{user.DisplayName}, an owner, set their own recovery email to {MaskEmail(email)}.");
         }
         return Results.Ok(new { sent = true, message = RecoveryVerifySentReply });
     }
@@ -1804,7 +1876,7 @@ public static class AuthEndpoints
     /// the one-live-match rule only governs RESET, a later stage.
     /// </summary>
     private static async Task<IResult> VerifyRecoveryEmailAsync(
-        VerifyRecoveryEmailRequest req, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        VerifyRecoveryEmailRequest req, AppDbContext db, TenantContext tenant, AuditWriter audit, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(req.Token))
             return Results.BadRequest(new { error = "A verification token is required." });
@@ -1813,6 +1885,13 @@ public static class AuthEndpoints
         var user = await db.Users.IgnoreQueryFilters()
             .FirstOrDefaultAsync(u => u.RecoveryEmailTokenHash == hash
                                       && u.Status != "deleted" && u.Status != "suspended", ct);
+        // Not the person's own pending address: it may be an address an
+        // ADMINISTRATOR set (decision 0009), whose link is the same page.
+        if (user is null
+            && await Admin.Endpoints.RecoveryEmailAdminEndpoints.ConfirmChangeAsync(hash, db, tenant, audit, ct)
+               is IResult adminChange)
+            return adminChange;
+
         var expired = user?.RecoveryEmailTokenSentAt is null
             || DateTimeOffset.UtcNow - user.RecoveryEmailTokenSentAt > RecoveryVerifyLifetime;
         if (user is null || expired)
@@ -2541,10 +2620,10 @@ public sealed record HandoffRequest(string? Path);
 
 /// <summary>The code the landing page read out of its own URL fragment.</summary>
 public sealed record HandoffRedeemRequest(string? Code);
-public sealed record SetRecoveryEmailRequest(string? Email, string? CurrentPassword = null);
+public sealed record SetRecoveryEmailRequest(string? Email, string? CurrentPassword = null, string? MfaCode = null);
 public sealed record SetPhoneRequest(string? Phone, string? CurrentPassword = null);
 /// <summary>The body of a DELETE that removes a way back into the account.</summary>
-public sealed record ConfirmPasswordRequest(string? CurrentPassword);
+public sealed record ConfirmPasswordRequest(string? CurrentPassword, string? MfaCode = null);
 public sealed record VerifyPhoneRequest(string? Code);
 public sealed record VerifyRecoveryEmailRequest(string? Token);
 public sealed record ForgotPasswordRecoveryRequest(string? RecoveryEmail);
