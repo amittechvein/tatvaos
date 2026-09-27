@@ -250,17 +250,30 @@ public sealed class TotpService(IConfiguration config)
     /// losing your place — the dash is stripped before hashing, so how the
     /// user types it does not matter.
     /// </summary>
+    /// <summary>
+    /// 32 symbols = 5 bits each; 16 of them = 80 bits. The number is load-bearing:
+    /// the codes are stored as a fast, unsalted SHA-256 (0024-mfa.sql) on the
+    /// argument that 80 bits leaves nothing to brute-force. Until 27 Sept 2026
+    /// they were 10 characters, 50 bits, under a comment claiming 80 — a leaked
+    /// table was then about a GPU-day from every code in it. Raised before
+    /// anyone had MFA on (all 169 accounts had it off), so no code was re-issued.
+    /// tests/mfa/test-recovery-codes.sh fails if the entropy drops again.
+    /// </summary>
+    public const int RecoveryCodeLength = 16;
+    public const string RecoveryCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
     public static List<string> NewRecoveryCodes(int count = 10)
     {
         // No I, O, 0 or 1: these get written on paper and then read back.
-        const string alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-
+        // Four groups of four, because sixteen characters in one run is where
+        // people lose their place while typing.
         return Enumerable.Range(0, count).Select(_ =>
         {
-            var chars = new char[10];
+            var chars = new char[RecoveryCodeLength];
             for (var i = 0; i < chars.Length; i++)
-                chars[i] = alphabet[RandomNumberGenerator.GetInt32(alphabet.Length)];
-            return $"{new string(chars[..5])}-{new string(chars[5..])}";
+                chars[i] = RecoveryCodeAlphabet[RandomNumberGenerator.GetInt32(RecoveryCodeAlphabet.Length)];
+            return string.Join("-", Enumerable.Range(0, RecoveryCodeLength / 4)
+                .Select(g => new string(chars, g * 4, 4)));
         }).ToList();
     }
 
