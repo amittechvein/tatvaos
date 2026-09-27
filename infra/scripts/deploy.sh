@@ -55,6 +55,37 @@ case "$ENV" in
 esac
 
 # ---------------------------------------------------------------------------
+#  RUN DETACHED, OR DO NOT RUN — HOUSE_RULES rule 11b (Mr. Singh, 27 Sept 2026).
+#
+#  On 26 September a hand deploy died at 13:58Z when the SSH session reset
+#  during the pre-deploy backup. It had not reached the schema step, so
+#  production was untouched — by luck: one step later and the box would have
+#  been half-updated with nobody watching. It then sat unnoticed for three
+#  hours, because the tool call driving it had timed out into the background.
+#
+#  A deploy attached to a terminal dies with that terminal. So this script
+#  refuses to start when its output is a terminal, and prints the one command
+#  that runs it correctly. The GitHub workflow and a detached run both write
+#  to a file, so neither trips this. DEPLOY_ATTACHED=1 overrides it for a
+#  local rehearsal, and is not for the production box.
+# ---------------------------------------------------------------------------
+if [ -t 1 ] && [ "${DEPLOY_ATTACHED:-}" != "1" ]; then
+    printf '\n   [FAIL] deploy.sh is attached to a terminal. Run it detached, so a dropped\n'
+    printf '          SSH session cannot kill it halfway (HOUSE_RULES rule 11b):\n\n'
+    printf '     LOG=~/deploy-%s-$(date -u +%%Y%%m%%dT%%H%%M%%SZ).log\n' "$ENV"
+    printf '     CI=1 setsid nohup ./infra/scripts/deploy.sh %s > "$LOG" 2>&1 < /dev/null &\n' "$ENV"
+    printf '     tail -f "$LOG"        # Ctrl-C stops the tail only, never the deploy\n\n'
+    printf '   The log ends in a DEPLOY VERDICT line. No verdict line = the deploy did not\n'
+    printf '   finish: check the server before doing anything else.\n\n'
+    exit 1
+fi
+
+# Every exit prints a verdict. A log with no "DEPLOY VERDICT" line was cut
+# off — killed, or the box died — and rule 11b says that is a failure, not a
+# maybe. The PASS line is printed by the success path at the bottom.
+trap 'rc=$?; if [ "$rc" -ne 0 ]; then printf "\n   DEPLOY VERDICT: FAIL (exit %s) at %s\n\n" "$rc" "$(date -u +%FT%TZ)"; fi' EXIT
+
+# ---------------------------------------------------------------------------
 #  ONE DEPLOYER AT A TIME — the lock rule 11 promised.
 #
 #  Since 29 August every lane deploys its own work, so two people reaching
@@ -910,7 +941,8 @@ else
 fi
 
 DOMAIN=$(grep '^SITE_DOMAIN=' infra/docker/.env | cut -d= -f2)
-printf '\n   %s%s deployed.%s\n\n' "$G" "$ENV" "$X"
+printf '\n   %s%s deployed.%s\n' "$G" "$ENV" "$X"
+printf '   DEPLOY VERDICT: PASS %s at %s\n\n' "$BUILD_SHA" "$(date -u +%FT%TZ)"
 printf '   App        https://%s\n' "$DOMAIN"
 printf '   API        https://%s/api\n' "$DOMAIN"
 printf '   Health     https://%s/health\n' "$DOMAIN"

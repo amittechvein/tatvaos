@@ -486,6 +486,53 @@ in a hurry.*
 
 ---
 
+## 11b. A hand deploy runs detached, and a log with no verdict is a failure
+
+Mr. Singh's ruling, 27 Sept 2026, after the incident below. Three parts, and
+the third is what makes the first two last.
+
+1. **Every hand deploy runs detached from the SSH session**, logging to a
+   file, so the connection dropping never stops it halfway:
+
+   ```bash
+   LOG=~/deploy-production-$(date -u +%Y%m%dT%H%M%SZ).log
+   CI=1 setsid nohup ./infra/scripts/deploy.sh production > "$LOG" 2>&1 < /dev/null &
+   tail -f "$LOG"        # Ctrl-C stops the tail only, never the deploy
+   ```
+
+   `CI=1` because the typed `production` confirmation cannot be answered
+   from `/dev/null`; the confirmation is the "go" Amit gave in chat, and the
+   deploy report names it. `setsid` gives the deploy its own session, so the
+   SIGHUP that follows a dropped connection never reaches it; `nohup` is the
+   belt to that brace.
+
+2. **A deploy with no verdict is not a success.** `deploy.sh` ends every run
+   with a `DEPLOY VERDICT: PASS <sha>` or `DEPLOY VERDICT: FAIL (exit N)`
+   line. **A log that has neither was cut off** — the process was killed, or
+   the box died under it — and the box may be half-updated: images pulled
+   but containers not recreated, or the schema step run and nothing after.
+   Treat it as failed. Before anything else, read the running build from the
+   web container (`docker inspect tatvaos-web-1` → `BUILD_SHA`), compare it
+   with the checkout, and say which you found. Never re-run on the
+   assumption that the first run did nothing.
+
+3. **`deploy.sh` refuses to start attached to a terminal** and prints the
+   command above instead. A rule in a document lasts until someone in a hurry
+   forgets it; a check in the script does not. `DEPLOY_ATTACHED=1` overrides
+   it for a local rehearsal only. The GitHub workflow is unaffected — its
+   output is not a terminal.
+
+*Incident, 26 Sept 2026: a hand deploy of #312 started at 13:58Z and died
+when the SSH session reset during the pre-deploy backup. It had not reached
+the schema step, so production stayed on `7f2de67` — one step later and it
+would have been half-updated. It then sat unnoticed for about three hours,
+because the tool call driving it had timed out into the background and
+nothing was watching a log. The re-run at 16:49Z was started with
+`setsid nohup` and polled from its log; it passed. Nothing broke. The rule
+exists because the next one lands one step later.*
+
+---
+
 ## 12. A deploy step prints `[ok]` only when it has checked something
 
 CTO's ruling, 17 Sept 2026, proposed by the Core session the same day.
