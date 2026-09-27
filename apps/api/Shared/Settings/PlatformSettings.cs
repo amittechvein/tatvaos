@@ -50,6 +50,10 @@ public static class SettingKeys
     // gates, and a deploy must never open it.
     public const string PersonalSignupOpen = "personal.signup_open";
     public const string PersonalCodesPerHour = "personal.signup_codes_per_hour";
+    // Amit, 26 Sept 2026: at a plan limit, warn first. The operator always
+    // sees the warnings; this decides whether the organisation's own
+    // administrators see them too. OFF until the wording is approved.
+    public const string PlansWarnClients = "plans.warn_clients";
 
     public sealed record Def(string Key, string Section, string Label, bool Secret, string Help);
 
@@ -115,6 +119,10 @@ public static class SettingKeys
         new(PersonalCodesPerHour, "personal", "Signup SMS codes per hour (whole platform)", false,
             "A ceiling on SMS codes sent by /join across everyone, so the form cannot run up an SMS bill. "
             + "Empty means 200. Per number (3 an hour) and per address (10 an hour) are fixed in code."),
+        new(PlansWarnClients, "plans", "Show plan warnings to organisation administrators", false,
+            "true shows each organisation's administrators a notice when they use something their plan "
+            + "does not include, or pass a plan limit. Nothing is ever stopped. You always see the "
+            + "warnings on the organisation's page, whatever this says."),
     ];
 
     public static bool IsKnown(string key) => All.Any(d => d.Key == key);

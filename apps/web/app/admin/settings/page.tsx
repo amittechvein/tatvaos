@@ -54,6 +54,12 @@ const SECTIONS: { id: string; title: string; blurb: string }[] = [
       + 'organisation can see its own use on its TatvaOS AI page.',
   },
   {
+    id: 'plans',
+    title: 'Plans — warnings',
+    blurb: 'At a plan limit, TatvaOS warns and never stops anything. You always see the warnings on '
+      + 'each organisation’s page; this decides whether their administrators see them too.',
+  },
+  {
     id: 'mail',
     title: 'System email',
     blurb: 'OTP codes and invoices send as this address through our own mail server. '

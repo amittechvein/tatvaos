@@ -591,6 +591,12 @@ export interface RecordingListItem {
      *  of a generic line, never alongside one. */
     error: string | null;
   } | null;
+  /**
+   * Host only: whole days before THIS recording is deleted, which is the
+   * longest a link to it may last. Per recording, because a "keep" hold on
+   * one does not lengthen another. Absent for everybody else.
+   */
+  shareDaysLeft?: number | null;
 }
 
 export interface RecordingList {
@@ -650,6 +656,42 @@ export const SHARE_PURPOSE: Record<ShareLevel, string> = {
   public: 'For a recording that is genuinely meant to be published.',
 };
 
+/**
+ * One colour per level, least exposure to most, using the product's four
+ * status colours (tailwind.config: info, ok, warn, danger) rather than new
+ * ones. Amit, 26 Sept: the four options "not visible" in the dialog — white
+ * cards on a white pop-up. The colour is the level's, everywhere it appears
+ * (the choice, the existing share, the badge), so a red card always means
+ * "anyone on the internet".
+ *
+ * Literal class strings on purpose: Tailwind only generates what it can find
+ * spelled out in source.
+ */
+export const SHARE_TONE: Record<ShareLevel, {
+  /** Left stripe + tint for a card. */ card: string;
+  /** Icon / accent text. */ accent: string;
+  /** Small pill. */ badge: string;
+  /** Remix icon class. */ icon: string;
+  /** Short word for the pill. */ word: string;
+}> = {
+  organisation: {
+    card: 'border-l-4 border-l-info bg-info/5 dark:bg-info/10',
+    accent: 'text-info', badge: 'bg-info/15 text-info', icon: 'ri-building-4-line', word: 'Organisation',
+  },
+  named: {
+    card: 'border-l-4 border-l-ok bg-ok/5 dark:bg-ok/10',
+    accent: 'text-ok', badge: 'bg-ok/15 text-ok', icon: 'ri-user-shared-line', word: 'Named people',
+  },
+  password: {
+    card: 'border-l-4 border-l-warn bg-warn/5 dark:bg-warn/10',
+    accent: 'text-warn', badge: 'bg-warn/15 text-warn', icon: 'ri-lock-password-line', word: 'Password',
+  },
+  public: {
+    card: 'border-l-4 border-l-danger bg-danger/5 dark:bg-danger/10',
+    accent: 'text-danger', badge: 'bg-danger/15 text-danger', icon: 'ri-global-line', word: 'Public',
+  },
+};
+
 export interface ShareCapability {
   /**
    * The levels this organisation permits. 'public' is ABSENT unless an
@@ -693,8 +735,12 @@ export interface RecordingShare {
   id: string;
   recordingId: string;
   level: ShareLevel;
-  /** The full link to hand somebody. Null for the two levels that have no
-   *  link — those are reached by signing in, not by holding a URL. */
+  /**
+   * The full link to hand somebody. For 'password' and 'public' it carries
+   * the secret token. For 'organisation' and 'named' it is the recording's
+   * own page, which opens only after signing in as somebody the share covers
+   * — the same address the named people are emailed.
+   */
   url: string | null;
   hasPassword: boolean;
   /** Null only for the levels where expiry is optional; never null on
@@ -707,6 +753,43 @@ export interface RecordingShare {
   opens: number;
   createdAt: string;
   createdBy: string;
+  /** On a create or a change of people only: set when somebody named could
+   *  not be emailed. They still have access; the host should send the link. */
+  mailNote?: string | null;
+  /** Password links only: set while the link refuses everybody after ten
+   *  wrong passwords in an hour. Somebody has been guessing. */
+  passwordPausedUntil?: string | null;
+  /** Wrong passwords tried on this link in the last day. */
+  wrongPasswords24h: number;
+}
+
+/**
+ * One recording, opened for watching — the same shape whether the viewer was
+ * in the meeting, was given a share, or is holding a link.
+ */
+export interface RecordingViewing {
+  recordingId: string;
+  title: string;
+  mode: RecordingMode;
+  durationMs: number | null;
+  sizeBytes: number | null;
+  startedAt: string | null;
+  /** meeting = they were in it; share = organisation/named; link = password/public. */
+  via: 'meeting' | 'share' | 'link';
+  level: ShareLevel | null;
+  /** Links only: when it stops working. */
+  expiresAt: string | null;
+  /** Participants only: the way back to the meeting page. */
+  meetingId: string | null;
+  ticket: string;
+}
+
+/** A password link paused after too many wrong passwords. */
+export class SharePausedError extends Error {}
+
+/** A link that wants a password, or got the wrong one. */
+export class SharePasswordError extends Error {
+  constructor(message: string, readonly wrong: boolean) { super(message); }
 }
 
 export interface NewShare {
@@ -881,6 +964,12 @@ export const recordingApi = {
       method: 'PUT', body: JSON.stringify({ userIds }),
     }).then((r) => json<RecordingShare>(r, 'Could not change who this is shared with.')),
 
+  /** Open a recording by id, signed in: as a participant, or through an
+   *  organisation or named share. 404 means neither. */
+  view: (f: AuthedFetch, recordingId: string) =>
+    f(`/connect/recordings/${recordingId}/view`)
+      .then((r) => json<RecordingViewing>(r, 'That recording does not exist, or it has not been shared with you.')),
+
   notes: (f: AuthedFetch, meetingId: string) =>
     f(`/connect/meetings/${meetingId}/notes`)
       .then((r) => json<NotesPayload>(r, 'Could not load the notes.')),
@@ -888,6 +977,57 @@ export const recordingApi = {
   regenerate: (f: AuthedFetch, meetingId: string) =>
     f(`/connect/meetings/${meetingId}/notes/regenerate`, { method: 'POST' })
       .then((r) => { if (!r.ok) throw new Error('Could not ask for the notes again.'); }),
+};
+
+// ---------------------------------------------------------------------------
+//  A share LINK, opened with no session. Plain fetch, never authedFetch: the
+//  holder may have no account, and a stale session must not change what a
+//  link does.
+// ---------------------------------------------------------------------------
+export const sharedLinkApi = {
+  /**
+   * POST, so a password never sits in a URL — and so a chat app unfurling the
+   * link does not count as somebody opening it.
+   */
+  open: async (token: string, password?: string): Promise<RecordingViewing> => {
+    const r = await fetch(`${API}/connect/shared/${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: password ?? null }),
+    });
+    if (r.status === 401) {
+      const b = await r.json().catch(() => ({})) as { error?: string };
+      throw new SharePasswordError(b.error ?? 'This recording needs a password.', Boolean(b.error));
+    }
+    if (r.status === 429) {
+      const b = await r.json().catch(() => ({})) as { error?: string };
+      throw new SharePausedError(b.error ?? 'Too many attempts. Try again later.');
+    }
+    return json<RecordingViewing>(r, 'This link does not work. It may have expired or been stopped by the person who shared it.');
+  },
+
+  /** A fresh ticket for a playback in progress. Share tickets only. */
+  renew: async (ticket: string): Promise<string> => {
+    const r = await fetch(`${API}/connect/shared/renew`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticket }),
+    });
+    return (await json<{ ticket: string }>(r, 'This recording has stopped being shared.')).ticket;
+  },
+};
+
+// ---------------------------------------------------------------------------
+//  The organisation's switch for 'Anyone with the link'. Reading is open to
+//  anybody signed in; changing it is an administrator's (the server says so).
+// ---------------------------------------------------------------------------
+export const connectSettingsApi = {
+  get: (f: AuthedFetch) =>
+    f('/connect/settings')
+      .then((r) => json<{ allowPublicRecordingLinks: boolean }>(r, 'Could not load the Connect sharing setting.')),
+  set: (f: AuthedFetch, allowPublicRecordingLinks: boolean) =>
+    f('/connect/settings', { method: 'PUT', body: JSON.stringify({ allowPublicRecordingLinks }) })
+      .then((r) => json<{ allowPublicRecordingLinks: boolean }>(r, 'Could not change the Connect sharing setting.')),
 };
 
 // ---------------------------------------------------------------------------

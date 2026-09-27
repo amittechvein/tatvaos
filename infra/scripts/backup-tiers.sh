@@ -15,10 +15,22 @@
 #
 #    last 24 hours     every set               (one every 2 hours = 12)
 #    24 to 48 hours    one per 6-hour slot     (about 4)
-#    2 to 7 days       one per calendar day    (about 5)
-#    older than 7 days deleted
+#    2 to 8 days       one per calendar day    (about 6)
+#    older than 8 days deleted
 #
-#  About 21 sets. The age of a set is read from its NAME
+#  About 22 sets.
+#
+#  WHY 8 AND NOT 7 — "AT LEAST SEVEN DAYS", ALWAYS (Amit, 26 Sept 2026).
+#  Off-box backups cover seven days: that is Amit's decision. The first cut
+#  kept one set per day until it turned 7 days old. But the set kept for a
+#  day is that day's LAST one (23:30 when two-hourly), so the moment it
+#  reached 168 hours and was dropped, the oldest set left was the NEXT day's
+#  last — 144 hours old. Measured in Chennai on 26 Sept: 13 sets, oldest
+#  156 h, and falling to 6 days at each daily drop. Seven days was the
+#  ceiling, not the floor. Dropping at 8 days makes seven the floor: when a
+#  day's set goes at 192 h, the next day's is 168 h old. The oldest restore
+#  point is always between 7 and 8 days (backup-tiers-test.sh checks every
+#  run). The cost is one more set in the bucket. The age of a set is read from its NAME
 #  (YYYYmmdd-HHMMSS.tar.gz.enc, the stamp backup.sh gives it), not from the
 #  bucket's modification time, so the answer does not change if an object is
 #  ever copied or re-uploaded.
@@ -103,7 +115,7 @@ while IFS=$'\t' read -r name epoch d; do
         keep=1                                     # the floor, or the last day
     elif [ "$age" -lt $((48 * H)) ]; then
         [ -z "${slot6[$s]:-}" ] && keep=1 || keep=0
-    elif [ "$age" -lt $((7 * 24 * H)) ]; then
+    elif [ "$age" -lt $((8 * 24 * H)) ]; then   # 8, not 7: see "WHY 8 AND NOT 7"
         [ -z "${day[$d]:-}" ] && keep=1 || keep=0
     else
         keep=0

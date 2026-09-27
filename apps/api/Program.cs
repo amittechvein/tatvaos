@@ -720,6 +720,26 @@ builder.Services.AddRateLimiter(o =>
                 QueueLimit = 0,
             });
     });
+
+    // Connect recording share LINKS (Connect lane, 26 Sept 2026). Tighter than
+    // the meeting door's 60: this is where a share password is guessed, and a
+    // share password may be as short as four characters. 20 a minute is still
+    // more than a person opening a link and renewing a playback ever needs.
+    // Rightmost X-Forwarded-For, like every limiter here.
+    o.AddPolicy("connect-shared-links", httpContext =>
+    {
+        var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();
+        var client = string.IsNullOrEmpty(xff)
+            ? httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"
+            : xff.Split(',')[^1].Trim();
+        return RateLimitPartition.GetFixedWindowLimiter($"connect-shared:{client}",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 20,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            });
+    });
 });
 
 // Translates message bodies through a translator in our own stack. OFF
@@ -884,6 +904,7 @@ app.MapOrgAiEndpoints();
 // The operator's read of an organisation's AI use (the limits are settings).
 app.MapOrgAiUsageEndpoints();
 app.MapOrganisationDetailEndpoints();
+app.MapPlanFeatureEndpoints();
 // Calendar. Recurrence is expanded at read time, never stored — see
 // Modules/Calendar/Recurrence.cs.
 app.MapCalendarEndpoints();
