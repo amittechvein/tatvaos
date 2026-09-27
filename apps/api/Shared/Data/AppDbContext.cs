@@ -102,6 +102,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<ConnectCapacityRefusal> ConnectCapacityRefusals => Set<ConnectCapacityRefusal>();
     /// <summary>Platform-wide: an address is held across every tenant.</summary>
     public DbSet<AddressHold> AddressHolds => Set<AddressHold>();
+    public DbSet<TatvaOS.Api.Shared.Mail.RetiredAddress> RetiredAddresses => Set<TatvaOS.Api.Shared.Mail.RetiredAddress>();
     public DbSet<PurgeLeftover> PurgeLeftovers => Set<PurgeLeftover>();
 
     // ---- mail ----
@@ -266,6 +267,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<AddressHold>().ToTable("address_holds", "core");
         b.Entity<AddressHold>().HasKey(h => h.Address);
         b.Entity<PurgeLeftover>().ToTable("personal_purge_leftovers", "core");
+        // Written by triggers too; the id is the database's.
+        b.Entity<TatvaOS.Api.Shared.Mail.RetiredAddress>().ToTable("retired_addresses", "core")
+            .Property(r => r.Id).ValueGeneratedOnAdd();
         // Declared so EF orders the INSERTs: the user and this row are saved
         // in one SaveChanges, and an undeclared FK lets EF write this first.
         b.Entity<PersonalAccount>().HasOne<User>().WithOne()

@@ -116,6 +116,15 @@ BEGIN
          WHERE m.tenant_id = v_tenant AND m.created_by_user_id = p_user AND r.file_name IS NOT NULL;
     RETURN QUERY SELECT 'maildir'::text, v_email::text;
 
+    -- The address, retired (§8; 20260927-retired-addresses.sql) BEFORE the
+    -- mailbox row goes, so this row — with its 90-day floor — is the one the
+    -- delete trigger finds. Released only by an operator, with a reason,
+    -- once the mail server has counted zero files for it.
+    INSERT INTO core.retired_addresses (address, tenant_id, source, not_before)
+    VALUES (v_email, v_tenant, 'personal_deleted', now() + interval '90 days')
+    ON CONFLICT (address) WHERE released_at IS NULL
+    DO UPDATE SET source = 'personal_deleted', not_before = EXCLUDED.not_before;
+
     DELETE FROM space.files   WHERE tenant_id = v_tenant AND owner_user_id = p_user;
     DELETE FROM space.folders WHERE tenant_id = v_tenant AND owner_user_id = p_user;
     DELETE FROM connect.meetings WHERE tenant_id = v_tenant AND created_by_user_id = p_user;
@@ -124,12 +133,6 @@ BEGIN
     DELETE FROM mail.mailboxes WHERE tenant_id = v_tenant AND user_id = p_user;
     DELETE FROM core.users WHERE id = p_user;
 
-    -- The address, held (§8). 90 days from now; never released while a
-    -- maildir leftover for it exists (PersonalLifecycle checks before it lets
-    -- IsTakenAsync see it as free).
-    INSERT INTO core.address_holds (address, held_until, reason)
-    VALUES (v_email, now() + interval '90 days', 'deleted personal account')
-    ON CONFLICT (address) DO UPDATE SET held_until = EXCLUDED.held_until, reason = EXCLUDED.reason;
 END $$;
 REVOKE ALL ON FUNCTION core.purge_personal_account(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION core.purge_personal_account(uuid) TO tatvaos_app;

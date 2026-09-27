@@ -14,7 +14,8 @@
 #      mailbox and messages, Space files AND their blobs on disk (the maildir
 #      is QUEUED for the mail server's job, infra/scripts/maildir-removals.sh), contacts, meetings they hosted — while the AI trial record
 #      stays (one per phone, ever) and the audit row is written
-#   3. The address is held 90 days, then free; and held BEYOND that while a
+#   3. The address is RETIRED (core.retired_addresses): at least 90 days, then
+#      until an OPERATOR releases it with a reason; and never while a
 #      maildir leftover exists (calibrated: the job's tool "succeeds", files stay)
 #   4. Inactive: 12 months → warning, +30 days → second warning, +90 days from
 #      the first → deleted; signing in after a warning clears it (calibrated)
@@ -196,9 +197,12 @@ same "A cannot sign in" "$(status "$(req POST /api/auth/login "" "{\"email\":\"$
 
 step "3. The address is held (§8), and never while its old mail may be on disk"
 same "held: A's address is not available" "$(available "$A_NAME")" "False"
-same "for 90 days" "$(PG "SELECT (held_until BETWEEN now()+interval '89 days' AND now()+interval '90 days 1 minute')::text FROM core.address_holds WHERE address='$A_ADDR'")" "true"
-PG "UPDATE core.address_holds SET held_until=now()-interval '1 minute' WHERE address='$A_ADDR'" >/dev/null
-same "day 90: free again" "$(available "$A_NAME")" "True"
+same "retired by the purge, with a 90-day floor" "$(PG "SELECT source||'|'||(not_before BETWEEN now()+interval '89 days' AND now()+interval '90 days 1 minute')::text FROM core.retired_addresses WHERE address='$A_ADDR' AND released_at IS NULL")" "personal_deleted|true"
+PG "UPDATE core.retired_addresses SET not_before=now()-interval '1 minute' WHERE address='$A_ADDR' AND released_at IS NULL" >/dev/null
+same "day 90: STILL held — nothing frees an address by itself any more" "$(available "$A_NAME")" "False"
+A_RID=$(PG "SELECT id FROM core.retired_addresses WHERE address='$A_ADDR' AND released_at IS NULL")
+same "the operator releases it, with a reason (the job counted zero earlier)" "$(status "$(req POST "/api/admin/retired-addresses/$A_RID/release" "$OP" '{"reason":"lifecycle test"}')")" "200"
+same "…and now it is free" "$(available "$A_NAME")" "True"
 
 # ---------------------------------------------------------------------------
 step "4. Inactive (§8): 12 months, two warnings, deleted 90 days after the first"
@@ -262,7 +266,7 @@ same "delete with the address typed back: scheduled" "$(status "$r")" "200"
 run_pass
 same "C is gone at the next pass" "$(PG "SELECT count(*) FROM core.users WHERE id='$C_ID'")" "0"
 same "the maildir it could not delete is recorded" "$(PG "SELECT count(*) FROM core.personal_purge_leftovers WHERE kind='maildir' AND address='$C_ADDR'")" "1"
-PG "UPDATE core.address_holds SET held_until=now()-interval '1 minute' WHERE address='$C_ADDR'" >/dev/null
+PG "UPDATE core.retired_addresses SET not_before=now()-interval '1 minute' WHERE address='$C_ADDR' AND released_at IS NULL" >/dev/null
 same "past its 90 days, the address is STILL held (the old mail may be on disk)" "$(available "$C_NAME")" "False"
 run_pass
 same "an API pass does not retry a maildir (it is the mail server's)" "$(PG "SELECT count(*) FROM core.personal_purge_leftovers WHERE address='$C_ADDR'")|$(find "$VMAIL/personal.local/$C_NAME" -type f | wc -l | tr -d ' ')" "1|1"
@@ -272,7 +276,10 @@ mr_job >/dev/null
 same "the next job pass removes it" "$(PG "SELECT count(*) FROM core.personal_purge_leftovers WHERE address='$C_ADDR'")" "0"
 # doveadm expunge empties the folders and leaves them; message files are what count.
 same "…no message file left on disk" "$(find "$VMAIL/personal.local/$C_NAME" -type f 2>/dev/null | wc -l | tr -d ' ')" "0"
-same "…and only then is the address free" "$(available "$C_NAME")" "True"
+C_RID=$(PG "SELECT id FROM core.retired_addresses WHERE address='$C_ADDR' AND released_at IS NULL")
+same "…the job wrote its zero count on the retired row" "$(PG "SELECT files_left FROM core.retired_addresses WHERE id=$C_RID")" "0"
+same "…and only then can an operator release it" "$(status "$(req POST "/api/admin/retired-addresses/$C_RID/release" "$OP" '{"reason":"lifecycle test"}')")" "200"
+same "…free" "$(available "$C_NAME")" "True"
 
 # ---------------------------------------------------------------------------
 step "7. Organisations untouched"

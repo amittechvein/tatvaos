@@ -167,6 +167,8 @@ export function platformNav(): NavSection[] {
           children: [
             { href: '/admin/personal', label: 'All personal accounts' },
             { href: '/admin/reserved-names', label: 'Reserved names' },
+            // Every retired address, organisation and personal; the only place one is released.
+            { href: '/admin/retired-addresses', label: 'Retired addresses' },
           ],
         },
         { href: '/admin/storage', label: 'Storage', icon: <Icon d={PATHS.database} /> },

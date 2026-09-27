@@ -246,6 +246,14 @@ public static class DomainEndpoints
                         "deleting the domain would delete their mail.",
             });
 
+        // Its aliases go with it (ON DELETE CASCADE). Retired first, as
+        // "domain_removed" — the delete trigger would write them anyway, as
+        // "alias_deleted", but the console should say why.
+        var aliasAddresses = await db.Aliases.IgnoreQueryFilters()
+            .Where(a => a.DomainId == id).Select(a => a.Address).ToListAsync(ct);
+        foreach (var address in aliasAddresses)
+            await RetiredAddresses.RetireAsync(db, address, d.TenantId, "domain_removed", null, ct);
+
         db.Domains.Remove(d);
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("domain.removed", "domain", id.ToString(),

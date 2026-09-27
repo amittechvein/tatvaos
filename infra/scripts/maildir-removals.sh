@@ -24,7 +24,7 @@
 #    1. checks, in the database, that it is safe to touch:
 #         - the address has the strict shape of one (no path characters)
 #         - NO mailbox row has that address any more   (never a live mailbox)
-#         - it is HELD in core.address_holds            (only what a purge queued)
+#         - it is HELD in core.retired_addresses        (retired, not released)
 #         - its domain belongs to the personal house    (never an organisation)
 #       Any check failing: the row is left, and the reason logged. Never guessed.
 #    2. runs, INSIDE the running Dovecot container, as vmail, for that one user:
@@ -33,9 +33,16 @@
 #       works after the account's rows are gone. The command is given the
 #       address and nothing else.
 #    3. counts the message files still under that address's maildir
-#       (cur/, new/, tmp/). Zero → deletes the leftover row, which is what
-#       lets the address's hold end on its date. Not zero → leaves the row,
-#       logs the count; the next pass tries again.
+#       (cur/, new/, tmp/), and writes the count on the address's row in
+#       core.retired_addresses — the count the operator console's release
+#       requires to be zero. Zero → also deletes the leftover row. Not zero →
+#       leaves it, logs the count; the next pass tries again.
+#
+#  THE COUNT-ONLY PASS (the retired-addresses PR). Every other retired address
+#  — an organisation's, a personal one already cleared — with no mailbox or
+#  alias row left and no zero count yet is COUNTED, never expunged: an
+#  organisation's mail is the organisation's, and nothing here deletes it. The
+#  count is what lets an operator release the address, and only at zero.
 #
 #  No network use of its own: it talks to two local containers through the
 #  Docker CLI on this host. It needs no secret — psql runs as postgres inside
@@ -133,7 +140,7 @@ mapfile -t QUEUE < <(sql -v n="$BATCH" <<'SQL' | tr -d '\r'
 SELECT id || '|' || ref FROM core.personal_purge_leftovers WHERE kind = 'maildir' ORDER BY id LIMIT :n;
 SQL
 )
-[ "${#QUEUE[@]}" -eq 0 ] && { say "nothing queued"; exit 0; }
+if [ "${#QUEUE[@]}" -eq 0 ]; then say "nothing queued"; else
 say "${#QUEUE[@]} address(es) queued$([ $DRY = 1 ] && echo ' (dry run)')"
 
 done_n=0; left_n=0; refused_n=0
@@ -150,7 +157,8 @@ for row in "${QUEUE[@]}"; do
     why=$(sql -v a="$addr" <<'SQL'
 SELECT CASE
   WHEN EXISTS (SELECT 1 FROM mail.mailboxes WHERE address = :'a')        THEN 'a mailbox with this address EXISTS'
-  WHEN NOT EXISTS (SELECT 1 FROM core.address_holds WHERE address = :'a') THEN 'not held by a purge'
+  WHEN NOT EXISTS (SELECT 1 FROM core.retired_addresses WHERE address = :'a' AND released_at IS NULL)
+                                                                         THEN 'not held (not in core.retired_addresses)'
   WHEN NOT EXISTS (SELECT 1 FROM core.domains d JOIN core.tenants t ON t.id = d.tenant_id
                     WHERE t.kind = 'personal_house'
                       AND lower(d.fqdn::text) = lower(split_part(:'a', '@', 2)))
@@ -174,17 +182,53 @@ SQL
     # 3. Seen gone → the row goes, and with it the hold's last reason.
     n=$(count_files "$addr" | tr -d '\r[:space:]')
     if [ "$n" = "0" ]; then
-        sql -v i="$id" <<'SQL' >/dev/null
+        sql -v i="$id" -v a="$addr" <<'SQL' >/dev/null
 DELETE FROM core.personal_purge_leftovers WHERE kind = 'maildir' AND id = :i;
+UPDATE core.retired_addresses SET files_left = 0, files_checked_at = now()
+ WHERE address = :'a' AND released_at IS NULL;
 SQL
         say "done [$addr]: no message files remain; its hold now ends on its date"
         done_n=$((done_n+1))
     else
-        sql -v i="$id" -v e="${n:-?} message file(s) remain after doveadm" <<'SQL' >/dev/null
+        sql -v i="$id" -v e="${n:-?} message file(s) remain after doveadm" -v a="$addr" -v n="${n:-}" <<'SQL' >/dev/null
 UPDATE core.personal_purge_leftovers SET attempts = attempts + 1, last_error = :'e' WHERE kind = 'maildir' AND id = :i;
+UPDATE core.retired_addresses SET files_left = NULLIF(:'n', '?')::int, files_checked_at = now()
+ WHERE address = :'a' AND released_at IS NULL AND :'n' ~ '^[0-9]+$';
 SQL
         say "NOT DONE [$addr]: ${n:-?} message file(s) remain; the address stays held"
         left_n=$((left_n+1))
     fi
 done
 say "pass finished: done=$done_n not_done=$left_n refused=$refused_n"
+fi
+
+# ---- The count-only pass: every other retired address --------------------------
+#  Counted, NEVER expunged. Oldest count first, so a large backlog rotates.
+mapfile -t TOCOUNT < <(sql -v n="$BATCH" <<'SQL' | tr -d '\r'
+SELECT r.id || '|' || r.address
+  FROM core.retired_addresses r
+ WHERE r.released_at IS NULL
+   AND (r.files_checked_at IS NULL OR r.files_left IS DISTINCT FROM 0)
+   AND NOT EXISTS (SELECT 1 FROM mail.mailboxes m WHERE m.address = r.address)
+   AND NOT EXISTS (SELECT 1 FROM mail.aliases  a WHERE a.address = r.address)
+   AND NOT EXISTS (SELECT 1 FROM core.personal_purge_leftovers l
+                    WHERE l.kind = 'maildir' AND l.ref = r.address::text)
+ ORDER BY r.files_checked_at NULLS FIRST, r.id
+ LIMIT :n;
+SQL
+)
+counted=0
+for row in "${TOCOUNT[@]}"; do
+    id="${row%%|*}"; addr="${row#*|}"
+    if ! one_address "$addr"; then say "COUNT REFUSED [$addr] (retired $id): not one plain address"; continue; fi
+    n=$(count_files "$addr" | tr -d '\r[:space:]')
+    if ! printf '%s' "$n" | grep -Eq '^[0-9]+$'; then say "COULD NOT COUNT [$addr]: the address stays held"; continue; fi
+    if [ $DRY = 1 ]; then say "would record [$addr]: $n message file(s)"; continue; fi
+    sql -v i="$id" -v n="$n" <<'SQL' >/dev/null
+UPDATE core.retired_addresses SET files_left = :n, files_checked_at = now() WHERE id = :i AND released_at IS NULL;
+SQL
+    counted=$((counted+1))
+    say "counted [$addr]: $n message file(s)$([ "$n" = 0 ] && echo ' — an operator may now release it')"
+done
+[ "${#TOCOUNT[@]}" -gt 0 ] && say "count pass finished: counted=$counted of ${#TOCOUNT[@]}"
+exit 0
