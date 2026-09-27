@@ -69,6 +69,9 @@ export default function JoinPage() {
   // Step 4 — password and terms
   const [password, setPassword] = useState('');
   const [recovery, setRecovery] = useState('');
+  // The number already signs in to a work account, so it cannot also recover
+  // this one (Mr. Singh on PR 311). Known only after the code is verified.
+  const [numberOnWorkAccount, setNumberOnWorkAccount] = useState(false);
   const [terms, setTerms] = useState(false);
   const [privacy, setPrivacy] = useState(false);
 
@@ -177,6 +180,7 @@ export default function JoinPage() {
         const left = typeof b.attemptsLeft === 'number' ? ` ${b.attemptsLeft} tries left.` : '';
         throw new Error(errOf(b, 'That code did not work.') + left);
       }
+      setNumberOnWorkAccount(b.numberOnWorkAccount === true);
       setStep(3);
     } catch (e) {
       setError((e as Error).message);
@@ -284,7 +288,7 @@ export default function JoinPage() {
                      autoComplete="name" maxLength={100} onChange={(e) => setDisplayName(e.target.value)} />
             )}
           </Field>
-          <Field label="Date of birth" required hint="Used only to check your age. We don't keep it.">
+          <Field label="Date of birth" required hint="Used only to check that you're 18 or older. We don't store your date of birth.">
             {({ id, invalid, describedBy }) => (
               <Input id={id} invalid={invalid} describedBy={describedBy} type="date" max={today}
                      value={dob} autoComplete="bday" onChange={(e) => setDob(e.target.value)} />
@@ -348,6 +352,11 @@ export default function JoinPage() {
             )}
           </Field>
           <PasswordStrength value={password} />
+          {numberOnWorkAccount && (
+            <Alert tone="warn" className="mt-4">
+              This number is already used for sign-in on a work account, so it can't recover this one. Add a recovery email.
+            </Alert>
+          )}
           <Field label="Recovery email" className="mt-4"
                  hint="Optional, recommended: another address you can read, for when you're locked out. We'll send it a link to confirm.">
             {({ id, invalid, describedBy }) => (

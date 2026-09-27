@@ -62,7 +62,15 @@ public sealed class ConnectDownloadTicket(IConfiguration config)
         config["Jwt:SigningKey"] ?? throw new InvalidOperationException(
             "Jwt:SigningKey is required to sign recording downloads."));
 
-    public sealed record Claim(Guid TenantId, Guid MeetingId, Guid RecordingId, Guid UserId);
+    /// <param name="UserId">Guid.Empty for somebody holding a share LINK, who
+    /// has no account to name.</param>
+    /// <param name="ShareId">Null when the reader was in the meeting — the
+    /// baseline, re-checked as a participant. Set when a SHARE let them in, and
+    /// then the file route re-checks that share instead, on every request:
+    /// revoking it, or an administrator switching public links off, must stop
+    /// a playback in progress rather than five minutes later.</param>
+    public sealed record Claim(Guid TenantId, Guid MeetingId, Guid RecordingId, Guid UserId,
+        Guid? ShareId = null);
 
     public string Issue(Claim claim)
     {
@@ -72,6 +80,7 @@ public sealed class ConnectDownloadTicket(IConfiguration config)
             M = claim.MeetingId,
             R = claim.RecordingId,
             U = claim.UserId,
+            S = claim.ShareId,
             E = DateTimeOffset.UtcNow.Add(Life).ToUnixTimeSeconds(),
         });
 
@@ -79,7 +88,10 @@ public sealed class ConnectDownloadTicket(IConfiguration config)
         return $"{body}.{ToBase64Url(Sign(body))}";
     }
 
-    public Claim? Verify(string? ticket)
+    /// <param name="grace">How long past expiry to still accept it. Only for
+    /// RENEWING a share reader's ticket mid-playback, where the share itself is
+    /// re-checked before anything new is issued; never for reading a file.</param>
+    public Claim? Verify(string? ticket, TimeSpan? grace = null)
     {
         if (string.IsNullOrWhiteSpace(ticket)) return null;
 
@@ -102,10 +114,11 @@ public sealed class ConnectDownloadTicket(IConfiguration config)
 
         // Signature checked BEFORE expiry, and expiry before anything is
         // returned: an unsigned payload's expiry claim is worth nothing.
-        if (DateTimeOffset.UtcNow.ToUnixTimeSeconds() > parsed.E) return null;
+        var slack = (long)(grace ?? TimeSpan.Zero).TotalSeconds;
+        if (DateTimeOffset.UtcNow.ToUnixTimeSeconds() > parsed.E + slack) return null;
         if (parsed.T == Guid.Empty || parsed.M == Guid.Empty || parsed.R == Guid.Empty) return null;
 
-        return new Claim(parsed.T, parsed.M, parsed.R, parsed.U);
+        return new Claim(parsed.T, parsed.M, parsed.R, parsed.U, parsed.S);
     }
 
     private byte[] Sign(string body)
@@ -133,6 +146,11 @@ public sealed class ConnectDownloadTicket(IConfiguration config)
         public Guid M { get; set; }
         public Guid R { get; set; }
         public Guid U { get; set; }
+        // Absent from every ticket minted before sharing existed, which then
+        // reads as null — a participant's ticket — exactly as it was issued.
+        [System.Text.Json.Serialization.JsonIgnore(Condition =
+            System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public Guid? S { get; set; }
         public long E { get; set; }
     }
 }

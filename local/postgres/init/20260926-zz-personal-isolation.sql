@@ -117,6 +117,29 @@ DROP TRIGGER IF EXISTS trg_house_no_delegation ON mail.mailbox_permissions;
 CREATE TRIGGER trg_house_no_delegation BEFORE INSERT ON mail.mailbox_permissions
     FOR EACH ROW EXECUTE FUNCTION mail.refuse_delegation_in_personal_house();
 
+-- ---- 3. Only the employee role exists in the house --------------------------
+--  Mr. Singh on PR 314 (27 Sept 2026): an admin in the house would defeat the
+--  isolation — Space's and Mail's own admin checks read the role from the
+--  database and would grant powers over other personal accounts' things. So
+--  the database makes it impossible, whatever path asks: a sign-up, an
+--  operator slip, a raw UPDATE. Organisations are untouched (the WHEN clause
+--  means they never even call the function).
+CREATE OR REPLACE FUNCTION core.refuse_non_employee_in_personal_house() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM core.tenants WHERE id = NEW.tenant_id AND kind = 'personal_house') THEN
+        RAISE EXCEPTION 'personal accounts: the role % is not available in the personal house; only employee is', NEW.role
+            USING ERRCODE = 'check_violation',
+                  HINT = 'An admin in the house would defeat the isolation (Mr. Singh, PR 314).';
+    END IF;
+    RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_house_employees_only ON core.users;
+CREATE TRIGGER trg_house_employees_only BEFORE INSERT OR UPDATE OF role, tenant_id ON core.users
+    FOR EACH ROW WHEN (NEW.role IS DISTINCT FROM 'employee')
+    EXECUTE FUNCTION core.refuse_non_employee_in_personal_house();
+
 -- Report what is here, rather than assert what should be. Any count above zero
 -- predates this file and needs a person to look at it.
 DO $$
@@ -135,4 +158,6 @@ BEGIN
          + (SELECT count(*) FROM calendar.calendars WHERE tenant_id = house AND kind IN ('organisation','resource'))
       INTO n;
     RAISE NOTICE 'personal isolation: triggers armed; % organisation-wide row(s) already in the house.', n;
+    SELECT count(*) INTO n FROM core.users WHERE tenant_id = house AND role <> 'employee';
+    RAISE NOTICE 'personal isolation: % account(s) in the house with a role other than employee (must be 0).', n;
 END $$;

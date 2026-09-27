@@ -52,6 +52,9 @@ interface AiCreditsState {
   used: number;
   percent: number;
   byFeature: { feature: string; credits: number }[];
+  /** Plan or override before this month's top-ups; top-up credits added this month. */
+  base?: number | null;
+  topUp?: number;
 }
 
 interface MailFeatureFlags {
@@ -441,6 +444,10 @@ function CreditsCard({ credits: c }: { credits: AiCreditsState }) {
         ? `From your ${c.planName} plan: ${c.perUser != null ? fmt(c.perUser) : '—'} per user × ${c.users ?? 0} users, shared.`
         : `From your ${c.planName} plan, shared by everyone in the organisation.`
       : 'Your plan does not set an AI credit limit.';
+  // Top-ups are extra credits for this month only, on top of the plan.
+  const topUpLine = (c.topUp ?? 0) > 0 && c.base != null
+    ? ` Includes ${fmt(c.topUp ?? 0)} top-up credits added this month (they end with the month) on top of ${fmt(c.base)}.`
+    : '';
   return (
     <Card title="AI credits this month" subtitle="One credit is one AI action — Help me write 1, a suggestion 1, a summary 2, sorting one email 1, meeting minutes 5">
       {c.allowance === null ? (
@@ -464,7 +471,7 @@ function CreditsCard({ credits: c }: { credits: AiCreditsState }) {
         </p>
       )}
       <p className="mb-0 text-[0.75rem] text-ink-muted">
-        {where} Administrators are emailed at 80% and 100%. Turning a feature off above stops it spending credits.
+        {where}{topUpLine} Administrators are emailed at 80% and 100%. Turning a feature off above stops it spending credits.
       </p>
     </Card>
   );

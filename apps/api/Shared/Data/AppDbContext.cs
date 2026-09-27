@@ -213,6 +213,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<AiUsage> AiUsage => Set<AiUsage>();
     public DbSet<AiUsageAlert> AiUsageAlerts => Set<AiUsageAlert>();
     public DbSet<AiCreditAlert> AiCreditAlerts => Set<AiCreditAlert>();
+    public DbSet<AiCreditTopup> AiCreditTopups => Set<AiCreditTopup>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -363,7 +364,18 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         // of throws, it does not invent a table.
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingShare>().ToTable("recording_shares", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingShareGrant>().ToTable("recording_share_grants", "connect");
+        // Declared so EF inserts the share BEFORE its grants. Without it EF
+        // knows of no dependency between the two and ordered the grant first:
+        // the first named share ever made failed on
+        // recording_share_grants_share_id_fkey (26 Sept, §3 case 7). No
+        // navigation property — the relationship exists only to order writes.
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingShareGrant>()
+            .HasOne<TatvaOS.Api.Modules.Connect.ConnectRecordingShare>()
+            .WithMany()
+            .HasForeignKey(g => g.ShareId)
+            .OnDelete(DeleteBehavior.NoAction);
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingAccess>().ToTable("recording_access_log", "connect");
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingSharePasswordFailure>().ToTable("recording_share_password_failures", "connect");
         // HasKey IS NOT OPTIONAL HERE, and leaving it out took production
         // down on 9 September. This entity's key is TenantId; EF's convention
         // only recognises `Id` or `ConnectTenantSettingsId`, so it found no
@@ -492,6 +504,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         // Products and Plans are platform-wide catalogue data.
         b.Entity<Domain>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<User>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        // No RLS on core.personal_accounts (like core.users). Exactly two reads
+        // bypass this filter, both the platform-wide "one personal account per
+        // number": JoinEndpoints.StartAsync and JoinEndpoints.CompleteAsync.
         b.Entity<PersonalAccount>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Department>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<ProductAccess>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
@@ -911,6 +926,15 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
 
         // AI credit warnings (26 Sept 2026): same shape and filter as the token
         // warnings below, their own table so the two can never collide.
+        // AI credit top-ups (26 Sept 2026): tenant-filtered like every AI table.
+        b.Entity<AiCreditTopup>(e =>
+        {
+            e.ToTable("ai_credit_topups", "core");
+            e.HasQueryFilter(t => t.TenantId == tenant.TenantId);
+            e.HasOne<Tenant>().WithMany()
+                .HasForeignKey(t => t.TenantId).OnDelete(DeleteBehavior.Cascade);
+        });
+
         b.Entity<AiCreditAlert>(e =>
         {
             e.ToTable("ai_credit_alerts", "core");
