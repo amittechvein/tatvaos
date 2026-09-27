@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Centre, initialOf } from './RoomChrome';
+import { useSelfPhoto } from '@/components/ui/UserPhoto';
 
 // ============================================================================
 //  The pre-join screen — see yourself before anybody else does.
@@ -33,12 +34,19 @@ export interface JoinPrefs {
   camId?: string;
 }
 
-export default function PreJoin({ title, name, onJoin }: {
+export default function PreJoin({ title, name, onJoin, awaitingHost = false }: {
   title: string;
+  /**
+   * The host has not let this person in yet. Join still works — it moves to
+   * the waiting screen with these choices, and admission then opens the
+   * meeting directly — so the person is told that here, before pressing it.
+   */
+  awaitingHost?: boolean;
   /** Shown on the placeholder tile when the camera is off or denied. */
   name: string;
   onJoin: (prefs: JoinPrefs) => void;
 }) {
+  const selfPhoto = useSelfPhoto();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -199,7 +207,12 @@ export default function PreJoin({ title, name, onJoin }: {
             <video ref={videoRef} autoPlay playsInline muted className="cx-preview-video" />
           ) : (
             <div className="cx-preview-off">
-              <div className="cx-initial">{initialOf(name)}</div>
+              {/* You, before you join: your photo if you have one (a guest has
+                  no account, so useSelfPhoto gives null and the initial stays). */}
+              <div className="cx-initial">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                {selfPhoto ? <img className="cx-photo" src={selfPhoto} alt="" /> : initialOf(name)}
+              </div>
             </div>
           )}
           <div className="cx-meter" title="Microphone level" aria-hidden="true">
@@ -259,6 +272,11 @@ export default function PreJoin({ title, name, onJoin }: {
         )}
 
         <button type="button" className="cx-cta" onClick={join}>Join now</button>
+        {awaitingHost && (
+          <p className="cx-sub" style={{ marginTop: 10, marginBottom: 0, textAlign: 'center' }}>
+            The host will let you in. You will join the moment they do.
+          </p>
+        )}
       </div>
     </Centre>
   );

@@ -145,7 +145,23 @@ public static class MailSender
         //  client picks from; attachments make it multipart/mixed around that.
         //  MimeKit assembles the right structure from what we set here.
         var builder = new BodyBuilder();
-        if (!string.IsNullOrWhiteSpace(s.BodyHtml)) builder.HtmlBody = s.BodyHtml;
+        if (!string.IsNullOrWhiteSpace(s.BodyHtml))
+        {
+            // Pictures in the body go out as inline attachments (cid:), not as
+            // data: URIs, which Gmail does not show and Outlook blocks. With
+            // any LinkedResources, MimeKit wraps the HTML in multipart/related.
+            // See OutgoingInlineImages for why this exists.
+            var (html, inline) = OutgoingInlineImages.Extract(
+                s.BodyHtml, box.Address[(box.Address.IndexOf('@') + 1)..]);
+            builder.HtmlBody = html;
+            for (var i = 0; i < inline.Count; i++)
+            {
+                var img = inline[i];
+                var part = builder.LinkedResources.Add(
+                    img.FileName(i + 1), img.Bytes, new ContentType("image", img.Subtype));
+                part.ContentId = img.ContentId;
+            }
+        }
         if (!string.IsNullOrWhiteSpace(s.BodyText)) builder.TextBody = s.BodyText;
         else if (string.IsNullOrWhiteSpace(s.BodyHtml)) builder.TextBody = "";
 
