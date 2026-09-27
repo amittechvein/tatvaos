@@ -40,9 +40,18 @@ export interface CodeSentReply extends SentReply {
   devCode: string | null;
 }
 
+/**
+ * Decision 0009: an OWNER with two-step verification on must also give the
+ * code from their authenticator app to change their own recovery email. The
+ * server says so with `mfaRequired`; the card then asks for the code.
+ */
+export class MfaRequiredError extends Error {}
+
 async function readError(res: Response, fallback: string): Promise<string> {
   const body = await res.json().catch(() => ({}));
-  return typeof body.error === 'string' ? body.error : fallback;
+  const message = typeof body.error === 'string' ? body.error : fallback;
+  if (body.mfaRequired === true) throw new MfaRequiredError(message);
+  return message;
 }
 
 function post(body: unknown): RequestInit {
@@ -60,15 +69,19 @@ export async function fetchRecoveryStatus(authedFetch: AuthedFetch): Promise<Rec
 }
 
 export async function setRecoveryEmail(
-  authedFetch: AuthedFetch, email: string, currentPassword?: string,
+  authedFetch: AuthedFetch, email: string, currentPassword?: string, mfaCode?: string,
 ): Promise<SentReply> {
-  const res = await authedFetch('/auth/recovery-email', post({ email, currentPassword }));
+  const res = await authedFetch('/auth/recovery-email', post({ email, currentPassword, mfaCode: mfaCode || undefined }));
   if (!res.ok) throw new Error(await readError(res, 'Could not save that address.'));
   return res.json();
 }
 
-export async function removeRecoveryEmail(authedFetch: AuthedFetch, currentPassword: string): Promise<void> {
-  const res = await authedFetch('/auth/recovery-email', { ...post({ currentPassword }), method: 'DELETE' });
+export async function removeRecoveryEmail(
+  authedFetch: AuthedFetch, currentPassword: string, mfaCode?: string,
+): Promise<void> {
+  const res = await authedFetch('/auth/recovery-email', {
+    ...post({ currentPassword, mfaCode: mfaCode || undefined }), method: 'DELETE',
+  });
   if (!res.ok) throw new Error(await readError(res, 'Could not remove the recovery email.'));
 }
 
