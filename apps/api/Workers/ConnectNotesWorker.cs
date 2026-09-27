@@ -532,6 +532,21 @@ public sealed class ConnectNotesWorker(
                 .Where(m => m.Id == meetingId).FirstOrDefaultAsync(ct);
             if (meeting is null) continue;
 
+            // The personal house (build plan D2, D3): there is no organisation
+            // whose consent covers this meeting. The HOST's own AI switch and
+            // the HOST's plan decide, so the work is done on the host's
+            // behalf — the AI gateway reads both from this scope, and the
+            // usage row names the host. An organisation's meetings are
+            // unchanged (anonymous "system" scope, the organisation's consent).
+            // (No host on record = nobody to act for: the scope stays
+            // anonymous, and the gateway refuses, fail-closed.)
+            if (meeting.CreatedByUserId is Guid host
+                && await TatvaOS.Api.Modules.Personal.PersonalHouse.IsHouseTenantAsync(db, tenantId, ct))
+            {
+                tenant.Set(tenantId, host, "system");
+                await db.SyncTenantAsync(ct);
+            }
+
             var transcripts = await db.ConnectTranscripts.AsNoTracking()
                 .Where(t => t.MeetingId == meetingId && t.Status == "ready")
                 .OrderBy(t => t.CreatedAt)
