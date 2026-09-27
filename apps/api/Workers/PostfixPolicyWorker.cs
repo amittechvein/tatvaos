@@ -254,11 +254,15 @@ public sealed class PostfixPolicyWorker(
             if (used + Math.Max(0, size) <= quota)
                 return Dunno;
 
+            // A personal account's full mailbox is refused PERMANENTLY (552);
+            // an organisation's is deferred (452), as before (Mr. Singh on
+            // PR 318, 27 Sept 2026).
+            var personal = await TatvaOS.Api.Modules.Personal.PersonalHouse.IsHouseTenantAsync(db, mailbox.TenantId, ct);
             return Map(
                 new StorageAllocator.AcceptResult(
                     StorageAllocator.AcceptDecision.Full,
                     $"person over allowance: {used} + {Math.Max(0, size)} > {quota} bytes"),
-                address);
+                address, personal);
         }
         catch (Exception ex)
         {
@@ -341,7 +345,11 @@ public sealed class PostfixPolicyWorker(
     /// Decision to wire response. The mapping is Core's, recorded in
     /// StorageAllocator.AcceptDecision — read that before changing anything here.
     /// </summary>
-    private string Map(StorageAllocator.AcceptResult result, string address)
+    /// <summary>What a sender's server is told when a personal account is full (wording: Mr. Singh, then Amit).</summary>
+    public const string PersonalFullReply =
+        "552 5.2.2 The recipient's mailbox is full and cannot accept new mail";
+
+    private string Map(StorageAllocator.AcceptResult result, string address, bool personal = false)
     {
         switch (result.Decision)
         {
@@ -360,10 +368,21 @@ public sealed class PostfixPolicyWorker(
                     log.LogInformation("would-defer {Address}: {Detail}", address, result.Detail);
                     return Dunno;
                 }
+                if (personal)
+                {
+                    // A PERSONAL account over its plan: refused permanently
+                    // (Mr. Singh on PR 318). A deferral makes the sender's
+                    // server retry for days and then bounce with a confusing
+                    // message; a free account that stays full would do that
+                    // to every sender, every time. 552 tells the sender now,
+                    // in words, and their server returns the message to them.
+                    log.LogInformation("rejecting (personal, full) {Address}: {Detail}", address, result.Detail);
+                    return PersonalFullReply;
+                }
                 log.LogInformation("deferring {Address}: {Detail}", address, result.Detail);
-                // 452, never 552. Temporary: the sending server keeps the
-                // message and retries, so a wrong reading costs a delay. A
-                // permanent 5xx would discard mail we cannot get back.
+                // Organisations: 452, never 552. Temporary: the sending server
+                // keeps the message and retries, so a wrong reading costs a
+                // delay. A permanent 5xx would discard mail we cannot get back.
                 return "DEFER_IF_PERMIT 452 4.2.2 Mailbox is full, try again later";
 
             case StorageAllocator.AcceptDecision.NoSuchMailbox:

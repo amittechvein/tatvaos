@@ -119,7 +119,7 @@ public static class ConnectRecordingEndpoints
     // ==================================================================
     private static async Task<IResult> ListAsync(
         Guid id, AppDbContext db, TenantContext tenant,
-        ConnectRecordingOptions options, CancellationToken ct)
+        ConnectRecordingOptions options, IConfiguration config, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
         if (!await SeenMeetingAsync(db, id, uid, ct)) return NotFound();
@@ -138,8 +138,12 @@ public static class ConnectRecordingEndpoints
             .Select(t => new { t.RecordingId, t.Status, t.Language, t.Error })
             .ToListAsync(ct);
 
+        // Null for everybody but the host. See CapabilityAsync.
+        var sharing = await ConnectShareEndpoints.CapabilityAsync(db, tenant, config, id, uid, ct);
+
         return Results.Ok(new
         {
+            sharing,
             // The UI needs to distinguish "recording is off on this server"
             // from "nobody has recorded this meeting", and an empty list
             // cannot say which.
@@ -162,6 +166,12 @@ public static class ConnectRecordingEndpoints
                 transcript = transcripts.FirstOrDefault(t => t.RecordingId == r.Id) is { } t
                     ? new { t.Status, t.Language, t.Error }
                     : null,
+                // How long a link to THIS recording may last. Per recording,
+                // because a hold on one does not lengthen another; the
+                // capability's maxDays is only the organisation's window.
+                shareDaysLeft = sharing is null
+                    ? (int?)null
+                    : ConnectShareEndpoints.DaysLeft(r, sharing.MaxDays),
             }),
         });
     }
@@ -557,11 +567,25 @@ public static class ConnectRecordingEndpoints
 
         // Re-checked, not trusted. The ticket said who asked; this says
         // whether they may still have it.
-        var stillIn = await db.ConnectParticipants.AsNoTracking()
-            .AnyAsync(p => p.MeetingId == claim.MeetingId && p.UserId == claim.UserId, ct);
-        var isOrganiser = await db.ConnectMeetings.AsNoTracking()
-            .AnyAsync(m => m.Id == claim.MeetingId && m.CreatedByUserId == claim.UserId, ct);
-        if (!stillIn && !isOrganiser) return NotFound();
+        if (claim.ShareId is Guid shareId)
+        {
+            // A SHARE let them in, so the SHARE is asked again — on every
+            // range request, which is what makes "Stop sharing" and the
+            // organisation's public-links switch end a playback in progress
+            // rather than when the ticket runs out. Never falls through to the
+            // participant check: a share ticket is not a participant's.
+            if (!await ConnectShareEndpoints.ShareStillAllowsAsync(
+                    db, shareId, claim.RecordingId, claim.UserId, ct))
+                return NotFound();
+        }
+        else
+        {
+            var stillIn = await db.ConnectParticipants.AsNoTracking()
+                .AnyAsync(p => p.MeetingId == claim.MeetingId && p.UserId == claim.UserId, ct);
+            var isOrganiser = await db.ConnectMeetings.AsNoTracking()
+                .AnyAsync(m => m.Id == claim.MeetingId && m.CreatedByUserId == claim.UserId, ct);
+            if (!stillIn && !isOrganiser) return NotFound();
+        }
 
         var recording = await db.ConnectRecordings.AsNoTracking()
             .Where(r => r.Id == claim.RecordingId

@@ -121,6 +121,7 @@ public sealed class ConnectNotesWorker(
                 if (DateTimeOffset.UtcNow - lastInvitationSweep >= InvitationSweepEvery)
                 {
                     await SweepInvitationsAsync(stopping);
+                    await SweepSharePasswordFailuresAsync(stopping);
                     lastInvitationSweep = DateTimeOffset.UtcNow;
                 }
             }
@@ -167,6 +168,35 @@ public sealed class ConnectNotesWorker(
         catch (Exception ex)
         {
             log.LogError(ex, "Meeting invitation sweep failed; will try again next hour.");
+        }
+    }
+
+    /// <summary>
+    /// Wrong-password rows on recording share links, removed after 30 days
+    /// (Mr. Singh, 26 Sept 2026). The window and the DELETE are in
+    /// connect.sweep_share_password_failures() (20260926-c), SECURITY DEFINER
+    /// because this runs with no tenant. Hourly, on the invitation sweep's
+    /// clock; its own try, so a failure cannot stop anything else.
+    /// </summary>
+    private async Task SweepSharePasswordFailuresAsync(CancellationToken ct)
+    {
+        try
+        {
+            using var scope = scopes.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var deleted = await db.Database
+                .SqlQuery<int>($"SELECT connect.sweep_share_password_failures() AS \"Value\"")
+                .SingleAsync(ct);
+            log.LogInformation(
+                "Share password sweep: {Deleted} wrong-password row(s) older than 30 days deleted.", deleted);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Shutting down.
+        }
+        catch (Exception ex)
+        {
+            log.LogError(ex, "Share password sweep failed; will try again next hour.");
         }
     }
 

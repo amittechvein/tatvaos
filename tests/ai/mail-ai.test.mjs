@@ -602,6 +602,68 @@ try {
       && psql(`select count(*) from core.subscriptions where plan_id='${planId}'`) === '0');
   }
 
+  // ── 13. Top-up credits (26 Sept 2026) ────────────────────────────────────
+  //  Extra credits for THIS month on top of the plan or override; withdrawn,
+  //  never deleted; a top-up adds to a limit and cannot create one.
+  {
+    const ORG = '11111111-1111-1111-1111-111111111111';
+    const credits = async () => (await call('GET', '/org/ai')).body.credits;
+    const tu = (body) => call('POST', `/admin/organisations/${ORG}/ai-credits/topups`, body);
+    await setAi({ enabled: true, mail: true, mailFeatures: { rewrite: true } });
+    try {
+      r = await tu({ credits: 0, reason: 'x' });
+      check('a top-up of 0 is refused (400)', r.status === 400, JSON.stringify(r.body));
+      r = await tu({ credits: 100, reason: '  ' });
+      check('a top-up with no reason is refused (400)', r.status === 400, JSON.stringify(r.body));
+
+      // No limit: a top-up is recorded but creates no limit.
+      await call('PUT', `/admin/organisations/${ORG}/ai-credits`, { override: null });
+      const noLimitBefore = await credits();
+      if (noLimitBefore.allowance === null) {
+        r = await tu({ credits: 50, priceInr: 0, reason: 'mail-ai-test no-limit' });
+        const nl = await credits();
+        check('no limit + a top-up: still no limit (a top-up cannot create one)', r.status === 201 && nl.allowance === null && nl.topUp === 50, JSON.stringify(nl));
+        await call('POST', `/admin/organisations/${ORG}/ai-credits/topups/${r.body.id}/withdraw`, { reason: 'test cleanup' });
+      } else {
+        check('no limit + a top-up: skipped (this database gives the org a plan limit)', true);
+      }
+
+      const used0 = (await credits()).used;
+      await call('PUT', `/admin/organisations/${ORG}/ai-credits`, { override: used0 });      // exactly used up
+      h0 = await hits();
+      r = await rewrite(DRAFT);
+      check('override exactly used up: refused before the top-up', typeof r.body.error === 'string' && (await hits()) === h0, JSON.stringify(r.body));
+
+      r = await tu({ credits: 3, priceInr: 99, reason: 'INV-TEST-001' });
+      const topupId = r.body.id;
+      let c = await credits();
+      check('a 3-credit top-up is added (201) and counted: base + 3', r.status === 201 && c.base === used0 && c.topUp === 3 && c.allowance === used0 + 3, JSON.stringify(c));
+      check('…audited', psql(`select count(*) from core.audit_logs where action like '%org.ai.credits_topup.added' and occurred_at > now() - interval '5 minutes'`) !== '0');
+      const op = await call('GET', `/admin/organisations/${ORG}/ai-credits`);
+      const row = (op.body.topups ?? []).find((t) => t.id === topupId);
+      check('the operator sees the top-up with its price and reason', row?.credits === 3 && row?.priceInr === 99 && row?.reason === 'INV-TEST-001' && row?.withdrawnAt === null, JSON.stringify(row));
+
+      h0 = await hits();
+      let ok = 0;
+      for (let i = 0; i < 4; i += 1) { r = await rewrite(DRAFT); if (typeof r.body.text === 'string') ok += 1; }
+      check('exactly 3 more requests fit (the 4th is stopped)', ok === 3 && (await hits()) === h0 + 3, `answered ${ok}`);
+
+      r = await call('POST', `/admin/organisations/${ORG}/ai-credits/topups/${topupId}/withdraw`, { reason: '' });
+      check('withdrawing needs a reason (400)', r.status === 400, JSON.stringify(r.body));
+      r = await call('POST', `/admin/organisations/${ORG}/ai-credits/topups/${topupId}/withdraw`, { reason: 'test: wrong organisation' });
+      c = await credits();
+      check('withdrawn: it stops counting', r.status === 200 && c.topUp === 0 && c.allowance === used0, JSON.stringify(c));
+      const kept = (await call('GET', `/admin/organisations/${ORG}/ai-credits`)).body.topups.find((t) => t.id === topupId);
+      check('…but the row is kept, marked withdrawn, with the reason', kept?.withdrawnAt !== null && kept?.withdrawReason === 'test: wrong organisation', JSON.stringify(kept));
+      check('…the app cannot delete top-ups (no DELETE grant)', psql(`select has_table_privilege('tatvaos_app','core.ai_credit_topups','DELETE')`) === 'f');
+      check('…RLS is on and forced on the top-ups table', psql(`select relrowsecurity and relforcerowsecurity from pg_class where oid='core.ai_credit_topups'::regclass`) === 't');
+    } finally {
+      await call('PUT', `/admin/organisations/${ORG}/ai-credits`, { override: null });
+      // Local test rows only: the superuser removes what the app may not.
+      psql(`delete from core.ai_credit_topups where tenant_id='${ORG}' and (reason like 'INV-TEST%' or reason like 'mail-ai-test%')`);
+    }
+  }
+
   // ── 6. Validation of the switch itself ────────────────────────────────────
   r = await setAi({});
   check('PUT with neither switch is 400', r.status === 400, `status ${r.status}`);
