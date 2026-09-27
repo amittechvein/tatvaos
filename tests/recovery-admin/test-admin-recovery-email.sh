@@ -171,8 +171,13 @@ curl -s -o /dev/null -w "%{http_code}" "$API/health" | grep -q 200 && pass "API 
 
 PG "UPDATE core.users SET phone='+919999900001' WHERE email='amit@techvein.local' AND phone IS NULL" >/dev/null
 PG "UPDATE core.users SET login_otp_sent_at=NULL, login_otp_attempts=0 WHERE phone='+919999900001'" >/dev/null
-code=$(curl -s -X POST "$API/api/auth/otp/request" -H "Content-Type: application/json" -d '{"phone":"+919999900001"}' | j "d.get('devCode') or ''")
-OWNER=$(curl -s -X POST "$API/api/auth/otp/verify" -H "Content-Type: application/json" -d "{\"phone\":\"+919999900001\",\"code\":\"$code\"}" | j "d.get('accessToken') or ''")
+owner_token() {
+    PG "UPDATE core.users SET login_otp_sent_at=NULL, login_otp_attempts=0 WHERE phone='+919999900001'" >/dev/null
+    local code
+    code=$(curl -s -X POST "$API/api/auth/otp/request" -H "Content-Type: application/json" -d '{"phone":"+919999900001"}' | j "d.get('devCode') or ''")
+    curl -s -X POST "$API/api/auth/otp/verify" -H "Content-Type: application/json" -d "{\"phone\":\"+919999900001\",\"code\":\"$code\"}" | j "d.get('accessToken') or ''"
+}
+OWNER=$(owner_token)
 OWNER_ID=$(PG "SELECT id FROM core.users WHERE email='amit@techvein.local'")
 [ -n "$OWNER" ] && pass "the owner (amit) signed in" || { fail "owner sign-in failed"; exit 1; }
 
@@ -182,6 +187,14 @@ NP1_ID=$(mkuser "$NP1_MAIL" employee); NP2_ID=$(mkuser "$NP2_MAIL" employee)
 temp_pw() { body "$(call POST "/api/org/users/$1/reset-password" "$OWNER" "{}")" | j "d.get('temporaryPassword') or ''"; }
 ADMIN_PW=$(temp_pw "$ADMIN_ID"); OWNER2_PW=$(temp_pw "$OWNER2_ID"); PW_PW=$(temp_pw "$PW_ID"); UNCONF_PW=$(temp_pw "$UNCONF_ID")
 ADMIN=$(body "$(login "$ADMIN_MAIL" "$ADMIN_PW")" | j "d.get('accessToken') or ''")
+# Access tokens live 15 minutes and this file can run longer than that on a
+# busy laptop (the hold worker, the mail sink at ~2 s a message): every step
+# that acts signs in again first, or it reads 401s as findings.
+fresh() {
+    OWNER=$(owner_token)
+    ADMIN=$(body "$(login "$ADMIN_MAIL" "$ADMIN_PW")" | j "d.get('accessToken') or ''")
+    [ -n "$OWNER" ] && [ -n "$ADMIN" ] || { fail "could not sign in again"; exit 1; }
+}
 [ -n "$ADMIN" ] && pass "an org_admin signed in" || { fail "admin sign-in failed"; exit 1; }
 PG "UPDATE core.users SET recovery_email='$OLD', recovery_email_verified_at=now() WHERE id='$PW_ID'" >/dev/null
 PG "UPDATE core.users SET recovery_email='$UNCONF_OLD', recovery_email_verified_at=NULL WHERE id='$UNCONF_ID'" >/dev/null
@@ -229,6 +242,7 @@ same "the People list shows the hold" "$(printf '%s' "$LIST" | ID="$PW_ID" "$PY"
 same "the People list carries neither full address" "$(printf '%s' "$LIST" | grep -ciF -e "$OLD" -e "$NEW")" "0"
 
 step "C. The hold ends (the real worker, with a hold made due)"
+fresh
 PG "UPDATE core.recovery_email_changes SET hold_until = now() - interval '1 minute' WHERE user_id='$PW_ID' AND status='held'" >/dev/null
 for _ in $(seq 1 120); do [ "$(PG "SELECT status FROM core.recovery_email_changes WHERE user_id='$PW_ID' ORDER BY created_at DESC LIMIT 1")" = "applied" ] && break; sleep 1; done
 same "the worker applied it" "$(PG "SELECT status FROM core.recovery_email_changes WHERE user_id='$PW_ID' ORDER BY created_at DESC LIMIT 1")" "applied"
@@ -239,6 +253,7 @@ r=$(call POST "/api/org/users/$PW_ID/signin-link" "$ADMIN" "{}")
 same "a sign-in link now goes to the new address" "$(status "$r")/$(mail count "$NEW" "")" "200/1"
 
 step "D. \"This was not me\""
+fresh
 NOTME_TOKEN="notme-$RUN-token"
 PG "UPDATE core.recovery_email_changes SET not_me_token_hash='$(sha "$NOTME_TOKEN")' WHERE user_id='$PW_ID' AND status='applied'" >/dev/null
 mark
@@ -257,6 +272,7 @@ r=$(call POST "/api/org/users/$ADMIN_ID/recovery-suspension/clear" "$OWNER" "{}"
 same "an owner clears it" "$(status "$r")" "200"
 
 step "E. No confirmed address: refused, with the reason"
+fresh
 r=$(call POST "/api/org/users/$UNCONF_ID/signin-link" "$ADMIN" "{}")
 same "Send sign-in link to an UNconfirmed address: refused (27 Sept)" "$(status "$r")" "400"
 has "...saying it is not confirmed" "$(body "$r")" "not been confirmed"
@@ -274,6 +290,7 @@ same "...and its invitation is refused during the hold" "$(status "$r")" "400"
 has "...naming when the hold ends" "$(body "$r")" "on hold until"
 
 step "F. Empty -> value is not held"
+fresh
 call PUT "/api/org/users/$NP1_ID/recovery-email" "$ADMIN" "{\"email\":\"$NP1_NEW\"}" >/dev/null
 PG "UPDATE core.recovery_email_changes SET confirm_token_hash='$(sha "c4-$RUN")' WHERE user_id='$NP1_ID' AND status='pending'" >/dev/null
 same "confirmed means applied at once" "$(body "$(call POST /api/auth/recovery-email/verify "" "{\"token\":\"c4-$RUN\"}")" | j "d.get('held')")" "False"
@@ -283,6 +300,7 @@ r=$(call POST "/api/org/users/$NP1_ID/invitation/resend" "$ADMIN" "{}")
 same "the invitation goes at once, to it" "$(status "$r")/$(mail count "$NP1_NEW" "")" "200/1"
 
 step "G. An owner's own address: MFA where enabled; every other owner and administrator told"
+fresh
 OWNER2=$(body "$(login "$OWNER2_MAIL" "$OWNER2_PW")" | j "d.get('accessToken') or ''")
 SECRET=$(body "$(call POST /api/auth/mfa/begin "$OWNER2" "{}")" | j "d.get('secret') or ''")
 same "the second owner turns MFA on" "$(status "$(call POST /api/auth/mfa/confirm "$OWNER2" "{\"code\":\"$(totp "$SECRET")\"}")")" "200"
@@ -302,12 +320,14 @@ same "the other owner is told" "$(mail count "amit@techvein.local" "An owner cha
 same "an administrator is told" "$(mail count "$ADMIN_MAIL" "An owner changed their recovery email")" "1"
 
 step "H. The person's own change overtakes an administrator's"
+fresh
 call PUT "/api/org/users/$PW_ID/recovery-email" "$ADMIN" "{\"email\":\"$NEW\"}" >/dev/null
 PWTOKEN=$(body "$(login "$PW_MAIL" "$PW_PW")" | j "d.get('accessToken') or ''")
 call POST /api/auth/recovery-email "$PWTOKEN" "{\"email\":\"$SELF_NEW\",\"currentPassword\":\"$PW_PW\"}" >/dev/null
 same "the administrator's pending change is superseded" "$(PG "SELECT status FROM core.recovery_email_changes WHERE user_id='$PW_ID' ORDER BY created_at DESC LIMIT 1")" "superseded"
 
 step "I. Audit rows: masked only"
+fresh
 same "recovery audit rows were written" "$(PG "SELECT (count(*) > 0)::text FROM core.audit_logs WHERE target_id IN ('$PW_ID','$UNCONF_ID','$NP1_ID','$NP2_ID') AND action LIKE 'user.recovery%'")" "true"
 same "no audit row holds a full address" "$(PG "SELECT count(*) FROM core.audit_logs WHERE target_id IN ('$PW_ID','$UNCONF_ID','$NP1_ID','$NP2_ID') AND (coalesce(before_state::text,'') || coalesce(after_state::text,'')) ~* '(old|new|new2|np1-new|np2-new)-$RUN@example'")" "0"
 
