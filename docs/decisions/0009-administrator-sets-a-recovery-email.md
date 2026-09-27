@@ -231,9 +231,30 @@ differ, **the ruling wins**:
   **answered by the ruling**: "the hold covers every email-delivered credential
   path — reset, sign-in link, invitation — named explicitly".
 - **Addendum question 4** (refuse Send sign-in link to an unconfirmed address
-  for someone who has a password) is **still open**. Mr. Singh will answer it
-  on PR 290.
+  for someone who has a password) is **answered 27 Sept: refuse**. His words
+  are below.
 - **Build plan step 2** becomes one hold check called from reset,
   forgot-recovery, sign-in link and invitation. During the hold it
   **redirects** to the old address rather than refusing.
+
+## Further ruling — Mr. Singh, 27 September 2026 (his words, transcribed exactly)
+
+> **The 0009 question: yes, refuse.** An unconfirmed address is not a recovery address; the record already says so. If the person has a password, no confirmed old address, and only an unconfirmed new one, Send sign-in link has nowhere safe to go. Refuse, with the reason shown, and Reset password stays as the visible fallback. Make the rule explicit rather than implied.
+
+### The rule, made explicit (lane's note)
+
+**Send sign-in link** goes only to a **confirmed** recovery address, and
+during the hold only to the confirmed **old** one. So, for a person who has a
+password:
+
+| Confirmed old address | Unconfirmed new address | Send sign-in link |
+|---|---|---|
+| yes | any | sent to the **old** address (during the hold, per the 24 Sept ruling) |
+| no | yes | **refused**, with the reason shown; Reset password is the fallback |
+| no | no | refused, as today ("no recovery email") |
+
+**Today's code does the opposite in row two**: it sends to whatever address is
+on file (`facts-before-0009.sh`, step A). **Resend invitation** to someone who
+has never signed in is not affected: a new person's first address is used
+unconfirmed, and that is how it gets confirmed.
 
