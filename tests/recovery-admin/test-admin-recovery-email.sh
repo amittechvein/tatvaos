@@ -32,8 +32,8 @@
 # the encoded text could miss an address and pass falsely. The decoder is
 # calibrated first - it must find the MASKED address where it should be.
 #
-# Needs: the SMTP sink (tatvaos-ai-metering/.tmp/fake-ai-and-mail.mjs, SMTP
-# :5871, log at TATVAOS_MAIL_SINK_LOG). WSL Postgres as tests/orgapi.
+# Needs: the SMTP sink, tests/support/smtp-sink.mjs (SMTP :5871, raw log at
+# TATVAOS_MAIL_SINK_LOG, default .tmp/mail-sink.log). WSL Postgres as tests/orgapi.
 # Build first:  dotnet build apps/api -c Release
 # TATVAOS_ROOT=<another checkout> runs it against that build (the red run).
 # ---------------------------------------------------------------------------
@@ -44,7 +44,7 @@ ROOT="${TATVAOS_ROOT:-$HERE}"
 PROJ="$ROOT/apps/api/TatvaOS.Api.csproj"
 PORT="${TATVAOS_RECOVERY_ADMIN_TEST_PORT:-5093}"
 API="http://localhost:$PORT"
-SINK_LOG="${TATVAOS_MAIL_SINK_LOG:-$HERE/../tatvaos-ai-metering/.tmp/mail-sink.log}"
+SINK_LOG="${TATVAOS_MAIL_SINK_LOG:-$HERE/.tmp/mail-sink.log}"
 RUN=$(date +%s)
 SCRATCH="$HERE/.tmp/recovery-admin-$$"; mkdir -p "$SCRATCH"; LOG="$SCRATCH/api.log"
 TV="11111111-1111-1111-1111-111111111111"; TV_DOMAIN="a1111111-1111-1111-1111-111111111111"
@@ -223,6 +223,21 @@ has "the notice names the administrator" "$NOTICE" "Rec org_admin $RUN"
 has "the notice carries \"This was not me\"" "$NOTICE" "This was not me"
 same "the full new address appears in NO message but its own" "$(mail mentions "$NEW" "$NEW")" "0"
 same "recovery_email is still the old address" "$(PG "SELECT recovery_email FROM core.users WHERE id='$PW_ID'")" "$OLD"
+# THE INVARIANT forgot-recovery's safety rests on (Mr. Singh, 27 Sept): it is
+# protected not by a hold check but because an unconfirmed pending address
+# never reaches users.recovery_email. Asserted explicitly, so a refactor that
+# writes it there fails here rather than silently. The NEW address is tried
+# FIRST: forgot-recovery has a 60 s resend throttle, and a send just before
+# would make "nothing sent" pass for the wrong reason.
+PG "UPDATE core.users SET password_reset_hash=NULL, password_reset_sent_at=NULL, password_reset_attempts=0 WHERE id='$PW_ID'" >/dev/null
+mark
+call POST /api/auth/password/forgot-recovery "" "{\"recoveryEmail\":\"$NEW\"}" >/dev/null
+same "INVARIANT: an unconfirmed pending address never matches forgot-recovery (no mail)" "$(mail count "$NEW" "")" "0"
+same "INVARIANT: ...and no reset is started" "$(PG "SELECT (password_reset_hash IS NULL)::text FROM core.users WHERE id='$PW_ID'")" "true"
+mark
+call POST /api/auth/password/forgot-recovery "" "{\"recoveryEmail\":\"$OLD\"}" >/dev/null
+same "(calibration: the same request with the confirmed OLD address does send)" "$(mail count "$OLD" "")" "1"
+PG "UPDATE core.users SET password_reset_hash=NULL, password_reset_sent_at=NULL, password_reset_attempts=0 WHERE id='$PW_ID'" >/dev/null
 CONFIRM_TOKEN="confirm-$RUN-token"
 PG "UPDATE core.recovery_email_changes SET confirm_token_hash='$(sha "$CONFIRM_TOKEN")' WHERE user_id='$PW_ID' AND status='pending'" >/dev/null
 r=$(call POST /api/auth/recovery-email/verify "" "{\"token\":\"$CONFIRM_TOKEN\"}")

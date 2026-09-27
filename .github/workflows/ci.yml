@@ -314,6 +314,15 @@ jobs:
       - name: "Dev operator: impossible outside Development, proven on the built API"
         run: bash tests/dev-operator/test.sh
 
+      # Decision 0009: an administrator sets a recovery email. Reads the mail it
+      # sends (decoded MIME) from a local SMTP sink, and runs the real hold
+      # worker with a hold due. Approved into CI by Mr. Singh, 27 Sept 2026.
+      - name: "0009: an administrator sets a recovery email"
+        run: |
+          node tests/support/smtp-sink.mjs > /tmp/smtp-sink.out 2>&1 &
+          for _ in $(seq 1 20); do [ -f .tmp/mail-sink.log ] && break; sleep 0.5; done
+          TATVAOS_MAIL_SINK_LOG="$PWD/.tmp/mail-sink.log" bash tests/recovery-admin/test-admin-recovery-email.sh
+
       - name: Install the web app's TypeScript (for the PiP check)
         run: pnpm install --frozen-lockfile
 
