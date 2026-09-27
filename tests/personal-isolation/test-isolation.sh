@@ -124,7 +124,10 @@ probe() { # name -> LEAK|SAFE
     # anyway, which would prove nothing about the house rule. This asks what
     # happens if a house account ever carried an admin role (a mistake, an
     # operator slip): the guard's /api/org/ prefix must still refuse it.
-    people-admin)        PG "UPDATE core.users SET role='org_admin' WHERE id='$A_ID'" >/dev/null
+    # The database now refuses an admin in the house (trg_house_employees_only,
+    # step 4), so this probe switches that rule off for the one UPDATE, to ask
+    # what the ROUTE guard would still do if the rule were ever bypassed.
+    people-admin)        PG "ALTER TABLE core.users DISABLE TRIGGER trg_house_employees_only; UPDATE core.users SET role='org_admin' WHERE id='$A_ID'; ALTER TABLE core.users ENABLE TRIGGER trg_house_employees_only" >/dev/null
                          s=$(jq_ "$(body "$(req POST /api/auth/login "" "{\"email\":\"$A_ADDR\",\"password\":\"a long enough passphrase\"}")")" "d['accessToken']")
                          PG "UPDATE core.users SET role='employee' WHERE id='$A_ID'" >/dev/null
                          r=$(req GET /api/org/users "$s"); contains "$(body "$r")" "$B_ADDR" && echo LEAK || echo SAFE ;;
@@ -223,6 +226,18 @@ backstop() { # label sql-for-tenant(%T) -> refused in house, accepted in Techvei
 backstop "organisation folder" "INSERT INTO space.folders(tenant_id, name, ownership_type) VALUES ('%T','x$RUN','organisational')"
 backstop "contact group"       "INSERT INTO family.contact_groups(tenant_id, name) VALUES ('%T','g$RUN')"
 backstop "organisation calendar" "INSERT INTO calendar.calendars(tenant_id, name, kind) VALUES ('%T','c$RUN','organisation')"
+# Only the employee role in the house (Mr. Singh, PR 314): as the app role,
+# refused in the house, allowed in an organisation; RED FIRST without the rule.
+r=$($APPSQL "UPDATE core.users SET role='org_admin' WHERE id='$A_ID'" 2>&1 | tr -d '\r')
+printf '%s' "$r" | grep -qF "only employee is" && pass "an admin role in the house: refused by the database" || fail "admin in the house: $r"
+same "…the account is still an employee" "$(PG "SELECT role FROM core.users WHERE id='$A_ID'")" "employee"
+r=$($APPSQL "INSERT INTO core.users(tenant_id, email, display_name, role, status) VALUES ('$HOUSE', 'boss.$RUN@personal.local', 'Boss', 'org_owner', 'active')" 2>&1 | tr -d '\r')
+printf '%s' "$r" | grep -qF "only employee is" && pass "a NEW owner in the house: refused" || fail "owner insert in the house: $r"
+r=$($APPSQL "BEGIN; UPDATE core.users SET role='org_admin' WHERE id=(SELECT id FROM core.users WHERE tenant_id='$TECHVEIN' AND role='employee' LIMIT 1); ROLLBACK;" 2>&1 | tr -d '\r')
+printf '%s' "$r" | grep -qi "error" && fail "an organisation could not make an admin: $r" || pass "an organisation can still make an admin (rolled back)"
+r=$($PSQL "BEGIN; DROP TRIGGER trg_house_employees_only ON core.users; UPDATE core.users SET role='org_admin' WHERE id='$A_ID'; SELECT 'role:'||role FROM core.users WHERE id='$A_ID'; ROLLBACK;" 2>&1 | tr -d '\r')
+printf '%s' "$r" | grep -qF "role:org_admin" && pass "RED FIRST: with the rule dropped (rolled back), the house account BECOMES an admin" || fail "calibration: $r"
+same "…(rolled back: the rule is still there)" "$(PG "SELECT count(*) FROM pg_trigger WHERE tgname='trg_house_employees_only'")" "1"
 r=$($PSQL "UPDATE core.tenants SET allow_ai=true WHERE id='$HOUSE'" 2>&1 | tr -d '\r')
 printf '%s' "$r" | grep -qF "tenants_house_no_org_ai" && pass "the house can never have organisation AI switched on" || fail "allow_ai on the house: $r"
 

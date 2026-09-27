@@ -23,6 +23,24 @@ with it. **Copy 2 is the one that matters, and phoning Amit is step zero of any
 real restore.** The paper copy was verified against a live object on 9 Sept
 2026; it works.
 
+## Keys that must never change
+
+Some keys in `infra/docker/.env` are not just secrets. **The data depends on
+their exact value**, so a restore with a *new* value does not fail loudly; it
+quietly breaks a rule. Restore these from `env.txt` in the backup set (or the
+paper copy); **never generate a fresh one on a server that has data.**
+
+| key | what it decides | if it changes |
+|---|---|---|
+| `PERSONAL_PHONE_HASH_KEY` | the fingerprint of every personal account's phone number: one personal account and one AI trial per number, ever (PR 311) | **every phone can sign up again**, with a second account and a second free trial; nothing errors |
+| the billing key (PR 320, when it lands) | to be written here with it | — |
+
+`PERSONAL_PHONE_HASH_KEY` is generated once (`openssl rand -hex 32`), at the
+switch-on of personal accounts. Compose refuses to run without it, and the API
+refuses to start outside Development if it is missing or shorter than 32
+characters. It travels in every backup's `env.txt`. **Never print it**, and
+never paste it into a chat or a transcript.
+
 ## What is backed up
 
 `infra/scripts/backup.sh`, **every six hours** (02:30, 08:30, 14:30, 20:30) —
@@ -57,11 +75,14 @@ Configured in `/srv/backups/tatvaos/.backup-env`:
 BACKUP_S3_REMOTE='linode:tatvaos-backups'
 BACKUP_ENC_PASSPHRASE='...'                # also on paper, offline
 BACKUP_S3_KEEP_DAYS=7                      # production's real value; ignored when BACKUP_S3_TIERED=1
-BACKUP_KEEP_DAYS=3                         # local sets AND pre-deploy copies
+BACKUP_KEEP_DAYS=3                         # pre-deploy copies; local sets too ONLY when not tiered
 ```
 
-**Off-box copies are kept 7 days, not 30.** This page said 30 until 24 Sept
-2026; the server's own config says 7, and the server is what happens. Measure
+**Off-box copies reach back at least 7 days, never 30.** This page said 30
+until 24 Sept 2026; the server's own config says 7, and the server is what
+happens. With the tiered schedule on (production, since 25 Sept) the bucket
+keeps one set a day for EIGHT days, so the oldest restore point is always
+between 7 and 8 days old — see the table below. Measure
 it (`BACKUP_S3_KEEP_DAYS` only — never print the file) before quoting a
 number to anyone.
 
@@ -73,9 +94,13 @@ Mr. Singh's ruling of 25 Sept 2026):
   the off-box objects. On production a missing passphrase **stops the
   deploy** — it will not write a plain copy.
 - **Locked down**: directory 700, each file 600, created that way.
-- **Kept by days, the same `BACKUP_KEEP_DAYS` as the local sets** — one
-  number. With production's 3, a pre-deploy copy older than 3 days is gone;
-  anything older comes from the off-box objects (7 days).
+- **Kept by days: `BACKUP_KEEP_DAYS`.** With production's 3, a pre-deploy
+  copy older than 3 days is gone; anything older comes from the off-box
+  objects (at least 7 days). **With tiering on, this is NOT the setting for
+  the scheduled local sets** — those follow `BACKUP_LOCAL_KEEP` (a count).
+  Lowering `BACKUP_KEEP_DAYS` to save space shrinks only the pre-deploy
+  copies (Mr. Singh's 26 Sept instruction assumed otherwise; the alert's
+  numbers could not show the difference, and now does).
 - **Checked whole** before the deploy carries on: decrypted, gunzipped, and
   checked for `pg_dumpall`'s end-of-dump marker.
 
@@ -113,17 +138,22 @@ re-run (it rewrites the cron line to match):
 
 ```bash
 BACKUP_S3_TIERED=1
-BACKUP_LOCAL_KEEP=2
+BACKUP_LOCAL_KEEP=4                          # production since 26 Sept: 8 hours at two-hourly
 ```
 
 | age | kept in the bucket |
 |---|---|
 | under 24 hours | every set (one every 2 hours — 12) |
 | 24 to 48 hours | one per 6-hour slot (about 4) |
-| 2 to 7 days | one per day (about 5) |
-| over 7 days | none |
+| 2 to 8 days | one per day, that day's last (about 6) |
+| over 8 days | none |
 
-About 21 sets. Which to delete is decided by `infra/scripts/backup-tiers.sh`
+About 22 sets. **Why eight days for a seven-day promise:** the set kept for
+a day is its last one, so when a 7-day cut-off dropped it, the next oldest
+was only 6 days old — measured in the bucket on 26 Sept 2026, 156 h and
+falling to 144 h. At 8 days the next oldest is 7 days when one drops, so the
+backups always reach back at least a week (Amit, 26 Sept; checked on every
+simulated run by `backup-tiers-test.sh`). Which to delete is decided by `infra/scripts/backup-tiers.sh`
 from the **names** of the objects, and each is deleted by name — never a
 recursive delete, so anything else in the bucket is left alone. It deletes
 nothing on a run whose own upload failed or whose bucket listing does not show
@@ -354,6 +384,60 @@ into live volumes, and it did not test `deploy.sh` against a restored database.
 Those remain untested, and this section is where to record it when somebody
 tests them.
 
+## What the 24 September 2026 test proved
+
+`~deploy/restore-test.sh`, run on the production host on 24 Sept 2026 (log
+`~deploy/restore-test.log`, 06:22 UTC). Accepted by Mr. Singh on 26 Sept as
+the most important result of that week. Three parts, each proving a
+different thing; `FAIL` lines in the whole log: **0**.
+
+**A. The newest pre-deploy dump restores.** `pre-deploy-20260924-061346.sql`
+(961 MB) into a throwaway `postgres:17-alpine` — created by the script with a
+random name, `--network none`, no volume; its `system_identifier` checked
+DIFFERENT from production's and the cluster checked EMPTY before a byte went
+in, so the dump's role and database statements could not reach live. One
+error, the benign `role "postgres" already exists`; nothing else.
+
+| table | restored | live |
+|---|---|---|
+| core.tenants | 5 | 5 |
+| core.users | 186 | 186 |
+| core.audit_logs | 1077 | 1077 |
+| mail.mailboxes | 193 | 193 |
+| mail.folders | 1158 | 1158 |
+| mail.messages | 40413 | 40415 — two arrived after the dump |
+| connect.meetings | 151 | 151 |
+
+**B. The newest off-box object opens.** `20260924-023001.tar.gz.enc`
+streamed download → decrypt → `tar -t` in one pipe (nothing plaintext on
+disk). Stage exit codes `0 0 0`, all members present. Every stage's code is
+checked, not just the last: before it ran, the same block was fed objects
+cut off at 60%, 16 bytes and **1 byte** short, a dropped download and a
+wrong passphrase, and all went red — the 1- and 16-byte cuts still LISTED
+every member, so a "members present" check alone would have passed a
+truncated backup.
+
+**C. The newest local mail archive is readable.** Set `20260924-023001`:
+30,743 files in `vmail.tar.gz` against 30,811 in the live maildir; the 68
+extra are mail that arrived after the backup.
+
+Clean-up ran on every exit path (tested beforehand: success, failure and
+interrupt, which exits 130 — not 0) and verified the throwaway container and
+temporary folder gone.
+
+**What it did not prove.** It decrypted with the **server's** copy of the
+passphrase, not the paper one, and ran on the production host — so, like the
+9 September drill, it does not cover losing the server. It LISTED the mail
+archive and the off-box object; it did not restore `vmail`, `spaceblobs` or
+`dkimkeys` into live volumes. **The disaster drill — Amit's paper copy, on a
+machine that is not this server — is still to do.**
+
+**Since then (26 Sept):** the tiered settings are in force —
+`BACKUP_S3_TIERED=1`, `BACKUP_LOCAL_KEEP` sets kept here — while cron still
+runs every **six** hours, because `backup.sh --install` has not been re-run.
+`BACKUP_KEEP_DAYS` now governs only the pre-deploy copies (deploy.sh), not
+the scheduled sets.
+
 ## Not covered
 
 - **Point-in-time recovery.** These are six-hourly (two-hourly, tiered) snapshots;
@@ -361,7 +445,7 @@ tests them.
 - **Rotation and old secrets.** A rotated credential survives in local sets and
   pre-deploy copies for `BACKUP_KEEP_DAYS` (local sets: the newest
   `BACKUP_LOCAL_KEEP` when tiered) and in off-box objects for
-  `BACKUP_S3_KEEP_DAYS` (seven days when tiered). **Changing `BACKUP_ENC_PASSPHRASE` does not re-encrypt
+  `BACKUP_S3_KEEP_DAYS` (when tiered: one set a day for eight days, so never less than seven — see `backup-tiers.sh`). **Changing `BACKUP_ENC_PASSPHRASE` does not re-encrypt
   anything already written** — keep the old one until the last copy made with
   it has aged out of every window. Rotation is not
   finished when the new secret is live; it is finished when the old one is out

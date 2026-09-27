@@ -205,6 +205,11 @@ services:
     environment:
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-tatvaos_mail};Username=tatvaos_app;Password=${APP_DB_PASSWORD:?APP_DB_PASSWORD must be set};Pooling=true"
       Jwt__SigningKey: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set}
+      # Fingerprints phone numbers for personal accounts: one account and one
+      # AI trial per number. Generated ONCE; must NEVER change (a new key lets
+      # every phone sign up again). Required: compose refuses to run without
+      # it, and so does the API outside Development (PR 311).
+      Personal__PhoneHashKey: ${PERSONAL_PHONE_HASH_KEY:?PERSONAL_PHONE_HASH_KEY must be set - generate ONCE with openssl rand -hex 32, never change it}
       Jwt__Issuer: ${JWT_ISSUER}
       Jwt__Audience: tatvaos-mail
       # Empty = host-only cookies, which is right when one host serves
@@ -363,6 +368,19 @@ services:
       # false every recording endpoint answers "not switched on for this
       # server" rather than failing somewhere deeper.
       Connect__Recording__Enabled: ${CONNECT_RECORDING_ENABLED:-false}
+      # Whether hosts are OFFERED the Share button on a recording. OFF by
+      # default, and meant to stay off until docs/CONNECT_DECISIONS.md §3's
+      # nine cases have been run against this server
+      # (tests/connect-recording-share/). The routes behind it answer either
+      # way — the matrix needs them — this only decides whether the button
+      # is shown. Set CONNECT_RECORDING_SHARING_OFFERED=true in .env and
+      # recreate the api container to switch it on.
+      Connect__RecordingSharingOffered: ${CONNECT_RECORDING_SHARING_OFFERED:-false}
+      # While the switch above is off, CREATING a share is refused too —
+      # except for the organisations listed here (comma-separated tenant ids),
+      # which is how §3's matrix runs on this server before anyone else can
+      # share. Empty by default; empty again once the matrix is done.
+      Connect__RecordingSharingTestTenants: ${CONNECT_RECORDING_SHARING_TEST_TENANTS:-}
       # Both containers mount the same volume; the two settings exist because
       # they are free to mount it at different paths, and assuming they match
       # is the kind of assumption that survives review and fails at 3 a.m.
