@@ -7,7 +7,8 @@
 # side (the same request allowed just below the limit, or on a bigger plan):
 #
 #   1. storage follows the plan (1 GB Free → 10 GB Premium → back), an upload
-#      over the allowance is refused, and incoming mail over it is DEFERRED
+#      over the allowance is refused, and incoming mail over it is REFUSED (552,
+#      Mr. Singh on PR 318; an organisation person stays DEFERRED, 452)
 #      by the mail-edge policy service ("mailbox full"), never accepted
 #   2. public links: refused on Free, allowed on Basic
 #   3. Connect, the HOST's plan: the 6th person refused on Free (signed in and
@@ -138,14 +139,22 @@ PG "UPDATE core.plans SET per_user_quota_bytes=3000 WHERE id='$FREE'" >/dev/null
 r=$(upload "$A" 5000)
 same "an upload over the allowance: refused (413)" "$(status "$r")" "413"
 a=$(policy "lima.$RUN@personal.local" 5000)
-has "incoming mail over it: deferred as mailbox full" "$a" "Mailbox is full"
-has "…a temporary refusal the sender is told about, not an accept" "$a" "452"
+# Mr. Singh on PR 318: a personal account's full mailbox refuses PERMANENTLY.
+has "incoming mail over it: REFUSED permanently (552), the sender told why" "$a" "552 5.2.2 The recipient's mailbox is full"
+if printf '%s' "$a" | grep -qF "452"; then fail "…but it was deferred (452): $a"; else pass "…not deferred (no 452: the sender's server does not retry for days)"; fi
+# An organisation person over their allowance is unchanged: deferred, 452.
+ORG_Q=$(PG "SELECT coalesce(storage_quota_bytes::text,'NULL') FROM core.users WHERE id='d1111111-1111-1111-1111-111111111111'")
+ORG_ADDR=$(PG "SELECT address FROM mail.mailboxes WHERE user_id='d1111111-1111-1111-1111-111111111111' LIMIT 1")
+PG "UPDATE core.users SET storage_quota_bytes=3000 WHERE id='d1111111-1111-1111-1111-111111111111'" >/dev/null
+a=$(policy "$ORG_ADDR" 5000)
+has "an ORGANISATION person over their allowance: still deferred (452)" "$a" "DEFER_IF_PERMIT 452"
+PG "UPDATE core.users SET storage_quota_bytes=$ORG_Q WHERE id='d1111111-1111-1111-1111-111111111111'" >/dev/null
 PG "UPDATE core.plans SET per_user_quota_bytes=$GB WHERE id='$FREE'" >/dev/null
 r=$(upload "$A" 5000)
 [ "$(status "$r")" -lt 300 ] && pass "calibration: the same upload fits in 1 GB ($(status "$r"))" || fail "upload at 1 GB: $(status "$r") $(body "$r" | head -c 160)"
 FILE_ID=$(jq_ "$(body "$r")" "d.get('id') or d.get('file',{}).get('id')")
 a=$(policy "lima.$RUN@personal.local" 5000)
-if printf '%s' "$a" | grep -qF "452"; then fail "calibration: mail still deferred at 1 GB: $a"; else pass "calibration: the same mail is accepted at 1 GB ($a)"; fi
+if printf '%s' "$a" | grep -qE "452|552"; then fail "calibration: mail still refused at 1 GB: $a"; else pass "calibration: the same mail is accepted at 1 GB ($a)"; fi
 
 # ---------------------------------------------------------------------------
 step "2. Public links follow the plan (§2.3, §4.6)"
