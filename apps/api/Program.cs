@@ -28,6 +28,11 @@ using TatvaOS.Api.Shared.Tenancy;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Development-only operator sign-in (Mr. Singh, 24 Sept 2026): refuse to boot
+// when its switch is on anywhere but Development. First, before anything else
+// is built. See Modules/Auth/Endpoints/DevOperatorGate.cs.
+DevOperatorGate.RefuseToStartOutsideDevelopment(builder.Environment, builder.Configuration);
+
 // ---------------------------------------------------------------------------
 //  `TatvaOS.Api --oidc-rotate` — the key-rotation runbook's one step. Runs in
 //  the API container against the same key directory, generates a new signing
@@ -360,7 +365,15 @@ builder.Services.AddHttpClient();
 // SCOPED since 27 Aug 2026: consent is per-organisation, so the gateway
 // reads the current tenant's allow_ai flag (fail-closed) — which needs the
 // scoped TenantContext and AppDbContext. Nothing else changed.
-builder.Services.AddScoped<IAiGateway, OpenAiGateway>();
+// IAiGateway resolves to the metering wrapper, and ONLY to it. The provider
+// gateway is deliberately NOT registered: MeteredAiGateway constructs its own
+// private copy, so no module can inject the provider by its concrete type and
+// walk past the meter (Mr. Singh on PR 280). tests/ai/gateway-not-bypassable.sh
+// fails if the provider class is named anywhere else.
+builder.Services.AddScoped<IAiGateway, MeteredAiGateway>();
+// Process memory only. First user: Mail's suggested replies, so reopening a
+// message does not send it to the AI provider again (MailAiEndpoints).
+builder.Services.AddMemoryCache();
 
 // Scoped: it writes through the request's AppDbContext and reads its
 // TenantContext. A singleton holding either would serve one tenant's scope to
@@ -430,6 +443,10 @@ builder.Services.AddHostedService<VacationReplyWorker>();
 // Calendar reminders. Polls every minute and records every send, rather than
 // scheduling in-memory timers that a deploy would silently swallow.
 builder.Services.AddHostedService<CalendarReminderWorker>();
+
+// TatvaOS AI sorts new inbox mail (Mail AI step 3). Does nothing unless an
+// organisation has switched sorting on; see the worker's header for its limits.
+builder.Services.AddHostedService<MailTriageWorker>();
 
 // iMIP: what Mail's ingest calls when a delivered message carries a calendar
 // reply (docs/MAIL_IMIP_SEAM.md §4). Scoped, because it runs inside the
@@ -665,6 +682,26 @@ builder.Services.AddRateLimiter(o =>
                 QueueLimit = 0,
             });
     });
+
+    // Connect recording share LINKS (Connect lane, 26 Sept 2026). Tighter than
+    // the meeting door's 60: this is where a share password is guessed, and a
+    // share password may be as short as four characters. 20 a minute is still
+    // more than a person opening a link and renewing a playback ever needs.
+    // Rightmost X-Forwarded-For, like every limiter here.
+    o.AddPolicy("connect-shared-links", httpContext =>
+    {
+        var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();
+        var client = string.IsNullOrEmpty(xff)
+            ? httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"
+            : xff.Split(',')[^1].Trim();
+        return RateLimitPartition.GetFixedWindowLimiter($"connect-shared:{client}",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 20,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            });
+    });
 });
 
 // Translates message bodies through a translator in our own stack. OFF
@@ -772,6 +809,8 @@ app.UseRateLimiter();
 TatvaOS.Api.Modules.Auth.Endpoints.AuthEndpoints.ConfigureCookies(app.Configuration);
 
 app.MapAuthEndpoints();
+// Maps nothing unless Development AND DevOperatorSignIn__Enabled — see the file.
+app.MapDevOperatorSignIn();
 app.MapMfaEndpoints();
 app.MapOrganisationEndpoints();
 app.MapUserEndpoints();
@@ -807,6 +846,10 @@ app.MapMyStorageEndpoints();
 // The organisation's AI consent switch — the screen for allow_ai, so "can we
 // turn it off ourselves" is answered by a toggle rather than a promise.
 app.MapOrgAiEndpoints();
+// The operator's read of an organisation's AI use (the limits are settings).
+app.MapOrgAiUsageEndpoints();
+app.MapOrganisationDetailEndpoints();
+app.MapPlanFeatureEndpoints();
 // Calendar. Recurrence is expanded at read time, never stored — see
 // Modules/Calendar/Recurrence.cs.
 app.MapCalendarEndpoints();
@@ -814,6 +857,9 @@ app.MapMailEndpoints();
 // Mail categories - the colour system. A name and a colour somebody made for
 // themselves; filters apply them, nothing infers them (see the endpoint header).
 app.MapMailCategoryEndpoints();
+// TatvaOS AI in Mail — Help me write. Governed by allow_ai AND allow_mail_ai,
+// both enforced inside the AI gateway (AiProductSwitch).
+app.MapMailAiEndpoints();
 app.MapFamilyEndpoints();
 app.MapSpaceEndpoints();
 app.MapSpaceDriveEndpoints();

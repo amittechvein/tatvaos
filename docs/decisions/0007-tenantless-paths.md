@@ -107,3 +107,14 @@ functions omit `pg_temp` and were assigned to this lane.
    - **Core** (auth): `mfa_recovery_codes`. **No RLS, by design**: it is read
      before the organisation is known (`0024-mfa.sql`), and every lookup is by
      `user_id` plus a 256-bit hash.
+7. **Arrived on `main` after this list was started (found on the merge of
+   27 Sept):**
+   - the **anonymous** `/api/connect/shared` group, where recording-share links
+     are opened by people with no account. How it finds the organisation has
+     **not been walked yet**;
+   - `connect.recording_share_password_failures`, read on that path. It has
+     RLS forced and no EF filter, and is in the enforcement test's allowed
+     list.
+
+   This row belongs in section 1 once the path is walked.
+

@@ -262,4 +262,4 @@ jobs:
           echo "  cd /srv/tatvaos-production"
           echo "  git log --oneline -5"
           echo "  git reset --hard <previous-sha> && ./infra/scripts/deploy.sh production"
-          echo "  Pre-deploy backup: backups/pre-deploy-*.sql"
+          echo "  Pre-deploy backup: backups/pre-deploy-*.sql.gz.enc (encrypted; kept BACKUP_KEEP_DAYS days; restore: docs/runbooks/backup-and-restore.md)"

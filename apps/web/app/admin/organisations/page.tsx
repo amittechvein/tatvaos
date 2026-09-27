@@ -129,7 +129,7 @@ export default function AdminOrganisations() {
                         {initial}
                       </div>
                       <div className="min-w-0">
-                        <div className="truncate font-semibold text-ink">{o.name}</div>
+                        <Link href={`/admin/organisations/${o.id}`} className="block truncate font-semibold text-ink hover:text-brand-700 hover:underline">{o.name}</Link>
                         <div className="truncate text-[12px] text-ink-muted">
                           {hasDomain ? o.primaryDomain : `${TYPE_LABEL[o.type] ?? o.type}`}
                         </div>
@@ -166,7 +166,8 @@ export default function AdminOrganisations() {
                   </Td>
                   <Td><StatusBadge status={o.status} /></Td>
                   <Td>
-                    <div className="flex justify-end">
+                    <div className="flex justify-end gap-2">
+                      <Button variant="secondary" href={`/admin/organisations/${o.id}`}>Details</Button>
                       <Button variant="secondary" onClick={() => setChanging(o)}>Manage</Button>
                     </div>
                   </Td>
@@ -403,6 +404,11 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
       <hr className="my-6" />
 
       <InvitationCaps orgId={org.id} />
+
+      <hr className="my-6" />
+
+      <AiUsageSection orgId={org.id} />
+      <AiCreditsSection orgId={org.id} />
     </Modal>
   );
 }
@@ -429,6 +435,266 @@ type CapsAnswer = {
   defaultPerMeeting: number;
   ceiling: number;
 };
+
+/**
+ * This organisation's AI use this month — the same summary its own TatvaOS AI
+ * page shows (AiUsageReport). The limits are platform settings, so this is
+ * read-only; change them on the Settings page.
+ */
+function AiUsageSection({ orgId }: { orgId: string }) {
+  const { authedFetch } = useAuth();
+  const [u, setU] = useState<{
+    tokens: number; requests: number; refused: number; ceilingTokens: number | null; percentOfCeiling: number;
+    byFeature: { feature: string; requests: number; tokens: number }[];
+  } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let gone = false;
+    authedFetch(`/admin/organisations/${orgId}/ai-usage`)
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error ?? 'Could not load AI use.');
+        if (!gone) setU(body);
+      })
+      .catch((e) => { if (!gone) setError(e instanceof Error ? e.message : 'Could not load AI use.'); });
+    return () => { gone = true; };
+  }, [authedFetch, orgId]);
+
+  const n = (x: number) => x.toLocaleString('en-IN');
+  return (
+    <>
+      <h6 className="font-semibold mb-2">TatvaOS AI — use this month</h6>
+      {error && <Alert tone="danger">{error}</Alert>}
+      {!u && !error && <p className="text-[0.75rem] text-ink-muted">Loading…</p>}
+      {u && (
+        <p className="text-sm mb-1">
+          {n(u.tokens)} tokens in {n(u.requests)} requests
+          {u.ceilingTokens === null ? ' — no ceiling'
+            : u.ceilingTokens === 0 ? ' — allowance set to none (AI refused)'
+            : ` — ${u.percentOfCeiling}% of the ${n(u.ceilingTokens)} allowance`}.
+          {u.refused > 0 && ` ${n(u.refused)} refused.`}
+          {u.byFeature.length > 0 && ` By feature: ${u.byFeature.map((f) => `${f.feature} ${n(f.tokens)}`).join(', ')}.`}
+        </p>
+      )}
+      <p className="text-[0.75rem] text-ink-muted mb-0">
+        Limits and the platform-wide pause are on the Settings page.
+      </p>
+    </>
+  );
+}
+
+/**
+ * AI credits for this organisation (26 Sept 2026): what its plan gives, what
+ * it has spent, and the operator's exception. Empty follows the plan; a
+ * number is exactly that many credits a month; 0 allows none. Audited.
+ */
+function AiCreditsSection({ orgId }: { orgId: string }) {
+  const { authedFetch } = useAuth();
+  type C = { allowance: number | null; source: string; planName: string | null; model: string | null;
+    perUser: number | null; users: number | null; used: number; percent: number;
+    base?: number | null; topUp?: number };
+  type T = { id: string; credits: number; priceInr: number | null; reason: string; createdAt: string;
+    withdrawnAt: string | null; withdrawReason: string | null };
+  const [c, setC] = useState<C | null>(null);
+  const [topups, setTopups] = useState<T[]>([]);
+  const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const path = `/admin/organisations/${orgId}/ai-credits`;
+
+  const load = useCallback(() => {
+    authedFetch(path)
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error ?? 'Could not load AI credits.');
+        setC(body.credits);
+        setTopups(Array.isArray(body.topups) ? body.topups : []);
+        setValue(body.override === null || body.override === undefined ? '' : String(body.override));
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : 'Could not load AI credits.'));
+  }, [authedFetch, path]);
+  useEffect(() => { load(); }, [load]);
+
+  async function save() {
+    setBusy(true); setError(null); setSaved(false);
+    try {
+      const v = value.trim();
+      if (v !== '' && !(Number.isInteger(Number(v)) && Number(v) >= 0)) throw new Error('A whole number, or empty to follow the plan.');
+      const res = await authedFetch(path, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ override: v === '' ? null : Number(v) }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? 'Could not save.');
+      setSaved(true);
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const n = (x: number) => x.toLocaleString('en-IN');
+  return (
+    <>
+      <h6 className="font-semibold mb-2 mt-4">AI credits</h6>
+      {error && <Alert tone="danger">{error}</Alert>}
+      {c && (
+        <p className="text-sm mb-2">
+          {n(c.used)} used this month
+          {c.allowance === null ? ' — no credit limit' : ` of ${n(c.allowance)} (${c.percent}%)`}.{' '}
+          <span className="text-ink-muted">
+            {c.source === 'override' ? 'Set for this organisation by the operator.'
+              : c.source === 'plan'
+                ? c.model === 'per_user'
+                  ? `From the ${c.planName} plan: ${c.perUser != null ? n(c.perUser) : '—'} per user × ${c.users ?? 0} users.`
+                  : `From the ${c.planName} plan (pooled).`
+                : 'No plan sets AI credits for this organisation.'}
+          </span>
+        </p>
+      )}
+      <div className="flex items-end gap-2">
+        <div>
+          <label htmlFor={`ai-credits-${orgId}`} className="mb-1 block text-[0.75rem] text-ink-muted">
+            Override credits / month (empty follows the plan; 0 allows none)
+          </label>
+          <input id={`ai-credits-${orgId}`} type="number" min={0} value={value} placeholder="Follow the plan"
+                 onChange={(e) => { setValue(e.target.value); setSaved(false); }}
+                 className="w-40 rounded-lg border border-line bg-surface px-2 py-1 text-sm text-ink" />
+        </div>
+        <Button variant="ghost" disabled={busy} onClick={() => void save()}>{busy ? 'Saving…' : 'Save'}</Button>
+        {saved && <span className="text-[0.75rem] text-ok">Saved and recorded in the audit trail.</span>}
+      </div>
+      <TopupsPanel orgId={orgId} topups={topups} hasLimit={c?.base !== null && c?.base !== undefined} onChanged={load} />
+    </>
+  );
+}
+
+/**
+ * Top-up packs (26 Sept 2026): extra credits for THIS month on top of the
+ * plan. The packs pre-fill the proposed prices; both stay editable, because
+ * the price is Amit's decision and a goodwill top-up is ₹0. Withdrawn, never
+ * deleted — each row records a sale.
+ */
+const PACKS = [
+  { credits: 1000, price: 99 },
+  { credits: 5000, price: 449 },
+  { credits: 25000, price: 1999 },
+];
+
+function TopupsPanel({ orgId, topups, hasLimit, onChanged }: {
+  orgId: string;
+  topups: { id: string; credits: number; priceInr: number | null; reason: string; createdAt: string;
+    withdrawnAt: string | null; withdrawReason: string | null }[];
+  hasLimit: boolean;
+  onChanged: () => void;
+}) {
+  const { authedFetch } = useAuth();
+  const [credits, setCredits] = useState('');
+  const [price, setPrice] = useState('');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const base = `/admin/organisations/${orgId}/ai-credits/topups`;
+  const n = (x: number) => x.toLocaleString('en-IN');
+
+  async function add() {
+    setBusy(true); setError(null);
+    try {
+      const cr = Number(credits);
+      if (!(Number.isInteger(cr) && cr > 0)) throw new Error('Credits must be a whole number above 0.');
+      if (!reason.trim()) throw new Error('Say why — for example the invoice number, or "goodwill".');
+      const res = await authedFetch(base, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credits: cr, priceInr: price.trim() === '' ? null : Number(price), reason: reason.trim() }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? 'Could not add the top-up.');
+      setCredits(''); setPrice(''); setReason('');
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not add the top-up.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function withdraw(id: string) {
+    const why = window.prompt('Why is this top-up being withdrawn? (kept in the record)');
+    if (!why || !why.trim()) return;
+    setBusy(true); setError(null);
+    try {
+      const res = await authedFetch(`${base}/${id}/withdraw`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: why.trim() }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? 'Could not withdraw it.');
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not withdraw it.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-3">
+      <p className="mb-1 text-sm font-medium">Top-up credits (this month only)</p>
+      {!hasLimit && (
+        <p className="mb-2 text-[0.75rem] text-warn">
+          This organisation has no credit limit, so a top-up changes nothing until its plan or an override sets one.
+        </p>
+      )}
+      {error && <Alert tone="danger">{error}</Alert>}
+      <div className="mb-2 flex flex-wrap gap-1.5">
+        {PACKS.map((p) => (
+          <button key={p.credits} type="button"
+                  onClick={() => { setCredits(String(p.credits)); setPrice(String(p.price)); }}
+                  className="rounded-full border border-line px-3 py-1 text-xs hover:border-brand-400">
+            {n(p.credits)} credits · ₹{n(p.price)}
+          </button>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-end gap-2">
+        <div>
+          <label htmlFor={`tu-c-${orgId}`} className="mb-1 block text-[0.75rem] text-ink-muted">Credits</label>
+          <input id={`tu-c-${orgId}`} type="number" min={1} value={credits} onChange={(e) => setCredits(e.target.value)}
+                 className="w-28 rounded-lg border border-line bg-surface px-2 py-1 text-sm text-ink" />
+        </div>
+        <div>
+          <label htmlFor={`tu-p-${orgId}`} className="mb-1 block text-[0.75rem] text-ink-muted">Price charged (₹)</label>
+          <input id={`tu-p-${orgId}`} type="number" min={0} value={price} placeholder="0 for goodwill" onChange={(e) => setPrice(e.target.value)}
+                 className="w-28 rounded-lg border border-line bg-surface px-2 py-1 text-sm text-ink" />
+        </div>
+        <div className="min-w-[12rem] flex-1">
+          <label htmlFor={`tu-r-${orgId}`} className="mb-1 block text-[0.75rem] text-ink-muted">Reason (invoice number, goodwill…)</label>
+          <input id={`tu-r-${orgId}`} value={reason} onChange={(e) => setReason(e.target.value)}
+                 className="w-full rounded-lg border border-line bg-surface px-2 py-1 text-sm text-ink" />
+        </div>
+        <Button variant="primary" disabled={busy} onClick={() => void add()}>{busy ? 'Adding…' : 'Add top-up'}</Button>
+      </div>
+      {topups.length > 0 && (
+        <ul className="mb-0 mt-2 list-none space-y-1 p-0 text-[0.8rem]">
+          {topups.map((t) => (
+            <li key={t.id} className={`flex flex-wrap items-center gap-2 ${t.withdrawnAt ? 'text-ink-faint line-through' : ''}`}>
+              <span>{n(t.credits)} credits</span>
+              <span className="text-ink-muted">{t.priceInr != null ? `₹${n(t.priceInr)}` : '—'}</span>
+              <span className="text-ink-muted">{new Date(t.createdAt).toLocaleDateString('en-IN')}</span>
+              <span className="min-w-0 truncate text-ink-muted">{t.reason}</span>
+              {t.withdrawnAt
+                ? <span className="no-underline text-ink-faint">(withdrawn: {t.withdrawReason})</span>
+                : <button type="button" disabled={busy} onClick={() => void withdraw(t.id)}
+                          className="text-danger hover:underline">Withdraw</button>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 function InvitationCaps({ orgId }: { orgId: string }) {
   const { authedFetch } = useAuth();
