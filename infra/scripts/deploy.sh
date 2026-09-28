@@ -85,9 +85,8 @@ esac
 #      same process writing to a file ran to the end. This is also why
 #      `| tee deploy.log` is refused: tee dies with the session.
 #
-#  DEPLOY_ATTACHED=1 overrides all three. It is for a local rehearsal, and for
-#  the GitHub workflow, which streams the deploy down its own SSH connection
-#  and says so where it sets it.
+#  There are two ways past, both deliberate and neither a habit: see
+#  override_allowed below.
 # ---------------------------------------------------------------------------
 has_controlling_terminal() { [ -e /dev/tty ] && sh -c ': < /dev/tty' 2>/dev/null; }
 # Sets ATTACHED_WHY and returns 0 when attached. NEVER called as $(...): inside
@@ -108,8 +107,25 @@ attached_because() {
     fi
     return 1
 }
-if [ "${DEPLOY_ATTACHED:-}" != "1" ] && attached_because; then
+# THE OVERRIDE IS NARROW ON PURPOSE (Mr. Singh, 29 Sept 2026). A single
+# variable that silences the guard gets typed by habit, and then the guard is
+# a formality. So:
+#   - DEPLOY_ATTACHED=1 counts ONLY beside GITHUB_ACTIONS=true. The workflow
+#     sets both on its own command line (GITHUB_ACTIONS is not inherited
+#     over SSH from the runner). Typed alone in an SSH session, it does
+#     nothing, and the refusal says so.
+#   - DEPLOY_LOCAL_REHEARSAL=1 is the laptop's switch, named for what it is.
+override_allowed() {
+    [ "${DEPLOY_LOCAL_REHEARSAL:-}" = "1" ] && return 0
+    [ "${DEPLOY_ATTACHED:-}" = "1" ] && [ "${GITHUB_ACTIONS:-}" = "true" ] && return 0
+    return 1
+}
+if ! override_allowed && attached_because; then
     printf '\n   [FAIL] deploy.sh is attached: %s.\n' "$ATTACHED_WHY"
+    if [ "${DEPLOY_ATTACHED:-}" = "1" ]; then
+        printf '          DEPLOY_ATTACHED=1 is ignored here: it counts only from the GitHub\n'
+        printf '          workflow. It does not make a hand deploy safe to run attached.\n'
+    fi
     printf '          Run it detached, so a dropped connection cannot kill it halfway\n'
     printf '          (HOUSE_RULES rule 11b):\n\n'
     printf '     LOG=~/deploy-%s-$(date -u +%%Y%%m%%dT%%H%%M%%SZ).log\n' "$ENV"

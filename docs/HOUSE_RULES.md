@@ -538,11 +538,23 @@ the third is what makes the first two last.
      `ssh host ./deploy.sh production` and `| tee log`, which have no
      terminal at all and still die with the connection, by SIGPIPE.
 
-   `DEPLOY_ATTACHED=1` overrides it, for a local rehearsal and for the
-   GitHub workflow. **The workflow is an exception, not an exemption**: it
-   streams the deploy down the runner's SSH connection, so it carries the
-   same exposure, watched by the job rather than by a person. Making the
-   workflow run detached and follow the log is owed.
+   **The override is narrow, so it cannot be typed by habit** (Mr. Singh,
+   29 Sept 2026):
+
+   - `DEPLOY_ATTACHED=1` counts only beside `GITHUB_ACTIONS=true`. The
+     workflow sets both. **Typed alone in an SSH session it does nothing**,
+     and the refusal says so.
+   - `DEPLOY_LOCAL_REHEARSAL=1` is the laptop's switch. It has no business
+     on the production box.
+
+   **The workflow's exception is temporary and dated.** The runner keeps the
+   output as the job log and does not hang up on its own process, so the
+   reason for the file test does not apply there today. Once Actions is
+   running again (expected 1 October 2026), the workflow is rewritten to
+   start the deploy detached and follow its log to the verdict line: one way
+   to run a deploy, not two. **If the exception is still in the workflow on
+   15 October 2026, that is a rule 12 failure** — a temporary carve-out that
+   became permanent.
 
    `tests/deploy/test-detached-guard.sh` runs every form, refused and
    allowed. It refuses to run where `infra/docker/.env` exists.

@@ -10,18 +10,24 @@
 #
 # passed it: output is a file, not a terminal. But the process is still in the
 # session, and still dies when the connection drops — the 26 September failure
-# exactly. What matters is whether the process HAS A CONTROLLING TERMINAL, and
-# that is what is tested here, four ways:
+# exactly. What matters is whether the process is ATTACHED to the session: a
+# terminal on any stream, a controlling terminal, or output that is not a
+# file. Every form is run here:
 #
-#   1. on a terminal, nothing redirected                      -> refused
-#   2. output redirected to a log, stdin still the terminal   -> refused
-#   3. output AND stdin redirected, still in the session      -> refused
-#   4. the printed form: setsid nohup, log, stdin /dev/null   -> runs
-#   5. DEPLOY_ATTACHED=1 on a terminal (local rehearsal)      -> runs
-#   6. NO terminal at all, output down a pipe                 -> refused
-#      (`ssh host ./deploy.sh production`, or `| tee log`: measured to die
-#      by SIGPIPE when the reader goes away)
-#   7. the same with DEPLOY_ATTACHED=1 (the workflow's form)  -> runs
+#   1.  on a terminal, nothing redirected                      -> refused
+#   1b. output a terminal, input not                           -> refused
+#   2.  output redirected to a log, stdin still the terminal   -> refused
+#   3.  output AND stdin redirected, still in the session      -> refused
+#   4.  the printed form: setsid nohup, log, stdin /dev/null   -> runs
+#   5.  DEPLOY_LOCAL_REHEARSAL=1 on a terminal (the laptop)    -> runs
+#   5b. DEPLOY_ATTACHED=1 ALONE on a terminal                  -> refused
+#   5c. DEPLOY_ATTACHED=1 alone, redirected, in the session    -> refused
+#   6.  NO terminal at all, output down a pipe                 -> refused
+#       (`ssh host ./deploy.sh production`, or `| tee log`: measured to die
+#       by SIGPIPE when the reader goes away)
+#   6b. the same with DEPLOY_ATTACHED=1 ALONE                  -> refused
+#   7.  GITHUB_ACTIONS=true AND DEPLOY_ATTACHED=1 (workflow)   -> runs
+#   7b. GITHUB_ACTIONS=true alone                              -> refused
 #
 # "Runs" means it got past the guard to Preflight, where it stops because this
 # checkout has no infra/docker/.env. THIS TEST REFUSES TO RUN WHERE THAT FILE
@@ -98,8 +104,20 @@ grep -q "controlling terminal" "$TMP/t3.out" \
 in_session t4 "CI=1 setsid nohup $D production > $TMP/t4.log 2>&1 < /dev/null & for i in \$(seq 1 50); do grep -q 'DEPLOY VERDICT' $TMP/t4.log 2>/dev/null && break; sleep 0.2; done"
 ran t4 "4. the printed form (setsid nohup, log, stdin /dev/null): runs"
 
-in_session t5 "DEPLOY_ATTACHED=1 $D production"
-ran t5 "5. DEPLOY_ATTACHED=1 on a terminal (local rehearsal): runs"
+# THE OVERRIDE IS NARROW (Mr. Singh, 29 Sept). DEPLOY_ATTACHED=1 on its own
+# does nothing, so the guard cannot be silenced by habit from an SSH session.
+# It counts only beside GITHUB_ACTIONS=true (the workflow sets both); the
+# laptop has its own switch, DEPLOY_LOCAL_REHEARSAL=1.
+in_session t5 "DEPLOY_LOCAL_REHEARSAL=1 $D production"
+ran t5 "5. DEPLOY_LOCAL_REHEARSAL=1 on a terminal (laptop rehearsal): runs"
+
+in_session t5b "DEPLOY_ATTACHED=1 $D production"
+refused t5b "5b. DEPLOY_ATTACHED=1 ALONE on a terminal: refused"
+grep -q "DEPLOY_ATTACHED=1 is ignored" "$TMP/t5b.out" \
+    && pass "    …and says the override was ignored, and why" || fail "    …without saying the override was ignored"
+
+in_session t5c "DEPLOY_ATTACHED=1 $D production > $TMP/t5c.log 2>&1 < /dev/null"
+refused t5c "5c. DEPLOY_ATTACHED=1 alone, everything redirected, in the session: refused"
 
 # No terminal anywhere: setsid drops it. Output goes down a pipe, as it does
 # over `ssh host cmd` without a terminal.
@@ -108,8 +126,17 @@ refused t6 "6. no terminal, output down a pipe (ssh without a terminal, or | tee
 grep -q "not a log file" "$TMP/t6.out" \
     && pass "   …and says why: its output is not a log file" || fail "   …without saying why"
 
-CI=1 DEPLOY_ATTACHED=1 setsid $D production < /dev/null 2>&1 | cat > "$TMP/t7.out"
-ran t7 "7. the same with DEPLOY_ATTACHED=1 (the workflow's form): runs"
+CI=1 DEPLOY_ATTACHED=1 setsid $D production < /dev/null 2>&1 | cat > "$TMP/t6b.out"
+refused t6b "6b. the same with DEPLOY_ATTACHED=1 ALONE: refused"
+
+# The workflow's form: it runs over SSH, where GITHUB_ACTIONS is NOT inherited
+# from the runner, so the workflow sets both on its own command line.
+CI=1 GITHUB_ACTIONS=true DEPLOY_ATTACHED=1 setsid $D production < /dev/null 2>&1 | cat > "$TMP/t7.out"
+ran t7 "7. GITHUB_ACTIONS=true and DEPLOY_ATTACHED=1 (the workflow's form): runs"
+
+# Neither half of the pair is enough alone.
+CI=1 GITHUB_ACTIONS=true setsid $D production < /dev/null 2>&1 | cat > "$TMP/t7b.out"
+refused t7b "7b. GITHUB_ACTIONS=true without DEPLOY_ATTACHED=1: refused"
 
 # The refusal must print the command that works, and take no lock.
 grep -q "setsid nohup ./infra/scripts/deploy.sh production" "$TMP/t1.out" \
