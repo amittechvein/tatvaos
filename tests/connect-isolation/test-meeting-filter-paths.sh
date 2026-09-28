@@ -37,16 +37,20 @@ SCRATCH="$ROOT/.tmp/connect-isolation-$$"
 mkdir -p "$SCRATCH"
 LOG="$SCRATCH/api.log"
 
+# TATVAOS_PG_DB: the database, tatvaos_mail unless set. Set it to run against a
+# fresh database of your own when other sessions' APIs share tatvaos_mail
+# (their workers take this test's rows; found 1 Oct 2026).
+PGDB="${TATVAOS_PG_DB:-tatvaos_mail}"
 WSL_KEEPALIVE=""
 if [ -z "${TATVAOS_PSQL:-}" ]; then
     if command -v wsl >/dev/null 2>&1; then
         wsl -e sleep 3600 >/dev/null 2>&1 &
         WSL_KEEPALIVE=$!
         sleep 2
-        TATVAOS_PSQL="wsl -u postgres -e psql -d tatvaos_mail -Atc"
+        TATVAOS_PSQL="wsl -u postgres -e psql -d $PGDB -Atc"
         TATVAOS_PG_HOST="${TATVAOS_PG_HOST:-$(wsl hostname -I | tr -d ' \r\n')}"
     else
-        TATVAOS_PSQL="docker exec tv-postgres psql -U postgres -d tatvaos_mail -Atc"
+        TATVAOS_PSQL="docker exec tv-postgres psql -U postgres -d $PGDB -Atc"
         TATVAOS_PG_HOST="${TATVAOS_PG_HOST:-localhost}"
     fi
 fi
@@ -99,7 +103,7 @@ signin() {
 
 export JWT_SIGNING_KEY="dev-only-key-at-least-32-characters-long"
 export ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS="$API"
-export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
+export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=$PGDB;Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
 export Smtp__Host=localhost Smtp__Port=5870
 if command -v cygpath >/dev/null 2>&1; then export Oidc__KeyDirectory="$(cygpath -w "$SCRATCH")\\keys"; else export Oidc__KeyDirectory="$SCRATCH/keys"; fi
 
