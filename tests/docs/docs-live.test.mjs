@@ -466,6 +466,18 @@ async function main() {
   check('Docs is refused at once for new requests', (await A(`/docs/${id}`)).status === 403);
   await waitFor(() => openBeforeOff.closed, 50_000);
   check('the open editor is closed with 4403', openBeforeOff.closed?.code === 4403, JSON.stringify(openBeforeOff.closed));
+  // Off withdraws the EDITOR, never the data (0011; Mr. Singh, 28 Sept):
+  // while off, Space must still list the file and hand out its readable
+  // copy. Until this, the run only showed the document back after
+  // switching ON again — which would pass even if "off" hid it.
+  const offList = await A('/space/list?scope=personal');
+  check('while off, Space still lists the document',
+    offList.status === 200 && (offList.body.files ?? []).some((f) => f.id === id),
+    `status ${offList.status}`);
+  const offDl = await A(`/space/files/${id}/content`);
+  check('while off, Space still downloads its readable copy',
+    offDl.status === 200 && String(offDl.body).includes('<p>Hello</p>'),
+    `status ${offDl.status}`);
   const cStill = await C('/docs/status');
   check('the other organisation is unaffected (still on)', cStill.body.enabled === true);
   await P(`/admin/organisations/${TENANT_A}/docs`, { method: 'PUT', body: JSON.stringify({ enabled: true }) });
