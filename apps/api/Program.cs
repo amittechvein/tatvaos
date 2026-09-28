@@ -93,17 +93,10 @@ builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(o =>
     {
-        o.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = true,
-            ValidateAudience = true,
-            ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
-            ValidIssuer = builder.Configuration["Jwt:Issuer"],
-            ValidAudience = builder.Configuration["Jwt:Audience"],
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
-            ClockSkew = TimeSpan.FromSeconds(30),
-        };
+        // Defined once, in TokenIssuer, with the access-token TYPE check
+        // (typ at+jwt) that keeps other tokens signed with this key out.
+        o.TokenValidationParameters = TatvaOS.Api.Shared.Auth.TokenIssuer.ValidationParameters(
+            jwtKey, builder.Configuration["Jwt:Issuer"], builder.Configuration["Jwt:Audience"]);
     });
 
 builder.Services.AddAuthorizationBuilder()

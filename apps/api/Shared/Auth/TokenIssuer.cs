@@ -26,6 +26,20 @@ namespace TatvaOS.Api.Shared.Auth;
 public sealed class TokenIssuer(IConfiguration config)
 {
     public static readonly TimeSpan AccessTokenLifetime = TimeSpan.FromMinutes(15);
+
+    /// <summary>
+    /// The JWT "typ" header every access token carries, and the ONLY one the
+    /// API accepts (RFC 9068's type for access tokens).
+    ///
+    /// Mr. Singh, 1 Oct 2026: one key signs access tokens, Connect download
+    /// tickets and (by default) MFA challenges, and they were told apart only
+    /// by their formats. "Every token type gets an explicit type claim, and
+    /// every verifier checks for its own" - so a fourth use of the key cannot
+    /// be mistaken for an access token by accident. The other two types:
+    /// ConnectDownloadTicket.Type and TotpService.ChallengeType.
+    /// tests/token-types feeds each type to all three verifiers.
+    /// </summary>
+    public const string AccessTokenType = "at+jwt";
     public static readonly TimeSpan RefreshTokenLifetime = TimeSpan.FromDays(14);
 
     private readonly string _key =
@@ -65,6 +79,7 @@ public sealed class TokenIssuer(IConfiguration config)
             Issuer = config["Jwt:Issuer"],
             Audience = config["Jwt:Audience"],
             Subject = new ClaimsIdentity(claims),
+            TokenType = AccessTokenType,
             NotBefore = DateTime.UtcNow,
             Expires = expires.UtcDateTime,
             SigningCredentials = new SigningCredentials(
@@ -74,6 +89,26 @@ public sealed class TokenIssuer(IConfiguration config)
 
         return new AccessToken(new JsonWebTokenHandler().CreateToken(descriptor), expires);
     }
+
+    /// <summary>
+    /// How an access token is checked - the one definition, used by the API's
+    /// bearer authentication (Program.cs) and by tests/token-types, so the two
+    /// cannot drift apart. ValidTypes is the type check: a token signed with
+    /// the right key but carrying any other "typ" (or none) is refused.
+    /// </summary>
+    public static TokenValidationParameters ValidationParameters(
+        string key, string? issuer, string? audience) => new()
+    {
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = issuer,
+        ValidAudience = audience,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key)),
+        ClockSkew = TimeSpan.FromSeconds(30),
+        ValidTypes = [AccessTokenType],
+    };
 
     /// <summary>
     /// 256 bits from a cryptographic RNG. Not a GUID: GUIDs are unique, which

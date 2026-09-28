@@ -108,6 +108,12 @@ jobs:
         run: dotnet run --project tests/connect-minutes
       - name: "Connect check: screen-share mode"
         run: dotnet run --project tests/connect-share
+      # Every token signed with Jwt:SigningKey carries its type, and every
+      # verifier accepts only its own (access at+jwt, Connect download ticket,
+      # MFA challenge). Mr. Singh, 1 Oct 2026: "make the distinction
+      # structural, not observed."
+      - name: "Auth check: every token type is checked for its own type"
+        run: dotnet run --project tests/token-types
 
       # Hire: HireAccess is the only route to hire.job_openings. A handler
       # that read the table directly would show a hiring manager every job in
