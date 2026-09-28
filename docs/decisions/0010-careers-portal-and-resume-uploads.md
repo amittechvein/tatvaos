@@ -1,8 +1,33 @@
 # 0010 — The public careers portal and résumé uploads
 
-**Status:** proposed — for Mr. Singh's ruling
-**Date:** 2026-09-24
+**Status:** accepted, with the conditions in "The ruling" below (Mr. Singh;
+his ruling is headed 30 Sept 2026 and reached this lane on 28 Sept)
+**Date:** 2026-09-24 (proposed)
 **Lane:** Hire & People
+
+## The ruling — read this before the proposal
+
+The proposal below is kept as it was put. **Where the ruling differs, the
+ruling wins.** §4 in particular is *refused*: do not build it from the text.
+
+| § | Ruling | What it adds or changes |
+|---|---|---|
+| 1 Address | **Accepted** (built as #275) | Stands with the two additions already made: `search_path` pinned on the resolver; `noindex` until launch. |
+| 2 Files | **Accepted, three additions** | (a) **Macros stripped from DOCX**, the way the workbook check strips them. (b) **The server assigns the stored filename**; the candidate's original is kept as metadata only — a filename is an injection vector. (c) **Served as a download, never inline.** |
+| 3 Storage | **Accepted, one wording change, one requirement** | "Only when scanned clean" becomes **"only when it passed the byte-level checks"** (§4 removes the scanner), so `scan_status` as proposed is not built. Download goes through `HireAccess`. **The blob follows the candidate:** when retention (#271) deletes an application, its file goes with it — **one purge that removes every blob belonging to a candidate.** Space's purge-path problem (#272) must not be repeated here. |
+| 4 Virus scanning | **No** | A 1.5 GB scanner on a box that reaches 6.5 GB at its caps and already swaps is the next outage. Constrain the input instead (§2). **`Modules/Mail/ClamAvScanner.cs` exists and is deliberately NOT wired** — it was not forgotten; do not wire it. If Amit wants "we scan uploads" as a sentence for schools, it runs **off this box**, at a cost that is his to decide. |
+| 5 Bots and floods | **Accepted, with a trigger and a caveat** | Honeypot, timing, per-IP and per-job limits now. **Email confirmation becomes the PRIMARY control once outbound mail works**, not a supplement: a confirmed address is also what erasure and retention need. The per-IP limit breaks the moment a CDN goes in front (rightmost `X-Forwarded-For`, same warning as #275). **"Turnstile in reserve" needs a written trigger:** spam applications above N per organisation per day switches it on. **N is not yet chosen — owed by this lane, with the form PR.** |
+| 6 Snapshot | **Accepted** | The snapshot is what retention deletes, so **#271 must cover application snapshots, not only profiles.** |
+| 7 Candidate notice | **The draft comes to Mr. Singh before any candidate sees it** | Principles: plain language; what is kept, for how long, who to write to; the talent-pool tick **unticked by default and separate from Submit**; the recorded text is **the exact text shown, versioned**. The backup sentence can now be true (§8b): *"deleted from live systems after six months and from backups within a further seven days."* |
+
+**Order of work:** accepted with the ClamAV step removed. Deletion first
+(#271), public pages (#275, live), the form without files, then résumés.
+**The portal stays off until all are deployed and the lawyer has answered.**
+
+**State on production when this was recorded (read 28 Sept, Amit's approval,
+three values only):** product `hire` `is_available = false`; product `people`
+`is_available = false`; `hire.careers_portal_enabled = false`. Live build
+`c7cb110` contains #260, #262, #264 and #275.
 
 ## Context
 
@@ -261,7 +286,7 @@ approval; no file contents read):
 
 | Copy | Where | Kept | Encrypted |
 |---|---|---|---|
-| Six-hourly backup, local | `/srv/backups/tatvaos/` (dir `drwx------ deploy`) | 14 days by the script's default (`BACKUP_KEEP_DAYS`; the server's value not read) | no — local disk |
+| Six-hourly backup, local | `/srv/backups/tatvaos/` (dir `drwx------ deploy`) | **3 days** — `BACKUP_KEEP_DAYS=3` on the server (read 24 Sept). *This row said "14 days by the script's default; the server's value not read" — a default quoted as if it were the fact. Corrected on Mr. Singh's instruction.* | no — local disk |
 | Six-hourly backup, off-box | object storage | **7 days** — `BACKUP_S3_KEEP_DAYS=7` on the server. **The runbook's 30 is wrong.** | AES-256 |
 | **Pre-deploy full copy** | `/srv/tatvaos-production/backups/` | **Forever** — **323 files, 31 GB, the oldest from 4 Aug 2026** (the repository's first day) | **no** — plain `.sql` / gzip |
 
@@ -271,6 +296,20 @@ accounts can log in (`root`, `deploy`; `deploy` is in `docker`, so
 root-equivalent) and no container mounts that directory — so today the
 practical readers are whoever holds root or the `deploy` SSH key, plus any
 service account on the host that is ever compromised.
+
+**What has changed since that table (it is kept as measured; this is now):**
+
+- **Pre-deploy copies:** encrypted, `0600` in a `0700` directory, kept
+  `BACKUP_KEEP_DAYS` = **3 days** — #254, live since 24 Sept. A restore of the
+  new format was proven on production on 25 Sept.
+- **The 323 old plain copies are gone:** deleted 25 Sept 07:16Z, one logged
+  action on Amit's explicit yes, after both restore drills (record on #254).
+- **The regular backups moved to a tiered schedule on 26 Sept** (#289, #317):
+  per those PRs' records, the server keeps only the newest few sets and the
+  off-box bucket holds up to 7 days. *Not re-measured for this edit.*
+- So **the longest any copy lives is the off-box 7 days.** The real N for the
+  notice is **re-measured on the server at launch** (checklist item 5), not
+  taken from this page.
 
 **Mr. Singh's ruling (25 Sept): the cap is by DAYS, not by count** — a count
 makes the period depend on how often we deploy, which no notice can state.
@@ -289,8 +328,8 @@ lane's privacy wording, not only Hire's.
 
 **For the notice**, once the window above is enforced: *"…deleted six months
 after a decision. Copies in our backups are deleted within a further N days."*
-— N being the longest window any copy is kept (14 if nothing changes the
-local default). Restoring a backup must not resurrect erased people: after
+— N being the longest window any copy is kept: **7** (the off-box window;
+this said 14, from the unread local default). Restoring a backup must not resurrect erased people: after
 any restore, the retention sweep runs before the system is opened to users
 (idempotent, seconds) — a line for the restore runbook.
 
@@ -306,6 +345,11 @@ forgotten one fails quietly. So every launch step is named here:
 1. Mr. Singh's rulings on §1–§7 implemented; the lawyer has confirmed the
    six months, the 30-day reply and the backup N (§8b).
 2. Pre-deploy copies capped by days (§8b) — deployed, not only merged.
+   **DONE:** #254 live 24 Sept, restore proven and old copies deleted 25 Sept.
+2b. **Retention covers application snapshots and résumé files** (ruling §3,
+   §6): one purge removes every blob and snapshot belonging to a candidate,
+   proven by a test that goes red without it.
+2c. **The Turnstile trigger N is written down** (ruling §5).
 3. **Remove `noindex` from `apps/web/app/careers/layout.tsx`.** Until this
    line goes, search engines are told not to list any careers page, and the
    product is never found. (The public API keeps its `X-Robots-Tag`: JSON is
@@ -323,13 +367,14 @@ forgotten one fails quietly. So every launch step is named here:
 Each step is its own PR, and the portal is **not switched on in production**
 until steps 1–5 are merged, deployed, and the lawyer has confirmed §7:
 
-1. **Automatic deletion** (§8) — in progress.
+1. **Automatic deletion** (§8) — #271, approved, stacked on #267.
 2. `hire.careers_sites`, the Careers settings page, the public job list and
-   job page — **no form yet** (§1).
+   job page — **no form yet** (§1). **Done: #275, live, switched off.**
 3. The application form **without a file**: consent, honeypot, limits,
    snapshot, identical reply (§5, §6, §7).
-4. ClamAV in compose (§4) — a `deploy`-area PR for you.
-5. Résumé upload, storage, scan worker, download (§2, §3).
+4. ~~ClamAV in compose (§4)~~ — **removed by the ruling. Not built.**
+5. Résumé upload, storage, byte-level checks, download (§2, §3) — no scan
+   worker.
 6. Later, separately: email confirmation (§5 option 3) once outbound mail
    works; customer domains with on-demand certificates (own record).
 
@@ -339,8 +384,9 @@ until steps 1–5 are merged, deployed, and the lawyer has confirmed §7:
   any certificate work; every step reuses a pattern already trusted here
   (token-style resolver, `IBlobStore`, `ClamAvScanner`, the sweep function,
   the structural gate).
-- **Harder:** one more container to run and keep updated (ClamAV); a new
-  public surface to watch (rate-limit rejections should appear in the logs
+- **Harder:** ~~one more container to run and keep updated (ClamAV)~~ (refused,
+  §4: uploads are **not virus-scanned**, and nothing we tell a customer may
+  say they are); a new public surface to watch (rate-limit rejections should appear in the logs
   and be looked at).
 - **Accepted:** R1 recruiters download résumés rather than preview them; no
   search inside résumés; weaker bot protection than a CAPTCHA until email
@@ -352,7 +398,8 @@ until steps 1–5 are merged, deployed, and the lawyer has confirmed §7:
   notice change).
 - The first customer asks for their own domain — the on-demand-certificate
   record.
-- Production memory cannot hold clamd — the commercial scanner question, with
-  its processor contract.
+- Amit wants "we scan uploads" as a promise to customers — scanning **off
+  this box** (ruling §4), with its cost and, if a third party, its processor
+  contract.
 - The lawyer's answer differs from six months / 30 days — change the default
   and the notice together.
