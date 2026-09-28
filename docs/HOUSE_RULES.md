@@ -213,6 +213,61 @@ Claude Code session that found the defect, not by Mr. Singh. He asked for the
 correction to be recorded; he has not checked this wording. If it misstates
 him, the error is the transcriber's.*
 
+**A pipeline reports every stage — Mr. Singh, 25 Sept 2026.**
+
+> A pipeline whose failures matter reports every stage's exit code. One that
+> sends its own errors to `/dev/null` can pass while broken and can't be
+> diagnosed when it fails.
+
+*The cost.* The restore drill (#286) ran five commands in a pipe — fetch,
+decrypt, untar, gunzip, psql — with every stage's stderr discarded. Its
+calibration failed twice and neither failure could be explained: the output was
+a bare "success" or "failure" with nothing behind it. Reading `PIPESTATUS` per
+stage made both visible in one run, and both turned out to be defects in the
+calibration rather than the pipeline — a "truncated" object that still
+contained the whole member, and state leaking between cases.
+
+`set -o pipefail` tells you the pipeline failed. It does not tell you which
+stage, and on a five-stage pipe that is most of the answer. Capture
+`PIPESTATUS` into an array **before any other command, including an
+assignment**, and print it when something goes wrong.
+
+Note also what the discarded stderr cost: the one line that explained the
+second failure — `ERROR: relation "drill_probe" already exists` — was being
+produced the whole time and thrown away.
+
+*Everything in this entry except the indented quotation is written by the
+Claude Code session that hit it, not by Mr. Singh. He asked for the rule to be
+recorded; he has not checked this wording. If it misstates him, the error is
+the transcriber's.*
+
+**Two nothings agreeing is not a match — Mr. Singh, 25 Sept 2026.**
+
+> A comparison must first prove both sides are non-empty. Two nothings agreeing
+> is not a match.
+
+*The cost.* Two sessions hit this on the same script on the same day, and found
+it independently. On the #254 restore drill, a schema query errored on **both**
+sides with a `text || "char"` cast, the two empty answers compared equal, and
+the run printed ok; a count query failed on a trailing space and counted 0
+tables, and also printed ok. Two whole drill runs were invalid. On #286's
+calibration, the same shape twice: a comparison that would have passed on two
+blanks, and a "truncated" object that wasn't truncated.
+
+The cure is cheap and belongs in the comparison itself, not in a reviewer's
+attention: demand a real answer before allowing a pass — a 32-character hash, a
+count that is a number and greater than zero, a non-empty string on both sides.
+The drill now refuses to compare unless both sides return a number; the #254
+drill now demands more than 0 tables and rows before any equality can count.
+
+This is the oldest failure in `docs/` — `testing-false-greens` — and it keeps
+coming back because it is invisible: the check does not error, it agrees.
+
+*Everything in this entry except the indented quotation is written by the
+Claude Code session that hit it, not by Mr. Singh. He asked for the rule to be
+recorded; he has not checked this wording. If it misstates him, the error is
+the transcriber's.*
+
 ## 6b. A result is about a version. Say which one.
 
 Rule 6 asks whether a check *can* fail. This asks whether its result still
