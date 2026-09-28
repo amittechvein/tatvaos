@@ -194,6 +194,13 @@ public sealed record UserResponse(
 /// </summary>
 public sealed record InvitationInfo(string State, DateTimeOffset? SentAt, string? SentTo);
 
+/// <summary>
+/// "Send to everyone who has not signed in". DryRun answers with the counts
+/// and sends nothing, so the screen can say how many mails a click will
+/// cause BEFORE the click — a hundred mails cannot be called back.
+/// </summary>
+public sealed record SendToPendingRequest(bool DryRun = true);
+
 public sealed record CreateDepartmentRequest(
     string Name, string? Description,
     long? DefaultQuotaBytes, string DefaultRole,

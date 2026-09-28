@@ -97,6 +97,7 @@ export default function PeoplePage() {
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [sendingToPending, setSendingToPending] = useState(false);
   const [editing, setEditing] = useState<Person | null>(null);
 
   const load = useCallback(async () => {
@@ -148,6 +149,11 @@ export default function PeoplePage() {
       subtitle={`${people.length} in this organisation`}
       actions={
         <div className="flex gap-2">
+          {people.some((p) => p.status === 'pending') && (
+            <Button variant="ghost" onClick={() => setSendingToPending(true)}>
+              Send to pending
+            </Button>
+          )}
           <Button variant="ghost" onClick={() => setAdding(true)} disabled={usable.length === 0}>
             Add many
           </Button>
@@ -163,6 +169,12 @@ export default function PeoplePage() {
           domains={usable}
           onClose={() => setAdding(false)}
           onDone={async (msg) => { setAdding(false); setNotice(msg); await load(); }}
+        />
+      )}
+      {sendingToPending && (
+        <SendToPending
+          onClose={() => setSendingToPending(false)}
+          onSent={async (msg) => { setSendingToPending(false); setNotice(msg); await load(); }}
         />
       )}
       {error && <Alert tone="danger" onDismiss={() => setError(null)}>{error}</Alert>}
@@ -308,6 +320,120 @@ export default function PeoplePage() {
         />
       )}
     </AdminShell>
+  );
+}
+
+interface PendingCounts {
+  pending: number; toSend: number; signInLinks: number; invitations: number;
+  skipped: { linkStillWorks: number; noRecoveryEmail: number; owners: number; yourself: number };
+}
+
+/**
+ * "Send to pending": the two per-person buttons (Send sign-in link, Send
+ * invitation) pressed for everybody who has never signed in.
+ *
+ * The counts are asked for FIRST and nothing is sent until the second press:
+ * a hundred mails cannot be called back. The server decides who is sent to;
+ * this only shows what it said.
+ */
+function SendToPending({ onClose, onSent }: {
+  onClose: () => void;
+  onSent: (msg: string) => void;
+}) {
+  const { authedFetch } = useAuth();
+  const [counts, setCounts] = useState<PendingCounts | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  const ask = useCallback(async (dryRun: boolean) => {
+    const res = await authedFetch('/org/users/pending/send-links', {
+      method: 'POST',
+      body: JSON.stringify({ dryRun }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(typeof body.error === 'string' ? body.error : 'That did not work.');
+    return body as { counts: PendingCounts; note?: string };
+  }, [authedFetch]);
+
+  useEffect(() => {
+    let live = true;
+    ask(true)
+      .then((b) => { if (live) setCounts(b.counts); })
+      .catch((e) => { if (live) setFailed(e instanceof Error ? e.message : 'That did not work.'); });
+    return () => { live = false; };
+  }, [ask]);
+
+  async function send() {
+    setBusy(true);
+    try {
+      const b = await ask(false);
+      onSent(b.note ?? 'Sent.');
+    } catch (e) {
+      setFailed(e instanceof Error ? e.message : 'That did not work.');
+      setBusy(false);
+    }
+  }
+
+  const people = (n: number) => (n === 1 ? '1 person' : `${n} people`);
+
+  return (
+    <Modal
+      title="Send to everyone who has not signed in"
+      subtitle="A one-use link, to each person's recovery email."
+      onClose={onClose}
+      busy={busy}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button variant="primary" onClick={() => void send()}
+                  disabled={busy || !counts || counts.toSend === 0}>
+            {counts && counts.toSend > 0 ? `Send to ${people(counts.toSend)}` : 'Send'}
+          </Button>
+        </>
+      }
+    >
+      {failed && <Alert tone="danger">{failed}</Alert>}
+      {!counts && !failed && <Spinner />}
+      {counts && (
+        <>
+          <p className="mb-3 text-sm text-ink">
+            {people(counts.pending)} {counts.pending === 1 ? 'has' : 'have'} never signed in.{' '}
+            {counts.toSend === 0
+              ? 'There is nobody to send to.'
+              : `${people(counts.toSend)} will be sent a link.`}
+          </p>
+          <ul className="mb-3 text-sm text-ink-muted list-disc pl-5">
+            {counts.signInLinks > 0 && (
+              <li>{people(counts.signInLinks)}: a sign-in link, which works for 24 hours.
+                Their current password keeps working until they use it.</li>
+            )}
+            {counts.invitations > 0 && (
+              <li>{people(counts.invitations)}: an invitation, which works for 72 hours.</li>
+            )}
+            {counts.skipped.linkStillWorks > 0 && (
+              <li>{people(counts.skipped.linkStillWorks)} left alone: they hold a link that
+                still works, and a new one would break it.</li>
+            )}
+            {counts.skipped.noRecoveryEmail > 0 && (
+              <li>{people(counts.skipped.noRecoveryEmail)} left out: no recovery email on
+                file, so a link has nowhere to go. Use Reset password for them.</li>
+            )}
+            {/* Mr. Singh, 1 Oct 2026: a sweep never sends to an owner, whoever
+                presses it. The count is shown so the owner is not forgotten. */}
+            {counts.skipped.owners > 0 && (
+              <li>{counts.skipped.owners === 1 ? '1 owner' : `${counts.skipped.owners} owners`} skipped.
+                Use their profile.</li>
+            )}
+          </ul>
+          {counts.toSend > 0 && (
+            <Alert tone="info" className="mb-0">
+              Tell them to expect a mail from no_reply@tatvaos.com and to look in
+              their spam folder. Any earlier link they were sent stops working.
+            </Alert>
+          )}
+        </>
+      )}
+    </Modal>
   );
 }
 
