@@ -136,6 +136,69 @@ fi
 ok "secrets present"
 
 # ---------------------------------------------------------------------------
+step "Settings files are private"
+# ── .env AND EVERY COPY OF IT: READABLE BY THIS ACCOUNT ONLY, OR NO DEPLOY. ──
+#  infra/docker/.env holds every production secret, and a copy of it is the
+#  same secret in a second place. On 28 Sept 2026 .env was found at mode 664
+#  — readable by every account on the server — with three copies beside it
+#  the same way, one 52 days old. Nobody chose that: this account's umask is
+#  002, so every file it creates is born world-readable unless the command
+#  says otherwise. A runbook rule was written that day. A rule is a sentence.
+#
+#  Mr. Singh, 1 Oct 2026: the deploy REFUSES — it does not warn — because
+#  the deploy is the one moment somebody is watching.
+#
+#  WHAT COUNTS: every file named .env* in the settings directory that is NOT
+#  tracked by git. The tracked ones are the published examples
+#  (.env.production.example): they are in the repository, git writes them
+#  664, and a secret in one of them is a different mistake. Deciding by git
+#  and not by the name "*.example" matters: a copy somebody called
+#  .env.example.bak is a copy of the secrets, and is refused.
+#
+#  WHAT FAILS: any group or other permission bit at all (so 640 fails, not
+#  only 644), or an owner that is not the account running the deploy.
+#
+#  OLD COPIES are named, not refused: removing a file is a person's decision
+#  (docs/DEPLOY_RUNBOOK.md). The age comes from the UTC stamp in the NAME
+#  when there is one — `cp -p` carries the original's date onto the copy, so
+#  the file's own date says when .env was last edited, not when it was copied.
+# ─────────────────────────────────────────────────────────────────────────
+ENV_DIR=infra/docker
+ME=$(id -un)
+env_checked=0; env_bad=(); env_old=()
+while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    git ls-files --error-unmatch -- "$f" >/dev/null 2>&1 && continue
+    env_checked=$((env_checked + 1))
+    if [ -n "$(find "$f" -maxdepth 0 \( -perm /077 -o ! -user "$ME" \) 2>/dev/null)" ]; then
+        env_bad+=("$f")
+    fi
+    [ "$f" = "$ENV_DIR/.env" ] && continue
+    stamp=$(printf '%s' "$f" | grep -oE '20[0-9]{6}T?[0-9]{0,6}Z?$' | cut -c1-8 || true)
+    if [ -n "$stamp" ] && born=$(date -u -d "$stamp" +%s 2>/dev/null); then :
+    else born=$(stat -c %Y "$f"); fi
+    [ $(( ( $(date -u +%s) - born ) / 86400 )) -gt 7 ] && env_old+=("$f")
+done < <(find "$ENV_DIR" -maxdepth 1 -type f -name '.env*' 2>/dev/null | sort)
+
+if [ "$env_checked" -eq 0 ]; then
+    bad "found no settings file to check in $ENV_DIR — the check itself is broken; stopping"
+    exit 1
+fi
+if [ "${#env_bad[@]}" -gt 0 ]; then
+    bad "${#env_bad[@]} settings file(s) can be read by someone other than $ME — refusing to deploy"
+    for f in "${env_bad[@]}"; do note "  $(stat -c 'mode %a, owner %U' "$f")  $f"; done
+    note "Each holds production secrets. Fix, then deploy again:"
+    note "  chmod 600 ${env_bad[*]}"
+    note "and make copies with:  ( umask 077; cp .env .env.before-<reason>-\$(date -u +%Y%m%dT%H%M%SZ) )"
+    exit 1
+fi
+ok "$env_checked settings file(s), each readable by $ME only"
+if [ "${#env_old[@]}" -gt 0 ]; then
+    note "${#env_old[@]} copy(ies) of .env older than seven days — remove by hand (docs/DEPLOY_RUNBOOK.md):"
+    for f in "${env_old[@]}"; do note "  $f"; done
+fi
+
+# ---------------------------------------------------------------------------
 #  Docker must exist AND be usable by this user.
 #
 #  Checked here because without it every later step fails individually while

@@ -1664,6 +1664,7 @@ public static class MailEndpoints
                 m.Id, m.FolderId, m.ThreadId, m.FromName, m.FromAddr, m.ToAddrs,
                 m.CcAddrs, m.Subject, m.Snippet, m.SentAt, m.ReceivedAt,
                 m.SizeBytes, m.IsRead, m.IsFlagged, m.HasAttachments, m.CategoryId,
+                m.MessageIdHeader,
             })
             .ToListAsync(ct);
 
@@ -1674,31 +1675,56 @@ public static class MailEndpoints
             .Where(f => folderIds.Contains(f.Id))
             .ToDictionaryAsync(
                 f => f.Id,
-                f => new { name = f.SpecialUse == "\\Inbox" ? "Inbox" : f.Name, slug = SlugFor(f.SpecialUse) },
+                f => new
+                {
+                    name = f.SpecialUse == "\\Inbox" ? "Inbox" : f.Name,
+                    slug = SlugFor(f.SpecialUse),
+                    sent = f.SpecialUse == "\\Sent",
+                },
                 ct);
+
+        // A message addressed to yourself is in this mailbox twice - the Sent
+        // copy and the delivered one - and drawn twice it reads as "sent
+        // twice". One row per message; see MailThreadCopies for the report
+        // that found it. Folded AFTER the cap, in memory, so the count is
+        // corrected by exactly what was folded in the rows on hand.
+        var shown = MailThreadCopies.Fold(
+            rows,
+            m => m.MessageIdHeader,
+            m => folders.TryGetValue(m.FolderId, out var f0) && f0.sent);
+        total -= rows.Count - shown.Count;
 
         return Results.Ok(new
         {
             total,
-            messages = rows.Select(m => new
+            messages = shown.Select(g =>
             {
-                id = m.Id,
-                folderId = m.FolderId,
-                folderName = folders.TryGetValue(m.FolderId, out var f) ? f.name : null,
-                folderSlug = folders.TryGetValue(m.FolderId, out var f2) ? f2.slug : null,
-                threadId = m.ThreadId,
-                from = new { name = m.FromName, email = m.FromAddr ?? "" },
-                to = (m.ToAddrs ?? []).Select(a => new { name = (string?)null, email = a }).ToList(),
-                cc = (m.CcAddrs ?? []).Select(a => new { name = (string?)null, email = a }).ToList(),
-                subject = m.Subject ?? "",
-                snippet = m.Snippet ?? "",
-                sentAt = m.SentAt ?? m.ReceivedAt,
-                receivedAt = m.ReceivedAt,
-                sizeBytes = m.SizeBytes,
-                isRead = m.IsRead,
-                isFlagged = m.IsFlagged,
-                hasAttachments = m.HasAttachments,
-            categoryId = m.CategoryId,
+                var m = g.Shown;
+                return new
+                {
+                    id = m.Id,
+                    // The OTHER rows this one stands for. The reading pane may
+                    // have the delivered copy open while the strip shows the
+                    // Sent one; without these it cannot tell that they are the
+                    // same message and draws the open message nowhere at all.
+                    copyIds = g.Copies.Where(c => c.Id != m.Id).Select(c => c.Id).ToList(),
+                    folderId = m.FolderId,
+                    folderName = folders.TryGetValue(m.FolderId, out var f) ? f.name : null,
+                    folderSlug = folders.TryGetValue(m.FolderId, out var f2) ? f2.slug : null,
+                    threadId = m.ThreadId,
+                    from = new { name = m.FromName, email = m.FromAddr ?? "" },
+                    to = (m.ToAddrs ?? []).Select(a => new { name = (string?)null, email = a }).ToList(),
+                    cc = (m.CcAddrs ?? []).Select(a => new { name = (string?)null, email = a }).ToList(),
+                    subject = m.Subject ?? "",
+                    snippet = m.Snippet ?? "",
+                    sentAt = m.SentAt ?? m.ReceivedAt,
+                    receivedAt = m.ReceivedAt,
+                    sizeBytes = m.SizeBytes,
+                    isRead = m.IsRead,
+                    isFlagged = m.IsFlagged,
+                    hasAttachments = m.HasAttachments,
+                    categoryId = m.CategoryId,
+                };
             }).ToList(),
         });
     }
