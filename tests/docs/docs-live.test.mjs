@@ -93,8 +93,11 @@ const MSG = { update: 1, awareness: 2, ack: 4, synced: 5, event: 6, state: 7 };
 const seqOf = (b) => Number(new DataView(b.buffer, b.byteOffset + 1, 8).getBigInt64(0));
 
 /** A minimal browser: a Y.Doc wired to the socket the way lib/docsLive.ts wires it. */
-async function connect(call, id, label) {
-  const t = await call(`/docs/${id}/live-ticket`, { method: 'POST' });
+// ticketIn: open with a ticket taken earlier, as a browser that fetched one
+// just before something changed would.
+async function connect(call, id, label, ticketIn) {
+  const t = ticketIn ? { status: 200, body: { ticket: ticketIn } }
+    : await call(`/docs/${id}/live-ticket`, { method: 'POST' });
   if (t.status !== 200) return { refused: t.status };
   const url = API.replace(/^http/, 'ws') + `/docs/${id}/live?ticket=${encodeURIComponent(t.body.ticket)}`;
   const doc = new Y.Doc();
@@ -461,9 +464,18 @@ async function main() {
   console.log('Switched off while open (waits up to 50 s for the recheck)');
   const openBeforeOff = await connect(A, id, 'owner-before-off');
   check('owner is connected before the switch-off', openBeforeOff.synced);
+  // A ticket in hand when the switch goes off (tickets live 60 s).
+  const heldTicket = (await A(`/docs/${id}/live-ticket`, { method: 'POST' })).body?.ticket;
   const offA = await P(`/admin/organisations/${TENANT_A}/docs`, { method: 'PUT', body: JSON.stringify({ enabled: false }) });
   check('the operator switches Docs off', offA.status === 200 && offA.body.enabled === false);
   check('Docs is refused at once for new requests', (await A(`/docs/${id}`)).status === 403);
+  // Found 28 Sept: opening a connection checked the file and the level but
+  // not the switch, so this ticket opened the editor after "off" and kept
+  // it until the 45 s recheck — up to ~105 s of editing past the switch.
+  const late = await connect(A, id, 'ticket-from-before-off', heldTicket);
+  check('a ticket taken before the switch-off cannot open the editor after it',
+    heldTicket && !late.synced && late.closed !== null, `synced=${late.synced} closed=${JSON.stringify(late.closed)}`);
+  try { late.ws?.close(); } catch { /* already gone */ }
   await waitFor(() => openBeforeOff.closed, 50_000);
   check('the open editor is closed with 4403', openBeforeOff.closed?.code === 4403, JSON.stringify(openBeforeOff.closed));
   // Off withdraws the EDITOR, never the data (0011; Mr. Singh, 28 Sept):
