@@ -176,6 +176,18 @@ done
 
 step "3. What the worker did"
 same "notes written for both meetings" "$(notes_ready)" "2"
+# BY THIS TEST'S API, not just by somebody. Found 1 Oct 2026: on a laptop
+# where other sessions leave their own APIs running against the same local
+# database, THEIR notes worker sometimes took one of these meetings first and
+# mailed it through their own SMTP settings - so this sink never saw it, and
+# the failure read as "the School attendee got 0 minutes", which blamed the
+# code. Named here instead. (CI runs one API on its own database: cannot happen.)
+mine=0; for m in "$M_TV" "$M_SC"; do grep -q "Wrote digest notes for meeting $m" "$LOG" && mine=$((mine+1)); done
+if [ "$mine" -eq 2 ]; then
+    pass "this test's own worker processed both meetings"
+else
+    fail "this test's own worker processed $mine of 2 meetings - ANOTHER TatvaOS API is running against this database and took the rest (a local-machine problem, not a product one): stop the others, then re-run"
+fi
 same "...each carrying its own organisation" \
     "$(PG "SELECT count(*) FROM connect.meeting_notes WHERE (meeting_id = '$M_TV' AND tenant_id = '$TV') OR (meeting_id = '$M_SC' AND tenant_id = '$SC')")" "2"
 same "the Techvein attendee got the Techvein minutes, once" "$(mail_to "$TV_MAIL" "Minutes: Minutes walk techvein $RUN")" "1"

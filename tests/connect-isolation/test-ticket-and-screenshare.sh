@@ -139,7 +139,9 @@ step "0. The database answers ($TATVAOS_PG_HOST)"
 for _ in $(seq 1 30); do [ -n "$(PG "SELECT 1")" ] && break; sleep 1; done
 [ -n "$(PG "SELECT 1")" ] || { fail "psql does not answer"; exit 1; }
 pass "psql answers"
-same "the three test phones belong to the right people"     "$(PG "SELECT string_agg(email, ' ' ORDER BY phone) FROM core.users WHERE phone BETWEEN '+919999900001' AND '+919999900003'")"     "amit@techvein.local hr@techvein.local principal@abcschool.local"
+# The three test phones, made true every run (tests/support/test-phones.sh).
+. "$(dirname "$0")/../support/test-phones.sh"
+[ "$(PG "$TEST_PHONES_SQL")" = "3" ] || { fail "the test phone numbers could not be set - see tests/support/test-phones.sh"; exit 1; }
 
 step "1. Start the API"
 dotnet run --no-build -c Release --project "$PROJ" > "$LOG" 2>&1 &
@@ -248,7 +250,7 @@ track() {
 # track_room EVENT ROOMNAME -> HTTP status, for a room that is not m-<id>
 track_room() {
     local body="{\"event\":\"$1\",\"id\":\"tw-$RUN-$RANDOM\",\"createdAt\":\"$(date +%s)\",\"room\":{\"name\":\"$2\"},\"participant\":{\"identity\":\"u-walk-$RUN\"},\"track\":{\"sid\":\"TR_$RUN\",\"source\":\"SCREEN_SHARE\"}}"
-    local jwt; jwt=$(BODY="$body" SECRET="$LK_SECRET" KEY="$LK_KEY" "$PY" "$SIGNER" | tr -d "")
+    local jwt; jwt=$(BODY="$body" SECRET="$LK_SECRET" KEY="$LK_KEY" "$PY" "$SIGNER" | tr -d "\r")
     curl -s -o /dev/null -w "%{http_code}" -X POST "$API/api/connect/webhooks/livekit"         -H "Authorization: $jwt" -H "Content-Type: application/webhook+json" --data-binary "$body"
 }
 reached() { grep -c "Share enforcement, meeting $1" "$LOG" | tr -d ' '; }
@@ -276,7 +278,7 @@ same "the screen share stopping is acted on too" "$(track track_unpublished "$MS
 # multiple-sharer event above is one; two more that should not happen in life.
 logged() { grep -c -- "$1" "$LOG" | tr -d ' '; }
 same "...and the multiple-sharer event SAYS why it did nothing"     "$(logged "in meeting $MM: share mode is multiple, nothing to enforce")" "1"
-GHOST="$("$PY" -c "import uuid; print(uuid.uuid4())" | tr -d "")"
+GHOST="$("$PY" -c "import uuid; print(uuid.uuid4())" | tr -d "\r")"
 same "a screen share for a meeting that does not exist: 200, and a warning naming it"     "$(track track_published "$GHOST" SCREEN_SHARE)/$(sleep 1; logged "for meeting $GHOST ignored: no such meeting")" "200/1"
 same "a screen share in a room that is not a meeting room: 200, and a warning"     "$(track_room track_published "lobby-$RUN")/$(sleep 1; logged "the room is not a meeting room")" "200/1"
 same "no screen share was read under the wrong organisation (the error line never appears)"     "$(logged "NOT ACTED ON: the meeting exists")" "0"

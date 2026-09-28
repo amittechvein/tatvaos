@@ -124,6 +124,9 @@ step "0. The database answers ($TATVAOS_PG_HOST)"
 for _ in $(seq 1 30); do [ -n "$(PG "SELECT 1")" ] && break; sleep 1; done
 [ -n "$(PG "SELECT 1")" ] || { fail "psql does not answer"; exit 1; }
 pass "psql answers"
+# The three test phones, made true every run (tests/support/test-phones.sh).
+. "$(dirname "$0")/../support/test-phones.sh"
+[ "$(PG "$TEST_PHONES_SQL")" = "3" ] || { fail "the test phone numbers could not be set - see tests/support/test-phones.sh"; exit 1; }
 
 step "1. Start the API"
 # Test values, not anybody's: enough to mint join tokens and verify webhooks.
@@ -153,7 +156,7 @@ command -v cygpath >/dev/null 2>&1 && SIGNER="$(cygpath -w "$SIGNER")"
 # signed BODY -> HTTP status of a LiveKit-signed event carrying exactly BODY
 signed() {
     local body="$1" jwt
-    jwt=$(BODY="$body" SECRET="$LK_SECRET" KEY="$LK_KEY" "$PY" "$SIGNER" | tr -d "")
+    jwt=$(BODY="$body" SECRET="$LK_SECRET" KEY="$LK_KEY" "$PY" "$SIGNER" | tr -d "\r")
     curl -s -o /dev/null -w "%{http_code}" -X POST "$API/api/connect/webhooks/livekit"         -H "Authorization: $jwt" -H "Content-Type: application/webhook+json" --data-binary "$body"
 }
 # webhook EVENT MEETING_ID -> HTTP status of a signed room event
@@ -199,7 +202,6 @@ fi
 
 step "3. The guest waiting room"
 PG "UPDATE core.users SET role='org_owner' WHERE email='amit@techvein.local' AND role='owner'" >/dev/null
-PG "UPDATE core.users SET phone='+919999900001' WHERE email='amit@techvein.local' AND phone IS NULL" >/dev/null
 HOST=$(signin "+919999900001")
 [ -n "$HOST" ] && pass "signed in as the host" || { fail "host sign-in failed"; exit 1; }
 r=$(call POST "/api/connect/meetings" "$HOST" "{\"title\":\"Iso lobby $RUN\",\"kind\":\"instant\",\"waitingRoom\":\"guests\",\"allowGuests\":true}")
