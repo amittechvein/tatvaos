@@ -49,7 +49,14 @@ public sealed class SpaceContentGateway(
         // blob is HTML, and HTML attachments are a phishing carrier that mail
         // gateways quarantine. DescribeAsync says so by name; here it is
         // simply not opened, so no caller can send one by accident.
-        if (f.MimeType == TatvaOS.Api.Modules.Docs.DocsFormat.MimeType) return null;
+        //
+        // Nor is a spreadsheet, yet. Opened here it would leave named
+        // "Book" and typed application/vnd.tatvaos.spreadsheet - a type no
+        // program opens, and one that is the server's alone. And its .xlsx
+        // is written by a browser: until the server writes it (decision
+        // 0011, condition 1) a file sent to someone OUTSIDE the
+        // organisation could say something the spreadsheet does not.
+        if (TatvaOS.Api.Modules.Docs.DocsFormat.IsLive(f.MimeType)) return null;
 
         var stream = blobs.OpenRead(f.BlobKey);
         return stream is null
@@ -70,7 +77,9 @@ public sealed class SpaceContentGateway(
             .Where(f => fileIds.Contains(f.Id) && f.DeletedAt == null)
             .Select(f => new SpaceContentInfo(f.Id, f.Name, f.MimeType, f.SizeBytes,
                 f.MimeType == TatvaOS.Api.Modules.Docs.DocsFormat.MimeType
-                    ? TatvaOS.Api.Modules.Docs.DocsFormat.NotAttachable : null))
+                    ? TatvaOS.Api.Modules.Docs.DocsFormat.NotAttachable
+                    : f.MimeType == TatvaOS.Api.Modules.Docs.DocsFormat.SpreadsheetMimeType
+                        ? TatvaOS.Api.Modules.Docs.DocsFormat.SpreadsheetNotAttachable : null))
             .ToListAsync(ct);
     }
 

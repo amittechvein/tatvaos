@@ -77,6 +77,10 @@ public static class DocsFormat
     public const string NotAttachable =
         "A TatvaOS document can't be attached yet. Open it in Docs, download it as a PDF (File > Download as PDF), and attach that.";
 
+    /// <summary>What a person is told when they try to attach a spreadsheet to mail.</summary>
+    public const string SpreadsheetNotAttachable =
+        "A TatvaOS spreadsheet can't be attached yet. Open it in Sheets, download it as Excel (File > Download as Excel), and attach that.";
+
     /// <summary>
     /// Wrap the editor's HTML into a standalone page — the file's blob. It is
     /// what Space downloads, what a public link serves, and what Mail attaches

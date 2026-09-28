@@ -137,7 +137,10 @@ public static class SheetsAiEndpoints
                 return Error(400, "action must be formula, explain, analyze or clean.");
         }
 
-        var result = await ai.CompleteAsync(instruction, input, ct);
+        // Named, so the metering counts it under "Sheets" - the gateway
+        // refuses a request with no feature. Default cost (1 credit) until
+        // Amit prices it; see the same note in DocsEndpoints.
+        var result = await ai.CompleteAsync(instruction, input, ct, feature: "sheets");
         if (result.Error is not null) return Error(502, result.Error);
         var text = result.Text.Trim();
 

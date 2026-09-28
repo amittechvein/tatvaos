@@ -53,13 +53,6 @@ until each of these is done.**
 - **3 (sanitiser).** The three malformed cases (unknown elements, content that is not a document, raw hostile HTML) produce only allowlisted, escaped markup, each with its permit twin (`tests/docs-html`). And two proofs that do not rest on cases its author chose: every output is **loaded in a browser**, where nothing may run and nothing may be fetched but a kept picture (`tests/docs-html/browser.mjs`); and it is run against **a corpus of attacks written by other people** (`tests/docs-html/corpus`).
 - **4 (logged drops).** A document with an unknown node produces a log line naming the document and the node type, never the content.
 
-**What proves each condition — so no box is ticked by something that only looks like it:**
-
-- **1 (server render).** The served file is produced by the API from the Yjs state it stores. Proof: a checkpoint whose uploaded file *differs* from the Yjs content does not change what Space serves — the test sends a mismatching file and shows the download still matches the content.
-- **2 (PDF by email).** The PDF is built **on the server, from the same source as condition 1**. A PDF made in the browser has exactly the divergence problem of HTML made in the browser, and **does not meet this condition**, however it looks. Proof: the same mismatch test, run against the mail attachment — the PDF matches the stored content, not the client's file (Mr. Singh, 25 Sept 2026).
-- **3 (sanitiser).** The three malformed cases (unknown elements, content that is not a document, raw hostile HTML) produce only allowlisted, escaped markup, each with its permit twin.
-- **4 (logged drops).** A document with an unknown node produces a log line naming the document and the node type, never the content.
-
 Already true, and must stay true (checked by tests every run):
 
 - A file's live type is set only by the server; Space strips the two live
