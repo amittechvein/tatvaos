@@ -20,6 +20,32 @@ ruling wins.** §4 in particular is *refused*: do not build it from the text.
 | 6 Snapshot | **Accepted** | The snapshot is what retention deletes, so **#271 must cover application snapshots, not only profiles.** |
 | 7 Candidate notice | **The draft comes to Mr. Singh before any candidate sees it** | Principles: plain language; what is kept, for how long, who to write to; the talent-pool tick **unticked by default and separate from Submit**; the recorded text is **the exact text shown, versioned**. The backup sentence can now be true (§8b): *"deleted from live systems after six months and from backups within a further seven days."* |
 
+### Erasure wins over explainability — a deliberate choice
+
+Recorded on Mr. Singh's read of #267 (same ruling day). Two things this
+product holds to pull against each other here:
+
+- **Decisions about people must be explainable.** A rejection cannot be saved
+  without a reason (`ck_application_rejection_reason`, #267).
+- **Erasure is real.** Erasing a candidate cascades through their
+  applications *and their history*, so **the rejection reason is deleted with
+  them.** That is correct: the reason may itself be personal data, and the law
+  asks for erasure.
+
+**So after erasure — on request, or automatic at the end of the retention
+period — the organisation can no longer explain that decision if asked. Erasure
+wins.** Nobody should later "fix" this by keeping reasons in the audit log or
+a side table: the audit log holds ids and counts only, and #267's test asserts
+it holds no name, email or rejection text.
+
+**The candidate notice (§7) must carry one line saying so** — in substance:
+*"Once your application has been deleted, we can no longer answer questions
+about it."* The exact wording goes to Mr. Singh with the rest of the draft.
+
+**Role defaults confirmed by Amit, 28 Sept:** recruiters see every candidate
+and application in the organisation; hiring managers see only applicants to
+their own jobs and act only on those; admins see everything.
+
 **Order of work:** accepted with the ClamAV step removed. Deletion first
 (#271), public pages (#275, live), the form without files, then résumés.
 **The portal stays off until all are deployed and the lawyer has answered.**
