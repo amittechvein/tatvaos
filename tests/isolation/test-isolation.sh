@@ -500,6 +500,13 @@ pub=$(scalar_as postgres "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON 
                            WHERE n.nspname = 'connect' AND p.prosecdef AND has_function_privilege('public', p.oid, 'EXECUTE')")
 [ "${pub:-1}" -eq 0 ] && pass "no connect definer is executable by PUBLIC"                       || fail "DANGEROUS: ${pub} connect definer(s) are executable by PUBLIC"
 
+# The four definers nothing called were dropped (20260928-e); a file that
+# brings one back without a caller fails here.
+gone=$(scalar_as postgres "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                            WHERE n.nspname = 'connect'
+                              AND p.proname IN ('meeting_chat_lines','meetings_with_captions','recording_bytes','share_for_user')")
+[ "${gone:-1}" -eq 0 ] && pass "the four uncalled definers are gone (meeting_chat_lines, meetings_with_captions, recording_bytes, share_for_user)"                        || fail "${gone} of the four uncalled connect definers exist again - see 20260928-e-connect-drop-unused-definers.sql"
+
 # The attendee list (emails and names) for a School meeting, asked for from
 # Techvein, must be empty; asked for from the School, it must not be - or the
 # empty answer proves nothing.

@@ -574,25 +574,10 @@ $$;
 REVOKE ALL ON FUNCTION connect.storage_headroom(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION connect.storage_headroom(uuid) TO tatvaos_app;
 
--- ----------------------------------------------------------------------------
---  What Connect itself is using, for the screen that shows it.
--- ----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION connect.recording_bytes(p_tenant uuid)
-RETURNS bigint
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = connect, pg_temp
-AS $$
-    SELECT COALESCE(SUM(r.size_bytes), 0)::bigint
-      FROM connect.recordings r
-      JOIN connect.meetings m ON m.id = r.meeting_id
-     WHERE m.tenant_id = p_tenant
-       AND r.status <> 'deleted';
-$$;
-
-REVOKE ALL ON FUNCTION connect.recording_bytes(uuid) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION connect.recording_bytes(uuid) TO tatvaos_app;
+-- connect.recording_bytes was REMOVED on 28 Sept 2026: nothing called it, and a definer
+-- nothing calls is only a way past every isolation layer (decision 0007's
+-- definer review). 20260928-e-connect-drop-unused-definers.sql drops it
+-- from databases that still have it. Do not bring it back without a caller.
 
 -- ----------------------------------------------------------------------------
 --  May this organisation record at all? One column, read through a definer
