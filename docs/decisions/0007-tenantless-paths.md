@@ -44,23 +44,18 @@ Every read of `ConnectMeetings` (26 sites, 8 files) was checked before PR
 The step-two column follows the ruling: "the child tables get a `tenant_id`
 column rather than a join through the meeting".
 
-| Table | `tenant_id` | EF filter | RLS forced | Step two |
+| Table | `tenant_id` | EF filter | RLS policy | Since |
 |---|---|---|---|---|
-| meetings | yes | **yes (PR 288)** | yes | done in step one |
-| meeting_invitations | yes | no | yes | filter only: the column exists |
-| recording_shares | yes | no | yes | filter only |
-| recording_share_grants | yes | no | yes | filter only |
-| recording_access_log | yes | no | yes | filter only |
-| tenant_settings | yes | no | yes | filter only |
-| participants | **no** | no | yes | add `tenant_id`, then the filter |
-| lobby_requests | **no** | no | yes | add, then filter |
-| meeting_events | **no** | no | yes | add, then filter |
-| meeting_chat | **no** | no | yes | add, then filter (high volume: the ruling's reason) |
-| caption_lines | **no** | no | yes | add, then filter (high volume) |
-| meeting_blocks | **no** | no | yes | add, then filter |
-| meeting_notes | **no** | no | yes | add, then filter |
-| recordings | **no** | no | yes | add, then filter |
-| transcripts | **no** | no | yes | add, then filter |
+| meetings | yes | yes | tenant_id | step one (PR 288) |
+| meeting_invitations, recording_shares, recording_share_grants, recording_access_log, tenant_settings | yes (already had it) | **yes** | tenant_id | step two (28 Sept) |
+| recording_share_password_failures | yes | **yes** | tenant_id | walked and filtered 28 Sept (PR 288) |
+| participants, lobby_requests, meeting_events, meeting_chat, caption_lines, meeting_blocks, meeting_notes, recordings, transcripts | **added 28 Sept**, set by a trigger from the meeting | **yes** | **tenant_id** (was a per-row join through the meeting) | step two (`20260928-connect-child-tenant-id.sql`) |
+
+Step two gave the nine tables without a `tenant_id` their own column. **Nine, not
+the "ten" this list said on 25 Sept.** The five that already had one got the EF
+filter only. The trigger ignores whatever a writer supplies and takes the
+meeting's `tenant_id`; a writer who cannot see the meeting gets NULL and is
+refused. `tests/tenant-filters` now lists no Connect entity among its gaps.
 
 "RLS forced" was read from `pg_class` on the local database built from this
 branch's init files. Production was not read.
@@ -91,9 +86,7 @@ functions omit `pg_temp` and were assigned to this lane.
    and nothing runs it.
 2. **Walk the ticketed download and the screen-share event.**
 3. **Review each definer function's body** against section 3's question.
-4. **Step two:** `tenant_id` on the ten child tables, then filters. The
-   enforcement test (PR 288) lists them as its only allowed exceptions, so the
-   list can only shrink.
+4. **Step two: done 28 Sept** (see section 2).
 5. **`core.departments`** (the ruling's first addition): policy on, the mail
    edge reads it through a definer function. Not Connect, but absorbed by 0007.
    It is its own migration PR.
