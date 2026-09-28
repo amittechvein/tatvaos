@@ -29,8 +29,8 @@ syncing leaves RLS blind. Several paths below have been bitten by exactly that.
 | `GET /api/connect/g/wait/{token}` (waiting room poll) | a parked guest or colleague | `connect.peek_lobby_request()`; on admission `connect.claim_lobby_admission()` → `EnterAnonymousScope(claimed.TenantId)` + `SyncTenantAsync` | lobby_requests, participants, meetings | `peek_lobby_request`, `claim_lobby_admission` | `tests/connect-isolation` step 3 |
 | `POST /api/connect/webhooks/livekit`: room and participant events | LiveKit, signed | `connect.webhook_meeting_tenant(meetingId)` from the room name `m-{id}` → `EnterAnonymousScope(…, "system")` + `SyncTenantAsync` | meeting_events, meetings, participants | `webhook_meeting_tenant`, `recording_allowed`, `storage_headroom` (auto-record) | `tests/connect-isolation` step 2 |
 | same, egress events (the recording callback) | LiveKit egress, signed | same, the room from `egressInfo.roomName` | recordings, meeting_notes, meetings | `webhook_meeting_tenant`, `reconcile_recording_storage` | `tests/connect-isolation` step 2b |
-| same, screen-share track events | LiveKit, signed | same | meetings | `webhook_meeting_tenant` | *read* |
-| `GET /api/connect/recordings/file` (ticketed download) | a browser holding a signed ticket | the ticket's claim → `EnterAnonymousScope(claim.TenantId, "system")` | meetings, participants, recordings | none | *read* |
+| same, screen-share track events | LiveKit, signed | same. Single-sharer meetings only; then asks LiveKit who is present | meetings, participants | `webhook_meeting_tenant` | `tests/connect-isolation/test-ticket-and-screenshare.sh` (walked 28 Sept) |
+| `GET /api/connect/recordings/file` (ticketed download) | a browser holding a signed ticket | the ticket's claim → `EnterAnonymousScope(claim.TenantId, "system")` + `SyncTenantAsync`. The tenant is the ONLY thing trusted; participant/organiser (or the share, via `share_still_allows`) is re-checked on every range request | meetings, participants, recordings | `share_still_allows` (share tickets) | `tests/connect-isolation/test-ticket-and-screenshare.sh` (walked 28 Sept): correctly signed tickets naming another organisation, a non-participant or another meeting are refused; a removed participant's ticket stops working |
 | `POST /api/connect/shared/{token}` (recording share link) | anyone holding a link | `connect.resolve_share_token()` → `EnterAnonymousScope(row.TenantId, "guest")` + `SyncTenantAsync`, before any EF read. Password failures are **counted and checked through definer functions** (`record_share_password_failure`, `share_password_paused_until`) | recordings, meetings, recording_shares (the password hash, after scoping) | `resolve_share_token`, `record_share_password_failure`, `share_password_paused_until`, `log_recording_access` | `tests/connect-isolation/test-recording-share-link.sh` (walked 28 Sept) |
 | `POST /api/connect/shared/renew` (playback ticket) | a holder of a signed ticket | none needed: no EF read. `connect.share_still_allows()` answers | none | `share_still_allows` | same test |
 | Meetings API `/api/v1/org/meetings…` | a customer's software, organisation key | `OrgApiAuth` → `EnterAnonymousScope(keyTenantId, "org_api")` + `SyncTenantAsync` | meetings | none | `tests/orgapi` (123), paging-promises (20, and 20 with RLS bypassed) |
@@ -118,7 +118,18 @@ whether a caller could get another organisation's rows out of it.
    own `tenant_id`, and minutes mailed to each attendee once. Calibrated: with
    the notes writer's `EnterAnonymousScope` removed, it goes red, 7 of 14
    ("Tenant context was not resolved", "Connect notes sweep failed").
-2. **Walk the ticketed download and the screen-share event.**
+2. **Walk the ticketed download and the screen-share event: done 28 Sept.**
+   `tests/connect-isolation/test-ticket-and-screenshare.sh`, 32 checks, both
+   paths now in section 1. Calibrated: participant re-check removed, 2 red;
+   the webhook lookup entering the wrong organisation, 2 more red.
+   Found on the way, nothing to fix: the ticket's key (`Jwt:SigningKey`) also
+   signs access tokens and MFA challenges, with no label separating them. They
+   cannot be confused today (a token always contains `.`, a challenge starts
+   `mfa-challenge:`, a ticket body can contain neither), but that is a property
+   of three formats, not a design; a fourth user of the key should add a prefix.
+   And `SyncTenantAsync` in the screen-share handler is not load-bearing today
+   (EF reopens the connection after the lookup; measured), so its comment
+   overstates it. Left in as a safety net.
 3. **Review each definer function's body: done 28 Sept** (section 3). Open:
    the four unused ones are dropped in `20260928-e`; merging that is Mr. Singh's call.
 4. **Step two: done 28 Sept** (see section 2).
