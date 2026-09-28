@@ -61,6 +61,11 @@ public static class SettingKeys
     // Which organisations may use TatvaOS AI in Mail at all (AiProductSwitch).
     public const string AiMailOrganisations = "ai.mail.organisations";
 
+    // Personal accounts (/join) — build plan personal-plans-build-plan.md §1
+    // and §3.4. Closed by default: the switch-on waits for the five launch
+    // gates, and a deploy must never open it.
+    public const string PersonalSignupOpen = "personal.signup_open";
+    public const string PersonalCodesPerHour = "personal.signup_codes_per_hour";
     // Amit, 26 Sept 2026: at a plan limit, warn first. The operator always
     // sees the warnings; this decides whether the organisation's own
     // administrators see them too. OFF until the wording is approved.
@@ -143,6 +148,13 @@ public static class SettingKeys
             + "EMPTY means every organisation may. Set to Techvein alone on 25 Sept 2026 until the "
             + "privacy policy describes Mail AI (Mr. Singh) — empty it once that text is live."),
 
+        new(PersonalSignupOpen, "personal", "Personal signup open (/join)", false,
+            "OFF until launch. ON lets anyone create a free personal address at /join. Needs a personal "
+            + "house organisation with a verified domain and the phone-hash key as well, or /join stays "
+            + "closed whatever this says."),
+        new(PersonalCodesPerHour, "personal", "Signup SMS codes per hour (whole platform)", false,
+            "A ceiling on SMS codes sent by /join across everyone, so the form cannot run up an SMS bill. "
+            + "Empty means 200. Per number (3 an hour) and per address (10 an hour) are fixed in code."),
         new(PlansWarnClients, "plans", "Show plan warnings to organisation administrators", false,
             "true shows each organisation's administrators a notice when they use something their plan "
             + "does not include, or pass a plan limit. Nothing is ever stopped. You always see the "

@@ -68,6 +68,12 @@ const SECTIONS: { id: string; title: string; blurb: string }[] = [
     blurb: 'OTP codes and invoices send as this address through our own mail server. '
       + 'On testing, everything is captured by Mailpit and reaches nobody.',
   },
+  {
+    id: 'personal',
+    title: 'Personal accounts (/join)',
+    blurb: 'Free personal addresses for the public. Stays closed until launch: the switch opens '
+      + '/join only once a personal house organisation with a verified domain exists.',
+  },
 ];
 
 export default function SettingsPage() {

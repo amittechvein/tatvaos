@@ -23,6 +23,45 @@ with it. **Copy 2 is the one that matters, and phoning Amit is step zero of any
 real restore.** The paper copy was verified against a live object on 9 Sept
 2026; it works.
 
+## Keys that must never change
+
+Some keys in `infra/docker/.env` are not just secrets. **The data depends on
+their exact value**, so a restore with a *new* value does not fail loudly; it
+quietly breaks a rule. Restore these from `env.txt` in the backup set (or the
+paper copy); **never generate a fresh one on a server that has data.**
+
+| key | what it decides | if it changes |
+|---|---|---|
+| `PERSONAL_PHONE_HASH_KEY` | the fingerprint of every personal account's phone number: one personal account and one AI trial per number, ever (PR 311) | **every phone can sign up again**, with a second account and a second free trial; nothing errors |
+| the billing key (PR 320, when it lands) | to be written here with it | — |
+
+`PERSONAL_PHONE_HASH_KEY` is generated once (`openssl rand -hex 32`), at the
+switch-on of personal accounts. Compose refuses to run without it, and the API
+refuses to start outside Development if it is missing or shorter than 32
+characters. It travels in every backup's `env.txt`. **Never print it**, and
+never paste it into a chat or a transcript.
+
+**Generating one (once, on the server, from the repo root):**
+
+1. Confirm it is not already there:
+   `grep -c '^PERSONAL_PHONE_HASH_KEY=' infra/docker/.env` must print `0`.
+   If it prints `1`, **stop**: the key exists, and must not be replaced.
+2. Append it without printing it:
+   `printf 'PERSONAL_PHONE_HASH_KEY=%s\n' "$(openssl rand -hex 32)" >> infra/docker/.env`
+3. **Run a backup now, not at the next scheduled time**:
+   `./infra/scripts/backup.sh`. A key that exists only in this `.env` until
+   the next backup can be lost with this disk (Mr. Singh, PR 311).
+4. Confirm the backup carries it:
+   `bash infra/scripts/check-key-in-backup.sh PERSONAL_PHONE_HASH_KEY`.
+   It must print **SAME** twice: for the newest local set, and for the
+   newest off-box object, which is decrypted as a stream to check. It never
+   prints the key. Anything else, whether MISSING, DIFFERENT, or a note that
+   the off-box object is older, means the key is not safe yet. Find out why
+   before deploying.
+5. Only then deploy anything that needs it.
+
+The same five steps apply to every key in the table above.
+
 ## What is backed up
 
 `infra/scripts/backup.sh`, **every six hours** (02:30, 08:30, 14:30, 20:30) —
