@@ -70,7 +70,7 @@ public static class BillingEndpoints
             .Select(i => new
             {
                 i.Id, i.Number, i.Status, i.IssuedOn, i.DueOn, i.PeriodStart, i.PeriodEnd,
-                i.Subtotal, i.Cgst, i.Sgst, i.Igst, i.Total, i.PaidOn, i.PaymentMethod,
+                i.Subtotal, i.Cgst, i.Sgst, i.Igst, i.Total, i.PaidOn, i.PaymentMethod, i.EmailedAt,
             })
             .ToListAsync(ct);
         var today = InvoiceMath.TodayInIndia(DateTimeOffset.UtcNow);
@@ -84,7 +84,7 @@ public static class BillingEndpoints
             invoices = invoices.Select(i => new
             {
                 i.Id, i.Number, i.Status, i.IssuedOn, i.DueOn, i.PeriodStart, i.PeriodEnd,
-                i.Subtotal, tax = i.Cgst + i.Sgst + i.Igst, i.Total, i.PaidOn, i.PaymentMethod,
+                i.Subtotal, tax = i.Cgst + i.Sgst + i.Igst, i.Total, i.PaidOn, i.PaymentMethod, i.EmailedAt,
                 overdue = i.Status == "issued" && i.DueOn < today,
             }),
             outstanding = invoices.Where(i => i.Status == "issued").Sum(i => i.Total),
@@ -97,17 +97,21 @@ public static class BillingEndpoints
         seller = JsonSerializer.Deserialize<JsonElement>(i.Seller),
         buyer = JsonSerializer.Deserialize<JsonElement>(i.Buyer),
         i.PlaceOfSupply, i.Subtotal, i.Cgst, i.Sgst, i.Igst, i.Total,
-        i.PaidOn, i.PaidAmount, i.PaymentMethod, i.PaymentReference, i.VoidedAt, i.VoidReason,
+        i.PaidOn, i.PaidAmount, i.PaymentMethod, i.PaymentReference, i.VoidedAt, i.VoidReason, i.EmailedAt,
         lines = i.Lines.OrderBy(l => l.LineNo)
             .Select(l => new { l.LineNo, l.Description, l.Sac, l.Quantity, l.UnitPrice, l.Amount }),
     };
 
     private static async Task<IResult> OperatorBillingAsync(
-        Guid id, AppDbContext db, TenantContext tenant, InvoiceIssuer issuer, HttpContext http, CancellationToken ct)
+        Guid id, AppDbContext db, TenantContext tenant, InvoiceIssuer issuer, RazorpayClient razorpay,
+        HttpContext http, CancellationToken ct)
     {
         if (!await Scope(db, tenant, id, http, ct)) return Results.NotFound();
         var (_, missing, _, _) = await issuer.SellerAsync(ct);
-        return Results.Ok(new { summary = await SummaryAsync(db, id, ct), sellerMissing = missing });
+        // Online payment needs the Razorpay keys; say so here rather than on
+        // the customer's first "Pay now".
+        var mode = await razorpay.ModeAsync(ct);
+        return Results.Ok(new { summary = await SummaryAsync(db, id, ct), sellerMissing = missing, razorpayMode = mode });
     }
 
     private static async Task<IResult> OrgBillingAsync(AppDbContext db, TenantContext tenant, CancellationToken ct) =>
@@ -249,7 +253,8 @@ public static class BillingEndpoints
 
     private static async Task<IResult> IssueAsync(
         Guid id, InvoiceIssuer.IssueRequest req, AppDbContext db, TenantContext tenant, InvoiceIssuer issuer,
-        AuditWriter audit, HttpContext http, CancellationToken ct)
+        AuditWriter audit, TatvaOS.Api.Shared.Notify.SystemMailer mailer, IConfiguration config,
+        HttpContext http, CancellationToken ct)
     {
         if (!await Scope(db, tenant, id, http, ct)) return Results.NotFound();
         var (draft, error) = await issuer.ComposeAsync(id, req, ct);
@@ -258,8 +263,12 @@ public static class BillingEndpoints
         Invoice inv;
         try { inv = await issuer.IssueAsync(id, draft, CurrentUserId(http), ct); }
         catch (InvoiceNumberTooLongException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        // Emailed to the billing contact at once (billing part 2). A failed
+        // send does not undo the invoice; the Billing tab shows it was not
+        // sent and offers to send it again.
+        var emailed = await PaymentEndpoints.SendInvoiceEmailAsync(db, mailer, config, inv, ct);
         await audit.WriteAsync("invoice.issued", "core.invoice", inv.Id.ToString(),
-            after: new { inv.Number, inv.Total, inv.PeriodStart, inv.PeriodEnd, lines = inv.Lines.Count }, ct: ct);
+            after: new { inv.Number, inv.Total, inv.PeriodStart, inv.PeriodEnd, lines = inv.Lines.Count, emailed }, ct: ct);
         return Results.Created($"/api/admin/organisations/{id}/invoices/{inv.Id}", InvoiceDto(inv));
     }
 
@@ -306,7 +315,7 @@ public static class BillingEndpoints
 
     private static async Task<IResult> VoidAsync(
         Guid id, Guid invoiceId, VoidRequest r, AppDbContext db, TenantContext tenant, AuditWriter audit,
-        HttpContext http, CancellationToken ct)
+        RazorpayClient razorpay, ILoggerFactory logs, HttpContext http, CancellationToken ct)
     {
         var reason = (r.Reason ?? "").Trim();
         if (reason.Length == 0) return Results.BadRequest(new { error = "Say why it is void. It stays on record with its number." });
@@ -320,9 +329,30 @@ public static class BillingEndpoints
         inv.VoidedAt = DateTimeOffset.UtcNow;
         inv.VoidReason = reason;
         await db.SaveChangesAsync(ct);
+        // Cancel its Razorpay link too, so an old invoice email cannot still
+        // pay it (Mr. Singh, 26 Sept). If Razorpay cannot be reached the void
+        // stands, and a payment that arrives anyway is recorded REFUND NEEDED
+        // and alerted; the operator is told here.
+        bool? linkCancelled = null;
+        if (inv.RazorpayLinkId is string linkId)
+        {
+            try { await razorpay.CancelLinkAsync(linkId, ct); linkCancelled = true; }
+            catch (Exception ex) when (ex is RazorpayClient.RazorpayException or HttpRequestException)
+            {
+                linkCancelled = false;
+                logs.CreateLogger("Billing").LogWarning("Invoice {Invoice} voided but its Razorpay link was not cancelled: {Reason}",
+                    inv.Id, ex.Message);
+            }
+        }
         await audit.WriteAsync("invoice.voided", "core.invoice", inv.Id.ToString(),
-            after: new { inv.Number, inv.Total, reason }, ct: ct);
-        return Results.Ok(new { inv.Id, inv.Status });
+            after: new { inv.Number, inv.Total, reason, linkCancelled }, ct: ct);
+        return Results.Ok(new
+        {
+            inv.Id, inv.Status, linkCancelled,
+            warning = linkCancelled == false
+                ? "Voided, but its Razorpay payment link could not be cancelled. If the customer pays it, you will be alerted to refund."
+                : null,
+        });
     }
 
     // ------------------------------------------------------------------

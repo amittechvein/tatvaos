@@ -9,21 +9,24 @@ import { Modal } from '@/components/ui/Modal';
 import { Alert } from '@/components/ui/Page';
 import { BillingProfileForm } from '@/components/billing/BillingProfileForm';
 import {
-  fetchOrgBilling, fmtDay, inr, issueInvoice, markPaid, previewInvoice, saveOrgProfile, setCycle, voidInvoice,
-  type BillingSummary, type ExtraLine, type InvoicePreview, type InvoiceRow,
+  checkPayment, emailInvoice, fetchOrgBilling, fmtDay, inr, issueInvoice, markPaid, previewInvoice, saveOrgProfile,
+  setCycle, voidInvoice,
+  type BillingSummary, type ExtraLine, type InvoicePreview, type InvoiceRow, type RazorpayMode,
 } from '@/lib/billing';
 
 // ============================================================================
 //  One organisation's billing, for the operator (billing part 1, 26 Sept
 //  2026): who it is billed to, monthly or yearly, its invoices, and the three
 //  things done to an invoice — issue, record payment, void. Nothing here is
-//  sent to the customer automatically yet; email and Razorpay's "Pay now" are
-//  part 2.
+//  Issuing emails the billing contact; they pay online through Razorpay from
+//  the invoice's page (billing part 2), which marks it paid by itself.
+//  "Check payment" asks Razorpay directly, for a notice that never arrived.
 // ============================================================================
 
 export function BillingTab({ orgId }: { orgId: string }) {
   const { authedFetch } = useAuth();
-  const [data, setData] = useState<{ summary: BillingSummary; sellerMissing: string[] } | null>(null);
+  const [data, setData] = useState<{ summary: BillingSummary; sellerMissing: string[]; razorpayMode: RazorpayMode } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [issuing, setIssuing] = useState(false);
   const [paying, setPaying] = useState<InvoiceRow | null>(null);
@@ -35,7 +38,21 @@ export function BillingTab({ orgId }: { orgId: string }) {
   useEffect(() => { load(); }, [load]);
 
   if (!data) return error ? <Alert tone="danger">{error}</Alert> : <Card><Empty title="Loading…" /></Card>;
-  const { summary: s, sellerMissing } = data;
+  const { summary: s, sellerMissing, razorpayMode } = data;
+
+  async function check(i: InvoiceRow) {
+    setError(null); setNotice(null);
+    try {
+      const r = await checkPayment(authedFetch, orgId, i.id);
+      setNotice(`${i.number}: Razorpay says "${r.razorpay}"; TatvaOS has it as ${r.status}.`);
+      load();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not reach Razorpay.'); }
+  }
+  async function email(i: InvoiceRow) {
+    setError(null); setNotice(null);
+    try { await emailInvoice(authedFetch, orgId, i.id); setNotice(`${i.number} emailed to the billing contact.`); load(); }
+    catch (e) { setError(e instanceof Error ? e.message : 'The email could not be sent.'); }
+  }
   const sub = s.subscription;
 
   async function changeCycle(cycle: 'monthly' | 'yearly') {
@@ -47,6 +64,12 @@ export function BillingTab({ orgId }: { orgId: string }) {
   return (
     <div className="space-y-5">
       {error && <Alert tone="danger" onDismiss={() => setError(null)}>{error}</Alert>}
+      {notice && <Alert tone="ok" onDismiss={() => setNotice(null)}>{notice}</Alert>}
+      {razorpayMode === null ? (
+        <Alert tone="warn">Online payment is off: the Razorpay keys are not set in Settings → Billing. Customers cannot pay.</Alert>
+      ) : razorpayMode === 'test' ? (
+        <Alert tone="warn">Razorpay is in TEST mode. Customers&rsquo; &ldquo;payments&rdquo; are not real money.</Alert>
+      ) : null}
       {sellerMissing.length > 0 && (
         <Alert tone="warn" title="Invoices cannot be issued yet">
           Techvein&rsquo;s own details are incomplete: {sellerMissing.join(', ')}.{' '}
@@ -91,11 +114,19 @@ export function BillingTab({ orgId }: { orgId: string }) {
                 <Td>{fmtDay(i.issuedOn)}</Td>
                 <Td>{fmtDay(i.dueOn)}</Td>
                 <Td>{inr(i.total)}</Td>
-                <Td><StatusBadge row={i} /></Td>
+                <Td>
+                  <div className="flex flex-wrap gap-1">
+                    <StatusBadge row={i} />
+                    {i.status !== 'void' && !i.emailedAt && <Badge tone="warn">Not emailed</Badge>}
+                    {i.paymentMethod === 'razorpay' && <Badge tone="neutral">Online</Badge>}
+                  </div>
+                </Td>
                 <Td>
                   <div className="flex justify-end gap-2">
                     <Button size="sm" href={`/admin/organisations/${orgId}/invoices/${i.id}`}>View</Button>
-                    {i.status === 'issued' && <Button size="sm" onClick={() => setPaying(i)}>Mark paid</Button>}
+                    {i.status === 'issued' && <Button size="sm" onClick={() => check(i)}>Check payment</Button>}
+                    {i.status !== 'void' && <Button size="sm" onClick={() => email(i)}>{i.emailedAt ? 'Email again' : 'Email'}</Button>}
+                    {i.status === 'issued' && <Button size="sm" onClick={() => setPaying(i)}>Paid elsewhere</Button>}
                     {i.status === 'issued' && <Button size="sm" onClick={() => setVoiding(i)}>Void</Button>}
                   </div>
                 </Td>
@@ -222,7 +253,10 @@ function PaidDialog({ orgId, inv, onClose, onDone }: { orgId: string; inv: Invoi
              <Button variant="primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : `Paid ${inr(inv.total)}`}</Button></>}>
       {error && <Alert tone="danger">{error}</Alert>}
       <div className="space-y-3 text-[13px]">
-        <p className="text-ink-muted">The whole amount, {inr(inv.total)}. Part payments are not recorded yet.</p>
+        <p className="text-ink-muted">
+          Customers pay online through Razorpay, and that is recorded by itself. Use this only for an
+          exception — money that reached Techvein some other way. The whole amount, {inr(inv.total)}.
+        </p>
         <Select aria-label="How it was paid" value={method} onChange={(e) => setMethod(e.target.value)}>
           <option value="bank_transfer">Bank transfer</option><option value="upi">UPI</option>
           <option value="cheque">Cheque</option><option value="cash">Cash</option><option value="other">Other</option>
@@ -241,7 +275,13 @@ function VoidDialog({ orgId, inv, onClose, onDone }: { orgId: string; inv: Invoi
   const [error, setError] = useState<string | null>(null);
   async function save() {
     setBusy(true); setError(null);
-    try { await voidInvoice(authedFetch, orgId, inv.id, reason.trim()); onDone(); }
+    try {
+      const warning = await voidInvoice(authedFetch, orgId, inv.id, reason.trim());
+      // The void stands either way; a link that could not be cancelled is
+      // said out loud, because a customer could still pay it.
+      if (warning) window.alert(warning);
+      onDone();
+    }
     catch (e) { setError(e instanceof Error ? e.message : 'Could not void it.'); setBusy(false); }
   }
   return (

@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { formatBytes } from '@tatvaos/core';
 import { fetchOrganisations, fetchPlanWarnings, type OrgRow, type PlanWarningsSummary } from '@/lib/adminData';
-import { fetchUnpaid, fmtDay, inr, type UnpaidSummary } from '@/lib/billing';
+import { acknowledgeProblem, fetchPaymentProblems, fetchUnpaid, fmtDay, inr, type PaymentProblem, type UnpaidSummary } from '@/lib/billing';
 import { AdminShell } from '@/components/admin/AdminShell';
 import { StatusBadge } from '@/components/admin/StatusBadge';
 import { Badge, Button, Card, Empty, Meter, Stat, Table, Td } from '@/components/ui/Kit';
@@ -31,6 +31,8 @@ export default function PlatformDashboard() {
   const [loading, setLoading] = useState(true);
   const [planWarnings, setPlanWarnings] = useState<PlanWarningsSummary | null>(null);
   const [unpaid, setUnpaid] = useState<UnpaidSummary | null>(null);
+  const [problems, setProblems] = useState<PaymentProblem[]>([]);
+  const loadProblems = () => fetchPaymentProblems(authedFetch).then(setProblems).catch(() => setProblems([]));
 
   useEffect(() => {
     fetchOrganisations(authedFetch)
@@ -41,6 +43,7 @@ export default function PlatformDashboard() {
     // must not blank the dashboard.
     fetchPlanWarnings(authedFetch).then(setPlanWarnings).catch(() => setPlanWarnings(null));
     fetchUnpaid(authedFetch).then(setUnpaid).catch(() => setUnpaid(null));
+    fetchPaymentProblems(authedFetch).then(setProblems).catch(() => setProblems([]));
   }, [authedFetch]);
 
   const totals = useMemo(() => {
@@ -141,6 +144,34 @@ export default function PlatformDashboard() {
           icon={<Glyph d="M12 9v4m0 4h.01M10.3 3.9L2.6 17a2 2 0 001.7 3h15.4a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z" />}
         />
       </div>
+
+      {/* Payment problems (billing part 2): money Razorpay received that TatvaOS
+          did not record as paid. First on the page, and it stays until someone
+          acknowledges it — Mr. Singh: never only in a table. */}
+      {problems.length > 0 && (
+        <Card className="mb-5 border-danger" title="Payment problems"
+              subtitle="Money reached Razorpay but did not mark an invoice paid. Check each in the Razorpay dashboard.">
+          <ul className="divide-y divide-line">
+            {problems.map((p) => (
+              <li key={p.eventId} className="flex flex-wrap items-start justify-between gap-2 py-2.5 text-[13px]">
+                <div className="min-w-0">
+                  <div className="font-semibold text-danger">
+                    {p.outcome.startsWith('REVIEW') ? 'Paid a different amount'
+                      : p.outcome.startsWith('REFUND') ? 'Paid a voided invoice: refund needed'
+                      : 'Payment matches no invoice'}
+                  </div>
+                  <div className="text-ink-muted">
+                    {p.organisation ?? 'Unknown organisation'} · {p.invoiceNumber ?? 'no invoice'} ·
+                    {' '}{p.amount != null ? inr(p.amount) : 'amount unknown'} · {p.paymentId ?? 'no payment id'} ·
+                    {' '}{fmtDay(p.receivedAt)}{p.alertedAt ? ' · emailed' : ' · NOT emailed'}
+                  </div>
+                </div>
+                <Button size="sm" onClick={() => acknowledgeProblem(authedFetch, p.eventId).then(loadProblems)}>Acknowledge</Button>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       {/* Unpaid invoices (billing part 1, 26 Sept 2026): what is owed, overdue first. */}
       {unpaid && unpaid.invoices.length > 0 && (

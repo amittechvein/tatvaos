@@ -51,6 +51,11 @@ public class Invoice
     public string? PaymentMethod { get; set; }
     public string? PaymentReference { get; set; }
     public Guid? RecordedBy { get; set; }
+    /// <summary>Razorpay Payment Link for this invoice (20260926-e-billing-razorpay.sql).</summary>
+    public string? RazorpayLinkId { get; set; }
+    public string? RazorpayLinkUrl { get; set; }
+    public string? RazorpayPaymentId { get; set; }
+    public DateTimeOffset? EmailedAt { get; set; }
     public DateTimeOffset? VoidedAt { get; set; }
     public string? VoidReason { get; set; }
     public Guid CreatedBy { get; set; }

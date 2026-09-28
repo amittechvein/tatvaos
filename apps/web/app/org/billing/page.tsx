@@ -11,8 +11,8 @@ import { fetchMyBilling, fmtDay, inr, saveMyProfile, type BillingSummary, type I
 // ============================================================================
 //  The organisation's own billing page (billing part 1, 26 Sept 2026): its
 //  plan and cycle, who its invoices are made out to, and every invoice with
-//  what is still owed. Paying online ("Pay now" through Razorpay) is part 2;
-//  until then the invoice itself says how to pay by bank transfer or UPI.
+//  what is still owed. Invoices are paid online only, through Razorpay, from
+//  each invoice's own page (billing part 2).
 // ============================================================================
 
 export default function OrgBillingPage() {
@@ -44,7 +44,7 @@ export default function OrgBillingPage() {
           {overdue.length > 0 && (
             <Alert tone="warn" title="Payment overdue">
               {overdue.length === 1 ? `Invoice ${overdue[0]!.number} was due ${fmtDay(overdue[0]!.dueOn)}.`
-                : `${overdue.length} invoices are past their due date.`} Please pay using the details on the invoice.
+                : `${overdue.length} invoices are past their due date.`} Open it and choose Pay now to pay online.
             </Alert>
           )}
 
@@ -77,7 +77,13 @@ export default function OrgBillingPage() {
                     <Td>{fmtDay(i.dueOn)}</Td>
                     <Td>{inr(i.total)}</Td>
                     <Td><Status row={i} /></Td>
-                    <Td><div className="flex justify-end"><Button size="sm" href={`/org/billing/invoices/${i.id}`}>View</Button></div></Td>
+                    <Td>
+                      <div className="flex justify-end">
+                        {i.status === 'issued'
+                          ? <Button size="sm" variant="primary" href={`/org/billing/invoices/${i.id}`}>View and pay</Button>
+                          : <Button size="sm" href={`/org/billing/invoices/${i.id}`}>View</Button>}
+                      </div>
+                    </Td>
                   </tr>
                 ))}
               </Table>

@@ -44,7 +44,7 @@ export interface BillingProfile {
 export interface InvoiceRow {
   id: string; number: string; status: 'issued' | 'paid' | 'void'; issuedOn: string; dueOn: string;
   periodStart: string | null; periodEnd: string | null; subtotal: number; tax: number; total: number;
-  paidOn: string | null; paymentMethod: string | null; overdue: boolean;
+  paidOn: string | null; paymentMethod: string | null; overdue: boolean; emailedAt: string | null;
 }
 
 export interface BillingSummary {
@@ -65,7 +65,7 @@ export interface InvoiceDoc {
   buyer: { organisation: string; legalName: string; gstin: string | null; address: string; stateCode: string; pincode: string | null; email: string };
   placeOfSupply: string; subtotal: number; cgst: number; sgst: number; igst: number; total: number;
   paidOn: string | null; paidAmount: number | null; paymentMethod: string | null; paymentReference: string | null;
-  voidedAt: string | null; voidReason: string | null;
+  voidedAt: string | null; voidReason: string | null; emailedAt: string | null;
   lines: { lineNo: number; description: string; sac: string; quantity: number; unitPrice: number; amount: number }[];
 }
 
@@ -87,7 +87,10 @@ async function fail(res: Response, fallback: string): Promise<never> {
 }
 
 // ---- operator -------------------------------------------------------------
-export async function fetchOrgBilling(f: AuthedFetch, orgId: string): Promise<{ summary: BillingSummary; sellerMissing: string[] }> {
+/** "test" / "live" from the Razorpay key id; null = no keys. */
+export type RazorpayMode = 'test' | 'live' | 'unknown' | null;
+
+export async function fetchOrgBilling(f: AuthedFetch, orgId: string): Promise<{ summary: BillingSummary; sellerMissing: string[]; razorpayMode: RazorpayMode }> {
   const res = await f(`/admin/organisations/${orgId}/billing`);
   if (!res.ok) return fail(res, 'Could not load billing.');
   return res.json();
@@ -120,9 +123,12 @@ export async function markPaid(f: AuthedFetch, orgId: string, invoiceId: string,
   const res = await f(`/admin/organisations/${orgId}/invoices/${invoiceId}/paid`, { method: 'POST', body: JSON.stringify(body) });
   if (!res.ok) return fail(res, 'Could not record the payment.');
 }
-export async function voidInvoice(f: AuthedFetch, orgId: string, invoiceId: string, reason: string): Promise<void> {
+/** Voids the invoice; returns a warning when its Razorpay link could not be cancelled. */
+export async function voidInvoice(f: AuthedFetch, orgId: string, invoiceId: string, reason: string): Promise<string | null> {
   const res = await f(`/admin/organisations/${orgId}/invoices/${invoiceId}/void`, { method: 'POST', body: JSON.stringify({ reason }) });
   if (!res.ok) return fail(res, 'Could not void the invoice.');
+  const body = await res.json();
+  return typeof body.warning === 'string' ? body.warning : null;
 }
 
 export interface UnpaidSummary {
@@ -149,4 +155,66 @@ export async function fetchMyInvoice(f: AuthedFetch, invoiceId: string): Promise
   const res = await f(`/org/billing/invoices/${invoiceId}`);
   if (!res.ok) return fail(res, 'Could not load the invoice.');
   return res.json();
+}
+
+// ---- paying online (billing part 2: Razorpay only) ------------------------
+/** Pay now: the Razorpay page for this invoice (one link per invoice). */
+export async function payInvoice(f: AuthedFetch, invoiceId: string): Promise<string> {
+  const res = await f(`/org/billing/invoices/${invoiceId}/pay`, { method: 'POST' });
+  if (!res.ok) {
+    let msg = 'Online payment is not available right now. Please try again shortly.';
+    try { const b = await res.json(); msg = b.error ?? b.detail ?? msg; } catch { /* keep */ }
+    throw new Error(msg);
+  }
+  return (await res.json()).url as string;
+}
+
+/** The customer's return from Razorpay: the query string Razorpay adds, checked by the API. */
+export async function confirmPayment(f: AuthedFetch, invoiceId: string, q: URLSearchParams): Promise<void> {
+  const res = await f(`/org/billing/invoices/${invoiceId}/confirm`, {
+    method: 'POST',
+    body: JSON.stringify({
+      razorpayPaymentId: q.get('razorpay_payment_id'),
+      razorpayPaymentLinkId: q.get('razorpay_payment_link_id'),
+      razorpayPaymentLinkReferenceId: q.get('razorpay_payment_link_reference_id'),
+      razorpayPaymentLinkStatus: q.get('razorpay_payment_link_status'),
+      razorpaySignature: q.get('razorpay_signature'),
+    }),
+  });
+  if (!res.ok) return fail(res, 'That payment could not be confirmed yet.');
+}
+
+export async function checkPayment(f: AuthedFetch, orgId: string, invoiceId: string): Promise<{ status: string; razorpay: string }> {
+  const res = await f(`/admin/organisations/${orgId}/invoices/${invoiceId}/check-payment`, { method: 'POST' });
+  if (!res.ok) {
+    let msg = 'Could not reach Razorpay.';
+    try { const b = await res.json(); msg = b.error ?? b.detail ?? msg; } catch { /* keep */ }
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+export async function emailInvoice(f: AuthedFetch, orgId: string, invoiceId: string): Promise<void> {
+  const res = await f(`/admin/organisations/${orgId}/invoices/${invoiceId}/email`, { method: 'POST' });
+  if (!res.ok) {
+    let msg = 'The email could not be sent.';
+    try { const b = await res.json(); msg = b.error ?? b.detail ?? msg; } catch { /* keep */ }
+    throw new Error(msg);
+  }
+}
+
+// ---- payment problems (Mr. Singh, 26 Sept: never only in a table) ---------
+export interface PaymentProblem {
+  eventId: string; outcome: string; invoiceId: string | null; invoiceNumber: string | null;
+  tenantId: string | null; organisation: string | null; paymentId: string | null;
+  amount: number | null; receivedAt: string; alertedAt: string | null;
+}
+export async function fetchPaymentProblems(f: AuthedFetch): Promise<PaymentProblem[]> {
+  const res = await f('/admin/billing/payment-problems');
+  if (!res.ok) return fail(res, 'Could not load payment problems.');
+  return (await res.json()).problems;
+}
+export async function acknowledgeProblem(f: AuthedFetch, eventId: string): Promise<void> {
+  const res = await f(`/admin/billing/payment-problems/${encodeURIComponent(eventId)}/acknowledge`, { method: 'POST' });
+  if (!res.ok) return fail(res, 'Could not acknowledge it.');
 }

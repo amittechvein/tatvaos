@@ -26,6 +26,25 @@ public static class SettingsEndpoints
         g.MapPut("/", SaveAsync);
         g.MapPost("/test-sms", TestSmsAsync);
         g.MapPost("/test-ai-warning", TestAiWarningAsync);
+        g.MapGet("/secrets-status", SecretsStatusAsync);
+        g.MapPost("/seal-secrets", SealSecretsAsync);
+    }
+
+    // ------------------------------------------------------------------
+    //  Secrets at rest (Mr. Singh, 26 Sept 2026). Saving always encrypts;
+    //  values saved before that are encrypted when the operator presses the
+    //  button, once a deploy with this code has proved good — sealing at
+    //  start-up would make a rollback break SMS sign-in.
+    // ------------------------------------------------------------------
+    private static async Task<IResult> SecretsStatusAsync(AppDbContext db, CancellationToken ct) =>
+        Results.Ok(new { plainText = await SettingsCrypto.PlainCountAsync(db, ct) });
+
+    private static async Task<IResult> SealSecretsAsync(
+        AppDbContext db, SettingsCrypto crypto, AuditWriter audit, ILoggerFactory logs, CancellationToken ct)
+    {
+        var n = await crypto.SealAsync(db, logs.CreateLogger("Settings"), ct);
+        await audit.WriteAsync("settings.secrets_sealed", "settings", null, after: new { count = n }, ct: ct);
+        return Results.Ok(new { encrypted = n, plainText = await SettingsCrypto.PlainCountAsync(db, ct) });
     }
 
     // ------------------------------------------------------------------
@@ -55,7 +74,7 @@ public static class SettingsEndpoints
     // ------------------------------------------------------------------
     private static async Task<IResult> SaveAsync(
         Dictionary<string, string> body, AppDbContext db, TenantContext tenant,
-        AuditWriter audit, CancellationToken ct)
+        AuditWriter audit, SettingsCrypto crypto, CancellationToken ct)
     {
         var changed = new List<string>();
 
@@ -71,18 +90,21 @@ public static class SettingsEndpoints
             // blank password box means "unchanged", not "erase the credential".
             if (secret && value.Length == 0) continue;
 
+            // Secrets are stored encrypted (Mr. Singh, 26 Sept 2026): a
+            // database dump or a backup must not hand over the Razorpay key.
+            var stored = secret ? crypto.Seal(value) : value;
             var row = await db.PlatformSettings.FirstOrDefaultAsync(s => s.Key == key, ct);
             if (row is null)
             {
                 db.PlatformSettings.Add(new PlatformSetting
                 {
-                    Key = key, Value = value, IsSecret = secret, UpdatedBy = tenant.UserId,
+                    Key = key, Value = stored, IsSecret = secret, UpdatedBy = tenant.UserId,
                 });
                 changed.Add(key);
             }
-            else if (row.Value != value)
+            else if ((secret ? crypto.Open(row.Value) : row.Value) != value)
             {
-                row.Value = value;
+                row.Value = stored;
                 row.UpdatedAt = DateTimeOffset.UtcNow;
                 row.UpdatedBy = tenant.UserId;
                 changed.Add(key);

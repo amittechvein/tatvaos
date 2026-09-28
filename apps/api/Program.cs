@@ -403,8 +403,10 @@ builder.Services.AddSingleton<SignupVerifier>();
 // credential saved in the console takes effect on the next request with no
 // cache to invalidate and no restart.
 builder.Services.AddHttpClient();
+builder.Services.AddSingleton<SettingsCrypto>();
 builder.Services.AddScoped<SettingsReader>();
 builder.Services.AddScoped<TatvaOS.Api.Modules.Billing.InvoiceIssuer>();
+builder.Services.AddHttpClient<TatvaOS.Api.Modules.Billing.RazorpayClient>();
 builder.Services.AddScoped<SystemMailer>();
 builder.Services.AddScoped<ISmsSender, SmsSender>();
 
@@ -867,6 +869,7 @@ app.MapOrgAiUsageEndpoints();
 app.MapOrganisationDetailEndpoints();
 app.MapPlanFeatureEndpoints();
 TatvaOS.Api.Modules.Billing.BillingEndpoints.MapBillingEndpoints(app);
+TatvaOS.Api.Modules.Billing.PaymentEndpoints.MapPaymentEndpoints(app);
 // Calendar. Recurrence is expanded at read time, never stored — see
 // Modules/Calendar/Recurrence.cs.
 app.MapCalendarEndpoints();
