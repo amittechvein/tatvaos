@@ -147,6 +147,13 @@ public class Domain
     /// <summary>Ownership token. Until this is proven, no mail is accepted.</summary>
     [MaxLength(64)] public string? VerificationToken { get; set; }
     public DateTimeOffset? OwnershipVerifiedAt { get; set; }
+
+    /// <summary>
+    /// Set when ANOTHER organisation proved ownership of this fqdn, which
+    /// closes this claim. The row is kept so its holder can be told why —
+    /// and never told by whom (Mr. Singh, 24 Sept 2026).
+    /// </summary>
+    public DateTimeOffset? SupersededAt { get; set; }
     public DateTimeOffset? MxVerifiedAt { get; set; }
 
     /// <summary>
