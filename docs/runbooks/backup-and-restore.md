@@ -41,6 +41,27 @@ refuses to start outside Development if it is missing or shorter than 32
 characters. It travels in every backup's `env.txt`. **Never print it**, and
 never paste it into a chat or a transcript.
 
+**Generating one (once, on the server, from the repo root):**
+
+1. Confirm it is not already there:
+   `grep -c '^PERSONAL_PHONE_HASH_KEY=' infra/docker/.env` must print `0`.
+   If it prints `1`, **stop**: the key exists, and must not be replaced.
+2. Append it without printing it:
+   `printf 'PERSONAL_PHONE_HASH_KEY=%s\n' "$(openssl rand -hex 32)" >> infra/docker/.env`
+3. **Run a backup now, not at the next scheduled time**:
+   `./infra/scripts/backup.sh`. A key that exists only in this `.env` until
+   the next backup can be lost with this disk (Mr. Singh, PR 311).
+4. Confirm the backup carries it:
+   `bash infra/scripts/check-key-in-backup.sh PERSONAL_PHONE_HASH_KEY`.
+   It must print **SAME** twice: for the newest local set, and for the
+   newest off-box object, which is decrypted as a stream to check. It never
+   prints the key. Anything else, whether MISSING, DIFFERENT, or a note that
+   the off-box object is older, means the key is not safe yet. Find out why
+   before deploying.
+5. Only then deploy anything that needs it.
+
+The same five steps apply to every key in the table above.
+
 ## What is backed up
 
 `infra/scripts/backup.sh`, **every six hours** (02:30, 08:30, 14:30, 20:30) —
