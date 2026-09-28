@@ -1565,19 +1565,87 @@ public static class MailEndpoints
             db.Messages.AsNoTracking().Where(m => m.MailboxId == box.Id), term,
             searchCtx, hideBin: true);
 
-        var total = await query.CountAsync(ct);
+        var from = Math.Max(0, skip ?? 0);
+        var size = Math.Clamp(take ?? 50, 1, MaxPageSize);
+        // Id breaks ties, so the same search always comes back in the same
+        // order: two copies of one mail are stored within a second of each
+        // other, and a page boundary between them must not move.
+        var ordered = query.OrderByDescending(m => m.ReceivedAt).ThenBy(m => m.Id);
 
-        var rows = await query
-            .OrderByDescending(m => m.ReceivedAt)
-            .Skip(Math.Max(0, skip ?? 0))
-            .Take(Math.Clamp(take ?? 50, 1, MaxPageSize))
+        // ── ONE ROW PER MAIL. ────────────────────────────────────────────
+        //
+        //  Mail you address to yourself is stored twice - the Sent copy and
+        //  the delivered one - and search listed both, which reads as "it
+        //  was sent twice" (client report, 28 Sept 2026; the conversation
+        //  was fixed first, in ThreadAsync). Folded from the top of the
+        //  result, not inside the page: see MailThreadCopies.Page for why.
+        //
+        //  Only copies that BOTH match the search fold. "in:inbox" finds the
+        //  delivered copy alone and shows it; nothing is hidden because a
+        //  copy of it exists somewhere the search did not look.
+        //
+        //  Past FoldDepth results deep the page is served as it always was,
+        //  unfolded. Reading the top of the list grows with skip, and skip is
+        //  a number the caller chooses.
+        const int FoldDepth = 5000;
+        // Written as a subtraction: skip is the caller's, and from + size
+        // overflows to a negative number - which is "<= FoldDepth" - for a
+        // skip near the top of int.
+        var folds = from <= FoldDepth - size;
+
+        int total;
+        var pageIds = new List<Guid>();
+        var copiesOf = new Dictionary<Guid, List<Guid>>();
+        if (folds)
+        {
+            var sentIds = searchCtx.FolderIdsBySpecialUse.TryGetValue("\\Sent", out var s) ? s : [];
+            var window = await ordered
+                .Take(MailThreadCopies.Window(from, size))
+                .Select(m => new { m.Id, m.FolderId, m.MessageIdHeader })
+                .ToListAsync(ct);
+            foreach (var g in MailThreadCopies.Page(
+                window, m => m.MessageIdHeader, m => sentIds.Contains(m.FolderId), from, size))
+            {
+                pageIds.Add(g.Shown.Id);
+                copiesOf[g.Shown.Id] = g.Copies.Where(c => c.Id != g.Shown.Id).Select(c => c.Id).ToList();
+            }
+
+            // Mails, not stored rows: those with no Message-ID count once
+            // each, the rest once per Message-ID.
+            //
+            // Compared BARE, as Fold compares them. Measured on 28 Sept 2026
+            // with one copy stored as <id> and the other as id: the rows
+            // folded to one and this still said "2 results", because an
+            // exact DISTINCT sees two strings. A count that disagrees with
+            // the list under it is how "it was sent twice" started.
+            var raw = await query.CountAsync(ct);
+            if (raw <= window.Count)
+                // The window IS the whole result: count what was folded.
+                total = MailThreadCopies.Fold(
+                    window, m => m.MessageIdHeader, m => sentIds.Contains(m.FolderId)).Count;
+            else
+                total = await query.CountAsync(m => m.MessageIdHeader == null || m.MessageIdHeader == "", ct)
+                      + await query.Where(m => m.MessageIdHeader != null && m.MessageIdHeader != "")
+                                   .Select(m => m.MessageIdHeader!.Trim('<', '>'))
+                                   .Distinct().CountAsync(ct);
+        }
+        else
+        {
+            total = await query.CountAsync(ct);
+            pageIds = await ordered.Skip(from).Take(size).Select(m => m.Id).ToListAsync(ct);
+        }
+
+        var found = await db.Messages.AsNoTracking()
+            .Where(m => m.MailboxId == box.Id && pageIds.Contains(m.Id))
             .Select(m => new
             {
                 m.Id, m.FolderId, m.ThreadId, m.FromName, m.FromAddr, m.ToAddrs,
                 m.CcAddrs, m.Subject, m.Snippet, m.SentAt, m.ReceivedAt,
                 m.SizeBytes, m.IsRead, m.IsFlagged, m.HasAttachments, m.CategoryId,
             })
-            .ToListAsync(ct);
+            .ToDictionaryAsync(m => m.Id, ct);
+        // Back into the order the search put them in; `found` has none.
+        var rows = pageIds.Where(found.ContainsKey).Select(id => found[id]).ToList();
 
         // Folder names for the hits, so a result can say where it lives —
         // one query for the page rather than one per row.
@@ -1595,6 +1663,8 @@ public static class MailEndpoints
             messages = rows.Select(m => new
             {
                 id = m.Id,
+                // Other stored copies of this same mail that also matched.
+                copyIds = copiesOf.TryGetValue(m.Id, out var others) ? others : [],
                 folderId = m.FolderId,
                 folderName = folderNames.TryGetValue(m.FolderId, out var f) ? f.name : null,
                 folderSlug = folderNames.TryGetValue(m.FolderId, out var f2) ? f2.slug : null,

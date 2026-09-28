@@ -79,4 +79,29 @@ public static class MailThreadCopies
             })
             .ToList();
     }
+
+    // ── PAGES OF A FOLDED LIST (search) ───────────────────────────────────
+    //
+    //  Search is paged, and the phone asks for its next page with
+    //  skip = "the rows I am already showing". So folding INSIDE one page is
+    //  not an option: a page of 30 that folds to 29 makes the next request
+    //  skip 29, and the server hands back stored row 30 a second time.
+    //
+    //  Instead the list is folded FROM THE TOP every time, and skip and take
+    //  count folded rows. The caller reads the first Window(skip, take)
+    //  stored rows - ids and Message-IDs only - and Page() does the rest.
+
+    /// <summary>
+    /// How many stored rows to read, from the top, to be able to cut this
+    /// page. Twice what is asked for: a mail has two copies at most in every
+    /// case seen (Sent and delivered). With three, a page can come back short;
+    /// it never repeats a row and never skips one.
+    /// </summary>
+    public static int Window(int skip, int take) => checked((skip + take) * 2);
+
+    /// <summary>Rows skip..skip+take of the FOLDED list that `window` is the top of.</summary>
+    public static List<Folded<T>> Page<T>(
+        IEnumerable<T> window, Func<T, string?> messageId, Func<T, bool> isSentCopy,
+        int skip, int take) =>
+        Fold(window, messageId, isSentCopy).Skip(skip).Take(take).ToList();
 }

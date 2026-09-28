@@ -102,6 +102,61 @@ internal static class Program
         }));
         Check("an empty conversation is empty", "", Shape(Array.Empty<Row>()));
 
+        // ── SEARCH: pages of the folded list. ───────────────────────────────
+        //
+        //  Twelve stored rows, nine mails. The pairs are placed where they
+        //  hurt: one straddling the end of the first page of 3 (c|C), one at
+        //  the very top (a,A), one at the very end (i,I).
+        //  Lower case = delivered copy, upper case = the Sent copy of the same mail.
+        var stored = new List<Row>
+        {
+            new("a", "1@x", false), new("A", "1@x", true),
+            new("b", "2@x", false),
+            new("c", "3@x", false), new("C", "3@x", true),
+            new("d", null,  false), new("e", null, false),
+            new("f", "6@x", false), new("g", "7@x", true), new("h", "8@x", false),
+            new("i", "9@x", false), new("I", "9@x", true),
+        };
+        const string whole = "AbCdefghI";
+
+        // The phone's way of paging: skip = the rows already on screen. The
+        // server reads only the top Window(skip, take) stored rows each time.
+        string Paged(int take, Func<IEnumerable<Row>, int, int, IEnumerable<Row>> page)
+        {
+            var shown = new List<Row>();
+            for (var guard = 0; guard < 50; guard++)
+            {
+                var got = page(stored, shown.Count, take).ToList();
+                if (got.Count == 0) break;
+                shown.AddRange(got);
+            }
+            return string.Concat(shown.Select(r => r.Tag));
+        }
+
+        IEnumerable<Row> Folded(IEnumerable<Row> all, int skip, int take) =>
+            Copies.Page(all.Take(Copies.Window(skip, take)), r => r.MessageId, r => r.InSent, skip, take)
+                  .Select(g => g.Shown);
+
+        foreach (var take in new[] { 1, 2, 3, 4, 5, 30 })
+            Check($"search, pages of {take}: every mail once, in order", whole, Paged(take, Folded));
+
+        // THE CALIBRATION, and the reason folding is not done inside a page:
+        // fold each page of stored rows by itself and the phone's next skip
+        // lands one row early. Must NOT equal `whole`, or the checks above
+        // would pass for any implementation at all.
+        IEnumerable<Row> FoldedInsideThePage(IEnumerable<Row> all, int skip, int take) =>
+            Copies.Fold(all.Skip(skip).Take(take), r => r.MessageId, r => r.InSent).Select(g => g.Shown);
+        var naive = Paged(3, FoldedInsideThePage);
+        Check("folding inside each page of 3 is WRONG (rows repeat) - what was not built",
+            "True", $"{naive != whole}");
+        Console.WriteLine($"          (it gives {naive})");
+
+        Check("the window is twice what is asked for", "70", $"{Copies.Window(5, 30)}");
+        var overflowed = false;
+        try { Copies.Window(int.MaxValue - 10, 30); } catch (OverflowException) { overflowed = true; }
+        Check("a skip near the top of int throws rather than wrapping to a small window", "True", $"{overflowed}");
+        Check("a page past the end is empty", "", string.Concat(Folded(stored, 9, 3).Select(r => r.Tag)));
+
         Console.WriteLine();
         Console.WriteLine(_failed == 0
             ? $"  PASSED  {_passed} checks"
