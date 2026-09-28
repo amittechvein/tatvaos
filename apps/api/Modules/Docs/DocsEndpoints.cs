@@ -941,7 +941,11 @@ public static class DocsEndpoints
                 return Error(400, "action must be summarize, rewrite, translate or generate.");
         }
 
-        var result = await ai.CompleteAsync(instruction, text, ct);
+        // Named, so the metering (PR 280) counts it under "Docs" — the gateway
+        // refuses a request with no feature. It costs the default, 1 credit:
+        // AiCredits has no line for "docs", and what it should cost is a
+        // pricing decision (Amit's), not one to make in a merge.
+        var result = await ai.CompleteAsync(instruction, text, ct, feature: "docs");
         if (result.Error is not null) return Error(502, result.Error);
         return Results.Ok(new { text = result.Text.Trim(), truncated = result.Truncated });
     }

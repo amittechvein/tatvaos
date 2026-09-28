@@ -91,7 +91,7 @@ public sealed class ConnectNotesComposer(
     /// ever made independent again.
     /// </summary>
     private const int MaxTranscriptChars =
-        TatvaOS.Api.Shared.Ai.OpenAiGateway.MaxInputCharacters - 1_000;
+        TatvaOS.Api.Shared.Ai.AiInput.MaxCharacters - 1_000;
 
     public async Task<Notes> ComposeAsync(
         string meetingTitle,
@@ -360,7 +360,7 @@ public sealed class ConnectNotesComposer(
         // that reads like an instruction to the model is a person being
         // quoted, not an order to obey. The gateway's contract makes that
         // distinction structural.
-        var result = await ai.CompleteAsync(system, user, ct);
+        var result = await ai.CompleteAsync(system, user, ct, feature: "connect.minutes");
 
         if (result.Error is not null)
         {

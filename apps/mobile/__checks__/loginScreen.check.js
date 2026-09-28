@@ -152,3 +152,32 @@ test('resend counts down from 60 on the phone, since the server never says it th
   expect(r.getByText('Resend code')).toBeTruthy();
   jest.useRealTimers();
 });
+
+// A client's screenshot, 24 Sept 2026: on a short phone the keyboard sat over
+// the password box and there was nothing to scroll. The page must scroll.
+test('the sign-in page scrolls, so a keyboard cannot hide the password box', () => {
+  const r = mount();
+  const page = r.getByLabelText('Sign-in page');
+  expect(page.props.keyboardShouldPersistTaps).toBe('handled');
+  // The password box is INSIDE the scroller, not beside it.
+  const inside = r.getByLabelText('Password');
+  let node = inside.parent; let found = false;
+  while (node) { if (node === page) { found = true; break; } node = node.parent; }
+  expect(found).toBe(true);
+});
+
+// Measured on the Samsung, 24 Sept 2026: the keyboard does not shrink the
+// window on this edge-to-edge build, so the root must pad itself by the
+// keyboard's height (that is what put the login password box, and the
+// message screen's reply box, under the keyboard).
+test('the app root moves out of the keyboard\'s way by padding, on Android', async () => {
+  const App = require('../App').default;
+  const r = render(<App />);
+  await act(async () => {});
+  // The label finds the host view; the behaviour lives on the composite.
+  const { KeyboardAvoidingView } = require('react-native');
+  const root = r.UNSAFE_getAllByType(KeyboardAvoidingView).find((k) => k.props.accessibilityLabel === 'App');
+  expect(root).toBeTruthy();
+  expect(root.props.behavior).toBe('padding');
+  expect(root.props.enabled).toBe(true);
+});
