@@ -347,10 +347,12 @@ async function main() {
     + '<script>steal(document.cookie)</script>'
     + '<p onclick="steal()">Words that stay</p>'
     + '<a href="javascript:steal()">a link</a>'
-    + '<img src="https://pictures.example/x.png" onerror="steal()">'
+    + '<img src="/api/docs/0b9d6c0e/images/7" onerror="steal()">'
+    + '<img src="https://pictures.example/x.png">'
     + '<iframe src="https://evil.example"></iframe>';
-  const gone = ['<script', 'steal(', 'onclick', 'onerror', 'javascript:', '<iframe', 'evil.example'];
-  const kept = [honest, 'Words that stay', 'a link', 'src="https://pictures.example/x.png"'];
+  // A picture from the web goes too: opening the file would tell its host.
+  const gone = ['<script', 'steal(', 'onclick', 'onerror', 'javascript:', '<iframe', 'evil.example', 'pictures.example'];
+  const kept = [honest, 'Words that stay', 'a link', 'src="/api/docs/0b9d6c0e/images/7"'];
 
   const hostileCp = await A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
     state: toB64(Y.encodeStateAsUpdate(a1.doc)), upToSeq: a1.lastSeq, html: hostile, text: textOf(a1.doc) }) });

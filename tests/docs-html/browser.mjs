@@ -11,9 +11,10 @@
 //             fires for a <script>, an inline handler and a javascript: URL
 //             alike, whether or not it then does anything visible), and any
 //             alert/confirm/prompt
-//    fetched  any request the page made, except a picture named by an <img>
-//             the sanitiser kept (pictures from the web are allowed — see
-//             "pictures" in the summary)
+//    fetched  any request the page made, except for one of Docs' OWN pictures
+//             (/api/docs/…, on the page's own server). A picture from the
+//             web is a request too, and is a failure: opening the file
+//             would tell that picture's host (Mr. Singh, 1 Oct 2026)
 //    parsed   any element or attribute in the browser's OWN tree that is not
 //             on the list, any link that is not http/https/mailto
 //
@@ -167,6 +168,7 @@ const INTERACT = `(() => {
     let protocol = '(none)';
     try { protocol = new URL(i.src).protocol; } catch { /* no address, or not one */ }
     if (!/^https?:$/.test(protocol)) bad.push('picture ' + protocol);
+    else if (!i.src.startsWith(location.origin + '/api/docs/')) bad.push('picture from elsewhere: ' + i.src.slice(0, 60));
   }
   for (const head of document.head?.children ?? []) {
     if (!['meta', 'title'].includes(head.localName)) bad.push('in head: ' + head.localName);
@@ -224,14 +226,14 @@ async function runCase(index) {
     await sleep(40); // handlers and requests started by the events above
     const pictures = new Set(dom.pictures);
     const fetched = seen.requests.filter((q) => q.url !== url
-      && !(q.type === 'Image' && pictures.has(q.url))
+      && !(q.type === 'Image' && pictures.has(q.url) && q.url.startsWith(`${origin}/api/docs/`))
       && q.url !== `${origin}/favicon.ico`);
     return {
       ran: [...seen.scripts.map((s) => 'script ' + s), ...seen.dialogs.map((d) => 'dialog ' + d),
         ...seen.windows.map((w) => 'new window ' + w)],
       fetched: fetched.map((q) => `${q.type} ${q.url}`),
       parsed: dom.bad,
-      pictures: seen.requests.filter((q) => q.type === 'Image' && pictures.has(q.url)).length,
+      pictures: seen.requests.filter((q) => q.type === 'Image' && pictures.has(q.url) && q.url.startsWith(`${origin}/api/docs/`)).length,
       elements: dom.elements,
       text: dom.text,
     };
@@ -278,7 +280,7 @@ const page = rest.find((r) => r.section === 'page' && r.input.includes('<table')
 if (!expectDirty) {
   ok('the real editor\'s page loads: its elements are in the tree', !!page && page.elements > 60, `${page?.elements} elements`);
   ok('…its words are on the page', !!page && page.text > 400, `${page?.text} characters`);
-  ok('…its two pictures are asked for', !!page && page.pictures === 2, `${page?.pictures} asked for`);
+  ok('…its own picture is asked for, and the one from the web is not', !!page && page.pictures === 1, `${page?.pictures} asked for`);
 }
 
 const sections = [...new Set(rest.map((r) => r.section))];
@@ -293,7 +295,7 @@ for (const section of sections) {
     console.log(`        ${section}: ${rows.length} outputs — ran ${ran.length}, fetched ${fetched.length}, off-list in the tree ${parsed.length}`);
   } else {
     ok(`${section}: ${rows.length} outputs, nothing RAN`, ran.length === 0, show(ran, 'ran'));
-    ok(`${section}: ${rows.length} outputs, nothing FETCHED but kept pictures`, fetched.length === 0, show(fetched, 'fetched'));
+    ok(`${section}: ${rows.length} outputs, nothing FETCHED but Docs' own pictures`, fetched.length === 0, show(fetched, 'fetched'));
     ok(`${section}: ${rows.length} outputs, the browser's tree holds only the list`, parsed.length === 0, show(parsed, 'parsed'));
   }
 }
@@ -307,7 +309,6 @@ if (expectDirty) {
 }
 
 const pictures = rest.reduce((n, r) => n + r.pictures, 0);
-console.log(`\n  pictures: ${pictures} requests for pictures the sanitiser kept (http/https <img>). Allowed by design;`);
-console.log('            a picture from the web tells its host that the page was opened.');
+console.log(`\n  pictures: ${pictures} requests, all for Docs' own pictures on the page's own server.`);
 console.log(`\n  ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

@@ -93,11 +93,18 @@ to the one case that showed it.
 **What it cannot do**, whoever wrote it: make the file say what the
 document says. That is condition 1.
 
-**Known and allowed:** a picture kept from the web (`http`/`https`) is
-asked for when the file is opened, which tells that picture's host the
-file was opened. The editor allows pasted web pictures, so the sanitiser
-does. Whether stored files should carry only Docs' own pictures is an open
-question for Mr. Singh, not decided here.
+**Pictures from the web are removed from the stored file** (Mr. Singh,
+1 October 2026). A saved page that names a picture on someone else's
+server asks for it when opened, so the reader's address goes to whoever
+hosts the picture: a tracking pixel in every document a school downloads.
+The editor may show such a picture live; the file Space stores and serves
+keeps only Docs' own (`/api/docs/...`), the sanitiser names each removal in
+the log, and the page's own policy allows pictures from its own server
+only. A picture that matters is pasted in, and becomes ours.
+
+**Numbers.** This record keeps 0011. A number is claimed by the first
+record merged to `main`; a branch that finds its number taken renumbers
+before it merges (Mr. Singh, 1 October 2026).
 
 ## Consequences
 

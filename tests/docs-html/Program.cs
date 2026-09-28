@@ -98,7 +98,7 @@ internal static partial class Program
     [GeneratedRegex(@"\s(on[a-z]+|srcdoc|formaction|action|xlink:href|srcset)\s*=", RegexOptions.IgnoreCase)]
     private static partial Regex RunningAttributes();
 
-    [GeneratedRegex(@"(href|src)=""\s*(?!https?://|mailto:|/api/docs/)", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"href=""\s*(?!https?://|mailto:)|src=""\s*(?!/api/docs/)", RegexOptions.IgnoreCase)]
     private static partial Regex OtherAddresses();
 
     private static readonly HashSet<string> MayAppear = new(StringComparer.OrdinalIgnoreCase)
@@ -150,12 +150,15 @@ internal static partial class Program
         page = page[(page.IndexOf("-->", StringComparison.Ordinal) + 3)..].Trim();
         var real = Clean(page);
         Ok("the fixture is a real page, not an empty file", page.Length > 1500 && page.Contains("<table"), $"{page.Length} characters");
-        Ok("NOTHING is dropped from it", real.Dropped.Count == 0, "dropped: " + string.Join(", ", real.Dropped));
+        // One thing is removed on purpose: the page holds a picture from the
+        // web, which the stored file does not keep (Mr. Singh, 1 Oct 2026).
+        Ok("NOTHING is dropped from it but its one picture from the web",
+            real.Dropped.SequenceEqual(["img from the web"]), "dropped: " + string.Join(", ", real.Dropped));
         foreach (var tag in MayAppear)
         {
             // Every element on the allowlist is there because the editor
             // makes it. One the fixture does not hold is one nobody proved.
-            var before = Regex.Matches(page, $@"<{tag}[\s>]").Count;
+            var before = Regex.Matches(page, $@"<{tag}[\s>]").Count - (tag == "img" ? 1 : 0); // less the web picture
             var after = Regex.Matches(real.Html, $@"<{tag}[\s>]").Count;
             Ok($"<{tag}> x{before}: the editor makes it, and all survive", before > 0 && before == after,
                 before == 0 ? "not in the fixture: add it to the page, or take it off the list" : $"{after} after");
@@ -198,7 +201,7 @@ internal static partial class Program
             "<!doctype html><html><head><title>T</title><style>p{color:red}</style><script>boot()</script></head><body onload=\"boot()\"><p>Body</p></body></html>",
             "<html", "<head", "<title", "<style", "<script", "<body", "onload", "boot()", "color:red", "doctype");
         Ok("           …and the body's paragraph stays", Clean("<html><body><p>Body</p></body></html>").Html == "<p>Body</p>");
-        Refuses("a tag that never ends", "<p>Before</p><img src=\"https://a.example/x.png\" onerror=\"go()", "onerror", "go()");
+        Refuses("a tag that never ends", "<p>Before</p><img src=\"/api/docs/0b9d6c0e/images/7\" onerror=\"go()", "onerror", "go()");
         Refuses("a comment", "<p>A</p><!--[if IE]><script>go()</script><![endif]--><p>B</p>", "<!--", "script", "go()");
         var open = Run("<p>Left <strong>open");
         Ok("what was left open is closed", open.Html == "<p>Left <strong>open</strong></p>", open.Html);
@@ -220,9 +223,14 @@ internal static partial class Program
         Refuses("a script that is never closed", "<p>Hi</p><script>go()", "script", "go()");
         Refuses("a handler on a known element", "<p onclick=\"go()\" onmouseover=go()>Hi</p>", "onclick", "onmouseover", "go()");
         Permits("the same element without one", "<p>Hi</p>");
-        Refuses("a picture that runs code when it fails", "<img src=\"https://a.example/x.png\" onerror=\"go()\">", "onerror", "go()");
-        Permits("a picture", "<img src=\"https://a.example/x.png\" alt=\"A chart\" width=\"320\">");
-        Permits("a picture stored by Docs", "<img src=\"/api/docs/0b9d6c0e-7f0a-4c1e-9b1e-3a5de1f0a001/images/7\">");
+        Refuses("a picture that runs code when it fails", "<img src=\"/api/docs/0b9d6c0e/images/7\" onerror=\"go()\">", "onerror", "go()");
+        Permits("a picture stored by Docs", "<img src=\"/api/docs/0b9d6c0e-7f0a-4c1e-9b1e-3a5de1f0a001/images/7\" alt=\"A chart\" width=\"320\">");
+        Refuses("a picture from the web (opening the file would tell its host)",
+            "<p>Before <img src=\"https://a.example/x.png\" alt=\"A chart\"> after</p>", "<img", "a.example");
+        var web = Run("<p>Before <img src=\"https://a.example/x.png\" alt=\"A chart\"> after</p>");
+        Ok("           …it is named for the log as what it is, and the words around it stay",
+            web.Dropped.SequenceEqual(["img from the web"]) && web.Html == "<p>Before  after</p>", web.Html + " | " + string.Join(", ", web.Dropped));
+        Refuses("a picture from the web over http, in capitals", "<img src=\"HTTP://a.example/x.png\">", "<img", "a.example");
         Refuses("a picture from another part of this API", "<img src=\"/api/auth/logout\">", "<img", "/api/auth");
         Refuses("a picture that climbs out of Docs' route", "<img src=\"/api/docs/../auth/logout\">", "<img");
         Refuses("a picture as data", "<img src=\"data:image/svg+xml;base64,PHN2Zz4=\">", "<img", "data:");
@@ -262,9 +270,9 @@ internal static partial class Program
         Refuses("a redirect",
             "<meta http-equiv=\"refresh\" content=\"0;url=https://evil.example\"><base href=\"https://evil.example/\"><p>After</p>",
             "<meta", "<base", "evil.example");
-        var alt = Run("<img src=\"https://a.example/x.png\" alt='\"><script>go()</script>'>");
+        var alt = Run("<img src=\"/api/docs/0b9d6c0e/images/7\" alt='\"><script>go()</script>'>");
         Ok("a value that tries to break out of its quotes stays a value",
-            alt.Html == "<img src=\"https://a.example/x.png\" alt=\"&quot;&gt;&lt;script&gt;go()&lt;/script&gt;\">" && Inert(alt.Html), alt.Html);
+            alt.Html == "<img src=\"/api/docs/0b9d6c0e/images/7\" alt=\"&quot;&gt;&lt;script&gt;go()&lt;/script&gt;\">" && Inert(alt.Html), alt.Html);
         Refuses("an id and a class", "<p id=\"main\" class=\"admin-only\">Hi</p>", "id=", "class=");
         Permits("the one class the editor writes", "<div data-page-break=\"\" class=\"docs-page-break\"></div>");
         Refuses("an input that can be typed into", "<input type=\"password\" name=\"p\" autofocus>", "<input", "password");
