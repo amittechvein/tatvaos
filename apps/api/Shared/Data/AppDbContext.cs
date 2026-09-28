@@ -45,6 +45,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<ProductAccess> ProductAccess => Set<ProductAccess>();
     public DbSet<Plan> Plans => Set<Plan>();
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
+    public DbSet<BillingProfile> BillingProfiles => Set<BillingProfile>();
+    public DbSet<Invoice> Invoices => Set<Invoice>();
+    public DbSet<InvoiceLine> InvoiceLines => Set<InvoiceLine>();
     public DbSet<Feature> Features => Set<Feature>();
     public DbSet<PlanFeatureLimit> PlanFeatureLimits => Set<PlanFeatureLimit>();
     public DbSet<FeatureOverride> FeatureOverrides => Set<FeatureOverride>();
@@ -885,6 +888,31 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             e.HasOne<User>().WithMany()
                 .HasForeignKey(u => u.UserId).OnDelete(DeleteBehavior.SetNull);
         });
+        // Billing (20260926-d-billing-invoices.sql). RLS-forced per
+        // organisation, and filtered here too. Seller and Buyer are jsonb
+        // snapshots — listed here because a jsonb column EF does not know
+        // about fails only at runtime (see the meeting_events note above).
+        b.Entity<BillingProfile>(e =>
+        {
+            e.ToTable("billing_profiles", "core");
+            e.HasKey(p => p.TenantId);
+            e.HasQueryFilter(p => p.TenantId == tenant.TenantId);
+        });
+        b.Entity<Invoice>(e =>
+        {
+            e.ToTable("invoices", "core");
+            e.Property(i => i.Seller).HasColumnType("jsonb");
+            e.Property(i => i.Buyer).HasColumnType("jsonb");
+            e.HasQueryFilter(i => i.TenantId == tenant.TenantId);
+            e.HasMany(i => i.Lines).WithOne().HasForeignKey(l => l.InvoiceId).OnDelete(DeleteBehavior.Cascade);
+        });
+        b.Entity<InvoiceLine>(e =>
+        {
+            e.ToTable("invoice_lines", "core");
+            e.HasKey(l => new { l.InvoiceId, l.LineNo });
+            e.HasQueryFilter(l => l.TenantId == tenant.TenantId);
+        });
+
         // Plan features (20260926-plan-features.sql). The catalogue and the
         // plan limits are platform reference data like plans (no tenant); the
         // overrides are per organisation, RLS-forced, and filtered here too.

@@ -52,6 +52,9 @@ public sealed record UpsertPlanRequest(
     string? AiCreditModel = null,         // "per_user" | "pooled"
     int? AiCreditsPerUser = null,
     int? AiCreditsPooled = null,
+    // Yearly prices (billing, 26 Sept 2026). Null = 12 × monthly.
+    decimal? PricePerUserYearly = null,
+    decimal? PriceYearly = null,
     // Plan features (26 Sept 2026). All three null = leave the features as
     // they are. AllFeatures true = "everything in the included modules" (the
     // column goes back to NULL); otherwise IncludedFeatures is the list.
