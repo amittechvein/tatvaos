@@ -28,7 +28,16 @@ namespace TatvaOS.Api.Modules.Docs;
 ///      IMPORTDATA/IMPORTXML/IMPORTHTML/IMPORTFEED/IMPORTRANGE, RTD, CALL,
 ///      REGISTER.ID, EXEC, DDE. Checked in every cell formula and every
 ///      defined name;
-///    · a DOCTYPE in any XML part (external entities in other readers).
+///    · a DOCTYPE in any XML part (external entities in other readers);
+///    · Excel 4 macro sheets and dialog sheets, by part name or content
+///      type, in a file of ANY type. Found 1 Oct 2026 by the corpus test
+///      (tests/sheets-xlsx-guard): the macro checks looked for VBA and for
+///      a macro-enabled content type, so a macro sheet added to an
+///      otherwise ordinary .xlsx was permitted;
+///    · any XML part that is not UTF-8. Found the same day: every part was
+///      read as UTF-8, so a sheet saved as UTF-16 was noise to every check
+///      here — DDE formula and all — and perfectly readable to Excel.
+///      Sheets' own writer writes UTF-8 only.
 ///
 ///  The editor's own writer never produces any of these (it writes a
 ///  calling-out formula as text), so an honest client is never refused;
@@ -79,6 +88,7 @@ public static partial class XlsxGuard
                 if (lower.StartsWith('/') || lower.Contains("../")) return "bad_part_name";
                 if (lower.Contains("vbaproject") || lower.EndsWith(".bin")) return "macro_or_binary_part";
                 if (lower.StartsWith("xl/activex/") || lower.StartsWith("xl/embeddings/")) return "embedded_object";
+                if (lower.StartsWith("xl/macrosheets/") || lower.StartsWith("xl/dialogsheets/")) return "macro_sheet";
                 if (lower.StartsWith("xl/externallinks/")) return "external_link";
                 if (lower == "xl/connections.xml" || lower.StartsWith("xl/querytables/")) return "data_connection";
                 if (lower == "xl/workbook.xml") sawWorkbook = true;
@@ -90,12 +100,16 @@ public static partial class XlsxGuard
                 try { text = ReadCapped(e, ref total); }
                 catch (InvalidDataException) { return "not_a_zip"; }
                 if (text is null) return "too_large";
+                // ReadCapped answers "" for a part that is not UTF-8.
+                if (text.Length == 0 && e.Length > 0) return "not_utf8";
 
                 if (text.Contains("<!DOCTYPE", StringComparison.OrdinalIgnoreCase)) return "doctype";
 
                 if (lower == "[content_types].xml"
                     && (text.Contains("macroEnabled", StringComparison.OrdinalIgnoreCase)
                         || text.Contains("vbaProject", StringComparison.OrdinalIgnoreCase)
+                        || text.Contains("macrosheet", StringComparison.OrdinalIgnoreCase)
+                        || text.Contains("dialogsheet", StringComparison.OrdinalIgnoreCase)
                         || text.Contains("activeX", StringComparison.OrdinalIgnoreCase)
                         || text.Contains("oleObject", StringComparison.OrdinalIgnoreCase)))
                     return "macro_content_type";
@@ -175,8 +189,22 @@ public static partial class XlsxGuard
             if (ms.Length + n > MaxXmlBytes || total > MaxTotalBytes) return null;
             ms.Write(buf, 0, n);
         }
-        return Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length);
+        var bytes = ms.GetBuffer().AsSpan(0, (int)ms.Length);
+        // UTF-8 or nothing. A byte-order mark of another encoding, a zero
+        // byte (every UTF-16 and UTF-32 text has them), or a declaration
+        // naming another encoding: "" - which the caller refuses.
+        if (bytes.StartsWith((ReadOnlySpan<byte>)[0xFF, 0xFE]) || bytes.StartsWith((ReadOnlySpan<byte>)[0xFE, 0xFF])
+            || bytes.Contains((byte)0)) return "";
+        string text;
+        try { text = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true).GetString(bytes); }
+        catch (DecoderFallbackException) { return ""; }
+        var declared = XmlEncoding().Match(text);
+        if (declared.Success && !declared.Groups[1].Value.Equals("utf-8", StringComparison.OrdinalIgnoreCase)) return "";
+        return text;
     }
+
+    [GeneratedRegex(@"^﻿?\s*<\?xml[^>]*?encoding\s*=\s*[""']([^""']+)[""']", RegexOptions.IgnoreCase)]
+    private static partial Regex XmlEncoding();
 
     [GeneratedRegex("\"(?:[^\"]|\"\")*\"?")]
     private static partial Regex QuotedText();
