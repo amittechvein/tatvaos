@@ -299,6 +299,26 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         // including ones added later — it is never the default fix (0007).
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeeting>()
             .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        // Decision 0007, STEP TWO: every other Connect entity. Nine gained
+        // tenant_id in 20260928-connect-child-tenant-id.sql (set by a trigger
+        // from the meeting); five already had it. Every tenantless read path
+        // was checked first (docs/decisions/0007-tenantless-paths.md) and each
+        // enters its tenant before an EF read. IgnoreQueryFilters() is never
+        // the fix for a path this breaks - enter the tenant.
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectParticipant>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectLobbyRequest>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingEvent>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingChat>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectCaptionLine>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingBlock>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecording>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectTranscript>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingInvitation>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingAccess>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingShare>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingShareGrant>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectTenantSettings>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectParticipant>().ToTable("participants", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectLobbyRequest>().ToTable("lobby_requests", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingEvent>().ToTable("meeting_events", "connect");
