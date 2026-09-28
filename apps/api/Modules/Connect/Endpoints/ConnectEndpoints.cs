@@ -119,7 +119,7 @@ public static class ConnectEndpoints
     /// carry exactly what the meeting page shows.</summary>
     internal static string JoinUrlOf(ConnectMeeting m) => $"{PublicBase}/connect/room/{m.Code}";
 
-    private static object Shape(ConnectMeeting m, string? myRole) => new
+    private static object Shape(ConnectMeeting m, string? myRole, bool forStranger = false) => new
     {
         m.Id,
         m.Code,
@@ -142,7 +142,8 @@ public static class ConnectEndpoints
         m.ChatPolicy,
         m.MinutesLive,
         m.Mode,
-        m.CreatedByUserId,
+        // A stranger in the personal house does not learn the host's user id.
+        CreatedByUserId = forStranger ? (Guid?)null : m.CreatedByUserId,
         myRole,
         m.CreatedAt,
         m.UpdatedAt,
@@ -256,11 +257,15 @@ public static class ConnectEndpoints
     }
 
     private static async Task<IResult> GetMeetingAsync(
-        Guid id, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid id, AppDbContext db, TenantContext tenant,
+        TatvaOS.Api.Modules.Personal.PersonalHouse houses, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
         var meeting = await FindAsync(db, id, ct);
         if (meeting is null) return NotFound();
+        // By id, a stranger's meeting does not exist for them (§6). They come
+        // in by CODE, through the guest rules, like anyone outside.
+        if (await IsStrangerAsync(db, houses, meeting, uid, ct)) return NotFound();
 
         var role = await RoleOfAsync(db, meeting.Id, uid, ct);
         return Results.Ok(Shape(meeting, role));
@@ -283,7 +288,8 @@ public static class ConnectEndpoints
     /// the org kill-switch, tenant status) that this deliberately does not.
     /// </summary>
     private static async Task<IResult> GetByCodeAsync(
-        string code, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        string code, AppDbContext db, TenantContext tenant,
+        TatvaOS.Api.Modules.Personal.PersonalHouse houses, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
 
@@ -296,15 +302,29 @@ public static class ConnectEndpoints
             .FirstOrDefaultAsync(ct);
         if (meeting is null) return NotFound();
 
+        // The personal house (§6): the code of a stranger's meeting works
+        // exactly as it would for a guest - only if the meeting (and the
+        // house) admit people from outside - and says nothing about who made
+        // it. Otherwise the same 404 as a code that never existed.
+        if (await IsStrangerAsync(db, houses, meeting, uid, ct))
+        {
+            if (!await GuestsWelcomeAsync(db, meeting, ct)) return NotFound();
+            return Results.Ok(Shape(meeting, null, forStranger: true));
+        }
+
         var role = await RoleOfAsync(db, meeting.Id, uid, ct);
         return Results.Ok(Shape(meeting, role));
     }
 
     private static async Task<IResult> ListParticipantsAsync(
-        Guid id, AppDbContext db, TenantContext tenant, CancellationToken ct)
+        Guid id, AppDbContext db, TenantContext tenant,
+        TatvaOS.Api.Modules.Personal.PersonalHouse houses, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
-        if (await FindAsync(db, id, ct) is null) return NotFound();
+        var found = await FindAsync(db, id, ct);
+        if (found is null) return NotFound();
+        // Who is in a stranger's meeting is not a stranger's business (§6).
+        if (await IsStrangerAsync(db, houses, found, uid, ct)) return NotFound();
 
         var people = await db.ConnectParticipants.AsNoTracking()
             .Where(p => p.MeetingId == id)
@@ -875,6 +895,7 @@ public static class ConnectEndpoints
     private static async Task<IResult> JoinAsync(
         Guid id, JoinRequest? req, AppDbContext db, TenantContext tenant,
         IPasswordHasher hasher, LiveKitTokenService tokens, ConnectRoomKey roomKeys,
+        TatvaOS.Api.Modules.Personal.PersonalHouse houses,
         CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
@@ -888,6 +909,18 @@ public static class ConnectEndpoints
 
         var role = await RoleOfAsync(db, id, uid, ct);
         var isHost = role is "host" or "cohost";
+
+        // The personal house (build plan §6): another personal account is a
+        // STRANGER, not a colleague. Same-organisation used to mean "skip the
+        // guest rules"; there it means nothing. A stranger comes in only where
+        // a guest could, and always through the waiting room unless the host
+        // switched it off - the host decides who is in their meeting.
+        var stranger = await IsStrangerAsync(db, houses, meeting, uid, ct);
+        if (stranger && !await GuestsWelcomeAsync(db, meeting, ct))
+            return Results.Json(new
+            {
+                error = "This meeting only admits people the host has invited.",
+            }, statusCode: 403);
 
         // Removed means removed. Checked before the lock and the password so a
         // blocked person learns nothing about either. 403 with a plain
@@ -941,8 +974,9 @@ public static class ConnectEndpoints
         }
 
         // waiting_room = 'everyone' parks colleagues too — except the people
-        // who would have to admit them.
-        if (meeting.WaitingRoom == "everyone" && !isHost)
+        // who would have to admit them. A stranger in the personal house is
+        // parked under 'guests' as well, as a guest would be.
+        if (!isHost && (meeting.WaitingRoom == "everyone" || (stranger && meeting.WaitingRoom != "off")))
         {
             var (waitToken, _) = await ParkAsync(db, id, uid, participant.DisplayName, ct);
             return Results.Ok(new { status = "waiting", waitToken });
@@ -1457,6 +1491,46 @@ public static class ConnectEndpoints
 
     private static Task<ConnectMeeting?> FindAsync(AppDbContext db, Guid id, CancellationToken ct)
         => db.ConnectMeetings.Where(m => m.Id == id).FirstOrDefaultAsync(ct);
+
+    /// <summary>
+    /// Asked to join and never let in: they have waiting-room requests for
+    /// this meeting and NONE of them was admitted. False when they never
+    /// knocked (the meeting had no waiting room for them).
+    ///
+    /// "Any admitted", not "the latest": a person who presses Join twice
+    /// leaves two requests, the host admits one, and the other stays
+    /// 'waiting'. Reading only the newest locked an admitted person out of
+    /// the chat (found by tests/personal-isolation, 26 Sept 2026).
+    /// </summary>
+    internal static async Task<bool> StillKnockingAsync(AppDbContext db, Guid meetingId, Guid userId, CancellationToken ct)
+    {
+        var mine = db.ConnectLobbyRequests.AsNoTracking()
+            .Where(r => r.MeetingId == meetingId && r.UserId == userId);
+        if (!await mine.AnyAsync(ct)) return false;
+        return !await mine.AnyAsync(r => r.Status == "admitted" || r.Status == "claimed", ct);
+    }
+
+    /// <summary>
+    /// In the personal house, is this caller a STRANGER to this meeting -
+    /// neither its creator, nor someone already in it (a row, and not still
+    /// knocking)? Always false outside the house, where same-organisation
+    /// means colleague (build plan §6).
+    /// </summary>
+    private static async Task<bool> IsStrangerAsync(
+        AppDbContext db, TatvaOS.Api.Modules.Personal.PersonalHouse houses,
+        ConnectMeeting m, Guid uid, CancellationToken ct)
+    {
+        if (m.CreatedByUserId == uid) return false;
+        if (!await houses.IsPersonalHouseAsync(m.TenantId, ct)) return false;
+        var hasRow = await db.ConnectParticipants.AsNoTracking()
+            .AnyAsync(p => p.MeetingId == m.Id && p.UserId == uid, ct);
+        return !hasRow || await StillKnockingAsync(db, m.Id, uid, ct);
+    }
+
+    /// <summary>A stranger may come through the door only where a guest could.</summary>
+    private static async Task<bool> GuestsWelcomeAsync(AppDbContext db, ConnectMeeting m, CancellationToken ct) =>
+        m.AllowGuests && await db.Tenants.AsNoTracking()
+            .AnyAsync(t => t.Id == m.TenantId && t.AllowConnectGuests, ct);
 
     private static async Task<string?> RoleOfAsync(AppDbContext db, Guid meetingId, Guid userId, CancellationToken ct)
     {
