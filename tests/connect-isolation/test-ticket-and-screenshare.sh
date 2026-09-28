@@ -245,6 +245,12 @@ track() {
     curl -s -o /dev/null -w "%{http_code}" -X POST "$API/api/connect/webhooks/livekit" \
         -H "Authorization: $jwt" -H "Content-Type: application/webhook+json" --data-binary "$body"
 }
+# track_room EVENT ROOMNAME -> HTTP status, for a room that is not m-<id>
+track_room() {
+    local body="{\"event\":\"$1\",\"id\":\"tw-$RUN-$RANDOM\",\"createdAt\":\"$(date +%s)\",\"room\":{\"name\":\"$2\"},\"participant\":{\"identity\":\"u-walk-$RUN\"},\"track\":{\"sid\":\"TR_$RUN\",\"source\":\"SCREEN_SHARE\"}}"
+    local jwt; jwt=$(BODY="$body" SECRET="$LK_SECRET" KEY="$LK_KEY" "$PY" "$SIGNER" | tr -d "")
+    curl -s -o /dev/null -w "%{http_code}" -X POST "$API/api/connect/webhooks/livekit"         -H "Authorization: $jwt" -H "Content-Type: application/webhook+json" --data-binary "$body"
+}
 reached() { grep -c "Share enforcement, meeting $1" "$LOG" | tr -d ' '; }
 
 PRINCIPAL_ID=${PRINCIPAL_ID:-$(PG "SELECT id FROM core.users WHERE phone='+919999900003'")}
@@ -265,6 +271,15 @@ same "the screen share was acted on: the handler read the meeting under ABC Scho
     "$(reached "$MS")" "1"
 same "control: the multiple-sharer meeting was NOT acted on" "$(reached "$MM")" "0"
 same "the screen share stopping is acted on too" "$(track track_unpublished "$MS" SCREEN_SHARE)/$(sleep 1; reached "$MS")" "200/2"
+
+# Every 200 that does nothing names its reason (Mr. Singh, 1 Oct 2026). The
+# multiple-sharer event above is one; two more that should not happen in life.
+logged() { grep -c -- "$1" "$LOG" | tr -d ' '; }
+same "...and the multiple-sharer event SAYS why it did nothing"     "$(logged "in meeting $MM: share mode is multiple, nothing to enforce")" "1"
+GHOST="$("$PY" -c "import uuid; print(uuid.uuid4())" | tr -d "")"
+same "a screen share for a meeting that does not exist: 200, and a warning naming it"     "$(track track_published "$GHOST" SCREEN_SHARE)/$(sleep 1; logged "for meeting $GHOST ignored: no such meeting")" "200/1"
+same "a screen share in a room that is not a meeting room: 200, and a warning"     "$(track_room track_published "lobby-$RUN")/$(sleep 1; logged "the room is not a meeting room")" "200/1"
+same "no screen share was read under the wrong organisation (the error line never appears)"     "$(logged "NOT ACTED ON: the meeting exists")" "0"
 
 step "Nothing ran without an organisation"
 if grep -q "Tenant context was not resolved" "$LOG"; then
