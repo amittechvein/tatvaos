@@ -455,9 +455,16 @@ function PlanCard({ plan: p, features, onEdit, onDelete }: {
           <Feature>{p.maxDomains ? `${p.maxDomains} domain${p.maxDomains > 1 ? 's' : ''}` : 'Unlimited domains'}</Feature>
         )}
         <Feature>
-          {p.aiCreditModel === 'per_user'
-            ? p.aiCreditsPerUser != null ? `${p.aiCreditsPerUser.toLocaleString('en-IN')} AI credits per user / month` : 'AI credits: no limit'
-            : p.aiCreditsPooled != null ? `${p.aiCreditsPooled.toLocaleString('en-IN')} AI credits pooled / month` : 'AI credits: no limit'}
+          {/* Mr. Singh on PR 313 (28 Sept 2026): until Amit sets Premium's own
+              number, a personal plan gets the same AI allowance as the trial —
+              which today has no per-person figure; only the platform's
+              monthly AI ceiling for the whole personal house applies. The
+              table says so rather than "no limit". */}
+          {p.audience === 'personal' && (p.aiCreditModel === 'per_user' ? p.aiCreditsPerUser : p.aiCreditsPooled) == null
+            ? 'AI: the same as the AI trial until a number is set here (no per-person allowance yet; the monthly AI ceiling for all personal accounts applies)'
+            : p.aiCreditModel === 'per_user'
+              ? p.aiCreditsPerUser != null ? `${p.aiCreditsPerUser.toLocaleString('en-IN')} AI credits per user / month` : 'AI credits: no limit'
+              : p.aiCreditsPooled != null ? `${p.aiCreditsPooled.toLocaleString('en-IN')} AI credits pooled / month` : 'AI credits: no limit'}
         </Feature>
         <Feature><span className="capitalize">{p.includedProducts.join(', ') || 'mail'}</span></Feature>
         <Feature>

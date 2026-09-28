@@ -140,13 +140,18 @@ public static class OrganisationEndpoints
         UpsertPlanRequest req, AppDbContext db, AuditWriter audit, CancellationToken ct)
     {
         if (ValidatePlan(req) is string err) return Results.BadRequest(new { error = err });
+        // Three personal plans, editable; a new one is a code change until there
+        // is a reason (Mr. Singh on PR 313, 28 Sept 2026). The form never sends
+        // "personal"; this refuses a direct request that does.
+        if (req.Audience == "personal")
+            return Results.BadRequest(new { error = "Personal plans are Free, Basic and Premium. Edit those; new personal plans are not created here." });
 
         var plan = new Plan
         {
             Name = req.Name.Trim(),
             // Chosen once, at creation. Moving a plan between audiences would
             // strand whoever is on it on a plan of the wrong kind.
-            Audience = req.Audience == "personal" ? "personal" : "organisation",
+            Audience = "organisation",
             MaxUsers = req.MaxUsers,
             StorageModel = req.StorageModel,
             PerUserQuotaBytes = req.StorageModel == "per_user" ? req.PerUserQuotaBytes : null,
