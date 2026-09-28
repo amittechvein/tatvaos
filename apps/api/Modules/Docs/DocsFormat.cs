@@ -18,6 +18,24 @@ public static class DocsFormat
     public const string DefaultTitle = "Untitled document";
 
     /// <summary>
+    /// How a Space file is named and typed when it is DOWNLOADED from Space. A
+    /// document's blob is its HTML rendering, so it downloads as "Title.html",
+    /// text/html; every other file is untouched.
+    ///
+    /// NOT for mail. Mr. Singh, 24 Sept, on PR 274: HTML attachments are a
+    /// phishing carrier that corporate gateways quarantine and Gmail distrusts,
+    /// and this domain is still earning its reputation. A document leaving by
+    /// mail must be a PDF; until the server can make one, documents are not
+    /// attachable at all (SpaceContentGateway, NotAttachable below).
+    /// </summary>
+    public static (string Name, string MimeType) AsDownload(string name, string mimeType) =>
+        mimeType == MimeType ? (name + ".html", "text/html; charset=utf-8") : (name, mimeType);
+
+    /// <summary>What a person is told when they try to attach a document to mail.</summary>
+    public const string NotAttachable =
+        "A TatvaOS document can't be attached yet. Open it in Docs, download it as a PDF (File > Download as PDF), and attach that.";
+
+    /// <summary>
     /// Wrap the editor's HTML into a standalone page — the file's blob. It is
     /// what Space downloads, what a public link serves, and what Mail attaches
     /// from Space, so it must read correctly with nothing else around it.

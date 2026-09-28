@@ -10,6 +10,9 @@ import {
 import { Icon } from '@/components/ui/Icon';
 import { useUploads } from '@/components/space/UploadTray';
 import { ShareDialog } from '@/components/space/ShareDialog';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { docsApi, docHref, isDocument } from '@/lib/docs';
 import { Spinner } from '@/components/ui/Kit';
 
 /**
@@ -43,6 +46,13 @@ export default function SpacePage({ params }: { params: Promise<{ view: string }
   const scope: SpaceScope = view === 'organisational' ? 'organisational' : 'personal';
 
   const { authedFetch } = useAuth();
+  const router = useRouter();
+  // Docs ships switched off per organisation; its button and links appear
+  // only where the operator has turned it on.
+  const [docsOn, setDocsOn] = useState(false);
+  useEffect(() => {
+    docsApi.status(authedFetch).then(setDocsOn).catch(() => setDocsOn(false));
+  }, [authedFetch]);
   const { upload, jobs, drainCompleted } = useUploads();
 
   const [folderId, setFolderId] = useState<string | null>(null);
@@ -170,6 +180,13 @@ export default function SpacePage({ params }: { params: Promise<{ view: string }
           >
             {item.name}
           </button>
+        ) : file && docsOn && isDocument(file) && !trashed ? (
+          // A TatvaOS document opens in Docs. Its Download button still
+          // works — it saves the HTML rendering the server keeps current.
+          <Link href={docHref(file.id)}
+            className="min-w-0 flex-1 truncate text-sm font-medium text-ink hover:underline">
+            {item.name}
+          </Link>
         ) : (
           <span className="min-w-0 flex-1 truncate text-sm text-ink">{item.name}</span>
         )}
@@ -299,6 +316,13 @@ export default function SpacePage({ params }: { params: Promise<{ view: string }
                 className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink-muted transition hover:bg-canvas hover:text-ink">
                 New folder
               </button>
+              {docsOn && <button type="button"
+                onClick={() => void docsApi.create(authedFetch, undefined, folderId, scope)
+                  .then((d) => router.push(docHref(d.id)))
+                  .catch((e: Error) => setError(e.message))}
+                className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink-muted transition hover:bg-canvas hover:text-ink">
+                New document
+              </button>}
               <button type="button" onClick={() => fileInput.current?.click()}
                 className="rounded-lg bg-brand-600 px-4 py-1.5 text-sm font-semibold text-white transition hover:bg-brand-700">
                 Upload

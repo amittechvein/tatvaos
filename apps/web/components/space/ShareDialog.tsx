@@ -117,6 +117,11 @@ export function ShareDialog({ kind, item, onClose, onChanged, publicLinks = true
                 </span>
               ))}
               <input
+                // Focus moves INTO the dialog on open. Measured in Docs, 24
+                // Sept: without it the keyboard stayed in the document behind
+                // the backdrop, and the first letter typed "into the dialog"
+                // was written into the document instead.
+                autoFocus
                 value={term}
                 onChange={(e) => setTerm(e.target.value)}
                 placeholder={chips.length === 0 ? 'Add people by name or email' : ''}

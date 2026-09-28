@@ -310,9 +310,16 @@ async function main() {
   a2.ws.close();
 
   const dl = await A(`/space/files/${id}/content`);
-  check('the checkpoint wrote Space\'s copy (the blob holds the new HTML)',
-    dl.status === 200 && String(dl.body).includes('<p>Hello</p>'), `status ${dl.status}`);
-  check('the stored page carries a script-forbidding CSP', String(dl.body).includes("default-src 'none'"));
+  check('Space download is the HTML rendering, named .html',
+    dl.status === 200 && /E2E plan\.html/.test(dl.headers.get('content-disposition') ?? '') && String(dl.body).includes('<p>Hello</p>'),
+    `status ${dl.status} cd=${dl.headers.get('content-disposition')}`);
+  check('the downloaded page carries a script-forbidding CSP', String(dl.body).includes("default-src 'none'"));
+
+  const form = new FormData();
+  form.append('sizeBytes', '3');
+  form.append('file', new Blob(['abc']), 'x.txt');
+  const over = await A(`/space/files/${id}/content`, { method: 'PUT', body: form });
+  check('Space refuses to overwrite a document\'s bytes (409)', over.status === 409, `status ${over.status}`);
 
   // ---- versions ------------------------------------------------------------------
   console.log('Versions');
