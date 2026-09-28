@@ -409,6 +409,10 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
 
       <AiUsageSection orgId={org.id} />
       <AiCreditsSection orgId={org.id} />
+
+      <hr className="my-6" />
+
+      <DocsSwitch orgId={org.id} />
     </Modal>
   );
 }
@@ -435,6 +439,70 @@ type CapsAnswer = {
   defaultPerMeeting: number;
   ceiling: number;
 };
+
+/**
+ * TatvaOS Docs, on or off for this organisation. Off by default; only the
+ * platform operator turns it on (DocsAdminEndpoints), and every change is
+ * audited. Turning it on also means this organisation's documents may go to
+ * the AI provider when its AI switch is on.
+ */
+function DocsSwitch({ orgId }: { orgId: string }) {
+  const { authedFetch } = useAuth();
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const path = `/admin/organisations/${orgId}/docs`;
+
+  useEffect(() => {
+    let gone = false;
+    authedFetch(path)
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error ?? 'Could not load the Docs setting.');
+        if (!gone) setEnabled(Boolean(body.enabled));
+      })
+      .catch((e) => { if (!gone) setError(e instanceof Error ? e.message : 'Could not load the Docs setting.'); });
+    return () => { gone = true; };
+  }, [authedFetch, path]);
+
+  async function flip() {
+    if (enabled === null) return;
+    setBusy(true); setError(null);
+    try {
+      const res = await authedFetch(path, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !enabled }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? 'Could not change the Docs setting.');
+      setEnabled(Boolean(body.enabled));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not change the Docs setting.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <h6 className="font-semibold mb-2">Docs</h6>
+      <p className="text-[0.75rem] text-ink-muted mb-4">
+        Collaborative documents, stored in Space. Off until you turn it on. Only you can change this;
+        the organisation cannot. Turning it off closes open documents within a minute; nothing is deleted.
+      </p>
+      {error && <Alert tone="danger">{error}</Alert>}
+      <div className="flex items-center justify-between">
+        <span className="text-sm">
+          {enabled === null ? 'Loading…' : enabled ? 'On for this organisation' : 'Off for this organisation'}
+        </span>
+        <Button variant={enabled ? 'secondary' : 'primary'} onClick={flip} disabled={busy || enabled === null}>
+          {busy ? 'Saving…' : enabled ? 'Turn Docs off' : 'Turn Docs on'}
+        </Button>
+      </div>
+    </>
+  );
+}
 
 /**
  * This organisation's AI use this month — the same summary its own TatvaOS AI

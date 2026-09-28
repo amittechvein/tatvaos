@@ -55,6 +55,93 @@ case "$ENV" in
 esac
 
 # ---------------------------------------------------------------------------
+#  RUN DETACHED, OR DO NOT RUN — HOUSE_RULES rule 11b (Mr. Singh, 27 Sept 2026).
+#
+#  On 26 September a hand deploy died at 13:58Z when the SSH session reset
+#  during the pre-deploy backup. It had not reached the schema step, so
+#  production was untouched — by luck: one step later and the box would have
+#  been half-updated with nobody watching. It then sat unnoticed for three
+#  hours, because the tool call driving it had timed out into the background.
+#
+#  A deploy attached to a session dies with that session. So this script
+#  refuses to start unless it is detached, and prints the one command that
+#  runs it correctly.
+#
+#  WHAT "ATTACHED" MEANS — three tests, each closing a hole the one before
+#  left open (tests/deploy/test-detached-guard.sh runs every form):
+#
+#   1. Input, output or errors are a terminal. The first version of this
+#      guard asked only about OUTPUT, so `./deploy.sh production > log 2>&1`
+#      — the natural thing to type — passed, while still sitting in the SSH
+#      session (Mr. Singh, 28 Sept).
+#   2. The process has a controlling terminal at all: /dev/tty opens. This is
+#      what `setsid` removes, and it catches a run with every stream
+#      redirected that is still in the session's process group.
+#   3. Output is not a regular file. `ssh host ./deploy.sh production` with
+#      no terminal has NO controlling terminal, so test 2 passes it — but its
+#      output is the SSH channel, and the first write after the connection
+#      drops kills it with SIGPIPE. Measured 28 Sept: a process with no
+#      terminal and its output on a pipe died when the reader went away; the
+#      same process writing to a file ran to the end. This is also why
+#      `| tee deploy.log` is refused: tee dies with the session.
+#
+#  There are two ways past, both deliberate and neither a habit: see
+#  override_allowed below.
+# ---------------------------------------------------------------------------
+has_controlling_terminal() { [ -e /dev/tty ] && sh -c ': < /dev/tty' 2>/dev/null; }
+# Sets ATTACHED_WHY and returns 0 when attached. NEVER called as $(...): inside
+# a command substitution, standard output IS the substitution's own pipe, so
+# the output tests would be asking about that pipe and not about this
+# script's output. The first draft did exactly that. It refused the correct
+# detached form as "not a log file", and its terminal test could never fire.
+# Found by tests/deploy/test-detached-guard.sh, 28 Sept 2026.
+ATTACHED_WHY=""
+attached_because() {
+    if [ -t 0 ]; then ATTACHED_WHY="its input is a terminal"; return 0; fi
+    if [ -t 1 ] || [ -t 2 ]; then ATTACHED_WHY="its output is a terminal"; return 0; fi
+    if has_controlling_terminal; then
+        ATTACHED_WHY="it is inside a login or SSH session (it has a controlling terminal)"; return 0
+    fi
+    if ! { [ -f /dev/stdout ] && [ -f /dev/stderr ]; }; then
+        ATTACHED_WHY="its output is not a log file (a pipe or an SSH channel breaks when the connection drops)"; return 0
+    fi
+    return 1
+}
+# THE OVERRIDE IS NARROW ON PURPOSE (Mr. Singh, 29 Sept 2026). A single
+# variable that silences the guard gets typed by habit, and then the guard is
+# a formality. So:
+#   - DEPLOY_ATTACHED=1 counts ONLY beside GITHUB_ACTIONS=true. The workflow
+#     sets both on its own command line (GITHUB_ACTIONS is not inherited
+#     over SSH from the runner). Typed alone in an SSH session, it does
+#     nothing, and the refusal says so.
+#   - DEPLOY_LOCAL_REHEARSAL=1 is the laptop's switch, named for what it is.
+override_allowed() {
+    [ "${DEPLOY_LOCAL_REHEARSAL:-}" = "1" ] && return 0
+    [ "${DEPLOY_ATTACHED:-}" = "1" ] && [ "${GITHUB_ACTIONS:-}" = "true" ] && return 0
+    return 1
+}
+if ! override_allowed && attached_because; then
+    printf '\n   [FAIL] deploy.sh is attached: %s.\n' "$ATTACHED_WHY"
+    if [ "${DEPLOY_ATTACHED:-}" = "1" ]; then
+        printf '          DEPLOY_ATTACHED=1 is ignored here: it counts only from the GitHub\n'
+        printf '          workflow. It does not make a hand deploy safe to run attached.\n'
+    fi
+    printf '          Run it detached, so a dropped connection cannot kill it halfway\n'
+    printf '          (HOUSE_RULES rule 11b):\n\n'
+    printf '     LOG=~/deploy-%s-$(date -u +%%Y%%m%%dT%%H%%M%%SZ).log\n' "$ENV"
+    printf '     CI=1 setsid nohup ./infra/scripts/deploy.sh %s > "$LOG" 2>&1 < /dev/null &\n' "$ENV"
+    printf '     tail -f "$LOG"        # Ctrl-C stops the tail only, never the deploy\n\n'
+    printf '   The log ends in a DEPLOY VERDICT line. No verdict line = the deploy did not\n'
+    printf '   finish: check the server before doing anything else.\n\n'
+    exit 1
+fi
+
+# Every exit prints a verdict. A log with no "DEPLOY VERDICT" line was cut
+# off — killed, or the box died — and rule 11b says that is a failure, not a
+# maybe. The PASS line is printed by the success path at the bottom.
+trap 'rc=$?; if [ "$rc" -ne 0 ]; then printf "\n   DEPLOY VERDICT: FAIL (exit %s) at %s\n\n" "$rc" "$(date -u +%FT%TZ)"; fi' EXIT
+
+# ---------------------------------------------------------------------------
 #  ONE DEPLOYER AT A TIME — the lock rule 11 promised.
 #
 #  Since 29 August every lane deploys its own work, so two people reaching
@@ -103,6 +190,69 @@ if grep -q 'CHANGE_ME' infra/docker/.env; then
     exit 1
 fi
 ok "secrets present"
+
+# ---------------------------------------------------------------------------
+step "Settings files are private"
+# ── .env AND EVERY COPY OF IT: READABLE BY THIS ACCOUNT ONLY, OR NO DEPLOY. ──
+#  infra/docker/.env holds every production secret, and a copy of it is the
+#  same secret in a second place. On 28 Sept 2026 .env was found at mode 664
+#  — readable by every account on the server — with three copies beside it
+#  the same way, one 52 days old. Nobody chose that: this account's umask is
+#  002, so every file it creates is born world-readable unless the command
+#  says otherwise. A runbook rule was written that day. A rule is a sentence.
+#
+#  Mr. Singh, 1 Oct 2026: the deploy REFUSES — it does not warn — because
+#  the deploy is the one moment somebody is watching.
+#
+#  WHAT COUNTS: every file named .env* in the settings directory that is NOT
+#  tracked by git. The tracked ones are the published examples
+#  (.env.production.example): they are in the repository, git writes them
+#  664, and a secret in one of them is a different mistake. Deciding by git
+#  and not by the name "*.example" matters: a copy somebody called
+#  .env.example.bak is a copy of the secrets, and is refused.
+#
+#  WHAT FAILS: any group or other permission bit at all (so 640 fails, not
+#  only 644), or an owner that is not the account running the deploy.
+#
+#  OLD COPIES are named, not refused: removing a file is a person's decision
+#  (docs/DEPLOY_RUNBOOK.md). The age comes from the UTC stamp in the NAME
+#  when there is one — `cp -p` carries the original's date onto the copy, so
+#  the file's own date says when .env was last edited, not when it was copied.
+# ─────────────────────────────────────────────────────────────────────────
+ENV_DIR=infra/docker
+ME=$(id -un)
+env_checked=0; env_bad=(); env_old=()
+while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    git ls-files --error-unmatch -- "$f" >/dev/null 2>&1 && continue
+    env_checked=$((env_checked + 1))
+    if [ -n "$(find "$f" -maxdepth 0 \( -perm /077 -o ! -user "$ME" \) 2>/dev/null)" ]; then
+        env_bad+=("$f")
+    fi
+    [ "$f" = "$ENV_DIR/.env" ] && continue
+    stamp=$(printf '%s' "$f" | grep -oE '20[0-9]{6}T?[0-9]{0,6}Z?$' | cut -c1-8 || true)
+    if [ -n "$stamp" ] && born=$(date -u -d "$stamp" +%s 2>/dev/null); then :
+    else born=$(stat -c %Y "$f"); fi
+    [ $(( ( $(date -u +%s) - born ) / 86400 )) -gt 7 ] && env_old+=("$f")
+done < <(find "$ENV_DIR" -maxdepth 1 -type f -name '.env*' 2>/dev/null | sort)
+
+if [ "$env_checked" -eq 0 ]; then
+    bad "found no settings file to check in $ENV_DIR — the check itself is broken; stopping"
+    exit 1
+fi
+if [ "${#env_bad[@]}" -gt 0 ]; then
+    bad "${#env_bad[@]} settings file(s) can be read by someone other than $ME — refusing to deploy"
+    for f in "${env_bad[@]}"; do note "  $(stat -c 'mode %a, owner %U' "$f")  $f"; done
+    note "Each holds production secrets. Fix, then deploy again:"
+    note "  chmod 600 ${env_bad[*]}"
+    note "and make copies with:  ( umask 077; cp .env .env.before-<reason>-\$(date -u +%Y%m%dT%H%M%SZ) )"
+    exit 1
+fi
+ok "$env_checked settings file(s), each readable by $ME only"
+if [ "${#env_old[@]}" -gt 0 ]; then
+    note "${#env_old[@]} copy(ies) of .env older than seven days — remove by hand (docs/DEPLOY_RUNBOOK.md):"
+    for f in "${env_old[@]}"; do note "  $f"; done
+fi
 
 # ---------------------------------------------------------------------------
 #  Docker must exist AND be usable by this user.
@@ -910,7 +1060,12 @@ else
 fi
 
 DOMAIN=$(grep '^SITE_DOMAIN=' infra/docker/.env | cut -d= -f2)
-printf '\n   %s%s deployed.%s\n\n' "$G" "$ENV" "$X"
+printf '\n   %s%s deployed.%s\n' "$G" "$ENV" "$X"
+# PASS covers everything above, INCLUDING this script's own verify-live.sh run
+# (a failure there is a bad() and never reaches this line). It does not cover
+# what runs after this script: the workflow's second verify-live and its
+# checks from outside have their own results.
+printf '   DEPLOY VERDICT: PASS %s at %s (verify-live passed inside this run)\n\n' "$BUILD_SHA" "$(date -u +%FT%TZ)"
 printf '   App        https://%s\n' "$DOMAIN"
 printf '   API        https://%s/api\n' "$DOMAIN"
 printf '   Health     https://%s/health\n' "$DOMAIN"
