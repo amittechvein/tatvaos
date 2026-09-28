@@ -153,6 +153,51 @@ when the cause is unclear; fix forward when it is one known line.
 
 ---
 
+## Changing the server's settings file (`infra/docker/.env`)
+
+That one file holds every production secret: database passwords, signing
+keys, mail and SMS credentials. **A copy of it is the same secret, in a
+second place.**
+
+**The rule (Mr. Singh, 28 Sept 2026 — the same rule #254 applied to the
+pre-deploy database copies):**
+
+1. **A copy of `.env` is created with `umask 077`, or not at all.** Never a
+   bare `cp`.
+2. **The name carries the reason and the UTC time**, so nobody has to guess
+   what it was for or how old it is. The file's own date cannot be trusted:
+   `cp -p` carries the *original's* date onto the copy.
+3. **Copies older than seven days are removed** — by a person, saying which
+   ones, never by a deploy.
+4. **`.env` itself is `600`, owner `deploy`.** Nothing else reads it: compose
+   substitutes its values when it renders the services, and no container
+   mounts the file.
+
+```bash
+cd /srv/tatvaos-production/infra/docker
+( umask 077; cp .env ".env.before-<reason>-$(date -u +%Y%m%dT%H%M%SZ)" )
+# ... make the change ...
+stat -c '%a %n' .env .env.*          # every line must start 600
+ls .env.before-* .env.*backup* 2>/dev/null   # anything older than 7 days goes
+```
+
+**Why this rule exists.** On 28 Sept 2026 `.env` was found at mode **664**
+— readable by every account on the server — with three copies beside it the
+same way, one of them 52 days old. Nobody chose that: the `deploy` account's
+default umask is `002`, so *every* file it creates is born group-writable and
+world-readable unless the command says otherwise. Only `root` and `deploy` can
+log in, so nothing is known to have read them; but one compromised service
+account on that machine would have been handed everything. They were set to
+`600` that day (Amit's go), with no restart and no service affected.
+
+**What this does not cover.** Anything else the `deploy` account writes is
+still born `664`. `/home/deploy` is `750` and `/srv/backups/tatvaos` is
+`700`, so their contents are protected by the folder; **the checkout under
+`/srv/tatvaos-production` is not** (`755`). A secret written anywhere inside
+the checkout needs the same `umask 077`.
+
+---
+
 ## What each guard actually catches
 
 | Guard | Catches | Does NOT catch |
