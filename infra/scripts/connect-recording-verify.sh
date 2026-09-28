@@ -336,14 +336,43 @@ due=$(q "SELECT count(*) FROM connect.expired_recordings(50)" 2>/dev/null)
 echo "  ..    ${kept:-0} recording(s) under a keep hold, ${due:-0} currently due for the sweep"
 
 echo
-echo "== the org pool, not the person =="
-# Recordings must NOT appear in core.user_storage_usage. Charging the host
-# would move a colleague's remaining space when somebody else records.
-n=$(q "SELECT count(*) FROM pg_proc p JOIN pg_namespace ns ON ns.oid=p.pronamespace
-        WHERE ns.nspname='core' AND p.proname='user_storage_usage'
-          AND pg_get_functiondef(p.oid) ILIKE '%connect.%'")
-[ "${n:-0}" -eq 0 ] && ok "core.user_storage_usage does NOT count recordings" \
-                    || bad "recordings are being charged to a PERSON — they belong to the organisation"
+echo "== recordings count against the person who started them =="
+# Amit's ruling, 23 Aug 2026, reconfirmed 28 Sept: the host chooses to record,
+# so the host sees the cost (20260823-d-connect-storage-charge.sql says why).
+# Until 28 Sept this section asserted the OPPOSITE - "the org pool, not the
+# person" - written before the ruling and never turned round, so it printed
+# FAIL on every correct box since 23 Aug.
+#
+# Behaviour, not the function's text: take the person with the most 'ready'
+# recording bytes and compare what core.user_storage_usage charges them for
+# Connect with those bytes summed directly. Read-only (the function is
+# STABLE). Equal means charged, to the right person, 'ready' rows only; zero
+# means the meter lost recordings again, which is the bug that file fixed.
+top=$(q "SELECT COALESCE(r.requested_by_user_id, mt.created_by_user_id)::text
+           FROM connect.recordings r JOIN connect.meetings mt ON mt.id = r.meeting_id
+          WHERE r.status = 'ready' AND r.size_bytes > 0
+            AND COALESCE(r.requested_by_user_id, mt.created_by_user_id) IS NOT NULL
+          GROUP BY 1 ORDER BY sum(r.size_bytes) DESC LIMIT 1")
+if [ -z "$top" ]; then
+    # No recording to measure with: fall back to the catalogue, and say so.
+    n=$(q "SELECT count(*) FROM pg_proc p JOIN pg_namespace ns ON ns.oid=p.pronamespace
+            WHERE ns.nspname='core' AND p.proname='user_storage_usage'
+              AND pg_get_functiondef(p.oid) ILIKE '%connect.recordings%'")
+    [ "${n:-0}" -eq 1 ] && warn "no ready recording to measure with; core.user_storage_usage does read connect.recordings" \
+                        || bad "core.user_storage_usage does not read connect.recordings - recordings are charged to nobody"
+else
+    want=$(q "SELECT COALESCE(sum(r.size_bytes), 0)
+                FROM connect.recordings r JOIN connect.meetings mt ON mt.id = r.meeting_id
+               WHERE r.status = 'ready'
+                 AND COALESCE(r.requested_by_user_id, mt.created_by_user_id) = '$top'::uuid")
+    got=$(q "SELECT COALESCE(sum(used_bytes), 0) FROM core.user_storage_usage('$top'::uuid)
+              WHERE product_code = 'connect'")
+    if [ -n "$want" ] && [ "$want" = "$got" ] && [ "$want" -gt 0 ]; then
+        ok "the person with the most recorded bytes is charged exactly their ready recordings ($got bytes)"
+    else
+        bad "core.user_storage_usage charges ${got:-nothing} for Connect where their ready recordings total ${want:-?} bytes - the person's meter is wrong"
+    fi
+fi
 
 n=$(q "SELECT count(*) FROM core.products WHERE code='connect'")
 [ "${n:-0}" -eq 1 ] && ok "'connect' exists in core.products" \
