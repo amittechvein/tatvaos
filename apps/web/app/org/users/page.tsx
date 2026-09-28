@@ -325,7 +325,7 @@ export default function PeoplePage() {
 
 interface PendingCounts {
   pending: number; toSend: number; signInLinks: number; invitations: number;
-  skipped: { linkStillWorks: number; noRecoveryEmail: number; notYours: number };
+  skipped: { linkStillWorks: number; noRecoveryEmail: number; owners: number; yourself: number };
 }
 
 /**
@@ -418,9 +418,11 @@ function SendToPending({ onClose, onSent }: {
               <li>{people(counts.skipped.noRecoveryEmail)} left out: no recovery email on
                 file, so a link has nowhere to go. Use Reset password for them.</li>
             )}
-            {counts.skipped.notYours > 0 && (
-              <li>{people(counts.skipped.notYours)} left out: yourself, or an owner&apos;s
-                account that only an owner can manage.</li>
+            {/* Mr. Singh, 1 Oct 2026: a sweep never sends to an owner, whoever
+                presses it. The count is shown so the owner is not forgotten. */}
+            {counts.skipped.owners > 0 && (
+              <li>{counts.skipped.owners === 1 ? '1 owner' : `${counts.skipped.owners} owners`} skipped.
+                Use their profile.</li>
             )}
           </ul>
           {counts.toSend > 0 && (

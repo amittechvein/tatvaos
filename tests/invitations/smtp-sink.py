@@ -7,7 +7,9 @@ answers "not delivered" and the delivered path is never exercised.
   python smtp-sink.py PORT DIR
 
 Each accepted message is written to DIR/<n>.eml with an "X-Sink-Rcpt:" line
-first, naming who it was for. Speaks only what System.Net.Mail.SmtpClient
+first, naming who it was for, and announced on stdout as "kept <n> for <who>".
+A second sink started on the same DIR numbers from 1 again, so empty the
+folder before starting one. Speaks only what System.Net.Mail.SmtpClient
 says: EHLO/HELO, MAIL, RCPT, DATA, RSET, NOOP, QUIT. No TLS, no AUTH.
 """
 import os
@@ -61,6 +63,9 @@ class Handler(socketserver.StreamRequestHandler):
                 with open(os.path.join(OUT, "%04d.eml" % n), "wb") as f:
                     f.write(("X-Sink-Rcpt: %s\r\n" % ",".join(rcpts)).encode())
                     f.writelines(lines)
+                # One line per message on stdout, so a test can ask "was anything
+                # EVER addressed to X" after it has emptied the folder.
+                print("kept %04d for %s" % (n, ",".join(rcpts)), flush=True)
                 self.say("250 kept")
             elif up == "QUIT":
                 self.say("221 bye")

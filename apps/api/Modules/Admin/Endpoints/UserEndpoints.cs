@@ -1154,8 +1154,15 @@ public static class UserEndpoints
     //  per person here, and a person the single button would refuse is
     //  skipped and counted, never sent to:
     //    - yourself
-    //    - an owner, unless you are one (GuardActOn)
     //    - nobody to send to (no recovery email)
+    //
+    //  AND IT HAS LESS POWER THAN THEY DO IN ONE RESPECT: it never sends to
+    //  an OWNER, whoever presses it (Mr. Singh, 1 October 2026). The single
+    //  button is a deliberate act on one person; a sweep must not issue the
+    //  organisation's most valuable credential as a side effect. Owners are
+    //  counted, and the dialog sends the administrator to their profile.
+    //  The first version let an owner's press reach a pending owner, because
+    //  GuardActOn allows that; the rule here is stricter than GuardActOn.
     //
     //  ONE RULE OF ITS OWN: somebody holding a link that still works is LEFT
     //  ALONE. Issuing a link kills the one before it, so pressing this twice
@@ -1183,7 +1190,8 @@ public static class UserEndpoints
 
     private static async Task<IResult> SendToPendingAsync(
         SendToPendingRequest? req, AppDbContext db, TenantContext tenant, AuditWriter audit,
-        IServiceScopeFactory scopeFactory, IConfiguration config, CancellationToken ct)
+        IServiceScopeFactory scopeFactory, IConfiguration config, ILoggerFactory loggers,
+        CancellationToken ct)
     {
         // A missing body is a dry run: the careless request sends nothing.
         var dryRun = req?.DryRun ?? true;
@@ -1193,11 +1201,12 @@ public static class UserEndpoints
             .OrderBy(u => u.Email)
             .ToListAsync(ct);
 
-        int linkStillWorks = 0, noRecoveryEmail = 0, notYours = 0, signInLinks = 0, invitations = 0;
+        int linkStillWorks = 0, noRecoveryEmail = 0, owners = 0, yourself = 0, signInLinks = 0, invitations = 0;
         var send = new List<(User User, string Channel)>();
         foreach (var user in pending)
         {
-            if (user.Id == tenant.UserId || GuardActOn(tenant, user) is not null) { notYours++; continue; }
+            if (user.Id == tenant.UserId) { yourself++; continue; }
+            if (user.Role == "org_owner") { owners++; continue; }
 
             var channel = user.PasswordHash is not null
                 ? (string.IsNullOrWhiteSpace(user.RecoveryEmail) ? null : Invitations.ChannelSignInLink)
@@ -1218,7 +1227,7 @@ public static class UserEndpoints
             toSend = send.Count,
             signInLinks,
             invitations,
-            skipped = new { linkStillWorks, noRecoveryEmail, notYours },
+            skipped = new { linkStillWorks, noRecoveryEmail, owners, yourself },
         };
 
         if (dryRun) return Results.Ok(new { dryRun = true, counts });
@@ -1236,6 +1245,15 @@ public static class UserEndpoints
 
         // One row for the press itself; each mail writes its own as it goes.
         await audit.WriteAsync("user.pending_links_sent", "user", "pending", after: counts, ct: ct);
+        // And one line in the log, so that a runaway - the same press many
+        // times, or a count nobody expected - is visible to whoever reads the
+        // server and not only to whoever reads the audit table.
+        loggers.CreateLogger("TatvaOS.SendToPending").LogInformation(
+            "Send to pending: {ToSend} of {Pending} pending in tenant {TenantId}, by {ActorId} "
+            + "({SignInLinks} sign-in links, {Invitations} invitations; skipped {LinkStillWorks} holding a link, "
+            + "{NoRecoveryEmail} with no recovery email, {Owners} owners)",
+            send.Count, pending.Count, tenant.TenantId, tenant.UserId,
+            signInLinks, invitations, linkStillWorks, noRecoveryEmail, owners);
 
         var (orgName, baseUrl) = await OrgNameAndBaseUrlAsync(db, tenant, config, ct);
         SendInvitationsInBackground(scopeFactory, tenant.TenantId, tenant.UserId!.Value, tenant.Role!,
