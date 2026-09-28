@@ -34,7 +34,7 @@ syncing leaves RLS blind. Several paths below have been bitten by exactly that.
 | `POST /api/connect/shared/{token}` (recording share link) | anyone holding a link | `connect.resolve_share_token()` → `EnterAnonymousScope(row.TenantId, "guest")` + `SyncTenantAsync`, before any EF read. Password failures are **counted and checked through definer functions** (`record_share_password_failure`, `share_password_paused_until`) | recordings, meetings, recording_shares (the password hash, after scoping) | `resolve_share_token`, `record_share_password_failure`, `share_password_paused_until`, `log_recording_access` | `tests/connect-isolation/test-recording-share-link.sh` (walked 28 Sept) |
 | `POST /api/connect/shared/renew` (playback ticket) | a holder of a signed ticket | none needed: no EF read. `connect.share_still_allows()` answers | none | `share_still_allows` | same test |
 | Meetings API `/api/v1/org/meetings…` | a customer's software, organisation key | `OrgApiAuth` → `EnterAnonymousScope(keyTenantId, "org_api")` + `SyncTenantAsync` | meetings | none | `tests/orgapi` (123), paging-promises (20, and 20 with RLS bypassed) |
-| `ConnectNotesWorker` (transcription, notes, minutes email, retention, stuck recordings, invitation sweep) | the API process, on a timer | a definer function lists work across organisations (`pending_notes`, `pending_transcription`, `pending_minutes_email`, `expired_recordings`, `stuck_recordings`, `notes_tenant`, `recording_tenant`), then `EnterAnonymousScope(tenantId, "system")` per item | meetings, participants, recordings, transcripts, caption_lines, meeting_notes | the seven named, plus `attendance`, `reconcile_recording_storage`, `sweep_meeting_invitations`, `webhook_meeting_tenant` | **read only. No suite drives the worker.** This is the largest gap in the list |
+| `ConnectNotesWorker` (transcription, notes, minutes email, retention, stuck recordings, invitation sweep) | the API process, on a timer | a definer function lists work across organisations (`pending_notes`, `pending_transcription`, `pending_minutes_email`, `expired_recordings`, `stuck_recordings`, `notes_tenant`, `recording_tenant`), then `EnterAnonymousScope(tenantId, "system")` per item | meetings, participants, recordings, transcripts, caption_lines, meeting_notes | the seven named, plus `attendance`, `reconcile_recording_storage`, `sweep_meeting_invitations`, `webhook_meeting_tenant` | notes + minutes email: `tests/connect-isolation/test-minutes-worker.sh` (28 Sept). Transcription, retention and stuck-recording repair: **read only** (they need a media server or a transcription provider) |
 
 Every read of `ConnectMeetings` (26 sites, 8 files) was checked before PR
 288's filter went in. The table in PR 288's description lists them.
@@ -82,8 +82,12 @@ functions omit `pg_temp` and were assigned to this lane.
 
 ## 4. Open items
 
-1. **Drive `ConnectNotesWorker` in a test.** It is the widest tenantless path
-   and nothing runs it.
+1. **Drive `ConnectNotesWorker` in a test: done 28 Sept.**
+   `tests/connect-isolation/test-minutes-worker.sh` runs the real worker with an
+   ended meeting in two organisations: notes written for both, each with its
+   own `tenant_id`, and minutes mailed to each attendee once. Calibrated: with
+   the notes writer's `EnterAnonymousScope` removed, it goes red, 7 of 14
+   ("Tenant context was not resolved", "Connect notes sweep failed").
 2. **Walk the ticketed download and the screen-share event.**
 3. **Review each definer function's body** against section 3's question.
 4. **Step two: done 28 Sept** (see section 2).
