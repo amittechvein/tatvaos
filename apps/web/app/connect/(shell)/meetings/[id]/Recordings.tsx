@@ -201,7 +201,15 @@ export default function Recordings({ meetingId, isHost, canDelete, guestNames }:
           left changes with the retention hold. */}
       {sharingRec && list.sharing && (
         <ShareDialog meetingId={meetingId} recording={sharingRec}
-                     capability={list.sharing}
+                     capability={{
+                       ...list.sharing,
+                       // THIS recording's days left, not the organisation's
+                       // window: a recording made three weeks ago under a
+                       // 30-day policy has a week, and a longer link would be
+                       // silently cut short by the database.
+                       maxDays: list.items.find((i) => i.recording.id === sharingRec.id)
+                         ?.shareDaysLeft ?? list.sharing.maxDays,
+                     }}
                      onClose={() => { setSharingRec(null); void load(); }} />
       )}
     </>

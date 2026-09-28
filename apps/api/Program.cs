@@ -17,6 +17,7 @@ using TatvaOS.Api.Modules.Family.Endpoints;
 using TatvaOS.Api.Modules.Space.Endpoints;
 using TatvaOS.Api.Modules.Calendar.Endpoints;
 using TatvaOS.Api.Modules.Connect.Endpoints;
+using TatvaOS.Api.Modules.Docs;
 using TatvaOS.Api.Workers;
 using TatvaOS.Api.Shared.Auth.Oidc;
 using TatvaOS.Api.Shared.Ai;
@@ -375,6 +376,15 @@ builder.Services.AddScoped<IAiGateway, MeteredAiGateway>();
 // message does not send it to the AI provider again (MailAiEndpoints).
 builder.Services.AddMemoryCache();
 
+// Docs' live rooms. SINGLETON on purpose — the rooms ARE the shared state
+// every open editor of a document must find; it creates its own scopes for
+// database work (see DocsLiveHub's header, and its single-process note).
+builder.Services.AddSingleton<DocsLiveHub>();
+// Makes "exactly one API container" loud: only the lock holder serves live
+// editing (DocsInstanceGuard's header; decision 0008's deployment rule).
+builder.Services.AddSingleton<DocsInstanceGuard>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<DocsInstanceGuard>());
+
 // Scoped: it writes through the request's AppDbContext and reads its
 // TenantContext. A singleton holding either would serve one tenant's scope to
 // whichever request arrived next.
@@ -685,6 +695,26 @@ builder.Services.AddRateLimiter(o =>
                 QueueLimit = 0,
             });
     });
+
+    // Connect recording share LINKS (Connect lane, 26 Sept 2026). Tighter than
+    // the meeting door's 60: this is where a share password is guessed, and a
+    // share password may be as short as four characters. 20 a minute is still
+    // more than a person opening a link and renewing a playback ever needs.
+    // Rightmost X-Forwarded-For, like every limiter here.
+    o.AddPolicy("connect-shared-links", httpContext =>
+    {
+        var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();
+        var client = string.IsNullOrEmpty(xff)
+            ? httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"
+            : xff.Split(',')[^1].Trim();
+        return RateLimitPartition.GetFixedWindowLimiter($"connect-shared:{client}",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 20,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            });
+    });
 });
 
 // Translates message bodies through a translator in our own stack. OFF
@@ -786,6 +816,11 @@ app.UseMiddleware<TenantMiddleware>();
 app.UseAuthorization();
 app.UseRateLimiter();
 
+// Docs' live channel (/api/docs/{id}/live) is the one WebSocket the API
+// serves. The keep-alive ping stops Caddy and home routers from reaping an
+// editor that is open but idle; the browser reconnects if it goes anyway.
+app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(25) });
+
 // Reads Auth:CookieDomain. Unset locally and on staging (one host serves
 // everything); ".tatvaos.com" in production, so a session started in Core is
 // carried to Mail. See the cookie-domain block in AuthEndpoints.
@@ -850,6 +885,9 @@ app.MapSpaceEndpoints();
 app.MapSpaceDriveEndpoints();
 app.MapSpaceLinkEndpoints();
 app.MapSpaceThumbnailEndpoints();
+// Docs: collaborative documents, each one a Space file.
+app.MapDocsEndpoints();
+app.MapDocsAdminEndpoints();
 
 // Connect. Meetings live in this monolith; only the MEDIA is a separate
 // container. The guest group and the LiveKit webhook are anonymous and

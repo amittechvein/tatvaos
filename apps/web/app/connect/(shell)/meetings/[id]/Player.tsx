@@ -42,6 +42,52 @@ export function Player({ meetingId, recording, onClose }: {
   onClose: () => void;
 }) {
   const { authedFetch } = useAuth();
+
+  const getUrl = useCallback(async () => {
+    const { ticket } = await recordingApi.ticket(authedFetch, meetingId, recording.id);
+    return recordingApi.ticketUrl(ticket);
+  }, [authedFetch, meetingId, recording.id]);
+
+  const isVideo = recording.mode === 'video';
+
+  return (
+    <Modal
+      title={isVideo ? 'Recording' : 'Recording (audio)'}
+      subtitle={recording.startedAt ? undefined : 'This recording is still being written.'}
+      size="lg"
+      onClose={onClose}
+      footer={(
+        <>
+          <Button onClick={onClose}>Close</Button>
+          {/* Still here. Watching is the common case, which is why it is the
+              default now — but somebody filing a recording still needs the
+              file, and hiding it would trade one annoyance for another. */}
+          <Button variant="primary"
+                  onClick={() => void recordingApi.download(authedFetch, meetingId, recording.id)}>
+            Download
+          </Button>
+        </>
+      )}
+    >
+      <RecordingVideo isVideo={isVideo} getUrl={getUrl} />
+    </Modal>
+  );
+}
+
+/**
+ * The player itself, with the ticket recovery above, and nothing about WHO is
+ * watching. The meeting page's pop-up, a shared recording's page and a link
+ * holder's page each say how to get a playable URL; this plays it, and asks
+ * again when it stops working.
+ *
+ * `getUrl` is called once to start and again on every recovery. It must
+ * return a URL the <video> can use directly, and throw a sentence to show
+ * when it cannot.
+ */
+export function RecordingVideo({ isVideo, getUrl }: {
+  isVideo: boolean;
+  getUrl: () => Promise<string>;
+}) {
   const ref = useRef<HTMLVideoElement | null>(null);
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -49,17 +95,14 @@ export function Player({ meetingId, recording, onClose }: {
   // network is down would ask for a ticket per event.
   const renewing = useRef(false);
 
-  const isVideo = recording.mode === 'video';
-
   const fetchTicket = useCallback(async (): Promise<string | null> => {
     try {
-      const { ticket } = await recordingApi.ticket(authedFetch, meetingId, recording.id);
-      return recordingApi.ticketUrl(ticket);
+      return await getUrl();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not open that recording.');
       return null;
     }
-  }, [authedFetch, meetingId, recording.id]);
+  }, [getUrl]);
 
   useEffect(() => {
     let alive = true;
@@ -100,31 +143,16 @@ export function Player({ meetingId, recording, onClose }: {
   }
 
   return (
-    <Modal
-      title={isVideo ? 'Recording' : 'Recording (audio)'}
-      subtitle={recording.startedAt ? undefined : 'This recording is still being written.'}
-      size="lg"
-      onClose={onClose}
-      footer={(
-        <>
-          <Button onClick={onClose}>Close</Button>
-          {/* Still here. Watching is the common case, which is why it is the
-              default now — but somebody filing a recording still needs the
-              file, and hiding it would trade one annoyance for another. */}
-          <Button variant="primary"
-                  onClick={() => void recordingApi.download(authedFetch, meetingId, recording.id)}>
-            Download
-          </Button>
-        </>
-      )}
-    >
+    <>
       {error && <Alert tone="danger" className="py-2 text-[0.8125rem]">{error}</Alert>}
 
       {src === null ? (
-        <div className="p-6 text-center text-ink-muted text-[0.8125rem]">
-          <Spinner inline className="mr-2" />
-          Opening…
-        </div>
+        !error && (
+          <div className="p-6 text-center text-ink-muted text-[0.8125rem]">
+            <Spinner inline className="mr-2" />
+            Opening…
+          </div>
+        )
       ) : (
         <div className={isVideo ? 'cx-player' : 'cx-player cx-player--audio'}>
           {/* One element for both. An <audio> and a <video> differ here only
@@ -146,6 +174,6 @@ export function Player({ meetingId, recording, onClose }: {
         Streamed from this server. Nothing is saved to your computer unless you
         press Download.
       </p>
-    </Modal>
+    </>
   );
 }
