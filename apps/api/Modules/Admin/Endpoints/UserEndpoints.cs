@@ -52,6 +52,7 @@ public static class UserEndpoints
         users.MapPost("/{id:guid}/reset-password", ResetPasswordAsync);
         users.MapPost("/{id:guid}/invitation/resend", ResendInvitationAsync);
         users.MapPost("/{id:guid}/signin-link", SendSignInLinkAsync);
+        users.MapPost("/pending/send-links", SendToPendingAsync);
         users.MapPost("/{id:guid}/reset-mailbox-password", ResetMailboxPasswordAsync);
         users.MapDelete("/{id:guid}", DeleteAsync);
         users.MapPost("/{id:guid}/offboard", OffboardAsync);
@@ -992,7 +993,8 @@ public static class UserEndpoints
         IServiceScopeFactory scopeFactory,
         Guid tenantId, Guid actorId, string actorRole,
         IReadOnlyList<(Guid UserId, string Token)> invites,
-        string orgName, string baseUrl)
+        string orgName, string baseUrl,
+        TimeSpan? gap = null)
     {
         _ = Task.Run(async () =>
         {
@@ -1015,9 +1017,16 @@ public static class UserEndpoints
                         continue;   // resent or replaced before we got here; that link is dead
                     var delivered = await Invitations.SendAsync(mailer, user, orgName, baseUrl, token);
                     user.InviteDelivered = delivered;
+                    var signInLink = user.InviteChannel == Invitations.ChannelSignInLink;
+                    // As SendSignInLinkAsync: a link nobody received must not
+                    // sit there live for a day on an account that has a password.
+                    if (signInLink && !delivered) user.InviteTokenHash = null;
                     await db.SaveChangesAsync();
-                    await audit.WriteAsync("user.invitation_sent", "user", user.Id.ToString(),
+                    await audit.WriteAsync(
+                        signInLink ? "user.signin_link_sent" : "user.invitation_sent",
+                        "user", user.Id.ToString(),
                         after: new { channel = user.InviteChannel, sentTo = Mask.Email(user.RecoveryEmail), delivered });
+                    if (gap is { } pause) await Task.Delay(pause);
                 }
                 catch (Exception ex)
                 {
@@ -1128,6 +1137,116 @@ public static class UserEndpoints
             note = delivered
                 ? $"A new invitation has been sent to {Mask.Email(user.RecoveryEmail)}. The previous link no longer works." + Invitations.CheckSpamNote
                 : "The invitation could not be sent. Check the recovery address, or set a password instead.",
+        });
+    }
+
+    // ------------------------------------------------------------------
+    //  SEND TO EVERYONE WHO HAS NOT SIGNED IN
+    //
+    //  Amit, 28 September 2026: 113 people at one organisation were "pending"
+    //  and the only tools were two buttons on each person's profile. This is
+    //  those same two buttons, pressed for everybody they apply to:
+    //
+    //    has a password       -> the sign-in link   (SendSignInLinkAsync)
+    //    has no password yet  -> the invitation     (ResendInvitationAsync)
+    //
+    //  It adds NO new power. Every guard the single buttons have is applied
+    //  per person here, and a person the single button would refuse is
+    //  skipped and counted, never sent to:
+    //    - yourself
+    //    - an owner, unless you are one (GuardActOn)
+    //    - nobody to send to (no recovery email)
+    //
+    //  ONE RULE OF ITS OWN: somebody holding a link that still works is LEFT
+    //  ALONE. Issuing a link kills the one before it, so pressing this twice
+    //  in an afternoon would otherwise break the mail a hundred people have
+    //  just been told to open. The single buttons do replace a live link,
+    //  because there the administrator is looking at one person and means it.
+    //
+    //  "Pending" is the status column: never signed in. Suspended and deleted
+    //  people are not pending and are never touched.
+    //
+    //  What the measurement that day said, so nobody expects more of this
+    //  than it can do: 112 of the 113 had ALREADY been sent a link and none
+    //  had used it. Sending again does not fix mail that lands in spam.
+    // ------------------------------------------------------------------
+
+    /// <summary>More than this in one press is refused rather than half done.</summary>
+    private const int SendToPendingCeiling = 500;
+
+    /// <summary>
+    /// Between two mails of a batch. A young sending domain that emits a
+    /// hundred near-identical messages in one second looks like what spam
+    /// filters are built to catch (Invitations.CheckSpamNote has the history).
+    /// </summary>
+    private static readonly TimeSpan SendToPendingGap = TimeSpan.FromSeconds(1);
+
+    private static async Task<IResult> SendToPendingAsync(
+        SendToPendingRequest? req, AppDbContext db, TenantContext tenant, AuditWriter audit,
+        IServiceScopeFactory scopeFactory, IConfiguration config, CancellationToken ct)
+    {
+        // A missing body is a dry run: the careless request sends nothing.
+        var dryRun = req?.DryRun ?? true;
+
+        var pending = await db.Users
+            .Where(u => u.Status == "pending")
+            .OrderBy(u => u.Email)
+            .ToListAsync(ct);
+
+        int linkStillWorks = 0, noRecoveryEmail = 0, notYours = 0, signInLinks = 0, invitations = 0;
+        var send = new List<(User User, string Channel)>();
+        foreach (var user in pending)
+        {
+            if (user.Id == tenant.UserId || GuardActOn(tenant, user) is not null) { notYours++; continue; }
+
+            var channel = user.PasswordHash is not null
+                ? (string.IsNullOrWhiteSpace(user.RecoveryEmail) ? null : Invitations.ChannelSignInLink)
+                : Invitations.ChannelFor(user.RecoveryEmail, user.Phone);
+            if (channel is null) { noRecoveryEmail++; continue; }
+
+            var linkOut = user.InviteTokenHash is not null && user.InviteAcceptedAt is null
+                          && user.InviteDelivered == true && !Invitations.IsExpired(user);
+            if (linkOut) { linkStillWorks++; continue; }
+
+            if (channel == Invitations.ChannelSignInLink) signInLinks++; else invitations++;
+            send.Add((user, channel));
+        }
+
+        var counts = new
+        {
+            pending = pending.Count,
+            toSend = send.Count,
+            signInLinks,
+            invitations,
+            skipped = new { linkStillWorks, noRecoveryEmail, notYours },
+        };
+
+        if (dryRun) return Results.Ok(new { dryRun = true, counts });
+        if (send.Count > SendToPendingCeiling)
+            return Results.BadRequest(new
+            {
+                error = $"That is {send.Count} people, and one press sends to at most {SendToPendingCeiling}. Nothing was sent.",
+            });
+        if (send.Count == 0) return Results.Ok(new { dryRun = false, counts, note = "There was nobody to send to." });
+
+        var tokens = new List<(Guid UserId, string Token)>(send.Count);
+        foreach (var (user, channel) in send)
+            tokens.Add((user.Id, Invitations.Issue(user, channel)));
+        await db.SaveChangesAsync(ct);
+
+        // One row for the press itself; each mail writes its own as it goes.
+        await audit.WriteAsync("user.pending_links_sent", "user", "pending", after: counts, ct: ct);
+
+        var (orgName, baseUrl) = await OrgNameAndBaseUrlAsync(db, tenant, config, ct);
+        SendInvitationsInBackground(scopeFactory, tenant.TenantId, tenant.UserId!.Value, tenant.Role!,
+                                    tokens, orgName, baseUrl, SendToPendingGap);
+
+        return Results.Ok(new
+        {
+            dryRun = false,
+            counts,
+            note = $"Sending to {send.Count} people now, about one a second. "
+                   + "Each person's profile shows whether their mail went." + Invitations.CheckSpamNote,
         });
     }
 
