@@ -61,9 +61,13 @@ n=$(q "SELECT count(*) FROM pg_class c JOIN pg_namespace ns ON ns.oid=c.relnames
 n=$(q "SELECT count(*) FROM pg_policies
         WHERE schemaname='connect' AND policyname='tenant_isolation'
           AND tablename IN ('recordings','transcripts','meeting_notes')
-          AND qual ILIKE '%nullif%' AND qual ILIKE '%connect.meetings%'")
-[ "${n:-0}" -eq 3 ] && ok "3 policies scope through connect.meetings" \
-                    || bad "expected 3 scoped policies, found ${n:-0}"
+          AND qual ILIKE '%nullif%' AND qual ILIKE '%tenant_id%'
+          AND qual NOT ILIKE '%connect.meetings%'")
+# Decision 0007 step two (20260928-connect-child-tenant-id.sql): each table now
+# carries the meeting's tenant_id, set by a trigger, and the policy compares it
+# directly. Until 28 Sept these policies joined through connect.meetings per row.
+[ "${n:-0}" -eq 3 ] && ok "3 policies compare the table's own tenant_id (0007 step two)" \
+                    || bad "expected 3 tenant_id policies, found ${n:-0} - has 20260928-connect-child-tenant-id.sql run?"
 
 n=$(q "SELECT count(*) FROM pg_proc p JOIN pg_namespace ns ON ns.oid=p.pronamespace
         WHERE ns.nspname='connect' AND p.prosecdef AND p.proname IN
@@ -160,13 +164,18 @@ else
     [ "${n:-0}" -eq 1 ] && ok "meeting_chat has ENABLE + FORCE row level security" \
                         || bad "meeting_chat is not FORCED — the owning role would bypass the policy"
 
-    # Scoped through the parent meeting, like recordings and notes: a chat line
-    # must be exactly as reachable as the meeting it belongs to and no more.
+    # A chat line must be exactly as reachable as the meeting it belongs to and
+    # no more. Since 0007 step two it carries the meeting's tenant_id (set by a
+    # trigger) and ONE policy compares it. The old per-row join was a separately
+    # named policy (meeting_chat_tenant), now dropped: permissive policies are
+    # OR'd, so a second one left standing would widen access - hence "exactly 1".
     n=$(q "SELECT count(*) FROM pg_policies
             WHERE schemaname='connect' AND tablename='meeting_chat'
-              AND qual ILIKE '%connect.meetings%' AND qual ILIKE '%app.tenant_id%'")
-    [ "${n:-0}" -ge 1 ] && ok "its policy scopes through connect.meetings" \
-                        || bad "meeting_chat's policy does not scope through the meeting"
+              AND qual ILIKE '%tenant_id%' AND qual ILIKE '%app.tenant_id%'
+              AND qual NOT ILIKE '%connect.meetings%'")
+    all=$(q "SELECT count(*) FROM pg_policies WHERE schemaname='connect' AND tablename='meeting_chat'")
+    [ "${n:-0}" -eq 1 ] && [ "${all:-0}" -eq 1 ] && ok "its one policy compares the meeting's tenant_id (0007 step two)" \
+                        || bad "meeting_chat has ${all:-0} policies, ${n:-0} on its own tenant_id - expected exactly 1"
 
     # The de-duplication. Without this UNIQUE index the ON CONFLICT clause in
     # the endpoint has nothing to conflict on and every client that saw a
@@ -256,9 +265,9 @@ else
 
     n=$(q "SELECT count(*) FROM pg_policies
             WHERE schemaname='connect' AND tablename='meeting_blocks'
-              AND qual ILIKE '%meetings%'")
-    [ "${n:-0}" -ge 1 ] && ok "its policy scopes through connect.meetings" \
-                        || bad "meeting_blocks has no meeting-scoped policy"
+              AND qual ILIKE '%tenant_id%' AND qual ILIKE '%app.tenant_id%'")
+    [ "${n:-0}" -ge 1 ] && ok "its policy compares the meeting's tenant_id (0007 step two)" \
+                        || bad "meeting_blocks has no tenant_id policy"
 
     n=$(q "SELECT count(*) FROM pg_indexes
             WHERE schemaname='connect' AND tablename='meeting_blocks'
