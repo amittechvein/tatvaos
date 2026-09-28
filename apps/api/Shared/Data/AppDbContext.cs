@@ -196,6 +196,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<AiCreditAlert> AiCreditAlerts => Set<AiCreditAlert>();
     public DbSet<AiCreditTopup> AiCreditTopups => Set<AiCreditTopup>();
 
+    // Docs — collaborative documents, each one a Space file
+    // (20260924-docs-schema.sql). Everything else about them is configured
+    // in the single "Docs" block at the end of OnModelCreating.
+    public DbSet<DocsDocument> DocsDocuments => Set<DocsDocument>();
+    public DbSet<DocsUpdate> DocsUpdates => Set<DocsUpdate>();
+    public DbSet<DocsVersion> DocsVersions => Set<DocsVersion>();
+    public DbSet<DocsComment> DocsComments => Set<DocsComment>();
+    public DbSet<DocsImage> DocsImages => Set<DocsImage>();
+    public DbSet<DocsTenantSetting> DocsTenantSettings => Set<DocsTenantSetting>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         // ---- Schemas -----------------------------------------------------
@@ -909,6 +919,82 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             e.HasQueryFilter(a => a.TenantId == tenant.TenantId);
             e.HasOne<Tenant>().WithMany()
                 .HasForeignKey(a => a.TenantId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ---- Docs --------------------------------------------------------
+        // One block, additive, so the Docs lane never has to edit anyone
+        // else's lines. Tenant filters only, like Space: visibility is the
+        // RLS policy's job (it defers to space.files), level is the app's.
+        b.Entity<DocsDocument>(e =>
+        {
+            e.ToTable("documents", "docs");
+            // Keyed by the Space file, not by an Id of its own — EF's
+            // convention would find no key here, and a model that fails
+            // validation fails for every entity (see ConnectTenantSettings).
+            e.HasKey(d => d.FileId);
+            e.HasQueryFilter(d => d.TenantId == tenant.TenantId);
+            e.HasOne<SpaceFile>().WithOne()
+                .HasForeignKey<DocsDocument>(d => d.FileId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<Tenant>().WithMany()
+                .HasForeignKey(d => d.TenantId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<User>().WithMany()
+                .HasForeignKey(d => d.CheckpointByUserId).OnDelete(DeleteBehavior.SetNull);
+        });
+        b.Entity<DocsUpdate>(e =>
+        {
+            e.ToTable("updates", "docs");
+            e.HasKey(u => u.Seq);
+            e.Property(u => u.Seq).ValueGeneratedOnAdd();
+            e.HasQueryFilter(u => u.TenantId == tenant.TenantId);
+            e.HasOne<DocsDocument>().WithMany()
+                .HasForeignKey(u => u.FileId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<User>().WithMany()
+                .HasForeignKey(u => u.UserId).OnDelete(DeleteBehavior.SetNull);
+        });
+        b.Entity<DocsVersion>(e =>
+        {
+            e.ToTable("versions", "docs");
+            e.HasQueryFilter(v => v.TenantId == tenant.TenantId);
+            e.HasOne<DocsDocument>().WithMany()
+                .HasForeignKey(v => v.FileId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<User>().WithMany()
+                .HasForeignKey(v => v.CreatedByUserId).OnDelete(DeleteBehavior.SetNull);
+        });
+        b.Entity<DocsComment>(e =>
+        {
+            e.ToTable("comments", "docs");
+            e.HasQueryFilter(c => c.TenantId == tenant.TenantId);
+            // jsonb must be stated: EF sends text and Postgres will not cast.
+            e.Property(c => c.Anchor).HasColumnType("jsonb");
+            e.HasOne<DocsDocument>().WithMany()
+                .HasForeignKey(c => c.FileId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<DocsComment>().WithMany()
+                .HasForeignKey(c => c.ParentId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<User>().WithMany()
+                .HasForeignKey(c => c.AuthorUserId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne<User>().WithMany()
+                .HasForeignKey(c => c.ResolvedByUserId).OnDelete(DeleteBehavior.SetNull);
+        });
+        b.Entity<DocsTenantSetting>(e =>
+        {
+            e.ToTable("tenant_settings", "docs");
+            // Keyed by tenant: EF's convention would find no key (the
+            // ConnectTenantSettings outage of 9 Sept).
+            e.HasKey(s => s.TenantId);
+            e.HasQueryFilter(s => s.TenantId == tenant.TenantId);
+            e.HasOne<Tenant>().WithOne()
+                .HasForeignKey<DocsTenantSetting>(s => s.TenantId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<User>().WithMany()
+                .HasForeignKey(s => s.UpdatedByUserId).OnDelete(DeleteBehavior.SetNull);
+        });
+        b.Entity<DocsImage>(e =>
+        {
+            e.ToTable("images", "docs");
+            e.HasQueryFilter(i => i.TenantId == tenant.TenantId);
+            e.HasOne<DocsDocument>().WithMany()
+                .HasForeignKey(i => i.FileId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<User>().WithMany()
+                .HasForeignKey(i => i.CreatedByUserId).OnDelete(DeleteBehavior.SetNull);
         });
 
         base.OnModelCreating(b);
