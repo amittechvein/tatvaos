@@ -31,6 +31,8 @@ syncing leaves RLS blind. Several paths below have been bitten by exactly that.
 | same, egress events (the recording callback) | LiveKit egress, signed | same, the room from `egressInfo.roomName` | recordings, meeting_notes, meetings | `webhook_meeting_tenant`, `reconcile_recording_storage` | `tests/connect-isolation` step 2b |
 | same, screen-share track events | LiveKit, signed | same | meetings | `webhook_meeting_tenant` | *read* |
 | `GET /api/connect/recordings/file` (ticketed download) | a browser holding a signed ticket | the ticket's claim → `EnterAnonymousScope(claim.TenantId, "system")` | meetings, participants, recordings | none | *read* |
+| `POST /api/connect/shared/{token}` (recording share link) | anyone holding a link | `connect.resolve_share_token()` → `EnterAnonymousScope(row.TenantId, "guest")` + `SyncTenantAsync`, before any EF read. Password failures are **counted and checked through definer functions** (`record_share_password_failure`, `share_password_paused_until`) | recordings, meetings, recording_shares (the password hash, after scoping) | `resolve_share_token`, `record_share_password_failure`, `share_password_paused_until`, `log_recording_access` | `tests/connect-isolation/test-recording-share-link.sh` (walked 28 Sept) |
+| `POST /api/connect/shared/renew` (playback ticket) | a holder of a signed ticket | none needed: no EF read. `connect.share_still_allows()` answers | none | `share_still_allows` | same test |
 | Meetings API `/api/v1/org/meetings…` | a customer's software, organisation key | `OrgApiAuth` → `EnterAnonymousScope(keyTenantId, "org_api")` + `SyncTenantAsync` | meetings | none | `tests/orgapi` (123), paging-promises (20, and 20 with RLS bypassed) |
 | `ConnectNotesWorker` (transcription, notes, minutes email, retention, stuck recordings, invitation sweep) | the API process, on a timer | a definer function lists work across organisations (`pending_notes`, `pending_transcription`, `pending_minutes_email`, `expired_recordings`, `stuck_recordings`, `notes_tenant`, `recording_tenant`), then `EnterAnonymousScope(tenantId, "system")` per item | meetings, participants, recordings, transcripts, caption_lines, meeting_notes | the seven named, plus `attendance`, `reconcile_recording_storage`, `sweep_meeting_invitations`, `webhook_meeting_tenant` | **read only. No suite drives the worker.** This is the largest gap in the list |
 
@@ -107,7 +109,11 @@ functions omit `pg_temp` and were assigned to this lane.
    - **Core** (auth): `mfa_recovery_codes`. **No RLS, by design**: it is read
      before the organisation is known (`0024-mfa.sql`), and every lookup is by
      `user_id` plus a 256-bit hash.
-7. **Arrived on `main` after this list was started (found on the merge of
+7. **Done 28 Sept.** Walked with a real password link, then filtered;
+   `recording_share_password_failures` now has its EF filter and is off the
+   enforcement test's allowed list. The path is in section 1. What follows
+   was the entry before the walk.
+   **Arrived on `main` after this list was started (found on the merge of
    27 Sept):**
    - the **anonymous** `/api/connect/shared` group, where recording-share links
      are opened by people with no account. How it finds the organisation has

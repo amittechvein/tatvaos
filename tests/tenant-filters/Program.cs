@@ -75,11 +75,6 @@ var KNOWN_GAPS = new Dictionary<string, Gap>
     ["ConnectRecordingShareGrant"] = new("Connect", S2, "0007 step two (has tenant_id; filter only)"),
     ["ConnectTenantSettings"] = new("Connect", S2, "0007 step two (has tenant_id; filter only)"),
     ["ConnectTranscript"] = new("Connect", S2, "0007 step two"),
-    // Arrived on main after 24 Sept (recording sharing) without a filter; this
-    // test caught it on the merge of 27 Sept. RLS forced. Read from the
-    // ANONYMOUS /api/connect/shared group, whose tenant entry is not yet walked.
-    ["ConnectRecordingSharePasswordFailure"] = new("Connect", S2,
-        "0007 step two; RLS forced; read on the anonymous /api/connect/shared path"),
 
     // Found by this test on its first run, 25 Sept 2026, outside Connect.
     ["CalendarCalendar"] = new("Mail (calendar)", CAL, "RLS forced"),

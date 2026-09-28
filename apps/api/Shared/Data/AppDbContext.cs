@@ -354,6 +354,14 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             .OnDelete(DeleteBehavior.NoAction);
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingAccess>().ToTable("recording_access_log", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingSharePasswordFailure>().ToTable("recording_share_password_failures", "connect");
+        // 0007: arrived without a filter; caught by tests/tenant-filters on the
+        // 27 Sept merge; walked 28 Sept (tests/connect-isolation/
+        // test-recording-share-link.sh). Its only EF read is the host's share
+        // list, in a session; the anonymous link counts failures through
+        // definer functions. With RLS bypassed and no filter, the host's count
+        // included another organisation's row (2 for 1).
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingSharePasswordFailure>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
         // HasKey IS NOT OPTIONAL HERE, and leaving it out took production
         // down on 9 September. This entity's key is TenantId; EF's convention
         // only recognises `Id` or `ConnectTenantSettingsId`, so it found no
