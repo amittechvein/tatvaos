@@ -424,7 +424,18 @@ async function main() {
   const extra = [];
   for (let i = 0; i < 19; i += 1) extra.push(await connect(A, id, `cap-${i}`));
   check('up to twenty connections per person all sync', extra.every((x) => x.synced),
-    `${extra.filter((x) => x.synced).length}/19 synced`);
+    // Says WHICH one and HOW it failed: "18/19 synced" (28 Sept) could not be
+    // told apart from a refused ticket, a close, or a sync that took too long.
+    `${extra.filter((x) => x.synced).length}/19 synced; ` + extra.map((x, i) => (x.synced ? null
+      : `cap-${i}: ${x.refused ? `ticket refused ${x.refused}` : x.closed ? `closed ${x.closed.code} ${x.closed.reason}` : 'no sync within 5 s, still open'}`))
+      .filter(Boolean).join('; ')
+      // Found 30 Sept 2026, after this failed 2 runs in 9 and looked like
+      // timing. It was not: both times a browser tab was signed in as this
+      // test's owner with a document open, holding one of the twenty.
+      // Reproduced on purpose (one held connection -> exactly this line).
+      + (extra.some((x) => x.closed?.code === 4429)
+        ? ' — the cap was reached EARLY: this person holds a connection this test did not open. Close any browser tab signed in as the owner this test uses, and run again.'
+        : ''));
   const overCap = await connect(A, id, 'cap-over');
   await waitFor(() => overCap.closed);
   check('the twenty-first is closed with 4429', overCap.closed?.code === 4429, JSON.stringify(overCap.closed));

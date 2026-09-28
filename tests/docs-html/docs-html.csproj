@@ -33,6 +33,8 @@
     <Compile Include="../../apps/api/Modules/Docs/DocsHtml.cs" Link="DocsHtml.cs" />
     <!-- A page made by the real editor (see the note at its top). -->
     <None Include="editor-page.html" CopyToOutputDirectory="Always" />
+    <!-- Attacks written by other people (corpus/README.md says whose). -->
+    <None Include="corpus/*.txt" CopyToOutputDirectory="Always" />
   </ItemGroup>
 
 </Project>
