@@ -56,7 +56,7 @@ internal static partial class Program
     /// Every input this run cleaned, with its output. DUMP=path writes them as
     /// JSON for tests/docs-html/browser.mjs, which loads each OUTPUT in a real
     /// browser — "cannot run" read from a string is a claim about text; a
-    /// browser is what decides (Mr. Singh, 30 Sept 2026).
+    /// browser is what decides (Mr. Singh, by 28 Sept 2026; see 0011's note on dates).
     /// </summary>
     private static readonly List<(string Section, string Input, string Output)> Seen = [];
     private static string Section = "page";
@@ -116,7 +116,7 @@ internal static partial class Program
     /// The attribute and CSS checks look INSIDE TAGS only. Looking at the
     /// whole string called four corpus outputs dangerous that were plain
     /// words on the page — "' onmouseover=alert(1)" with nothing around it
-    /// is a sentence, not a handler (30 Sept 2026). Everything between "&lt;"
+    /// is a sentence, not a handler (28 Sept 2026). Everything between "&lt;"
     /// and "&gt;" is a tag: the sanitiser encodes both characters wherever
     /// else they occur, which the first line here checks by finding every
     /// "&lt;" followed by a name. This is still reading text; whether

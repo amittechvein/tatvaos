@@ -429,7 +429,7 @@ async function main() {
     `${extra.filter((x) => x.synced).length}/19 synced; ` + extra.map((x, i) => (x.synced ? null
       : `cap-${i}: ${x.refused ? `ticket refused ${x.refused}` : x.closed ? `closed ${x.closed.code} ${x.closed.reason}` : 'no sync within 5 s, still open'}`))
       .filter(Boolean).join('; ')
-      // Found 30 Sept 2026, after this failed 2 runs in 9 and looked like
+      // Found by 28 Sept 2026, after this failed 2 runs in 9 and looked like
       // timing. It was not: both times a browser tab was signed in as this
       // test's owner with a document open, holding one of the twenty.
       // Reproduced on purpose (one held connection -> exactly this line).
