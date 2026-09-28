@@ -597,7 +597,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
     }
   }
 
-  async function handleOpen(id: string) {
+  async function handleOpen(id: string, from: 'list' | 'strip' = 'list') {
     // Three row sources, and now a fourth. While searching the row lives in
     // the search results — possibly a message in another folder that was
     // never in the loaded page. The thread strip adds siblings that live in
@@ -636,23 +636,69 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
 
     // The conversation loads alongside the body.
     const rowThreadId = summary?.threadId ?? conversation?.threadId ?? null;
-    if (rowThreadId && !(thread && thread.some((m) => m.id === id))) {
+    // "Already have it" counts a folded copy too (see copyIds): without that,
+    // opening the delivered copy of a mail whose Sent copy the strip carries
+    // refetched the conversation and blanked the strip on every click.
+    const have = !!thread && thread.some(
+      (m) => m.id === id || (m.copyIds ?? []).includes(id));
+    let trail: SearchHit[] | null = have ? thread : null;
+    if (rowThreadId && !have) {
       setThread(null);
-      void mailApi.thread(authedFetch, rowThreadId, mailboxId).then(
+      const loading = mailApi.thread(authedFetch, rowThreadId, mailboxId).then(
         (page) => {
-          if (openTicket.current !== ticket) return;
+          if (openTicket.current !== ticket) return null;
           setThread(page.messages);
           setThreadTotal(page.total);
+          return page.messages;
         },
-        () => { /* no strip is a fine fallback; the message still reads */ },
+        () => null /* no strip is a fine fallback; the message still reads */,
       );
+      // Only a conversation row waits for it - see below. A message opened
+      // by itself still loads its body alongside, as it always has.
+      if (conversation && from === 'list') trail = await loading;
     } else if (!rowThreadId) {
       setThread(null);
       setThreadTotal(0);
     }
 
+    // ── A TRAIL OPENS AT ITS END, WHICHEVER FOLDER IT WAS OPENED FROM. ─────
+    //
+    //  Client report, 28 September 2026: in Gmail a trail is one thing, and
+    //  wherever you open it from you land on the latest update. Here a row
+    //  in Sent opened the newest mail IN SENT, with the answer that came
+    //  after it folded into a one-line row underneath - so the same trail
+    //  opened on a different mail depending on the folder you were standing
+    //  in, and from Sent the newest news was the least visible thing in it.
+    //
+    //  Only for a conversation ROW. A single message picked out of a list, a
+    //  search result or the strip is that message, and opens as itself.
+    //  Drafts and the rest are skipped: a half-written reply is not news.
+    //
+    //  And only from the LIST. The Sent row's own id is also a row in the
+    //  strip; without `from`, picking that mail out of the strip was read as
+    //  a click on the conversation and bounced straight back to the end.
+    let openId = id;
+    if (from === 'list' && conversation && trail && openTicket.current === ticket) {
+      const quiet = ['drafts', 'scheduled', 'junk', 'trash'];
+      const last = [...trail]
+        .filter((m) => !quiet.includes(m.folderSlug ?? ''))
+        .sort((a, b) => +new Date(a.sentAt) - +new Date(b.sentAt))
+        .pop();
+      if (last && last.id !== id && !(last.copyIds ?? []).includes(id)) {
+        openId = last.id;
+        setOpen({ ...last, isRead: true });
+        if (!last.isRead) {
+          // It lives in another folder, so the row's own read-marking above
+          // never reached it, and the badge that moves is that folder's.
+          setThread((prev) => prev && prev.map((m) => (m.id === last.id ? { ...m, isRead: true } : m)));
+          bumpUnread(last.folderId, -1);
+          void mailApi.setRead(authedFetch, last.id, true, mailboxId).catch(() => {});
+        }
+      }
+    }
+
     try {
-      const full = await mailApi.message(authedFetch, id, mailboxId);
+      const full = await mailApi.message(authedFetch, openId, mailboxId);
       if (openTicket.current === ticket) setOpen({ ...full, isRead: true });
     } catch {
       /* the summary stays on screen; body shows the snippet */
@@ -1388,7 +1434,16 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
               layout={inboxLayout}
               messages={filtered}
               selectedIds={selectedIds}
-              openId={open?.id ?? null}
+              // The row that stays lit is the CONVERSATION's, even when the
+              // mail open inside it lives in another folder (a trail opens at
+              // its end) or was picked out of the strip.
+              openId={(() => {
+                if (!open) return null;
+                if (filtered.some((r) => r.id === open.id)) return open.id;
+                const conv = open.threadId
+                  ? threads.find((t) => t.threadId === open.threadId) : undefined;
+                return conv ? conv.latestMessageId : open.id;
+              })()}
               onToggleSelect={toggleSelect}
               onOpen={(id) => void handleOpen(id)}
               onToggleFlag={handleToggleFlag}
@@ -1424,7 +1479,7 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
               onSaveAttachmentToSpace={(m, a: Attachment) => saveAttachmentToSpace(m.id, a.id)}
               threadMessages={thread ?? undefined}
               threadTotal={threadTotal}
-              onOpenMessage={(id) => void handleOpen(id)}
+              onOpenMessage={(id) => void handleOpen(id, 'strip')}
               expanded={wide}
               onToggleExpand={() => setWide((v) => !v)}
               autoLoadImages={folder?.slug !== 'junk'}
@@ -1444,6 +1499,12 @@ export default function MailPage({ params }: { params: Promise<{ folderId: strin
               // step 2 — shows nothing unless Mail AI is on). Not in folders
               // whose mail nobody answers; the server refuses those anyway,
               // this only saves the request.
+              // Which mail the box answers, said out loud above it. One
+              // response box per message (startCompose), so [0] is all of them.
+              responding={inlineComposers[0]?.mode === 'reply'
+                || inlineComposers[0]?.mode === 'replyAll'
+                || inlineComposers[0]?.mode === 'forward'
+                ? inlineComposers[0].mode : null}
               footer={inlineComposers.length === 0
                 ? (!['sent', 'drafts', 'junk', 'trash'].includes(folder?.slug ?? '') && (
                     <SuggestedReplies
