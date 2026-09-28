@@ -40,6 +40,9 @@
 #      job's pipeline is frozen
 #  17. erasure removes the candidate, applications and history, and no audit
 #      row written since step 14 names them or repeats the rejection reason
+#  18. two people opening the pipeline for the first time at the same moment
+#      both get the twelve stages, and the organisation has exactly twelve
+#      (TATVAOS_HIRE_RACE_ROUNDS, default 5 rounds of 10 requests at once)
 #
 # ── CALIBRATION, 24 September 2026 (house rule 6) ──────────────────────────
 #  * PUBLISH CHECK REMOVED FROM SAVE -> "blanking the description of an open
@@ -71,6 +74,15 @@
 #    widened candidate list still would not show a person's other roles.
 #  * CANDIDATE NAME WRITTEN INTO THE AUDIT ROW -> exactly "no audit row since
 #    step 14 holds their name..." red. That check is what keeps erasure real.
+#  * STEP 18 WAS RED ON THE CODE AS FIRST WRITTEN (28 Sept 2026, 8341be2):
+#    nine of ten requests in one round answered 500, "40P01 deadlock
+#    detected". The method caught DbUpdateException expecting a duplicate
+#    key; EF batched the twelve inserts in random-Guid order, so two requests
+#    deadlocked instead. The table never held two sets — the unique index
+#    held — but the loser got an error page. It showed in ONE round of five,
+#    which is why there are rounds. After the fix: 5 rounds green, then 40
+#    rounds (400 requests) green, and pg_stat_database.deadlocks stayed at
+#    the nine the old code had caused.
 #  * First run of 14-17: EF inserted an application's history row BEFORE the
 #    application (no relationship declared) and the composite FK refused it,
 #    500. AppDbContext now declares it.
@@ -519,6 +531,43 @@ same "the erasure itself is audited" "$(PG "SELECT count(*) FROM core.audit_logs
 same "and no audit row since step 14 holds their name, email or rejection reason" \
     "$(PG "SELECT count(*) FROM core.audit_logs WHERE id > $PERSONAL_FLOOR AND (coalesce(before_state::text,'')||coalesce(after_state::text,'')) ~* '(asha|verma|$RUN@example|production react)'")" "0"
 expect "and they are 404 now" 404 "$(call "$TOKEN" GET /hire/candidates/$CAND)"
+
+step "18. Two people open the pipeline for the first time at the same moment"
+# Mr. Singh's question on PR 267: the default stages are created on first use,
+# so can two first requests at once leave an organisation with two sets of
+# twelve? Two things prevent it, and they fail differently:
+#   - UNIQUE (tenant_id, key) makes the second set impossible;
+#   - PipelineAsync catches the loser's failed insert and re-reads, so the
+#     loser still gets an answer instead of a 500.
+# Five rounds of ten requests at once, against an organisation whose stages
+# are removed before each round. Every answer must be 200 with twelve stages,
+# and the table must hold exactly twelve.
+ROUNDS="${TATVAOS_HIRE_RACE_ROUNDS:-5}"; PAR=10; race_bad=0; race_answers=0
+same "fixture: the School has no applications holding its stages" \
+    "$(PG "SELECT count(*) FROM hire.applications WHERE tenant_id='$SCHOOL'")" "0"
+for round in $(seq 1 $ROUNDS); do
+    PG "DELETE FROM hire.pipeline_stages WHERE tenant_id='$SCHOOL'" >/dev/null
+    [ "$(PG "SELECT count(*) FROM hire.pipeline_stages WHERE tenant_id='$SCHOOL'")" = 0 ] \
+        || { fail "round $round: the School's stages were not cleared"; race_bad=1; break; }
+    pids=""
+    for n in $(seq 1 $PAR); do
+        ( call "$OTHER" GET /hire/pipeline > "$SCRATCH/race-$round-$n.txt" 2>/dev/null ) &
+        pids="$pids $!"
+    done
+    wait $pids
+    for n in $(seq 1 $PAR); do
+        r=$(cat "$SCRATCH/race-$round-$n.txt")
+        race_answers=$((race_answers + 1))
+        if [ "$(status "$r")" != 200 ] || [ "$(jq_ "$(body "$r")" "len(d)")" != 12 ]; then
+            race_bad=$((race_bad + 1))
+            printf '      round %s request %s: answered %s: %s\n' "$round" "$n" "$(status "$r")" "$(brief "$(body "$r")")"
+        fi
+    done
+    in_db=$(PG "SELECT count(*)||'/'||count(DISTINCT key) FROM hire.pipeline_stages WHERE tenant_id='$SCHOOL'")
+    [ "$in_db" = "12/12" ] || { race_bad=$((race_bad + 1)); printf '      round %s: the table holds %s (rows/distinct keys), wanted 12/12\n' "$round" "$in_db"; }
+done
+same "all $((ROUNDS * PAR)) answers were read" "$race_answers" "$((ROUNDS * PAR))"
+same "every one answered 200 with twelve stages, and each round left exactly twelve rows" "$race_bad" "0"
 
 printf '\n%s----------------------------------------%s\n' "$CYAN" "$RST"
 printf '  passed: %d   failed: %d\n\n' "$PASSED" "$FAILED"
