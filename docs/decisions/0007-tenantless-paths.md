@@ -100,8 +100,8 @@ whether a caller could get another organisation's rows out of it.
 | `reconcile_recording_storage`, `storage_headroom`, `recording_allowed`, `recording_retention_days` | numbers and flags for one org | the org the request or worker is acting for | safe. `recording_retention_days` **was executable by PUBLIC**; revoked |
 | `minutes_recipients` | **attendee emails and names** for a meeting | the minutes routes (after a filtered "did you see this meeting" check) and the worker (after entering the org) | callers were safe; **the function answered any org's meeting to anyone who could call it.** Now it answers only for the caller's current org. Red before (Techvein got a School attendee), green after |
 | `minutes_unreachable` | a count for a meeting | as above | as above: Techvein got a School count before, 0 after |
-| `meeting_chat_lines` | **any meeting's chat** | **nothing calls it** | **unused, and the widest of all.** Propose dropping it (Mr. Singh: not additive) |
-| `meetings_with_captions`, `recording_bytes`, `share_for_user` | ids, a byte count, a share id | **nothing calls them** | unused. `share_for_user` also ignores its third argument. Propose dropping |
+| `meeting_chat_lines` | **any meeting's chat** | **nothing calls it** | **unused, and the widest of all. Dropped** in `20260928-e` (awaiting Mr. Singh's ruling; not additive) |
+| `meetings_with_captions`, `recording_bytes`, `share_for_user` | ids, a byte count, a share id | **nothing calls them** | unused; `share_for_user` also ignored its third argument. **Dropped** in `20260928-e`, same ruling pending |
 
 **What would prove this review wrong:**
 - a caller I did not find that passes a user-chosen id to a content function;
@@ -120,7 +120,7 @@ whether a caller could get another organisation's rows out of it.
    ("Tenant context was not resolved", "Connect notes sweep failed").
 2. **Walk the ticketed download and the screen-share event.**
 3. **Review each definer function's body: done 28 Sept** (section 3). Open:
-   dropping the four unused ones is Mr. Singh's call.
+   the four unused ones are dropped in `20260928-e`; merging that is Mr. Singh's call.
 4. **Step two: done 28 Sept** (see section 2).
 5. **`core.departments`** (the ruling's first addition): policy on, the mail
    edge reads it through a definer function. Not Connect, but absorbed by 0007.
