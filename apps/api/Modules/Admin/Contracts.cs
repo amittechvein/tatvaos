@@ -46,7 +46,20 @@ public sealed record UpsertPlanRequest(
     int? MaxDomains,
     string[]? IncludedProducts,
     decimal? PricePerUserMonthly,
-    decimal? PriceMonthly);
+    decimal? PriceMonthly,
+    // AI credits (26 Sept 2026): the same per-user / pooled choice as storage.
+    // Optional so an older form that does not send them leaves them alone.
+    string? AiCreditModel = null,         // "per_user" | "pooled"
+    int? AiCreditsPerUser = null,
+    int? AiCreditsPooled = null,
+    // Plan features (26 Sept 2026). All three null = leave the features as
+    // they are. AllFeatures true = "everything in the included modules" (the
+    // column goes back to NULL); otherwise IncludedFeatures is the list.
+    // FeatureLimits replaces the plan's limits when sent; a missing code =
+    // no limit.
+    string[]? IncludedFeatures = null,
+    bool? AllFeatures = null,
+    Dictionary<string, long>? FeatureLimits = null);
 
 /// <summary>
 /// Edit an organisation's identity and owner contact. Every field optional —
@@ -102,6 +115,13 @@ public sealed record UpdateUserRequest(
 /// and stores the bytes.
 /// </summary>
 public sealed record SetAvatarRequest(string DataUrl);
+
+/// <summary>
+/// "Which of these people are colleagues with a photo?" — by email address
+/// (Mail, Contacts) or by user id (Connect, whose participants carry one).
+/// See UserEndpoints.PhotoLookupAsync.
+/// </summary>
+public sealed record PhotoLookupRequest(List<string>? Emails, List<Guid>? UserIds);
 
 public sealed record BulkCreateUserRequest(
     // The fallback domain, for a file of bare usernames. NULL is normal: a CSV

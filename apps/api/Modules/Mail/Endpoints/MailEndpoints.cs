@@ -1857,7 +1857,7 @@ public static class MailEndpoints
     // ------------------------------------------------------------------
     private static async Task<IResult> ListThreadsAsync(
         Guid folderId, Guid? mailboxId, AppDbContext db, TenantContext tenant,
-        int? skip, int? take, CancellationToken ct)
+        int? skip, int? take, string? aiLabel, CancellationToken ct)
     {
         var box = await MailboxAccess.ResolveAsync(db, tenant, mailboxId, MailboxAccess.Read, ct);
         if (box is null) return Results.NotFound();
@@ -1869,14 +1869,26 @@ public static class MailEndpoints
         var scope = db.Messages.AsNoTracking()
             .Where(m => m.MailboxId == box.Id && m.FolderId == folderId);
 
-        var total = await scope.Select(m => m.ThreadId ?? m.Id).Distinct().CountAsync(ct);
+        // TatvaOS AI's inbox tabs (Mail AI step 3): only conversations holding
+        // a message with that label. The rows below still carry the WHOLE
+        // conversation, so a filtered row is the same row, just fewer of them.
+        var grouping = scope;
+        if (!string.IsNullOrEmpty(aiLabel))
+        {
+            if (!MailTriage.Labels.Contains(aiLabel))
+                return Results.BadRequest(new { error = "That is not one of the TatvaOS AI labels." });
+            var labelled = scope.Where(m => m.AiLabel == aiLabel).Select(m => m.ThreadId ?? m.Id);
+            grouping = scope.Where(m => labelled.Contains(m.ThreadId ?? m.Id));
+        }
+
+        var total = await grouping.Select(m => m.ThreadId ?? m.Id).Distinct().CountAsync(ct);
 
         // Two queries and an in-memory rollup, not one grouped-and-shaped
         // query. The aggregate below is restricted to Max on purpose: that is
         // the GroupBy shape EF translates reliably, and everything harder is
         // done in memory where it cannot fail at runtime on a production box
         // that has no staging in front of it.
-        var page = await scope
+        var page = await grouping
             .GroupBy(m => m.ThreadId ?? m.Id)
             .Select(g => new { Key = g.Key, Latest = g.Max(x => x.ReceivedAt) })
             .OrderByDescending(x => x.Latest)
@@ -1893,7 +1905,7 @@ public static class MailEndpoints
             .Select(m => new
             {
                 m.Id, m.ThreadId, m.FromName, m.FromAddr, m.Subject, m.Snippet,
-                m.SentAt, m.ReceivedAt, m.IsRead, m.IsFlagged, m.HasAttachments,
+                m.SentAt, m.ReceivedAt, m.IsRead, m.IsFlagged, m.HasAttachments, m.AiLabel,
             })
             .ToListAsync(ct);
 
@@ -1947,6 +1959,10 @@ public static class MailEndpoints
                     isRead = x.Msgs.All(m => m.IsRead),
                     isFlagged = x.Msgs.Any(m => m.IsFlagged),
                     hasAttachments = x.Msgs.Any(m => m.HasAttachments),
+                    // TatvaOS AI's label (step 3): the NEWEST labelled
+                    // message's, since that is what the conversation is
+                    // waiting on now. Null when sorting is off or not yet run.
+                    aiLabel = x.Msgs.LastOrDefault(m => m.AiLabel != null)?.AiLabel,
                 };
             })
             .ToList();

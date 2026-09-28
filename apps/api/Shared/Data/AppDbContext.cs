@@ -45,6 +45,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<ProductAccess> ProductAccess => Set<ProductAccess>();
     public DbSet<Plan> Plans => Set<Plan>();
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
+    public DbSet<Feature> Features => Set<Feature>();
+    public DbSet<PlanFeatureLimit> PlanFeatureLimits => Set<PlanFeatureLimit>();
+    public DbSet<FeatureOverride> FeatureOverrides => Set<FeatureOverride>();
     public DbSet<StoragePool> StoragePools => Set<StoragePool>();
     public DbSet<StorageAllocation> StorageAllocations => Set<StorageAllocation>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
@@ -186,6 +189,13 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<SpacePublicLink> SpacePublicLinks => Set<SpacePublicLink>();
     public DbSet<SpaceTenantSetting> SpaceTenantSettings => Set<SpaceTenantSetting>();
 
+    // AI usage — metering and limits (20260924-ai-usage.sql). Configured in
+    // the single "AI usage" block at the end of OnModelCreating.
+    public DbSet<AiUsage> AiUsage => Set<AiUsage>();
+    public DbSet<AiUsageAlert> AiUsageAlerts => Set<AiUsageAlert>();
+    public DbSet<AiCreditAlert> AiCreditAlerts => Set<AiCreditAlert>();
+    public DbSet<AiCreditTopup> AiCreditTopups => Set<AiCreditTopup>();
+
     // Docs — collaborative documents, each one a Space file
     // (20260924-docs-schema.sql). Everything else about them is configured
     // in the single "Docs" block at the end of OnModelCreating.
@@ -305,6 +315,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.Hire.HireTeamMember>().HasKey(m => new { m.TenantId, m.UserId });
         b.Entity<TatvaOS.Api.Modules.Hire.HireTeamMember>()
             .HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        // 20260924-f: careers sites. No DbSet, like every Hire record.
+        b.Entity<TatvaOS.Api.Modules.Hire.HireCareersSite>().ToTable("careers_sites", "hire");
+        b.Entity<TatvaOS.Api.Modules.Hire.HireCareersSite>().HasKey(s => s.TenantId);
+        b.Entity<TatvaOS.Api.Modules.Hire.HireCareersSite>()
+            .HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<TatvaOS.Api.Modules.Mail.MailApiSend>().ToTable("api_sends", "mail");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>().ToTable("meeting_notes", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingChat>().ToTable("meeting_chat", "connect");
@@ -319,7 +334,18 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         // of throws, it does not invent a table.
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingShare>().ToTable("recording_shares", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingShareGrant>().ToTable("recording_share_grants", "connect");
+        // Declared so EF inserts the share BEFORE its grants. Without it EF
+        // knows of no dependency between the two and ordered the grant first:
+        // the first named share ever made failed on
+        // recording_share_grants_share_id_fkey (26 Sept, §3 case 7). No
+        // navigation property — the relationship exists only to order writes.
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingShareGrant>()
+            .HasOne<TatvaOS.Api.Modules.Connect.ConnectRecordingShare>()
+            .WithMany()
+            .HasForeignKey(g => g.ShareId)
+            .OnDelete(DeleteBehavior.NoAction);
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingAccess>().ToTable("recording_access_log", "connect");
+        b.Entity<TatvaOS.Api.Modules.Connect.ConnectRecordingSharePasswordFailure>().ToTable("recording_share_password_failures", "connect");
         // HasKey IS NOT OPTIONAL HERE, and leaving it out took production
         // down on 9 September. This entity's key is TenantId; EF's convention
         // only recognises `Id` or `ConnectTenantSettingsId`, so it found no
@@ -827,6 +853,73 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             .HasForeignKey(l => l.CreatedByUserId).OnDelete(DeleteBehavior.SetNull);
         b.Entity<SpaceTenantSetting>().HasOne<Tenant>().WithOne()
             .HasForeignKey<SpaceTenantSetting>(s => s.TenantId).OnDelete(DeleteBehavior.Cascade);
+
+        // ---- AI usage ----------------------------------------------------
+        // One additive block. Both tables are records: the app appends and
+        // reads (the migration revokes UPDATE and DELETE).
+        b.Entity<AiUsage>(e =>
+        {
+            e.ToTable("ai_usage", "core");
+            e.HasKey(u => u.Id);
+            e.Property(u => u.Id).ValueGeneratedOnAdd();
+            e.HasQueryFilter(u => u.TenantId == tenant.TenantId);
+            e.HasOne<Tenant>().WithMany()
+                .HasForeignKey(u => u.TenantId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<User>().WithMany()
+                .HasForeignKey(u => u.UserId).OnDelete(DeleteBehavior.SetNull);
+        });
+        // Plan features (20260926-plan-features.sql). The catalogue and the
+        // plan limits are platform reference data like plans (no tenant); the
+        // overrides are per organisation, RLS-forced, and filtered here too.
+        b.Entity<Feature>(e =>
+        {
+            e.ToTable("features", "core");
+            e.HasKey(f => f.Code);
+        });
+        b.Entity<PlanFeatureLimit>(e =>
+        {
+            e.ToTable("plan_feature_limits", "core");
+            e.HasKey(l => new { l.PlanId, l.FeatureCode });
+            // Declared so EF inserts a new plan before its limits; without it
+            // the order is not guaranteed and the FK refuses the limit row.
+            e.HasOne<Plan>().WithMany().HasForeignKey(l => l.PlanId).OnDelete(DeleteBehavior.Cascade);
+        });
+        b.Entity<FeatureOverride>(e =>
+        {
+            e.ToTable("feature_overrides", "core");
+            e.HasQueryFilter(o => o.TenantId == tenant.TenantId);
+        });
+
+        // AI credit warnings (26 Sept 2026): same shape and filter as the token
+        // warnings below, their own table so the two can never collide.
+        // AI credit top-ups (26 Sept 2026): tenant-filtered like every AI table.
+        b.Entity<AiCreditTopup>(e =>
+        {
+            e.ToTable("ai_credit_topups", "core");
+            e.HasQueryFilter(t => t.TenantId == tenant.TenantId);
+            e.HasOne<Tenant>().WithMany()
+                .HasForeignKey(t => t.TenantId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        b.Entity<AiCreditAlert>(e =>
+        {
+            e.ToTable("ai_credit_alerts", "core");
+            e.HasKey(a => new { a.TenantId, a.Month, a.Level, a.Allowance });
+            e.HasQueryFilter(a => a.TenantId == tenant.TenantId);
+            e.HasOne<Tenant>().WithMany()
+                .HasForeignKey(a => a.TenantId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        b.Entity<AiUsageAlert>(e =>
+        {
+            e.ToTable("ai_usage_alerts", "core");
+            // Composite key — EF's convention would find none (the
+            // ConnectTenantSettings outage of 9 Sept).
+            e.HasKey(a => new { a.TenantId, a.Month, a.Level, a.Ceiling });
+            e.HasQueryFilter(a => a.TenantId == tenant.TenantId);
+            e.HasOne<Tenant>().WithMany()
+                .HasForeignKey(a => a.TenantId).OnDelete(DeleteBehavior.Cascade);
+        });
 
         // ---- Docs --------------------------------------------------------
         // One block, additive, so the Docs lane never has to edit anyone

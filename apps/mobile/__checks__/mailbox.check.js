@@ -94,3 +94,15 @@ describe('every read call names the mailbox', () => {
     for (const [path] of request.mock.calls) expect(path).not.toMatch(/mailboxId/);
   });
 });
+
+// The thread route, 24 Sept 2026 (reply in reply): the conversation around a message.
+describe('threadMessages', () => {
+  test('asks the thread route for the open mailbox, and an id-less message asks nothing', async () => {
+    request.mockResolvedValueOnce({ total: 2, messages: [{ id: 'a' }, { id: 'b' }] });
+    expect(await mail.threadMessages('AT', 't1', 'mb2')).toEqual([{ id: 'a' }, { id: 'b' }]);
+    expect(request).toHaveBeenLastCalledWith('/api/mail/threads/t1/messages?mailboxId=mb2', { method: 'GET', token: 'AT' });
+    request.mockClear();
+    expect(await mail.threadMessages('AT', null)).toEqual([]);
+    expect(request).not.toHaveBeenCalled();
+  });
+});

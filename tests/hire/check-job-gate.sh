@@ -24,9 +24,11 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 API="$ROOT/apps/api"
 GATE="Modules/Hire/HireAccess.cs"
 
-SET_RE='Set<[[:space:]]*(TatvaOS\.Api\.Modules\.Hire\.)?JobOpening[[:space:]]*>'
-DBSET_RE='DbSet<[[:space:]]*(TatvaOS\.Api\.Modules\.Hire\.)?JobOpening[[:space:]]*>'
-SQL_RE='hire\.job_openings'
+# Careers sites (20260924-f) joined 24 Sept: the public page resolves them
+# through hire.resolve_careers_site(), a function, which is not matched here.
+SET_RE='Set<[[:space:]]*(TatvaOS\.Api\.Modules\.Hire\.)?(JobOpening|HireCareersSite)[[:space:]]*>'
+DBSET_RE='DbSet<[[:space:]]*(TatvaOS\.Api\.Modules\.Hire\.)?(JobOpening|HireCareersSite)[[:space:]]*>'
+SQL_RE='hire\.(job_openings|careers_sites)\b'
 PROP_RE='\.JobOpenings\b'
 
 fails=0
