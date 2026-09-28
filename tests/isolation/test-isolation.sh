@@ -484,6 +484,46 @@ path=$(scalar_as postgres "SELECT array_to_string(proconfig, ';') FROM pg_proc W
     && pass "the public careers resolver searches pg_catalog first and pg_temp last" \
     || fail "the careers resolver's path is '$path'"
 
+hdr "Connect's definer functions: pinned, not PUBLIC, and the attendee lists stay in their organisation (0007 review)"
+
+# The 28 Sept review (docs/decisions/0007-tenantless-paths.md section 3).
+# 20260928-d-connect-definer-review.sql pins every connect definer to
+# pg_catalog first and pg_temp last and revokes PUBLIC; asserted here for
+# EVERY connect definer, so a new one that skips the pattern fails this suite.
+total=$(scalar_as postgres "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                             WHERE n.nspname = 'connect' AND p.prosecdef")
+bad=$(scalar_as postgres "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                           WHERE n.nspname = 'connect' AND p.prosecdef
+                             AND NOT coalesce(array_to_string(p.proconfig, ';'), '') ~ '^search_path=pg_catalog,.*pg_temp$'")
+[ "${total:-0}" -ge 20 ] && [ "${bad:-1}" -eq 0 ]     && pass "all ${total} connect definers search pg_catalog first and pg_temp last"     || fail "${bad:-?} of ${total:-?} connect definer(s) do not search pg_catalog first and pg_temp last"
+pub=$(scalar_as postgres "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                           WHERE n.nspname = 'connect' AND p.prosecdef AND has_function_privilege('public', p.oid, 'EXECUTE')")
+[ "${pub:-1}" -eq 0 ] && pass "no connect definer is executable by PUBLIC"                       || fail "DANGEROUS: ${pub} connect definer(s) are executable by PUBLIC"
+
+# The attendee list (emails and names) for a School meeting, asked for from
+# Techvein, must be empty; asked for from the School, it must not be - or the
+# empty answer proves nothing.
+MM=$(scalar_as postgres "WITH x AS (INSERT INTO connect.meetings (tenant_id, code, title, kind, status)
+        VALUES ('$SCHOOL', 'iso-min-$$', 'iso-min', 'instant', 'ended') RETURNING id) SELECT id FROM x")
+run_as postgres "INSERT INTO connect.participants (meeting_id, user_id, identity, display_name, role, is_guest, first_joined_at)
+    SELECT '$MM', u.id, 'iso-min-p', 'iso-min', 'participant', false, now()
+      FROM core.users u WHERE u.tenant_id = '$SCHOOL' AND u.email <> '' AND u.status = 'active' LIMIT 1;" >/dev/null 2>&1
+# And one guest - unreachable by email - so the School's unreachable count is 1
+# and Techvein's 0 means something (without it both are 0 whatever the guard).
+run_as postgres "INSERT INTO connect.participants (meeting_id, identity, display_name, role, is_guest, first_joined_at)
+    VALUES ('$MM', 'iso-min-g', 'iso-min-guest', 'participant', true, now());" >/dev/null 2>&1
+own=$(as_tenant "$SCHOOL" "SELECT count(*) FROM connect.minutes_recipients('$MM')")
+[ "${own:-0}" -ge 1 ] && pass "minutes_recipients: the School sees its own meeting's attendee"                       || fail "minutes_recipients returned '${own}' to the School for its own meeting - fixture or function broken"
+leak=$(as_tenant "$TECHVEIN" "SELECT count(*) FROM connect.minutes_recipients('$MM')")
+[ "${leak:-1}" -eq 0 ] && pass "minutes_recipients: Techvein gets none of a School meeting's attendees"                        || fail "LEAK: minutes_recipients gave Techvein ${leak} School attendee(s)"
+n=$(no_context "SELECT count(*) FROM connect.minutes_recipients('$MM')")
+[ "${n:-1}" -eq 0 ] && pass "minutes_recipients: no tenant context returns none"                     || fail "DANGEROUS: minutes_recipients returned ${n} attendee(s) with no tenant set"
+ocnt=$(as_tenant "$SCHOOL" "SELECT connect.minutes_unreachable('$MM')")
+[ "${ocnt:-0}" = "1" ] && pass "minutes_unreachable: the School counts its own guest (1)"                        || fail "minutes_unreachable gave the School '${ocnt}' for its own meeting - fixture or function broken"
+cnt=$(as_tenant "$TECHVEIN" "SELECT connect.minutes_unreachable('$MM')")
+[ "${cnt:-1}" = "0" ] && pass "minutes_unreachable: Techvein's count for a School meeting is 0"                       || fail "LEAK: minutes_unreachable gave Techvein '${cnt}' for a School meeting"
+run_as postgres "DELETE FROM connect.meetings WHERE id = '$MM';" >/dev/null 2>&1
+
 hdr "Sign-in handoff codes are isolated, and the redeem reaches no further than one row"
 
 # Decision 0003. This table is unusual and so is its test: the REDEEM is
