@@ -1,0 +1,62 @@
+# ============================================================================
+#  TatvaOS Hire — hire.tatvaos.com
+# ============================================================================
+#
+#  Modeled on space.caddy: its own front door onto the same web container.
+#  /api/* is proxied SAME-ORIGIN, so the shared session (Domain=.tatvaos.com)
+#  works for the signed-in product and the browser never makes a cross-origin
+#  call.
+#
+#  TWO KINDS OF VISITOR USE THIS DOOR, and that is new:
+#    /hire/*      signed-in staff — job openings, the hiring team, candidates.
+#    /careers/*   STRANGERS — an organisation's public job pages (decision
+#                 0010 §1). No session is needed or read. The pages and the
+#                 public API (/api/public/careers/*) answer 404 for everything
+#                 until BOTH switches are on: the organisation's own site
+#                 switch, and the platform's hire.careers_portal_enabled.
+#                 This file opens the address; it does not open the portal.
+#
+#  NOT HERE YET, ON PURPOSE: a `request_body max_size` on the apply route
+#  (0010 §2). There is no apply route. It is added WITH the application form,
+#  on the route that then exists — a limit written against a path that does
+#  not exist is a line nobody can test.
+#
+#  {$HIRE_DOMAIN} MUST be in infra/docker/.env on the server BEFORE this file
+#  is deployed. docker-compose.base.yml lists it with `:?`, so a deploy
+#  without it stops at `docker compose` — before anything is built or
+#  restarted — instead of Caddy rejecting the ENTIRE config and taking every
+#  product down. The order is: compose list, .env on the server, this file.
+# ============================================================================
+
+{$HIRE_DOMAIN} {
+    encode zstd gzip
+
+    # Send every other product's paths to their own door — see
+    # core/product-doors.caddy for why and for the self-redirect guard.
+    import /etc/caddy/conf.d/core/product-doors.caddy
+
+    handle /api/* {
+        reverse_proxy api:8080
+    }
+
+    # Landing on the host lands in the product. A stranger who types the bare
+    # address is sent to sign-in by the app, which is honest: the public
+    # pages are per organisation and have no index of organisations.
+    redir / /hire
+
+    # Administration lives on Core and nowhere else. Mirrors space.caddy.
+    @consolepaths path /org /org/* /admin /admin/* /signup /signup/*
+    redir @consolepaths https://{$SITE_DOMAIN}{uri}
+
+    handle {
+        reverse_proxy web:3000
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+}

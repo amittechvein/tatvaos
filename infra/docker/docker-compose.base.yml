@@ -467,6 +467,7 @@ services:
       CONNECT_DOMAIN: ${CONNECT_DOMAIN:?CONNECT_DOMAIN must be set}
       PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:?PLATFORM_DOMAIN must be set}
       WEBSITE_DOMAIN: ${WEBSITE_DOMAIN:?WEBSITE_DOMAIN must be set}
+      HIRE_DOMAIN: ${HIRE_DOMAIN:?HIRE_DOMAIN must be set}
     ports:
       - "80:80"
       - "443:443"
