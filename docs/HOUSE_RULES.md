@@ -508,7 +508,16 @@ the third is what makes the first two last.
 
 2. **A deploy with no verdict is not a success.** `deploy.sh` ends every run
    with a `DEPLOY VERDICT: PASS <sha>` or `DEPLOY VERDICT: FAIL (exit N)`
-   line. **A log that has neither was cut off** — the process was killed, or
+   line. **Whoever ran the deploy finds that line in the log before
+   reporting the deploy as done**, and pastes it.
+
+   *What PASS covers.* `deploy.sh` runs `verify-live.sh` itself, as its last
+   step before the verdict, and a failure there never reaches PASS. So PASS
+   means "deployed, and this run's own verify passed". It does **not** cover
+   anything that runs after the script: the workflow runs `verify-live.sh` a
+   second time and then checks from outside, and those have their own
+   results. On a hand deploy, the checks from outside are yours to run and
+   report separately. **A log that has neither was cut off** — the process was killed, or
    the box died under it — and the box may be half-updated: images pulled
    but containers not recreated, or the schema step run and nothing after.
    Treat it as failed. Before anything else, read the running build from the
@@ -516,11 +525,27 @@ the third is what makes the first two last.
    with the checkout, and say which you found. Never re-run on the
    assumption that the first run did nothing.
 
-3. **`deploy.sh` refuses to start attached to a terminal** and prints the
+3. **`deploy.sh` refuses to start unless it is detached** and prints the
    command above instead. A rule in a document lasts until someone in a hurry
-   forgets it; a check in the script does not. `DEPLOY_ATTACHED=1` overrides
-   it for a local rehearsal only. The GitHub workflow is unaffected — its
-   output is not a terminal.
+   forgets it; a check in the script does not. It refuses when any of these
+   is true, and says which:
+
+   - input, output or errors are a terminal;
+   - the process has a controlling terminal (`/dev/tty` opens) — this is
+     what catches `./deploy.sh production > log 2>&1` typed in an SSH
+     session, which the first version of the check let through;
+   - output is not a regular file — this is what catches
+     `ssh host ./deploy.sh production` and `| tee log`, which have no
+     terminal at all and still die with the connection, by SIGPIPE.
+
+   `DEPLOY_ATTACHED=1` overrides it, for a local rehearsal and for the
+   GitHub workflow. **The workflow is an exception, not an exemption**: it
+   streams the deploy down the runner's SSH connection, so it carries the
+   same exposure, watched by the job rather than by a person. Making the
+   workflow run detached and follow the log is owed.
+
+   `tests/deploy/test-detached-guard.sh` runs every form, refused and
+   allowed. It refuses to run where `infra/docker/.env` exists.
 
 *Incident, 26 Sept 2026: a hand deploy of #312 started at 13:58Z and died
 when the SSH session reset during the pre-deploy backup. It had not reached

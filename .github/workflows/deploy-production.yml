@@ -198,7 +198,15 @@ jobs:
             echo "Server is now at $(git rev-parse HEAD) ($TARGET)"
             # deploy.sh takes its own pre-deploy database backup and refuses
             # to continue if that fails.
-            CI=1 ./infra/scripts/deploy.sh production
+            #
+            # DEPLOY_ATTACHED=1: deploy.sh refuses to run attached to a
+            # session (HOUSE_RULES rule 11b), and this step IS attached: it
+            # streams the deploy down the SSH connection of this job. The
+            # exception is written here so that it is visible. If the
+            # connection drops mid-deploy, this deploy dies with it, and
+            # command_timeout above is the only thing watching. Running it
+            # detached and following the log is owed.
+            CI=1 DEPLOY_ATTACHED=1 ./infra/scripts/deploy.sh production
             # deploy.sh already ran verify-live.sh as its final step; this
             # second, EXPLICIT call is the workflow's own signature on the
             # same contract. If deploy.sh ever loses that step, the deploy

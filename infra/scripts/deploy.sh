@@ -63,15 +63,55 @@ esac
 #  been half-updated with nobody watching. It then sat unnoticed for three
 #  hours, because the tool call driving it had timed out into the background.
 #
-#  A deploy attached to a terminal dies with that terminal. So this script
-#  refuses to start when its output is a terminal, and prints the one command
-#  that runs it correctly. The GitHub workflow and a detached run both write
-#  to a file, so neither trips this. DEPLOY_ATTACHED=1 overrides it for a
-#  local rehearsal, and is not for the production box.
+#  A deploy attached to a session dies with that session. So this script
+#  refuses to start unless it is detached, and prints the one command that
+#  runs it correctly.
+#
+#  WHAT "ATTACHED" MEANS — three tests, each closing a hole the one before
+#  left open (tests/deploy/test-detached-guard.sh runs every form):
+#
+#   1. Input, output or errors are a terminal. The first version of this
+#      guard asked only about OUTPUT, so `./deploy.sh production > log 2>&1`
+#      — the natural thing to type — passed, while still sitting in the SSH
+#      session (Mr. Singh, 28 Sept).
+#   2. The process has a controlling terminal at all: /dev/tty opens. This is
+#      what `setsid` removes, and it catches a run with every stream
+#      redirected that is still in the session's process group.
+#   3. Output is not a regular file. `ssh host ./deploy.sh production` with
+#      no terminal has NO controlling terminal, so test 2 passes it — but its
+#      output is the SSH channel, and the first write after the connection
+#      drops kills it with SIGPIPE. Measured 28 Sept: a process with no
+#      terminal and its output on a pipe died when the reader went away; the
+#      same process writing to a file ran to the end. This is also why
+#      `| tee deploy.log` is refused: tee dies with the session.
+#
+#  DEPLOY_ATTACHED=1 overrides all three. It is for a local rehearsal, and for
+#  the GitHub workflow, which streams the deploy down its own SSH connection
+#  and says so where it sets it.
 # ---------------------------------------------------------------------------
-if [ -t 1 ] && [ "${DEPLOY_ATTACHED:-}" != "1" ]; then
-    printf '\n   [FAIL] deploy.sh is attached to a terminal. Run it detached, so a dropped\n'
-    printf '          SSH session cannot kill it halfway (HOUSE_RULES rule 11b):\n\n'
+has_controlling_terminal() { [ -e /dev/tty ] && sh -c ': < /dev/tty' 2>/dev/null; }
+# Sets ATTACHED_WHY and returns 0 when attached. NEVER called as $(...): inside
+# a command substitution, standard output IS the substitution's own pipe, so
+# the output tests would be asking about that pipe and not about this
+# script's output. The first draft did exactly that. It refused the correct
+# detached form as "not a log file", and its terminal test could never fire.
+# Found by tests/deploy/test-detached-guard.sh, 28 Sept 2026.
+ATTACHED_WHY=""
+attached_because() {
+    if [ -t 0 ]; then ATTACHED_WHY="its input is a terminal"; return 0; fi
+    if [ -t 1 ] || [ -t 2 ]; then ATTACHED_WHY="its output is a terminal"; return 0; fi
+    if has_controlling_terminal; then
+        ATTACHED_WHY="it is inside a login or SSH session (it has a controlling terminal)"; return 0
+    fi
+    if ! { [ -f /dev/stdout ] && [ -f /dev/stderr ]; }; then
+        ATTACHED_WHY="its output is not a log file (a pipe or an SSH channel breaks when the connection drops)"; return 0
+    fi
+    return 1
+}
+if [ "${DEPLOY_ATTACHED:-}" != "1" ] && attached_because; then
+    printf '\n   [FAIL] deploy.sh is attached: %s.\n' "$ATTACHED_WHY"
+    printf '          Run it detached, so a dropped connection cannot kill it halfway\n'
+    printf '          (HOUSE_RULES rule 11b):\n\n'
     printf '     LOG=~/deploy-%s-$(date -u +%%Y%%m%%dT%%H%%M%%SZ).log\n' "$ENV"
     printf '     CI=1 setsid nohup ./infra/scripts/deploy.sh %s > "$LOG" 2>&1 < /dev/null &\n' "$ENV"
     printf '     tail -f "$LOG"        # Ctrl-C stops the tail only, never the deploy\n\n'
@@ -1005,7 +1045,11 @@ fi
 
 DOMAIN=$(grep '^SITE_DOMAIN=' infra/docker/.env | cut -d= -f2)
 printf '\n   %s%s deployed.%s\n' "$G" "$ENV" "$X"
-printf '   DEPLOY VERDICT: PASS %s at %s\n\n' "$BUILD_SHA" "$(date -u +%FT%TZ)"
+# PASS covers everything above, INCLUDING this script's own verify-live.sh run
+# (a failure there is a bad() and never reaches this line). It does not cover
+# what runs after this script: the workflow's second verify-live and its
+# checks from outside have their own results.
+printf '   DEPLOY VERDICT: PASS %s at %s (verify-live passed inside this run)\n\n' "$BUILD_SHA" "$(date -u +%FT%TZ)"
 printf '   App        https://%s\n' "$DOMAIN"
 printf '   API        https://%s/api\n' "$DOMAIN"
 printf '   Health     https://%s/health\n' "$DOMAIN"
