@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    PICTURES IN OUTGOING MAIL.
+    Same shape as tests/mail-threading: the production files are LINKED, not
+    copied, so this compiles what production runs. No test framework and no
+    NuGet packages, so `dotnet run` works on a box with no network.
+
+    What it does NOT prove: that MimeKit lays the parts out as
+    multipart/related, or that Gmail then shows the picture. The first was
+    checked with MimeKit directly and the second needs a real send; the PR
+    that added this says which.
+
+    NOT RUN BY CI as of 25 September 2026 — CI workflow changes go to the CTO,
+    so it is asked for in the PR rather than added by it.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TatvaOS.Tests.MailInlineImages</RootNamespace>
+    <AssemblyName>mail-inline-images-test</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\apps\api\Modules\Mail\OutgoingInlineImages.cs" Link="OutgoingInlineImages.cs" />
+  </ItemGroup>
+
+</Project>

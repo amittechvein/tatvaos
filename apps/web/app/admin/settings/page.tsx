@@ -47,6 +47,19 @@ const SECTIONS: { id: string; title: string; blurb: string }[] = [
     blurb: 'Stored and ready. Checkout wiring ships with the billing section.',
   },
   {
+    id: 'ai',
+    title: 'TatvaOS AI — spend controls',
+    blurb: 'Apply to every organisation. The pause stops all AI at once; the limits cap one '
+      + 'person per hour and one organisation per month. Every AI request is metered, and each '
+      + 'organisation can see its own use on its TatvaOS AI page.',
+  },
+  {
+    id: 'plans',
+    title: 'Plans — warnings',
+    blurb: 'At a plan limit, TatvaOS warns and never stops anything. You always see the warnings on '
+      + 'each organisation’s page; this decides whether their administrators see them too.',
+  },
+  {
     id: 'mail',
     title: 'System email',
     blurb: 'OTP codes and invoices send as this address through our own mail server. '
@@ -98,6 +111,25 @@ export default function SettingsPage() {
       setNotice({ kind: 'danger', text: e instanceof Error ? e.message : 'Could not save.' });
     } finally {
       setBusy(false);
+    }
+  }
+
+  const [aiTestTo, setAiTestTo] = useState('');
+  const [aiTesting, setAiTesting] = useState(false);
+  const [aiTestResult, setAiTestResult] = useState<string | null>(null);
+
+  async function testAiWarning() {
+    setAiTesting(true); setAiTestResult(null);
+    try {
+      const res = await authedFetch('/admin/settings/test-ai-warning', {
+        method: 'POST', body: JSON.stringify({ to: aiTestTo }),
+      });
+      const body = await res.json().catch(() => ({}));
+      setAiTestResult(res.ok && body.sent ? `Sent. ${body.detail ?? ''}` : `Not sent — ${body.detail ?? body.error ?? 'unknown reason'}`);
+    } catch {
+      setAiTestResult('Not sent — the request itself failed.');
+    } finally {
+      setAiTesting(false);
     }
   }
 
@@ -177,6 +209,12 @@ export default function SettingsPage() {
                           <option value="infobip">Infobip</option>
                           <option value="msg91">MSG91</option>
                         </Select>
+                      ) : s.key === 'ai.paused' ? (
+                        <Select value={val(s) || 'false'}
+                                onChange={(e) => setEdits((p) => ({ ...p, [s.key]: e.target.value }))}>
+                          <option value="false">Running — AI works where organisations allow it</option>
+                          <option value="true">PAUSED — every AI request is refused</option>
+                        </Select>
                       ) : s.key === 'sms.show_otp_on_screen' ? (
                         <Select value={val(s) || 'false'}
                                 onChange={(e) => setEdits((p) => ({ ...p, [s.key]: e.target.value }))}>
@@ -198,6 +236,29 @@ export default function SettingsPage() {
                     </div>
                   ))}
                 </div>
+
+                {section.id === 'ai' && (
+                  <div className="mt-2 border-t border-line pt-4">
+                    <div className="font-semibold mb-1">Send a test AI warning email</div>
+                    <div className="mb-2 text-xs text-ink-muted">
+                      The 80% email an organisation&apos;s administrators receive, marked [Test]. Send one to an
+                      outside mailbox (Gmail, for example) and open it before any organisation can trigger a real one.
+                    </div>
+                    <div className="flex gap-2 flex-wrap items-start">
+                      <Input style={{ maxWidth: 300 }} type="email" placeholder="someone@gmail.com"
+                             value={aiTestTo} onChange={(e) => setAiTestTo(e.target.value)} />
+                      <Button variant="secondary" onClick={testAiWarning}
+                              disabled={aiTesting || !aiTestTo.includes('@')}>
+                        {aiTesting ? 'Sending…' : 'Send test email'}
+                      </Button>
+                    </div>
+                    {aiTestResult && (
+                      <Alert tone={aiTestResult.startsWith('Sent') ? 'ok' : 'warn'} className="mt-2 mb-0">
+                        {aiTestResult}
+                      </Alert>
+                    )}
+                  </div>
+                )}
 
                 {section.id === 'sms' && (
                   <div className="mt-2 border-t border-line pt-4">
