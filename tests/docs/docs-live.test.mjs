@@ -334,6 +334,47 @@ async function main() {
   check('a version\'s state rebuilds to the text it was taken from', textOf(rebuilt) === textOf(a1.doc));
   check('other organisation cannot read versions', (await C(`/docs/${id}/versions/${named.body.id}`)).status === 404);
 
+  // ---- the HTML that is stored ------------------------------------------------------
+  // The browser's HTML is rewritten from an allowlist before it is stored
+  // (DocsHtml.cs; its own cases are in tests/docs-html). Here: that the
+  // ENDPOINTS use it — a sanitiser nobody calls passes every unit test.
+  // Each refusal has its permit twin in the same request: the words and
+  // the honest markup around the hostile part must arrive.
+  console.log('The HTML that is stored');
+  const honest = '<h1>Fees</h1><p style="text-align: center">The fee is <strong>50,000</strong></p>'
+    + '<table><tbody><tr><td colspan="1" rowspan="1"><p>Asha</p></td></tr></tbody></table>';
+  const hostile = honest
+    + '<script>steal(document.cookie)</script>'
+    + '<p onclick="steal()">Words that stay</p>'
+    + '<a href="javascript:steal()">a link</a>'
+    + '<img src="https://pictures.example/x.png" onerror="steal()">'
+    + '<iframe src="https://evil.example"></iframe>';
+  const gone = ['<script', 'steal(', 'onclick', 'onerror', 'javascript:', '<iframe', 'evil.example'];
+  const kept = [honest, 'Words that stay', 'a link', 'src="https://pictures.example/x.png"'];
+
+  const hostileCp = await A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
+    state: toB64(Y.encodeStateAsUpdate(a1.doc)), upToSeq: a1.lastSeq, html: hostile, text: textOf(a1.doc) }) });
+  check('a checkpoint carrying hostile HTML is accepted (it is cleaned, not refused)',
+    hostileCp.status === 200 && hostileCp.body.saved === true, `status ${hostileCp.status} ${JSON.stringify(hostileCp.body)}`);
+  const hostileDl = String((await A(`/space/files/${id}/content`)).body);
+  check('Space\'s copy holds none of the hostile parts',
+    gone.every((g) => !hostileDl.toLowerCase().includes(g)), gone.filter((g) => hostileDl.toLowerCase().includes(g)).join(' | '));
+  check('…and all of the honest ones, unchanged',
+    kept.every((k) => hostileDl.includes(k)), kept.filter((k) => !hostileDl.includes(k)).join(' | '));
+
+  const hostileV = await A(`/docs/${id}/versions`, { method: 'POST', body: JSON.stringify({
+    kind: 'named', name: 'Hostile', state: toB64(Y.encodeStateAsUpdate(a1.doc)), html: hostile }) });
+  const hostileRead = String((await A(`/docs/${id}/versions/${hostileV.body.id}`)).body.html);
+  check('a version\'s HTML holds none of the hostile parts',
+    hostileV.status === 201 && gone.every((g) => !hostileRead.toLowerCase().includes(g)),
+    gone.filter((g) => hostileRead.toLowerCase().includes(g)).join(' | '));
+  check('…and all of the honest ones, unchanged',
+    kept.every((k) => hostileRead.includes(k)), kept.filter((k) => !hostileRead.includes(k)).join(' | '));
+
+  // Put Space's copy back to what the document says, for the checks below.
+  await A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
+    state: toB64(Y.encodeStateAsUpdate(a1.doc)), upToSeq: a1.lastSeq, html: htmlNow, text: textOf(a1.doc) }) });
+
   // ---- comments -------------------------------------------------------------------
   console.log('Comments');
   const c1 = await B(`/docs/${id}/comments`, { method: 'POST', body: JSON.stringify({

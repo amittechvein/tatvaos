@@ -42,6 +42,8 @@ export interface DocumentMeta {
   updatedAt: string;
   me: { id: string; displayName: string };
   ai: { available: boolean; reason: string | null };
+  /** What the file is. Each editor refuses the other's files. */
+  kind?: 'document' | 'spreadsheet';
 }
 
 export interface DocVersion {

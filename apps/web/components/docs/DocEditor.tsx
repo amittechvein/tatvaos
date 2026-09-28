@@ -139,6 +139,15 @@ function VersionView({ json, loadImage }: { json: JSONContent; loadImage: (src: 
   return <EditorContent editor={view} />;
 }
 
+/**
+ * An answer with no kind at all is from an API older than kinds, when every
+ * file it could return was a document — so only a kind that is PRESENT and
+ * is not "document" is refused.
+ */
+function notADocument(meta: DocumentMeta): boolean {
+  return meta.kind !== undefined && meta.kind !== 'document';
+}
+
 export function DocEditor({ id }: { id: string }) {
   const { authedFetch } = useAuth();
   const [meta, setMeta] = useState<DocumentMeta | null>(null);
@@ -162,7 +171,7 @@ export function DocEditor({ id }: { id: string }) {
   // One live connection per page, created after the metadata says the
   // document exists and is not in the trash.
   useEffect(() => {
-    if (!meta || meta.deletedAt) return;
+    if (!meta || meta.deletedAt || notADocument(meta)) return;
     const p = new DocsLiveProvider(id, () => docsApi.ticket(authedFetch, id), (e) => eventSink.current(e));
     setProvider(p);
     return () => { p.destroy(); setProvider(null); };
@@ -182,6 +191,22 @@ export function DocEditor({ id }: { id: string }) {
     );
   }
   if (!meta) return <div className="flex h-screen items-center justify-center bg-canvas"><Spinner /></div>;
+
+  // A spreadsheet opened at a Docs address (/docs/d/<its id>). This editor
+  // would read its content as an empty document, and the first keystroke
+  // would write a document's structure into a spreadsheet's file. The
+  // server cannot tell which editor a browser runs (it never reads the
+  // content), so the refusal lives here, as Sheets' editor refuses
+  // documents. No live connection is opened for it either (effect above).
+  if (notADocument(meta)) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center gap-3 bg-canvas px-6 text-center">
+        <DocGlyph className="h-12 w-12 opacity-60" />
+        <p className="text-base font-medium text-ink">&ldquo;{meta.title}&rdquo; is a spreadsheet, not a document.</p>
+        <Link href={`/sheets/s/${meta.id}`} className="text-sm text-brand-600 hover:underline">Open it in Sheets</Link>
+      </div>
+    );
+  }
 
   if (meta.deletedAt) {
     return (
