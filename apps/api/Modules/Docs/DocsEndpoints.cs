@@ -117,7 +117,9 @@ public static class DocsEndpoints
         Guid Id, string Title, string MyPermission, Guid? OwnerUserId, string? OwnerDisplayName,
         string OwnershipType, Guid? FolderId, bool IsStarred, bool IsShared,
         DateTimeOffset? DeletedAt, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
-        MeDto Me, AiDto Ai);
+        MeDto Me, AiDto Ai,
+        // "document" or "spreadsheet": each editor refuses the other's files.
+        string Kind = "document");
     public sealed record MeDto(Guid Id, string DisplayName);
     public sealed record AiDto(bool Available, string? Reason);
 
@@ -411,7 +413,7 @@ public static class DocsEndpoints
 
     private static async Task<IResult> CheckpointAsync(
         Guid id, CheckpointRequest req, AppDbContext db, TenantContext tenant, DocsLiveHub hub,
-        IBlobStore blobs, StorageAllocator allocator, CancellationToken ct)
+        IBlobStore blobs, StorageAllocator allocator, ILoggerFactory loggers, CancellationToken ct)
     {
         var (err, file, perm, uid) = await LoadAsync(db, tenant, id, tracked: true, forChange: true, ct);
         if (err is not null) return err;
@@ -419,8 +421,8 @@ public static class DocsEndpoints
 
         if (!TryDecode(req.State, MaxStateBytes, out var state))
             return Error(400, "state must be base64, and within the size limit.");
-        var html = req.Html ?? "";
-        if (html.Length > MaxHtmlChars) return Error(413, "This document is too large to save.");
+        if ((req.Html ?? "").Length > MaxHtmlChars) return Error(413, "This document is too large to save.");
+        var html = CleanHtml(req.Html, id, uid, "checkpoint", loggers);
         var text = req.Text ?? "";
         if (text.Length > 2_000_000) text = text[..2_000_000];
 
@@ -505,6 +507,25 @@ public static class DocsEndpoints
         return Results.Ok(new { saved = true });
     }
 
+    /// <summary>
+    /// The browser's HTML, made safe to store (see <see cref="DocsHtml"/>).
+    /// When anything had to be removed it is logged as a WARNING: an honest
+    /// editor sends nothing this removes, so the line means either a
+    /// hand-built request or an editor whose schema has outgrown the list.
+    /// Names only — never the document's content.
+    /// </summary>
+    private static string CleanHtml(string? html, Guid fileId, Guid userId, string from, ILoggerFactory loggers)
+    {
+        var cleaned = DocsHtml.Clean(html);
+        if (cleaned.Dropped.Count > 0)
+        {
+            loggers.CreateLogger("TatvaOS.Docs.Html").LogWarning(
+                "Docs {From} for file {FileId} by user {UserId}: removed from the HTML before storing: {Dropped}",
+                from, fileId, userId, string.Join(", ", cleaned.Dropped.Take(40)));
+        }
+        return cleaned.Html;
+    }
+
     private static bool TryDecode(string? b64, int max, out byte[] bytes)
     {
         bytes = [];
@@ -551,7 +572,10 @@ public static class DocsEndpoints
         return Results.Ok(new
         {
             id = v.Id, kind = v.Kind, name = v.Name, createdAt = v.CreatedAt,
-            html = v.Html, state = Convert.ToBase64String(v.State),
+            // Cleaned again on the way out: a row written before the
+            // sanitiser existed, or by anything that ever bypasses it, still
+            // leaves as allowlisted markup. Cleaning clean HTML changes nothing.
+            html = DocsHtml.Clean(v.Html).Html, state = Convert.ToBase64String(v.State),
         });
     }
 
@@ -561,7 +585,8 @@ public static class DocsEndpoints
     /// be undone). Automatic versions come only from checkpoints.
     /// </summary>
     private static async Task<IResult> CreateVersionAsync(
-        Guid id, VersionRequest req, AppDbContext db, TenantContext tenant, DocsLiveHub hub, CancellationToken ct)
+        Guid id, VersionRequest req, AppDbContext db, TenantContext tenant, DocsLiveHub hub,
+        ILoggerFactory loggers, CancellationToken ct)
     {
         var (err, _, perm, uid) = await LoadAsync(db, tenant, id, tracked: false, forChange: true, ct);
         if (err is not null) return err;
@@ -578,7 +603,7 @@ public static class DocsEndpoints
         var v = new DocsVersion
         {
             FileId = id, TenantId = tenant.TenantId, Kind = req.Kind, Name = name,
-            State = state, Html = req.Html ?? "", CreatedByUserId = uid,
+            State = state, Html = CleanHtml(req.Html, id, uid, "version", loggers), CreatedByUserId = uid,
         };
         db.DocsVersions.Add(v);
         await db.SaveChangesAsync(ct);
