@@ -239,6 +239,21 @@ public sealed class DocsLiveHub(IServiceScopeFactory scopes, DocsInstanceGuard g
             http.Response.StatusCode = StatusCodes.Status404NotFound;
             return;
         }
+        // The switch, again, here — THIS FILE'S switch (LiveSwitch: a sheet
+        // answers to Sheets, a document to Docs). The ticket was issued while
+        // the product was on, but it lives 60 s: without this, a ticket in
+        // hand when the operator switched the product off still opened the
+        // editor, and kept it until the 45 s recheck (found 28 Sept, PR 351
+        // for Docs; tests/sheets "a ticket taken before the switch-off").
+        // PR 351 checks DocsSwitch; merging it here must keep LiveSwitch, or
+        // a sheet is judged by the Docs switch — that version was run and
+        // the Sheets test stays red. Refused before the upgrade, so the
+        // browser asks for a new ticket and is told sheets_off / docs_off.
+        if (!await LiveSwitch.EnabledAsync(db, file.MimeType, ct))
+        {
+            http.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return;
+        }
         var perm = await SpaceEndpoints.FilePermAsync(db, file, ticket.UserId, ct);
 
         using var socket = await http.WebSockets.AcceptWebSocketAsync();

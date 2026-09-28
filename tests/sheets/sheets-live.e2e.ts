@@ -71,13 +71,16 @@ function client(who: { token: string }): Call {
 const MSG = { update: 1, ack: 4, synced: 5, event: 6, state: 7 };
 const seqOf = (b: Uint8Array) => Number(new DataView(b.buffer, b.byteOffset + 1, 8).getBigInt64(0));
 
-async function connect(call: Call, id: string) {
-  const t = await call(`/docs/${id}/live-ticket`, { method: 'POST' });
+// ticketIn: open with a ticket taken earlier, as a browser that fetched one
+// just before something changed would.
+async function connect(call: Call, id: string, ticketIn?: string) {
+  const t = ticketIn ? { status: 200, body: { ticket: ticketIn } }
+    : await call(`/docs/${id}/live-ticket`, { method: 'POST' });
   if (t.status !== 200) return null;
   const ws = new WebSocket(API.replace(/^http/, 'ws') + `/docs/${id}/live?ticket=${encodeURIComponent(t.body.ticket)}`);
   ws.binaryType = 'arraybuffer';
   const doc = new Y.Doc();
-  const s = { doc, ws, synced: false, lastSeq: 0, acks: 0, events: [] as { type: string; perm?: string }[], model: null as SheetsModel | null };
+  const s = { doc, ws, synced: false, closed: null as number | null, lastSeq: 0, acks: 0, events: [] as { type: string; perm?: string }[], model: null as SheetsModel | null };
   ws.onmessage = (ev) => {
     const b = new Uint8Array(ev.data as ArrayBuffer);
     switch (b[0]) {
@@ -93,7 +96,8 @@ async function connect(call: Call, id: string) {
     const f = new Uint8Array(u.length + 1); f[0] = MSG.update; f.set(u, 1);
     if (ws.readyState === WebSocket.OPEN) ws.send(f);
   });
-  for (let i = 0; i < 50 && !s.synced; i += 1) await sleep(100);
+  ws.onclose = (ev) => { s.closed = ev.code; };
+  for (let i = 0; i < 50 && !s.synced && s.closed === null; i += 1) await sleep(100);
   s.model = new SheetsModel(doc);
   return s;
 }
@@ -373,12 +377,22 @@ async function main() {
 
   const live = await connect(A, id);
   check('a live connection to the spreadsheet is open', !!live?.synced);
+  // A ticket in hand when the switch goes off (tickets live 60 s).
+  const heldTicket = (await A(`/docs/${id}/live-ticket`, { method: 'POST' })).body?.ticket as string | undefined;
   await sw('sheets', TENANT_A, false);
   const refused = await A(`/docs/${id}`);
   check('Sheets off: the spreadsheet is refused at once (403 sheets_off)', refused.status === 403 && refused.body?.reason === 'sheets_off',
     `${refused.status} ${JSON.stringify(refused.body)}`);
   check('…its AI is refused at once (403)', (await A(`/sheets/${id}/ai`, { method: 'POST', body: JSON.stringify({ action: 'analyze', context: 'a	b' }) })).status === 403);
   check('…while the document opens (200)', (await A(`/docs/${docId}`)).status === 200);
+  // Found 28 Sept in Docs (PR 351): opening a connection checked the file
+  // and the level, not the switch, so a ticket taken before "off" opened the
+  // editor after it. Sheets shares that hub; here it must be SHEETS' switch
+  // that refuses — Docs is on at this moment, so a Docs-switch check passes.
+  const late = heldTicket ? await connect(A, id, heldTicket) : null;
+  check('Sheets off: a ticket taken before the switch-off cannot open the spreadsheet after it',
+    !!heldTicket && !!late && !late.synced && late.closed !== null, `synced=${late?.synced} closed=${late?.closed}`);
+  try { late?.ws.close(); } catch { /* already gone */ }
   // Rule (Mr. Singh, 24 Sept): switching a product off withdraws the editor,
   // never the customer's data. The same download answered 200 while on (the
   // Space-copy checks above); it must still answer, as an .xlsx, while off.
