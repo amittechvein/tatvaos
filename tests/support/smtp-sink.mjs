@@ -30,6 +30,25 @@ fs.appendFileSync(LOG, '');   // exists from the start: tests check for it
 
 const mails = [];
 
+// The Subject as a person reads it. Headers FOLD (a long one continues on the
+// next line, starting with a space) and non-ASCII subjects arrive as RFC 2047
+// encoded words (=?utf-8?B?...?=). Found 28 Sept 2026: a minutes subject with
+// an em dash arrived encoded AND folded, and a test matching the title saw
+// nothing although the mail had been delivered. The raw text stays in the log.
+function subjectOf(data) {
+  const head = data.split(/\r?\n\r?\n/)[0].replace(/\r?\n[ \t]+/g, ' ');
+  const raw = /^Subject: (.*)$/mi.exec(head)?.[1]?.trim() ?? '';
+  return raw
+    .replace(/\?=\s+=\?/g, '?==?')   // whitespace between encoded words is not text
+    .replace(/=\?([^?]+)\?([BbQq])\?([^?]*)\?=/g, (_, charset, enc, text) => {
+      const bytes = enc.toUpperCase() === 'B'
+        ? Buffer.from(text, 'base64')
+        : Buffer.from(text.replace(/_/g, ' ').replace(/=([0-9A-Fa-f]{2})/g,
+            (_m, h) => String.fromCharCode(parseInt(h, 16))), 'binary');
+      return new TextDecoder(charset.toLowerCase() === 'utf8' ? 'utf-8' : charset).decode(bytes);
+    });
+}
+
 http.createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/mail') {
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(mails));
@@ -50,7 +69,7 @@ net.createServer((sock) => {
       data += text;
       if (data.includes('\r\n.\r\n')) {
         inData = false;
-        const subject = /^Subject: (.*)$/m.exec(data)?.[1]?.trim() ?? '';
+        const subject = subjectOf(data);
         mails.push({ to: rcpt.slice(), subject });
         fs.appendFileSync(LOG, `----- ${new Date().toISOString()} to ${rcpt.join(',')}\n${data}\n`);
         data = ''; rcpt.length = 0;
