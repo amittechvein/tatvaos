@@ -94,6 +94,11 @@ supersedes anything it says about styling.
 `PLATFORM_TO_CORE_TRANSFER.md`,
 [`PERSONAL_PLANS_AND_PRICING.md`](PERSONAL_PLANS_AND_PRICING.md)
 
+**Docs & Sheets** — [`decisions/0011`](decisions/0011-docs-and-sheets-before-customers.md)
+(what must be true before customers),
+[`DOCS_SERVER_RENDER_DESIGN.md`](DOCS_SERVER_RENDER_DESIGN.md) (condition 1:
+the file built on the server — a design, not built)
+
 **Everything, unsorted** — [`BACKLOG.md`](BACKLOG.md)
 
 ---
