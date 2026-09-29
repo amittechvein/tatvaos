@@ -143,8 +143,11 @@ written by a browser.
    `rendered_seq IS NULL` is rendered before its file is served. The
    backfill below is kept for the case where Docs is switched on first
    (and for local and test databases, which do hold browser-written files).
-   **Proposal: keep Docs off for everyone, Techvein included, until the
-   render lands.** That is Amit's call — it delays Techvein's own use.
+   **DECIDED (Amit, 29 September 2026): Docs stays off for everyone,
+   Techvein included, until the render lands.** So production never holds a
+   browser-written file, and the build's step 5 is the guard, not a
+   production backfill. Anyone switching Docs on before then is going
+   against this decision; the operator route does not enforce it (§10).
 2. **Additive migration:** `docs.documents.rendered_seq bigint`,
    `rendered_at timestamptz`, `renderer text` (the schema version that
    rendered it). All NULL = "a browser wrote this".
@@ -238,8 +241,10 @@ Either way the PDF is made from the renderer's HTML, never the browser's.
 4. **Backfill at start-up**, or as a one-off command run by the deployer.
 5. Condition 2's PDF engine can wait for its own ruling (§7).
 
-And for Amit: whether Docs stays off for everyone, Techvein included, until
-the render lands (§4.1). The two production counts are done: 0 and 0.
+Amit has decided Docs stays off for everyone until the render lands (§4.1);
+the two production counts were 0 and 0. Open for Mr. Singh: whether the
+operator route should *refuse* switching Docs on until then, rather than
+rely on the decision being remembered.
 
 ## 11. Build order, once ruled
 
