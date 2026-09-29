@@ -45,6 +45,14 @@ The pattern Connect's workers already use (Mr. Singh, 27 Sept):
   session, and reads that organisation's reminders under row-level security,
   as a signed-in person would. One organisation failing is logged and does not
   stop the others.
+- **Live organisations only** (Mr. Singh, 29 Sept, a condition of merging):
+  the function keeps organisations whose status is `active` or `trial`, as
+  `share_is_live` and `resolve_meeting_code` do. "A suspended school shouldn't
+  keep emailing its staff."
+- **A fresh scope per organisation** (his second condition): each
+  organisation gets its own `AppDbContext` and `TenantContext`, so nothing
+  tracked for one is in the change tracker while the next is swept. The
+  worker already did this; it now says so where it happens.
 
 ## How we know
 
@@ -57,13 +65,18 @@ email arrives at the local mail sink, once, to its own person.
 |---|---|
 | `main` c7cb110 (before) | **4 of 11 red**: nothing recorded, nothing sent, **and "no sweep failure" green**, which is exactly the silence that hid it |
 | fix c0aca3b | **11/11** |
+| with two not-live organisations added to the test, function unchanged (`3711429`) | **3 of 16 red**: the suspended and the deleted organisation's due reminders were **sent** |
+| with the live-organisations filter (`e219df8`, merged with `main` 1280156) | **16/16** |
 
 ## On deploy day
 
-1. Set a reminder on production for a few minutes ahead, on a real calendar,
-   and watch it arrive.
-2. Read `SELECT count(*) FROM calendar.reminder_sends` before and after: it
-   must rise.
+The deployer does this and fills in the row (Mr. Singh, 29 Sept 2026):
+
+1. On production, set a reminder that falls due **within the next hour**, on a
+   real calendar, and watch the email arrive.
+2. Watch **that reminder's own row appear** in `calendar.reminder_sends` (by its
+   reminder id; a count read only, never titles or people). A rising total is
+   weaker: it could be another reminder.
 3. Fill in the **Fix live on production** row above, in the same PR as the
    deploy record.
 

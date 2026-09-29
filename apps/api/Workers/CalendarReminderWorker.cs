@@ -100,6 +100,12 @@ public sealed class CalendarReminderWorker(
 
     private async Task SweepOrganisationAsync(Guid tenantId, CancellationToken ct)
     {
+        // A FRESH SCOPE PER ORGANISATION, never one context switched between
+        // them: its own AppDbContext and TenantContext (both scoped, Program.cs),
+        // so nothing tracked for organisation A is in the change tracker while
+        // B's sweep runs. Mr. Singh, 29 Sept 2026, reviewing this PR: the
+        // two-organisation test proves today's emails go to the right people;
+        // this makes it structural.
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var mailer = scope.ServiceProvider.GetRequiredService<SystemMailer>();
