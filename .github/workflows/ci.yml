@@ -324,7 +324,7 @@ jobs:
       # Two-step recovery codes: enrols a person with a real TOTP code, then
       # measures the codes the API issues (>= 80 bits each: 0024-mfa.sql's
       # unsalted SHA-256 depends on it), hash-only storage, one use each.
-      # Red on c7cb110 at 50 bits. Approved into CI by Mr. Singh, 27 Sept 2026.
+      # Red on c7cb110 at 50 bits. Approved into CI by Mr. Singh on 29 Sept 2026, for when Actions returns.
       - name: "MFA: recovery codes are 80 bits, stored hashed, used once"
         run: bash tests/mfa/test-recovery-codes.sh
 
