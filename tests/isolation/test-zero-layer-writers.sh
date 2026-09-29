@@ -31,15 +31,18 @@ SCRATCH="$ROOT/.tmp/zero-layer-writers-$$"; mkdir -p "$SCRATCH"; LOG="$SCRATCH/a
 TECHVEIN="11111111-1111-1111-1111-111111111111"
 STARTER="a0000000-0000-0000-0000-000000000001"
 
-WSL_KEEPALIVE=""
+# ITS OWN DATABASE (house rule 13; Mr. Singh, 29 Sept 2026): built by
+# tests/lib/throwaway-db.sh from every file in local/postgres/init/ (applied
+# twice: the re-run check) and dropped by cleanup(), pass or fail. Until then
+# this ran in the shared local database. A caller that sets TATVAOS_PSQL is
+# still obeyed.
+TDB_USED=""
 if [ -z "${TATVAOS_PSQL:-}" ]; then
-    if command -v wsl >/dev/null 2>&1; then
-        wsl -e sleep 1800 >/dev/null 2>&1 & WSL_KEEPALIVE=$!
-        sleep 2
-        TATVAOS_PSQL="wsl -u postgres -e psql -d tatvaos_mail -Atc"
-    else
-        TATVAOS_PSQL="docker exec tv-postgres psql -U postgres -d tatvaos_mail -Atc"
-    fi
+    # shellcheck source=../lib/throwaway-db.sh
+    source "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/throwaway-db.sh"
+    tdb_create zerolayer_writers || exit 2
+    TDB_USED=1
+    TATVAOS_PG_HOST="$TDB_HOST"
 fi
 PG() { $TATVAOS_PSQL "$1" 2>/dev/null | grep -v "^wsl:" | tr -d "\r" | tail -n1; }
 
@@ -57,19 +60,20 @@ same() {
 ORG_ID=""
 API_PID=""
 cleanup() {
-    [ -n "$ORG_ID" ] && PG "DELETE FROM core.tenants WHERE id='$ORG_ID'" >/dev/null
+    [ -n "$ORG_ID" ] && [ -z "$TDB_USED" ] && PG "DELETE FROM core.tenants WHERE id='$ORG_ID'" >/dev/null
     if [ -n "$API_PID" ]; then
         if command -v powershell.exe >/dev/null 2>&1; then
             powershell.exe -NoProfile -Command "\$c = Get-NetTCPConnection -LocalPort $PORT -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if (\$c) { Stop-Process -Id \$c.OwningProcess -Force }" >/dev/null 2>&1
         else fuser -k "$PORT/tcp" >/dev/null 2>&1 || true; fi
         kill "$API_PID" >/dev/null 2>&1 || true
     fi
-    [ -n "$WSL_KEEPALIVE" ] && kill "$WSL_KEEPALIVE" >/dev/null 2>&1
+    # AFTER the API has stopped, so nothing is connected when it goes.
+    [ -n "$TDB_USED" ] && tdb_drop
     if [ "$FAILED" -eq 0 ]; then rm -rf "$SCRATCH"; else printf "  kept for reading: %s\n" "$SCRATCH"; fi
 }
 trap cleanup EXIT
 
-printf "\n  Zero-layer tables: the writers still work under RLS\n  tree under test: %s\n" "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)"
+printf "\n  Zero-layer tables: the writers still work under RLS\n  tree under test: %s\n  database: %s\n" "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)" "${TDB_NAME:-given by the caller (TATVAOS_PSQL)}"
 
 step "0. RLS really is forced on both tables (else this proves nothing)"
 same "core.departments: RLS forced" "$(PG "SELECT relforcerowsecurity FROM pg_class WHERE oid = 'core.departments'::regclass")" "t"
@@ -78,7 +82,7 @@ same "calendar.reminder_sends: RLS forced" "$(PG "SELECT relforcerowsecurity FRO
 step "1. Start the API as the Development operator"
 export ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS="$API" DevOperatorSignIn__Enabled=true
 export JWT_SIGNING_KEY="dev-only-key-at-least-32-characters-long"
-export ConnectionStrings__Postgres="Host=localhost;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
+export ConnectionStrings__Postgres="Host=${TATVAOS_PG_HOST:-localhost};Port=5432;Database=${TDB_NAME:-tatvaos_mail};Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
 export Smtp__Host=localhost Smtp__Port=5870
 if command -v cygpath >/dev/null 2>&1; then export Oidc__KeyDirectory="$(cygpath -w "$SCRATCH")\\keys"; else export Oidc__KeyDirectory="$SCRATCH/keys"; fi
 dotnet run --no-build -c Release --project "$PROJ" > "$LOG" 2>&1 &
