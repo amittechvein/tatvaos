@@ -60,7 +60,8 @@ export default function DeletedOrganisations() {
           <Table head={['Organisation', 'Deleted', 'What there was', 'Files', 'Mail on the server']}>
             {rows.map((r) => {
               const filesFailed = (r.filesRemoved?.errors?.length ?? 0) > 0 || !!r.filesRemoved?.error;
-              const mailLeft = r.mailFolders.length > 0 && !r.mailFoldersRemovedAt;
+              const stillThere = r.mailFolders.filter((d) => !r.mailFoldersRemoved.includes(d));
+              const mailLeft = stillThere.length > 0 && !r.mailFoldersRemovedAt;
               return (
                 <tr key={r.id}>
                   <Td>
@@ -99,7 +100,8 @@ export default function DeletedOrganisations() {
                       <>
                         <Badge tone="warn">Still there</Badge>
                         <p className="mt-1 text-[12px] text-ink-muted">
-                          {r.mailFolders.join(', ')} cannot be registered again until removed.
+                          {stillThere.join(', ')} cannot be registered again until removed.
+                          {r.mailFoldersRemoved.length > 0 && ` Removed: ${r.mailFoldersRemoved.join(', ')}.`}
                         </p>
                       </>
                     )}

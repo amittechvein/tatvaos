@@ -372,6 +372,8 @@ export interface OrganisationDeletion {
   filesRemoved: DeletedFiles | null;
   filesRemovedAt: string | null;
   mailFolders: string[];
+  /** Folders the mail server has removed so far, one domain at a time. */
+  mailFoldersRemoved: string[];
   mailFoldersRemovedAt: string | null;
 }
 

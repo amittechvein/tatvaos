@@ -98,6 +98,13 @@ CREATE TABLE IF NOT EXISTS core.organisation_deletions (
     mail_dirs_purged_by text
 );
 
+-- Domains whose folder the mail server has removed, one at a time
+-- (infra/scripts/maildir-removals.sh --domain, Mr. Singh 29 Sept: each run on
+-- Amit's go). A domain is held while it is pending and not in this list;
+-- mail_dirs_purged_at is set when every pending domain is in it.
+ALTER TABLE core.organisation_deletions
+    ADD COLUMN IF NOT EXISTS mail_dirs_removed text[] NOT NULL DEFAULT '{}';
+
 CREATE INDEX IF NOT EXISTS ix_organisation_deletions_when
     ON core.organisation_deletions (deleted_at DESC);
 CREATE INDEX IF NOT EXISTS ix_organisation_deletions_mail_pending
@@ -322,12 +329,12 @@ BEGIN
         RAISE EXCEPTION 'The name typed does not match the organisation''s name.' USING ERRCODE = 'TVD04';
     END IF;
 
-    SELECT COALESCE(array_agg(d.fqdn::text ORDER BY d.fqdn), '{}') INTO v_domains
+    SELECT COALESCE(array_agg(lower(d.fqdn::text) ORDER BY d.fqdn), '{}') INTO v_domains
       FROM core.domains d WHERE d.tenant_id = p_tenant;
 
     SELECT string_agg(x, ', ') INTO v_bad
       FROM unnest(COALESCE(p_mail_dirs, '{}')) AS x
-     WHERE NOT (x = ANY (v_domains));
+     WHERE NOT (lower(x) = ANY (v_domains));
     IF v_bad IS NOT NULL THEN
         RAISE EXCEPTION 'Mail folders were named for domains this organisation does not hold: %', v_bad
             USING ERRCODE = 'TVD11';
@@ -354,7 +361,7 @@ BEGIN
     VALUES
         (org.id, org.name, org.type, org.origin, org.created_at, org.suspended_at, v_domains, v_counts,
          NULLIF(btrim(COALESCE(p_reason, '')), ''), actor.id, actor.email::text, v_files,
-         COALESCE(p_mail_dirs, '{}'))
+         COALESCE((SELECT array_agg(lower(x)) FROM unnest(p_mail_dirs) AS x), '{}'))
     RETURNING id INTO v_record;
 
     -- 1. What a cascade could trip over (see the header: not needed today,
@@ -426,6 +433,23 @@ GRANT EXECUTE ON FUNCTION core.delete_organisation(uuid, text, uuid, text, text[
 --  trigger and not a check in one endpoint. (fqdn is citext and the list is
 --  text[]: without the cast there is no such operator and EVERY insert into
 --  core.domains fails — the first run of tests/admin-org-delete found it.)
+--  The question itself, in one place: the trigger, the API's friendly
+--  refusal and the removal script all ask it the same way.
+CREATE OR REPLACE FUNCTION core.domain_mail_held(p_fqdn text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+    SELECT EXISTS (SELECT 1 FROM core.organisation_deletions d
+                    WHERE d.mail_dirs_purged_at IS NULL
+                      AND lower(p_fqdn) = ANY (d.mail_dirs_pending)
+                      AND NOT (lower(p_fqdn) = ANY (d.mail_dirs_removed)));
+$$;
+REVOKE ALL ON FUNCTION core.domain_mail_held(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION core.domain_mail_held(text) TO tatvaos_app;
+
 CREATE OR REPLACE FUNCTION core.refuse_domain_with_leftover_mail()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -433,9 +457,7 @@ SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
 AS $$
 BEGIN
-    IF EXISTS (SELECT 1 FROM core.organisation_deletions d
-                WHERE d.mail_dirs_purged_at IS NULL
-                  AND d.mail_dirs_pending @> ARRAY[NEW.fqdn::text]) THEN
+    IF core.domain_mail_held(NEW.fqdn::text) THEN
         RAISE EXCEPTION 'The domain % belonged to an organisation that was deleted, and its mail is still on the server. It can be registered again once that mail has been removed.', NEW.fqdn
             USING ERRCODE = 'TVD20';
     END IF;

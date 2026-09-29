@@ -451,9 +451,15 @@ e=$(PGE "INSERT INTO core.domains (tenant_id, fqdn, type) VALUES ('$TECHVEIN','$
 has  "the database refuses it by itself, whoever asks" "$e" "its mail is still on the server"
 same "the platform name was free to reuse: it had no mail folder" \
     "$(PG "SELECT count(*) FROM core.organisation_deletions WHERE id='$RECORD' AND mail_dirs_pending @> ARRAY['$PLATFORM_FQDN']")0" "00"
-# A person removes the folder on the server and marks it.
+# The mail server's job removes the folder and lists the domain as removed
+# (infra/scripts/maildir-removals.sh --domain, PR 321). Listing it is enough
+# for that one domain, before the record as a whole is done.
 rm -rf "$SCRATCH/vmail/$FQDN"
-PG "UPDATE core.organisation_deletions SET mail_dirs_purged_at=now(), mail_dirs_purged_by='test' WHERE id='$RECORD'" >/dev/null
+same "held while pending and not removed" "$(PG "SELECT core.domain_mail_held('$FQDN')")" "t"
+same "…held whatever the case it is asked in" "$(PG "SELECT core.domain_mail_held(upper('$FQDN'))")" "t"
+PG "UPDATE core.organisation_deletions SET mail_dirs_removed = array_append(mail_dirs_removed, '$FQDN') WHERE id='$RECORD'" >/dev/null
+same "once listed as removed: no longer held" "$(PG "SELECT core.domain_mail_held('$FQDN')")" "f"
+same "…though the record as a whole is not marked done"     "$(PG "SELECT (mail_dirs_purged_at IS NULL)::text FROM core.organisation_deletions WHERE id='$RECORD'")" "true"
 r=$(callm POST "/api/admin/organisations" "$OPERATOR" "$NEW")
 same "once marked removed, the domain can be registered" "$(status "$r")" "201"
 ORG2=$(PG "SELECT id FROM core.tenants WHERE name='$NAME2'")

@@ -234,6 +234,7 @@ public static partial class OrganisationDeletionEndpoints
                            cardinality(recording_files) AS "recordingFiles",
                            files_removed AS "filesRemoved", files_removed_at AS "filesRemovedAt",
                            mail_dirs_pending AS "mailFolders",
+                           mail_dirs_removed AS "mailFoldersRemoved",
                            mail_dirs_purged_at AS "mailFoldersRemovedAt"
                       FROM core.organisation_deletions
                      ORDER BY deleted_at DESC
@@ -444,8 +445,7 @@ public static class DeletedOrganisationDomains
     public static async Task<bool> IsHeldAsync(AppDbContext db, string fqdn, CancellationToken ct)
     {
         var held = await db.Database.SqlQuery<int>($"""
-            SELECT count(*)::int AS "Value" FROM core.organisation_deletions
-             WHERE mail_dirs_purged_at IS NULL AND mail_dirs_pending @> ARRAY[{fqdn}]::text[]
+            SELECT CASE WHEN core.domain_mail_held({fqdn}) THEN 1 ELSE 0 END AS "Value"
             """).FirstAsync(ct);
         return held > 0;
     }
