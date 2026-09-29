@@ -23,6 +23,14 @@
 --  It runs as its owner, so RLS does not apply inside it; its body is the only
 --  guard. search_path is pinned with pg_temp LAST (Mr. Singh, 24 Sept, the
 --  definer audit), and only tatvaos_app may call it.
+--
+--  LIVE ORGANISATIONS ONLY: status 'active' or 'trial', the same two words
+--  core.share_is_live and resolve_meeting_code use. Mr. Singh, 29 Sept 2026,
+--  a condition of merging this: "a suspended school shouldn't keep emailing
+--  its staff." Without it a suspended or deleted organisation's reminders
+--  went out like anyone's - measured by tests/calendar/test-reminders.sh,
+--  red on the previous body with both sends recorded. core.tenants is named
+--  in full: the pinned search_path does not include core.
 -- ============================================================================
 
 CREATE OR REPLACE FUNCTION calendar.reminder_tenants()
@@ -35,8 +43,10 @@ AS $$
     SELECT DISTINCT e.tenant_id
       FROM calendar.event_reminders r
       JOIN calendar.events e ON e.id = r.event_id
+      JOIN core.tenants t    ON t.id = e.tenant_id
      WHERE e.deleted_at IS NULL
        AND e.status <> 'cancelled'
+       AND t.status IN ('active', 'trial')
 $$;
 
 REVOKE ALL ON FUNCTION calendar.reminder_tenants() FROM PUBLIC;
