@@ -113,7 +113,9 @@ winpath() { if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else pr
 
 export JWT_SIGNING_KEY="dev-only-key-at-least-32-characters-long"
 export ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS="$API"
-export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
+# House rule 13: a run through tests/lib/throwaway-db.sh (PR 359) supplies
+# its own database as TDB_CONN; the shared tatvaos_mail is only the fallback.
+export ConnectionStrings__Postgres="${TDB_CONN:-Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true}"
 export Smtp__Host=localhost Smtp__Port=5870
 export Personal__PhoneHashKey="test-only-phone-hash-key-at-least-32-characters"
 export Oidc__KeyDirectory="$(winpath "$SCRATCH/keys")"
@@ -162,7 +164,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-step "0. The database answers, and has the deletion functions ($TATVAOS_PG_HOST)"
+step "0. The database answers, and has the deletion functions (${TDB_NAME:-${TATVAOS_PG_HOST:-}})"
 for _ in $(seq 1 30); do [ -n "$(PG "SELECT 1")" ] && break; sleep 1; done
 [ -n "$(PG "SELECT 1")" ] || { fail "psql does not answer"; exit 1; }
 pass "psql answers"
@@ -185,6 +187,8 @@ curl -s -o /dev/null -w "%{http_code}" "$API/health" | grep -q 200 && pass "API 
 PG "UPDATE core.users SET phone='+919999900001' WHERE email='amit@techvein.local' AND phone IS NULL" >/dev/null
 OWNER=$(signin "+919999900001")
 [ -n "$OWNER" ] && pass "signed in as the Techvein owner" || { fail "owner sign-in failed"; exit 1; }
+# A fresh database (rule 13) has the operator-to-be without a phone number.
+PG "UPDATE core.users SET phone='+919999900003' WHERE email='principal@abcschool.local' AND phone IS NULL" >/dev/null
 PRINCIPAL_WAS=$(PG "SELECT role FROM core.users WHERE email='principal@abcschool.local'")
 PG "UPDATE core.users SET role='super_admin' WHERE email='principal@abcschool.local'" >/dev/null
 OPERATOR=$(signin "+919999900003")
