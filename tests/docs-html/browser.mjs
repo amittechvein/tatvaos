@@ -1,7 +1,7 @@
 // ============================================================================
 //  The sanitiser's output, loaded in a real browser.
 //
-//  Mr. Singh, 30 Sept 2026 (PR 273): "cannot run" was checked by reading the
+//  Mr. Singh, by 28 Sept 2026 (PR 273; see 0011's note on dates): "cannot run" was checked by reading the
 //  output as a string. A string check is a claim about text; whether
 //  something runs is decided by a browser's parser, which is exactly where
 //  sanitisers are beaten. So every output is loaded in Chromium, and three
