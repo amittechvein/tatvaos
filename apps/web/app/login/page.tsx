@@ -6,6 +6,7 @@ import { Suspense, useEffect, useRef, useState } from 'react';
 
 import { useAuth, type MfaChallenge } from '@/lib/auth';
 import { homeFor } from '@/components/RequireAuth';
+import { safeNext } from '@/lib/safeNext';
 import { Button } from '@/components/ui/Kit';
 import { Field, Input, Select, Checkbox } from '@/components/ui/Form';
 import { Alert } from '@/components/ui/Page';
@@ -150,14 +151,13 @@ function SignInForm() {
   // WHERE `next` MAY POINT: a path inside this site, and nothing else. It
   // arrives in the address bar, so anyone can write it; handed to the router
   // as it came, "?next=https://elsewhere.example" sent a person who had just
-  // typed their password to a page of somebody else's choosing. One leading
-  // slash, so "//host" and "/\host" (which browsers read as another site) are
-  // refused too. Anything else falls through to the person's own home.
-  const next = (() => {
-    const raw = params.get('next');
-    if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) return null;
-    return raw;
-  })();
+  // typed their password to a page of somebody else's choosing. The browser's
+  // own URL parser decides, not a test on the string: see lib/safeNext.ts for
+  // the "/%09/evil.example" case that got past the string test. Anything
+  // refused falls through to the person's own home.
+  // Read only in the effect below, which runs in the browser; during the
+  // server render there is no window, and no navigation either.
+  const next = typeof window === 'undefined' ? null : safeNext(params.get('next'), window.location.origin);
 
   // Who was signed in when this page finished loading. In "add account" mode
   // a session is already here, so "there is a user" cannot mean "a sign-in
