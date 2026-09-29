@@ -205,6 +205,11 @@ same "…and a preview numbers nothing" "$(PG "SELECT count(*) FROM core.invoice
 
 r=$(callm POST "$TV/invoices" "$OPERATOR" '{"includePlan":true,"extraLines":[{"description":"AI credits top-up","quantity":1,"unitPrice":500}]}')
 same "issued" "$(status "$r")" "201"; B=$(body "$r"); INV1=$(jq_ "$B" "d['id']")
+# It names who issued it. Until 29 Sept 2026 every invoice carried the all-zero
+# id here: the operator's id was read from a claim the JWT handler had renamed
+# (apps/api/Shared/Auth/SignedIn.cs).
+same "the invoice names the operator who issued it" "$(PG "SELECT created_by FROM core.invoices WHERE id='$INV1'")" \
+    "$(PG "SELECT id FROM core.users WHERE email='principal@abcschool.local'")"
 same "numbered PREFIX/FY/next" "$(jq_ "$B" "d['number']")" "TV/$FY/$(printf '%04d' $(( ${SEQ_WAS:-0} + 1 )))"
 same "two lines, total 1758.20 (1490 + 18%)" "$(jq_ "$B" "str(len(d['lines']))+'/'+('%.2f' % d['total'])")" "2/1758.20"
 same "the seller is copied onto it" "$(jq_ "$B" "d['seller']['gstin']")" "10AAACT1234A1Z5"
