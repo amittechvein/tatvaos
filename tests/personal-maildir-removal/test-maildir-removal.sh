@@ -172,7 +172,10 @@ PG "INSERT INTO core.personal_purge_leftovers(kind, ref) VALUES ('maildir', '')"
 o=$(bash "infra/scripts/.mr-cut-$RUN.sh" 2>&1 | tr -d '')
 has  "an empty address reaching run_expunge: refused there" "$o" "REFUSED at doveadm: [] is not one address"
 same "…doveadm never called" "$(wc -l < "$MR_FAKE_LOG" | tr -d ' ')" "0"
-sed -i 's/if ! one_address "\${1-}"; then/if false; then/' "infra/scripts/.mr-cut-$RUN.sh"
+# The guard also accepts an organisation's address since --domain (29 Sept);
+# the cut takes out the whole condition.
+sed -i 's/if ! one_address "\${1-}" \&\& ! one_org_address "\${1-}"; then/if false; then/' "infra/scripts/.mr-cut-$RUN.sh"
+same "(the copy now has the doveadm guard cut too)" "$(grep -c 'if false; then' "infra/scripts/.mr-cut-$RUN.sh")" "3"
 : > "$MR_FAKE_LOG"
 bash "infra/scripts/.mr-cut-$RUN.sh" >/dev/null 2>&1
 same "calibrated: with that guard cut too, doveadm IS called with an empty user" "$(cat "$MR_FAKE_LOG")" "expunge []"

@@ -55,12 +55,55 @@
 #  NOT been run by this script yet: that is the first thing to do on the
 #  server, with --dry-run, then on one throwaway address. See the PR.
 # ─────────────────────────────────────────────────────────────────────────────
+#
+# ─────────────────────────────────────────────────────────────────────────────
+#  A DELETED ORGANISATION'S MAIL — ONE DOMAIN, BY HAND (Mr. Singh, 29 Sept 2026)
+#
+#   ./infra/scripts/maildir-removals.sh --domain <domain> --dry-run   the exact path and commands
+#   ./infra/scripts/maildir-removals.sh --domain <domain>             remove it
+#
+#  Deleting an organisation (PR 353) removes its rows; the API cannot remove
+#  its mail files. The domains whose folder exists are left pending on
+#  core.organisation_deletions, and the domain cannot be registered again
+#  until its folder is gone. This removes ONE such folder.
+#
+#  NEVER FROM CRON AND NEVER FROM A DEPLOY. Each run is a person's decision,
+#  on Amit's go, the first one on one of his own test organisations. The cron
+#  line above calls this script with no arguments, which never reaches here.
+#
+#  A WHOLE DOMAIN FOLDER IS FAR MORE DANGEROUS THAN ONE ADDRESS: an empty
+#  domain turned into "vhosts/" would delete every customer's mail. So the
+#  guards come first, and every one of them refuses rather than guesses:
+#
+#    1. the domain is non-empty and a plain domain name (no "/", no "..",
+#       no whitespace, no leading "-", lower case)
+#    2. it is HELD by an organisation deletion (core.domain_mail_held):
+#       pending, and not already removed
+#    3. it is NOT registered again: no core.domains row has it, and no
+#       mailbox or alias is at it
+#    4. the folder resolves (realpath -e, symlinks followed) to EXACTLY
+#       <vhosts>/<domain>, whose parent is <vhosts>, and which is not <vhosts>
+#    5. every folder inside it is a plain local part — one that is not is a
+#       folder nobody explained, and the whole domain is left
+#
+#  Then: doveadm expunges each address (the mail server removes the
+#  messages), the message files left are counted, and ONLY at zero is the
+#  folder removed (rm -rf on the path checked in 4, re-checked immediately
+#  before). The domain is then listed as removed on its deletion record,
+#  which releases it; the record is marked done when all its domains are.
+# ─────────────────────────────────────────────────────────────────────────────
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 
 LOG="${MR_LOG:-$HOME/tatvaos-maildir-removals.log}"
 BATCH="${MR_BATCH:-20}"
 DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
+DOMAIN_MODE=0
+if [ "${1:-}" = "--domain" ]; then
+    DOMAIN_MODE=1
+    if [ $# -lt 2 ]; then DOMAIN_ARG=""; else DOMAIN_ARG="$2"; fi   # absent and "" alike: refused below
+    [ "${3:-}" = "--dry-run" ] && DRY=1
+fi
 
 say() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*"; }
 
@@ -98,12 +141,38 @@ one_address() {
     printf '%s' "$a" | grep -Eq -- '^[a-z][a-z0-9.-]{2,62}[a-z0-9]@[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
 }
 
+one_domain() {
+    local d="${1-}"
+    [ -n "$d" ] || return 1
+    [ "${#d}" -le 253 ] || return 1
+    case "$d" in *[[:space:]]*|-*|*..*|*/*|*\\*|.*) return 1 ;; esac
+    printf '%s' "$d" | grep -Eq -- '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
+}
+# A folder inside a domain: the local part of an address, nothing else.
+one_local_part() {
+    local l="${1-}"
+    [ -n "$l" ] || return 1
+    case "$l" in *[[:space:]]*|-*|*..*|*/*|*\\*|.*) return 1 ;; esac
+    printf '%s' "$l" | grep -Eq -- '^[a-z0-9][a-z0-9._+-]{0,63}$'
+}
+
+# An organisation's address, for --domain: a plain local part at a plain
+# domain. Looser than one_address on the local part (an organisation has
+# "hr@"), exactly as strict on everything that could become a path or an
+# option.
+one_org_address() {
+    local a="${1-}"
+    [ -n "$a" ] || return 1
+    case "$a" in *@*@*) return 1 ;; esac
+    one_local_part "${a%@*}" && one_domain "${a#*@}"
+}
+
 # The one doveadm command, as an array: the address is one argument, whatever
 # it contains. Printed by --dry-run exactly as it would run.
 expunge_cmd() { EXPUNGE=(docker exec -u vmail "$DOVECOT" doveadm expunge -u "$1" mailbox '*' all); }
 run_expunge() {
     # The last guard, where it matters: nothing reaches doveadm but one address.
-    if ! one_address "${1-}"; then say "REFUSED at doveadm: [${1-}] is not one address"; return 99; fi
+    if ! one_address "${1-}" && ! one_org_address "${1-}"; then say "REFUSED at doveadm: [${1-}] is not one address"; return 99; fi
     if [ -n "${MR_EXPUNGE:-}" ]; then $MR_EXPUNGE "$1"; return; fi
     expunge_cmd "$1"; "${EXPUNGE[@]}"
 }
@@ -124,6 +193,134 @@ count_files() {
 
 if [ -z "${MR_PSQL:-}" ] && { [ -z "$PG" ] || [ -z "$DOVECOT" ]; }; then
     say "REFUSED: need both containers running (postgres=[$PG] dovecot=[$DOVECOT])"; exit 1
+fi
+
+# ==============================================================================
+#  --domain: one deleted organisation's mail folder (header above)
+# ==============================================================================
+if [ $DOMAIN_MODE = 1 ]; then
+    D="$DOMAIN_ARG"                       # nothing trimmed: a space is refused, not tidied
+    VROOT="${MR_VMAIL_ROOT:-/var/mail/vhosts}"
+
+    # Commands on the mail store: inside the Dovecot container as vmail, or,
+    # for the local test (MR_VMAIL_ROOT set), on a local tree. Every path
+    # travels as its own argument; there is no shell string anywhere here.
+    in_store() {
+        if [ -n "${MR_VMAIL_ROOT:-}" ]; then "$@"
+        else docker exec -u vmail "$DOVECOT" "$@"; fi
+    }
+
+    # 1. The name.
+    if ! one_domain "$D"; then
+        say "REFUSED domain [$D]: not one plain domain name (empty, whitespace, a path, or not a domain)"; exit 2
+    fi
+
+    # 2 and 3. The database: held by a deletion, and not registered again.
+    dwhy=$(sql -v d="$D" <<'SQL'
+SELECT CASE
+  WHEN to_regclass('core.organisation_deletions') IS NULL
+    OR NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'core.organisation_deletions'::regclass
+                                             AND attname = 'mail_dirs_removed' AND NOT attisdropped)
+                                                                         THEN 'this database has no organisation deletions (needs PR 353)'
+  WHEN EXISTS (SELECT 1 FROM core.domains WHERE lower(fqdn::text) = :'d')  THEN 'REGISTERED AGAIN: a core.domains row has this domain'
+  WHEN EXISTS (SELECT 1 FROM mail.mailboxes WHERE lower(split_part(address::text, '@', 2)) = :'d')
+                                                                         THEN 'a mailbox is at this domain'
+  WHEN EXISTS (SELECT 1 FROM mail.aliases WHERE lower(split_part(address::text, '@', 2)) = :'d')
+                                                                         THEN 'an alias is at this domain'
+  WHEN NOT core.domain_mail_held(:'d')                                   THEN 'not held by an organisation deletion (not pending, or already removed)'
+  ELSE 'ok' END;
+SQL
+)
+    dwhy=$(printf '%s' "$dwhy" | tr -d '\r')
+    if [ "$dwhy" != "ok" ]; then say "REFUSED domain [$D]: ${dwhy:-the database gave no answer}"; exit 2; fi
+
+    # 4. The path. Resolved by the store's own realpath, symlinks followed.
+    ROOT_REAL=$(in_store realpath -e -- "$VROOT" 2>/dev/null | tr -d '\r')
+    if [ -z "$ROOT_REAL" ] || [ "$ROOT_REAL" = "/" ]; then
+        say "REFUSED domain [$D]: the mail store root [$VROOT] does not resolve"; exit 2
+    fi
+    TARGET="$ROOT_REAL/$D"
+    if ! in_store test -e "$TARGET"; then
+        RESOLVED=""                                  # no folder: nothing to remove
+    else
+        RESOLVED=$(in_store realpath -e -- "$TARGET" 2>/dev/null | tr -d '\r')
+        if [ "$RESOLVED" != "$TARGET" ] || [ "$RESOLVED" = "$ROOT_REAL" ] \
+           || [ "$(dirname -- "$RESOLVED")" != "$ROOT_REAL" ] || [ "$(basename -- "$RESOLVED")" != "$D" ]; then
+            say "REFUSED domain [$D]: [$TARGET] resolves to [${RESOLVED:-nothing}], not exactly a child of [$ROOT_REAL]"; exit 2
+        fi
+        if ! in_store test -d "$RESOLVED" || in_store test -L "$TARGET"; then
+            say "REFUSED domain [$D]: [$TARGET] is not a plain folder"; exit 2
+        fi
+    fi
+
+    # 5. What is inside.
+    LOCALS=()
+    if [ -n "$RESOLVED" ]; then
+        mapfile -t LOCALS < <(in_store find "$RESOLVED" -mindepth 1 -maxdepth 1 -printf '%f\n' | tr -d '\r')
+        for l in "${LOCALS[@]}"; do
+            if ! one_local_part "$l" || ! in_store test -d "$RESOLVED/$l"; then
+                say "REFUSED domain [$D]: [$RESOLVED/$l] is not a plain address folder; nothing touched"; exit 2
+            fi
+        done
+    fi
+    count_domain() {
+        local out
+        out=$(in_store find "$RESOLVED" -type f \( -path '*/cur/*' -o -path '*/new/*' -o -path '*/tmp/*' \)) || { echo "?"; return; }
+        [ -z "$out" ] && echo 0 || printf '%s\n' "$out" | wc -l
+    }
+
+    if [ $DRY = 1 ]; then
+        say "DRY RUN domain [$D]: every check passed; nothing will be changed"
+        if [ -z "$RESOLVED" ]; then
+            say "  no folder at [$TARGET]: a real run would only list the domain as removed"
+        else
+            say "  the path, exactly: $RESOLVED"
+            say "  ${#LOCALS[@]} address folder(s), $(count_domain) message file(s)"
+            for l in "${LOCALS[@]}"; do
+                expunge_cmd "$l@$D"; say "  would run: $(printf '%q ' "${EXPUNGE[@]}")"
+            done
+            say "  then, only if 0 message files remain: $(printf '%q ' docker exec -u vmail "$DOVECOT" rm -rf -- "$RESOLVED")"
+        fi
+        exit 0
+    fi
+
+    if [ -n "$RESOLVED" ]; then
+        # The mail server removes the messages, one address at a time.
+        for l in "${LOCALS[@]}"; do
+            out=$(run_expunge "$l@$D" 2>&1); rc=$?
+            [ $rc -ne 0 ] && say "doveadm for [$l@$D] exited $rc: $(printf '%s' "$out" | head -c 300)"
+        done
+        n=$(count_domain | tr -d '\r[:space:]')
+        if [ "$n" != "0" ]; then
+            say "NOT DONE domain [$D]: ${n:-?} message file(s) remain after doveadm; the folder stays, the domain stays held"; exit 3
+        fi
+        # Checked again, immediately before: nothing has moved under it.
+        again=$(in_store realpath -e -- "$TARGET" 2>/dev/null | tr -d '\r')
+        if [ "$again" != "$RESOLVED" ] || [ "$(dirname -- "$again")" != "$ROOT_REAL" ]; then
+            say "REFUSED domain [$D]: the path changed between the checks and the removal ([$again])"; exit 2
+        fi
+        in_store rm -rf -- "$RESOLVED"
+        if in_store test -e "$RESOLVED"; then
+            say "NOT DONE domain [$D]: [$RESOLVED] is still there after removal; the domain stays held"; exit 3
+        fi
+        say "removed [$RESOLVED]"
+    fi
+
+    sql -v d="$D" <<'SQL' >/dev/null
+UPDATE core.organisation_deletions
+   SET mail_dirs_removed = array_append(mail_dirs_removed, :'d')
+ WHERE mail_dirs_purged_at IS NULL AND :'d' = ANY (mail_dirs_pending) AND NOT (:'d' = ANY (mail_dirs_removed));
+UPDATE core.organisation_deletions
+   SET mail_dirs_purged_at = now(), mail_dirs_purged_by = 'maildir-removals.sh'
+ WHERE mail_dirs_purged_at IS NULL AND mail_dirs_pending <@ mail_dirs_removed;
+SQL
+    held=$(sql -v d="$D" <<'SQL' | tr -d '\r'
+SELECT core.domain_mail_held(:'d');
+SQL
+)
+    if [ "$held" = "f" ]; then say "done domain [$D]: listed as removed; it can be registered again"
+    else say "NOT DONE domain [$D]: the folder is gone but the record still holds it ([$held])"; exit 3; fi
+    exit 0
 fi
 
 # ---- The queue ---------------------------------------------------------------
