@@ -103,7 +103,9 @@ callx() {
 
 export JWT_SIGNING_KEY="dev-only-key-at-least-32-characters-long"
 export ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS="$API"
-export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
+# House rule 13: a run through tests/lib/throwaway-db.sh (PR 359) supplies
+# its own database as TDB_CONN; the shared tatvaos_mail is only the fallback.
+export ConnectionStrings__Postgres="${TDB_CONN:-Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true}"
 export Smtp__Host=localhost Smtp__Port=5870
 export Personal__PhoneHashKey="test-only-phone-hash-key-at-least-32-characters"
 if command -v cygpath >/dev/null 2>&1; then export Oidc__KeyDirectory="$(cygpath -w "$SCRATCH")\\keys"; else export Oidc__KeyDirectory="$SCRATCH/keys"; fi
@@ -138,7 +140,7 @@ else fail "these still read \"sub\" by itself, and will name nobody: $(printf "%
 same "the readers that remain ask for NameIdentifier first (3 files)" \
     "$(grep -ln 'ClaimTypes.NameIdentifier' "$ROOT/apps/api/Shared/Auth/SignedIn.cs" "$ROOT/apps/api/Shared/Tenancy/TenantMiddleware.cs" "$ROOT/apps/api/Program.cs" | wc -l | tr -d ' ')" "3"
 
-step "1. The database answers; the API starts; the operator signs in ($TATVAOS_PG_HOST)"
+step "1. The database answers; the API starts; the operator signs in (${TDB_NAME:-${TATVAOS_PG_HOST:-}})"
 for _ in $(seq 1 30); do [ -n "$(PG "SELECT 1")" ] && break; sleep 1; done
 [ -n "$(PG "SELECT 1")" ] || { fail "psql does not answer"; exit 1; }
 PLAN=$(PG "SELECT id FROM core.plans ORDER BY name LIMIT 1")
@@ -148,6 +150,10 @@ dotnet run --no-build -c Release --project "$PROJ" > "$LOG" 2>&1 &
 API_PID=$!
 for _ in $(seq 1 150); do curl -s -o /dev/null -w "%{http_code}" "$API/health" 2>/dev/null | grep -q 200 && break; sleep 1; done
 curl -s -o /dev/null -w "%{http_code}" "$API/health" | grep -q 200 && pass "API up" || { fail "API did not start"; tail -5 "$LOG"; exit 1; }
+# A fresh database (rule 13) has the seeded people without phone numbers;
+# give the two this suite signs in as theirs, only where none is set.
+PG "UPDATE core.users SET phone='+919999900003' WHERE email='principal@abcschool.local' AND phone IS NULL" >/dev/null
+PG "UPDATE core.users SET phone='+919999900001' WHERE email='amit@techvein.local' AND phone IS NULL" >/dev/null
 PRINCIPAL_WAS=$(PG "SELECT role FROM core.users WHERE email='principal@abcschool.local'")
 PG "UPDATE core.users SET role='super_admin' WHERE email='principal@abcschool.local'" >/dev/null
 OPERATOR=$(signin "+919999900003")
