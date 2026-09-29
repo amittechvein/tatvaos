@@ -33,7 +33,23 @@ paper copy); **never generate a fresh one on a server that has data.**
 | key | what it decides | if it changes |
 |---|---|---|
 | `PERSONAL_PHONE_HASH_KEY` | the fingerprint of every personal account's phone number: one personal account and one AI trial per number, ever (PR 311) | **every phone can sign up again**, with a second account and a second free trial; nothing errors |
-| the billing key (PR 320, when it lands) | to be written here with it | — |
+| `JWT_SIGNING_KEY` (the sign-in key) | signs sign-in tokens **and**, until the keys are separated, is the key stored MFA secrets and sealed secret settings are encrypted with: the Razorpay key secret and webhook secret (billing, PR 320/322), the Infobip password, the MSG91 auth key, the Google OAuth client secret | everyone is signed out, which is expected - **and every stored MFA secret and every sealed secret setting becomes unreadable at once**: people with MFA cannot sign in, and SMS sign-in, Google sign-in and Razorpay payments stop |
+
+**`JWT_SIGNING_KEY` is on this list until the keys are separated** (Mr. Singh,
+29 Sept 2026, reviewing PR 346). It is not only a signing key. Two things
+fall back to it when their own key is unset - MFA (`Mfa:EncryptionKey`) and
+secret platform settings (`Settings:EncryptionKey`, then `Mfa:EncryptionKey`)
+- and neither compose file passes either key to the API (checked on `main`,
+29 Sept 2026; the live container is to be confirmed with a yes/no read that
+never prints a value). So a rotation of the sign-in key is **not** a routine
+rotation: it silently turns every stored MFA secret and sealed setting into
+data nobody can read. Restore it from `env.txt` like the key below, never
+generate a fresh one on a server that has data, and never print it.
+
+Separating them is its own PR, designed and brought to Mr. Singh before it is
+built: new keys, the existing secrets re-encrypted in one transaction, and
+the sign-in key kept as the old key until the re-encryption is verified. When
+that lands, this row changes to name the new keys instead.
 
 `PERSONAL_PHONE_HASH_KEY` is generated once (`openssl rand -hex 32`), at the
 switch-on of personal accounts. Compose refuses to run without it, and the API
