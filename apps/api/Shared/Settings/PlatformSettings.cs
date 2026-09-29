@@ -33,6 +33,22 @@ public static class SettingKeys
     public const string RazorpayKeyId = "billing.razorpay.key_id";
     public const string RazorpayKeySecret = "billing.razorpay.key_secret";
 
+    // Techvein as the SELLER on every GST invoice (billing part 1, 26 Sept
+    // 2026). No invoice is issued until the legal name, GSTIN, address,
+    // state code and SAC are all set: an invoice without them is not a
+    // valid tax invoice, and it cannot be edited after it is sent.
+    public const string SellerLegalName = "billing.seller.legal_name";
+    public const string SellerGstin = "billing.seller.gstin";
+    public const string SellerAddress = "billing.seller.address";
+    public const string SellerStateCode = "billing.seller.state_code";
+    public const string SellerSac = "billing.seller.sac";
+    public const string InvoicePrefix = "billing.invoice_prefix";
+    public const string PaymentTermsDays = "billing.payment_terms_days";
+    // Payment is online only, through Razorpay (Amit, 26 Sept 2026). The
+    // webhook secret is the one set on the Razorpay dashboard's webhook for
+    // https://core.tatvaos.com/api/billing/razorpay/webhook.
+    public const string RazorpayWebhookSecret = "billing.razorpay.webhook_secret";
+
     // Mail identity
     public const string SmtpFrom = "mail.smtp_from";
 
@@ -45,6 +61,11 @@ public static class SettingKeys
     // Which organisations may use TatvaOS AI in Mail at all (AiProductSwitch).
     public const string AiMailOrganisations = "ai.mail.organisations";
 
+    // Personal accounts (/join) — build plan personal-plans-build-plan.md §1
+    // and §3.4. Closed by default: the switch-on waits for the five launch
+    // gates, and a deploy must never open it.
+    public const string PersonalSignupOpen = "personal.signup_open";
+    public const string PersonalCodesPerHour = "personal.signup_codes_per_hour";
     // Amit, 26 Sept 2026: at a plan limit, warn first. The operator always
     // sees the warnings; this decides whether the organisation's own
     // administrators see them too. OFF until the wording is approved.
@@ -87,6 +108,26 @@ public static class SettingKeys
         new(RazorpayKeyId, "billing", "Razorpay key ID", false,
             "Checkout integration ships with the billing section; keys stored and ready."),
         new(RazorpayKeySecret, "billing", "Razorpay key secret", true, ""),
+        new(SellerLegalName, "billing", "Seller: legal name", false,
+            "Printed on every invoice as the seller, e.g. Techvein IT Solutions Pvt. Ltd."),
+        new(SellerGstin, "billing", "Seller: GSTIN", false,
+            "Techvein's 15-character GSTIN. No invoice can be issued until this is set."),
+        new(SellerAddress, "billing", "Seller: registered address", false,
+            "The address on the GST registration."),
+        new(SellerStateCode, "billing", "Seller: GST state code", false,
+            "Two digits, the first two of the GSTIN (e.g. 10 Bihar, 27 Maharashtra). A customer in the "
+            + "same state is charged CGST 9% + SGST 9%; anywhere else IGST 18%."),
+        new(SellerSac, "billing", "SAC code for the service", false,
+            "The GST service code printed on each invoice line. Confirm with your accountant."),
+        new(InvoicePrefix, "billing", "Invoice number prefix", false,
+            "1-3 capital letters. Invoices are numbered PREFIX/2026-27/0001, starting again each April. "
+            + "GST allows 16 characters in an invoice number, which is why the prefix is short."),
+        new(PaymentTermsDays, "billing", "Days to pay", false,
+            "Due date = issue date + this many days. Empty means 15."),
+        new(RazorpayWebhookSecret, "billing", "Razorpay webhook secret", true,
+            "Create a webhook in the Razorpay dashboard for https://core.tatvaos.com/api/billing/razorpay/webhook "
+            + "with the event payment_link.paid, and paste the secret you chose there. Without it, payments are "
+            + "still recorded when the customer returns to TatvaOS, but not if they close the page first."),
 
         new(SmtpFrom, "mail", "System mail from-address", false,
             "OTP codes and invoices are sent as this address, through our own mail server on the tatvaos.com domain."),
@@ -107,6 +148,13 @@ public static class SettingKeys
             + "EMPTY means every organisation may. Set to Techvein alone on 25 Sept 2026 until the "
             + "privacy policy describes Mail AI (Mr. Singh) — empty it once that text is live."),
 
+        new(PersonalSignupOpen, "personal", "Personal signup open (/join)", false,
+            "OFF until launch. ON lets anyone create a free personal address at /join. Needs a personal "
+            + "house organisation with a verified domain and the phone-hash key as well, or /join stays "
+            + "closed whatever this says."),
+        new(PersonalCodesPerHour, "personal", "Signup SMS codes per hour (whole platform)", false,
+            "A ceiling on SMS codes sent by /join across everyone, so the form cannot run up an SMS bill. "
+            + "Empty means 200. Per number (3 an hour) and per address (10 an hour) are fixed in code."),
         new(PlansWarnClients, "plans", "Show plan warnings to organisation administrators", false,
             "true shows each organisation's administrators a notice when they use something their plan "
             + "does not include, or pass a plan limit. Nothing is ever stopped. You always see the "
@@ -122,17 +170,33 @@ public static class SettingKeys
 /// which at signup volume is nothing, and it means a saved change takes effect
 /// on the very next request with no cache to invalidate and no restart.
 /// </summary>
-public sealed class SettingsReader(AppDbContext db)
+/// Secret values are stored encrypted (SettingsCrypto) and decrypted here, so
+/// every caller keeps seeing the plain value it always saw. Without a crypto
+/// instance (one caller builds the reader by hand for non-secret keys) an
+/// encrypted value reads as not set, never as its ciphertext.
+public sealed class SettingsReader(AppDbContext db, SettingsCrypto? crypto = null)
 {
-    public async Task<Dictionary<string, string>> GetAsync(CancellationToken ct = default) =>
-        await db.PlatformSettings.AsNoTracking()
-            .ToDictionaryAsync(s => s.Key, s => s.Value, ct);
+    private string? Plain(string stored) =>
+        crypto is not null ? crypto.Open(stored)
+        : stored.StartsWith(SettingsCrypto.Prefix, StringComparison.Ordinal) ? null : stored;
 
-    public async Task<string?> GetAsync(string key, CancellationToken ct = default) =>
-        await db.PlatformSettings.AsNoTracking()
+    public async Task<Dictionary<string, string>> GetAsync(CancellationToken ct = default)
+    {
+        var rows = await db.PlatformSettings.AsNoTracking().ToListAsync(ct);
+        var result = new Dictionary<string, string>();
+        foreach (var r in rows)
+            if (Plain(r.Value) is string v) result[r.Key] = v;
+        return result;
+    }
+
+    public async Task<string?> GetAsync(string key, CancellationToken ct = default)
+    {
+        var stored = await db.PlatformSettings.AsNoTracking()
             .Where(s => s.Key == key)
             .Select(s => s.Value)
             .FirstOrDefaultAsync(ct);
+        return stored is null ? null : Plain(stored);
+    }
 
     public async Task<bool> FlagAsync(string key, bool fallback = false, CancellationToken ct = default)
     {

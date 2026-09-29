@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ONE MESSAGE, ONE ROW. Same shape as tests/mail-sort and tests/mail-threading.
+
+    MailThreadCopies.cs is LINKED, not copied: this compiles the file
+    production runs. No test framework and no packages, so `dotnet run` works
+    on a box with no network.
+
+    What it does NOT prove: that GET /api/mail/threads/{id}/messages calls it,
+    or that the reading pane matches the open message by copyIds. Those were
+    seen on a local stack; the PR that added this says what was looked at.
+
+    NOT RUN BY CI as of 28 September 2026, for the reason tests/mail-sort gives:
+    CI workflow changes go to the CTO, so it is asked for in the PR rather than
+    added by it.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TatvaOS.Tests.ThreadCopies</RootNamespace>
+    <AssemblyName>mail-thread-copies-test</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The production file itself. Not a copy. -->
+    <Compile Include="../../apps/api/Modules/Mail/MailThreadCopies.cs" Link="MailThreadCopies.cs" />
+  </ItemGroup>
+
+</Project>

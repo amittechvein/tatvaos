@@ -404,6 +404,44 @@ export async function threadMessages(token, threadId, mailboxId = null) {
 }
 
 /**
+ * The OTHER messages of a conversation: everything but the one being read.
+ *
+ * Mail you address to yourself is stored twice, in Sent and in Inbox. The
+ * server folds the pair into one row (28 Sept 2026) and names the copy it
+ * left out in `copyIds`. Opened from Inbox, the message on screen is the
+ * delivered copy and the row carries the Sent one, so "not this id" alone
+ * listed the message being read as another message under itself - which is
+ * how a client came to report that his reminder had been sent twice.
+ */
+export function otherMessages(rows, openId) {
+  return (Array.isArray(rows) ? rows : []).filter(
+    (r) => r && r.id !== openId && !(Array.isArray(r.copyIds) && r.copyIds.includes(openId)),
+  );
+}
+
+/**
+ * Who a plain Reply goes to: the sender - unless the sender was me.
+ *
+ * Replying to a message I SENT means "say more to the people I wrote to".
+ * Until 28 Sept 2026 it went to the original sender regardless, so a
+ * reminder on my own mail was addressed to me, and the copy that came back
+ * to my Inbox is what showed up twice in the conversation. Same rule as the
+ * web's lib/replyRecipients.ts. A note sent only to myself stays one.
+ * `me` is the address the reply goes out from (a shared mailbox's own
+ * address when one is open).
+ */
+export function replyRecipients(message, me) {
+  const norm = (e) => String(e ?? '').trim().toLowerCase();
+  const mine = norm(me);
+  const from = message?.from?.email ?? '';
+  if (!mine || norm(from) !== mine) return { to: from, cc: '' };
+  const seen = new Set([mine]);
+  const to = (message?.to ?? []).map((p) => p?.email).filter(Boolean)
+    .filter((e) => { const k = norm(e); if (!k || seen.has(k)) return false; seen.add(k); return true; });
+  return { to: to.length ? to.join(', ') : from, cc: '' };
+}
+
+/**
  * Who a Reply all goes to: the sender in To, everyone else who was on the
  * message in Cc — minus me, and with nobody twice. Same rule as the web.
  * `me` is the address of the mailbox the reply goes out from (a shared

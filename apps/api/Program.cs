@@ -17,6 +17,8 @@ using TatvaOS.Api.Modules.Family.Endpoints;
 using TatvaOS.Api.Modules.Space.Endpoints;
 using TatvaOS.Api.Modules.Calendar.Endpoints;
 using TatvaOS.Api.Modules.Connect.Endpoints;
+using TatvaOS.Api.Modules.Personal;
+using TatvaOS.Api.Modules.Docs;
 using TatvaOS.Api.Workers;
 using TatvaOS.Api.Shared.Auth.Oidc;
 using TatvaOS.Api.Shared.Ai;
@@ -92,17 +94,10 @@ builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(o =>
     {
-        o.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = true,
-            ValidateAudience = true,
-            ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
-            ValidIssuer = builder.Configuration["Jwt:Issuer"],
-            ValidAudience = builder.Configuration["Jwt:Audience"],
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
-            ClockSkew = TimeSpan.FromSeconds(30),
-        };
+        // Defined once, in TokenIssuer, with the access-token TYPE check
+        // (typ at+jwt) that keeps other tokens signed with this key out.
+        o.TokenValidationParameters = TatvaOS.Api.Shared.Auth.TokenIssuer.ValidationParameters(
+            jwtKey, builder.Configuration["Jwt:Issuer"], builder.Configuration["Jwt:Audience"]);
     });
 
 builder.Services.AddAuthorizationBuilder()
@@ -122,6 +117,13 @@ builder.Services.AddScoped<StorageAllocator>();
 builder.Services.AddScoped<AuditWriter>();
 // What the signed-in person may do in Hire (admin / recruiter / hiring manager).
 builder.Services.AddScoped<TatvaOS.Api.Modules.Hire.HireAccess>();
+// Personal accounts (/join): the one "is this the personal house?" answer,
+// and the keyed phone fingerprint (Personal:PhoneHashKey; unset = /join closed).
+builder.Services.AddScoped<TatvaOS.Api.Modules.Personal.PersonalHouse>();
+builder.Services.AddSingleton<TatvaOS.Api.Modules.Personal.PersonalPhone>();
+// Signup's prune, hourly: an abandoned signup's plain phone number lives a
+// day at most even while /join is shut and nobody starts one (PR 311).
+builder.Services.AddHostedService<TatvaOS.Api.Modules.Personal.PersonalSignupPruneWorker>();
 
 // ---- OpenID Connect provider (decision 0004) — stage 1: the stores -------
 // OpenIddict's core with EF Core storage on our own entities, and the two
@@ -375,6 +377,15 @@ builder.Services.AddScoped<IAiGateway, MeteredAiGateway>();
 // message does not send it to the AI provider again (MailAiEndpoints).
 builder.Services.AddMemoryCache();
 
+// Docs' live rooms. SINGLETON on purpose — the rooms ARE the shared state
+// every open editor of a document must find; it creates its own scopes for
+// database work (see DocsLiveHub's header, and its single-process note).
+builder.Services.AddSingleton<DocsLiveHub>();
+// Makes "exactly one API container" loud: only the lock holder serves live
+// editing (DocsInstanceGuard's header; decision 0008's deployment rule).
+builder.Services.AddSingleton<DocsInstanceGuard>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<DocsInstanceGuard>());
+
 // Scoped: it writes through the request's AppDbContext and reads its
 // TenantContext. A singleton holding either would serve one tenant's scope to
 // whichever request arrived next.
@@ -393,7 +404,10 @@ builder.Services.AddSingleton<SignupVerifier>();
 // credential saved in the console takes effect on the next request with no
 // cache to invalidate and no restart.
 builder.Services.AddHttpClient();
+builder.Services.AddSingleton<SettingsCrypto>();
 builder.Services.AddScoped<SettingsReader>();
+builder.Services.AddScoped<TatvaOS.Api.Modules.Billing.InvoiceIssuer>();
+builder.Services.AddHttpClient<TatvaOS.Api.Modules.Billing.RazorpayClient>();
 builder.Services.AddScoped<SystemMailer>();
 builder.Services.AddScoped<ISmsSender, SmsSender>();
 
@@ -668,6 +682,36 @@ builder.Services.AddRateLimiter(o =>
                 QueueLimit = 0,
             });
     });
+    // /join (personal signup, build plan §3). Anonymous and internet-reachable
+    // like the others, same rightmost-XFF key and the same CDN warning above.
+    // "join": 30 a minute per address across the whole flow — a person makes
+    // a handful of calls. The SMS limits proper are in JoinEndpoints, counted
+    // in the database per number, per address and platform-wide.
+    // "join-address": the availability check answers "does this address
+    // exist", so it is held to 20 a minute to keep it from listing them —
+    // enough for a person typing (the page waits for a pause before asking).
+    o.AddPolicy("join", httpContext =>
+    {
+        var client = TatvaOS.Api.Shared.ClientIp.From(httpContext) ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter($"join:{client}",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 30,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            });
+    });
+    o.AddPolicy("join-address", httpContext =>
+    {
+        var client = TatvaOS.Api.Shared.ClientIp.From(httpContext) ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter($"join-address:{client}",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 20,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            });
+    });
     o.AddPolicy("space-public-links", httpContext =>
     {
         var xff = httpContext.Request.Headers["X-Forwarded-For"].ToString();
@@ -743,6 +787,21 @@ using (var startupScope = app.Services.CreateScope())
             $"ASPNETCORE_ENVIRONMENT is '{app.Environment.EnvironmentName}'. That logging prints every " +
             "query parameter — hashed secrets and token hashes included — and is only ever meant for " +
             "Development. Fix the environment on this box, or the code that enabled it.");
+
+    // The key that fingerprints phone numbers decides whether one phone can
+    // get a second personal account and a second AI trial (Mr. Singh on
+    // PR 311: protect it like the backup passphrase). Missing outside
+    // Development = refuse to start, not run with /join quietly shut. It is
+    // generated once, lives in infra/docker/.env (so in every backup's
+    // env.txt), and must NEVER change: docs/runbooks/backup-and-restore.md,
+    // "Keys that must never change".
+    if (!app.Environment.IsDevelopment()
+        && !startupScope.ServiceProvider.GetRequiredService<TatvaOS.Api.Modules.Personal.PersonalPhone>().Configured)
+        throw new InvalidOperationException(
+            "Refusing to start: Personal:PhoneHashKey is missing or shorter than 32 characters, and " +
+            $"ASPNETCORE_ENVIRONMENT is '{app.Environment.EnvironmentName}'. Set PERSONAL_PHONE_HASH_KEY in " +
+            "infra/docker/.env to the key already in use — NEVER a new one if personal accounts exist: " +
+            "a changed key lets every phone sign up again.");
 }
 
 // ---------------------------------------------------------------------------
@@ -803,6 +862,11 @@ app.UseMiddleware<TenantMiddleware>();
 app.UseAuthorization();
 app.UseRateLimiter();
 
+// Docs' live channel (/api/docs/{id}/live) is the one WebSocket the API
+// serves. The keep-alive ping stops Caddy and home routers from reaping an
+// editor that is open but idle; the browser reconnects if it goes anyway.
+app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(25) });
+
 // Reads Auth:CookieDomain. Unset locally and on staging (one host serves
 // everything); ".tatvaos.com" in production, so a session started in Core is
 // carried to Mail. See the cookie-domain block in AuthEndpoints.
@@ -818,6 +882,8 @@ app.MapOidcApplicationEndpoints();
 app.MapOidcEndpoints();
 app.MapDomainEndpoints();
 app.MapSignupEndpoints();
+app.MapJoinEndpoints();
+app.MapReservedUsernameEndpoints();
 app.MapSettingsEndpoints();
 app.MapDepartmentEndpoints();
 // Locations and designations: Phase 0 of Hire & People (24 Sept 2026).
@@ -850,6 +916,8 @@ app.MapOrgAiEndpoints();
 app.MapOrgAiUsageEndpoints();
 app.MapOrganisationDetailEndpoints();
 app.MapPlanFeatureEndpoints();
+TatvaOS.Api.Modules.Billing.BillingEndpoints.MapBillingEndpoints(app);
+TatvaOS.Api.Modules.Billing.PaymentEndpoints.MapPaymentEndpoints(app);
 // Calendar. Recurrence is expanded at read time, never stored — see
 // Modules/Calendar/Recurrence.cs.
 app.MapCalendarEndpoints();
@@ -865,6 +933,9 @@ app.MapSpaceEndpoints();
 app.MapSpaceDriveEndpoints();
 app.MapSpaceLinkEndpoints();
 app.MapSpaceThumbnailEndpoints();
+// Docs: collaborative documents, each one a Space file.
+app.MapDocsEndpoints();
+app.MapDocsAdminEndpoints();
 
 // Connect. Meetings live in this monolith; only the MEDIA is a separate
 // container. The guest group and the LiveKit webhook are anonymous and

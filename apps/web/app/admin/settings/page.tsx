@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { AdminShell } from '@/components/admin/AdminShell';
+import { SealSecretsNotice } from '@/components/admin/SealSecretsNotice';
 import { Badge, Button, Card, Spinner } from '@/components/ui/Kit';
 import { useAuth } from '@/lib/auth';
 import { Input, Select } from '@/components/ui/Form';
@@ -44,7 +45,9 @@ const SECTIONS: { id: string; title: string; blurb: string }[] = [
   {
     id: 'billing',
     title: 'Billing (Razorpay)',
-    blurb: 'Stored and ready. Checkout wiring ships with the billing section.',
+    blurb: 'Techvein as the seller on every GST invoice, and how customers pay. No invoice can be issued '
+      + 'until the legal name, GSTIN, address, state code, SAC and prefix are set: an issued invoice cannot '
+      + 'be edited. The Razorpay keys are used by online payment (billing part 2).',
   },
   {
     id: 'ai',
@@ -64,6 +67,12 @@ const SECTIONS: { id: string; title: string; blurb: string }[] = [
     title: 'System email',
     blurb: 'OTP codes and invoices send as this address through our own mail server. '
       + 'On testing, everything is captured by Mailpit and reaches nobody.',
+  },
+  {
+    id: 'personal',
+    title: 'Personal accounts (/join)',
+    blurb: 'Free personal addresses for the public. Stays closed until launch: the switch opens '
+      + '/join only once a personal house organisation with a verified domain exists.',
   },
 ];
 
@@ -172,6 +181,8 @@ export default function SettingsPage() {
           {notice.text}
         </Alert>
       )}
+
+      <SealSecretsNotice />
 
       {showOtpOn && (
         <Alert tone="warn">
