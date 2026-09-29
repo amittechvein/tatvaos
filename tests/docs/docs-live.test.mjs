@@ -351,9 +351,12 @@ async function main() {
     + '<p onclick="steal()">Words that stay</p>'
     + '<a href="javascript:steal()">a link</a>'
     + '<img src="https://pictures.example/x.png" onerror="steal()">'
+    + '<img src="http://pictures.example/y.png">'
     + '<iframe src="https://evil.example"></iframe>';
-  const gone = ['<script', 'steal(', 'onclick', 'onerror', 'javascript:', '<iframe', 'evil.example'];
-  const kept = [honest, 'Words that stay', 'a link', 'src="https://pictures.example/x.png"'];
+  // Pictures from the web stay, over https only (Mr. Singh, 28 Sept 2026):
+  // the http one must arrive rewritten, not dropped and not as http.
+  const gone = ['<script', 'steal(', 'onclick', 'onerror', 'javascript:', '<iframe', 'evil.example', 'http://pictures.example'];
+  const kept = [honest, 'Words that stay', 'a link', 'src="https://pictures.example/x.png"', 'src="https://pictures.example/y.png"'];
 
   const hostileCp = await A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
     state: toB64(Y.encodeStateAsUpdate(a1.doc)), upToSeq: a1.lastSeq, html: hostile, text: textOf(a1.doc) }) });
