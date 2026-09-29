@@ -34,9 +34,18 @@
 --      on 29 Sept — the order happened to be kind. The order is the order
 --      the constraints were created in, which nothing promises, so the
 --      openings are removed first anyway. It costs nothing.
---    * Seven columns hold an organisation's id with NO foreign key
---      (Connect's share and access-log tables, core.razorpay_events). A
---      cascade never reaches them. They would be left pointing at nothing.
+--    * EIGHT columns hold an organisation's id with NO foreign key, so a
+--      cascade never reaches them. (The first draft of this header said
+--      seven; the measurement said eight.) Seven are deleted by name:
+--        connect.meeting_invitations.tenant_id
+--        connect.recording_shares.tenant_id
+--        connect.recording_share_grants.tenant_id and .subject_tenant_id
+--        connect.recording_share_password_failures.tenant_id
+--        connect.recording_access_log.tenant_id
+--        core.razorpay_events.tenant_id
+--      ONE is kept: connect.recording_access_log.subject_tenant_id, a line in
+--      ANOTHER organisation's log saying one of these people opened that
+--      organisation's recording. It is that organisation's record.
 --    * core.signup_drafts is SET NULL, and the sales queue lists every draft
 --      that is not completed — the deleted organisation's sign-up would have
 --      stayed there with the person's name, email and phone on it.
@@ -180,8 +189,9 @@ SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
 AS $$
 DECLARE
-    org core.tenants%ROWTYPE;
-    n   bigint;
+    org     core.tenants%ROWTYPE;
+    n       bigint;
+    v_hours int;
 BEGIN
     IF NOT core.organisation_delete_sees_all() THEN
         RAISE EXCEPTION 'organisation_delete_blockers is owned by %, which cannot see through row security: it would find no invoices and no operators and allow everything', current_user
@@ -203,6 +213,30 @@ BEGIN
         code := 'TVD03';
         reason := 'Suspend the organisation first. Deleting is the second step, not the first.';
         RETURN NEXT;
+    ELSE
+        -- SUSPENDED FOR AT LEAST 24 HOURS (Mr. Singh, 29 Sept 2026): long
+        -- enough to stop a press made in anger or by mistake. A platform
+        -- setting so it can be RAISED; a value below 24, or one that is not a
+        -- whole number, is read as 24. It cannot be lowered from the console.
+        -- A suspension with no time on it (made before suspended_at was
+        -- written) counts as just now.
+        v_hours := 24;
+        BEGIN
+            SELECT GREATEST(24, value::int) INTO v_hours
+              FROM core.platform_settings WHERE key = 'organisations.delete_after_suspended_hours';
+        EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+            v_hours := 24;
+        END;
+        v_hours := COALESCE(v_hours, 24);
+        IF COALESCE(org.suspended_at, now()) > now() - make_interval(hours => v_hours) THEN
+            code := 'TVD10';
+            reason := format('Suspended %s. It can be deleted from %s (IST), %s hours after suspension.',
+                CASE WHEN org.suspended_at IS NULL THEN 'at an unrecorded time, counted as now'
+                     ELSE 'at ' || to_char(org.suspended_at AT TIME ZONE 'Asia/Kolkata', 'DD Mon YYYY HH24:MI') || ' (IST)' END,
+                to_char((COALESCE(org.suspended_at, now()) + make_interval(hours => v_hours)) AT TIME ZONE 'Asia/Kolkata', 'DD Mon YYYY HH24:MI'),
+                v_hours);
+            RETURN NEXT;
+        END IF;
     END IF;
 
     SELECT count(*) INTO n FROM core.users u WHERE u.tenant_id = p_tenant AND u.role = 'super_admin';
@@ -353,6 +387,13 @@ BEGIN
     IF to_regclass('connect.meeting_invitations') IS NOT NULL THEN
         EXECUTE 'DELETE FROM connect.meeting_invitations WHERE tenant_id = $1' USING p_tenant;
     END IF;
+    IF to_regclass('core.razorpay_events') IS NOT NULL THEN
+        -- Only ever written for an invoice's payment link, and an invoiced
+        -- organisation is refused above, so today this finds nothing. Deleted
+        -- explicitly anyway (Mr. Singh, 29 Sept): a column with no foreign
+        -- key is removed by name, not left to "cannot happen".
+        EXECUTE 'DELETE FROM core.razorpay_events WHERE tenant_id = $1' USING p_tenant;
+    END IF;
 
     -- 3. The sign-up it came from, which holds a name, an email and a phone
     --    and would otherwise reappear in the sales queue.
@@ -361,12 +402,11 @@ BEGIN
     -- 4. Everything else, by cascade.
     DELETE FROM core.tenants WHERE id = p_tenant;
 
-    -- 5. Did it all go? Two columns are left on purpose and are not counted:
-    --    another organisation's access log (above), and Razorpay's event log,
-    --    which is a record of what the payment provider sent us.
+    -- 5. Did it all go? ONE column is left on purpose and not counted:
+    --    another organisation's access log, where a line says one of these
+    --    people opened THAT organisation's recording (above).
     v_left := core.organisation_row_counts(p_tenant)
-              - 'connect.recording_access_log.subject_tenant_id'
-              - 'core.razorpay_events.tenant_id';
+              - 'connect.recording_access_log.subject_tenant_id';
     IF v_left <> '{}'::jsonb THEN
         RAISE EXCEPTION 'Rows still name this organisation after the delete: %. Nothing was deleted. A table has no foreign key to core.tenants and is not handled in core.delete_organisation.', v_left
             USING ERRCODE = 'TVD09';
@@ -408,6 +448,22 @@ CREATE TRIGGER trg_domains_leftover_mail
     BEFORE INSERT OR UPDATE OF fqdn ON core.domains
     FOR EACH ROW EXECUTE FUNCTION core.refuse_domain_with_leftover_mail();
 
+-- ---- The wait, as a setting ----------------------------------------------
+INSERT INTO core.platform_settings (key, value, is_secret)
+VALUES ('organisations.delete_after_suspended_hours', '24', false)
+ON CONFLICT (key) DO NOTHING;
+
+-- ---- Only the function deletes an organisation -------------------------------
+--
+--  The app's role had DELETE on core.tenants from the default privileges the
+--  core schema was created with. Nothing in the API used it, and any bug that
+--  reached a tenant DELETE would have removed an organisation with every one
+--  of the checks above skipped. Revoked (Mr. Singh, 29 Sept 2026): the only
+--  way left is core.delete_organisation, which is SECURITY DEFINER and runs
+--  as its owner. A default privilege applies only when a table is created, so
+--  no later file grants it back; tests/admin-org-delete checks it every run.
+REVOKE DELETE ON core.tenants FROM tatvaos_app;
+
 DO $$
 DECLARE gone int; pending int;
 BEGIN
@@ -416,5 +472,8 @@ BEGIN
     RAISE NOTICE 'organisation-deletions: % organisation(s) deleted so far, % with mail folders still on disk', gone, pending;
     IF NOT core.organisation_delete_sees_all() THEN
         RAISE WARNING 'organisation-deletions: this file was run by %, which cannot see through row security. The delete functions will refuse to run.', current_user;
+    END IF;
+    IF has_table_privilege('tatvaos_app', 'core.tenants', 'DELETE') THEN
+        RAISE WARNING 'organisation-deletions: tatvaos_app can still DELETE from core.tenants directly — the revoke above did not hold';
     END IF;
 END $$;

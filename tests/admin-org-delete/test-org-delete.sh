@@ -3,7 +3,9 @@
 # Deleting an organisation for good (Amit, 29 Sept 2026). What is proved:
 #
 #   * only a platform operator has the route; the organisation's owner does not
-#   * REFUSED unless suspended first; unless the name typed is the name; if it
+#   * REFUSED unless suspended first, and suspended at least 24 hours (a
+#     setting that can be raised, never lowered below 24); unless the name
+#     typed is the name; if it
 #     was ever invoiced; if an operator belongs to it; if it is the operator's
 #     own; if it is the house personal accounts live in — by the API, and by
 #     the database function when called directly
@@ -11,6 +13,8 @@
 #   * afterwards NOTHING names the organisation: rows that cascade, rows a
 #     cascade could trip over (job openings), rows a cascade never reaches
 #     (share grants with no foreign key), and the sign-up it came from
+#   * the app's own role cannot DELETE an organisation directly; only the
+#     function can (Mr. Singh, 29 Sept 2026)
 #   * a table nobody handled STOPS the deletion and rolls all of it back
 #     (a probe table with no foreign key is made for the purpose)
 #   * the two other organisations are untouched, and a line in ANOTHER
@@ -124,7 +128,11 @@ NAME="Delete Me $RUN"
 NAME2="Delete Me Again $RUN"
 FQDN="delete-me-$RUN.test"
 API_PID=""; PRINCIPAL_WAS=""; ORG=""; ORG2=""
+WAIT_WAS=""
 cleanup() {
+    if [ -n "$WAIT_WAS" ]; then
+        PG "UPDATE core.platform_settings SET value='$WAIT_WAS' WHERE key='organisations.delete_after_suspended_hours'" >/dev/null
+    fi
     [ -n "$PRINCIPAL_WAS" ] && PG "UPDATE core.users SET role='$PRINCIPAL_WAS' WHERE email='principal@abcschool.local'" >/dev/null
     PG "DROP TABLE IF EXISTS core.zz_delete_probe" >/dev/null
     # Whatever the run left: its organisations (the invoice first, which is
@@ -241,6 +249,17 @@ MEET_TV=$(PG "SELECT count(*) FROM connect.meetings WHERE tenant_id='$TECHVEIN'"
 AUDIT_TV=$(PG "SELECT count(*) FROM core.audit_logs WHERE tenant_id='$TECHVEIN'")
 RECORDS0=$(PG "SELECT count(*) FROM core.organisation_deletions")
 
+step "2b. The app's own role cannot delete an organisation directly"
+# As the API's database role, not the owner. Before 29 Sept it could: any
+# bug that reached a tenant DELETE removed an organisation with every check
+# in core.delete_organisation skipped.
+e=$(PGE "SET ROLE tatvaos_app; DELETE FROM core.tenants WHERE id='$ORG'")
+has  "a direct DELETE as tatvaos_app is refused" "$e" "permission denied"
+same "…and the organisation is still there" "$(PG "SELECT count(*) FROM core.tenants WHERE id='$ORG'")" "1"
+same "the app role holds no DELETE on core.tenants" "$(PG "SELECT has_table_privilege('tatvaos_app','core.tenants','DELETE')")" "f"
+same "…while the function it calls runs as its owner (SECURITY DEFINER)" \
+    "$(PG "SELECT prosecdef FROM pg_proc WHERE proname='delete_organisation'")" "t"
+
 step "3. Who may even ask"
 PV="/api/admin/organisations/$ORG/deletion-preview"
 DEL="/api/admin/organisations/$ORG/delete"
@@ -261,6 +280,38 @@ same "pressing delete anyway answers 409" "$(status "$r")" "409"
 has  "…with the reason" "$(body "$r")" "Suspend the organisation first"
 same "it is still there" "$(PG "SELECT count(*) FROM core.tenants WHERE id='$ORG'")" "1"
 r=$(callm POST "/api/admin/organisations/$ORG/suspend" "$OPERATOR"); same "suspended" "$(status "$r")" "200"
+
+step "4b. Refused: suspended less than 24 hours ago"
+WAIT_WAS=$(PG "SELECT value FROM core.platform_settings WHERE key='organisations.delete_after_suspended_hours'")
+same "the wait is a setting, 24 by default" "$WAIT_WAS" "24"
+r=$(call "$PV" "$OPERATOR"); B=$(body "$r")
+same "just suspended: the preview says it cannot be deleted" "$(jq_ "$B" "d['canDelete']")" "False"
+has  "…because of the wait" "$B" "TVD10"
+has  "…and says from when it can" "$B" "It can be deleted from"
+r=$(callm POST "$DEL" "$OPERATOR" "$GOOD")
+same "pressing delete anyway answers 409" "$(status "$r")" "409"
+same "it is still there" "$(PG "SELECT count(*) FROM core.tenants WHERE id='$ORG'")" "1"
+e=$(PGE "SELECT core.delete_organisation('$ORG','$NAME','$PRINCIPAL',NULL,'{}')")
+has  "the database function refuses by itself" "$e" "It can be deleted from"
+# 23 hours: still refused. 25: allowed (checked in step 8).
+PG "UPDATE core.tenants SET suspended_at = now() - interval '23 hours' WHERE id='$ORG'" >/dev/null
+r=$(call "$PV" "$OPERATOR"); has "suspended 23 hours ago: still refused" "$(body "$r")" "TVD10"
+# The setting RAISES the wait...
+PG "UPDATE core.tenants SET suspended_at = now() - interval '30 hours' WHERE id='$ORG'" >/dev/null
+PG "UPDATE core.platform_settings SET value='48' WHERE key='organisations.delete_after_suspended_hours'" >/dev/null
+r=$(call "$PV" "$OPERATOR"); has "raised to 48, suspended 30 hours ago: refused" "$(body "$r")" "TVD10"
+# ...and cannot LOWER it below 24.
+PG "UPDATE core.tenants SET suspended_at = now() - interval '2 hours' WHERE id='$ORG'" >/dev/null
+PG "UPDATE core.platform_settings SET value='1' WHERE key='organisations.delete_after_suspended_hours'" >/dev/null
+r=$(call "$PV" "$OPERATOR"); has "set to 1, suspended 2 hours ago: still refused (24 is the floor)" "$(body "$r")" "TVD10"
+PG "UPDATE core.platform_settings SET value='soon' WHERE key='organisations.delete_after_suspended_hours'" >/dev/null
+r=$(call "$PV" "$OPERATOR"); has "set to nonsense: read as 24, still refused" "$(body "$r")" "TVD10"
+PG "DELETE FROM core.platform_settings WHERE key='organisations.delete_after_suspended_hours'" >/dev/null
+r=$(call "$PV" "$OPERATOR"); has "setting missing altogether: 24, still refused" "$(body "$r")" "TVD10"
+PG "INSERT INTO core.platform_settings (key, value) VALUES ('organisations.delete_after_suspended_hours', '$WAIT_WAS')" >/dev/null
+# From here the organisation has waited its day.
+PG "UPDATE core.tenants SET suspended_at = now() - interval '25 hours' WHERE id='$ORG'" >/dev/null
+r=$(call "$PV" "$OPERATOR"); hasnt "suspended 25 hours ago: the wait no longer stands in the way" "$(body "$r")" "TVD10"
 
 step "5. Refused: the name"
 r=$(callm POST "$DEL" "$OPERATOR" "{\"typedName\":\"Delete Me\"}")
@@ -409,6 +460,7 @@ ORG2=$(PG "SELECT id FROM core.tenants WHERE name='$NAME2'")
 
 step "14. The second one goes too, with no mail folder to leave"
 r=$(callm POST "/api/admin/organisations/$ORG2/suspend" "$OPERATOR"); same "suspended" "$(status "$r")" "200"
+PG "UPDATE core.tenants SET suspended_at = now() - interval '25 hours' WHERE id='$ORG2'" >/dev/null
 r=$(callm POST "/api/admin/organisations/$ORG2/delete" "$OPERATOR" "{\"typedName\":\"  $NAME2  \",\"reason\":\"tvdel-$RUN\"}"); B=$(body "$r")
 same "deleted (spaces around the typed name are forgiven)" "$(status "$r")" "200"
 same "no mail folder is left pending" "$(jq_ "$B" "len(d['mailFoldersLeft'])")" "0"

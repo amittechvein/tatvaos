@@ -1,7 +1,7 @@
 # 0012 — Deleting an organisation
 
-**Status:** built as a draft, for Mr. Singh's tenancy gate. **Not merged, not deployed.
-Nothing has been deleted on production.**
+**Status:** design accepted by Mr. Singh, 29 September 2026, with the answers below.
+Built as a draft; **not merged, not deployed. Nothing has been deleted on production.**
 **Date:** 2026-09-29
 **Asked by** Amit, 29 September: three organisations made for testing (Scottish public
 school katihar, Trineetra Org, Trineetra by Techvein) should be deleted, "and inside
@@ -25,7 +25,7 @@ a person's data is. So the capability had to be something a person presses.
 | 83 foreign keys to `core.tenants` cascade | One `DELETE` removes most of it |
 | `core.invoices`, `core.invoice_lines` are `RESTRICT` | An invoiced organisation cannot be deleted; this is right, invoices are tax records |
 | `hire.job_openings` is `RESTRICT` against locations and designations | Could fail depending on cascade order. With the explicit delete removed the test still passed, so today the order is kind. Kept anyway |
-| 7 columns hold an organisation's id with no foreign key (Connect share and access-log tables, `core.razorpay_events`) | A cascade never reaches them |
+| 8 columns hold an organisation's id with no foreign key (Connect share and access-log tables, `core.razorpay_events`); first written here as 7 | A cascade never reaches them. Seven are deleted by name; one, another organisation's access-log line about one of these people, is kept |
 | `core.signup_drafts` is `SET NULL` | The deleted organisation's sign-up, with a name, email and phone on it, would stay |
 | The app's role has `DELETE` on `core.tenants` today | Any endpoint bug that reaches a tenant `DELETE` already removes an organisation. Not changed here; see Open questions |
 | The API mounts the maildir read-only | It cannot remove mail files, by design |
@@ -111,3 +111,23 @@ a person's data is. So the capability had to be something a person presses.
 - The schema built from nothing (`verify-migrations.sh`) was **not** run: it needs
   Docker, which is not started on this laptop, and CI is down. The file was applied
   twice to an already-built database.
+
+## Mr. Singh's answers (via Amit), 29 September 2026
+
+| # | Question | Ruling | Where |
+|---|---|---|---|
+| 1 | Minimum time suspended | **24 hours.** A setting, so it can be raised | `organisations.delete_after_suspended_hours`; a value below 24 or not a number reads as 24 (TVD10) |
+| 2 | A second operator | **No, not now.** Revisit with more than two operators | — |
+| 3 | Mail files | **(a), built as part of 321's job**, never a deploy step. Guards first: domain non-empty and valid, not registered again, the path exactly `vhosts/<domain>` and a child of `vhosts`, never `vhosts` itself. Dry run printing the exact path. Each run on Amit's go, first on one of his test organisations | PR 321's `maildir-removals.sh` |
+| 4 | Revoke `DELETE` on `core.tenants` | **Yes, in this PR**, given the function is `SECURITY DEFINER` | Revoked in the migration; red first proven |
+| 5 | The organisation's own audit log goes with it | **Yes** | As built |
+| 6 | Operator's email on the record | **Acceptable** (staff accountability) | As built |
+
+He also asked for confirmation that `core.signup_drafts` is deleted for the organisation (it
+is, by `converted_tenant_id`), and that the columns with no foreign key are deleted
+explicitly. The measurement found **eight** such columns, not the seven first written
+here. Seven are deleted by name, including `core.razorpay_events.tenant_id`, which was
+first left and is now deleted. The eighth, `connect.recording_access_log.subject_tenant_id`,
+is a line in *another* organisation's log saying one of these people opened that
+organisation's recording. It is kept, as that organisation's record, and is the one
+exception the check afterwards allows.
