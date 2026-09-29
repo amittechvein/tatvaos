@@ -40,6 +40,35 @@ CREATE POLICY tenant_isolation ON core.departments
     WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);
 
 -- ---- calendar.reminder_sends ------------------------------------------------
+--
+--  THE BACKFILL MUST NOT BE ABLE TO FAIL A DEPLOY (Mr. Singh, 30 Sept 2026).
+--  This file runs on every deploy. If one row is left NULL, SET NOT NULL
+--  fails, and so does every deploy after it: decision 0001's lesson, a
+--  migration that works on an empty database and fails on real rows.
+--  tests/isolation/test-zero-layer-backfill.sh builds that row and applies
+--  this file twice; it was red on the version without the two guards below.
+--
+--  Guard 1, ORPHANS. A send whose event is gone has no organisation to be
+--  filled from, and nothing left to protect, so it is deleted and counted.
+--  events -> event_reminders -> reminder_sends is ON DELETE CASCADE at both
+--  steps, so an orphan can only exist if the foreign-key triggers were
+--  bypassed; this is belt and braces. The count is a WARNING: psql shows it
+--  when the file is applied by hand, in CI and in the test. deploy.sh prints
+--  a migration's output only when it FAILS, so on production it is not seen;
+--  the post-deploy check (no NULL tenant_id) is what production shows.
+--
+--  Guard 2, THE LIVE API. The running API (PR 329) records sends every minute
+--  WITHOUT a tenant_id while this runs. A row written after the fill would be
+--  a NULL that fails SET NOT NULL; one written before the orphan delete must
+--  not be taken for an orphan. So: one transaction, with new rows held off
+--  until it commits (SHARE ROW EXCLUSIVE blocks inserts, not reads), and the
+--  delete takes only rows whose event really is gone. The API's insert waits
+--  milliseconds; after NOT NULL and row security it is refused until the new
+--  API replaces it, and the worker retries on its next tick, inside its
+--  15-minute grace.
+BEGIN;
+LOCK TABLE calendar.reminder_sends IN SHARE ROW EXCLUSIVE MODE;
+
 ALTER TABLE calendar.reminder_sends
     ADD COLUMN IF NOT EXISTS tenant_id uuid REFERENCES core.tenants(id) ON DELETE CASCADE;
 
@@ -50,6 +79,21 @@ UPDATE calendar.reminder_sends s
  WHERE r.id = s.reminder_id
    AND s.tenant_id IS NULL;
 
+DO $$
+DECLARE n bigint;
+BEGIN
+    DELETE FROM calendar.reminder_sends s
+     WHERE s.tenant_id IS NULL
+       AND NOT EXISTS (SELECT 1
+                         FROM calendar.event_reminders r
+                         JOIN calendar.events e ON e.id = r.event_id
+                        WHERE r.id = s.reminder_id);
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n > 0 THEN
+        RAISE WARNING 'zero-layer: removed % reminder_sends row(s) whose event is gone (nothing left to protect)', n;
+    END IF;
+END $$;
+
 ALTER TABLE calendar.reminder_sends ALTER COLUMN tenant_id SET NOT NULL;
 CREATE INDEX IF NOT EXISTS ix_reminder_sends_tenant ON calendar.reminder_sends (tenant_id);
 
@@ -59,3 +103,4 @@ DROP POLICY IF EXISTS tenant_isolation ON calendar.reminder_sends;
 CREATE POLICY tenant_isolation ON calendar.reminder_sends
     USING      (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)
     WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);
+COMMIT;
