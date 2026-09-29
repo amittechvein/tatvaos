@@ -43,7 +43,7 @@ until each of these is done.**
 |---|---|---|---|
 | 1 | The file Space serves (`.html` / `.xlsx`) is **built on the server from the Yjs state**, so there is one source of truth and a client cannot make the file differ from the content. | Docs **and** Sheets | not started |
 | 2 | Documents sent by email go as **PDF, not HTML**, generated from the same server-side render as condition 1. The `.html` download from Space may stay. | Docs | not started |
-| 3 | Server-side allowlist sanitiser on checkpoint HTML and on `docs.versions` — **a merge condition, not only a customer one.** | Docs | **built** (PR 273, `DocsHtml.cs`); approved by Mr. Singh 30 Sept 2026 — see "The sanitiser is our own code" below |
+| 3 | Server-side allowlist sanitiser on checkpoint HTML and on `docs.versions` — **a merge condition, not only a customer one.** | Docs | **built** (PR 273, `DocsHtml.cs`); approved by Mr. Singh (reached this lane by 28 Sept 2026, given in a separate session — see "A note on the dates") — see "The sanitiser is our own code" below |
 | 4 | y-prosemirror's dropping of unknown nodes, if verified, is logged, not silent. | Docs | not started, not yet verified |
 
 **What proves each condition — so no box is ticked by something that only looks like it:**
@@ -61,9 +61,21 @@ Already true, and must stay true (checked by tests every run):
   still lists and downloads the file (`tests/sheets/sheets-live.e2e.ts`).
 - Each product answers only to its own switch (`LiveSwitch`).
 
+## A note on the dates in this record
+
+Corrected 28 September 2026, at Mr. Singh's request through Amit. This record
+first dated two rulings **30 September 2026**, a date that had not yet come;
+every line carrying it was committed on 28 September. The dates below are
+now the dates the rulings **reached this lane** — the commit date, so at the
+latest. Those rulings were given in a **separate session**, not the one Amit
+forwards Mr. Singh's rulings from; Mr. Singh has not disputed what they say.
+From 28 September every CTO ruling comes through Amit from that one session,
+and a record that says "Mr. Singh ruled" means that session.
+
 ## The sanitiser is our own code — a decision, not a default
 
-Mr. Singh, 30 September 2026, on PR 273. Recorded so a later reader knows
+Mr. Singh, on PR 273 (reached this lane by 28 September 2026, in a separate
+session — see "A note on the dates"). Recorded so a later reader knows
 it was chosen and why, and what to do the day it is wrong.
 
 **The choice.** `apps/api/Modules/Docs/DocsHtml.cs` is a parser and writer
@@ -93,18 +105,11 @@ to the one case that showed it.
 **What it cannot do**, whoever wrote it: make the file say what the
 document says. That is condition 1.
 
-**Pictures from the web are removed from the stored file** (Mr. Singh,
-1 October 2026). A saved page that names a picture on someone else's
-server asks for it when opened, so the reader's address goes to whoever
-hosts the picture: a tracking pixel in every document a school downloads.
-The editor may show such a picture live; the file Space stores and serves
-keeps only Docs' own (`/api/docs/...`), the sanitiser names each removal in
-the log, and the page's own policy allows pictures from its own server
-only. A picture that matters is pasted in, and becomes ours.
-
-**Numbers.** This record keeps 0011. A number is claimed by the first
-record merged to `main`; a branch that finds its number taken renumbers
-before it merges (Mr. Singh, 1 October 2026).
+**Known and allowed:** a picture kept from the web (`http`/`https`) is
+asked for when the file is opened, which tells that picture's host the
+file was opened. The editor allows pasted web pictures, so the sanitiser
+does. Whether stored files should carry only Docs' own pictures is an open
+question for Mr. Singh, not decided here.
 
 ## Consequences
 

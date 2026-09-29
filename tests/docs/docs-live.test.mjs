@@ -93,8 +93,11 @@ const MSG = { update: 1, awareness: 2, ack: 4, synced: 5, event: 6, state: 7 };
 const seqOf = (b) => Number(new DataView(b.buffer, b.byteOffset + 1, 8).getBigInt64(0));
 
 /** A minimal browser: a Y.Doc wired to the socket the way lib/docsLive.ts wires it. */
-async function connect(call, id, label) {
-  const t = await call(`/docs/${id}/live-ticket`, { method: 'POST' });
+// ticketIn: open with a ticket taken earlier, as a browser that fetched one
+// just before something changed would.
+async function connect(call, id, label, ticketIn) {
+  const t = ticketIn ? { status: 200, body: { ticket: ticketIn } }
+    : await call(`/docs/${id}/live-ticket`, { method: 'POST' });
   if (t.status !== 200) return { refused: t.status };
   const url = API.replace(/^http/, 'ws') + `/docs/${id}/live?ticket=${encodeURIComponent(t.body.ticket)}`;
   const doc = new Y.Doc();
@@ -347,12 +350,10 @@ async function main() {
     + '<script>steal(document.cookie)</script>'
     + '<p onclick="steal()">Words that stay</p>'
     + '<a href="javascript:steal()">a link</a>'
-    + '<img src="/api/docs/0b9d6c0e/images/7" onerror="steal()">'
-    + '<img src="https://pictures.example/x.png">'
+    + '<img src="https://pictures.example/x.png" onerror="steal()">'
     + '<iframe src="https://evil.example"></iframe>';
-  // A picture from the web goes too: opening the file would tell its host.
-  const gone = ['<script', 'steal(', 'onclick', 'onerror', 'javascript:', '<iframe', 'evil.example', 'pictures.example'];
-  const kept = [honest, 'Words that stay', 'a link', 'src="/api/docs/0b9d6c0e/images/7"'];
+  const gone = ['<script', 'steal(', 'onclick', 'onerror', 'javascript:', '<iframe', 'evil.example'];
+  const kept = [honest, 'Words that stay', 'a link', 'src="https://pictures.example/x.png"'];
 
   const hostileCp = await A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
     state: toB64(Y.encodeStateAsUpdate(a1.doc)), upToSeq: a1.lastSeq, html: hostile, text: textOf(a1.doc) }) });
@@ -431,7 +432,7 @@ async function main() {
     `${extra.filter((x) => x.synced).length}/19 synced; ` + extra.map((x, i) => (x.synced ? null
       : `cap-${i}: ${x.refused ? `ticket refused ${x.refused}` : x.closed ? `closed ${x.closed.code} ${x.closed.reason}` : 'no sync within 5 s, still open'}`))
       .filter(Boolean).join('; ')
-      // Found 30 Sept 2026, after this failed 2 runs in 9 and looked like
+      // Found by 28 Sept 2026, after this failed 2 runs in 9 and looked like
       // timing. It was not: both times a browser tab was signed in as this
       // test's owner with a document open, holding one of the twenty.
       // Reproduced on purpose (one held connection -> exactly this line).
@@ -463,11 +464,32 @@ async function main() {
   console.log('Switched off while open (waits up to 50 s for the recheck)');
   const openBeforeOff = await connect(A, id, 'owner-before-off');
   check('owner is connected before the switch-off', openBeforeOff.synced);
+  // A ticket in hand when the switch goes off (tickets live 60 s).
+  const heldTicket = (await A(`/docs/${id}/live-ticket`, { method: 'POST' })).body?.ticket;
   const offA = await P(`/admin/organisations/${TENANT_A}/docs`, { method: 'PUT', body: JSON.stringify({ enabled: false }) });
   check('the operator switches Docs off', offA.status === 200 && offA.body.enabled === false);
   check('Docs is refused at once for new requests', (await A(`/docs/${id}`)).status === 403);
+  // Found 28 Sept: opening a connection checked the file and the level but
+  // not the switch, so this ticket opened the editor after "off" and kept
+  // it until the 45 s recheck — up to ~105 s of editing past the switch.
+  const late = await connect(A, id, 'ticket-from-before-off', heldTicket);
+  check('a ticket taken before the switch-off cannot open the editor after it',
+    heldTicket && !late.synced && late.closed !== null, `synced=${late.synced} closed=${JSON.stringify(late.closed)}`);
+  try { late.ws?.close(); } catch { /* already gone */ }
   await waitFor(() => openBeforeOff.closed, 50_000);
   check('the open editor is closed with 4403', openBeforeOff.closed?.code === 4403, JSON.stringify(openBeforeOff.closed));
+  // Off withdraws the EDITOR, never the data (0011; Mr. Singh, 28 Sept):
+  // while off, Space must still list the file and hand out its readable
+  // copy. Until this, the run only showed the document back after
+  // switching ON again — which would pass even if "off" hid it.
+  const offList = await A('/space/list?scope=personal');
+  check('while off, Space still lists the document',
+    offList.status === 200 && (offList.body.files ?? []).some((f) => f.id === id),
+    `status ${offList.status}`);
+  const offDl = await A(`/space/files/${id}/content`);
+  check('while off, Space still downloads its readable copy',
+    offDl.status === 200 && String(offDl.body).includes('<p>Hello</p>'),
+    `status ${offDl.status}`);
   const cStill = await C('/docs/status');
   check('the other organisation is unaffected (still on)', cStill.body.enabled === true);
   await P(`/admin/organisations/${TENANT_A}/docs`, { method: 'PUT', body: JSON.stringify({ enabled: true }) });

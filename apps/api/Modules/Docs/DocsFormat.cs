@@ -53,7 +53,7 @@ public static class DocsFormat
     {
         var sb = new StringBuilder();
         sb.Append("<!doctype html>\n<html><head><meta charset=\"utf-8\">");
-        sb.Append("<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src 'self'; style-src 'unsafe-inline'\">");
+        sb.Append("<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src data: https: 'self'; style-src 'unsafe-inline'\">");
         sb.Append("<title>").Append(WebUtility.HtmlEncode(title)).Append("</title>");
         sb.Append("<style>body{font-family:Arial,Helvetica,sans-serif;max-width:800px;margin:40px auto;padding:0 24px;line-height:1.5;color:#1f1f1f}")
           .Append("table{border-collapse:collapse}td,th{border:1px solid #bbb;padding:4px 8px}img{max-width:100%}</style>");

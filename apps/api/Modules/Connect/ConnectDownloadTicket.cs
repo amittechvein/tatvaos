@@ -58,6 +58,16 @@ public sealed class ConnectDownloadTicket(IConfiguration config)
     /// </summary>
     private static readonly TimeSpan Life = TimeSpan.FromMinutes(5);
 
+    /// <summary>
+    /// The type every ticket carries INSIDE its signed body, and the only one
+    /// Verify accepts. The key is Jwt:SigningKey, which also signs access
+    /// tokens; see TokenIssuer.AccessTokenType for the rule (Mr. Singh's ruling,
+    /// which reached this lane by 28 Sept 2026). Tickets issued before this
+    /// field existed are refused: they live
+    /// five minutes, and a share reader mid-playback re-opens the link once.
+    /// </summary>
+    public const string Type = "connect-download";
+
     private readonly byte[] _key = Encoding.UTF8.GetBytes(
         config["Jwt:SigningKey"] ?? throw new InvalidOperationException(
             "Jwt:SigningKey is required to sign recording downloads."));
@@ -76,6 +86,7 @@ public sealed class ConnectDownloadTicket(IConfiguration config)
     {
         var payload = JsonSerializer.SerializeToUtf8Bytes(new Body
         {
+            Y = Type,
             T = claim.TenantId,
             M = claim.MeetingId,
             R = claim.RecordingId,
@@ -111,6 +122,9 @@ public sealed class ConnectDownloadTicket(IConfiguration config)
         try { parsed = JsonSerializer.Deserialize<Body>(FromBase64Url(body)); }
         catch (Exception e) when (e is JsonException or FormatException) { return null; }
         if (parsed is null) return null;
+        // Its own type, or nothing: a body signed with this key for any other
+        // purpose is not a ticket, however well-formed.
+        if (parsed.Y != Type) return null;
 
         // Signature checked BEFORE expiry, and expiry before anything is
         // returned: an unsigned payload's expiry claim is worth nothing.
@@ -142,6 +156,7 @@ public sealed class ConnectDownloadTicket(IConfiguration config)
     /// base64 of this JSON.</summary>
     private sealed class Body
     {
+        public string? Y { get; set; }
         public Guid T { get; set; }
         public Guid M { get; set; }
         public Guid R { get; set; }

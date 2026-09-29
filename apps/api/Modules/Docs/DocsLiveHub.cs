@@ -239,6 +239,17 @@ public sealed class DocsLiveHub(IServiceScopeFactory scopes, DocsInstanceGuard g
             http.Response.StatusCode = StatusCodes.Status404NotFound;
             return;
         }
+        // The switch, again, here. The ticket was issued while Docs was on,
+        // but it lives 60 s: without this, a ticket in hand when the
+        // operator switched Docs off still opened the editor, and kept it
+        // until the 45 s recheck (found 28 Sept; tests/docs "a ticket taken
+        // before the switch-off"). Refused before the upgrade, so the browser
+        // asks for a new ticket and is told docs_off.
+        if (!await DocsSwitch.EnabledAsync(db, ct))
+        {
+            http.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return;
+        }
         var perm = await SpaceEndpoints.FilePermAsync(db, file, ticket.UserId, ct);
 
         using var socket = await http.WebSockets.AcceptWebSocketAsync();

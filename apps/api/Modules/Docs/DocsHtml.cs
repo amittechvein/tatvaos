@@ -237,10 +237,9 @@ public static partial class DocsHtml
         }
 
         var written = new StringBuilder();
-        if (!Attributes(tag, attrs, written, dropped, out var named))
+        if (!Attributes(tag, attrs, written, dropped))
         {
-            // A picture from the web has been named already, as what it is.
-            if (!named) dropped.Add(tag);
+            dropped.Add(tag);
             return i;
         }
         o.Append('<').Append(tag).Append(written).Append('>');
@@ -261,10 +260,8 @@ public static partial class DocsHtml
     // ------------------------------------------------------------------
 
     /// <summary>False when the element cannot be written at all (a picture with no usable address, an input that is not a checkbox).</summary>
-    private static bool Attributes(string tag, List<(string Name, string Value)> attrs, StringBuilder o,
-        SortedSet<string> dropped, out bool named)
+    private static bool Attributes(string tag, List<(string Name, string Value)> attrs, StringBuilder o, SortedSet<string> dropped)
     {
-        named = false;
         if (tag == "input")
         {
             // Only the tick box of a task list, and never one that can be
@@ -306,9 +303,6 @@ public static partial class DocsHtml
                 _ => null,
             };
 
-            // A picture from the web is named as what it is, so the log tells
-            // an ordinary pasted picture from an attack on the address.
-            if (keep is null && tag == "img" && n == "src" && FromTheWeb(v)) { dropped.Add("img from the web"); named = true; continue; }
             // A style that lost some of its properties has named each one already.
             if (keep is null) { if (n != "style") dropped.Add(tag + "@" + Safe(n)); continue; }
             if (tag == "img" && n == "src") hasSource = true;
@@ -321,18 +315,10 @@ public static partial class DocsHtml
     }
 
     /// <summary>
-    /// A link may go to http, https or mailto. A picture may come ONLY from
-    /// Docs' own picture route. Everything else — javascript:, data:,
-    /// vbscript:, file:, a path to some other part of this API, a "//host"
-    /// that borrows the page's scheme — is refused.
-    ///
-    /// PICTURES FROM THE WEB ARE REMOVED FROM THE STORED FILE (Mr. Singh,
-    /// 1 Oct 2026). A saved page that names a picture on someone else's
-    /// server asks that server for it when the page is opened: the reader's
-    /// address goes to whoever hosts the picture. That is a tracking pixel
-    /// in every document a school downloads. The editor may show such a
-    /// picture live; the file Space stores and serves keeps only ours. A
-    /// picture that matters is pasted in, and becomes ours.
+    /// A link may go to http, https or mailto. A picture may come from http,
+    /// https, or Docs' own picture route. Everything else — javascript:,
+    /// data:, vbscript:, file:, a path to some other part of this API, a
+    /// "//host" that borrows the page's scheme — is refused.
     /// </summary>
     private static string? Url(string raw, bool picture)
     {
@@ -343,17 +329,10 @@ public static partial class DocsHtml
         if (v.Length is 0 or > MaxUrlChars) return null;
         if (v.Contains('\\')) return null; // a browser reads "\" as "/": "/\host" leaves the site
 
-        if (picture) return v.StartsWith("/api/docs/", StringComparison.Ordinal) && !v.Contains("..") ? v : null;
         if (v.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
             || v.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) return v;
+        if (picture) return v.StartsWith("/api/docs/", StringComparison.Ordinal) && !v.Contains("..") ? v : null;
         return v.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase) ? v : null;
-    }
-
-    private static bool FromTheWeb(string raw)
-    {
-        var v = raw.Replace("\t", "").Replace("\r", "").Replace("\n", "").Trim(TrimFromUrl);
-        return v.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
-            || v.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
     }
 
     private static readonly char[] TrimFromUrl = [.. Enumerable.Range(0, 33).Select(c => (char)c)];

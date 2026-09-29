@@ -204,13 +204,27 @@ public sealed class TotpService(IConfiguration config)
 
     private static readonly TimeSpan ChallengeLifetime = TimeSpan.FromMinutes(5);
 
+    /// <summary>
+    /// The first segment of every challenge, and the only one ReadChallenge
+    /// accepts: "mfa-challenge.{user}.{expiry}.{mac}". The type was already
+    /// inside the MAC ("mfa-challenge:" prefix) and the MAC key is SHA-256 of
+    /// the configured key, not the key itself - so a challenge was never
+    /// confusable with an access token or a download ticket. Now it is also
+    /// explicit and checked, as every token type's is (TokenIssuer.
+    /// AccessTokenType; Mr. Singh's ruling, which reached this lane by 28 Sept
+    /// 2026). A challenge issued before this
+    /// has three segments and is refused: it lived five minutes, and the
+    /// person types their password again.
+    /// </summary>
+    public const string ChallengeType = "mfa-challenge";
+
     public string IssueChallenge(Guid userId)
     {
         var expires = DateTimeOffset.UtcNow.Add(ChallengeLifetime).ToUnixTimeSeconds();
         var body = $"{userId:N}.{expires}";
         var mac = Convert.ToHexString(
             HMACSHA256.HashData(Key(), Encoding.UTF8.GetBytes($"mfa-challenge:{body}")));
-        return $"{body}.{mac.ToLowerInvariant()}";
+        return $"{ChallengeType}.{body}.{mac.ToLowerInvariant()}";
     }
 
     /// <summary>The user the challenge is for, or null if it is forged or expired.</summary>
@@ -218,8 +232,9 @@ public sealed class TotpService(IConfiguration config)
     {
         if (string.IsNullOrWhiteSpace(challenge)) return null;
 
-        var parts = challenge.Split('.');
-        if (parts.Length != 3) return null;
+        var all = challenge.Split('.');
+        if (all.Length != 4 || all[0] != ChallengeType) return null;
+        var parts = all[1..];
         if (!Guid.TryParseExact(parts[0], "N", out var userId)) return null;
         if (!long.TryParse(parts[1], out var expires)) return null;
 
