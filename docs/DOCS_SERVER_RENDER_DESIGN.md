@@ -134,12 +134,17 @@ that, unchanged.)
 Every existing Space file for a document, and every `docs.versions.html`, was
 written by a browser.
 
-1. **Measure first.** Production has Docs switched on for **0**
-   organisations (read 29 Sept, Amit approved). Documents can still exist from
-   before a switch-off or from Techvein's own tries. The count —
-   `select count(*) from docs.documents` and the same for `docs.versions` —
-   is a production read and needs Amit's approval; it sets how long step 3
-   runs, nothing else.
+1. **Measured, 29 September 2026 (Amit approved the reads; read as a role
+   that bypasses row security, so a 0 is a real 0):** Docs switched on for
+   **0** organisations; **0** documents; **0** versions in production.
+   **So there are no browser-written copies in production today.** If the
+   render lands before anyone switches Docs on — Techvein included — none
+   will ever exist there, and steps 2–5 shrink to a guard: a document with
+   `rendered_seq IS NULL` is rendered before its file is served. The
+   backfill below is kept for the case where Docs is switched on first
+   (and for local and test databases, which do hold browser-written files).
+   **Proposal: keep Docs off for everyone, Techvein included, until the
+   render lands.** That is Amit's call — it delays Techvein's own use.
 2. **Additive migration:** `docs.documents.rendered_seq bigint`,
    `rendered_at timestamptz`, `renderer text` (the schema version that
    rendered it). All NULL = "a browser wrote this".
@@ -221,8 +226,8 @@ Either way the PDF is made from the renderer's HTML, never the browser's.
 4. **A second runtime is a real cost** for a three-person team: its image,
    its updates, its logs. If Mr. Singh judges that heavier than two
    serialisers, (B) is the alternative — with its drift risk written down.
-5. **The count in §4.1.** If production holds many browser-written
-   documents, the backfill needs its own run window.
+5. **The count in §4.1** was 0 on 29 Sept. If Docs is switched on before the
+   render lands, browser-written files start to exist and the backfill is real work again.
 
 ## 10. For Mr. Singh to rule
 
@@ -233,7 +238,8 @@ Either way the PDF is made from the renderer's HTML, never the browser's.
 4. **Backfill at start-up**, or as a one-off command run by the deployer.
 5. Condition 2's PDF engine can wait for its own ruling (§7).
 
-And for Amit: approval for the two production counts in §4.1.
+And for Amit: whether Docs stays off for everyone, Techvein included, until
+the render lands (§4.1). The two production counts are done: 0 and 0.
 
 ## 11. Build order, once ruled
 
