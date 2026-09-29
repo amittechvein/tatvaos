@@ -83,7 +83,9 @@ const DRAFT = 'hi priya, can we move the review to 3 oct at 4pm? thanks';
 const settingsNow = async () => Object.fromEntries((await call('GET', '/admin/settings')).body
   .filter((i) => i.key.startsWith('ai.')).map((i) => [i.key, i.value ?? '']));
 const found = await settingsNow();
-await call('PUT', '/admin/settings', { 'ai.paused': 'false', 'ai.limit.per_person_per_hour': '', 'ai.limit.org_monthly_tokens': '' });
+// ai.mail.organisations: EMPTY means NOBODY since 29 Sept 2026 (Mr. Singh),
+// so the run opens it with "all" and step 10 narrows it; put back at the end.
+await call('PUT', '/admin/settings', { 'ai.paused': 'false', 'ai.limit.per_person_per_hour': '', 'ai.limit.org_monthly_tokens': '', 'ai.mail.organisations': 'all' });
 
 try {
   // ── 1. Both off ───────────────────────────────────────────────────────────
@@ -389,8 +391,9 @@ try {
   check('the organisation type is back as found', psql(`select type from core.tenants where id='${TENANT}'`) === typeWas, typeWas);
 
   // ── 10. Mail AI held to a list of organisations (Mr. Singh, 25 Sept) ──────
-  //  ai.mail.organisations: empty = everyone; ids = only those; nothing that
-  //  parses = nobody. Checked in the gateway, so every mail.* feature obeys.
+  //  ai.mail.organisations: empty = NOBODY (since 29 Sept); "all" =
+  //  everyone; ids = only those; nothing that parses = nobody. Checked in
+  //  the gateway, so every mail.* feature obeys.
   {
     const ORG = '11111111-1111-1111-1111-111111111111';
     const gate = (v) => call('PUT', '/admin/settings', { 'ai.mail.organisations': v });
@@ -429,8 +432,16 @@ try {
     check('a list where NOTHING parses lets nobody in (a typo does not open the gate)',
       (await call('GET', '/org/ai')).body.mailOffered === false && typeof r.body.error === 'string' && (await hits()) === h0, JSON.stringify(r.body));
 
+    // EMPTY MEANS NONE (Mr. Singh, 29 Sept 2026). Until then this step said
+    // "an empty list: every organisation may" — the rule he ruled against.
     await gate('');
-    check('an empty list: every organisation may', (await call('GET', '/org/ai')).body.mailOffered === true);
+    h0 = await hits();
+    r = await rewrite(DRAFT);
+    check('an empty list: NO organisation may, and nothing is sent',
+      (await call('GET', '/org/ai')).body.mailOffered === false && typeof r.body.error === 'string' && (await hits()) === h0,
+      JSON.stringify(r.body));
+    await gate('all');
+    check('"all": every organisation may', (await call('GET', '/org/ai')).body.mailOffered === true);
     r = await setAi({ mail: false });
     check('…and switching Mail AI off works whatever the list says', r.status === 200 && r.body.mailEnabled === false, JSON.stringify(r.body));
   }
@@ -504,7 +515,15 @@ try {
     check('not on the Mail AI list: switching a feature ON is refused (400)', r.status === 400, JSON.stringify(r.body));
     r = await setAi({ mailFeatures: { summary: false } });
     check('…switching one OFF works', r.status === 200 && r.body.mailFeatures?.summary === false, JSON.stringify(r.body));
+    // Empty means NOBODY now (Mr. Singh, 29 Sept 2026): cleared, Techvein
+    // itself is refused; "all" opens it again for the steps that follow.
     await call('PUT', '/admin/settings', { 'ai.mail.organisations': '' });
+    r = await setAi({ mailFeatures: { summary: true } });
+    check('emptied: nobody, Techvein included (400)', r.status === 400, JSON.stringify(r.body));
+    await call('PUT', '/admin/settings', { 'ai.mail.organisations': 'all' });
+    r = await setAi({ mailFeatures: { summary: true } });
+    check('"all": every organisation, Techvein included', r.status === 200, JSON.stringify(r.body));
+    await setAi({ mailFeatures: { summary: false } });
   }
 
   // ── 12. AI credits by plan (26 Sept 2026) ────────────────────────────────

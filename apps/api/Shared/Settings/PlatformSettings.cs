@@ -145,8 +145,9 @@ public static class SettingKeys
         new(AiMailOrganisations, "ai", "Organisations that may use TatvaOS AI in Mail", false,
             "Organisation ids, separated by commas. Only these can switch Mail AI on (Help me write, "
             + "suggested replies, sorting); every other organisation is told it is not available yet. "
-            + "EMPTY means every organisation may. Set to Techvein alone on 25 Sept 2026 until the "
-            + "privacy policy describes Mail AI (Mr. Singh) — empty it once that text is live."),
+            + "EMPTY means NO organisation may (Mr. Singh, 29 Sept 2026). Type all to let every "
+            + "organisation. Set to Techvein alone on 25 Sept 2026 until the privacy policy describes "
+            + "Mail AI (Mr. Singh) — change it to all once that text is live."),
 
         new(PersonalSignupOpen, "personal", "Personal signup open (/join)", false,
             "OFF until launch. ON lets anyone create a free personal address at /join. Needs a personal "
