@@ -1,6 +1,6 @@
 # Docs and Sheets — the file is built on the server (design)
 
-**Status:** design for Mr. Singh's read. **Nothing here is built.**
+**Status:** **APPROVED by Mr. Singh**, with five rulings (§12), reached this lane 29 September 2026 (UTC; 30 September in India) through Amit. **Nothing here is built yet; step 1 is a gate.**
 **Asked for:** Mr. Singh, 28 September 2026, through Amit: *"Condition 1, the
 server-side render, for Docs first … Bring me the design before building: how
 the renderer reads Yjs updates on the server, and what happens to the existing
@@ -257,3 +257,39 @@ rely on the decision being remembered.
 5. Backfill worker; run on a copy; then production, on the deployer's run.
 6. Remove the browser's `html` / `text` / `state` fields one release later.
 7. Sheets `/render/xlsx`. Then condition 2.
+
+## 12. Rulings (Mr. Singh, reached this lane 29 September 2026, through Amit)
+
+1. **(A), the Node render service.** Accepted *"on one condition: the parity
+   spike is step 1 and it's a gate. If `@tiptap/html` in Node doesn't
+   reproduce `editor.getHTML()` for the fixture page, stop and bring it back
+   to me. Don't patch around it."*
+2. **Stop trusting the browser's `state` in this same piece of work, not
+   later.** `state ⊕ updates`, merged by the renderer, is what makes the
+   file true. The old fields are accepted for one release, then removed.
+3. **The container: approved in principle; the compose PR comes to him**,
+   with the hardening written into it:
+   - its own Docker network with `internal: true` (no egress, not only "no
+     Caddy route"), shared with `api` only;
+   - `read_only: true`, a non-root user, `cap_drop: [ALL]`,
+     `security_opt: no-new-privileges`, a `pids_limit`, the 512 MB cap;
+   - no environment secrets, no Docker socket, no volumes but a small
+     `tmpfs`;
+   - dependencies pinned by lockfile and installed at build time, never at
+     start.
+   The "cannot reach the internet or the database" proof is **red first:
+   run with `internal: false` and watch the connection succeed.**
+4. **The backfill is a worker at start-up**, not a deployer command. With 0
+   documents and Docs held off it is really the guard: nothing with
+   `rendered_seq IS NULL` is served before it is rendered. **Keep the
+   text-difference count** — it is the evidence 0011 asked for.
+5. **The PDF engine waits for its own ruling.**
+
+**Render cost (§9 point 3):** measure on the fixture and on a generated
+large document before choosing "every checkpoint". His default if it is
+slow: **at most once every 10 seconds per document, always after the last
+edit.**
+
+Also ruled the same day: PR 358 (the switch refusal) accepted after the
+fact; PR 344 (web pictures, https only) approved; Sheets (PR 342) after the
+render is settled.
