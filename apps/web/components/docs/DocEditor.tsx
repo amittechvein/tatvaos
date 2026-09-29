@@ -4,14 +4,6 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import { EditorContent, useEditor, type Editor, type JSONContent } from '@tiptap/react';
-import StarterKit from '@tiptap/starter-kit';
-import { TextStyle, Color, FontFamily, FontSize } from '@tiptap/extension-text-style';
-import Highlight from '@tiptap/extension-highlight';
-import TextAlign from '@tiptap/extension-text-align';
-import Subscript from '@tiptap/extension-subscript';
-import Superscript from '@tiptap/extension-superscript';
-import { TableKit } from '@tiptap/extension-table';
-import { TaskList, TaskItem } from '@tiptap/extension-list';
 import { CharacterCount, Placeholder } from '@tiptap/extensions';
 import Collaboration from '@tiptap/extension-collaboration';
 import CollaborationCaret from '@tiptap/extension-collaboration-caret';
@@ -32,7 +24,8 @@ import { ShareDialog } from '@/components/space/ShareDialog';
 import { Modal } from '@/components/ui/Modal';
 import { Spinner } from '@/components/ui/Kit';
 
-import { CommentHighlights, DocsImage, PageBreak, ParagraphFormat, type CommentRange } from './extensions';
+import { CommentHighlights, type CommentRange } from './extensions';
+import { documentExtensions } from './schema';
 import { MenuBar, Toolbar, applyStyle, type MenuItem } from './Toolbar';
 import { CommentsPanel } from './CommentsPanel';
 import { HistoryPanel } from './HistoryPanel';
@@ -83,36 +76,6 @@ const colourFor = (id: string) => {
 };
 
 type Panel = 'comments' | 'history' | 'ai' | null;
-
-/**
- * The document schema: every node and mark a document can hold. Shared by
- * the live editor and the read-only version view, so a version renders with
- * exactly the rules it was written under — and through the schema, never as
- * raw HTML (react/no-danger is a security rule in this repo, and a version's
- * HTML is whatever an editor-level browser sent).
- */
-function documentExtensions(loadImage: (src: string) => Promise<string>) {
-  return [
-    StarterKit.configure({
-      undoRedo: false, // Yjs has its own, per person — undo never undoes a colleague
-      heading: { levels: [1, 2, 3, 4] },
-      link: {
-        openOnClick: false,
-        autolink: true,
-        protocols: ['mailto'],
-        HTMLAttributes: { rel: 'noopener noreferrer nofollow', target: '_blank' },
-      },
-    }),
-    TextStyle, Color, FontFamily, FontSize,
-    Highlight.configure({ multicolor: true }),
-    TextAlign.configure({ types: ['heading', 'paragraph'] }),
-    Subscript, Superscript,
-    TableKit.configure({ table: { resizable: true } }),
-    TaskList, TaskItem.configure({ nested: true }),
-    ParagraphFormat, PageBreak,
-    DocsImage.configure({ load: loadImage, inline: true }),
-  ];
-}
 
 /** Rebuild a stored Yjs state as editor JSON, without touching the live document. */
 function stateToJson(stateB64: string): { json: JSONContent; settings: Record<string, unknown> } {

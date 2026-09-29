@@ -1,0 +1,18 @@
+{
+  "name": "@tatvaos/render",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Builds the files Space serves for Docs (and later Sheets) on the server, from the stored Yjs state, with the editor's own schema. docs/DOCS_SERVER_RENDER_DESIGN.md",
+  "scripts": {
+    "parity": "node --import ./spike/register.mjs spike/parity.mjs"
+  },
+  "dependencies": {
+    "@tiptap/core": "3.31.3",
+    "@tiptap/html": "3.31.3",
+    "@tiptap/pm": "3.31.3",
+    "@tiptap/y-tiptap": "3.0.9",
+    "happy-dom": "20.14.5",
+    "yjs": "13.6.33"
+  }
+}
