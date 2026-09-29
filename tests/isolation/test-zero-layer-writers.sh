@@ -82,7 +82,9 @@ same "calendar.reminder_sends: RLS forced" "$(PG "SELECT relforcerowsecurity FRO
 step "1. Start the API as the Development operator"
 export ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS="$API" DevOperatorSignIn__Enabled=true
 export JWT_SIGNING_KEY="dev-only-key-at-least-32-characters-long"
-export ConnectionStrings__Postgres="Host=${TATVAOS_PG_HOST:-localhost};Port=5432;Database=${TDB_NAME:-tatvaos_mail};Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
+# localhost, NOT the WSL address: the development operator sign-in refuses any
+# database that is not on a loopback host, and WSL forwards localhost:5432.
+export ConnectionStrings__Postgres="Host=localhost;Port=5432;Database=${TDB_NAME:-tatvaos_mail};Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
 export Smtp__Host=localhost Smtp__Port=5870
 if command -v cygpath >/dev/null 2>&1; then export Oidc__KeyDirectory="$(cygpath -w "$SCRATCH")\\keys"; else export Oidc__KeyDirectory="$SCRATCH/keys"; fi
 dotnet run --no-build -c Release --project "$PROJ" > "$LOG" 2>&1 &
