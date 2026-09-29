@@ -40,8 +40,9 @@ paper copy); **never generate a fresh one on a server that has data.**
 fall back to it when their own key is unset - MFA (`Mfa:EncryptionKey`) and
 secret platform settings (`Settings:EncryptionKey`, then `Mfa:EncryptionKey`)
 - and neither compose file passes either key to the API (checked on `main`,
-29 Sept 2026; the live container is to be confirmed with a yes/no read that
-never prints a value). So a rotation of the sign-in key is **not** a routine
+29 Sept 2026). **Confirmed on the live API container 29 Sept 2026 17:38Z,
+on Amit's approval: `Mfa__EncryptionKey` not set, `Settings__EncryptionKey`
+not set** (a yes/no read; no value printed). So a rotation of the sign-in key is **not** a routine
 rotation: it silently turns every stored MFA secret and sealed setting into
 data nobody can read. Restore it from `env.txt` like the key below, never
 generate a fresh one on a server that has data, and never print it.
