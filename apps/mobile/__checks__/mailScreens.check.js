@@ -359,6 +359,20 @@ test('a reply is addressed to the sender, subject Re:, and carries inReplyToId',
   expect(onSent).toHaveBeenCalled();
 });
 
+// 28 Sept 2026: a reply to a message I SENT was addressed to me. The compose
+// screen has the same rule as the message screen now (lib/mail replyRecipients).
+test('a reply to my OWN message is addressed to the people I wrote to', () => {
+  const message = full({
+    from: { name: 'Amit', email: 'amit@tatvaos.com' },
+    to: [{ email: 'ravi@example.com' }, { email: 'priya@example.com' }],
+  });
+  const r = render(
+    <MailCompose session={session} draft={{ kind: 'reply', message }} signature="" myAddress="amit@tatvaos.com"
+                 onClose={() => {}} onSent={() => {}} />,
+  );
+  expect(r.getByLabelText('To').props.value).toBe('ravi@example.com, priya@example.com');
+});
+
 test('a forward starts with nobody in To and quotes the original', () => {
   const r = render(
     <MailCompose session={session} draft={{ kind: 'forward', message: full() }} signature=""

@@ -1,12 +1,14 @@
 # Attacks written by other people
 
-Mr. Singh, 30 September 2026 (PR 273): the sanitiser's own refusal cases are
+Mr. Singh, by 28 September 2026 (PR 273; given in a separate session — see
+`docs/decisions/0011-docs-and-sheets-before-customers.md`, "A note on the dates"): the sanitiser's own refusal cases are
 the ones its author thought of. These are not. Every entry must come out of
 `DocsHtml.Clean` as something that cannot run — checked as text by
 `Program.cs`, and in a real browser by `browser.mjs`.
 
 **These files are test input. Nothing here is run, and nothing here is
-ours.** Downloaded 30 September 2026 with Amit's approval, unchanged apart
+ours.** Downloaded by 28 September 2026 (first written as 30 September, a date
+that had not yet come) with Amit's approval, unchanged apart
 from what is noted.
 
 | File | Entries | From | Licence |

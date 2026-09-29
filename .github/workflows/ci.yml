@@ -108,6 +108,13 @@ jobs:
         run: dotnet run --project tests/connect-minutes
       - name: "Connect check: screen-share mode"
         run: dotnet run --project tests/connect-share
+      # Every token signed with Jwt:SigningKey carries its type, and every
+      # verifier accepts only its own (access at+jwt, Connect download ticket,
+      # MFA challenge). Mr. Singh, in a ruling that reached this lane by
+      # 28 Sept 2026 (given in a separate session): "make the distinction
+      # structural, not observed."
+      - name: "Auth check: every token type is checked for its own type"
+        run: dotnet run --project tests/token-types
 
       # Hire: HireAccess is the only route to hire.job_openings. A handler
       # that read the table directly would show a hiring manager every job in
@@ -313,6 +320,13 @@ jobs:
       # Mr. Singh, 25 Sept 2026. Starts its own API on :5083.
       - name: "Dev operator: impossible outside Development, proven on the built API"
         run: bash tests/dev-operator/test.sh
+
+      # Two-step recovery codes: enrols a person with a real TOTP code, then
+      # measures the codes the API issues (>= 80 bits each: 0024-mfa.sql's
+      # unsalted SHA-256 depends on it), hash-only storage, one use each.
+      # Red on c7cb110 at 50 bits. Approved into CI by Mr. Singh on 29 Sept 2026, for when Actions returns.
+      - name: "MFA: recovery codes are 80 bits, stored hashed, used once"
+        run: bash tests/mfa/test-recovery-codes.sh
 
       - name: Install the web app's TypeScript (for the PiP check)
         run: pnpm install --frozen-lockfile

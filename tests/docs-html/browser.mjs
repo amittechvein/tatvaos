@@ -1,7 +1,7 @@
 // ============================================================================
 //  The sanitiser's output, loaded in a real browser.
 //
-//  Mr. Singh, 30 Sept 2026 (PR 273): "cannot run" was checked by reading the
+//  Mr. Singh, by 28 Sept 2026 (PR 273; see 0011's note on dates): "cannot run" was checked by reading the
 //  output as a string. A string check is a claim about text; whether
 //  something runs is decided by a browser's parser, which is exactly where
 //  sanitisers are beaten. So every output is loaded in Chromium, and three
@@ -12,8 +12,8 @@
 //             alike, whether or not it then does anything visible), and any
 //             alert/confirm/prompt
 //    fetched  any request the page made, except a picture named by an <img>
-//             the sanitiser kept (pictures from the web are allowed — see
-//             "pictures" in the summary)
+//             the sanitiser kept (pictures from the web are allowed, over
+//             https only — see "pictures" in the summary)
 //    parsed   any element or attribute in the browser's OWN tree that is not
 //             on the list, any link that is not http/https/mailto
 //
@@ -166,7 +166,9 @@ const INTERACT = `(() => {
     pictures.push(i.src);
     let protocol = '(none)';
     try { protocol = new URL(i.src).protocol; } catch { /* no address, or not one */ }
-    if (!/^https?:$/.test(protocol)) bad.push('picture ' + protocol);
+    // Docs' own pictures on the page's own server, or the web over https
+    // only (Mr. Singh, 28 Sept 2026: http is rewritten, never kept).
+    if (!(protocol === 'https:' || i.src.startsWith(location.origin + '/api/docs/'))) bad.push('picture ' + protocol + ' ' + i.src.slice(0, 60));
   }
   for (const head of document.head?.children ?? []) {
     if (!['meta', 'title'].includes(head.localName)) bad.push('in head: ' + head.localName);
@@ -222,7 +224,10 @@ async function runCase(index) {
     if (r.exceptionDetails) throw new Error('the harness itself threw: ' + r.exceptionDetails.text);
     const dom = JSON.parse(r.result.value);
     await sleep(40); // handlers and requests started by the events above
-    const pictures = new Set(dom.pictures);
+    // A request never carries the address's #fragment, so compare without
+    // it: "x.png?w=2#top" is asked for as "x.png?w=2" (found 29 Sept, the
+    // first kept picture with a fragment).
+    const pictures = new Set(dom.pictures.map((p) => p.split('#')[0]));
     const fetched = seen.requests.filter((q) => q.url !== url
       && !(q.type === 'Image' && pictures.has(q.url))
       && q.url !== `${origin}/favicon.ico`);
@@ -307,7 +312,7 @@ if (expectDirty) {
 }
 
 const pictures = rest.reduce((n, r) => n + r.pictures, 0);
-console.log(`\n  pictures: ${pictures} requests for pictures the sanitiser kept (http/https <img>). Allowed by design;`);
-console.log('            a picture from the web tells its host that the page was opened.');
+console.log(`\n  pictures: ${pictures} requests for pictures the sanitiser kept (https, or Docs' own). Allowed for now;`);
+console.log('            a picture from the web tells its host that the page was opened (0011: until the server render).');
 console.log(`\n  ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
