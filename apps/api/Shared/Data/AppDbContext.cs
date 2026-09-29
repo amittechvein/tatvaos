@@ -45,6 +45,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<ProductAccess> ProductAccess => Set<ProductAccess>();
     public DbSet<Plan> Plans => Set<Plan>();
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
+    public DbSet<BillingProfile> BillingProfiles => Set<BillingProfile>();
+    public DbSet<Invoice> Invoices => Set<Invoice>();
+    public DbSet<InvoiceLine> InvoiceLines => Set<InvoiceLine>();
     public DbSet<Feature> Features => Set<Feature>();
     public DbSet<PlanFeatureLimit> PlanFeatureLimits => Set<PlanFeatureLimit>();
     public DbSet<FeatureOverride> FeatureOverrides => Set<FeatureOverride>();
@@ -85,6 +88,15 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
 
     /// <summary>Platform-wide, no tenant scope — see the entity's comment.</summary>
     public DbSet<PlatformSetting> PlatformSettings => Set<PlatformSetting>();
+
+    // ---- personal accounts (/join) — 20260926-a-personal-join.sql ----
+    // Reserved names, signups and attempts are platform-wide like
+    // SignupDrafts: they exist before any account does. PersonalAccounts
+    // carries a tenant and is filtered like Users.
+    public DbSet<ReservedUsername> ReservedUsernames => Set<ReservedUsername>();
+    public DbSet<PersonalSignup> PersonalSignups => Set<PersonalSignup>();
+    public DbSet<PersonalSignupAttempt> PersonalSignupAttempts => Set<PersonalSignupAttempt>();
+    public DbSet<PersonalAccount> PersonalAccounts => Set<PersonalAccount>();
 
     // ---- mail ----
     public DbSet<Mailbox> Mailboxes => Set<Mailbox>();
@@ -245,6 +257,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<SignupDraft>().ToTable("signup_drafts", "core");
         b.Entity<PlatformSetting>().ToTable("platform_settings", "core");
         b.Entity<PlatformSetting>().HasKey(s => s.Key);
+        b.Entity<ReservedUsername>().ToTable("reserved_usernames", "core");
+        b.Entity<ReservedUsername>().HasKey(r => r.Name);
+        b.Entity<PersonalSignup>().ToTable("personal_signups", "core");
+        b.Entity<PersonalSignupAttempt>().ToTable("personal_signup_attempts", "core");
+        b.Entity<PersonalAccount>().ToTable("personal_accounts", "core");
+        b.Entity<PersonalAccount>().HasKey(a => a.UserId);
+        // Declared so EF orders the INSERTs: the user and this row are saved
+        // in one SaveChanges, and an undeclared FK lets EF write this first.
+        b.Entity<PersonalAccount>().HasOne<User>().WithOne()
+            .HasForeignKey<PersonalAccount>(a => a.UserId).OnDelete(DeleteBehavior.Cascade);
 
         b.Entity<Mailbox>().ToTable("mailboxes", "mail");
         b.Entity<Alias>().ToTable("aliases", "mail");
@@ -474,6 +496,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         // Products and Plans are platform-wide catalogue data.
         b.Entity<Domain>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<User>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        // No RLS on core.personal_accounts (like core.users). Exactly two reads
+        // bypass this filter, both the platform-wide "one personal account per
+        // number": JoinEndpoints.StartAsync and JoinEndpoints.CompleteAsync.
+        b.Entity<PersonalAccount>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Department>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<ProductAccess>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<Subscription>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
@@ -868,6 +894,31 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             e.HasOne<User>().WithMany()
                 .HasForeignKey(u => u.UserId).OnDelete(DeleteBehavior.SetNull);
         });
+        // Billing (20260926-d-billing-invoices.sql). RLS-forced per
+        // organisation, and filtered here too. Seller and Buyer are jsonb
+        // snapshots — listed here because a jsonb column EF does not know
+        // about fails only at runtime (see the meeting_events note above).
+        b.Entity<BillingProfile>(e =>
+        {
+            e.ToTable("billing_profiles", "core");
+            e.HasKey(p => p.TenantId);
+            e.HasQueryFilter(p => p.TenantId == tenant.TenantId);
+        });
+        b.Entity<Invoice>(e =>
+        {
+            e.ToTable("invoices", "core");
+            e.Property(i => i.Seller).HasColumnType("jsonb");
+            e.Property(i => i.Buyer).HasColumnType("jsonb");
+            e.HasQueryFilter(i => i.TenantId == tenant.TenantId);
+            e.HasMany(i => i.Lines).WithOne().HasForeignKey(l => l.InvoiceId).OnDelete(DeleteBehavior.Cascade);
+        });
+        b.Entity<InvoiceLine>(e =>
+        {
+            e.ToTable("invoice_lines", "core");
+            e.HasKey(l => new { l.InvoiceId, l.LineNo });
+            e.HasQueryFilter(l => l.TenantId == tenant.TenantId);
+        });
+
         // Plan features (20260926-plan-features.sql). The catalogue and the
         // plan limits are platform reference data like plans (no tenant); the
         // overrides are per organisation, RLS-forced, and filtered here too.
