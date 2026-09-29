@@ -201,7 +201,9 @@ step "Settings files are private"
 #  002, so every file it creates is born world-readable unless the command
 #  says otherwise. A runbook rule was written that day. A rule is a sentence.
 #
-#  Mr. Singh, 1 Oct 2026: the deploy REFUSES — it does not warn — because
+#  Mr. Singh (reached this lane by 28 Sept 2026, given in a separate session;
+#  first written "1 Oct", a date that had not yet come): the deploy REFUSES —
+#  it does not warn — because
 #  the deploy is the one moment somebody is watching.
 #
 #  WHAT COUNTS: every file named .env* in the settings directory that is NOT
