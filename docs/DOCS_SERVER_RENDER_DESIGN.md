@@ -293,3 +293,49 @@ edit.**
 Also ruled the same day: PR 358 (the switch refusal) accepted after the
 fact; PR 344 (web pictures, https only) approved; Sheets (PR 342) after the
 render is settled.
+
+## 13. Second rulings, after the gate failed (Mr. Singh, reached this lane 29 September 2026, through Amit)
+
+These **replace** the matching parts of §12 and of the design above.
+
+1. **The gate is redefined, by him: "the same document", strictly** — not
+   character for character, and no headless Chromium. *Character for
+   character against `editor.getHTML()` compares with one browser's
+   serialisation; Chrome, Safari and Firefox write the same document
+   differently, so a Safari user's own editor would fail that gate.* Under
+   condition 1 the browser writes nothing stored. The definition:
+   - the same sequence of elements, the same text nodes byte for byte, the
+     same SET of attribute names on each element;
+   - attribute values equal byte for byte, except `style`, compared as a
+     parsed set of declarations with colour values normalised to one
+     notation. **No other normalisation.**
+   - **Calibrate the comparison**, each must FAIL: a changed word; one colour
+     one digit different (`#fff475` against `rgb(255, 244, 118)`); an
+     attribute dropped; an extra attribute; two elements swapped; a style
+     declaration dropped; one extension removed (kept).
+   - **More than one fixture:** content pasted from Word and from Google
+     Docs, nested lists, tables with merged cells, every mark combined with
+     every other.
+   Re-run, and bring the results **before building step 2**.
+2. **(A) confirmed**; stop trusting the browser's HTML, text and state **in
+   this work**.
+3. **The backfill is dropped** (replaces §4 steps 2–5 and §12.4). Instead
+   one guard: **switching Docs on for an organisation is refused if any of
+   its files was written by a browser.** The §4.1 counts are not needed.
+4. **A failed render is a failed save, shown to the person — never a
+   silent fallback to the browser's HTML.** (This replaces §3.4's "the save
+   still succeeds and the file stays at the last good render". The edits
+   themselves are not lost either way: they are stored as live updates
+   before any save.)
+5. **The container PR comes to him** and must show: no internet (internal
+   network only), no database access, no secrets in its environment,
+   non-root, read-only filesystem, **memory and CPU limits**, reachable only
+   from the API, the **10-second render timeout**. Red first on the network
+   rule: a request from inside the container to the internet fails.
+6. **Sheets: same service, same rules, and `XlsxGuard` checks the server's
+   own `.xlsx` too.**
+
+**Order:** the gate re-run → his read of the results → the service and its
+container PR → saves from the server's file → deploy, still off → the
+one-line change allowing Docs on → Amit's decision, Techvein first.
+

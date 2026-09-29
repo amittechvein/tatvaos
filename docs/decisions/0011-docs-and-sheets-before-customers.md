@@ -120,6 +120,29 @@ twice. (The first draft of PR 344 removed web pictures altogether, on a
 ruling dated "1 October" that came from a separate session; this one
 replaces it.)
 
+## How condition 1 is proved: "the same document", not the same characters
+
+Mr. Singh, reached this lane 29 September 2026, through Amit, after the
+first gate (character for character against `editor.getHTML()`) failed on
+2 of 94 tags — attribute order, and one colour written `rgb(…)` by the
+browser and `#…` by the server. **The gate compares documents, not one
+browser's way of writing them:** Chrome, Safari and Firefox serialise the
+same document differently, so a Safari user's own editor would fail a
+character-for-character gate, and under condition 1 the browser writes
+nothing that is stored. Headless Chromium on the server was refused: a
+match to an invisible detail at the price of 300–400 MB, a browser process
+per render, and a large attack surface running user-controlled content on
+the production server. PDF (condition 2) gets its own engine decision.
+
+The gate: the same sequence of elements; the same text nodes byte for byte;
+the same set of attribute names on each element; attribute values byte for
+byte except `style`, compared as a parsed set of declarations with colour
+values in one notation. No other normalisation. The comparison is itself
+calibrated (a changed word, a colour one digit off, an attribute dropped or
+added, two elements swapped, a style declaration dropped, one extension
+removed — each must fail), and it runs on more than one real-world fixture.
+Details: `docs/DOCS_SERVER_RENDER_DESIGN.md` §13.
+
 ## Consequences
 
 - Techvein can use both products on its own data, with the divergence
