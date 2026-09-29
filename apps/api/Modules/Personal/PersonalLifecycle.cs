@@ -25,10 +25,12 @@ namespace TatvaOS.Api.Modules.Personal;
 ///     Any that cannot be removed become core.personal_purge_leftovers and are
 ///     retried every pass. Rows first because a row pointing at a missing file
 ///     is a broken product; a file with no row is only disk, and is found.
-///  3. The address is HELD for 90 days (core.address_holds) — and for as long
-///     as its maildir leftover exists, whatever the date. The mail importer
-///     matches maildir files by ADDRESS: an address given to a new person while
-///     the old owner's files are on disk would hand them the old mail.
+///  3. The address is RETIRED (core.retired_addresses, written by the purge
+///     function): held at least 90 days, then until an operator releases it
+///     with a reason, which the console allows only once the mail server has
+///     counted zero files. The mail importer matches maildir files by ADDRESS:
+///     an address given to a new person while the old owner's files are on
+///     disk would hand them the old mail.
 ///
 ///  If this machine cannot see the maildir at all (Mail:VmailRoot missing),
 ///  the maildir is recorded as a leftover rather than assumed gone: "I could

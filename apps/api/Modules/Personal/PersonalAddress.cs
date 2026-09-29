@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using TatvaOS.Api.Shared.Data;
+using TatvaOS.Api.Shared.Mail;
 
 namespace TatvaOS.Api.Modules.Personal;
 
@@ -70,8 +71,8 @@ public static partial class PersonalAddress
     /// <summary>
     /// Taken by anything that shares the address namespace: a sign-in, a
     /// mailbox, an alias — platform-wide, like CreatePersonAsync — or an
-    /// address freed by a deletion less than 90 days ago (part F; nothing
-    /// frees one yet).
+    /// address somebody used before (core.retired_addresses), until an
+    /// operator releases it.
     /// </summary>
     public static async Task<bool> IsTakenAsync(AppDbContext db, string address, CancellationToken ct)
     {
@@ -80,13 +81,14 @@ public static partial class PersonalAddress
             await db.Aliases.IgnoreQueryFilters().AnyAsync(a => a.Address == address, ct))
             return true;
 
-        // Held after a deletion (§8, part F): 90 days — and for as long as the
-        // old mailbox's files may still be on disk, whatever the date says.
-        // The mail importer matches maildir files by ADDRESS, so a new owner
-        // of an address with the old files still there would be handed the
-        // previous owner's mail.
-        var now = DateTimeOffset.UtcNow;
-        return await db.AddressHolds.AnyAsync(h => h.Address == address && h.HeldUntil > now, ct)
+        // Retired (Mr. Singh, 26 Sept 2026): held — organisation or personal,
+        // whatever the date says — until an operator releases it, which needs
+        // a reason and the mail server's count of zero files. The mail importer
+        // matches maildir files by ADDRESS, so a new owner of an address with
+        // the old files still there would be handed the previous owner's mail.
+        // The leftover check stays as a second reason, in case a row is ever
+        // released by hand in the database.
+        return await RetiredAddresses.IsHeldAsync(db, address, ct)
             || await db.PurgeLeftovers.AnyAsync(l => l.Kind == "maildir" && l.Address == address, ct);
     }
 

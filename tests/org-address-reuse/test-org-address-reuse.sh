@@ -123,7 +123,13 @@ same "…so no mailbox row was removed by it" "$(PG "SELECT count(*) FROM mail.m
 step "2. RED FIRST: what the test sees if an address WERE freed"
 # Exactly what a hard delete would do: the rows go, the maildir stays.
 PG "DELETE FROM mail.mailboxes WHERE address='$RA'; DELETE FROM core.users WHERE email='$RA'" >/dev/null
-same "rahul@ can now be created again (201)" "$(status "$(create "$R" "Rahul Two, a different person")")" "201"
+# Since the retired-addresses list (20260927): the database retired rahul@
+# itself when its mailbox row went, so even a hard delete does not free it.
+same "after the hard delete, rahul@ is still held (retired when rahul was deleted; the delete trigger keeps that row)" "$(PG "SELECT source FROM core.retired_addresses WHERE address='$RA' AND released_at IS NULL")" "user_deleted"
+same "…and creating rahul@ again is refused (409)" "$(status "$(create "$R" "Rahul Two, a different person")")" "409"
+# The leak itself, with that last protection removed too:
+PG "DELETE FROM core.retired_addresses WHERE address='$RA'" >/dev/null
+same "without the list, rahul@ can be created again (201)" "$(status "$(create "$R" "Rahul Two, a different person")")" "201"
 old_mail "$R" "NUDGE $RUN"   # any new delivery makes the importer walk the folder
 if wait_for "$RA" "RAHUL ONE PRIVATE $RUN" 1; then
     pass "LEAK SHOWN: the new rahul@ received the old rahul's mail from disk (this is what the refusals above prevent)"

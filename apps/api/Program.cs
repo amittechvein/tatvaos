@@ -888,6 +888,7 @@ app.MapDomainEndpoints();
 app.MapSignupEndpoints();
 app.MapJoinEndpoints();
 app.MapReservedUsernameEndpoints();
+app.MapRetiredAddressEndpoints();
 app.MapPersonalPlanEndpoints();
 app.MapPersonalLifecycleEndpoints();
 app.MapSettingsEndpoints();
