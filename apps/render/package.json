@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Builds the files Space serves for Docs (and later Sheets) on the server, from the stored Yjs state, with the editor's own schema. docs/DOCS_SERVER_RENDER_DESIGN.md",
   "scripts": {
-    "parity": "node --import ./spike/register.mjs spike/parity.mjs"
+    "parity": "node --import ./spike/register.mjs spike/parity.mjs",
+    "gate": "node --import ./spike/register.mjs spike/gate.mjs"
   },
   "dependencies": {
     "@tiptap/core": "3.31.3",
