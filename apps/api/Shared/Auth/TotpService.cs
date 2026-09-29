@@ -211,7 +211,8 @@ public sealed class TotpService(IConfiguration config)
     /// the configured key, not the key itself - so a challenge was never
     /// confusable with an access token or a download ticket. Now it is also
     /// explicit and checked, as every token type's is (TokenIssuer.
-    /// AccessTokenType; Mr. Singh, 1 Oct 2026). A challenge issued before this
+    /// AccessTokenType; Mr. Singh's ruling, which reached this lane by 28 Sept
+    /// 2026). A challenge issued before this
     /// has three segments and is refused: it lived five minutes, and the
     /// person types their password again.
     /// </summary>

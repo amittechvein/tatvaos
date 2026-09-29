@@ -31,13 +31,20 @@ public sealed class TokenIssuer(IConfiguration config)
     /// The JWT "typ" header every access token carries, and the ONLY one the
     /// API accepts (RFC 9068's type for access tokens).
     ///
-    /// Mr. Singh, 1 Oct 2026: one key signs access tokens, Connect download
+    /// Mr. Singh's ruling, which reached this lane by 28 Sept 2026 and was
+    /// given in a separate session (from his PR 340 review): one key signs
+    /// access tokens, Connect download
     /// tickets and (by default) MFA challenges, and they were told apart only
     /// by their formats. "Every token type gets an explicit type claim, and
     /// every verifier checks for its own" - so a fourth use of the key cannot
     /// be mistaken for an access token by accident. The other two types:
     /// ConnectDownloadTicket.Type and TotpService.ChallengeType.
     /// tests/token-types feeds each type to all three verifiers.
+    ///
+    /// (This comment first dated the ruling "1 Oct 2026", a date that had not
+    /// yet come. Corrected on 29 Sept 2026 at Mr. Singh's request, the same
+    /// correction PR 350 made: the date is the one the ruling had reached this
+    /// lane by - this branch's commit - so at the latest.)
     /// </summary>
     public const string AccessTokenType = "at+jwt";
     public static readonly TimeSpan RefreshTokenLifetime = TimeSpan.FromDays(14);

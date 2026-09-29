@@ -5,7 +5,7 @@
      EVERY TOKEN TYPE CARRIES ITS TYPE, AND EVERY VERIFIER CHECKS FOR ITS OWN.
 
      Jwt:SigningKey signs access tokens and Connect download tickets, and is
-     MFA's default key. Until 1 Oct 2026 the three were told apart only by
+     MFA's default key. Until PR 346 the three were told apart only by
      their formats. Mr. Singh: "make the distinction structural, not
      observed." This runs the three REAL issuers and verifiers from the API
      with one shared key and feeds every token to every verifier - plus

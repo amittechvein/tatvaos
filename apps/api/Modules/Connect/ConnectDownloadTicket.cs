@@ -61,8 +61,9 @@ public sealed class ConnectDownloadTicket(IConfiguration config)
     /// <summary>
     /// The type every ticket carries INSIDE its signed body, and the only one
     /// Verify accepts. The key is Jwt:SigningKey, which also signs access
-    /// tokens; see TokenIssuer.AccessTokenType for the rule (Mr. Singh, 1 Oct
-    /// 2026). Tickets issued before this field existed are refused: they live
+    /// tokens; see TokenIssuer.AccessTokenType for the rule (Mr. Singh's ruling,
+    /// which reached this lane by 28 Sept 2026). Tickets issued before this
+    /// field existed are refused: they live
     /// five minutes, and a share reader mid-playback re-opens the link once.
     /// </summary>
     public const string Type = "connect-download";

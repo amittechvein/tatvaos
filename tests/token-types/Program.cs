@@ -45,11 +45,11 @@ internal static class Program
 
         // Correctly SIGNED with the shared key, but not carrying the right type.
         var jwtNoType = Jwt(typ: null);
-        var jwtPlainType = Jwt(typ: "JWT");          // what every access token said before 1 Oct
+        var jwtPlainType = Jwt(typ: "JWT");          // what every access token said before PR 346
         var jwtOtherType = Jwt(typ: "something-else+jwt");
-        var ticketNoType = Ticket(type: null);        // what every ticket said before 1 Oct
+        var ticketNoType = Ticket(type: null);        // what every ticket said before PR 346
         var ticketOtherType = Ticket(type: "some-other-use");
-        var challengeOld = OldChallenge(user.Id);     // three segments, before 1 Oct
+        var challengeOld = OldChallenge(user.Id);     // three segments, before PR 346
         var challengeOtherType = "other-type." + challenge["mfa-challenge.".Length..];
 
         Console.WriteLine();
@@ -74,12 +74,12 @@ internal static class Program
         Section("signed with the right key, wrong or missing type: refused (a fourth use of the key)");
         Ok("control: the hand-built JWT is accepted when it says at+jwt", await IsAccessToken(Jwt(typ: TokenIssuer.AccessTokenType)));
         Ok("a JWT with no typ is refused", !await IsAccessToken(jwtNoType));
-        Ok("a JWT saying typ JWT (every token before 1 Oct) is refused", !await IsAccessToken(jwtPlainType));
+        Ok("a JWT saying typ JWT (every token before PR 346) is refused", !await IsAccessToken(jwtPlainType));
         Ok("a JWT saying another +jwt type is refused", !await IsAccessToken(jwtOtherType));
         Ok("control: the hand-built ticket is accepted when it carries the ticket type", tickets.Verify(Ticket(type: ConnectDownloadTicket.Type)) is not null);
-        Ok("a ticket body with no type is refused (every ticket before 1 Oct)", tickets.Verify(ticketNoType) is null);
+        Ok("a ticket body with no type is refused (every ticket before PR 346)", tickets.Verify(ticketNoType) is null);
         Ok("a ticket body with another type is refused", tickets.Verify(ticketOtherType) is null);
-        Ok("a three-segment challenge (before 1 Oct) is refused", totp.ReadChallenge(challengeOld) is null);
+        Ok("a three-segment challenge (before PR 346) is refused", totp.ReadChallenge(challengeOld) is null);
         Ok("a challenge naming another type is refused", totp.ReadChallenge(challengeOtherType) is null);
 
         Console.WriteLine();
@@ -123,7 +123,7 @@ internal static class Program
         }
 
         // A ticket built exactly as ConnectDownloadTicket.Issue builds one, with
-        // the given type field (null = absent, as before 1 Oct).
+        // the given type field (null = absent, as before PR 346).
         static string Ticket(string? type)
         {
             var body = new Dictionary<string, object>
@@ -136,7 +136,7 @@ internal static class Program
             return $"{b}.{B64(HMACSHA256.HashData(Encoding.UTF8.GetBytes(Key), Encoding.ASCII.GetBytes(b)))}";
         }
 
-        // The challenge format before 1 Oct: {user}.{expiry}.{mac}, MAC as today.
+        // The challenge format before PR 346: {user}.{expiry}.{mac}, MAC as today.
         static string OldChallenge(Guid userId)
         {
             var bodyPart = $"{userId:N}.{DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeSeconds()}";

@@ -110,7 +110,8 @@ jobs:
         run: dotnet run --project tests/connect-share
       # Every token signed with Jwt:SigningKey carries its type, and every
       # verifier accepts only its own (access at+jwt, Connect download ticket,
-      # MFA challenge). Mr. Singh, 1 Oct 2026: "make the distinction
+      # MFA challenge). Mr. Singh, in a ruling that reached this lane by
+      # 28 Sept 2026 (given in a separate session): "make the distinction
       # structural, not observed."
       - name: "Auth check: every token type is checked for its own type"
         run: dotnet run --project tests/token-types
