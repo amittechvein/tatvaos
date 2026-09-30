@@ -42,14 +42,14 @@ public static class PaymentEndpoints
         org.MapPost("/confirm", ConfirmAsync);
 
         var op = app.MapGroup("/api/admin/organisations/{id:guid}/invoices/{invoiceId:guid}")
-            .RequireAuthorization("SuperAdmin").WithTags("Platform administration");
+            .RequireOperator().WithTags("Platform administration");
         op.MapPost("/check-payment", CheckAsync);
         op.MapPost("/email", EmailAsync);
 
         app.MapPost("/api/billing/razorpay/webhook", WebhookAsync).AllowAnonymous().WithTags("Billing");
 
         var problems = app.MapGroup("/api/admin/billing/payment-problems")
-            .RequireAuthorization("SuperAdmin").WithTags("Platform administration");
+            .RequireOperator().WithTags("Platform administration");
         problems.MapGet("/", ProblemsAsync);
         problems.MapPost("/{eventId}/acknowledge", AcknowledgeAsync);
     }

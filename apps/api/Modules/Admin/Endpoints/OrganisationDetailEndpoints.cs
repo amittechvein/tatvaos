@@ -37,7 +37,7 @@ public static class OrganisationDetailEndpoints
     public static void MapOrganisationDetailEndpoints(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api/admin/organisations/{id:guid}")
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
 
         g.MapGet("/overview", OverviewAsync);

@@ -17,23 +17,23 @@ public static class OrgAiUsageEndpoints
     public static void MapOrgAiUsageEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/admin/organisations/{id:guid}/ai-usage", GetAsync)
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
         // The operator's AI-credit exception for one organisation (26 Sept 2026).
         app.MapPut("/api/admin/organisations/{id:guid}/ai-credits", PutCreditsAsync)
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
         // Its own read, beside ai-usage rather than inside it: ai-usage's shape
         // is read by the metering test and the console, and stays as it was.
         app.MapGet("/api/admin/organisations/{id:guid}/ai-credits", GetCreditsAsync)
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
         // Top-ups (26 Sept 2026): extra credits for this month, sold on top of the plan.
         app.MapPost("/api/admin/organisations/{id:guid}/ai-credits/topups", AddTopupAsync)
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
         app.MapPost("/api/admin/organisations/{id:guid}/ai-credits/topups/{topupId:guid}/withdraw", WithdrawTopupAsync)
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
     }
 

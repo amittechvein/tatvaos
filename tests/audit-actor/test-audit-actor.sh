@@ -18,6 +18,10 @@
 #     never the first (which the client chose), never the connection's
 #   * no copy of the old lookup is left in apps/api
 #
+#   * a refused audit line undoes the change: suspend, keep-everything,
+#     billing cycle and Connect caps each fail and change NOTHING (step 5,
+#     throwaway database only)
+#
 # tests/audit-actor/gates asks the three decisions directly (dotnet run).
 #
 # Setup as tests/admin-org-detail. Build first: dotnet build apps/api -c Release
@@ -207,6 +211,48 @@ same "no line carries the address the client claimed" \
     "$(PG "SELECT count(*) FROM core.audit_logs WHERE occurred_at > '$T0' AND actor_ip='198.51.100.9'")0" "00"
 same "no platform line carries the connection's own address" \
     "$(PG "SELECT count(*) FROM core.audit_logs WHERE action LIKE 'platform:%' AND occurred_at > '$T0' AND actor_ip IN ('::1','127.0.0.1','::ffff:127.0.0.1')")0" "00"
+
+
+step "5. A refused audit line undoes the change (Mr. Singh, 30 Sept)"
+# The database is made to refuse every audit line for this run's
+# organisation. Each operator change below must then fail AND leave nothing
+# changed: the change and its line commit together or not at all. A trigger
+# is added for this, so the step runs only on a database of its own.
+if [ -z "${TDB_NAME:-}" ]; then
+    fail "step 5 adds a trigger and runs only on a throwaway database (tests/lib/throwaway-db.sh): NOT run"
+else
+    grep -q "operator write route(s) covered, 0 uncovered" "$LOG" \
+        && pass "start-up: every operator write route carries the transaction" \
+        || fail "start-up did not report 0 uncovered routes: $(grep -m1 'Operator write transaction' "$LOG" | cut -c1-200)"
+    status_was=$(PG "SELECT status FROM core.tenants WHERE id='$ORG'")
+    keeps_was=$(PG "SELECT keeps_everything FROM core.tenants WHERE id='$ORG'")
+    cycle_was=$(PG "SELECT billing_cycle FROM core.subscriptions WHERE tenant_id='$ORG' ORDER BY started_at DESC LIMIT 1")
+    caps_was=$(PG "SELECT invite_max_per_request||'/'||invite_max_per_meeting FROM connect.tenant_settings WHERE tenant_id='$ORG'")
+    same "before: active, keeps everything, yearly, caps 50/100" "$status_was/$keeps_was/$cycle_was/$caps_was" "active/t/yearly/50/100"
+    PG "CREATE OR REPLACE FUNCTION public.zz_refuse_audit() RETURNS trigger LANGUAGE plpgsql AS \$\$ BEGIN RAISE EXCEPTION 'test: audit refused'; END \$\$" >/dev/null
+    PG "CREATE TRIGGER zz_refuse_audit BEFORE INSERT ON core.audit_logs FOR EACH ROW WHEN (NEW.tenant_id = '$ORG') EXECUTE FUNCTION public.zz_refuse_audit()" >/dev/null
+    same "the refusing trigger is in place" "$(PG "SELECT count(*) FROM pg_trigger WHERE tgname='zz_refuse_audit'")" "1"
+
+    r=$(callx POST "/api/admin/organisations/$ORG/suspend" "$OPERATOR")
+    same "suspend, line refused: the request fails (500)" "$(status "$r")" "500"
+    same "…and the organisation is NOT suspended" "$(PG "SELECT status FROM core.tenants WHERE id='$ORG'")" "$status_was"
+    r=$(callx PUT "/api/admin/organisations/$ORG/keeps-everything" "$OPERATOR" "{\"keepsEverything\":false,\"reason\":\"audit-actor $RUN\"}")
+    same "keep-everything off, line refused: fails (500)" "$(status "$r")" "500"
+    same "…and it still keeps everything" "$(PG "SELECT keeps_everything FROM core.tenants WHERE id='$ORG'")" "$keeps_was"
+    r=$(callx PUT "/api/admin/organisations/$ORG/billing/cycle" "$OPERATOR" "{\"cycle\":\"monthly\"}")
+    same "billing cycle to monthly, line refused: fails (500)" "$(status "$r")" "500"
+    same "…and it is still yearly" "$(PG "SELECT billing_cycle FROM core.subscriptions WHERE tenant_id='$ORG' ORDER BY started_at DESC LIMIT 1")" "$cycle_was"
+    r=$(callx PUT "/api/admin/organisations/$ORG/connect-invitation-caps" "$OPERATOR" "{\"perRequest\":70,\"perMeeting\":140}")
+    same "Connect caps to 70/140, line refused: fails (500)" "$(status "$r")" "500"
+    same "…and they are still 50/100" "$(PG "SELECT invite_max_per_request||'/'||invite_max_per_meeting FROM connect.tenant_settings WHERE tenant_id='$ORG'")" "$caps_was"
+
+    # The calibration: with the trigger gone the same request goes through,
+    # so the "nothing changed" above was the refusal, not a broken request.
+    PG "DROP TRIGGER zz_refuse_audit ON core.audit_logs" >/dev/null
+    r=$(callx POST "/api/admin/organisations/$ORG/suspend" "$OPERATOR")
+    same "trigger gone: the same suspend succeeds" "$(status "$r")" "200"
+    same "…and the organisation is suspended" "$(PG "SELECT status FROM core.tenants WHERE id='$ORG'")" "suspended"
+fi
 
 printf "\n  ═════════════════════════════════════════════\n"
 if [ "$FAILED" -eq 0 ]; then printf "  PASS  %d checks\n\n" "$PASSED"; exit 0
