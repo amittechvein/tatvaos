@@ -95,6 +95,24 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 
+# ---- Test hooks do not exist on a server (Mr. Singh on PR 321, 30 Sept 2026) --
+#  MR_VMAIL_ROOT moves the mail store this job removes folders from; MR_PSQL,
+#  MR_EXPUNGE, MR_COUNT and MR_DOVECOT swap the database and the commands.
+#  They exist so tests/ can run the job against a local tree. On a server one
+#  left in an environment — or typed by habit — would point a removal at a
+#  folder nobody checked, or run a command that is not doveadm. So where the
+#  checkout is a real one (it has infra/docker/.env, which a server's has and
+#  a test's never does) every one of them is IGNORED, and the log says which.
+if [ -f infra/docker/.env ]; then
+    for hook in MR_VMAIL_ROOT MR_PSQL MR_EXPUNGE MR_COUNT MR_DOVECOT; do
+        if [ -n "${!hook:-}" ]; then
+            printf '%s IGNORED %s: test hooks are not honoured where infra/docker/.env exists\n' \
+                "$(date -u +%FT%TZ)" "$hook"
+            unset "$hook"
+        fi
+    done
+fi
+
 LOG="${MR_LOG:-$HOME/tatvaos-maildir-removals.log}"
 BATCH="${MR_BATCH:-20}"
 DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1

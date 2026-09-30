@@ -22,6 +22,7 @@
 #      domain untouched; the domain released; the record done only when ALL
 #      its domains are
 #   9. never from cron; one rm -rf in the file, with "--"
+#  11. on a server (infra/docker/.env present) every test hook is ignored
 #  10. RED FIRST: copies of the job with one guard cut — the name guard (the
 #      empty and ".." cases are no longer refused at the name) and the
 #      database guard (the registered-again domain's folder IS removed)
@@ -188,6 +189,40 @@ grep -q 'if false; then say "REFUSED domain' "$SCR/job-no-db.sh" && pass "(b) co
 bash "$SCR/job-no-db.sh" --domain "$REG" >/dev/null 2>&1
 gone "(b) without it, the registered-again domain's mail IS removed — so section 2's check would go red" "$MR_VMAIL_ROOT/$REG"
 there "(b) …another customer's mail, even so" "$MR_VMAIL_ROOT/$OTHER/keep/cur/$RUN.1.eml"
+
+
+step "11. On a server the test hooks are ignored (Mr. Singh, 30 Sept)"
+# A server's checkout has infra/docker/.env; a test's never does. Build a
+# checkout that looks like a server's — the job, and that file — and run it
+# with every hook set, pointing at a copy of this run's tree.
+# Its own domain, still held: the earlier ones have been released by now.
+D3="dr3-$RUN.test"
+PG "INSERT INTO core.organisation_deletions (tenant_id, name, deleted_by, deleted_by_email, domains, mail_dirs_pending)
+    VALUES (gen_random_uuid(), '$NAME 3', gen_random_uuid(), 'test@tatvaos.test', ARRAY['$D3'], ARRAY['$D3'])" >/dev/null
+same "the step's domain is held" "$(PG "SELECT core.domain_mail_held('$D3')")" "t"
+check_prodlike() { # job-file label
+    local P="$SCR/prodlike-$2" out
+    mkdir -p "$P/infra/scripts" "$P/infra/docker" "$P/store"
+    cp "$1" "$P/infra/scripts/maildir-removals.sh"
+    : > "$P/infra/docker/.env"
+    cp -r "$MR_VMAIL_ROOT" "$P/store/vhosts"
+    mkdir -p "$P/store/vhosts/$D3/a1/cur"; printf 'x' > "$P/store/vhosts/$D3/a1/cur/prod.eml"
+    out=$(MR_VMAIL_ROOT="$(realpath -- "$P/store/vhosts")" bash "$P/infra/scripts/maildir-removals.sh" --domain "$D3" --dry-run 2>&1)
+    printf '%s' "$out"
+}
+out=$(check_prodlike "$JOB" now)
+has   "MR_VMAIL_ROOT is ignored, and the log says so" "$out" "IGNORED MR_VMAIL_ROOT"
+has   "MR_PSQL is ignored" "$out" "IGNORED MR_PSQL"
+has   "MR_EXPUNGE is ignored" "$out" "IGNORED MR_EXPUNGE"
+has   "MR_COUNT is ignored" "$out" "IGNORED MR_COUNT"
+has   "MR_DOVECOT is ignored" "$out" "IGNORED MR_DOVECOT"
+hasnt "…so the dry run never reaches the tree the hook pointed at" "$out" "the path, exactly:"
+has   "…it looks for the real containers instead, and stops without them" "$out" "need both containers running"
+there "…and that tree is untouched" "$SCR/prodlike-now/store/vhosts/$D3/a1/cur/prod.eml"
+# RED FIRST: the job as it was (f04ab85) honours the hook on a server.
+git show f04ab85:infra/scripts/maildir-removals.sh > "$SCR/job-before.sh"
+out=$(check_prodlike "$SCR/job-before.sh" before)
+has   "RED: the job before this fix, on a server, DOES go to the hooked tree" "$out" "the path, exactly:"
 
 printf "\n  ═════════════════════════════════════════════\n"
 if [ "$FAILED" -eq 0 ]; then printf "  PASS  %d checks\n\n" "$PASSED"; exit 0
