@@ -24,6 +24,7 @@ import { prosemirrorJSONToYDoc, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-
 import { Window } from 'happy-dom';
 import { documentExtensions } from '../../web/components/docs/schema.ts';
 import { sameDocument } from './same-document.mjs';
+import { applyDrops, logLine } from './storage-drops.mjs';
 
 let passed = 0;
 let failed = 0;
@@ -66,7 +67,7 @@ const root = new URL('../../../tests/', import.meta.url);
 const fixtures = [
   { name: 'editor-page (one of every node and mark)', url: new URL('docs-html/editor-page.html', root) },
   ...readdirSync(new URL('docs-render/fixtures/', root))
-    .filter((f) => f.endsWith('.html'))
+    .filter((f) => f.endsWith('.html') && !f.endsWith('.reloaded.html')) // a reload belongs to its fixture, it is not one
     .sort()
     .map((f) => ({
       name: f.replace(/\.html$/, ''),
@@ -107,22 +108,58 @@ const short = extensions.filter((e) => e.name !== 'highlight');
 check('caught: one extension removed (highlight)', short.length === extensions.length - 1
   && sameDocument(page, serverPath(page, short)).length > 0);
 
-// ---- 2. every fixture ------------------------------------------------------------
-console.log(`\n2. Every fixture (${fixtures.length}): the server's render is the same document`);
+// ---- 2. every fixture, two halves (Mr. Singh, 30 Sept 2026) ---------------------
+//
+//  A. The server's file == the editor RELOADED from storage (the stored Yjs
+//     state is the document; every reader sees the reload).
+//  B. The editor's FIRST view vs the editor reloaded: every difference must be
+//     explained by the closed list of known storage drops (storage-drops.mjs);
+//     anything else fails. Each entry that fires writes condition 4's line.
+//
+//  A fixture with no reloaded HTML (editor-page, made before this ruling) can
+//  only be checked the old way, against its first view, and says so.
+console.log(`\n2. Every fixture (${fixtures.length}): A = server file vs the editor reloaded; B = first view vs reload, explained by the closed list`);
+const reloadedOf = (f) => { try { return readFixture(new URL(f.url.href.replace(/\.html$/, '.reloaded.html'))); } catch { return null; } };
+const jsonOf = (f) => { try { return f.json ? JSON.parse(readFileSync(f.json, 'utf8')) : null; } catch { return null; } };
+const logLines = [];
 for (const f of fixtures) {
-  const html = readFixture(f.url);
-  if (html.length < 100) { check(`${f.name}: a real page, not an empty file`, false, `${html.length} characters`); continue; }
-  // The editor's own document when it was captured (the real path);
-  // otherwise re-read from its HTML (see serverPath's warning).
-  let json = null;
-  try { if (f.json) json = JSON.parse(readFileSync(f.json, 'utf8')); } catch { json = null; }
-  const rendered = json ? serverPathFromJson(json, extensions) : serverPath(html, extensions);
-  const diffs = sameDocument(html, rendered);
-  check(`${f.name} (${html.length} chars, from ${json ? "the editor's document" : 'its HTML'})`,
-    diffs.length === 0, diffs.slice(0, 5).join('\n        '));
-  if (json) {
-    const viaHtml = sameDocument(html, serverPath(html, extensions));
-    if (viaHtml.length) console.log(`        (for the record: re-read from its HTML instead, ${viaHtml.length} differences — the lossy re-read, not the server path)`);
+  const first = readFixture(f.url);
+  if (first.length < 100) { check(`${f.name}: a real page, not an empty file`, false, `${first.length} characters`); continue; }
+  const json = jsonOf(f);
+  const reloaded = reloadedOf(f);
+  if (!json || !reloaded) {
+    const diffs = sameDocument(first, json ? serverPathFromJson(json, extensions) : serverPath(first, extensions));
+    check(`${f.name}: server file vs its FIRST view (no reloaded copy — made before the ruling)`, diffs.length === 0, diffs.slice(0, 5).join('\n        '));
+    continue;
+  }
+  const a = sameDocument(reloaded, serverPathFromJson(json, extensions));
+  check(`A ${f.name}: the server's file is the same document as the editor reloaded from storage`, a.length === 0, a.slice(0, 5).join('\n        '));
+  const raw = sameDocument(first, reloaded).length;
+  const { json: dropped, fired } = applyDrops(json);
+  const b = sameDocument(reloaded, generateHTML(dropped, extensions));
+  check(`B ${f.name}: first view vs reload — ${raw} difference(s), ${b.length === 0 ? 'every one on the list' : 'NOT all on the list'}`
+    + (fired.length ? ` (${fired.map((x) => `entry ${x.id} x${x.count}`).join(', ')})` : ''), b.length === 0, b.slice(0, 5).join('\n        '));
+  for (const x of fired) logLines.push(logLine(f.name, x));
+}
+if (logLines.length) console.log('\n  condition 4 log lines (document + kind, never content):\n    ' + logLines.join('\n    '));
+
+// ---- 3. the closed list is calibrated ----------------------------------------------
+console.log('\n3. The closed list is calibrated');
+{
+  const g = fixtures.find((f) => f.name === 'google-docs-paste');
+  const json = g && jsonOf(g), first = g && readFixture(g.url), reloaded = g && reloadedOf(g);
+  if (!json || !reloaded) check('the Google Docs fixture and its reload are present', false);
+  else {
+    // Entry 1 is doing the work: with an EMPTY list the same fixture fails B.
+    const bare = sameDocument(reloaded, generateHTML(applyDrops(json, []).json, extensions));
+    check('with the list EMPTY, the Google Docs first view is NOT explained (entry 1 carries it)', bare.length > 0 && sameDocument(first, reloaded).length > 0);
+    // A fabricated drop of a different kind: storage "loses" one bold word.
+    const i = reloaded.indexOf('<strong>');
+    const j = reloaded.indexOf('</strong>', i);
+    const fabricated = i < 0 ? reloaded : reloaded.slice(0, i) + reloaded.slice(i + 8, j) + reloaded.slice(j + 9);
+    check('the fabrication changed the text', fabricated !== reloaded);
+    const fb = sameDocument(fabricated, generateHTML(applyDrops(json).json, extensions));
+    check('caught: a bold word losing its bold is NOT on the list, and fails', fb.length > 0);
   }
 }
 

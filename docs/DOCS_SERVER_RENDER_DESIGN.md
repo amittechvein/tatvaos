@@ -339,3 +339,21 @@ These **replace** the matching parts of §12 and of the design above.
 container PR → saves from the server's file → deploy, still off → the
 one-line change allowing Docs on → Amit's decision, Techvein first.
 
+## 14. Third ruling, after the Google Docs fixture (Mr. Singh, reached this lane 30 September 2026)
+
+1. **The gate compares the server's file with the editor reloaded from
+   storage**, not the paster's first view (transient).
+2. **Plus a closed list of known storage drops** (0011, condition 4): the
+   first view vs the reload must differ only by listed kinds; anything else
+   fails; a new entry needs his ruling; each firing writes condition 4's
+   log line (document + kind, never content). Entry 1: marks on a hard
+   break. Calibrated with a fabricated drop of another kind.
+3. **Strip marks from hard breaks on paste**: a follow-up, not blocking.
+4. **Fixtures made from real documents live only in a throwaway database**
+   (rule 13), dropped at the end of the run; nothing made from a real
+   customer's or Amit's document is kept unscrubbed anywhere
+   (`tests/docs-render/capture-harness.sh`).
+
+Order: the gate as ruled, re-run -> his read -> the render service and its
+container PR.
+

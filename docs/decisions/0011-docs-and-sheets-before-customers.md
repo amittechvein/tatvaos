@@ -143,6 +143,31 @@ added, two elements swapped, a style declaration dropped, one extension
 removed — each must fail), and it runs on more than one real-world fixture.
 Details: `docs/DOCS_SERVER_RENDER_DESIGN.md` §13.
 
+## Condition 4: the closed list of known storage drops
+
+Mr. Singh, reached this lane 30 September 2026, through Amit, after the
+Google Docs paste showed that the storage layer (y-tiptap's Yjs mapping, the
+one the live editor syncs through) drops marks on a hard break.
+
+**The gate compares the server's file with the editor reloaded from
+storage**: the stored Yjs state is the document, and every collaborator, and
+the author after a reload, reads that. **It also compares the editor's
+first view with the editor reloaded, and every difference must match an
+entry on this list.** Any other kind of difference fails the gate; a new
+entry needs Mr. Singh's ruling. Whenever an entry fires, condition 4's log
+line is written, naming the document and the kind of drop, never the
+content. The list itself is calibrated: a fabricated drop of another kind
+(a bold word losing its bold) must fail.
+
+| # | Kind of drop | Why it is on the list |
+|---|---|---|
+| 1 | **Marks on a hard break** | y-tiptap stores no marks on a non-text inline node. Invisible in practice: a line break shows no glyph. Proven 30 Sept 2026: 14 of the Google Docs fixture's 60 line breaks carried marks before storage and 0 after; a three-character document reproduces it; the server's file matches the reloaded editor with 0 differences. |
+
+Code: `apps/render/spike/storage-drops.mjs`. **Follow-up, not blocking:**
+the editor strips marks from hard breaks on paste and insert, so the
+author's first view already equals what is stored; after that, entry 1
+should stop firing on new pastes.
+
 ## Consequences
 
 - Techvein can use both products on its own data, with the divergence
