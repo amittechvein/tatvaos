@@ -22,6 +22,10 @@
 #   3. apply 20260927-d-zero-layer-rls.sql: it must succeed, say how many it
 #      removed, keep the real row with its organisation, and leave no NULL
 #   4. apply it again: every file re-runs on every deploy
+#   5. the old API's insert AFTER the migration (no tenant_id) succeeds with the
+#      right organisation; a wrong-organisation insert is still refused
+#   6. with the table held by someone else, the migration fails within seconds
+#      (lock_timeout), and succeeds once it is free
 #
 # Its own throwaway database (house rule 13), dropped at the end.
 # Usage: bash tests/isolation/test-zero-layer-backfill.sh
@@ -92,7 +96,7 @@ step "3. Apply the migration (deploy day)"
 apply
 same "the migration succeeds (psql exit 0)" "$APPLY_RC" "0"
 [ "$APPLY_RC" -eq 0 ] || printf "        %s\n" "$(printf '%s\n' "$APPLY_OUT" | grep -m2 -E "ERROR|DETAIL")"
-same "it says how many orphaned rows it removed" "$(printf '%s\n' "$APPLY_OUT" | grep -c "removed 1 reminder_sends row(s) whose event is gone")" "1"
+same "it says how many orphaned rows it removed, as a WARNING" "$(printf '%s\n' "$APPLY_OUT" | grep -c "WARNING:.*removed 1 reminder_sends row(s) whose event is gone")" "1"
 same "no send row is left without an organisation" "$(PG "SELECT count(*) FROM calendar.reminder_sends WHERE tenant_id IS NULL")" "0"
 same "tenant_id is NOT NULL" "$(PG "SELECT is_nullable FROM information_schema.columns WHERE table_schema='calendar' AND table_name='reminder_sends' AND column_name='tenant_id'")" "NO"
 same "the real send is kept, with its organisation" "$(PG "SELECT tenant_id FROM calendar.reminder_sends WHERE reminder_id='$R_REAL'")" "$TECHVEIN"
@@ -102,8 +106,52 @@ same "row security is forced on reminder_sends" "$(PG "SELECT relforcerowsecurit
 step "4. Apply it again (every file re-runs on every deploy)"
 apply
 same "the second run succeeds too" "$APPLY_RC" "0"
-same "...and has nothing to remove, so says nothing" "$(printf '%s\n' "$APPLY_OUT" | grep -c "whose event is gone")" "0"
+# Mr. Singh: a WARNING only when there is something to see; 0 stays a NOTICE.
+same "...and has nothing to remove, so raises no WARNING" "$(printf '%s\n' "$APPLY_OUT" | grep -c "WARNING")" "0"
 same "the real send is still there" "$(PG "SELECT count(*) FROM calendar.reminder_sends WHERE reminder_id='$R_REAL'")" "1"
+
+# ── THE WINDOW AFTER THE MIGRATION (Mr. Singh, 30 Sept 2026) ─────────────────
+#  The migration commits; the old API (PR 329) is still serving until the new
+#  container replaces it, and it records sends with NO tenant_id. The worker
+#  records BEFORE sending, so a refused insert is a late (or, past the
+#  15-minute grace, a missed) reminder - never a duplicate. A BEFORE INSERT
+#  trigger fills tenant_id from the reminder's event, looked up in the
+#  inserting session's own organisation, so the old code's insert succeeds
+#  with the right value, and a wrong-organisation insert still fails.
+step "5. The old API's insert, after the migration and before the new API"
+# as_app TENANT SQL -> psql's output, run as the API's role in that organisation
+as_app() { PGS "SET ROLE tatvaos_app; SELECT set_config('app.tenant_id', '$1', false); $2"; }
+SCHOOL="22222222-2222-2222-2222-222222222222"
+before=$(PG "SELECT count(*) FROM calendar.reminder_sends")
+out=$(as_app "$TECHVEIN" "INSERT INTO calendar.reminder_sends (reminder_id, occurrence_starts_at) VALUES ('$R_REAL', now() + interval '1 day');")
+same "the old code's insert (no tenant_id, its own organisation) succeeds" "$(printf '%s\n' "$out" | grep -c "ERROR")" "0"
+[ -z "$(printf '%s\n' "$out" | grep -m1 ERROR)" ] || printf "        %s\n" "$(printf '%s\n' "$out" | grep -m1 ERROR)"
+same "...and the row carries the right organisation" "$(PG "SELECT tenant_id FROM calendar.reminder_sends WHERE reminder_id='$R_REAL' AND occurrence_starts_at > now() + interval '12 hours'")" "$TECHVEIN"
+out=$(as_app "$SCHOOL" "INSERT INTO calendar.reminder_sends (reminder_id, occurrence_starts_at) VALUES ('$R_REAL', now() + interval '2 days');")
+same "the same insert under ANOTHER organisation's scope is refused" "$(printf '%s\n' "$out" | grep -c "ERROR")" "1"
+out=$(as_app "$SCHOOL" "INSERT INTO calendar.reminder_sends (reminder_id, occurrence_starts_at, tenant_id) VALUES ('$R_REAL', now() + interval '3 days', '$TECHVEIN');")
+same "...and so is one forging Techvein's tenant_id from School's scope" "$(printf '%s\n' "$out" | grep -c "ERROR")" "1"
+out=$(as_app "$TECHVEIN" "INSERT INTO calendar.reminder_sends (reminder_id, occurrence_starts_at, tenant_id) VALUES ('$R_REAL', now() + interval '4 days', '$TECHVEIN');")
+same "the new code's insert (tenant_id given) still succeeds" "$(printf '%s\n' "$out" | grep -c "ERROR")" "0"
+same "exactly the two right inserts landed" "$(PG "SELECT count(*) FROM calendar.reminder_sends")" "$((before + 2))"
+
+# ── THE LOCK TIMEOUT ─────────────────────────────────────────────────────────
+#  If something holds the table, the migration must fail QUICKLY - the deploy
+#  stops cleanly and is retried - rather than hang with the old API queued
+#  behind it. Held here for 25 s; the migration must give up well before.
+step "6. With the table held by someone else, the migration gives up quickly"
+base="${TATVAOS_PSQL% -Atc}"
+$base -qc "BEGIN; LOCK TABLE calendar.reminder_sends IN ACCESS EXCLUSIVE MODE; SELECT pg_sleep(25); COMMIT;" >/dev/null 2>&1 &
+HOLDER=$!
+sleep 3
+t0=$(date +%s); apply; took=$(( $(date +%s) - t0 ))
+same "the migration fails rather than waiting" "$([ "$APPLY_RC" -ne 0 ] && echo failed || echo "succeeded after ${took}s")" "failed"
+same "...within 15 seconds" "$([ "$took" -le 15 ] && echo yes || echo "no, ${took}s")" "yes"
+same "...saying why (lock timeout)" "$(printf '%s\n' "$APPLY_OUT" | grep -c "lock timeout")" "1"
+wait "$HOLDER" 2>/dev/null
+apply
+same "once the table is free, the retried migration succeeds" "$APPLY_RC" "0"
+same "and nothing was lost meanwhile" "$(PG "SELECT count(*) FROM calendar.reminder_sends")" "$((before + 2))"
 
 printf "\n  -----------------------------------------------\n"
 if [ "$FAILED" -eq 0 ]; then printf "  PASS  %d checks\n\n" "$PASSED"; exit 0
