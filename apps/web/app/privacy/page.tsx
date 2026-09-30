@@ -14,6 +14,10 @@ import Link from 'next/link';
  *     api.openai.com, and the per-organisation switch (core.tenants.allow_ai)
  *     is OFF by default. The sentence mirrors the disclosure the API itself
  *     returns (OrgAiEndpoints) - keep the two saying the same thing.
+ *     From 30 Sept 2026 the AI sentences are the AI constant below, copied
+ *     from AiDisclosure.cs and checked by tests/ai/privacy-text-matches.py.
+ *   • Google is named because live captions (lib/useCaptions.ts) use Chrome's
+ *     speech recognition, which sends microphone audio to Google.
  *   • Transcription: production had NO transcription service configured on
  *     21 Sept. ConnectNotesWorker.TranscribeAsync does NOT check allow_ai;
  *     if an outside transcription service is ever configured, that gap must be
@@ -31,7 +35,27 @@ export const metadata: Metadata = {
   description: 'How TatvaOS handles the personal data of the people who use it.',
 };
 
-const UPDATED = '21 September 2026';
+// The date the Mail AI text goes live. A placeholder until then: the page
+// must not claim a date it was not published on (privacy-text-matches.py
+// fails while any PENDING marker is left).
+const UPDATED = '[PENDING: the date this text goes live]';
+
+/**
+ * What TatvaOS AI sends, WORD FOR WORD as apps/api/Shared/Ai/AiDisclosure.cs
+ * (Mr. Singh, 30 Sept 2026: "in the same words everywhere"). The admin page
+ * builds its sentences from those constants; tests/ai/privacy-text-matches.py
+ * fails when any one of them is not here exactly. Edit both, or neither.
+ */
+const AI = {
+  helpMeWrite: "the draft a person has typed, only when they ask for it to be rewritten",
+  suggestedReplies: "the sender's name, the subject and the new text of an email, when a person opens it",
+  summarise: "the sender's name, the date and the new text of each email in a conversation, when a person asks for a summary",
+  sorting: "the sender's name, the subject and the first 1,000 characters of the new text of every new email that arrives, including ones about health, children or money, without anyone clicking anything",
+  neverSent: "The sender's email address, earlier messages quoted below the new text, attachments and junk mail are never sent. Suggested replies and sorting also skip mail your organisation sent and mail from automated senders.",
+  whoDecides: "Mail AI is off by default. Only your organisation's administrator can turn it on, and they can turn each feature off again at any time. When Mail AI is turned on, Help me write starts on; suggested replies, Summarise and sorting stay off until the administrator turns each one on. Sorting is not offered to hospitals and clinics.",
+  retention: "[PENDING Amit: OpenAI keeps what we send for ___ and does / does not use it to train its models. This is from our OpenAI account's data settings, checked on ___.]",
+  toWhom: 'OpenAI, in the United States',
+};
 const CONTACT = 'support@tatvaos.com';
 
 function H({ children }: { children: React.ReactNode }) {
@@ -116,10 +140,26 @@ export default function PrivacyPage() {
         <L items={[
           <><strong className="text-ink">Text messages:</strong> to send you a one-time sign-in or recovery
             code, your mobile number and the code are passed to our SMS provider (Infobip or MSG91).</>,
-          <><strong className="text-ink">AI features, only if your organisation turns them on:</strong> AI
-            features are off unless your organisation&rsquo;s administrator switches them on. When they
-            are on, meeting transcripts from that organisation are sent to OpenAI in the United States
-            to write meeting notes. Nothing is sent while this is off.</>,
+          <><strong className="text-ink">AI features, only if your organisation turns them on:</strong>{' '}
+            TatvaOS AI is off unless your organisation&rsquo;s administrator switches it on. Meetings and
+            mail are switched on separately, and in mail each feature has its own switch. When a feature
+            is on, the following is sent to {AI.toWhom}:
+            <ul className="mt-1.5 list-[circle] space-y-1 pl-5">
+              {/* PENDING Mr. Singh (captions): the meeting-notes line and the Google
+                  bullet below are the wording proposed on 30 Sept, not yet ruled. */}
+              <li>for meeting notes: the text of what was said, taken from live captions (not the audio);</li>
+              <li>Help me write: {AI.helpMeWrite};</li>
+              <li>Suggested replies: {AI.suggestedReplies};</li>
+              <li>Summarise conversation: {AI.summarise};</li>
+              <li>Sort incoming mail: {AI.sorting}.</li>
+            </ul>
+            <span className="mt-1.5 block">
+              {AI.neverSent} {AI.whoDecides} {AI.retention} Nothing is sent while these are off.
+            </span></>,
+          <><strong className="text-ink">Live captions for meeting minutes:</strong> when the person
+            running a meeting turns minutes on, each participant&rsquo;s Chrome or Edge browser sends
+            their microphone audio to Google to turn speech into text. Only the resulting text reaches
+            TatvaOS. {'[PENDING Mr. Singh: captions wording]'}</>,
           <><strong className="text-ink">The people you communicate with:</strong> the recipients of your
             emails, the participants in your meetings, and anyone you share a file with.</>,
           <><strong className="text-ink">The law:</strong> when we are legally required to, for example by a

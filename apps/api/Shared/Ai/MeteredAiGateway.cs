@@ -71,6 +71,7 @@ public sealed class MeteredAiGateway(
     public bool IsConfigured => inner.IsConfigured;
     public string Model => inner.Model;
     public string? DataLocation => inner.DataLocation;
+    public string? Vendor => inner.Vendor;
     public Task<bool> EnabledForTenantAsync(CancellationToken ct) => inner.EnabledForTenantAsync(ct);
 
     /// <summary>The limits in force. NULL means no limit; 0 means none allowed.</summary>

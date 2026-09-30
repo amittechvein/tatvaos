@@ -303,6 +303,9 @@ services:
       # AI features report themselves unavailable. Deliberately `:-` and not
       # `:?` — a missing value must not stop mail and calendar; it stops AI.
       Ai__DataLocation: ${AI_DATA_LOCATION:-}
+      # Optional for api.openai.com (it names its own vendor, OpenAI); required
+      # for any other host. See OpenAiGateway.KnownHosts.
+      Ai__Vendor: ${AI_VENDOR:-}
       # Over-quota mailboxes: anything but "enforce" only LOGS would-defer
       # lines. Flip to enforce only after reading those logs shows no
       # innocent mailbox would be hit — a 4xx defer makes senders queue and

@@ -4,7 +4,9 @@
 //
 //  Uses a FAKE provider, never a real key:
 //    - the API with Ai__BaseUrl=http://127.0.0.1:5199/v1 and any
-//      Ai__ApiKey/Model/DataLocation;
+//      Ai__ApiKey/Model/DataLocation, and Ai__Vendor=OpenAI (from 30 Sept
+//      2026 a host the gateway does not know must name its vendor, or AI
+//      stays unconfigured; the disclosure checks expect "OpenAI");
 //    - tests/ai/fake-ai-mail.mjs running on :5199 (node tests/ai/fake-ai-mail.mjs). It answers "REWRITTEN: <INPUT>" and
 //      keeps the last request it received at GET /last — the independent
 //      witness for WHAT WAS SENT — and a count at GET /hits, the witness that
@@ -104,7 +106,8 @@ try {
     put.status === 200 && put.body.enabled === true && put.body.mailEnabled === false, JSON.stringify(put.body));
   const org = (await call('GET', '/org/ai')).body;
   check('GET /org/ai reports mailEnabled false and a mail disclosure naming the place',
-    org.mailEnabled === false && typeof org.mailDisclosure === 'string' && org.mailDisclosure.includes('when a person opens it') && org.mailDisclosure.includes('Nothing is sent in the background'),
+    org.mailEnabled === false && typeof org.mailDisclosure === 'string' && org.mailDisclosure.includes('when a person opens it') && org.mailDisclosure.includes('sent to OpenAI, in ')
+      && org.mailDisclosure.includes('each has its own switch below') && org.mailDisclosure.includes('attachments and junk mail are never sent'),
     JSON.stringify({ mailEnabled: org.mailEnabled, mailDisclosure: org.mailDisclosure }));
   s = await status();
   check('mail off: status says unavailable because of Mail', s.body.available === false && s.body.reason === 'mail', JSON.stringify(s.body));
@@ -214,7 +217,22 @@ try {
   r = await suggest(ids.normal);
   check('suggestions with Mail AI off: skipped "off", nothing sent', r.body.skipped === 'off' && r.body.suggestions?.length === 0 && (await hits()) === h0, JSON.stringify(r.body));
 
+  // Turning Mail AI on starts only Help me write (Mr. Singh, 30 Sept 2026):
+  // suggested replies send someone else's email on open, so an administrator
+  // turns them on deliberately - even if the stored value said on.
+  spawnSync('wsl', ['-u', 'postgres', '-e', 'psql', '-d', DB, '-Atc',
+    "update core.tenants set mail_ai_suggest = true where id='11111111-1111-1111-1111-111111111111'"]);
   await setAi({ enabled: true, mail: true });
+  {
+    const f = (await call('GET', '/org/ai')).body.mailFeatures;
+    check('Mail AI turned on: Help me write on, suggested replies and Summarise off (the published default)',
+      f?.rewrite === true && f?.suggest === false && f?.summary === false, JSON.stringify(f));
+    h0 = await hits();
+    r = await suggest(ids.normal);
+    check('…so no email is sent for suggestions until an administrator turns them on',
+      r.body.skipped === 'off' && (await hits()) === h0, JSON.stringify(r.body));
+  }
+  await setAi({ mailFeatures: { suggest: true } });
   h0 = await hits();
   r = await suggest(ids.normal);
   check('a normal message gets three suggestions', JSON.stringify(r.body.suggestions) === JSON.stringify(
@@ -447,8 +465,9 @@ try {
     // feature by hand must not be able to hide a wrong default (found 26
     // Sept: a browser check left Summarise on, and four checks read that).
     const def = (col) => psql(`select column_default from information_schema.columns where table_schema='core' and table_name='tenants' and column_name='${col}'`);
-    check('defaults: Summarise OFF, Help me write and suggestions ON',
-      def('mail_ai_summary') === 'false' && def('mail_ai_rewrite') === 'true' && def('mail_ai_suggest') === 'true',
+    // Suggested replies default OFF from 30 Sept 2026 (Mr. Singh).
+    check('defaults: Help me write ON, suggestions and Summarise OFF',
+      def('mail_ai_summary') === 'false' && def('mail_ai_rewrite') === 'true' && def('mail_ai_suggest') === 'false',
       `${def('mail_ai_summary')} ${def('mail_ai_rewrite')} ${def('mail_ai_suggest')}`);
     await setAi({ enabled: true, mail: true, mailTriage: false, mailFeatures: { rewrite: true, suggest: true, summary: false } });
 
@@ -456,7 +475,7 @@ try {
     check('Summarise off, Help me write and suggestions on (as set)',
       org.mailFeatures?.summary === false && org.mailFeatures?.rewrite === true && org.mailFeatures?.suggest === true, JSON.stringify(org.mailFeatures));
     check('each feature says what it sends', typeof org.mailFeatureDisclosure?.summary === 'string'
-      && org.mailFeatureDisclosure.summary.includes('whole conversation'), JSON.stringify(org.mailFeatureDisclosure));
+      && org.mailFeatureDisclosure.summary.includes('each email in a conversation'), JSON.stringify(org.mailFeatureDisclosure));
     s = await ownerCall('GET', '/mail/ai/status');
     check('status: summary false, rewrite and suggest true', s.body.summary === false && s.body.rewrite === true && s.body.suggest === true, JSON.stringify(s.body));
     h0 = await hits();
