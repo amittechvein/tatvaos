@@ -636,6 +636,19 @@ else
     pass "mail edge denied on billing"
 fi
 
+# core.departments: granted to the mail edge in 0009 for a recipient lookup
+# that was never built. No Postfix or Dovecot query reads it (local/postfix/sql,
+# local/dovecot/*.ext, and the senders_allowed_external view, checked 30 Sept
+# 2026). "An unused grant is a door nobody watches" (Mr. Singh, reviewing PR
+# 330): revoked by 20260930-revoke-mailedge-departments.sql. With the grant, a
+# SELECT here SUCCEEDS (row security makes it return 0 rows, which is not a
+# denial), so this fails while the grant exists.
+if run_as tatvaos_mailedge "SELECT count(*) FROM core.departments" >/dev/null 2>&1; then
+    fail "mail edge can read departments - revoke that grant"
+else
+    pass "mail edge denied on departments"
+fi
+
 if run_as tatvaos_mailedge "SELECT count(*) FROM mail.mailboxes" >/dev/null 2>&1; then
     pass "mail edge can still read mailboxes (needed for routing)"
 else
