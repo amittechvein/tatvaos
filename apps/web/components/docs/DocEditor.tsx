@@ -15,7 +15,7 @@ import type { EditorState } from '@tiptap/pm/state';
 
 import { useAuth } from '@/lib/auth';
 import {
-  docsApi, fromBase64, toBase64, DocsError,
+  docsApi, fromBase64, DocsError,
   type CommentThread, type DocumentMeta, type DocVersion,
 } from '@/lib/docs';
 import { DocsLiveProvider, type LiveEvent } from '@/lib/docsLive';
@@ -393,22 +393,24 @@ function Workspace({ meta, setMeta, provider, eventSink }: {
   // or typing done during an outage would reach docs.updates but never
   // Space's copy, search or history until the next keystroke.
   const dirty = useRef(false);
+  // The server could not build the document's file (render_failed): SAID, not
+  // hidden behind "All changes saved" (Mr. Singh, 30 Sept 2026). The typing
+  // itself is stored already; saving retries until it works.
+  const [fileError, setFileError] = useState<string | null>(null);
   const checkpoint = useCallback(async () => {
     if (!editor || editor.isDestroyed || checkpointing.current) return false;
     if (!provider.canEdit || provider.status !== 'synced') return false;
     checkpointing.current = true;
     try {
-      await docsApi.checkpoint(authedFetch, id, {
-        state: toBase64(Y.encodeStateAsUpdate(provider.doc)),
-        upToSeq: provider.lastSeq,
-        html: editor.getHTML(),
-        text: editor.getText({ blockSeparator: '\n' }),
-      });
+      await docsApi.checkpoint(authedFetch, id, { upToSeq: provider.lastSeq });
       setSavedAt(new Date());
+      setFileError(null);
       dirty.current = false;
       return true;
-    } catch {
-      return false; // edits are already stored as updates; the next checkpoint retries
+    } catch (e) {
+      // Edits are already stored as updates; a later checkpoint retries.
+      if (e instanceof DocsError && e.status === 503) setFileError(e.message);
+      return false;
     } finally {
       checkpointing.current = false;
     }
@@ -436,6 +438,14 @@ function Workspace({ meta, setMeta, provider, eventSink }: {
       if (idle) { clearTimeout(idle); void checkpoint(); }
     };
   }, [provider, checkpoint]);
+
+  // The file could not be built: try again every 10 s until it can, even with
+  // no new typing, so the warning clears by itself once the service is back.
+  useEffect(() => {
+    if (!fileError) return;
+    const t = setInterval(() => { dirty.current = true; void checkpoint(); }, 10_000);
+    return () => clearInterval(t);
+  }, [fileError, checkpoint]);
 
   // Back from an outage with unsaved typing: checkpoint once the queued edits
   // have been acked, so Space's copy catches up without waiting for a keystroke.
@@ -540,7 +550,7 @@ function Workspace({ meta, setMeta, provider, eventSink }: {
   async function nameCurrentVersion(name: string) {
     if (!editor) return;
     await docsApi.saveVersion(authedFetch, id, {
-      kind: 'named', name, state: toBase64(Y.encodeStateAsUpdate(provider.doc)), html: editor.getHTML(),
+      kind: 'named', name,
     });
     loadVersions();
     setNotice(`Saved as “${name}”.`);
@@ -564,7 +574,6 @@ function Workspace({ meta, setMeta, provider, eventSink }: {
       // 1. Keep what is there now.
       await docsApi.saveVersion(authedFetch, id, {
         kind: 'restore', name: `Before restoring ${when}`,
-        state: toBase64(Y.encodeStateAsUpdate(provider.doc)), html: editor.getHTML(),
       });
       // 2. Put the old content in as an ordinary edit, so it reaches
       //    everyone in the document like any other change.
@@ -623,6 +632,9 @@ function Workspace({ meta, setMeta, provider, eventSink }: {
 
   // ---- status line -----------------------------------------------------------
   const status = lostAccess ? { text: provider.closedReason === 'too-many' ? 'Not connected' : 'You no longer have access', tone: 'text-danger', icon: <I.cloudOff className="h-4 w-4" /> }
+    // Before "Saving…" and "All changes saved": the typing reached the
+    // server, but the file others download was not built. Say so.
+    : fileError ? { text: 'Not saved as a file yet — your typing is safe, retrying', tone: 'text-warn', icon: <I.cloudOff className="h-4 w-4" /> }
     : provider.status === 'offline' ? { text: provider.pending ? 'Offline — your edits are kept in this tab' : 'Offline', tone: 'text-warn', icon: <I.cloudOff className="h-4 w-4" /> }
     : provider.status === 'connecting' ? { text: 'Connecting…', tone: 'text-ink-faint', icon: null }
     : provider.pending ? { text: 'Saving…', tone: 'text-ink-faint', icon: null }
