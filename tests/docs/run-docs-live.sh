@@ -26,6 +26,15 @@ API_ROOT="${DOCS_API_ROOT:-$ROOT}"
 export TATVAOS_ROOT="$API_ROOT"
 API="http://localhost:5141"
 RENDER_PORT="${DOCS_RENDER_PORT:-18450}"
+
+# REFUSE A STALE BINARY. dotnet run --no-build runs whatever was last built:
+# on 30 Sept a planted calibration failed to COMPILE and this test then ran
+# the previous binary and passed — a green that proved nothing. So the API
+# DLL must be newer than every source file under apps/api.
+DLL="$(ls -t "$API_ROOT"/apps/api/bin/Release/net*/TatvaOS.Api.dll 2>/dev/null | head -1)"
+[ -n "$DLL" ] || { echo "no Release build of the API: dotnet build apps/api -c Release"; exit 2; }
+NEWER="$(find "$API_ROOT/apps/api" \( -name '*.cs' -o -name '*.csproj' -o -name 'appsettings*.json' \) -newer "$DLL" -not -path '*/obj/*' -not -path '*/bin/*' | head -3)"
+[ -z "$NEWER" ] || { echo "the API build is OLDER than its source — rebuild first (dotnet build apps/api -c Release). Newer: $NEWER"; exit 2; }
 SCRATCH="$(mktemp -d)"
 # shellcheck source=../lib/throwaway-db.sh
 source "$ROOT/tests/lib/throwaway-db.sh"
