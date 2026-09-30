@@ -66,7 +66,14 @@ CREATE POLICY tenant_isolation ON core.departments
 --  milliseconds; after NOT NULL and row security it is refused until the new
 --  API replaces it, and the worker retries on its next tick, inside its
 --  15-minute grace.
+--
+--  THE LOCK HAS A TIMEOUT (Mr. Singh, 30 Sept). If something already holds
+--  the table, waiting would leave the deploy hanging with the old API queued
+--  behind it. Ten seconds, then the migration fails, the deploy stops before
+--  any container is replaced, and it is simply run again. Measured: with the
+--  table held, the version without this waited 22 s and then went ahead.
 BEGIN;
+SET LOCAL lock_timeout = '10s';
 LOCK TABLE calendar.reminder_sends IN SHARE ROW EXCLUSIVE MODE;
 
 ALTER TABLE calendar.reminder_sends
@@ -89,13 +96,54 @@ BEGIN
                          JOIN calendar.events e ON e.id = r.event_id
                         WHERE r.id = s.reminder_id);
     GET DIAGNOSTICS n = ROW_COUNT;
+    -- WARNING only when there is something to see; deploy.sh prints WARNING
+    -- lines from migrations, and a hundred files of NOTICE would bury them.
     IF n > 0 THEN
         RAISE WARNING 'zero-layer: removed % reminder_sends row(s) whose event is gone (nothing left to protect)', n;
+    ELSE
+        RAISE NOTICE 'zero-layer: no orphaned reminder_sends rows';
     END IF;
 END $$;
 
 ALTER TABLE calendar.reminder_sends ALTER COLUMN tenant_id SET NOT NULL;
 CREATE INDEX IF NOT EXISTS ix_reminder_sends_tenant ON calendar.reminder_sends (tenant_id);
+
+--  THE WINDOW AFTER THIS COMMITS (Mr. Singh, 30 Sept). Until the new API
+--  container replaces the old one, the old API (PR 329) keeps recording sends
+--  with NO tenant_id, and each would be refused (by the row-security check, as
+--  it happens, which runs before NOT NULL). The worker records BEFORE sending,
+--  so a refused insert is a late reminder, or a missed one past its 15-minute
+--  grace: never a duplicate. This trigger fills tenant_id from the reminder's
+--  event, so the old code's insert succeeds.
+--
+--  NOT A DEFINER, on purpose. It runs as whoever inserts, so the lookup is
+--  subject to row-level security like any other read: inside the event's own
+--  organisation it finds the event and fills its tenant_id, which is exactly
+--  what WITH CHECK then accepts. Inside any other organisation it finds
+--  nothing, leaves the value NULL, and the insert fails. It never guesses and
+--  never sees across organisations. tests/isolation/test-zero-layer-backfill.sh
+--  inserts exactly as the old code does: refused without this, accepted with
+--  the right tenant with it, and still refused from another organisation.
+--  The new API always sets tenant_id, so for it this does nothing.
+CREATE OR REPLACE FUNCTION calendar.reminder_sends_fill_tenant()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, calendar, pg_temp
+AS $$
+BEGIN
+    IF NEW.tenant_id IS NULL THEN
+        SELECT e.tenant_id INTO NEW.tenant_id
+          FROM calendar.event_reminders r
+          JOIN calendar.events e ON e.id = r.event_id
+         WHERE r.id = NEW.reminder_id;
+    END IF;
+    RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS trg_reminder_sends_fill_tenant ON calendar.reminder_sends;
+CREATE TRIGGER trg_reminder_sends_fill_tenant
+    BEFORE INSERT ON calendar.reminder_sends
+    FOR EACH ROW EXECUTE FUNCTION calendar.reminder_sends_fill_tenant();
 
 ALTER TABLE calendar.reminder_sends ENABLE ROW LEVEL SECURITY;
 ALTER TABLE calendar.reminder_sends FORCE  ROW LEVEL SECURITY;
