@@ -25,7 +25,8 @@
 # Needs the local SMTP sink (tatvaos-ai-metering/.tmp/fake-ai-and-mail.mjs:
 # SMTP :5871, recipients at http://127.0.0.1:5198/mail). The worker waits a
 # minute after start, then ticks every minute: allow ~3 minutes.
-# WSL Postgres as tests/orgapi. Build first:  dotnet build apps/api -c Release
+# Its own throwaway database (tests/lib/throwaway-db.sh). Build first:
+# dotnet build apps/api -c Release
 # TATVAOS_ROOT=<another checkout> runs it against that build (the red run).
 # ---------------------------------------------------------------------------
 set -uo pipefail
@@ -45,17 +46,18 @@ PR_ID="d2222222-2222-2222-2222-222222222222"; PR_MAIL="principal@abcschool.local
 # fixed so a run that died half-way is cleaned up by the next one.
 SUSPENDED="33333333-3333-4333-8333-000000000329"; DELETED="33333333-3333-4333-8333-000000000330"
 
-WSL_KEEPALIVE=""
+# ITS OWN DATABASE (house rule 13; Mr. Singh, 29 Sept 2026): built by
+# tests/lib/throwaway-db.sh from every file in local/postgres/init/ (applied
+# twice: the re-run check) and dropped by cleanup(), pass or fail. Until then
+# this ran in the shared local database. A caller that sets TATVAOS_PSQL is
+# still obeyed.
+TDB_USED=""
 if [ -z "${TATVAOS_PSQL:-}" ]; then
-    if command -v wsl >/dev/null 2>&1; then
-        wsl -e sleep 1800 >/dev/null 2>&1 & WSL_KEEPALIVE=$!
-        sleep 2
-        TATVAOS_PSQL="wsl -u postgres -e psql -d tatvaos_mail -Atc"
-        TATVAOS_PG_HOST="${TATVAOS_PG_HOST:-$(wsl hostname -I | tr -d ' \r\n')}"
-    else
-        TATVAOS_PSQL="docker exec tv-postgres psql -U postgres -d tatvaos_mail -Atc"
-        TATVAOS_PG_HOST="${TATVAOS_PG_HOST:-localhost}"
-    fi
+    # shellcheck source=../lib/throwaway-db.sh
+    source "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/throwaway-db.sh"
+    tdb_create calendar || exit 2
+    TDB_USED=1
+    TATVAOS_PG_HOST="$TDB_HOST"
 fi
 PG() { $TATVAOS_PSQL "$1" 2>/dev/null | grep -v "^wsl:" | tr -d "\r" | tail -n1; }
 # A whole SQL FILE on stdin: a /c/... path handed to wsl is mangled by Git Bash.
@@ -89,12 +91,13 @@ cleanup() {
         else fuser -k "$PORT/tcp" >/dev/null 2>&1 || true; fi
         kill "$API_PID" >/dev/null 2>&1 || true
     fi
-    [ -n "$WSL_KEEPALIVE" ] && kill "$WSL_KEEPALIVE" >/dev/null 2>&1
+    # AFTER the API has stopped, so nothing is connected when it goes.
+    [ -n "$TDB_USED" ] && tdb_drop
     if [ "$FAILED" -eq 0 ]; then rm -rf "$SCRATCH"; else printf "  kept for reading: %s\n" "$SCRATCH"; fi
 }
 trap cleanup EXIT
 
-printf "\n  Calendar reminders\n  tree under test: %s\n" "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)"
+printf "\n  Calendar reminders\n  tree under test: %s\n  database: %s\n" "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)" "${TDB_NAME:-given by the caller (TATVAOS_PSQL)}"
 
 step "0. The mail sink and the database; the definer function is in place"
 same "the local mail sink answers" "$(curl -s -o /dev/null -w "%{http_code}" "$SINK")" "200"
@@ -136,7 +139,7 @@ same "...while it does list the live ones (the check above can fail)" "$(PG "SEL
 
 step "2. Start the API and let the real worker run"
 export JWT_SIGNING_KEY="dev-only-key-at-least-32-characters-long" ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS="$API"
-export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
+export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=${TDB_NAME:-tatvaos_mail};Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
 export Smtp__Host=localhost Smtp__Port=5871
 if command -v cygpath >/dev/null 2>&1; then export Oidc__KeyDirectory="$(cygpath -w "$SCRATCH")\\keys"; else export Oidc__KeyDirectory="$SCRATCH/keys"; fi
 dotnet run --no-build -c Release --project "$PROJ" > "$LOG" 2>&1 &
