@@ -135,6 +135,13 @@ jobs:
       - name: "Dev operator check: only known sign-in paths reach the session tail"
         run: bash tests/dev-operator/check-signin-tail.sh
 
+      # Every AI entry point asks AiGate before sending, and every AI feature
+      # label has an organisation list (Mr. Singh, 30 Sept 2026, after a
+      # customer used Mail AI before its privacy text existed). Source scan,
+      # no database. deploy.sh runs the same file before it builds.
+      - name: "AI check: every entry point asks its organisation list"
+        run: python3 tests/ai/every_ai_entry_calls_gate.py apps/api
+
   isolation:
     name: Tenant isolation
     runs-on: ubuntu-latest
