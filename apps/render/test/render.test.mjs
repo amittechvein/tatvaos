@@ -22,7 +22,7 @@ const read = (f) => { const s = readFileSync(new URL(f, fixtures), 'utf8'); retu
 const stateOf = (json) => Y.encodeStateAsUpdate(prosemirrorJSONToYDoc(schema, json, 'default'));
 const paragraph = (text) => ({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] });
 
-for (const name of ['word-paste', 'nested-lists', 'merged-cells', 'every-mark-pair', 'google-docs-paste']) {
+for (const name of ['editor-page', 'word-paste', 'nested-lists', 'merged-cells', 'every-mark-pair', 'google-docs-paste']) {
   test(`${name}: the service's file is the same document as the editor reloaded from storage`, () => {
     const json = JSON.parse(readFileSync(new URL(`${name}.json`, fixtures), 'utf8'));
     const r = renderDoc([stateOf(json)]);
@@ -106,11 +106,13 @@ test('the server renders, refuses bad input, and never logs content', async () =
 });
 
 test('a render past the limit is killed (504), and the next render still works', async () => {
-  const s = await startServer(18432, { RENDER_TIMEOUT_MS: '40', RENDER_WORKERS: '1' });
+  // 250 ms: far below the large fixture (~400 ms), far above a small render even in a
+  // fresh worker. 40 ms failed the SMALL render too on a busy laptop and on one CPU.
+  const s = await startServer(18432, { RENDER_TIMEOUT_MS: '250', RENDER_WORKERS: '1' });
   try {
     const big = stateOf(JSON.parse(readFileSync(new URL('google-docs-paste.json', fixtures), 'utf8')));
     const slow = await post(18432, { updates: [b64(big)] });
-    assert.equal(slow.status, 504, 'the large document outruns a 40 ms limit');
+    assert.equal(slow.status, 504, 'the large document outruns a 250 ms limit');
     const after = await post(18432, { updates: [b64(stateOf(paragraph('small')))] });
     assert.equal(after.status, 200, 'the killed worker was replaced');
   } finally { s.child.kill(); }

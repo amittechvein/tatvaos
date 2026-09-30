@@ -65,7 +65,10 @@ function readFixture(url) {
 const extensions = documentExtensions();
 const root = new URL('../../../tests/', import.meta.url);
 const fixtures = [
-  { name: 'editor-page (one of every node and mark)', url: new URL('docs-html/editor-page.html', root) },
+  // The 28 Sept page stays where the sanitiser's tests read it; its editor document
+  // and reload (rebuilt 1 Oct on the gate's footing) sit with the other fixtures.
+  { name: 'editor-page (one of every node and mark)', url: new URL('docs-html/editor-page.html', root),
+    json: new URL('docs-render/fixtures/editor-page.json', root), reloaded: new URL('docs-render/fixtures/editor-page.reloaded.html', root) },
   ...readdirSync(new URL('docs-render/fixtures/', root))
     .filter((f) => f.endsWith('.html') && !f.endsWith('.reloaded.html')) // a reload belongs to its fixture, it is not one
     .sort()
@@ -119,7 +122,7 @@ check('caught: one extension removed (highlight)', short.length === extensions.l
 //  A fixture with no reloaded HTML (editor-page, made before this ruling) can
 //  only be checked the old way, against its first view, and says so.
 console.log(`\n2. Every fixture (${fixtures.length}): A = server file vs the editor reloaded; B = first view vs reload, explained by the closed list`);
-const reloadedOf = (f) => { try { return readFixture(new URL(f.url.href.replace(/\.html$/, '.reloaded.html'))); } catch { return null; } };
+const reloadedOf = (f) => { try { return readFixture(f.reloaded ?? new URL(f.url.href.replace(/\.html$/, '.reloaded.html'))); } catch { return null; } };
 const jsonOf = (f) => { try { return f.json ? JSON.parse(readFileSync(f.json, 'utf8')) : null; } catch { return null; } };
 const logLines = [];
 for (const f of fixtures) {
