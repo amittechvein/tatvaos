@@ -1,0 +1,28 @@
+-- ============================================================================
+--  The mail edge does not read core.departments.
+-- ============================================================================
+--
+--  0009-departments.sql granted SELECT on core.departments to tatvaos_mailedge
+--  (Postfix and Dovecot's role) for a recipient lookup that was never built.
+--  Checked 30 Sept 2026: no mail-edge query reads it - local/postfix/sql/*.cf,
+--  local/dovecot/dovecot-sql*.conf.ext and the mail.senders_allowed_external
+--  view read mailboxes, aliases, app passwords, users, tenants and domains,
+--  and nothing else. Mr. Singh, reviewing PR 330: "an unused grant is a door
+--  nobody watches". Harmless while row security is forced on the table (the
+--  role saw 0 rows), which is why it was a follow-up and not urgent.
+--
+--  0009 still carries its GRANT and runs on every deploy. This file sorts
+--  after it (a plain string sort: 0009 < 2026...), so each deploy grants and
+--  then revokes within the same run, and the result is always "revoked".
+--  0009 is left as it is: a migration's old text is history, and every
+--  database, new or restored, ends up in the same place either way.
+--
+--  If the mail edge ever needs departments (a department mailing list, say),
+--  give it a SECURITY DEFINER function that returns only what routing needs,
+--  as it has for everything else - not the table.
+--
+--  tests/isolation/test-isolation.sh, "mail edge denied on departments":
+--  red without this file, green with it.
+-- ============================================================================
+
+REVOKE ALL ON core.departments FROM tatvaos_mailedge;
