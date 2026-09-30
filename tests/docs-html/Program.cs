@@ -101,6 +101,11 @@ internal static partial class Program
     [GeneratedRegex(@"(href|src)=""\s*(?!https?://|mailto:|/api/docs/)", RegexOptions.IgnoreCase)]
     private static partial Regex OtherAddresses();
 
+    // A picture comes from our own route or over https — never http (Mr.
+    // Singh, 28 Sept 2026: pictures from the web stay, always as https).
+    [GeneratedRegex(@"\ssrc=""\s*(?!https://|/api/docs/)", RegexOptions.IgnoreCase)]
+    private static partial Regex PictureNotHttps();
+
     private static readonly HashSet<string> MayAppear = new(StringComparer.OrdinalIgnoreCase)
     {
         "p", "h1", "h2", "h3", "h4", "blockquote", "ul", "ol", "li", "pre", "code", "hr", "br",
@@ -128,6 +133,7 @@ internal static partial class Program
         return Tags().Matches(html).All(m => MayAppear.Contains(m.Groups[1].Value))
             && !RunningAttributes().IsMatch(tags)
             && !OtherAddresses().IsMatch(tags)
+            && !PictureNotHttps().IsMatch(tags)
             && !tags.Contains("url(", StringComparison.OrdinalIgnoreCase)
             && !tags.Contains("expression(", StringComparison.OrdinalIgnoreCase)
             && !html.Contains("<!--");
@@ -223,6 +229,25 @@ internal static partial class Program
         Refuses("a picture that runs code when it fails", "<img src=\"https://a.example/x.png\" onerror=\"go()\">", "onerror", "go()");
         Permits("a picture", "<img src=\"https://a.example/x.png\" alt=\"A chart\" width=\"320\">");
         Permits("a picture stored by Docs", "<img src=\"/api/docs/0b9d6c0e-7f0a-4c1e-9b1e-3a5de1f0a001/images/7\">");
+        // Pictures from the web stay, always over https (Mr. Singh, 28 Sept 2026).
+        Permits("a picture over http is kept, as https",
+            "<p>Fees <img src=\"http://a.example/x.png\" alt=\"A chart\"> due</p>",
+            "<p>Fees <img src=\"https://a.example/x.png\" alt=\"A chart\"> due</p>");
+        Permits("…in capitals too", "<img src=\"HTTP://a.example/x.png\">", "<img src=\"https://a.example/x.png\">");
+        Permits("…with a line break inside the scheme", "<img src=\"ht\ntp://a.example/x.png\">", "<img src=\"https://a.example/x.png\">");
+        Permits("…naming port 80, which goes with http", "<img src=\"http://a.example:80/x.png?w=2#top\">", "<img src=\"https://a.example/x.png?w=2#top\">");
+        Permits("…an address kept character for character past the scheme",
+            "<img src=\"http://a.example/a%20b/x.png?q=1&amp;r=%2F\">", "<img src=\"https://a.example/a%20b/x.png?q=1&amp;r=%2F\">");
+        Permits("an https picture on its own port is kept as written", "<img src=\"https://a.example:8443/x.png\">");
+        Permits("an IPv6 picture over http", "<img src=\"http://[2001:db8::1]/x.png\">", "<img src=\"https://[2001:db8::1]/x.png\">");
+        Refuses("a picture over http on another port (https there is a guess)", "<img src=\"http://a.example:8080/x.png\">", "<img", "a.example");
+        Refuses("a picture with a name and password in its address", "<img src=\"http://user:secret@a.example/x.png\">", "<img", "secret");
+        Refuses("…over https too", "<img src=\"https://user@a.example/x.png\">", "<img", "user@");
+        Refuses("a picture from http:// with no host", "<img src=\"http:///x.png\">", "<img");
+        Refuses("a picture from ftp", "<img src=\"ftp://a.example/x.png\">", "<img", "ftp:");
+        Permits("a LINK keeps http (links are not pictures)",
+            "<a href=\"http://a.example/page\">Open</a>",
+            "<a href=\"http://a.example/page\" target=\"_blank\" rel=\"noopener noreferrer nofollow\">Open</a>");
         Refuses("a picture from another part of this API", "<img src=\"/api/auth/logout\">", "<img", "/api/auth");
         Refuses("a picture that climbs out of Docs' route", "<img src=\"/api/docs/../auth/logout\">", "<img");
         Refuses("a picture as data", "<img src=\"data:image/svg+xml;base64,PHN2Zz4=\">", "<img", "data:");

@@ -610,6 +610,14 @@ for f in local/postgres/init/*.sql; do
     if out=$($COMPOSE exec -T postgres psql -U postgres -d tatvaos_mail \
              -v ON_ERROR_STOP=1 < "$f" 2>&1); then
         ok "$(basename "$f")"
+        # A migration that did something unusual says so with RAISE WARNING,
+        # and it is shown here, under its [ ok ] - WARNING lines only, never
+        # NOTICE, or a hundred files of chatter would bury it (Mr. Singh,
+        # 30 Sept 2026; rule 12). Until then a successful migration's output
+        # went nowhere, so PR 330's count of deleted orphan rows could not be
+        # seen on a deploy. A failed one already shows its last 20 lines,
+        # warnings included. tests/deploy/migration-warnings.sh runs this loop.
+        printf '%s\n' "$out" | grep -E '^(psql:[^ ]+ )?WARNING:' | sed 's/^/      /' || true
     else
         bad "$(basename "$f")"
         printf '%s\n' "$out" | tail -20 | sed 's/^/      /'
