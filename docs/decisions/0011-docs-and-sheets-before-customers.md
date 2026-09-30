@@ -163,6 +163,15 @@ content. The list itself is calibrated: a fabricated drop of another kind
 |---|---|---|
 | 1 | **Marks on a hard break** | y-tiptap stores no marks on a non-text inline node. Invisible in practice: a line break shows no glyph. Proven 30 Sept 2026: 14 of the Google Docs fixture's 60 line breaks carried marks before storage and 0 after; a three-character document reproduces it; the server's file matches the reloaded editor with 0 differences. |
 
+**Reading HTML back into a document is lossy too — a separate finding**
+(Mr. Singh, 30 September 2026, asked for it to be kept here). A `<span>`
+with no attributes (a text-style mark with no settings, which a Word paste
+leaves) is not read back as a mark; 30 of them in the Word fixture. The
+server never does this — it reads the stored Yjs — so the gate is
+unaffected. But **any future feature that imports HTML into a document**
+(opening an `.html` file as a document, turning an email into one)
+inherits the loss and needs its own check, of the same kind as the gate.
+
 Code: `apps/render/spike/storage-drops.mjs`. **Follow-up, not blocking:**
 the editor strips marks from hard breaks on paste and insert, so the
 author's first view already equals what is stored; after that, entry 1
