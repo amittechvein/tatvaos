@@ -11,18 +11,29 @@
 --  nobody watches". Harmless while row security is forced on the table (the
 --  role saw 0 rows), which is why it was a follow-up and not urgent.
 --
---  0009 still carries its GRANT and runs on every deploy. This file sorts
---  after it (a plain string sort: 0009 < 2026...), so each deploy grants and
---  then revokes within the same run, and the result is always "revoked".
---  0009 is left as it is: a migration's old text is history, and every
---  database, new or restored, ends up in the same place either way.
+--  The GRANT itself was removed from 0009 in the same change (Mr. Singh,
+--  30 Sept 2026): kept there, every deploy would give the access and take it
+--  away again a moment later, and the file would tell the next reader the
+--  mail edge is meant to have it. Removing a GRANT can only reduce access.
+--  0009 now carries a one-line pointer here, so nobody restores the grant
+--  thinking it went missing. This file is what removes the grant a database
+--  ALREADY holds - production's - and is a no-op everywhere else.
+--
+--  0009's comment claimed "can_send_external drives the outbound gate". It
+--  does not: the gate is local/postfix/sql/sender-external-gate.cf over the
+--  mail.senders_allowed_external view (0006), which reads mailboxes, tenants
+--  and domains only. can_send_external is read by the admin API alone.
 --
 --  If the mail edge ever needs departments (a department mailing list, say),
 --  give it a SECURITY DEFINER function that returns only what routing needs,
 --  as it has for everything else - not the table.
 --
 --  tests/isolation/test-isolation.sh, "mail edge denied on departments":
---  red without this file, green with it.
+--  red on main (0009 still granting), green with this change. And the case
+--  this file exists for, measured the same day: a database built from main's
+--  migrations holds the grant; re-applying this change's files over it WITHOUT
+--  this one leaves the grant in place (removing the line from 0009 takes
+--  nothing back); WITH it, the grant is gone.
 -- ============================================================================
 
 REVOKE ALL ON core.departments FROM tatvaos_mailedge;
