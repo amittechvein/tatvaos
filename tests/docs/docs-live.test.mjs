@@ -34,6 +34,8 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
+import http from 'node:http';
+import { readFileSync } from 'node:fs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(path.join(here, '../../apps/web/package.json'));
@@ -161,18 +163,43 @@ const toB64 = (u8) => Buffer.from(u8).toString('base64');
 // Docs:RenderUrl must point at it — tests/docs/run-docs-live.sh does that),
 // stopped mid-run to prove a failed render fails the save, started again.
 const RENDER_PORT = Number(process.env.DOCS_RENDER_PORT ?? 18450);
+// The API talks to a PROXY on RENDER_PORT (Docs:RenderUrl); the real service
+// runs on RENDER_PORT + 1. The proxy lets the test hold render requests and
+// release them in the order it chooses (two saves at once), with no test
+// hook in production code. With the real service stopped it answers 502,
+// which the API must treat as a failed render.
+const REAL_PORT = RENDER_PORT + 1;
+const held = [];
+let holding = false;
+const proxy = http.createServer((req, res) => {
+  const chunks = [];
+  req.on('data', (c) => chunks.push(c));
+  req.on('end', () => {
+    const forward = () => {
+      const up = http.request({ host: '127.0.0.1', port: REAL_PORT, path: req.url, method: req.method,
+        headers: { 'content-type': req.headers['content-type'] ?? 'application/json' } }, (r) => {
+        res.writeHead(r.statusCode ?? 502, { 'content-type': r.headers['content-type'] ?? 'application/json' });
+        r.pipe(res);
+      });
+      up.on('error', () => { res.writeHead(502, { 'content-type': 'application/json' }); res.end('{"error":"render service down"}'); });
+      up.end(Buffer.concat(chunks));
+    };
+    if (holding && req.url === '/render/doc') held.push(forward); else forward();
+  });
+});
 let renderChild = null;
 async function startRender() {
   const dir = path.join(here, '../../apps/render');
   renderChild = spawn(process.execPath, ['--import', './src/register.mjs', 'src/server.mjs'],
-    { cwd: dir, env: { ...process.env, PORT: String(RENDER_PORT) }, stdio: 'ignore' });
-  for (let i = 0; i < 100; i += 1) {
-    try { if ((await fetch(`http://127.0.0.1:${RENDER_PORT}/health`)).ok) return true; } catch { /* not yet */ }
+    { cwd: dir, env: { ...process.env, PORT: String(REAL_PORT) }, stdio: 'ignore' });
+  for (let i = 0; i < 300; i += 1) { // up to 30 s: a cold start beside the API can take >10 s
+    try { if ((await fetch(`http://127.0.0.1:${REAL_PORT}/health`)).ok) return true; } catch { /* not yet */ }
     await sleep(100);
   }
   return false;
 }
 function stopRender() { if (renderChild) { renderChild.kill(); renderChild = null; } }
+function stopAll() { stopRender(); proxy.close(); proxy.closeAllConnections?.(); }
 
 // SQL for the two checks only a database can set up (the browser-file guard).
 // TATVAOS_PSQL is exported by tests/lib/throwaway-db.sh: "<psql> -d <db> -Atc".
@@ -184,7 +211,16 @@ function pg(sql) {
 
 async function main() {
   console.log(`Docs end-to-end against ${API}\n`);
-  if (!(await startRender())) throw new Error(`the render service did not start on ${RENDER_PORT}`);
+  await new Promise((r) => proxy.listen(RENDER_PORT, '127.0.0.1', r));
+  if (!(await startRender())) throw new Error(`the render service did not start on ${REAL_PORT}`);
+
+  // The browser's ignored fields have an END DATE (Mr. Singh, 30 Sept 2026):
+  // by 14 October 2026 they must be gone from the API. After that date this
+  // fails while they remain, so the grace cannot quietly become permanent.
+  const endpoints = readFileSync(path.join(here, '../../apps/api/Modules/Docs/DocsEndpoints.cs'), 'utf8');
+  const stillThere = /record CheckpointRequest\(string\? State/.test(endpoints);
+  check('the ignored browser fields are removed by their end date (14 Oct 2026)',
+    Date.now() < Date.parse('2026-10-15T00:00:00Z') || !stillThere, 'the grace period is over: remove State/Html/Text from CheckpointRequest and VersionRequest');
 
   const owner = await signIn(OWNER);
   const employee = await signIn(EMPLOYEE);
@@ -453,6 +489,62 @@ async function main() {
     upAgain.status === 200 && fileAfter.includes('TYPED WHILE DOWN') && !fileAfter.includes('BROWSER COPY'),
     `status ${upAgain.status} ${JSON.stringify(upAgain.body)}`);
 
+  // ---- two saves at once: an older build never overwrites a newer file -------------
+  // Mr. Singh, 30 Sept 2026. The render runs outside the editing lock, so
+  // two saves can build at once and finish in either order. The proxy holds
+  // both render requests (each save has taken its snapshot by then) and
+  // releases them in the order each case needs.
+  console.log('Two saves at once (an older build never overwrites a newer file)');
+  const save = () => A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({ upToSeq: a1.lastSeq }) });
+  async function twoSaves(olderText, newerText) {
+    holding = true;
+    let acks = a1.acks.length;
+    appendParagraph(a1.doc, olderText);
+    await waitFor(() => a1.acks.length > acks);
+    const older = save();
+    await waitFor(() => held.length === 1);
+    acks = a1.acks.length;
+    appendParagraph(a1.doc, newerText);
+    await waitFor(() => a1.acks.length > acks);
+    const newer = save();
+    await waitFor(() => held.length === 2);
+    holding = false;
+    return { older, newer, releaseOlder: held[0], releaseNewer: held[1] };
+  }
+
+  // Mr. Singh's case: the NEWER build finishes first, the OLDER one last.
+  let pair = await twoSaves('OLDER EDIT', 'NEWER EDIT');
+  check('both saves were building at once (the proxy held two render requests)', held.length === 2);
+  pair.releaseNewer();
+  const newerFirst = await pair.newer;
+  pair.releaseOlder();
+  const olderLast = await pair.older;
+  held.length = 0;
+  let file = String((await A(`/space/files/${id}/content`)).body);
+  check('the newer build, finishing first, is written (200 saved)',
+    newerFirst.status === 200 && newerFirst.body.saved === true, `status ${newerFirst.status} ${JSON.stringify(newerFirst.body)}`);
+  check('THE OLDER BUILD, FINISHING LAST, IS DISCARDED (stale) — not written over the newer file',
+    olderLast.status === 200 && olderLast.body.stale === true && olderLast.body.saved === false,
+    `status ${olderLast.status} ${JSON.stringify(olderLast.body)}`);
+  check('…and the file is the newer one (it holds the newer edit, and the older one before it)',
+    file.includes('NEWER EDIT') && file.includes('OLDER EDIT'), `newer=${file.includes('NEWER EDIT')} older=${file.includes('OLDER EDIT')}`);
+
+  // The reverse order: the OLDER build finishes first, the NEWER after it.
+  // The newer one must still be written — the first version of the check
+  // threw it away because the stored state had moved.
+  pair = await twoSaves('OLDER EDIT 2', 'NEWER EDIT 2');
+  pair.releaseOlder();
+  const olderFirst = await pair.older;
+  pair.releaseNewer();
+  const newerLast = await pair.newer;
+  held.length = 0;
+  file = String((await A(`/space/files/${id}/content`)).body);
+  check('the older build, finishing first, is written (it was newer than the stored file then)',
+    olderFirst.status === 200 && olderFirst.body.saved === true, `status ${olderFirst.status} ${JSON.stringify(olderFirst.body)}`);
+  check('THE NEWER BUILD, FINISHING AFTER IT, IS WRITTEN TOO — not thrown away',
+    newerLast.status === 200 && newerLast.body.saved === true && file.includes('NEWER EDIT 2'),
+    `status ${newerLast.status} ${JSON.stringify(newerLast.body)} newer-in-file=${file.includes('NEWER EDIT 2')}`);
+
   // ---- comments -------------------------------------------------------------------
   console.log('Comments');
   const c1 = await B(`/docs/${id}/comments`, { method: 'POST', body: JSON.stringify({
@@ -618,9 +710,9 @@ async function main() {
   await P(`/admin/organisations/${TENANT_A}/docs`, { method: 'PUT', body: JSON.stringify({ enabled: false }) });
   await P(`/admin/organisations/${TENANT_C}/docs`, { method: 'PUT', body: JSON.stringify({ enabled: false }) });
 
-  stopRender();
+  stopAll();
   console.log(`\n  passed: ${passed}   failed: ${failed}`);
   process.exit(failed === 0 ? 0 : 1);
 }
 
-main().catch((e) => { stopRender(); console.error(`\nERROR: ${e.message}`); process.exit(2); });
+main().catch((e) => { stopAll(); console.error(`\nERROR: ${e.message}`); process.exit(2); });

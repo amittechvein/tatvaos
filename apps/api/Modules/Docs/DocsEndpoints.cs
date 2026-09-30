@@ -106,6 +106,12 @@ public static class DocsEndpoints
 
     public sealed record CreateRequest(string? Title, Guid? FolderId, string? Scope);
     public sealed record RenameRequest(string? Title);
+    // State / Html / Text: ACCEPTED AND IGNORED, for tabs opened before the
+    // server built the files (0011 condition 1). END DATE (Mr. Singh, 30 Sept
+    // 2026): removed at the SECOND production deploy after the one that ships
+    // this, and in any case by 14 October 2026. tests/docs/docs-live.test.mjs
+    // fails after that date while these fields are still here, so the grace
+    // cannot quietly become permanent.
     public sealed record CheckpointRequest(string? State, long UpToSeq, string? Html, string? Text);
     public sealed record VersionRequest(string? Kind, string? Name, string? State, string? Html);
     public sealed record NameVersionRequest(string? Name);
@@ -403,7 +409,8 @@ public static class DocsEndpoints
     //  "Please save now." Nothing the browser sends is used (decision 0011
     //  condition 1; Mr. Singh, 29-30 Sept 2026): not its state, not its HTML,
     //  not its text. Those fields are still ACCEPTED for one release, so a tab
-    //  opened before this change keeps working, and ignored. We:
+    //  opened before this change keeps working, and ignored — until the end
+    //  date on CheckpointRequest (by 14 October 2026). We:
     //
     //    1. under the room lock, snapshot what the server STORED: the state
     //       and every update after it (what it relayed to everyone)
@@ -486,8 +493,17 @@ public static class DocsEndpoints
         {
             var doc = await db.DocsDocuments.FirstOrDefaultAsync(d => d.FileId == id, ct);
             if (doc is null) return Error(404, "No such document.");
-            if (doc.StateSeq != baseSeq || doc.RenderedSeq > upTo)
-                return Results.Ok(new { saved = false, stale = true }); // a newer save already built the file
+            // AN OLDER BUILD NEVER OVERWRITES A NEWER FILE (Mr. Singh, 30 Sept
+            // 2026). Two saves can build at once now the render runs outside
+            // the lock, and finish in either order. Write only if this build
+            // was made from a later point (upTo) than the stored file was;
+            // otherwise discard it. Decided on the seq, not on "did anything
+            // change": the first version of this check discarded ANY build
+            // that found the state moved — which also threw away a NEWER
+            // build finishing after an older one (the file then lagged until
+            // the next save). Both orders are in tests/docs "two saves".
+            if ((doc.RenderedSeq is long builtFrom && builtFrom >= upTo) || doc.StateSeq > upTo)
+                return Results.Ok(new { saved = false, stale = true }); // a build from a later point is already stored
 
             var now = DateTimeOffset.UtcNow;
             doc.State = r.State;
