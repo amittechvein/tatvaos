@@ -303,6 +303,7 @@ DECLARE
     v_users    uuid[];
     v_record   uuid;
     v_bad      text;
+    v_col      record;
 BEGIN
     IF NOT core.organisation_delete_sees_all() THEN
         RAISE EXCEPTION 'delete_organisation is owned by %, which cannot see through row security: it would delete what it can see and report the rest as gone', current_user
@@ -387,6 +388,31 @@ BEGIN
         -- recording is that organisation's record, and stays; it holds ids
         -- that now resolve to nothing.
         EXECUTE 'DELETE FROM connect.recording_access_log WHERE tenant_id = $1' USING p_tenant;
+
+        -- ...but with no name or email of the deleted person left in it
+        -- (Mr. Singh, 30 Sept 2026: "keep the other organisation's
+        -- access-log line, but blank any name or email in it"). Today the
+        -- table has no such column (ids, a level, an address prefix, a
+        -- time). This finds any column named like a name or an email, from
+        -- the catalogue, so one added later is blanked without anyone
+        -- remembering to come here. One that cannot be blanked (NOT NULL,
+        -- or not text) stops the deletion instead of keeping it.
+        FOR v_col IN
+            SELECT a.attname, a.attnotnull, format_type(a.atttypid, a.atttypmod) AS typ
+              FROM pg_attribute a
+             WHERE a.attrelid = 'connect.recording_access_log'::regclass
+               AND a.attnum > 0 AND NOT a.attisdropped
+               AND (a.attname ~* 'email' OR a.attname ~* 'name')
+        LOOP
+            IF v_col.attnotnull OR v_col.typ NOT IN ('text', 'citext', 'character varying') THEN
+                RAISE EXCEPTION 'connect.recording_access_log.% may hold a name or an email and cannot be blanked (% %). Nothing was deleted; core.delete_organisation must be taught how to blank it.',
+                    v_col.attname, v_col.typ, CASE WHEN v_col.attnotnull THEN 'NOT NULL' ELSE '' END
+                    USING ERRCODE = 'TVD12';
+            END IF;
+            EXECUTE format('UPDATE connect.recording_access_log SET %I = NULL WHERE subject_tenant_id = $1 OR subject_user_id = ANY ($2)',
+                           v_col.attname)
+              USING p_tenant, v_users;
+        END LOOP;
     END IF;
     IF to_regclass('connect.recording_shares') IS NOT NULL THEN
         EXECUTE 'DELETE FROM connect.recording_shares WHERE tenant_id = $1' USING p_tenant;

@@ -137,6 +137,7 @@ cleanup() {
     fi
     [ -n "$PRINCIPAL_WAS" ] && PG "UPDATE core.users SET role='$PRINCIPAL_WAS' WHERE email='principal@abcschool.local'" >/dev/null
     PG "DROP TABLE IF EXISTS core.zz_delete_probe" >/dev/null
+    PG "ALTER TABLE connect.recording_access_log DROP COLUMN IF EXISTS zz_subject_email" >/dev/null
     # Whatever the run left: its organisations (the invoice first, which is
     # RESTRICT), the rows planted in Techvein, and its deletion records.
     for o in "$ORG" "$ORG2"; do
@@ -221,7 +222,11 @@ printf "x" > "$SCRATCH/recordings/keep-$RUN.mp4"
 PG "INSERT INTO connect.recording_shares (tenant_id, recording_id, meeting_id, level, created_by_user_id) VALUES ('$TECHVEIN','$TV_REC','$TV_MEETING','named','$AMIT')" >/dev/null
 TV_SHARE=$(PG "SELECT id FROM connect.recording_shares WHERE recording_id='$TV_REC'")
 PG "INSERT INTO connect.recording_share_grants (tenant_id, share_id, subject_user_id, subject_tenant_id) VALUES ('$TECHVEIN','$TV_SHARE','$PERSON','$ORG')" >/dev/null
-PG "INSERT INTO connect.recording_access_log (tenant_id, recording_id, share_id, level, subject_user_id, subject_tenant_id) VALUES ('$TECHVEIN','$TV_REC','$TV_SHARE','named','$PERSON','$ORG')" >/dev/null
+# The line is kept, but with no name or email of the deleted person in it
+# (Mr. Singh, 30 Sept). The table has no such column today, so a probe one is
+# added for the run: the function must find it by itself and blank it.
+PG "ALTER TABLE connect.recording_access_log ADD COLUMN IF NOT EXISTS zz_subject_email text" >/dev/null
+PG "INSERT INTO connect.recording_access_log (tenant_id, recording_id, share_id, level, subject_user_id, subject_tenant_id, zz_subject_email) VALUES ('$TECHVEIN','$TV_REC','$TV_SHARE','named','$PERSON','$ORG','person@$FQDN')" >/dev/null
 same "Techvein's grant TO the new organisation is in" "$(PG "SELECT count(*) FROM connect.recording_share_grants WHERE subject_tenant_id='$ORG'")" "1"
 same "…and Techvein's access-log line about its person" "$(PG "SELECT count(*) FROM connect.recording_access_log WHERE subject_tenant_id='$ORG'")" "1"
 
@@ -413,6 +418,8 @@ same "Techvein's meetings" "$(PG "SELECT count(*) FROM connect.meetings WHERE te
 same "Techvein's audit log" "$(PG "SELECT count(*) FROM core.audit_logs WHERE tenant_id='$TECHVEIN'")" "$AUDIT_TV"
 same "Techvein's recording and its share" "$(PG "SELECT count(*) FROM connect.recording_shares WHERE id='$TV_SHARE'")" "1"
 same "the line in Techvein's access log stays" "$(PG "SELECT count(*) FROM connect.recording_access_log WHERE tenant_id='$TECHVEIN' AND subject_tenant_id='$ORG'")" "1"
+same "…with the probe email column blanked" "$(PG "SELECT COALESCE(zz_subject_email,'(blank)') FROM connect.recording_access_log WHERE tenant_id='$TECHVEIN' AND subject_tenant_id='$ORG'")" "(blank)"
+hasnt "…and no email or name of the person anywhere in it"     "$(PG "SELECT row_to_json(l)::text FROM connect.recording_access_log l WHERE tenant_id='$TECHVEIN' AND subject_tenant_id='$ORG'")" "person@$FQDN"
 
 step "11. What is left to say it happened"
 same "one record" "$(PG "SELECT count(*) FROM core.organisation_deletions WHERE id='$RECORD'")" "1"

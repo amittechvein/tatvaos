@@ -180,7 +180,7 @@ public static partial class OrganisationDeletionEndpoints
             {
                 "TVD01" => 404,
                 "TVD04" => 400,
-                "TVD00" or "TVD09" or "TVD11" => 500,
+                "TVD00" or "TVD09" or "TVD11" or "TVD12" => 500,
                 _ => 409,
             };
             return Results.Json(new { error = ex.MessageText, code = ex.SqlState }, statusCode: status);
