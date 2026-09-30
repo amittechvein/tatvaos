@@ -915,6 +915,9 @@ app.MapOrgAiEndpoints();
 // The operator's read of an organisation's AI use (the limits are settings).
 app.MapOrgAiUsageEndpoints();
 app.MapOrganisationDetailEndpoints();
+// Deleting an organisation for good: suspended first, name typed, never one
+// that was invoiced. The rules are in 20260929-organisation-deletions.sql.
+app.MapOrganisationDeletionEndpoints();
 app.MapPlanFeatureEndpoints();
 TatvaOS.Api.Modules.Billing.BillingEndpoints.MapBillingEndpoints(app);
 TatvaOS.Api.Modules.Billing.PaymentEndpoints.MapPaymentEndpoints(app);

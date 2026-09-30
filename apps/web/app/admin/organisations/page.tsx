@@ -65,9 +65,14 @@ export default function AdminOrganisations() {
       subtitle="Every customer on the platform"
       nav={NAV}
       actions={
-        <Link href="/admin/organisations/new">
-          <Button variant="primary">Onboard organisation</Button>
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link href="/admin/organisations/deleted">
+            <Button variant="secondary">Deleted organisations</Button>
+          </Link>
+          <Link href="/admin/organisations/new">
+            <Button variant="primary">Onboard organisation</Button>
+          </Link>
+        </div>
       }
     >
       <div className="mb-6 flex flex-wrap items-center gap-2">

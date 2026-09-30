@@ -114,6 +114,14 @@ public static class DomainEndpoints
                         "ownership before transferring a domain.",
             });
 
+        // Or it belonged to an organisation that was deleted and its mail is
+        // still on the server (the database refuses it too, as a trigger).
+        if (await TatvaOS.Api.Modules.Admin.Endpoints.DeletedOrganisationDomains.IsHeldAsync(db, fqdn, ct))
+            return Results.Conflict(new
+            {
+                error = TatvaOS.Api.Modules.Admin.Endpoints.DeletedOrganisationDomains.Refusal(fqdn),
+            });
+
         var domain = new Domain
         {
             TenantId = tenant.TenantId,
