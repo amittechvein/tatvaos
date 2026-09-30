@@ -334,6 +334,76 @@ jobs:
       - name: "Connect check: picture-in-picture grid"
         run: bash infra/scripts/connect-pip-test.sh
 
+  # Docs: the file Space serves is built on the server (decision 0011
+  # condition 1). A job of its own: the render service needs Node 24 (it runs
+  # the editor's TypeScript schema directly), and the end-to-end test builds
+  # its own throwaway database (house rule 13) rather than sharing one.
+  # Approved into CI by Mr. Singh (1 Oct 2026: "the Docs render and container
+  # tests, with PR 367").
+  docs-render:
+    name: Docs render (service, gate, end to end, container)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: devpass
+          POSTGRES_DB: tatvaos_mail
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+        ports: ['5432:5432']
+    env:
+      # tests/lib/throwaway-db.sh, outside WSL, uses psql with these.
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: devpass
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '10.0.x' }
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install client
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list /etc/apt/sources.list.d/google-chrome*.sources
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: "Render service: its own tests"
+        working-directory: apps/render
+        run: node --import ./src/register.mjs --test test/*.test.mjs
+
+      # The gate Mr. Singh set before any building: the server's file is the
+      # same document as the editor reloaded from storage, for every fixture,
+      # and the editor's first view differs from that only by the closed list
+      # of known storage drops (0011 condition 4). The comparison is calibrated.
+      - name: "Render gate: the same document, and the closed list of storage drops"
+        working-directory: apps/render
+        run: node --import ./spike/register.mjs spike/gate.mjs
+
+      - name: Build the API
+        run: dotnet build -c Release apps/api/TatvaOS.Api.csproj
+
+      # Its own throwaway database; the test starts the render service, STOPS
+      # it to prove a failed render fails the save, and holds two builds to
+      # prove an older one never overwrites a newer file.
+      - name: "Docs end to end: the file is the server's"
+        run: bash tests/docs/run-docs-live.sh
+
+      # The container's hardening, each condition proven against the real
+      # compose definition, red first on the network rule. Docker is already
+      # running on the runner, so the script leaves it as it found it.
+      - name: "Render container: no internet, no database, API only, non-root, read-only, limits"
+        run: bash tests/docs-render/container-test.sh
+
   mail-stack:
     name: Mail stack
     runs-on: ubuntu-latest
