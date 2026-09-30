@@ -307,7 +307,7 @@ public static class PaymentEndpoints
     private static async Task<IResult> AcknowledgeAsync(
         string eventId, AppDbContext db, AuditWriter audit, HttpContext http, CancellationToken ct)
     {
-        var who = Guid.TryParse(http.User.FindFirst("sub")?.Value, out var u) ? u : (Guid?)null;
+        var who = TatvaOS.Api.Shared.Auth.SignedIn.UserId(http);
         var n = await db.Database.ExecuteSqlAsync($"""
             UPDATE core.razorpay_events SET acknowledged_at = now(), acknowledged_by = {who}
              WHERE event_id = {eventId} AND acknowledged_at IS NULL
@@ -385,7 +385,7 @@ public static class PaymentEndpoints
     private static async Task<bool> Scope(AppDbContext db, TenantContext tenant, Guid id, HttpContext http, CancellationToken ct)
     {
         if (!await db.Tenants.AsNoTracking().AnyAsync(t => t.Id == id, ct)) return false;
-        tenant.EnterPlatformScope(id, Guid.TryParse(http.User.FindFirst("sub")?.Value, out var u) ? u : Guid.Empty);
+        tenant.EnterPlatformScope(id, TatvaOS.Api.Shared.Auth.SignedIn.UserIdOrEmpty(http));
         await db.SyncTenantAsync(ct);
         return true;
     }

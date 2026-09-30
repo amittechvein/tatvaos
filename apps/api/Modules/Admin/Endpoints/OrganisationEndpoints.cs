@@ -700,7 +700,7 @@ public static class OrganisationEndpoints
     // ------------------------------------------------------------------
 
     private static Guid CurrentUserId(HttpContext http) =>
-        Guid.TryParse(http.User.FindFirst("sub")?.Value, out var id) ? id : Guid.Empty;
+        TatvaOS.Api.Shared.Auth.SignedIn.UserIdOrEmpty(http);
 
     /// <summary>
     /// Turns "ABC School & Co." into abcschool.tatvaos.com, adding a numeric

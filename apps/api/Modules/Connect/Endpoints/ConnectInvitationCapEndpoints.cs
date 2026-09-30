@@ -106,5 +106,5 @@ public static class ConnectInvitationCapEndpoints
     }
 
     private static Guid Actor(HttpContext http) =>
-        Guid.TryParse(http.User.FindFirst("sub")?.Value, out var uid) ? uid : Guid.Empty;
+        TatvaOS.Api.Shared.Auth.SignedIn.UserIdOrEmpty(http);
 }

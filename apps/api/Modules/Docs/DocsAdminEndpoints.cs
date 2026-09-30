@@ -123,5 +123,5 @@ public static class DocsAdminEndpoints
         && (!env.IsDevelopment() || config.GetValue<bool>("Docs:RefuseSwitchOnInDevelopment"));
 
     private static Guid Actor(HttpContext http) =>
-        Guid.TryParse(http.User.FindFirst("sub")?.Value, out var uid) ? uid : Guid.Empty;
+        TatvaOS.Api.Shared.Auth.SignedIn.UserIdOrEmpty(http);
 }

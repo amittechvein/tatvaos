@@ -829,8 +829,8 @@ else
 //  above read that header themselves and take its LAST entry, which is the
 //  one Caddy appended; this middleware would consume that entry and leave any
 //  client-supplied ones in front of it for the limiters to trust. Audit rows
-//  keep recording Caddy's address as they do today; a real-client-IP change
-//  is its own decision, not a side effect of the provider.
+//  read the same last entry themselves (AuditWriter, through ClientIp) since
+//  29 Sept 2026; before that they recorded Caddy's address.
 //
 //  No known-proxy list, on purpose: the API publishes no port, so the only
 //  thing that can reach it is Caddy on the compose network, whose container

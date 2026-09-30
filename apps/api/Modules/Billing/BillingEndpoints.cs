@@ -365,5 +365,5 @@ public static class BillingEndpoints
     }
 
     private static Guid CurrentUserId(HttpContext http) =>
-        Guid.TryParse(http.User.FindFirst("sub")?.Value, out var uid) ? uid : Guid.Empty;
+        TatvaOS.Api.Shared.Auth.SignedIn.UserIdOrEmpty(http);
 }

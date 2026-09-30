@@ -56,7 +56,7 @@ public static class OrgAiUsageEndpoints
             return Results.BadRequest(new { error = "Say why — for example the invoice number or \"goodwill\"." });
         if (!await db.Tenants.AsNoTracking().AnyAsync(t => t.Id == id, ct)) return Results.NotFound();
 
-        var actor = Guid.TryParse(http.User.FindFirst("sub")?.Value, out var uid) ? uid : Guid.Empty;
+        var actor = TatvaOS.Api.Shared.Auth.SignedIn.UserIdOrEmpty(http);
         tenant.EnterPlatformScope(id, actor);
         await db.SyncTenantAsync(ct);
 
@@ -85,7 +85,7 @@ public static class OrgAiUsageEndpoints
         if (reason.Length == 0)
             return Results.BadRequest(new { error = "Say why it is being withdrawn." });
 
-        var actor = Guid.TryParse(http.User.FindFirst("sub")?.Value, out var uid) ? uid : Guid.Empty;
+        var actor = TatvaOS.Api.Shared.Auth.SignedIn.UserIdOrEmpty(http);
         tenant.EnterPlatformScope(id, actor);
         await db.SyncTenantAsync(ct);
 
@@ -109,7 +109,7 @@ public static class OrgAiUsageEndpoints
         var over = await db.Tenants.AsNoTracking().Where(t => t.Id == id)
             .Select(t => new { t.AiCreditsOverride }).FirstOrDefaultAsync(ct);
         if (over is null) return Results.NotFound();
-        var actor = Guid.TryParse(http.User.FindFirst("sub")?.Value, out var uid) ? uid : Guid.Empty;
+        var actor = TatvaOS.Api.Shared.Auth.SignedIn.UserIdOrEmpty(http);
         tenant.EnterPlatformScope(id, actor);
         await db.SyncTenantAsync(ct);
         // This month's top-ups, withdrawn ones too (a record of what was sold).
@@ -141,7 +141,7 @@ public static class OrgAiUsageEndpoints
 
         // Audited into the CUSTOMER's own log: an exception to what their plan
         // gives them is something their administrators may ask about.
-        var actor = Guid.TryParse(http.User.FindFirst("sub")?.Value, out var uid) ? uid : Guid.Empty;
+        var actor = TatvaOS.Api.Shared.Auth.SignedIn.UserIdOrEmpty(http);
         tenant.EnterPlatformScope(id, actor);
         await db.SyncTenantAsync(ct);
         await audit.WriteAsync("org.ai.credits_override", "core.tenant", id.ToString(),
@@ -157,7 +157,7 @@ public static class OrgAiUsageEndpoints
 
         // Platform scope sets the tenant for this one read; RLS still applies.
         // A read, so nothing to audit (the same stance as the other GETs here).
-        var actor = Guid.TryParse(http.User.FindFirst("sub")?.Value, out var uid) ? uid : Guid.Empty;
+        var actor = TatvaOS.Api.Shared.Auth.SignedIn.UserIdOrEmpty(http);
         tenant.EnterPlatformScope(id, actor);
         await db.SyncTenantAsync(ct);
 
