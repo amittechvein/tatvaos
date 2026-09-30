@@ -914,6 +914,8 @@ app.MapMyStorageEndpoints();
 app.MapOrgAiEndpoints();
 // The operator's read of an organisation's AI use (the limits are settings).
 app.MapOrgAiUsageEndpoints();
+// Offering Mail AI to one organisation, and resetting its own Mail AI with it.
+app.MapOrgMailAiOfferEndpoints();
 app.MapOrganisationDetailEndpoints();
 app.MapPlanFeatureEndpoints();
 TatvaOS.Api.Modules.Billing.BillingEndpoints.MapBillingEndpoints(app);
