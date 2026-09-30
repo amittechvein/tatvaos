@@ -1,7 +1,9 @@
 # 0010 — The public careers portal and résumé uploads
 
 **Status:** accepted, with the conditions in "The ruling" below (Mr. Singh;
-his ruling is headed 30 Sept 2026 and reached this lane on 28 Sept)
+the ruling reached this lane on 28 Sept 2026 and was given in a separate
+session, not the one Amit forwards rulings from. Its heading said 30 Sept
+2026, a date that had not yet come; corrected 28 Sept at Mr. Singh's request)
 **Date:** 2026-09-24 (proposed)
 **Lane:** Hire & People
 

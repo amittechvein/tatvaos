@@ -20,6 +20,20 @@ public static class DocsSwitch
     /// <summary>403 with reason "docs_off", which the web client shows as a sentence.</summary>
     public static IResult Off() =>
         Results.Json(new { error = OffMessage, reason = "docs_off" }, statusCode: StatusCodes.Status403Forbidden);
+
+    /// <summary>
+    /// FALSE UNTIL THE FILE IS BUILT ON THE SERVER (decision 0011 condition 1;
+    /// design docs/DOCS_SERVER_RENDER_DESIGN.md). Amit, 29 Sept 2026: Docs
+    /// stays off for EVERY organisation, Techvein included, until then — so
+    /// production never holds a file a browser wrote. While false, the
+    /// operator's switch refuses to turn Docs on (DocsAdminEndpoints). The
+    /// render's own pull request sets it true, and nothing else should.
+    /// </summary>
+    public const bool ServerRenderLanded = false;
+
+    public const string BeforeRenderMessage =
+        "Docs cannot be switched on yet. Documents must first be built on the server "
+        + "(decision 0011, condition 1); until then Docs stays off for every organisation.";
 }
 
 /// <summary>
@@ -54,9 +68,22 @@ public static class DocsAdminEndpoints
 
     private static async Task<IResult> PutAsync(
         Guid id, SwitchRequest req, AppDbContext db, TenantContext tenant, AuditWriter audit,
-        HttpContext http, CancellationToken ct)
+        HttpContext http, IHostEnvironment env, IConfiguration config, ILoggerFactory loggers, CancellationToken ct)
     {
         if (!await db.Tenants.AsNoTracking().AnyAsync(t => t.Id == id, ct)) return Results.NotFound();
+
+        // Switching ON is refused until the render lands (DocsSwitch.
+        // ServerRenderLanded). Switching OFF is never refused. Refused before
+        // anything is written or scoped, and logged — a refused attempt is
+        // somebody working against Amit's decision, or not knowing it.
+        if (req.Enabled && RefuseSwitchOn(env, config))
+        {
+            loggers.CreateLogger("TatvaOS.Docs.Switch").LogWarning(
+                "Docs switch-on REFUSED before the server render (Amit, 29 Sept 2026): organisation {OrganisationId}, operator {OperatorId}",
+                id, Actor(http));
+            return Results.Json(new { error = DocsSwitch.BeforeRenderMessage, reason = "docs_before_render" },
+                statusCode: StatusCodes.Status409Conflict);
+        }
 
         // Platform scope sets the tenant for this one operation; it does not
         // switch row-level security off (see OrganisationEndpoints).
@@ -83,6 +110,17 @@ public static class DocsAdminEndpoints
 
         return Results.Ok(new { enabled = row.Enabled, updatedAt = row.UpdatedAt });
     }
+
+    /// <summary>
+    /// Refused everywhere but a developer's machine, where tests/docs must
+    /// switch Docs on to test it. Docs:RefuseSwitchOnInDevelopment can only
+    /// ADD the refusal (tests/docs/docs-switch-before-render.test.mjs runs
+    /// with it) — no setting takes it away in production; only the render's
+    /// pull request, by setting ServerRenderLanded.
+    /// </summary>
+    private static bool RefuseSwitchOn(IHostEnvironment env, IConfiguration config) =>
+        !DocsSwitch.ServerRenderLanded
+        && (!env.IsDevelopment() || config.GetValue<bool>("Docs:RefuseSwitchOnInDevelopment"));
 
     private static Guid Actor(HttpContext http) =>
         Guid.TryParse(http.User.FindFirst("sub")?.Value, out var uid) ? uid : Guid.Empty;

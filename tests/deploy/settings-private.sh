@@ -4,7 +4,8 @@
 # git repository, with nothing stubbed but the four printing helpers.
 #
 # WHY THIS EXISTS. On 28 Sept 2026 production's infra/docker/.env was mode
-# 664 with three copies beside it the same way. Mr. Singh, 1 Oct: the deploy
+# 664 with three copies beside it the same way. Mr. Singh (by 28 Sept, in a
+# separate session; first written "1 Oct"): the deploy
 # refuses if any .env* in the settings directory can be read by anyone but
 # the deploying account. A refusal that does not refuse is worse than none,
 # so every case here has a mutant of deploy.sh that must turn it red.
