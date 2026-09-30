@@ -105,11 +105,20 @@ to the one case that showed it.
 **What it cannot do**, whoever wrote it: make the file say what the
 document says. That is condition 1.
 
-**Known and allowed:** a picture kept from the web (`http`/`https`) is
-asked for when the file is opened, which tells that picture's host the
-file was opened. The editor allows pasted web pictures, so the sanitiser
-does. Whether stored files should carry only Docs' own pictures is an open
-question for Mr. Singh, not decided here.
+**Pictures from the web stay in the stored file, over https only** (Mr.
+Singh, 28 September 2026, through Amit from his session). A picture kept
+from the web is asked for when the file is opened, which tells that
+picture's host the file was opened: a small leak, against a common case (a
+school's document with a pasted picture). So the sanitiser keeps `https`
+pictures as written, rewrites `http://` to `https://`, and refuses a
+picture whose address cannot honestly be made https (no host, a user or
+password in the address, or an `http` port other than 80). Links are not
+pictures and keep `http`. **For now:** once condition 1 renders the file on
+the server, the render can fetch each picture once and store our own copy,
+which removes the leak entirely — revisit then; it is not worth building
+twice. (The first draft of PR 344 removed web pictures altogether, on a
+ruling dated "1 October" that came from a separate session; this one
+replaces it.)
 
 ## Consequences
 
