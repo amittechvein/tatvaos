@@ -220,7 +220,18 @@ async function main() {
   const endpoints = readFileSync(path.join(here, '../../apps/api/Modules/Docs/DocsEndpoints.cs'), 'utf8');
   const stillThere = /record CheckpointRequest\(string\? State/.test(endpoints);
   check('the ignored browser fields are removed by their end date (14 Oct 2026)',
-    Date.now() < Date.parse('2026-10-15T00:00:00Z') || !stillThere, 'the grace period is over: remove State/Html/Text from CheckpointRequest and VersionRequest');
+    // DOCS_TEST_NOW (an ISO date) exists only to show this check failing before the day.
+    (process.env.DOCS_TEST_NOW ? Date.parse(process.env.DOCS_TEST_NOW) : Date.now()) < Date.parse('2026-10-15T00:00:00Z') || !stillThere, [
+      'END DATE REACHED (14 Oct 2026; Mr. Singh, 30 Sept 2026). Browsers used to upload the document\'s state, HTML and',
+      'text with every save; since the server builds the file itself (decision 0011 condition 1) those uploads are',
+      'accepted and IGNORED, for open tabs, until this date. Remove them now — do NOT switch this check off:',
+      '  1. apps/api/Modules/Docs/DocsEndpoints.cs: CheckpointRequest(string? State, long UpToSeq, string? Html, string? Text)',
+      '     becomes CheckpointRequest(long UpToSeq)',
+      '  2. same file: VersionRequest(string? Kind, string? Name, string? State, string? Html) becomes VersionRequest(string? Kind, string? Name)',
+      '  3. same file, CheckpointAsync: delete the line "_ = req; // accepted for one release..." and the END DATE comments',
+      '  4. this test: stop sending state/html/text in the checkpoint and version calls, then delete this check',
+      'The web app already sends none of them (apps/web/lib/docs.ts). Nothing reads them: removing them changes no behaviour.',
+    ].join('\n        '));
 
   const owner = await signIn(OWNER);
   const employee = await signIn(EMPLOYEE);
