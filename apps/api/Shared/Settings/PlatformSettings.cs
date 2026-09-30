@@ -60,6 +60,10 @@ public static class SettingKeys
     public const string AiOrgMonthlyTokens = "ai.limit.org_monthly_tokens";
     // Which organisations may use TatvaOS AI in Mail at all (AiProductSwitch).
     public const string AiMailOrganisations = "ai.mail.organisations";
+    // …and for each other AI product (AiGate, 30 Sept 2026). Same rule:
+    // empty = nobody, "all" = everyone, ids = only those.
+    public const string AiConnectOrganisations = "ai.connect.organisations";
+    public const string AiDocsOrganisations = "ai.docs.organisations";
 
     // Personal accounts (/join) — build plan personal-plans-build-plan.md §1
     // and §3.4. Closed by default: the switch-on waits for the five launch
@@ -148,6 +152,14 @@ public static class SettingKeys
             + "EMPTY means NO organisation may (Mr. Singh, 29 Sept 2026). Type all to let every "
             + "organisation. Set to Techvein alone on 25 Sept 2026 until the privacy policy describes "
             + "Mail AI (Mr. Singh) — change it to all once that text is live."),
+        new(AiConnectOrganisations, "ai", "Organisations that may use TatvaOS AI in Connect", false,
+            "Meeting minutes, and transcription of recordings if a transcription service is ever set up. "
+            + "Same rule as Mail: organisation ids separated by commas, all for everyone, EMPTY means NO "
+            + "organisation. Started as all on 30 Sept 2026 (Mr. Singh): minutes' disclosure is live, and "
+            + "each organisation's own TatvaOS AI switch remains its consent."),
+        new(AiDocsOrganisations, "ai", "Organisations that may use TatvaOS AI in Docs", false,
+            "Same rule as Mail. Started EMPTY on 30 Sept 2026 (no organisation): Docs is off for everyone "
+            + "and its AI has no privacy text yet."),
 
         new(PersonalSignupOpen, "personal", "Personal signup open (/join)", false,
             "OFF until launch. ON lets anyone create a free personal address at /join. Needs a personal "

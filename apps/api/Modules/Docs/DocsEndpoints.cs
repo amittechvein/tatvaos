@@ -895,6 +895,9 @@ public static class DocsEndpoints
         if (!ai.IsConfigured) return Error(503, "AI is not set up on this TatvaOS installation.");
         if (!await ai.EnabledForTenantAsync(ct))
             return Error(403, "AI is switched off for your organisation. An administrator can turn it on.");
+        if (!await TatvaOS.Api.Shared.Ai.AiGate.AllowedAsync(db, tenant.HasTenant ? tenant.TenantId : null,
+                TatvaOS.Api.Shared.Ai.AiGate.Docs, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, ct))
+            return Error(403, TatvaOS.Api.Shared.Ai.AiGate.NotOffered);
 
         const string Plain =
             " Reply with the text only — no preamble, no closing remarks, no quotation marks around it." +
@@ -945,7 +948,7 @@ public static class DocsEndpoints
         // refuses a request with no feature. It costs the default, 1 credit:
         // AiCredits has no line for "docs", and what it should cost is a
         // pricing decision (Amit's), not one to make in a merge.
-        var result = await ai.CompleteAsync(instruction, text, ct, feature: "docs");
+        var result = await ai.CompleteAsync(instruction, text, ct, feature: TatvaOS.Api.Shared.Ai.AiGate.Docs);
         if (result.Error is not null) return Error(502, result.Error);
         return Results.Ok(new { text = result.Text.Trim(), truncated = result.Truncated });
     }
