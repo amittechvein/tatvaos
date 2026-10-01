@@ -347,6 +347,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.Hire.HireCareersSite>()
             .HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<TatvaOS.Api.Modules.Mail.MailApiSend>().ToTable("api_sends", "mail");
+        // 20261001-mail-sender-gate-bounce: the outbound gate's record of each
+        // send's mailbox. No DbSet; append-only for the app.
+        b.Entity<TatvaOS.Api.Modules.Mail.MailApiSendEnvelope>().ToTable("api_send_envelopes", "mail");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>().ToTable("meeting_notes", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingChat>().ToTable("meeting_chat", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingBlock>().ToTable("meeting_blocks", "connect");
