@@ -49,7 +49,11 @@ failures, pending = [], []
 consts = {}
 for m in re.finditer(r'public const string (\w+)\s*=\s*((?:\s*\+?\s*"(?:[^"\\]|\\.)*")+)\s*;', text['disclosure']):
     consts[m.group(1)] = ''.join(re.findall(r'"((?:[^"\\]|\\.)*)"', m.group(2)))
-WANTED = ['HelpMeWrite', 'SuggestedReplies', 'Summarise', 'Sorting', 'NeverSent', 'WhoDecides', 'Retention']
+WANTED = ['HelpMeWrite', 'SuggestedReplies', 'Summarise', 'Sorting', 'NeverSent', 'WhoDecides', 'Retention',
+          'MeetingNotes', 'Captions']
+# Sentences the privacy page carries but the ADMIN page does not show
+# (meetings and captions are not on the Mail AI card).
+PRIVACY_ONLY = {'MeetingNotes', 'Captions'}
 missing = [w for w in WANTED if w not in consts]
 if missing:
     print(f'  AiDisclosure.cs has no {", ".join(missing)} - the check cannot read it, so it proves nothing')
@@ -66,7 +70,7 @@ for name in WANTED:
         for phrase in SORTING_PHRASES:
             if phrase not in consts[name] or phrase not in text['admin api']:
                 failures.append(f'the sorting sentence and the admin page do not both say "{phrase}"')
-    elif f'AiDisclosure.{name}' not in text['admin api']:
+    elif name not in PRIVACY_ONLY and f'AiDisclosure.{name}' not in text['admin api']:
         failures.append(f'the admin page (OrgAiEndpoints) does not use AiDisclosure.{name}')
 
 # ── 2. Who and where ─────────────────────────────────────────────────────

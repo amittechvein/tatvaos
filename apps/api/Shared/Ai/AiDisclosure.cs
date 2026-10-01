@@ -72,6 +72,39 @@ public static class AiDisclosure
         "[PENDING Amit: OpenAI keeps what we send for ___ and does / does not use it to train its models. "
         + "This is from our OpenAI account's data settings, checked on ___.]";
 
+    // ── Meetings ──────────────────────────────────────────────────────────
+    //  Minutes are written from live captions; no meeting audio reaches
+    //  OpenAI (checked 30 Sept 2026: the recording-transcription path is not
+    //  configured on production).
+    public const string MeetingNotes =
+        "the text of what was said, taken from live captions (not the audio)";
+
+    //  Live captions themselves: the BROWSER turns speech into text, and the
+    //  browser's own speech service hears the audio - Google for Chrome,
+    //  Microsoft for Edge, Apple for Safari (lib/useCaptions.ts uses whatever
+    //  the browser provides). Mr. Singh writes this sentence once his five
+    //  questions are answered (30 Sept 2026); until then it is a blank, and a
+    //  blank here keeps the Mail AI offer button closed like any other.
+    public const string Captions =
+        "[PENDING Mr. Singh: the live-captions sentence - which speech service hears the audio, where, "
+        + "who turns it on, what that service keeps, and whether there is a switch.]";
+
     /// <summary>"OpenAI, in the United States" - the one way every sentence names who and where.</summary>
     public static string ToWhom(string vendor, string location) => $"{vendor}, in {location}";
+
+    /// <summary>
+    /// True when no sentence here still has a blank (a PENDING marker) -
+    /// the same markers tests/ai/privacy-text-matches.py fails on. Read by
+    /// MailAiPrivacyText: the operator's Offer Mail AI button opens on this
+    /// (Mr. Singh, 30 Sept 2026). Every public const string is looked at, so a
+    /// sentence added later is covered without anyone listing it.
+    /// </summary>
+    public static bool Complete { get; } = typeof(AiDisclosure)
+        .GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+        .Where(f => f.IsLiteral && f.FieldType == typeof(string))
+        .All(f => !((string)f.GetRawConstantValue()!).Contains(PendingMarker, StringComparison.Ordinal));
+
+    // Built from two pieces so this file's own code is not itself a blank to
+    // privacy-text-matches.py; private, so the scan above does not read it.
+    private const string PendingMarker = "[" + "PENDING";
 }

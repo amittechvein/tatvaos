@@ -116,7 +116,8 @@ export Smtp__Host=localhost Smtp__Port=5870
 # AI configured (nothing is ever sent: no request reaches the provider in
 # this suite), so Mail's status answers from the SWITCHES. Unconfigured, it
 # says "unavailable" whatever they are, and step 6 would prove nothing.
-export Ai__BaseUrl=http://127.0.0.1:9/v1 Ai__ApiKey=test-only-not-a-key Ai__Model=test-model Ai__DataLocation="the United States"
+# An unknown host must name its vendor (PR 366), or AI stays unconfigured.
+export Ai__Vendor=OpenAI Ai__BaseUrl=http://127.0.0.1:9/v1 Ai__ApiKey=test-only-not-a-key Ai__Model=test-model Ai__DataLocation="the United States"
 export Personal__PhoneHashKey="test-only-phone-hash-key-at-least-32-characters"
 if command -v cygpath >/dev/null 2>&1; then export Oidc__KeyDirectory="$(cygpath -w "$SCRATCH")\\keys"; else export Oidc__KeyDirectory="$SCRATCH/keys"; fi
 

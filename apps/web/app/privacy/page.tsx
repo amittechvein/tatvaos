@@ -54,6 +54,8 @@ const AI = {
   neverSent: "The sender's email address, earlier messages quoted below the new text, attachments and junk mail are never sent. Suggested replies and sorting also skip mail your organisation sent and mail from automated senders.",
   whoDecides: "Mail AI is off by default. Only your organisation's administrator can turn it on, and they can turn each feature off again at any time. When Mail AI is turned on, Help me write starts on; suggested replies, Summarise and sorting stay off until the administrator turns each one on. Sorting is not offered to hospitals and clinics.",
   retention: "[PENDING Amit: OpenAI keeps what we send for ___ and does / does not use it to train its models. This is from our OpenAI account's data settings, checked on ___.]",
+  meetingNotes: "the text of what was said, taken from live captions (not the audio)",
+  captions: "[PENDING Mr. Singh: the live-captions sentence - which speech service hears the audio, where, who turns it on, what that service keeps, and whether there is a switch.]",
   toWhom: 'OpenAI, in the United States',
 };
 const CONTACT = 'support@tatvaos.com';
@@ -145,9 +147,7 @@ export default function PrivacyPage() {
             mail are switched on separately, and in mail each feature has its own switch. When a feature
             is on, the following is sent to {AI.toWhom}:
             <ul className="mt-1.5 list-[circle] space-y-1 pl-5">
-              {/* PENDING Mr. Singh (captions): the meeting-notes line and the Google
-                  bullet below are the wording proposed on 30 Sept, not yet ruled. */}
-              <li>for meeting notes: the text of what was said, taken from live captions (not the audio);</li>
+              <li>for meeting notes: {AI.meetingNotes};</li>
               <li>Help me write: {AI.helpMeWrite};</li>
               <li>Suggested replies: {AI.suggestedReplies};</li>
               <li>Summarise conversation: {AI.summarise};</li>
@@ -156,10 +156,7 @@ export default function PrivacyPage() {
             <span className="mt-1.5 block">
               {AI.neverSent} {AI.whoDecides} {AI.retention} Nothing is sent while these are off.
             </span></>,
-          <><strong className="text-ink">Live captions for meeting minutes:</strong> when the person
-            running a meeting turns minutes on, each participant&rsquo;s Chrome or Edge browser sends
-            their microphone audio to Google to turn speech into text. Only the resulting text reaches
-            TatvaOS. {'[PENDING Mr. Singh: captions wording]'}</>,
+          <><strong className="text-ink">Live captions for meeting minutes:</strong> {AI.captions}</>,
           <><strong className="text-ink">The people you communicate with:</strong> the recipients of your
             emails, the participants in your meetings, and anyone you share a file with.</>,
           <><strong className="text-ink">The law:</strong> when we are legally required to, for example by a
