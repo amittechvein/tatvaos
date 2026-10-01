@@ -79,6 +79,21 @@ public static class DocsEndpoints
 
         g.MapPost("/{id:guid}/ai", AiAsync);
 
+        // A SPREADSHEET SAVES THROUGH ITS OWN TWO ROUTES (1 Oct 2026, when PR
+        // 367's server-built Docs files met Sheets). A document's file is built
+        // on the server and the browser's copy is ignored (0011 condition 1);
+        // a spreadsheet's .xlsx is still the one its browser wrote, behind
+        // XlsxGuard, until Sheets has its own server build — and until then
+        // Sheets cannot be switched on (SheetsSwitch.ServerRenderLanded). Kept
+        // apart so that removing Docs' ignored fields (by 14 Oct 2026) cannot
+        // break Sheets, and so the browser-written path is one named place
+        // that the server build replaces. Each route refuses the other kind.
+        var s = app.MapGroup("/api/sheets")
+            .RequireAuthorization("User")
+            .WithTags("Sheets");
+        s.MapPost("/{id:guid}/checkpoint", SheetCheckpointAsync);
+        s.MapPost("/{id:guid}/versions", SheetVersionAsync);
+
         // ─── WHY AllowAnonymous HERE IS SAFE — read before copying or "fixing" ───
         // A browser cannot put the access token on a WebSocket upgrade, so the
         // credential is the single-use ticket from /live-ticket (an
@@ -104,7 +119,8 @@ public static class DocsEndpoints
     //  Shapes
     // ------------------------------------------------------------------
 
-    public sealed record CreateRequest(string? Title, Guid? FolderId, string? Scope);
+    /// <summary>Kind: "document" (default) or "spreadsheet".</summary>
+    public sealed record CreateRequest(string? Title, Guid? FolderId, string? Scope, string? Kind = null);
     public sealed record RenameRequest(string? Title);
     // State / Html / Text: ACCEPTED AND IGNORED, for tabs opened before the
     // server built the files (0011 condition 1). END DATE (Mr. Singh, 30 Sept
@@ -113,6 +129,14 @@ public static class DocsEndpoints
     // fails after that date while these fields are still here, so the grace
     // cannot quietly become permanent.
     public sealed record CheckpointRequest(string? State, long UpToSeq, string? Html, string? Text);
+    /// <summary>
+    /// A spreadsheet's save (POST /api/sheets/{id}/checkpoint): its state, the
+    /// HTML/text for search and history, and the .xlsx Space serves — all
+    /// written by the browser until Sheets has its own server build. NOT
+    /// covered by the 14 Oct end date, which is Docs' ignored fields only.
+    /// </summary>
+    public sealed record SheetCheckpointRequest(string? State, long UpToSeq, string? Html, string? Text, string? Xlsx);
+    public sealed record SheetVersionRequest(string? Kind, string? Name, string? State, string? Html);
     public sealed record VersionRequest(string? Kind, string? Name, string? State, string? Html);
     public sealed record NameVersionRequest(string? Name);
     public sealed record CommentRequest(string? Body, string? Anchor, string? Quote);
@@ -149,15 +173,24 @@ public static class DocsEndpoints
     /// wants to look (Space lets a trashed file be opened; Docs lets it be
     /// read, not changed).
     /// </summary>
-    private static async Task<(IResult? Error, SpaceFile File, string Perm, Guid Uid)> LoadAsync(
+    internal static async Task<(IResult? Error, SpaceFile File, string Perm, Guid Uid)> LoadAsync(
         AppDbContext db, TenantContext tenant, Guid id, bool tracked, bool forChange, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return (Results.Unauthorized(), null!, "", default);
-        if (!await DocsSwitch.EnabledAsync(db, ct)) return (DocsSwitch.Off(), null!, "", uid);
 
-        var q = db.SpaceFiles.Where(f => f.Id == id && f.MimeType == DocsFormat.MimeType);
+        // Documents and spreadsheets alike: everything below — live channel,
+        // versions, comments — is the same for both (DocsFormat.IsLive).
+        var q = db.SpaceFiles.Where(f => f.Id == id
+            && (f.MimeType == DocsFormat.MimeType || f.MimeType == DocsFormat.SpreadsheetMimeType));
         var file = await (tracked ? q : q.AsNoTracking()).FirstOrDefaultAsync(ct);
         if (file is null) return (Error(404, "No such document."), null!, "", uid);
+        // Each kind answers to its own switch (LiveSwitch): Docs off leaves
+        // spreadsheets open, Sheets off leaves documents open. Checked after
+        // the lookup because only the file says which switch applies; the
+        // lookup runs under the caller's RLS, so it reveals nothing they
+        // could not already see in Space.
+        if (!await LiveSwitch.EnabledAsync(db, file.MimeType, ct))
+            return (LiveSwitch.Off(file.MimeType), null!, "", uid);
         if (forChange && file.DeletedAt is not null)
             return (Error(409, "This document is in the trash. Restore it first."), null!, "", uid);
 
@@ -177,14 +210,17 @@ public static class DocsEndpoints
 
     private static async Task<IResult> ListAsync(
         AppDbContext db, TenantContext tenant, CancellationToken ct,
-        string? view = "recent", string? q = null, int page = 1, int pageSize = 50)
+        string? view = "recent", string? q = null, int page = 1, int pageSize = 50, string? kind = null)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
-        if (!await DocsSwitch.EnabledAsync(db, ct)) return DocsSwitch.Off();
+        // Docs' home lists documents, Sheets' lists spreadsheets; absent kind
+        // is "document" so the Docs client is unchanged. Each behind its own switch.
+        var mime = kind == "spreadsheet" ? DocsFormat.SpreadsheetMimeType : DocsFormat.MimeType;
+        if (!await LiveSwitch.EnabledAsync(db, mime, ct)) return LiveSwitch.Off(mime);
         if (page < 1) page = 1;
         pageSize = Math.Clamp(pageSize, 1, 200);
 
-        var files = db.SpaceFiles.AsNoTracking().Where(f => f.MimeType == DocsFormat.MimeType);
+        var files = db.SpaceFiles.AsNoTracking().Where(f => f.MimeType == mime);
         files = view switch
         {
             "trash" => files.Where(f => f.DeletedAt != null
@@ -243,16 +279,23 @@ public static class DocsEndpoints
         IBlobStore blobs, IConfiguration config, CancellationToken ct)
     {
         if (tenant.UserId is not Guid uid) return Results.Unauthorized();
-        if (!await DocsSwitch.EnabledAsync(db, ct)) return DocsSwitch.Off();
 
-        var title = CleanTitle(req.Title) ?? DocsFormat.DefaultTitle;
+        if (req.Kind is not (null or "document" or "spreadsheet"))
+            return Error(400, "kind must be document or spreadsheet.");
+        var sheet = req.Kind == "spreadsheet";
+        var kindMime = sheet ? DocsFormat.SpreadsheetMimeType : DocsFormat.MimeType;
+        if (!await LiveSwitch.EnabledAsync(db, kindMime, ct)) return LiveSwitch.Off(kindMime);
+        var title = CleanTitle(req.Title) ?? (sheet ? DocsFormat.DefaultSpreadsheetTitle : DocsFormat.DefaultTitle);
 
         // Where it lands and who owns it: Space's rule, not a copy of it.
         var (err, folderId, ownership, owner) =
             await SpaceEndpoints.ResolveDestinationAsync(db, uid, req.FolderId, req.Scope ?? "personal", ct);
         if (err is not null) return err;
 
-        var html = DocsFormat.RenderHtml(title, "");
+        // A new spreadsheet's Space copy is empty until its first checkpoint
+        // writes the .xlsx; zero bytes is honest ("nothing yet") where a
+        // made-up placeholder file would not be.
+        var html = sheet ? Array.Empty<byte>() : DocsFormat.RenderHtml(title, "");
         var verdict = await SpaceEndpoints.EvaluateStorageAsync(db, allocator, tenant.TenantId,
             ownership, owner, uid, html.Length, html.Length, SpaceEndpoints.MaxFileBytes(config), ct);
         if (!verdict.Ok)
@@ -270,7 +313,7 @@ public static class DocsEndpoints
             OwnershipType = ownership,
             OwnerUserId = owner,
             Name = title,
-            MimeType = DocsFormat.MimeType,
+            MimeType = sheet ? DocsFormat.SpreadsheetMimeType : DocsFormat.MimeType,
             BlobKey = key,
             SizeBytes = html.Length,
         };
@@ -332,7 +375,8 @@ public static class DocsEndpoints
             file.OwnershipType, file.FolderId, starred, shared,
             file.DeletedAt, file.CreatedAt, file.UpdatedAt,
             new MeDto(uid, names.GetValueOrDefault(uid) ?? ""),
-            aiState));
+            aiState,
+            LiveSwitch.IsSheet(file.MimeType) ? "spreadsheet" : "document"));
     }
 
     // ==================================================================
@@ -434,6 +478,10 @@ public static class DocsEndpoints
         var (err, file, perm, uid) = await LoadAsync(db, tenant, id, tracked: true, forChange: true, ct);
         if (err is not null) return err;
         if (!AtLeast(perm, "edit")) return Error(403, "You need edit access to save this document.");
+        // The Docs render builds documents; a spreadsheet given to it would
+        // come back as an empty page stored as its file. See MapDocsEndpoints.
+        if (LiveSwitch.IsSheet(file.MimeType))
+            return Error(400, "A spreadsheet saves through /api/sheets/{id}/checkpoint.");
         _ = req; // accepted for one release, never read: see above
 
         // 1. What the server stored.
@@ -568,6 +616,164 @@ public static class DocsEndpoints
     }
 
     /// <summary>
+    /// A spreadsheet's save. The Sheets branch's checkpoint, unchanged but for
+    /// its own route and request (see MapDocsEndpoints): the browser's state,
+    /// HTML, text and .xlsx are stored, the .xlsx only past XlsxGuard. Which
+    /// is why Sheets cannot be switched on until its own server build lands.
+    /// RenderedSeq is the DOCS render's marker and is not touched here: a
+    /// spreadsheet is never counted by Docs' browser-written guard.
+    /// </summary>
+    private static async Task<IResult> SheetCheckpointAsync(
+        Guid id, SheetCheckpointRequest req, AppDbContext db, TenantContext tenant, DocsLiveHub hub,
+        IBlobStore blobs, StorageAllocator allocator, ILoggerFactory loggers, CancellationToken ct)
+    {
+        var (err, file, perm, uid) = await LoadAsync(db, tenant, id, tracked: true, forChange: true, ct);
+        if (err is not null) return err;
+        if (!AtLeast(perm, "edit")) return Error(403, "You need edit access to save this spreadsheet.");
+        if (!LiveSwitch.IsSheet(file.MimeType))
+            return Error(400, "A document saves through /api/docs/{id}/checkpoint.");
+
+        if (!TryDecode(req.State, MaxStateBytes, out var state))
+            return Error(400, "state must be base64, and within the size limit.");
+        if ((req.Html ?? "").Length > MaxHtmlChars) return Error(413, "This spreadsheet is too large to save.");
+        var html = CleanHtml(req.Html, id, uid, "checkpoint", loggers);
+        var text = req.Text ?? "";
+        if (text.Length > 2_000_000) text = text[..2_000_000];
+
+        // Space's copy is the .xlsx the editor wrote — never HTML, so a
+        // hand-made request cannot give a spreadsheet an HTML blob that Space
+        // would then hand out named ".xlsx".
+        if (!TryDecode(req.Xlsx, MaxStateBytes, out var xlsx) || xlsx.Length == 0)
+            return Error(400, "A spreadsheet checkpoint needs its .xlsx copy (base64, within the size limit).");
+        // PK\x03\x04: the start of every zip file, which is what an .xlsx is.
+        if (xlsx.Length < 4 || xlsx[0] != 0x50 || xlsx[1] != 0x4B || xlsx[2] != 0x03 || xlsx[3] != 0x04)
+            return Error(400, "The .xlsx copy is not a zip file.");
+        // Macros, embedded objects, links outside the file, calling-out
+        // formulas: refused (XlsxGuard). The editor's own writer never
+        // produces them, so this fires only for a hand-made client — or a
+        // writer bug, which the log line makes findable. Ids and the reason
+        // code only, never content.
+        var refusal = XlsxGuard.Check(xlsx);
+        if (refusal is not null)
+        {
+            loggers.CreateLogger("TatvaOS.Sheets").LogWarning(
+                "Spreadsheet checkpoint refused its .xlsx: {Reason}. fileId={FileId} userId={UserId}", refusal, id, uid);
+            return Results.Json(new { error = "The spreadsheet's Excel copy was refused because it contains something that is not allowed in a TatvaOS file.", reason = refusal }, statusCode: 400);
+        }
+
+        string? oldKey = null;
+        using (await hub.LockAsync(id, ct))
+        {
+            var doc = await db.DocsDocuments.FirstOrDefaultAsync(d => d.FileId == id, ct);
+            if (doc is null) return Error(404, "No such spreadsheet.");
+
+            // A claim about the future is refused: a browser cannot have seen
+            // an update the server has not yet numbered.
+            var maxSeq = await db.DocsUpdates.Where(u => u.FileId == id)
+                .MaxAsync(u => (long?)u.Seq, ct) ?? doc.StateSeq;
+            if (req.UpToSeq > maxSeq)
+                return Error(409, "That checkpoint names updates this spreadsheet does not have.");
+
+            // A browser BEHIND the last checkpoint changes nothing: its state,
+            // HTML and .xlsx all predate what is already stored, and taking
+            // them would roll Space's copy backwards until someone else saved.
+            if (req.UpToSeq < doc.StateSeq)
+                return Results.Ok(new { saved = false, stale = true });
+
+            var now = DateTimeOffset.UtcNow;
+            doc.State = state;
+            doc.StateSeq = req.UpToSeq;
+            doc.TextContent = text;
+            doc.CheckpointAt = now;
+            doc.CheckpointByUserId = uid;
+            doc.UpdatedAt = now;
+
+            var key = blobs.NewKey(tenant.TenantId);
+            await using (var ms = new MemoryStream(xlsx))
+                await blobs.WriteAsync(key, ms, xlsx.Length, ct);
+            oldKey = file.BlobKey;
+            file.BlobKey = key;
+            var imageBytes = await db.DocsImages.Where(i => i.FileId == id).SumAsync(i => (long?)i.SizeBytes, ct) ?? 0;
+            file.SizeBytes = xlsx.Length + imageBytes;
+            file.UpdatedAt = now;
+
+            var latest = await db.DocsVersions.AsNoTracking()
+                .Where(v => v.FileId == id)
+                .OrderByDescending(v => v.CreatedAt)
+                .Select(v => new { v.CreatedAt, v.Html })
+                .FirstOrDefaultAsync(ct);
+            if ((latest is null || now - latest.CreatedAt >= AutoVersionEvery) && latest?.Html != html)
+            {
+                db.DocsVersions.Add(new DocsVersion
+                {
+                    FileId = id, TenantId = tenant.TenantId, Kind = "auto",
+                    State = doc.State, Html = html, CreatedByUserId = uid, CreatedAt = now,
+                });
+            }
+
+            try
+            {
+                await db.SaveChangesAsync(ct);
+            }
+            catch
+            {
+                try { await blobs.DeleteAsync(key); } catch { /* orphan costs bytes only */ }
+                throw;
+            }
+
+            var cutoff = now - KeepFoldedUpdates;
+            var folded = doc.StateSeq;
+            await db.DocsUpdates
+                .Where(u => u.FileId == id && u.Seq <= folded && u.CreatedAt < cutoff)
+                .ExecuteDeleteAsync(ct);
+        }
+
+        if (oldKey is not null)
+        {
+            try { await blobs.DeleteAsync(oldKey); }
+            catch { /* an orphaned blob costs bytes, not correctness */ }
+        }
+        await SpaceDriveEndpoints.RecordActivityAsync(db, tenant, id, "modified", ct);
+        await allocator.ReconcileUsageAsync(tenant.TenantId, ct);
+
+        hub.Broadcast(id, new { type = "saved", at = DateTimeOffset.UtcNow });
+        return Results.Ok(new { saved = true });
+    }
+
+    /// <summary>
+    /// A spreadsheet's named or before-restore version: the browser's state
+    /// and HTML, as the Sheets branch stored them (see SheetCheckpointAsync).
+    /// </summary>
+    private static async Task<IResult> SheetVersionAsync(
+        Guid id, SheetVersionRequest req, AppDbContext db, TenantContext tenant, DocsLiveHub hub,
+        ILoggerFactory loggers, CancellationToken ct)
+    {
+        var (err, file, perm, uid) = await LoadAsync(db, tenant, id, tracked: false, forChange: true, ct);
+        if (err is not null) return err;
+        if (!AtLeast(perm, "edit")) return Error(403, "You need edit access to save a version.");
+        if (!LiveSwitch.IsSheet(file.MimeType))
+            return Error(400, "A document saves its versions through /api/docs/{id}/versions.");
+
+        if (req.Kind is not ("named" or "restore")) return Error(400, "kind must be named or restore.");
+        if (!TryDecode(req.State, MaxStateBytes, out var state) || state.Length == 0)
+            return Error(400, "state must be base64, and within the size limit.");
+        var name = string.IsNullOrWhiteSpace(req.Name) ? null : req.Name.Trim();
+        if (name is { Length: > 200 }) name = name[..200];
+        if (req.Kind == "named" && name is null) return Error(400, "A named version needs a name.");
+        if ((req.Html ?? "").Length > MaxHtmlChars) return Error(413, "This spreadsheet is too large to save.");
+
+        var v = new DocsVersion
+        {
+            FileId = id, TenantId = tenant.TenantId, Kind = req.Kind, Name = name,
+            State = state, Html = CleanHtml(req.Html, id, uid, "version", loggers), CreatedByUserId = uid,
+        };
+        db.DocsVersions.Add(v);
+        await db.SaveChangesAsync(ct);
+        hub.Broadcast(id, new { type = "versions" });
+        return Results.Created($"/api/docs/{id}/versions/{v.Id}", new { id = v.Id });
+    }
+
+    /// <summary>
     /// The browser's HTML, made safe to store (see <see cref="DocsHtml"/>).
     /// When anything had to be removed it is logged as a WARNING: an honest
     /// editor sends nothing this removes, so the line means either a
@@ -653,9 +859,11 @@ public static class DocsEndpoints
         Guid id, VersionRequest req, AppDbContext db, TenantContext tenant, DocsLiveHub hub,
         DocsRenderClient render, ILoggerFactory loggers, CancellationToken ct)
     {
-        var (err, _, perm, uid) = await LoadAsync(db, tenant, id, tracked: false, forChange: true, ct);
+        var (err, file, perm, uid) = await LoadAsync(db, tenant, id, tracked: false, forChange: true, ct);
         if (err is not null) return err;
         if (!AtLeast(perm, "edit")) return Error(403, "You need edit access to save a version.");
+        if (LiveSwitch.IsSheet(file.MimeType))
+            return Error(400, "A spreadsheet saves its versions through /api/sheets/{id}/versions.");
 
         if (req.Kind is not ("named" or "restore")) return Error(400, "kind must be named or restore.");
         var name = string.IsNullOrWhiteSpace(req.Name) ? null : req.Name.Trim();

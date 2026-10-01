@@ -70,7 +70,9 @@ for _ in $(seq 1 150); do curl -s -o /dev/null -w "%{http_code}" "$API/health" 2
 curl -s -o /dev/null -w "%{http_code}" "$API/health" | grep -q 200 || { echo "API did not start"; tail -5 "$SCRATCH/api.log"; exit 1; }
 
 export DOCS_API="$API/api" DOCS_RENDER_PORT="$RENDER_PORT" TATVAOS_PSQL
-NODE_PATH="${NODE_PATH:-}" node "$ROOT/tests/docs/docs-live.test.mjs"
+# DOCS_TEST runs another Docs test against the same throwaway stack, e.g. the
+# production switch check (tests/docs/docs-switch-production.test.mjs).
+NODE_PATH="${NODE_PATH:-}" node "$ROOT/${DOCS_TEST:-tests/docs/docs-live.test.mjs}"
 RC=$?
 echo "  (API log: $SCRATCH/api.log; database $TDB_NAME is dropped now)"
 exit $RC

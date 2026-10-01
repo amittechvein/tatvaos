@@ -940,6 +940,11 @@ app.MapSpaceThumbnailEndpoints();
 // Docs: collaborative documents, each one a Space file.
 app.MapDocsEndpoints();
 app.MapDocsAdminEndpoints();
+// Sheets' own per-organisation switch, beside Docs' (SheetsSwitch.cs).
+app.MapSheetsAdminEndpoints();
+// Sheets: spreadsheets are Docs files too (DocsFormat.SpreadsheetMimeType);
+// only their AI actions need endpoints of their own.
+app.MapSheetsAiEndpoints();
 
 // Connect. Meetings live in this monolith; only the MEDIA is a separate
 // container. The guest group and the LiveKit webhook are anonymous and
