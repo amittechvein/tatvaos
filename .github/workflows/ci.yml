@@ -374,6 +374,19 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq postgresql-client
 
+      # The server-wide roles (tatvaos_app, tatvaos_mailedge) exist on every
+      # real Postgres before a throwaway database is made; on this fresh service
+      # they do not. Without this step the first migration CREATES them inside
+      # the throwaway run, and throwaway-db.sh rightly stops: "a migration
+      # changed a SERVER-WIDE role" (PR 367's first CI run, 1 Oct 2026). The
+      # same step as the Verification scripts job.
+      - name: Apply schema (creates the server-wide roles)
+        run: |
+          for f in local/postgres/init/*.sql; do
+            echo "-- $f"
+            psql -h localhost -U postgres -d tatvaos_mail -v ON_ERROR_STOP=1 -f "$f"
+          done
+
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
