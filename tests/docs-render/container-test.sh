@@ -70,6 +70,32 @@ trap cleanup EXIT
 TCP='const [h,p]=process.argv.slice(1);const s=require("net").connect({host:h,port:+p,timeout:4000});s.on("connect",()=>{console.log("open");process.exit(0)});s.on("timeout",()=>{console.log("timeout");process.exit(1)});s.on("error",e=>{console.log(e.code||e.message);process.exit(1)})'
 WEB='fetch(process.argv[1],{signal:AbortSignal.timeout(8000)}).then(r=>{console.log("reached "+r.status);process.exit(0)},e=>{console.log("refused "+(e.cause?.code||e.name));process.exit(1)})'
 
+echo "== the base image is pinned by digest (Mr. Singh, 1 Oct 2026)"
+# Every FROM names an image@sha256:<64 hex>, and all name the same one. Shown
+# to fail first on a copy with one stage back on the moving tag, so the check
+# can see an unpinned line at all.
+DOCKERFILE="$ROOT/apps/render/Dockerfile"
+pinned() {
+  local froms digests
+  froms=$(grep -E '^FROM ' "$1")
+  [ -n "$froms" ] || return 1
+  echo "$froms" | grep -vqE '^FROM [^ ]+@sha256:[0-9a-f]{64}( |$)' && return 1
+  digests=$(echo "$froms" | grep -oE 'sha256:[0-9a-f]{64}' | sort -u | wc -l)
+  [ "$digests" = 1 ]
+}
+sed '0,/@sha256:[0-9a-f]\{64\}/s///' "$DOCKERFILE" > "$TMP/Dockerfile.unpinned"
+if cmp -s "$DOCKERFILE" "$TMP/Dockerfile.unpinned"; then bad "red first: the unpinning plant changed nothing"
+elif pinned "$TMP/Dockerfile.unpinned"; then bad "red first: a stage on the moving tag was NOT caught"
+else ok "red first: a stage back on the moving tag is caught"; fi
+# The second stage on a DIFFERENT digest (its first hex digit changed).
+awk '/^FROM /{n++; if (n==2 && match($0,/sha256:./)) { c=substr($0,RSTART+7,1); $0=substr($0,1,RSTART+6) (c=="0"?"1":"0") substr($0,RSTART+8) }} {print}' \
+  "$DOCKERFILE" > "$TMP/Dockerfile.split"
+if cmp -s "$DOCKERFILE" "$TMP/Dockerfile.split"; then bad "red first: the split-digest plant changed nothing"
+elif pinned "$TMP/Dockerfile.split"; then bad "red first: two stages on different digests were NOT caught"
+else ok "red first: two stages on different digests are caught"; fi
+if pinned "$DOCKERFILE"; then ok "both stages name one base image by digest"
+else bad "a FROM line is not pinned by digest, or the stages differ"; grep -E '^FROM ' "$DOCKERFILE"; fi
+
 echo "== build the image (dependencies from the lockfile, at build time)"
 if DC build render >"$TMP/build.log" 2>&1; then ok "the image builds from the lockfile (frozen install)"
 else bad "the image did not build"; tail -15 "$TMP/build.log"; exit 1; fi

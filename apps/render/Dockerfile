@@ -15,9 +15,24 @@
 #  Node 24: the service loads the schema's TypeScript directly (Node strips
 #  the types) and uses module.registerHooks — both Node 24 (the web image's
 #  Node 22 has neither by default).
+#
+#  THE BASE IMAGE IS PINNED BY DIGEST (Mr. Singh, 1 Oct 2026). `node:24-alpine`
+#  is a moving tag: two builds a week apart can run different Node and Alpine
+#  under the same Dockerfile, and nothing would say so. Both stages name the
+#  same digest — the multi-platform index, so it resolves on any architecture.
+#  Pinned 1 Oct 2026: node:24-alpine = Node v24.21.0.
+#
+#  To update it, in ONE commit that touches nothing else:
+#    1. docker pull node:24-alpine
+#    2. docker inspect --format '{{index .RepoDigests 0}}' node:24-alpine
+#       and `docker run --rm node:24-alpine node --version` (still 24.x?)
+#    3. replace the digest in BOTH FROM lines below, and the date and version
+#       above
+#    4. run tests/docs-render/container-test.sh (all checks pass, red first)
+#       and apps/render's own tests before it merges
 # ============================================================================
 
-FROM node:24-alpine AS deps
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS deps
 WORKDIR /repo
 RUN corepack enable
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
@@ -27,7 +42,7 @@ COPY apps/render/package.json apps/render/
 # the build rather than quietly picking other versions (see apps/web/Dockerfile).
 RUN pnpm install --frozen-lockfile --prod --filter @tatvaos/render
 
-FROM node:24-alpine AS runtime
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS runtime
 WORKDIR /app
 ENV NODE_ENV=production PORT=8080
 COPY --from=deps /repo/node_modules ./node_modules
