@@ -4,8 +4,8 @@ A step-by-step guide for migrating your email from Gmail, Outlook, or another pr
 
 You will need:
 - **Thunderbird** (free, download from mozilla.org)
-- Your **old email address and password** (or app password if the provider uses one)
-- Your **TatvaOS app password** (generated in TatvaOS Mail settings)
+- Your **old email address and password**
+- A **TatvaOS app password**. To make one, sign in to TatvaOS Mail in your browser, open **Settings → App passwords**, give it a name (e.g. "Thunderbird import") and press **Generate**. It is shown **once**, so copy it straight away.
 
 ---
 
@@ -26,10 +26,11 @@ In Thunderbird:
 2. Enter:
    - **Your name** (any name you like; it's for display only)
    - **Email address** — your old Gmail or Outlook address
-   - **Password** — your Gmail/Outlook password (or app password if they use one)
+   - **Password** — your Gmail/Outlook password
 3. Click **Continue**
 4. Thunderbird will auto-detect the settings and show them
 5. Click **Done**
+6. For **Gmail** and **Outlook.com**, Thunderbird usually opens Google's or Microsoft's own sign-in window at this point. Sign in there, and allow Thunderbird access when asked.
 
 You should now see your old email account in the left sidebar with all your folders underneath.
 
@@ -43,9 +44,10 @@ You should now see your old email account in the left sidebar with all your fold
    - **Email address** — your TatvaOS email (e.g., `accounts@yourschool.com`)
    - **Password** — your **TatvaOS app password** (NOT your sign-in password)
 3. Click **Continue**
-4. When settings appear, change:
+4. When settings appear, click **Configure manually** and check them:
    - **Incoming (IMAP):** `mail.tatvaos.com` port **993** with **SSL/TLS**
    - **Outgoing (SMTP):** `mail.tatvaos.com` port **587** with **STARTTLS**
+   - **Username** (both): your **full** TatvaOS email address
 5. Click **Done**
 
 You should now see your TatvaOS account in the left sidebar.
@@ -54,19 +56,20 @@ You should now see your TatvaOS account in the left sidebar.
 
 ## Step 4: Copy your mail over
 
-In the left sidebar, you now have two accounts. Time to copy:
+In the left sidebar, you now have two accounts. Copy one folder at a time:
 
-1. In your **old account**, right-click on **Inbox** (or any folder you want to copy)
-2. Select **Copy**
-3. In your **TatvaOS account**, right-click on **Inbox**
-4. Select **Paste**
+1. In your **old account**, click **Inbox** (or the folder you want to copy) so its messages show
+2. Click any message in the list, then press **Ctrl+A** (**Cmd+A** on a Mac) to select them all
+3. Right-click the selected messages → **Copy To** → your **TatvaOS account** → **Inbox**
 
-Thunderbird will copy all the messages. A progress bar will appear. This may take a few minutes depending on how much mail you have.
+Thunderbird copies the messages, and the bottom of the window shows the progress. This may take a few minutes depending on how much mail you have. The messages stay in your old account too: this is a copy, not a move.
 
 **Repeat for other folders:**
+- Sent → Sent (in Gmail it is called **Sent Mail**, under **[Gmail]**)
 - Drafts → Drafts
-- Sent → Sent
-- Any custom folders → copy them too
+- Any folders you made yourself: first create a folder with the same name in your TatvaOS account (right-click the account → **New Folder**), then copy into it
+
+**For Gmail, do not copy "All Mail".** It holds every message again, including your Inbox and Sent, so copying it would give you everything twice. Gmail's labels show up as folders; copy the ones you want.
 
 ---
 
@@ -83,11 +86,15 @@ Thunderbird will copy all the messages. A progress bar will appear. This may tak
 ## If something goes wrong
 
 **"Thunderbird is asking for a password over and over"**
-- You may have entered your Gmail/Outlook *sign-in* password instead of an *app password*
-- Gmail and Outlook require special app passwords for third-party apps like Thunderbird
-- For **Gmail:** go to myaccount.google.com → Security → App passwords (you may need 2-factor on)
-- For **Outlook:** go to account.microsoft.com → Security → App passwords
+- **For your TatvaOS account:** use a TatvaOS **app password**, not your TatvaOS sign-in password, and your **full** email address as the username. If you have lost the app password, make a new one in TatvaOS Mail (**Settings → App passwords**). The old one stops working.
+- **For your old Gmail/Outlook account:** if Google's or Microsoft's sign-in window did not appear, your provider may need an *app password* for Thunderbird instead of your normal password.
+  - **Gmail:** myaccount.google.com → **Security** → **2-Step Verification** → **App passwords**. This only appears once 2-Step Verification is on.
+  - **Outlook.com:** account.microsoft.com → **Security** → **Advanced security options** → **App passwords**
+  - A **work or school** Microsoft or Google account may not allow this. Ask that organisation's IT administrator.
 - Delete the account from Thunderbird and add it again with the app password
+
+**"The copy stopped, saying the mailbox is full or over quota"**
+- Your TatvaOS mailbox has a storage limit set by your organisation's plan. Ask your TatvaOS administrator for more space, or copy only the folders you need.
 
 **"The copy is very slow"**
 - That's normal for large mailboxes. Let it run. Don't close Thunderbird.
@@ -99,8 +106,8 @@ Thunderbird will copy all the messages. A progress bar will appear. This may tak
 
 **"I see the messages in Thunderbird but not in the webmail"**
 - Wait a few minutes — Thunderbird syncs in the background
-- Then sign out of the webmail, close your browser, and sign back in
-- If they still don't appear, check that you're looking at the right account
+- Then reload the webmail page
+- If they still don't appear, check that you're looking at the right account, and that you copied into the **TatvaOS** account, not into Thunderbird's **Local Folders**
 
 ---
 
@@ -109,7 +116,7 @@ Thunderbird will copy all the messages. A progress bar will appear. This may tak
 You can now:
 - Keep using Thunderbird (it will stay in sync with TatvaOS)
 - Use the webmail at **mail.tatvaos.com**
-- Set up other devices (phone, tablet) using the settings in `CLIENT_MAIL_SETUP.md`
+- Set up other devices (phone, tablet) with the settings sheet at **core.tatvaos.com/platform**: the same server names and ports as above, and a separate app password for each device
 - Delete the old email account from Thunderbird if you want (it stays on Gmail/Outlook unless you delete it there too)
 
 To avoid confusion, **update the email forwarding on your old account** to send new mail to your TatvaOS address:
