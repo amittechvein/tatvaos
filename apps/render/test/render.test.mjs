@@ -106,15 +106,63 @@ test('the server renders, refuses bad input, and never logs content', async () =
 });
 
 test('a render past the limit is killed (504), and the next render still works', async () => {
-  // 250 ms: far below the large fixture (~400 ms), far above a small render even in a
-  // fresh worker. 40 ms failed the SMALL render too on a busy laptop and on one CPU.
-  const s = await startServer(18432, { RENDER_TIMEOUT_MS: '250', RENDER_WORKERS: '1' });
+  // 250 ms: far above a small render even in a fresh worker (40 ms failed the SMALL
+  // render too on a busy laptop and on one CPU).
+  //
+  // THE LARGE DOCUMENT IS SIZED ON THIS MACHINE (Mr. Singh, 1 Oct 2026). A fixed
+  // size measured the machine twice over: one copy of the Google Docs fixture was
+  // ~400 ms on a busy laptop but 130-190 ms on an idle one (this test then failed
+  // 5 runs in 5), and twenty copies (2.5 s on that laptop) took more than the
+  // normal 10 s on CI's runner inside the one-CPU container. So: 1, 2, 4 ... 64
+  // copies, each timed under the normal limit (the faster of two renders), until
+  // one takes at least TWICE the test limit; that one is used. The test FAILS,
+  // saying which, if a size outruns even the normal limit first, or 64 copies are
+  // still too fast. RENDER_TEST_COPIES pins one size, only to show the failure.
+  const LIMIT = 250;
+  const sizes = process.env.RENDER_TEST_COPIES ? [Number(process.env.RENDER_TEST_COPIES)] : [1, 2, 4, 8, 16, 32, 64];
+  const fixture = JSON.parse(readFileSync(new URL('google-docs-paste.json', fixtures), 'utf8'));
+  const bodyOf = (n) => ({ updates: [b64(stateOf({ ...fixture, content: Array.from({ length: n }, () => fixture.content).flat() }))] });
+
+  const free = await startServer(18434, { RENDER_WORKERS: '1' });
+  const tried = [];
+  let body = null;
+  let took = Infinity;
   try {
-    const big = stateOf(JSON.parse(readFileSync(new URL('google-docs-paste.json', fixtures), 'utf8')));
-    const slow = await post(18432, { updates: [b64(big)] });
-    assert.equal(slow.status, 504, 'the large document outruns a 250 ms limit');
+    for (const n of sizes) {
+      const candidate = bodyOf(n);
+      let best = Infinity;
+      for (let i = 0; i < 2; i += 1) { // the faster of two: a warm worker, the conservative figure
+        const t = performance.now();
+        const r = await post(18434, candidate);
+        await r.text();
+        assert.equal(r.status, 200,
+          `CALIBRATION: ${n} copies answered ${r.status} under the NORMAL limit before any size took ${2 * LIMIT} ms `
+          + `(tried: ${tried.join(' ')}) — the document could not be sized on this machine`);
+        best = Math.min(best, performance.now() - t);
+      }
+      tried.push(`${n}x=${Math.round(best)}ms`);
+      if (best >= 2 * LIMIT) { body = candidate; took = best; break; }
+    }
+  } finally { free.child.kill(); }
+  assert.ok(body,
+    `CALIBRATION: the document is too small for this machine — no size took ${2 * LIMIT} ms `
+    + `(twice the ${LIMIT} ms test limit): ${tried.join(' ')}`);
+
+  const s = await startServer(18432, { RENDER_TIMEOUT_MS: String(LIMIT), RENDER_WORKERS: '1' });
+  try {
+    const slow = await post(18432, body);
+    // Every check says what it saw: on 1 Oct this test failed 2 runs in 5
+    // once and then passed 37 in a row (also with every core busy), and the
+    // run that failed had not kept its message. The next failure must explain itself.
+    const slowBody = await slow.text();
+    assert.equal(slow.status, 504,
+      `a document measured at ${Math.round(took)} ms should outrun the ${LIMIT} ms limit; got ${slow.status} ${slowBody.slice(0, 120)}`);
+    const t = performance.now();
     const after = await post(18432, { updates: [b64(stateOf(paragraph('small')))] });
-    assert.equal(after.status, 200, 'the killed worker was replaced');
+    const afterBody = await after.text();
+    assert.equal(after.status, 200,
+      `the killed worker was replaced: a small render answered ${after.status} in ${Math.round(performance.now() - t)} ms ${afterBody.slice(0, 120)}`
+      + `\nserver log: ${s.log().slice(-400)}`);
   } finally { s.child.kill(); }
 });
 
