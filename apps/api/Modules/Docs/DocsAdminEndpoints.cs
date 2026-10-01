@@ -49,7 +49,7 @@ public static class DocsAdminEndpoints
     public static void MapDocsAdminEndpoints(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api/admin/organisations/{id:guid}/docs")
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
 
         g.MapGet("/", GetAsync);
@@ -83,6 +83,31 @@ public static class DocsAdminEndpoints
                 id, Actor(http));
             return Results.Json(new { error = DocsSwitch.BeforeRenderMessage, reason = "docs_before_render" },
                 statusCode: StatusCodes.Status409Conflict);
+        }
+
+        // No file a BROWSER wrote may go live (Mr. Singh, 30 Sept 2026, in
+        // place of a backfill): refused while any of this organisation's
+        // documents was saved before the server built the files. Counted by a
+        // definer function, because documents are visible only to people who
+        // can see their Space file, and the operator is not one of them — a
+        // plain count here would read 0 and pass (20260930-b-...sql).
+        if (req.Enabled)
+        {
+            var browserWritten = await db.Database
+                .SqlQuery<long>($"SELECT docs.browser_written_count({id}) AS \"Value\"")
+                .SingleAsync(ct);
+            if (browserWritten > 0)
+            {
+                loggers.CreateLogger("TatvaOS.Docs.Switch").LogWarning(
+                    "Docs switch-on REFUSED: organisation {OrganisationId} has {Count} document(s) a browser wrote before the server built the files; operator {OperatorId}",
+                    id, browserWritten, Actor(http));
+                return Results.Json(new
+                {
+                    error = $"Docs cannot be switched on for this organisation: {browserWritten} of its documents were saved by a browser before TatvaOS built document files on the server.",
+                    reason = "browser_files",
+                    count = browserWritten,
+                }, statusCode: StatusCodes.Status409Conflict);
+            }
         }
 
         // Platform scope sets the tenant for this one operation; it does not
@@ -123,5 +148,5 @@ public static class DocsAdminEndpoints
         && (!env.IsDevelopment() || config.GetValue<bool>("Docs:RefuseSwitchOnInDevelopment"));
 
     private static Guid Actor(HttpContext http) =>
-        Guid.TryParse(http.User.FindFirst("sub")?.Value, out var uid) ? uid : Guid.Empty;
+        TatvaOS.Api.Shared.Auth.SignedIn.UserIdOrEmpty(http);
 }

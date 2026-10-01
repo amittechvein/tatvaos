@@ -19,7 +19,7 @@ public static class SettingsEndpoints
     public static void MapSettingsEndpoints(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api/admin/settings")
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
 
         g.MapGet("/", ListAsync);

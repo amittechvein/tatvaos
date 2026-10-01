@@ -71,3 +71,20 @@ public sealed class MailApiSend
     public string? Error { get; set; }
     public DateTimeOffset SentAt { get; set; }
 }
+
+/// <summary>
+/// Which mailbox a send-API send goes out as, written before the submit so
+/// Postfix's outbound gate can judge a bounce-tracked envelope by it
+/// (mail.sender_gate_class). Append-only for the app, like MailApiSend; no
+/// DbSet, used only by MailSendApiEndpoints through Set&lt;&gt;().
+///
+/// Mapped with ToTable("api_send_envelopes", "mail"). Schema:
+/// 20261001-mail-sender-gate-bounce.sql.
+/// </summary>
+public sealed class MailApiSendEnvelope
+{
+    public Guid Id { get; set; }
+    public Guid TenantId { get; set; }
+    public string FromAddress { get; set; } = "";
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}

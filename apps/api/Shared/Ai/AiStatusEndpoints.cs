@@ -1,3 +1,4 @@
+using TatvaOS.Api.Shared.Data;
 using System.Diagnostics;
 
 namespace TatvaOS.Api.Shared.Ai;
@@ -104,7 +105,7 @@ public static class AiStatusEndpoints
                       + "rather than OK). Worth checking the model name.",
             });
         })
-        .RequireAuthorization("SuperAdmin")
+        .RequireOperator()
         .WithName("AiStatus");
     }
 }

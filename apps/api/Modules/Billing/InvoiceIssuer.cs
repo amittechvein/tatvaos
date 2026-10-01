@@ -152,7 +152,11 @@ public sealed class InvoiceIssuer(AppDbContext db, SettingsReader settings)
         var (_, _, prefix, _) = await SellerAsync(ct);
         var fy = InvoiceMath.FinancialYear(d.IssuedOn);
 
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        // Joins the operator request's transaction when there is one
+        // (OperatorWriteTransaction), so the invoice and its audit line commit
+        // together; opens its own otherwise. Either way a failed issue uses no number.
+        var own = db.Database.CurrentTransaction is null;
+        await using var tx = own ? await db.Database.BeginTransactionAsync(ct) : null;
         await db.SyncTenantAsync(ct);
 
         var seq = await db.Database.SqlQuery<int>($"""
@@ -210,7 +214,7 @@ public sealed class InvoiceIssuer(AppDbContext db, SettingsReader settings)
         }
 
         await db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
+        if (tx is not null) await tx.CommitAsync(ct);
         return inv;
     }
 }
