@@ -120,6 +120,63 @@ twice. (The first draft of PR 344 removed web pictures altogether, on a
 ruling dated "1 October" that came from a separate session; this one
 replaces it.)
 
+## How condition 1 is proved: "the same document", not the same characters
+
+Mr. Singh, reached this lane 29 September 2026, through Amit, after the
+first gate (character for character against `editor.getHTML()`) failed on
+2 of 94 tags — attribute order, and one colour written `rgb(…)` by the
+browser and `#…` by the server. **The gate compares documents, not one
+browser's way of writing them:** Chrome, Safari and Firefox serialise the
+same document differently, so a Safari user's own editor would fail a
+character-for-character gate, and under condition 1 the browser writes
+nothing that is stored. Headless Chromium on the server was refused: a
+match to an invisible detail at the price of 300–400 MB, a browser process
+per render, and a large attack surface running user-controlled content on
+the production server. PDF (condition 2) gets its own engine decision.
+
+The gate: the same sequence of elements; the same text nodes byte for byte;
+the same set of attribute names on each element; attribute values byte for
+byte except `style`, compared as a parsed set of declarations with colour
+values in one notation. No other normalisation. The comparison is itself
+calibrated (a changed word, a colour one digit off, an attribute dropped or
+added, two elements swapped, a style declaration dropped, one extension
+removed — each must fail), and it runs on more than one real-world fixture.
+Details: `docs/DOCS_SERVER_RENDER_DESIGN.md` §13.
+
+## Condition 4: the closed list of known storage drops
+
+Mr. Singh, reached this lane 30 September 2026, through Amit, after the
+Google Docs paste showed that the storage layer (y-tiptap's Yjs mapping, the
+one the live editor syncs through) drops marks on a hard break.
+
+**The gate compares the server's file with the editor reloaded from
+storage**: the stored Yjs state is the document, and every collaborator, and
+the author after a reload, reads that. **It also compares the editor's
+first view with the editor reloaded, and every difference must match an
+entry on this list.** Any other kind of difference fails the gate; a new
+entry needs Mr. Singh's ruling. Whenever an entry fires, condition 4's log
+line is written, naming the document and the kind of drop, never the
+content. The list itself is calibrated: a fabricated drop of another kind
+(a bold word losing its bold) must fail.
+
+| # | Kind of drop | Why it is on the list |
+|---|---|---|
+| 1 | **Marks on a hard break** | y-tiptap stores no marks on a non-text inline node. Invisible in practice: a line break shows no glyph. Proven 30 Sept 2026: 14 of the Google Docs fixture's 60 line breaks carried marks before storage and 0 after; a three-character document reproduces it; the server's file matches the reloaded editor with 0 differences. |
+
+**Reading HTML back into a document is lossy too — a separate finding**
+(Mr. Singh, 30 September 2026, asked for it to be kept here). A `<span>`
+with no attributes (a text-style mark with no settings, which a Word paste
+leaves) is not read back as a mark; 30 of them in the Word fixture. The
+server never does this — it reads the stored Yjs — so the gate is
+unaffected. But **any future feature that imports HTML into a document**
+(opening an `.html` file as a document, turning an email into one)
+inherits the loss and needs its own check, of the same kind as the gate.
+
+Code: `apps/render/spike/storage-drops.mjs`. **Follow-up, not blocking:**
+the editor strips marks from hard breaks on paste and insert, so the
+author's first view already equals what is stored; after that, entry 1
+should stop firing on new pastes.
+
 ## Consequences
 
 - Techvein can use both products on its own data, with the divergence

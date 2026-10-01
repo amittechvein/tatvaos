@@ -413,6 +413,11 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
       <hr className="my-6" />
 
       <DocsSwitch orgId={org.id} />
+
+      <hr className="my-6" />
+
+      <ProductSwitch orgId={org.id} product="sheets" name="Sheets"
+        blurb="Collaborative spreadsheets, stored in Space. Separate from Docs: either can be on without the other. Off until you turn it on. Only you can change this; the organisation cannot. Turning it off closes open spreadsheets within a minute; nothing is deleted." />
     </Modal>
   );
 }
@@ -848,6 +853,66 @@ function InvitationCaps({ orgId }: { orgId: string }) {
       <div className="flex justify-end">
         <Button variant="primary" onClick={save} disabled={busy || !dirty}>
           {busy ? 'Saving…' : 'Save limits'}
+        </Button>
+      </div>
+    </>
+  );
+}
+
+/**
+ * A product's on/off switch for this organisation, for the products whose
+ * operator route is /admin/organisations/{id}/{product} with { enabled }.
+ * Sheets uses it (SheetsAdminEndpoints); every change is audited there.
+ */
+function ProductSwitch({ orgId, product, name, blurb }: { orgId: string; product: string; name: string; blurb: string }) {
+  const { authedFetch } = useAuth();
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const path = `/admin/organisations/${orgId}/${product}`;
+
+  useEffect(() => {
+    let gone = false;
+    authedFetch(path)
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error ?? `Could not load the ${name} setting.`);
+        if (!gone) setEnabled(Boolean(body.enabled));
+      })
+      .catch((e) => { if (!gone) setError(e instanceof Error ? e.message : `Could not load the ${name} setting.`); });
+    return () => { gone = true; };
+  }, [authedFetch, path, name]);
+
+  async function flip() {
+    if (enabled === null) return;
+    setBusy(true); setError(null);
+    try {
+      const res = await authedFetch(path, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !enabled }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? `Could not change the ${name} setting.`);
+      setEnabled(Boolean(body.enabled));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : `Could not change the ${name} setting.`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <h6 className="font-semibold mb-2">{name}</h6>
+      <p className="text-[0.75rem] text-ink-muted mb-4">{blurb}</p>
+      {error && <Alert tone="danger">{error}</Alert>}
+      <div className="flex items-center justify-between">
+        <span className="text-sm">
+          {enabled === null ? 'Loading…' : enabled ? 'On for this organisation' : 'Off for this organisation'}
+        </span>
+        <Button variant={enabled ? 'secondary' : 'primary'} onClick={flip} disabled={busy || enabled === null}>
+          {busy ? 'Saving…' : enabled ? `Turn ${name} off` : `Turn ${name} on`}
         </Button>
       </div>
     </>
