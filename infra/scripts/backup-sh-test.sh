@@ -52,6 +52,10 @@ case "$1" in
             echo "2026/10/02 00:00:00 INFO  : $f: Copied (new)"
           fi
         done
+        # rclone -v prints a progress block every minute that NAMES the
+        # files in flight. Seen on production in the 2 Oct proof run:
+        # "Transferring:" then " * 01a0d6d9…-OqPhbJlu_iu2.mp4: 31% /1.654Gi".
+        printf 'Transferring:\n * room-a1/meeting-a1-part1.mp4: 31%% /1.654Gi, 43.670Mi/s, 26s\n'
         echo "Transferred:   	          0 B / 0 B, -, 0 B/s, ETA -" ;;
       *" lsf -R --files-only reccrypt:"*)
         (cd "$FAKE_REC_BUCKET" && find . -type f | sed 's#^\./##') | grep -v -x -F -e "${FAKE_REC_HIDE:-(none)}" ;;
