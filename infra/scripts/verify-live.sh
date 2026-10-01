@@ -294,17 +294,34 @@ parse_queue() {
 if [ "${1:-}" = "--selftest" ]; then
     now=$(date +%s)
     j() { printf '{"queue_name": "deferred", "queue_id": "%s", "arrival_time": %s, "message_size": 1204, "sender": "a@b", "recipients": [{"address": "c@d"}]}\n' "$1" "$2"; }
+    # jr <id> <arrival> <recipient> <delay_reason> - a deferral WITH Postfix's reason.
+    jr() { printf '{"queue_name": "deferred", "queue_id": "%s", "arrival_time": %s, "message_size": 1204, "sender": "a@b", "recipients": [{"address": "%s", "delay_reason": "%s"}]}\n' "$1" "$2" "$3" "$4"; }
+    # Reasons as Postfix writes them. FULL is word for word the deferral on
+    # production on 1 Oct 2026, which turned a good deploy's verdict to FAIL.
+    FULL="host alt1.gmail-smtp-in.l.google.com[173.194.41.27] said: 452-4.2.2 The recipient's inbox is out of storage space. Please direct the 452-4.2.2 recipient to https://support.google.com/mail/?p=OverQuotaTemp (in reply to RCPT TO command)"
+    REFUSED="connect to gmail-smtp-in.l.google.com[142.250.4.27]:25: Connection refused"
+    NODNS="Host or domain name not found. Name service error for name=example.in type=MX: Host not found, try again"
+    LMTP="connect to dovecot[172.18.0.9]:24: Connection refused"
+    REPUTATION="host mx.example.com[192.0.2.10] said: 421-4.7.28 Our system has detected an unusual rate of unsolicited mail originating from your IP address (in reply to end of DATA command)"
 
     ST_FAILED=0
-    fixture() {  # fixture <name> <expected-rc> <rc> <output>
-        local name="$1" want="$2" rc="$3" out="$4" got
+    # fixture <name> <expected-rc> <rc> <output> [must-say] [must-not-say]
+    # The text checks matter as much as the code: a warning that names the
+    # whole address leaks it into a log Amit forwards, and a warning that names
+    # nothing tells the reader nothing.
+    fixture() {
+        local name="$1" want="$2" rc="$3" out="$4" say="${5:-}" nosay="${6:-}" got text
         echo "== $name (expect rc $want)"
-        parse_queue "$rc" "$out"; got=$?
-        if [ "$got" -eq "$want" ]; then
-            echo "   rc=$got — as expected"
+        text=$(parse_queue "$rc" "$out"); got=$?
+        printf '%s\n' "$text"
+        if [ "$got" -ne "$want" ]; then
+            echo "   rc=$got — EXPECTED $want: SELF-TEST FAILURE"; ST_FAILED=1
+        elif [ -n "$say" ] && ! printf '%s' "$text" | grep -qF -- "$say"; then
+            echo "   rc=$got, but the output does not say '$say': SELF-TEST FAILURE"; ST_FAILED=1
+        elif [ -n "$nosay" ] && printf '%s' "$text" | grep -qF -- "$nosay"; then
+            echo "   rc=$got, but the output says '$nosay', which it must not: SELF-TEST FAILURE"; ST_FAILED=1
         else
-            echo "   rc=$got — EXPECTED $want: SELF-TEST FAILURE"
-            ST_FAILED=1
+            echo "   rc=$got — as expected"
         fi
     }
 
@@ -314,12 +331,29 @@ if [ "${1:-}" = "--selftest" ]; then
     fixture "D: one old (45m, stuck)"           1 0 "$(j BBBB2222 $((now-2700)))"
     fixture "E: mixed - oldest must win"        1 0 "$(j AAAA1111 $((now-30)); j BBBB2222 $((now-2700)))"
     fixture "F: entries but no arrival_time"    1 0 '{"queue_id": "CCCC3333", "sender": "a@b"}'
+    # Recipient's side versus ours (Mr. Singh, 2 Oct 2026).
+    fixture "G: a full Gmail inbox, 4h old - recipient's side: PASS, warned" \
+            0 0 "$(jr DDDD4444 $((now-15896)) priya.sharma@gmail.com "$FULL")" "[warn]" "priya.sharma"
+    fixture "H: connection refused, 45m - OUR side: FAIL" \
+            1 0 "$(jr EEEE5555 $((now-2700)) someone@gmail.com "$REFUSED")" "Connection refused"
+    fixture "I: connection refused, 5m - still retrying: PASS" \
+            0 0 "$(jr EEEE5555 $((now-300)) someone@gmail.com "$REFUSED")"
+    fixture "J: no DNS for the recipient's MX, 45m - OUR side: FAIL" \
+            1 0 "$(jr FFFF6666 $((now-2700)) someone@example.in "$NODNS")"
+    fixture "K: Dovecot unreachable, 45m - OUR side: FAIL" \
+            1 0 "$(jr GGGG7777 $((now-2700)) colleague@techvein.com "$LMTP")"
+    fixture "L: 4.7.x from the far side is about OUR server's reputation: FAIL" \
+            1 0 "$(jr HHHH8888 $((now-2700)) someone@example.com "$REPUTATION")"
+    many=$(for n in 01 02 03 04 05 06 07 08 09 10 11; do jr "MANY00$n" $((now-120)) "p$n@gmail.com" "$FULL"; done)
+    fixture "M: eleven deferred at once, all fresh, all recipient-side - systemic: FAIL" 1 0 "$many" "11"
+    fixture "N: a full inbox beside one of ours - ours still fails" \
+            1 0 "$(jr DDDD4444 $((now-15896)) a@gmail.com "$FULL"; jr EEEE5555 $((now-2700)) b@gmail.com "$REFUSED")"
 
     if [ "$ST_FAILED" -ne 0 ]; then
         echo; echo "SELF-TEST FAILED — parse_queue does not behave as the fixtures require."
         exit 1
     fi
-    echo; echo "self-test passed: 6 fixtures, 4 of them failures that failed correctly."
+    echo; echo "self-test passed: 14 fixtures, 9 of them failures that failed correctly."
     exit 0
 fi
 
