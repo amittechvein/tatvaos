@@ -993,6 +993,13 @@ app.MapGet("/health/db", async (AppDbContext db, CancellationToken ct) =>
                       : Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
 }).AllowAnonymous().WithTags("Operations");
 
+// Every operator write route must carry its transaction (OperatorWriteTransaction).
+// Logged once the routes exist: a CRITICAL line names any that do not.
+app.Lifetime.ApplicationStarted.Register(() =>
+    TatvaOS.Api.Shared.Data.OperatorWriteTransaction.Report(
+        ((IEndpointRouteBuilder)app).DataSources,
+        app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("OperatorWriteTransaction")));
+
 app.Run();
 
 /// <summary>Exposed so the integration and isolation tests can boot the app.</summary>

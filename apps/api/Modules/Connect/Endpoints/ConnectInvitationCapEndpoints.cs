@@ -31,7 +31,7 @@ public static class ConnectInvitationCapEndpoints
     public static void MapConnectInvitationCapEndpoints(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api/admin/organisations/{id:guid}/connect-invitation-caps")
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
 
         g.MapGet("/", GetAsync);
