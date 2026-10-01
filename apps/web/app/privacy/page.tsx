@@ -39,7 +39,7 @@ export const metadata: Metadata = {
 // The date the Mail AI text goes live. A placeholder until then: the page
 // must not claim a date it was not published on (privacy-text-matches.py
 // fails while any PENDING marker is left).
-const UPDATED = '[PENDING: the date this text goes live]';
+const UPDATED = '2 October 2026';
 
 /**
  * What TatvaOS AI sends, WORD FOR WORD as apps/api/Shared/Ai/AiDisclosure.cs
