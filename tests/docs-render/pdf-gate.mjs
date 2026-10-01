@@ -101,6 +101,17 @@ function bagDiff(server, pdf) {
   return { missing, extra: extra.filter((t) => !DECOR.test(t)) };
 }
 const sameText = (d) => d.missing.length === 0 && d.extra.length === 0;
+// "[picture: …]" is the PDF naming a picture it does not draw (a web address,
+// or no stored bytes); it is the PDF's own text, not the document's.
+const PLACEHOLDER = /\[picture(?:: [^\]]*)?\]/g;
+
+// Mr. Singh, 1 Oct 2026: copy and search of Indian-script text from the PDF
+// is imperfect — acceptable for the Hindi/Marathi launch while the count of
+// affected words is reported on every run and CANNOT GET WORSE. These are the
+// counts measured on the first run that had them (2 Oct 2026), with the
+// combination named below. Lower them when a fix lands; never raise them.
+const COMBINATION = 'Typst 0.14.2 + Noto Sans Devanagari 2026.06.01 (Alpine 3.24)';
+const TEXT_LAYER_BROKEN_MAX = { 'editor-page': 0, 'indian-scripts': 6 };
 const flat = (s) => s.replace(/\s+/g, ' ').trim();
 
 /** Every path opened and every socket made, from an strace log. */
@@ -136,15 +147,21 @@ for (const name of FIXTURES) {
   built[name] = res;
   writeFileSync(`${OUT}/${name}.pdf`, res.pdf);
   const t = textOf(res.pdf);
-  const d = bagDiff(res.r.text, t.body);
+  const d = bagDiff(res.r.text, t.body.replace(PLACEHOLDER, ' '));
+  // Fixtures are synthetic or scrubbed, so the end of the extracted text may be shown.
   check(`${name}: the PDF's text is the server's text (${t.pages} page(s), ${res.ms} ms)`, sameText(d),
-    `missing ${JSON.stringify(d.missing.slice(0, 12))} extra ${JSON.stringify(d.extra.slice(0, 12))}`);
+    `missing ${JSON.stringify(d.missing.slice(0, 12))} extra ${JSON.stringify(d.extra.slice(0, 12))}\n        pdftotext ends: ${JSON.stringify(t.body.slice(-300))}`);
   check(`${name}: every page has its number at the foot`, t.numbersOk);
   if (INDIC.test(res.r.text)) {
     const want = res.r.text.normalize('NFC').split(/\s+/).filter((w) => INDIC.test(w));
     const got = new Set(t.body.normalize('NFC').split(/\s+/));
     const exact = want.filter((w) => got.has(w)).length;
-    console.log(`  info  ${name}: the PDF's TEXT LAYER (copy, search) has ${exact} of ${want.length} Indian-script words intact — a finding, not a gate check`);
+    const broken = want.length - exact;
+    console.log(`  info  ${name}: the PDF's TEXT LAYER (copy, search) has ${exact} of ${want.length} Indian-script words intact (${COMBINATION})`);
+    if (name in TEXT_LAYER_BROKEN_MAX) {
+      check(`${name}: the copy/search finding has not got worse — ${broken} word(s) affected, at most ${TEXT_LAYER_BROKEN_MAX[name]} allowed`,
+        broken <= TEXT_LAYER_BROKEN_MAX[name]);
+    }
   }
 }
 {
@@ -257,7 +274,8 @@ console.log('\n3. Shaping: the glyphs drawn equal HarfBuzz\'s (tool check, every
         s.trace_sample ? `the trace looked like: ${JSON.stringify(s.trace_sample)}` : '');
       for (const l of s.lines) {
         check(`line ${l.line} (${l.script}${l.font ? `, ${l.font}` : ''}): ${l.pdf_glyphs ?? '?'} glyphs equal hb-shape's`, l.ok,
-          l.why ?? `pdf ${l.pdf_glyphs} vs reference ${l.reference_glyphs}, first difference at glyph ${l.first_difference_at_glyph}`);
+          l.why ?? `pdf ${l.pdf_glyphs} vs reference ${l.reference_glyphs}; names equal ${l.names_equal}, outlines equal ${l.outlines_equal}; `
+            + `first difference at glyph ${l.first_difference_at_glyph}: ${JSON.stringify(l.around)}`);
       }
       // Calibration: the same comparison with shaping SWITCHED OFF in the
       // reference must fail on the conjunct lines — the check sees shaping.
@@ -286,7 +304,8 @@ console.log('\n4. Every node and mark (editor-page)');
       check(`link kept: ${href}`, plain.includes(href));
     }
     const trace = sh('mutool', ['trace', '/tmp/ep.pdf']);
-    check('colour kept: rgb(26, 115, 232) text', /color="0\.10\d* 0\.45\d* 0\.9\d*"/.test(trace),
+    // mutool writes ".10196 .45098 .9098" (no leading zero; found by the second run).
+    check('colour kept: rgb(26, 115, 232) text', /color="0?\.10\d* 0?\.45\d* 0?\.9\d*"/.test(trace),
       `colours in the trace: ${JSON.stringify([...new Set(trace.match(/<fill_text[^>]*>/g) ?? [])].slice(0, 6))}`);
     check('the stored picture is drawn', (trace.match(/<fill_image/g) ?? []).length >= 1);
     check('the web picture is named, not fetched', textOf(ep.pdf).body.includes('[picture: From the web]'));
@@ -308,6 +327,24 @@ console.log('\n5. Inside the limits (condition 4)');
   try { peak = readFileSync('/sys/fs/cgroup/memory.peak', 'utf8').trim(); } catch { /* cgroup v1 */ }
   check(`memory stayed under the container's 512 MB (peak ${peak ? `${Math.round(Number(peak) / 1048576)} MB` : 'not readable'})`,
     peak !== '' && Number(peak) < 512 * 1048576);
+}
+
+console.log('\n5b. The copy/search finding: another face (tracked, not a gate check)');
+{
+  const fams = sh('typst', ['fonts', '--font-path', FONTS, '--ignore-system-fonts']);
+  if (!fams.split('\n').some((l) => l.trim() === 'Noto Serif Devanagari')) {
+    console.log('  info  Noto Serif Devanagari is not installed in this image — not tried');
+  } else {
+    const serif = readFileSync('/app/apps/render/pdf/main.typ', 'utf8').replace('"Noto Sans Devanagari"', '"Noto Serif Devanagari"');
+    writeFileSync('/tmp/serif.typ', serif);
+    const r = await tryPdf(stateOf(fixture('indian-scripts')), { template: new URL('file:///tmp/serif.typ') });
+    if (r.error) console.log(`  info  serif trial did not build: ${r.error.code}`);
+    else {
+      const want = r.r.text.normalize('NFC').split(/\s+/).filter((w) => /[ऀ-ॿ]/.test(w));
+      const got = new Set(textOf(r.pdf).body.normalize('NFC').split(/\s+/));
+      console.log(`  info  Noto SERIF Devanagari: ${want.filter((w) => got.has(w)).length} of ${want.length} Devanagari words intact in the text layer (${COMBINATION.replace('Sans', 'Serif')})`);
+    }
+  }
 }
 
 console.log('\n6. A sample for the reader (Devanagari, day one)');

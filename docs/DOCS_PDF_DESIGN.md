@@ -126,6 +126,14 @@ The script packages carry many families and weights. We would ship **Regular and
 
 **Then:** build the gate first, and bring its results before the email side is wired up.
 
+**Mr. Singh, on the gate's first run: copy and search of Indian-script text.** In the first run, the PDF's text layer split and repeated shaped clusters (कृपया came out as "कृ पया"), so copying or searching that text from the PDF is imperfect. What the page *shows* is checked glyph by glyph against the stored text.
+
+1. **Acceptable for the Hindi and Marathi launch, with two conditions.**
+   - The gate reports the number of affected words on every run and **fails if it grows** (`TEXT_LAYER_BROKEN_MAX`, with the Typst-and-font combination named in the output).
+   - The PDF email's one-line footer says plainly: **"Text in Indian scripts may not copy or search correctly from this PDF."**
+2. **The fix is tracked as its own item, not blocking.** The likely cause is how the text layer records shaped glyphs (ActualText / ToUnicode). Try a newer Typst (0.15.1 is in Alpine edge) and the serif face (Noto Serif Devanagari). The gate's part 5b reports the serif face's count.
+3. **A person who reads Hindi still checks a sample PDF before switch-on.** The tool proves the glyphs; the reader proves the result reads naturally.
+
 ## 9. Scripts checked by a reader
 
 The record Amit asked for. A script is switched on in `CHECKED_SCRIPTS` (`apps/render/src/render-pdf.mjs`) only in the same change that adds its row here.

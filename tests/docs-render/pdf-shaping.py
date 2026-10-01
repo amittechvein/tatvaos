@@ -5,11 +5,14 @@
 #
 #  For each expected line: the glyphs the PDF draws in the Indian-script font,
 #  compared with the glyphs HarfBuzz (hb-shape) gives for the same text with
-#  the same font file. Compared by OUTLINE, not glyph number: a PDF writer
-#  embeds a subset of the font and renumbers its glyphs, so equal numbers would
-#  prove nothing and unequal ones would fail for nothing. Equal outlines in the
-#  same order = the same shaping (conjuncts formed, vowel signs placed and
-#  reordered as HarfBuzz does).
+#  the same font file. Compared by glyph NAME and OUTLINE, never by glyph
+#  number: a PDF writer embeds a subset of the font and renumbers its glyphs.
+#  mutool's trace names each drawn glyph (the subset keeps the font's own
+#  names, e.g. "iMatra-deva.04"); hb-shape names the glyphs it chooses from
+#  the original file. Same names, in the same order, with the same outlines =
+#  the same shaping (conjuncts formed, vowel signs placed and reordered as
+#  HarfBuzz does). The first CI run (1 Oct 2026) found the trace gives names,
+#  not numbers, and positions relative to each line's own transform.
 #
 #    python3 pdf-shaping.py <pdf> <expected.json> <font dir>
 #  expected.json: [{"text": "...", "script": "Devanagari"}, ...] — one per
@@ -92,39 +95,58 @@ for line in run("pdffonts", PDF).splitlines()[2:]:
         embedded[base] = e
 
 
-def outline(font, gid):
-    order = font.getGlyphOrder()
-    if gid >= len(order):
-        return ("missing", gid)
+def original_for(base):
+    # The PDF may cut the name short ("NotoSansDevanagari-Regul").
+    if base in originals:
+        return originals[base]
+    hits = sorted(ps for ps in originals if ps.startswith(base))
+    return originals[hits[0]] if len(hits) == 1 else None
+
+
+def embedded_for(base):
+    if base in embedded:
+        return embedded[base]
+    hits = [k for k in embedded if k.startswith(base) or base.startswith(k)]
+    return embedded[hits[0]] if len(hits) == 1 else None
+
+
+def outline(font, name):
+    gs = font.getGlyphSet()
+    if name not in gs:
+        return ("missing", name)
     pen = RecordingPen()
-    font.getGlyphSet()[order[gid]].draw(pen)
+    gs[name].draw(pen)
     return tuple((op, tuple(tuple(p) if isinstance(p, tuple) else p for p in args)) for op, args in pen.value)
 
 
 # ---- the glyphs the PDF draws, line by line ------------------------------------
-lines = []  # [(page, y, [(base, gid)])]
+lines = []  # [(page, y, [(base, glyph name)])]
 page = 0
 cur_font = None
+cur_y = None
 ATTR = re.compile(r'([\w-]+)="([^"]*)"')
 trace = run("mutool", "trace", PDF)
 for raw in trace.splitlines():
     s = raw.strip()
     if s.startswith("<page"):
         page += 1
+    if s.startswith("<fill_text"):
+        t = dict(ATTR.findall(s)).get("transform", "").split()
+        cur_y = round(float(t[5]), 0) if len(t) == 6 else None
+        continue
     if s.startswith("<span"):
-        a = dict(ATTR.findall(s))
-        cur_font = a.get("font", "").split("+", 1)[-1] or None
+        cur_font = dict(ATTR.findall(s)).get("font", "").split("+", 1)[-1] or None
         continue
     if s.startswith("<g "):
         a = dict(ATTR.findall(s))
-        gid = a.get("glyph", "")
-        if not cur_font or not gid.isdigit() or "y" not in a:
+        name = a.get("glyph")
+        # A <g> with no glyph is the rest of a cluster drawn by the glyph before it.
+        if not cur_font or not name or cur_y is None:
             continue
-        y = round(float(a["y"]), 0)
-        if lines and lines[-1][0] == page and abs(lines[-1][1] - y) < 2:
-            lines[-1][2].append((cur_font, int(gid)))
+        if lines and lines[-1][0] == page and abs(lines[-1][1] - cur_y) < 2:
+            lines[-1][2].append((cur_font, name))
         else:
-            lines.append([page, y, [(cur_font, int(gid))]])
+            lines.append([page, cur_y, [(cur_font, name)]])
 if not lines:
     # Say what the trace looked like (synthetic fixtures only), so the parser can be fixed.
     sample = [l.strip()[:200] for l in trace.splitlines() if "<span" in l or "<g " in l][:8]
@@ -173,8 +195,8 @@ for i, exp in enumerate(expected):
         results.append(res)
         continue
     base = fonts[0]
-    sub = embedded.get(base)
-    orig_path = originals.get(base)
+    sub = embedded_for(base)
+    orig_path = original_for(base)
     if not isinstance(sub, TTFont) or not orig_path:
         res.update(ok=False, why=f"font {base}: embedded={type(sub).__name__}, original={'found' if orig_path else 'NOT FOUND'}")
         ok_all = False
@@ -186,16 +208,21 @@ for i, exp in enumerate(expected):
     # SHAPING_FEATURES: the gate's calibration only — switch shaping features
     # off in the reference, and the conjunct lines must stop matching.
     feats = [f"--features={os.environ['SHAPING_FEATURES']}"] if os.environ.get("SHAPING_FEATURES") else []
+    ref_names = []
     for r in runs(exp["text"], lo, hi):
-        shaped = run("hb-shape", f"--font-file={orig_path}", "--language=en", *feats, "--no-glyph-names",
+        shaped = run("hb-shape", f"--font-file={orig_path}", "--language=en", *feats,
                      "--no-positions", "--no-clusters", "--", r).strip().strip("[]")
-        ref_out.extend(outline(orig, int(g)) for g in shaped.split("|") if g)
-    pdf_out = [outline(sub, gid) for _, gid in glyphs]
-    same = pdf_out == ref_out
-    res.update(ok=same, font=base, pdf_glyphs=len(pdf_out), reference_glyphs=len(ref_out))
+        ref_names.extend(g for g in shaped.split("|") if g)
+    pdf_names = [n for _, n in glyphs]
+    same_names = pdf_names == ref_names
+    same_outlines = [outline(sub, n) for n in pdf_names] == [outline(orig, n) for n in ref_names]
+    same = same_names and same_outlines
+    res.update(ok=same, font=base, pdf_glyphs=len(pdf_names), reference_glyphs=len(ref_names),
+               names_equal=same_names, outlines_equal=same_outlines)
     if not same:
-        n = next((k for k in range(min(len(pdf_out), len(ref_out))) if pdf_out[k] != ref_out[k]), min(len(pdf_out), len(ref_out)))
+        n = next((k for k in range(min(len(pdf_names), len(ref_names))) if pdf_names[k] != ref_names[k]), min(len(pdf_names), len(ref_names)))
         res["first_difference_at_glyph"] = n
+        res["around"] = {"pdf": pdf_names[max(0, n - 2):n + 3], "hb_shape": ref_names[max(0, n - 2):n + 3]}
         ok_all = False
     results.append(res)
 
