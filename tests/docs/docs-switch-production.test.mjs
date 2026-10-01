@@ -1,19 +1,32 @@
 // ============================================================================
-//  Docs cannot be switched on before the file is built on the server
+//  The operator's Docs switch, as production runs it, after the server render
 // ============================================================================
 //
-//  Amit, 29 Sept 2026: Docs stays off for every organisation, Techvein
-//  included, until decision 0011 condition 1 lands (the server render). The
-//  operator's switch refuses to turn it on (DocsAdminEndpoints,
-//  DocsSwitch.ServerRenderLanded). This checks that it refuses, that
-//  switching OFF still works, and that the refusal changed nothing.
+//  History. Amit, 29 Sept 2026: Docs stays off for every organisation,
+//  Techvein included, until decision 0011 condition 1 lands (the file built
+//  on the server). PR 358 made the operator's switch refuse to turn it on
+//  (409 docs_before_render) while DocsSwitch.ServerRenderLanded was false;
+//  this file then checked that refusal. The render landed in PR 367 and was
+//  checked on production; the switch-on pull request set ServerRenderLanded
+//  true, so this now checks the switch AFTER the render:
+//
+//    - switching OFF works;
+//    - switching ON works (200) — the before-render refusal is gone;
+//    - Docs then reports on, and switching back OFF works.
+//
+//  The browser-written-files guard (409 browser_files) is NOT tested here:
+//  tests/docs/docs-live.test.mjs plants a browser-written file and proves it.
+//
+//  RED FIRST: against an API built before the switch-on change (ServerRender-
+//  Landed false), "switching ON works" FAILS with 409 docs_before_render.
 //
 //  Run against an API that refuses as production does. On a developer's
-//  machine the refusal is off (tests/docs must switch Docs on), so start the
-//  API with the one setting that ADDS it:
+//  machine the before-render refusal is off (tests/docs must switch Docs on),
+//  so the API runs with the one setting that ADDS it back — which is what
+//  makes this a production check:
 //
-//    Docs__RefuseSwitchOnInDevelopment=true   (in the API's environment)
-//    node tests/docs/docs-switch-before-render.test.mjs
+//    Docs__RefuseSwitchOnInDevelopment=true DOCS_TEST=tests/docs/docs-switch-production.test.mjs \
+//      bash tests/docs/run-docs-live.sh
 //
 //  Environment: DOCS_API (default http://localhost:5141/api), DOCS_ADMIN
 //  "email,password" of the platform operator, DOCS_TENANT (default seed 1).
@@ -47,23 +60,26 @@ async function main() {
     return { status: res.status, body: await res.json().catch(() => ({})) };
   };
 
-  console.log('Docs cannot be switched on before the server render');
+  console.log('The Docs switch as production runs it, after the server render');
   // Start from off. Switching OFF must work whatever state an earlier run left.
   const off = await P('PUT', { enabled: false });
   check('switching Docs OFF is allowed (200)', off.status === 200 && off.body.enabled === false,
     `status ${off.status} ${JSON.stringify(off.body)}`);
+  const before = await P('GET');
+  check('…and it reads off (the starting point is known)', before.status === 200 && before.body.enabled === false,
+    `status ${before.status} ${JSON.stringify(before.body)}`);
 
   const on = await P('PUT', { enabled: true });
-  check('switching Docs ON is refused (409, docs_before_render)',
-    on.status === 409 && on.body.reason === 'docs_before_render', `status ${on.status} ${JSON.stringify(on.body)}`);
-  check('…with a sentence that says why', /built on the server/.test(on.body.error ?? ''), JSON.stringify(on.body.error));
+  check('switching Docs ON works (200) — no before-render refusal any more',
+    on.status === 200 && on.body.enabled === true, `status ${on.status} ${JSON.stringify(on.body)}`);
 
   const after = await P('GET');
-  check('…and Docs is still off afterwards', after.status === 200 && after.body.enabled === false,
+  check('…and Docs now reads on', after.status === 200 && after.body.enabled === true,
     `status ${after.status} ${JSON.stringify(after.body)}`);
 
-  // If the refusal failed, put Docs back off so this run leaves nothing on.
-  if (on.status === 200) await P('PUT', { enabled: false });
+  const backOff = await P('PUT', { enabled: false });
+  check('switching back OFF works (200), leaving Docs off', backOff.status === 200 && backOff.body.enabled === false,
+    `status ${backOff.status} ${JSON.stringify(backOff.body)}`);
 
   console.log(`\n  passed: ${passed}   failed: ${failed}`);
   // exitCode, not process.exit(): on Windows, Node 24 aborts in libuv when

@@ -411,6 +411,14 @@ jobs:
       - name: "Docs end to end: the file is the server's"
         run: bash tests/docs/run-docs-live.sh
 
+      # The operator's switch with production's refusal added back: after the
+      # server render, switching on works (red before ServerRenderLanded: 409).
+      - name: "Docs switch: as production runs it"
+        env:
+          Docs__RefuseSwitchOnInDevelopment: 'true'
+          DOCS_TEST: tests/docs/docs-switch-production.test.mjs
+        run: bash tests/docs/run-docs-live.sh
+
       # The container's hardening, each condition proven against the real
       # compose definition, red first on the network rule. Docker is already
       # running on the runner, so the script leaves it as it found it.
