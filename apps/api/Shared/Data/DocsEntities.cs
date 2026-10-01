@@ -27,6 +27,13 @@ public class DocsDocument
     public DateTimeOffset? CheckpointAt { get; set; }
     public Guid? CheckpointByUserId { get; set; }
 
+    /// <summary>
+    /// The update seq the render service last built the file from. NULL with
+    /// CheckpointAt set = a browser wrote the file (before 0011 condition 1).
+    /// See 20260930-b-docs-rendered-by-server.sql.
+    /// </summary>
+    public long? RenderedSeq { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
