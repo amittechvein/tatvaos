@@ -821,8 +821,10 @@ public static class SpaceEndpoints
                 return Error(413, $"Files are limited to {maxBytes / (1024 * 1024)} MB each.", "file_too_large");
             }
 
-            var contentType = string.IsNullOrWhiteSpace(section.ContentType)
-                ? "application/octet-stream" : section.ContentType;
+            // A client's claimed type, minus the two only the server may set
+            // (DocsFormat.ClientType) — covers upload AND overwrite, which
+            // both come through here.
+            var contentType = TatvaOS.Api.Modules.Docs.DocsFormat.ClientType(section.ContentType);
 
             return await complete(new UploadedPart(fileName, contentType, blobKey, written), folderId, scope, ct);
         }
@@ -905,8 +907,10 @@ public static class SpaceEndpoints
         // A TatvaOS document's blob is a rendering Docs rewrites on every
         // checkpoint; its content lives in docs.documents. Replacing the blob
         // would be silently undone by the next checkpoint, so refuse it.
-        if (file.MimeType == TatvaOS.Api.Modules.Docs.DocsFormat.MimeType)
-            return Error(409, "This is a TatvaOS document. Open it in Docs to change it.");
+        if (TatvaOS.Api.Modules.Docs.DocsFormat.IsLive(file.MimeType))
+            return Error(409, file.MimeType == TatvaOS.Api.Modules.Docs.DocsFormat.SpreadsheetMimeType
+                ? "This is a TatvaOS spreadsheet. Open it in Sheets to change it."
+                : "This is a TatvaOS document. Open it in Docs to change it.");
 
         var oldKey = file.BlobKey;
         var oldSize = file.SizeBytes;

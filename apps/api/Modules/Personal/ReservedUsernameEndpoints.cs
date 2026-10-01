@@ -26,7 +26,7 @@ public static class ReservedUsernameEndpoints
     public static void MapReservedUsernameEndpoints(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api/admin/reserved-usernames")
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
         g.MapGet("/", ListAsync);
         g.MapPost("/", AddAsync);

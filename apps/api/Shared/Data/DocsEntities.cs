@@ -108,3 +108,15 @@ public class DocsTenantSetting
     public Guid? UpdatedByUserId { get; set; }
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
+
+/// <summary>
+/// Sheets' own per-organisation switch (20260925-sheets-switch.sql). Same
+/// rules as DocsTenantSetting: no row = off, written only by the operator.
+/// </summary>
+public class SheetsTenantSetting
+{
+    public Guid TenantId { get; set; }
+    public bool Enabled { get; set; }
+    public Guid? UpdatedByUserId { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}

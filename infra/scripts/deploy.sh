@@ -422,6 +422,22 @@ if [ "$ENV" = "production" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Every AI entry point asks AiGate before sending, and every AI feature label
+# has an organisation list (Mr. Singh, 30 Sept 2026: a customer used Mail AI
+# on 25 Sept before its privacy text existed). CI runs the same check; it runs
+# here too because a hand deploy is the path that has skipped CI before.
+# Source scan only - no database, no containers - so it costs nothing and
+# refuses before anything is built or stopped.
+step "Every AI entry point asks its organisation list"
+if ai_gate_out=$(python3 tests/ai/every_ai_entry_calls_gate.py apps/api 2>&1); then
+    printf '%s\n' "$ai_gate_out" | sed 's/^/   /'
+else
+    printf '%s\n' "$ai_gate_out" | sed 's/^/      /'
+    bad "an AI entry point does not ask AiGate, or a feature has no list - stopping"
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
 step "Pulling and building"
 $COMPOSE pull 2>&1 | grep -Ei 'error|warn' | sed 's/^/   /' || true
 
@@ -624,6 +640,17 @@ for f in local/postgres/init/*.sql; do
         schema_failed=1
     fi
 done
+
+# Which organisations each AI feature is offered to, AS THIS DEPLOY STARTS
+# (Mr. Singh, 30 Sept 2026: every AI deploy note states it). Printed here,
+# after the schema, so the deploy log carries it whoever writes the note.
+# Organisation ids only; "(no row)" and "" both mean nobody (PR 360).
+ai_lists=$($COMPOSE exec -T postgres psql -U postgres -d tatvaos_mail -At -c "
+    SELECT k || ' = ' || COALESCE((SELECT CASE WHEN value = '' THEN '(empty - nobody)' ELSE value END
+                                   FROM core.platform_settings s WHERE s.key = k), '(no row - nobody)')
+      FROM unnest(ARRAY['ai.mail.organisations','ai.connect.organisations','ai.docs.organisations','ai.sheets.organisations']) AS k" 2>&1) \
+    && { note "AI offered to (organisation lists):"; printf '%s\n' "$ai_lists" | sed 's/^/      /'; } \
+    || note "could not read the AI organisation lists: $ai_lists"
 
 # A half-applied schema is worse than a failed deploy: the containers come up,
 # the health check may even pass, and the breakage surfaces later as missing

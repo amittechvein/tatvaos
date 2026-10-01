@@ -41,7 +41,7 @@ function MailSearchSlot() {
 }
 
 export function Topbar({ scope, pinned, onToggle }: {
-  scope: 'platform' | 'organisation' | 'mail' | 'family' | 'space' | 'calendar' | 'connect' | 'hire' | 'docs';
+  scope: 'platform' | 'organisation' | 'mail' | 'family' | 'space' | 'calendar' | 'connect' | 'hire' | 'docs' | 'sheets';
   /** Desktop only: whether the rail is pinned at full width. Sets this bar's left edge. */
   pinned: boolean;
   onToggle: () => void;

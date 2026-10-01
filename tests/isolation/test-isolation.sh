@@ -741,6 +741,30 @@ n=$(as_person "$SCHOOL" "$OTHER" "SELECT count(*) FROM docs.tenant_settings WHER
 # would hide that from whatever runs next (tests/docs starts from "off").
 run_as postgres "DELETE FROM docs.tenant_settings WHERE tenant_id = '$TECHVEIN';" >/dev/null 2>&1
 
+# Sheets' own switch (20260925-sheets-switch.sql): the same rules, and one
+# more — another organisation cannot WRITE Techvein's row either (the
+# policy's WITH CHECK), so it cannot switch Sheets on for someone else.
+run_as postgres "
+    INSERT INTO docs.sheets_tenant_settings (tenant_id, enabled) VALUES ('$TECHVEIN', true)
+    ON CONFLICT (tenant_id) DO NOTHING;
+" >/dev/null 2>&1
+n=$(as_person "$TECHVEIN" "$OWNER" "SELECT count(*) FROM docs.sheets_tenant_settings")
+[ "${n:-0}" -ge 1 ] && pass "an organisation sees its own Sheets switch"                     || fail "an organisation cannot read its own Sheets switch"
+n=$(as_person "$SCHOOL" "$OTHER" "SELECT count(*) FROM docs.sheets_tenant_settings WHERE tenant_id = '$TECHVEIN'")
+[ "${n:-1}" -eq 0 ] && pass "another organisation cannot see Techvein's Sheets switch"                     || fail "LEAK: another tenant sees Techvein's Sheets switch"
+run_as postgres "DELETE FROM docs.sheets_tenant_settings WHERE tenant_id = '$TECHVEIN';" >/dev/null 2>&1
+# Calibration: the SAME insert for the school's own row goes through, so the
+# refusal below is the policy speaking, not a statement that could never work.
+as_person "$SCHOOL" "$OTHER" "INSERT INTO docs.sheets_tenant_settings (tenant_id, enabled) VALUES ('$SCHOOL', false)" >/dev/null 2>&1
+n=$(run_as postgres "SELECT count(*) FROM docs.sheets_tenant_settings WHERE tenant_id = '$SCHOOL'" | tail -n1 | tr -d '[:space:]')
+[ "${n:-0}" -eq 1 ] && pass "an organisation's own switch row can be written (calibrates the next check)"                     || fail "the calibration insert failed - the refusal check below proves nothing"
+run_as postgres "DELETE FROM docs.sheets_tenant_settings WHERE tenant_id = '$SCHOOL';" >/dev/null 2>&1
+as_person "$SCHOOL" "$OTHER" "INSERT INTO docs.sheets_tenant_settings (tenant_id, enabled) VALUES ('$TECHVEIN', true)" >/dev/null 2>&1
+n=$(run_as postgres "SELECT count(*) FROM docs.sheets_tenant_settings WHERE tenant_id = '$TECHVEIN'" | tail -n1 | tr -d '[:space:]')
+[ "${n:-1}" -eq 0 ] && pass "another organisation cannot switch Sheets on for Techvein"                     || fail "LEAK: another tenant wrote Techvein's Sheets switch"
+# Off again, as Sheets ships (tests/sheets starts from "off").
+run_as postgres "DELETE FROM docs.sheets_tenant_settings WHERE tenant_id = '$TECHVEIN';" >/dev/null 2>&1
+
 run_as postgres "DELETE FROM space.files WHERE id = '$DOC';" >/dev/null 2>&1
 n=$(run_as postgres "SELECT count(*) FROM docs.updates WHERE file_id = '$DOC'" | tail -n1 | tr -d '[:space:]')
 [ "${n:-1}" -eq 0 ] && pass "purging the Space file removes the document's rows with it" \
@@ -764,6 +788,8 @@ for stmt in \
     "DELETE FROM mail.api_keys WHERE false" \
     "DELETE FROM mail.app_passwords WHERE false" \
     "DELETE FROM mail.api_sends WHERE false" \
+    "DELETE FROM mail.api_send_envelopes WHERE false" \
+    "UPDATE mail.api_send_envelopes SET from_address = from_address WHERE false" \
     "DELETE FROM family.contact_audit_logs WHERE false"     "DELETE FROM core.ai_usage WHERE false"     "UPDATE core.ai_usage SET tokens_in = tokens_in WHERE false"     "DELETE FROM core.ai_usage_alerts WHERE false"
 do
     if run_as tatvaos_app "$stmt" >/dev/null 2>&1; then

@@ -89,7 +89,9 @@ signin() {
 
 export JWT_SIGNING_KEY="dev-only-key-at-least-32-characters-long"
 export ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS="$API"
-export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
+# House rule 13: a run through tests/lib/throwaway-db.sh (PR 359) supplies
+# its own database as TDB_CONN; the shared tatvaos_mail is only the fallback.
+export ConnectionStrings__Postgres="${TDB_CONN:-Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true}"
 export Smtp__Host=localhost Smtp__Port=5870
 if command -v cygpath >/dev/null 2>&1; then export Oidc__KeyDirectory="$(cygpath -w "$SCRATCH")\\keys"; else export Oidc__KeyDirectory="$SCRATCH/keys"; fi
 # call METHOD PATH TOKEN [JSON]
@@ -154,6 +156,8 @@ API_PID=$!
 for _ in $(seq 1 150); do curl -s -o /dev/null -w "%{http_code}" "$API/health" 2>/dev/null | grep -q 200 && break; sleep 1; done
 curl -s -o /dev/null -w "%{http_code}" "$API/health" | grep -q 200 && pass "API up" || { fail "API did not start"; tail -5 "$LOG"; exit 1; }
 PG "UPDATE core.users SET phone='+919999900001' WHERE email='amit@techvein.local' AND phone IS NULL" >/dev/null
+# A fresh database (rule 13) has the operator-to-be without a phone number.
+PG "UPDATE core.users SET phone='+919999900003' WHERE email='principal@abcschool.local' AND phone IS NULL" >/dev/null
 OWNER=$(signin "+919999900001")
 [ -n "$OWNER" ] && pass "signed in as the Techvein owner" || { fail "owner sign-in failed"; exit 1; }
 PRINCIPAL_WAS=$(PG "SELECT role FROM core.users WHERE email='principal@abcschool.local'")
@@ -205,6 +209,11 @@ same "…and a preview numbers nothing" "$(PG "SELECT count(*) FROM core.invoice
 
 r=$(callm POST "$TV/invoices" "$OPERATOR" '{"includePlan":true,"extraLines":[{"description":"AI credits top-up","quantity":1,"unitPrice":500}]}')
 same "issued" "$(status "$r")" "201"; B=$(body "$r"); INV1=$(jq_ "$B" "d['id']")
+# It names who issued it. Until 29 Sept 2026 every invoice carried the all-zero
+# id here: the operator's id was read from a claim the JWT handler had renamed
+# (apps/api/Shared/Auth/SignedIn.cs).
+same "the invoice names the operator who issued it" "$(PG "SELECT created_by FROM core.invoices WHERE id='$INV1'")" \
+    "$(PG "SELECT id FROM core.users WHERE email='principal@abcschool.local'")"
 same "numbered PREFIX/FY/next" "$(jq_ "$B" "d['number']")" "TV/$FY/$(printf '%04d' $(( ${SEQ_WAS:-0} + 1 )))"
 same "two lines, total 1758.20 (1490 + 18%)" "$(jq_ "$B" "str(len(d['lines']))+'/'+('%.2f' % d['total'])")" "2/1758.20"
 same "the seller is copied onto it" "$(jq_ "$B" "d['seller']['gstin']")" "10AAACT1234A1Z5"
