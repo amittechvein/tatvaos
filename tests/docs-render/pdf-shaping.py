@@ -105,24 +105,32 @@ def outline(font, gid):
 lines = []  # [(page, y, [(base, gid)])]
 page = 0
 cur_font = None
-for raw in run("mutool", "trace", PDF).splitlines():
+ATTR = re.compile(r'([\w-]+)="([^"]*)"')
+trace = run("mutool", "trace", PDF)
+for raw in trace.splitlines():
     s = raw.strip()
     if s.startswith("<page"):
         page += 1
-    m = re.match(r'<span font="([^"]+)"', s)
-    if m:
-        cur_font = m.group(1).split("+", 1)[-1]
+    if s.startswith("<span"):
+        a = dict(ATTR.findall(s))
+        cur_font = a.get("font", "").split("+", 1)[-1] or None
         continue
-    m = re.match(r'<g unicode="[^"]*" glyph="([^"]+)" x="([-\d.]+)" y="([-\d.]+)"', s)
-    if m and cur_font:
-        gid = m.group(1)
-        if not gid.isdigit():
+    if s.startswith("<g "):
+        a = dict(ATTR.findall(s))
+        gid = a.get("glyph", "")
+        if not cur_font or not gid.isdigit() or "y" not in a:
             continue
-        y = round(float(m.group(3)), 0)
+        y = round(float(a["y"]), 0)
         if lines and lines[-1][0] == page and abs(lines[-1][1] - y) < 2:
             lines[-1][2].append((cur_font, int(gid)))
         else:
             lines.append([page, y, [(cur_font, int(gid))]])
+if not lines:
+    # Say what the trace looked like (synthetic fixtures only), so the parser can be fixed.
+    sample = [l.strip()[:200] for l in trace.splitlines() if "<span" in l or "<g " in l][:8]
+    print(json.dumps({"ok": False, "pdf_lines": 0, "expected_lines": len(expected), "lines": [],
+                      "trace_sample": sample or trace.splitlines()[:12]}, ensure_ascii=False))
+    sys.exit(0)
 
 # The page number at each foot is a line of its own: drop the last line of each page.
 by_page = {}

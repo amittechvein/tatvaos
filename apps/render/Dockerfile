@@ -60,7 +60,7 @@ RUN apk add --no-cache \
       font-noto-tamil=2026.06.01-r0 font-noto-telugu=2026.06.01-r0 \
       font-noto-gujarati=2026.06.01-r0 font-noto-kannada=2026.06.01-r0 \
       font-noto-malayalam=2026.06.01-r0 font-noto-gurmukhi=2026.06.01-r0 \
-      font-noto-oriya=2026.06.01-r0
+      font-noto-oriya=2026.06.01-r0 font-noto-emoji=2.051-r0
 COPY apps/render/package.json ./apps/render/
 COPY apps/render/src ./apps/render/src
 COPY apps/render/pdf ./apps/render/pdf

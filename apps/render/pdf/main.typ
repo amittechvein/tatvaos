@@ -33,7 +33,7 @@
   "Noto Sans Gujarati", "Noto Sans Kannada", "Noto Sans Malayalam", "Noto Sans Gurmukhi",
   "Noto Sans Oriya",
 )
-#let tail = indic + ("DejaVu Sans",)
+#let tail = indic + ("DejaVu Sans", "Noto Color Emoji")
 #let sans = ("Liberation Sans",) + tail
 #let mono = ("Liberation Mono",) + tail
 
@@ -181,12 +181,15 @@
     let al = get(a, "textAlign", "left")
     let where = if al == "center" { center } else if al == "right" { right } else { left }
     let ind = whole(get(a, "indent", 0), 0, 0, 8) * 27pt  // 36px a step
-    block(
-      above: if t == "heading" { 14pt } else { 0.35em },
-      below: if t == "heading" { 6pt } else { 0.35em },
-      pad(left: ind, align(where, par(justify: al == "justify", leading: lead,
-        if body == none or body == [] { h(0pt) } else { sized }))),
-    )
+    // A heading is never put inside par(): Typst drops it there, text and
+    // all (the gate's first run, 1 Oct 2026: every heading missing).
+    if t == "heading" {
+      block(above: 14pt, below: 6pt, pad(left: ind, align(where, sized)))
+    } else {
+      block(above: 0.35em, below: 0.35em,
+        pad(left: ind, align(where, par(justify: al == "justify", leading: lead,
+          if body == none or body == [] { h(0pt) } else { sized }))))
+    }
   } else if t == "bulletList" {
     list(..kids(n).map(node))
   } else if t == "orderedList" {
