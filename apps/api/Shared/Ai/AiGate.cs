@@ -31,6 +31,8 @@ namespace TatvaOS.Api.Shared.Ai;
 ///    ai.connect.organisations   all — minutes' disclosure is live; each
 ///                               organisation's allow_ai stays the consent
 ///    ai.docs.organisations      empty — Docs is off for everyone
+///    ai.sheets.organisations    empty — Sheets is off for everyone (added
+///                               2 Oct 2026, when Sheets merged after this)
 ///  20260930-ai-feature-lists.sql writes the Connect and Docs rows ONCE, if
 ///  absent, so the deploy that brings this in cannot switch minutes off by
 ///  a forgotten setting.
@@ -51,11 +53,15 @@ public static class AiGate
         // why it is named here and gated where it is sent.
         [ConnectTranscription] = SettingKeys.AiConnectOrganisations,
         [Docs] = SettingKeys.AiDocsOrganisations,
+        // Sheets (merged 1 Oct 2026, after this registry was written): its own
+        // list, EMPTY until Sheets AI has a disclosure - the same start as Docs.
+        [Sheets] = SettingKeys.AiSheetsOrganisations,
     };
 
     public const string ConnectMinutes = "connect.minutes";
     public const string ConnectTranscription = "connect.transcription";
     public const string Docs = "docs";
+    public const string Sheets = "sheets";
 
     /// <summary>
     /// Labels that carry nothing of any organisation's and need no list: the

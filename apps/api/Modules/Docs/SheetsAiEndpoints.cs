@@ -68,6 +68,13 @@ public static class SheetsAiEndpoints
         if (!ai.IsConfigured) return Error(503, "AI is not set up on this TatvaOS installation.");
         if (!await ai.EnabledForTenantAsync(ct))
             return Error(403, "AI is switched off for your organisation. An administrator can turn it on.");
+        // Offered to this organisation (AiGate, ai.sheets.organisations)? Sheets
+        // merged after the AI lists were written; their check caught this
+        // entry point sending with no list (2 Oct 2026). Empty = nobody, until
+        // Sheets AI has its disclosure.
+        if (!await AiGate.AllowedAsync(db, tenant.HasTenant ? tenant.TenantId : null, AiGate.Sheets,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, ct))
+            return Error(403, AiGate.NotOffered);
 
         var context = req.Context ?? "";
         if (context.Length > MaxInputChars)
@@ -140,7 +147,7 @@ public static class SheetsAiEndpoints
         // Named, so the metering counts it under "Sheets" - the gateway
         // refuses a request with no feature. Default cost (1 credit) until
         // Amit prices it; see the same note in DocsEndpoints.
-        var result = await ai.CompleteAsync(instruction, input, ct, feature: "sheets");
+        var result = await ai.CompleteAsync(instruction, input, ct, feature: AiGate.Sheets);
         if (result.Error is not null) return Error(502, result.Error);
         var text = result.Text.Trim();
 

@@ -648,7 +648,7 @@ done
 ai_lists=$($COMPOSE exec -T postgres psql -U postgres -d tatvaos_mail -At -c "
     SELECT k || ' = ' || COALESCE((SELECT CASE WHEN value = '' THEN '(empty - nobody)' ELSE value END
                                    FROM core.platform_settings s WHERE s.key = k), '(no row - nobody)')
-      FROM unnest(ARRAY['ai.mail.organisations','ai.connect.organisations','ai.docs.organisations']) AS k" 2>&1) \
+      FROM unnest(ARRAY['ai.mail.organisations','ai.connect.organisations','ai.docs.organisations','ai.sheets.organisations']) AS k" 2>&1) \
     && { note "AI offered to (organisation lists):"; printf '%s\n' "$ai_lists" | sed 's/^/      /'; } \
     || note "could not read the AI organisation lists: $ai_lists"
 

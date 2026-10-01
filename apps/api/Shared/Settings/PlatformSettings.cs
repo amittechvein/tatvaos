@@ -64,6 +64,7 @@ public static class SettingKeys
     // empty = nobody, "all" = everyone, ids = only those.
     public const string AiConnectOrganisations = "ai.connect.organisations";
     public const string AiDocsOrganisations = "ai.docs.organisations";
+    public const string AiSheetsOrganisations = "ai.sheets.organisations";
 
     // Personal accounts (/join) — build plan personal-plans-build-plan.md §1
     // and §3.4. Closed by default: the switch-on waits for the five launch
@@ -159,6 +160,9 @@ public static class SettingKeys
             + "each organisation's own TatvaOS AI switch remains its consent."),
         new(AiDocsOrganisations, "ai", "Organisations that may use TatvaOS AI in Docs", false,
             "Same rule as Mail. Started EMPTY on 30 Sept 2026 (no organisation): Docs is off for everyone "
+            + "and its AI has no privacy text yet."),
+        new(AiSheetsOrganisations, "ai", "Organisations that may use TatvaOS AI in Sheets", false,
+            "Same rule as Mail. Started EMPTY on 2 Oct 2026 (no organisation): Sheets is off for everyone "
             + "and its AI has no privacy text yet."),
 
         new(PersonalSignupOpen, "personal", "Personal signup open (/join)", false,
