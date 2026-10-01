@@ -188,16 +188,47 @@ until it is 8 days old (see *The tiered schedule*), so the 7 in
 `BACKUP_S3_KEEP_DAYS` is not the number here. Rotate and throw away the old
 passphrase on the same day, and a week of backups can no longer be opened.
 
-**The old plain copies are gone.** 323 files (`pre-deploy-*.sql` and
-`.sql.gz`, 31 GB, 4 Aug to 24 Sept 2026) were deleted on **25 Sept 2026,
-07:16Z**, by hand, as one logged action, authorised by Amit, after both of
-Mr. Singh's conditions were met: a restore proven on the off-box object
-(24 Sept) and on the new encrypted pre-deploy copy (25 Sept), and PR 254
-live. The record, with every file name, is
-`/home/deploy/predeploy-deletion-2026-09-25.log` on the server (mode 600),
-and the same summary is on PR 254. Nothing older than the windows above
-exists anywhere any more: local sets 3 days, pre-deploy copies 3 days,
-off-box objects 7 days.
+**The old unencrypted copies are gone.** **323 files, 31 GB**, from
+4 Aug to 24 Sept 2026, were deleted on **25 Sept 2026 at 07:16Z**. It was
+done by hand, as one logged action, authorised by Amit, after both of Mr.
+Singh's conditions were met:
+- a restore proven on the off-box object (24 Sept) and on the new encrypted
+  pre-deploy copy (25 Sept 06:44Z);
+- PR 254 live (`fdffa9f`, since 24 Sept 18:08Z).
+
+None of the 323 was encrypted, but they were not all one kind:
+
+| kind | count | dates |
+|---|---|---|
+| `pre-deploy-*.sql.gz`: gzip-compressed, **not encrypted** | 311 | 4 Aug (`20260804-161107`) to 23 Sept (`20260923-183336`) |
+| `pre-deploy-*.sql`: plain, not even compressed | 12 | 24 Sept (`20260924-044441` to `20260924-112411`) |
+| encrypted (`.enc`) | 0 | the one encrypted copy that existed was left alone |
+
+Compression is not protection: anyone holding a `.sql.gz` could read the
+whole database.
+
+The record is `/home/deploy/predeploy-deletion-2026-09-25.log` on the server
+(mode 600). It lists every file name and ends `deleted 323 (31G), plain
+copies left: 0, encrypted copies: 1 -> 1`, with 53 GB free afterwards. The
+same summary is on PR 254. The counts and dates above were taken from that
+log on 2 Oct 2026.
+
+**What is still kept on purpose, so a search does not mistake it for a
+leftover:**
+- **Pre-deploy copies** (`pre-deploy-*.sql.gz.enc`, encrypted) are pruned by
+  `deploy.sh`. A copy goes once `find -mtime +3` sees it as more than **four
+  whole days** old (`BACKUP_KEEP_DAYS=3`), so one can sit there for up to
+  just under five days.
+- **Scheduled sets:** the newest **4** stay on the server, about 8 hours. The
+  bucket keeps each day's last set **until 8 days**. See *The tiered
+  schedule* below.
+- **`linode:tatvaos-backups-hold`** holds one set put aside by hand on
+  **24 Sept 2026**, the last set before the mail import. Nothing prunes it.
+  See the end of *The tiered schedule*.
+- **`/srv/tatvaos-production/backups/env-pre-website-20260923-102553`** is a
+  copy of the environment file from 23 Sept (mode 600). It contains every
+  secret. No prune matches its name, so it stays until a person removes it.
+  Removing it is Amit's decision.
 
 ### The tiered schedule (Amit, 24 Sept 2026)
 
