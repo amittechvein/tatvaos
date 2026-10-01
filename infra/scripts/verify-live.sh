@@ -31,6 +31,9 @@ step() { printf '\n%s%s>> %s%s\n' "$B" "$C" "$1" "$X"; }
 ok()   { printf '   %s[ ok ]%s %s\n' "$G" "$X" "$1"; }
 bad()  { printf '   %s[FAIL]%s %s\n' "$R" "$X" "$1"; FAILURES=$((FAILURES + 1)); }
 note() { printf '   %s%s%s\n' "$D" "$1" "$X"; }
+# Something a person should read that is NOT a failure: it never counts toward
+# FAILURES, so it never turns a deploy's verdict red. Same form as deploy.sh's.
+warn() { printf '   %s[warn]%s %s\n' "$Y" "$X" "$1"; }
 
 COMPOSE="docker compose \
     -f infra/docker/docker-compose.base.yml \
@@ -214,13 +217,94 @@ check_smtp() {
 #  integer. No queue-ID alphabet assumption, no date parsing, no year bug.
 #  On an empty queue it prints nothing and exits 0 — verified on the box.
 #
-#  AGE, NOT DEPTH, DECIDES. One depth sample cannot tell five messages in
-#  flight from five stuck, and a threshold on depth goes stale the day this
-#  box gets busy. On a box whose normal queue is empty, a message older than
-#  ten minutes is delivery stuck, whatever the count; a busy queue that is
-#  moving never trips it. Depth is reported for the human, not gated on.
+#  WHOSE SIDE, THEN AGE (Mr. Singh, 2 Oct 2026). Until then any message
+#  older than ten minutes failed the check. On 1 Oct a good deploy (a437fad)
+#  reported DEPLOY VERDICT: FAIL for ONE message, 4.4 h old, that Gmail was
+#  refusing with "452-4.2.2 The recipient's inbox is out of storage space"
+#  while twelve others went out. A verdict that says FAIL on a working release
+#  invites the rollback that breaks it. Postfix records why it deferred each
+#  recipient (delay_reason), so the check now reads it:
+#
+#   * the far server answered with its own refusal ("host X said: 4xx") -
+#     a full mailbox, a disabled account, greylisting: the RECIPIENT'S side.
+#     A named [warn], with the address masked and the age. Never a failure.
+#     Except 4.7.x: that is the far side's policy about OUR server (rate,
+#     reputation, our IP listed), so it counts as ours.
+#   * anything else - connection refused or timed out, no DNS, TLS, Dovecot's
+#     LMTP unreachable, or no reason recorded at all: OUR side. A failure once
+#     the message is older than QUEUE_OURS_MAX_AGE; younger, it is retrying.
+#   * more than QUEUE_MAX_DEFERRED deferred at once is systemic, whoever the
+#     recipients are, and fails regardless of the reasons.
+#
+#  A recipient-side message is not left for ever: Postfix returns it to its
+#  sender after maximal_queue_lifetime, 5d on production (Postfix's default;
+#  read with postconf on 2 Oct 2026, not set in local/postfix/main.cf).
 # ---------------------------------------------------------------------------
-QUEUE_MAX_AGE=600
+QUEUE_OURS_MAX_AGE=1800
+QUEUE_MAX_DEFERRED=10
+
+# The judging is Python (python3 is on the box, /usr/bin/python3, 2 Oct
+# 2026): reading a reason out of JSON with grep is how the year bug above
+# happened. It prints one verdict per line - OK / WARN / NOTE / FAIL - and
+# the shell below turns those into the usual lines and the failure count.
+# Every address is masked to ***@domain before it is printed: this output
+# lands in deploy logs that are forwarded whole.
+QUEUE_JUDGE=$(cat <<'PY'
+import json, os, re, sys, time
+now = int(time.time())
+ours_max = int(os.environ["QUEUE_OURS_MAX_AGE"])
+max_deferred = int(os.environ["QUEUE_MAX_DEFERRED"])
+ADDR = re.compile(r"[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+)")
+def mask(s): return ADDR.sub(lambda m: "***@" + m.group(1), s or "")
+def side(reason):
+    # "host mx[ip] said: 452-4.2.2 ..." - the far server's own words.
+    m = re.search(r"\bsaid:\s*\d{3}[ -](\d\.\d{1,3}\.\d{1,3})?", reason)
+    if m:
+        return "ours" if (m.group(1) or "").startswith("4.7.") else "theirs"
+    return "ours" if reason else "unknown"
+def dur(s):
+    h, r = divmod(max(s, 0), 3600)
+    return f"{h}h{r // 60:02d}m" if h else f"{r // 60}m"
+msgs = []
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        msgs.append(json.loads(line))
+    except ValueError:
+        print("FAIL Queue output not understood: a line is not JSON."); sys.exit(0)
+arrivals = [m.get("arrival_time") for m in msgs]
+if not msgs or not all(isinstance(a, int) for a in arrivals):
+    print(f"FAIL {len(msgs)} queue entr(y/ies) and no arrival_time could be read - queue output not understood."); sys.exit(0)
+deferred = sum(1 for m in msgs if m.get("queue_name") == "deferred")
+oldest = now - min(arrivals)
+print(f"NOTE {len(msgs)} message(s) queued, {deferred} deferred, oldest {oldest}s old.")
+failed, theirs = False, 0
+if deferred > max_deferred:
+    failed = True
+    print(f"FAIL {deferred} messages deferred at once (more than {max_deferred}) - something systemic, whoever the recipients are.")
+for m in msgs:
+    age = now - m["arrival_time"]
+    for r in (m.get("recipients") or [{}]):
+        reason = " ".join((r.get("delay_reason") or "").split())
+        who = mask(r.get("address") or "(no recipient)")
+        s = side(reason)
+        if s == "theirs":
+            theirs += 1
+            print(f'WARN Recipient\'s side, not ours: {who}, queued {dur(age)} - "{mask(reason)[:170]}". Postfix keeps retrying and returns it to the sender after maximal_queue_lifetime.')
+        elif age > ours_max:
+            failed = True
+            if s == "ours":
+                print(f'FAIL Mail has been queued for {age}s and the last error is on OUR side: "{mask(reason)[:170]}" ({who}).')
+            else:
+                print(f"FAIL Mail has been queued for {age}s with no reason recorded ({who}) - delivery is stuck, not slow.")
+        else:
+            print(f"NOTE Still retrying after {dur(age)}: {who}" + (f' - "{mask(reason)[:120]}"' if reason else ""))
+if not failed:
+    print(f"OK Queue judged: nothing stuck on our side (oldest {oldest}s; {theirs} recipient-side deferral(s)).")
+PY
+)
 
 # Parsing lives in its own function taking (exit-code, output) so the
 # fixtures below the verdict can drive it without a mail server. A check
@@ -245,40 +329,45 @@ parse_queue() {
         return 0
     fi
 
-    local depth
-    depth=$(printf '%s\n' "$out" | grep -c '"queue_id"')
-
-    local now oldest=0 secs
-    now=$(date +%s)
-    # Keep the EARLIEST. oldest=0 means "nothing parsed yet", which is why it
-    # is also the sentinel the failure branch below tests for.
-    while IFS= read -r secs; do
-        [ -n "$secs" ] || continue
-        if [ "$oldest" -eq 0 ] || [ "$secs" -lt "$oldest" ]; then
-            oldest=$secs
-        fi
-    done < <(printf '%s\n' "$out" \
-             | grep -o '"arrival_time": *[0-9][0-9]*' \
-             | grep -o '[0-9][0-9]*$')
-
-    # Output exists but not one arrival time parsed: the output is in a shape
-    # we do not understand, which is a failure to test, not a pass.
-    if [ "$oldest" -eq 0 ]; then
-        bad "${depth} queue entr(y/ies) and no arrival_time could be read — queue output not understood."
+    # FAIL CLOSED here too: no judge, or a judge that crashed or said nothing
+    # we recognise, is "could not test", never "fine".
+    if ! command -v python3 >/dev/null 2>&1; then
+        bad "python3 is not on this machine — the mail queue cannot be judged."
+        return 1
+    fi
+    local verdict jrc=0
+    verdict=$(printf '%s\n' "$out" \
+              | QUEUE_OURS_MAX_AGE="$QUEUE_OURS_MAX_AGE" QUEUE_MAX_DEFERRED="$QUEUE_MAX_DEFERRED" \
+                python3 -c "$QUEUE_JUDGE" 2>&1) || jrc=$?
+    if [ "$jrc" -ne 0 ]; then
+        bad "The mail queue could not be judged (python3 exit $jrc)."
+        note "${verdict##*$'\n'}"
         return 1
     fi
 
-    local age=$(( now - oldest ))
-    note "${depth} message(s) queued, oldest ${age}s old."
+    local line kind failed=0 decided=0
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        kind=${line%% *}; line=${line#* }
+        case "$kind" in
+            OK)   ok "$line"; decided=1 ;;
+            WARN) warn "$line" ;;
+            NOTE) note "$line" ;;
+            FAIL) bad "$line"; failed=1; decided=1 ;;
+            *)    bad "The queue judge printed something unexpected: ${kind:0:40}"; failed=1; decided=1 ;;
+        esac
+    done <<< "$verdict"
 
-    if [ "$age" -gt "$QUEUE_MAX_AGE" ]; then
-        bad "Mail has been queued for ${age}s — delivery is stuck, not slow."
-        note "Postfix accepts and holds when Dovecot LMTP is unreachable. Nothing is lost yet."
-        note "Check: docker compose ps dovecot"
+    if [ "$decided" -eq 0 ]; then
+        bad "The queue judge reached no verdict — queue output not understood."
         return 1
     fi
-
-    ok "Queue moving (oldest ${age}s)."
+    if [ "$failed" -ne 0 ]; then
+        note "Our side means our Postfix could not connect, resolve, authenticate, or reach Dovecot's LMTP."
+        note "Check: docker compose logs postfix --since 1h | grep -i deferred"
+        return 1
+    fi
+    return 0
 }
 
 # ---------------------------------------------------------------------------
