@@ -107,8 +107,14 @@ const TEMPLATE = new URL('../pdf/main.typ', import.meta.url);
 
 /**
  * @param {{json: object, text: string, pictures?: Map<string, Uint8Array>, deadline: number,
- *          typst?: string, fontDir?: string, checkedScripts?: Set<string>}} job
+ *          typst?: string, fontDir?: string, checkedScripts?: Set<string>,
+ *          template?: URL, traceTo?: string, root?: string}} job
  *   deadline: Date.now() value past which the build is killed.
+ *   template, traceTo, root: THE GATE ONLY (tests/docs-render/pdf-gate.mjs) — a
+ *   deliberately unsafe template to show the checks catch one, and an strace
+ *   log of every file Typst opens and every connection it tries, and a wider
+ *   --root to show the gate would see a read outside the job folder. The API
+ *   never sets them.
  * @returns {Promise<{pdf: Buffer, ms: number}>}
  */
 export async function buildPdf(job) {
@@ -123,17 +129,18 @@ export async function buildPdf(job) {
   const dir = await mkdtemp(join(tmpdir(), 'pdf-'));
   const t0 = Date.now();
   try {
-    await copyFile(TEMPLATE, join(dir, 'main.typ'));
+    await copyFile(job.template ?? TEMPLATE, join(dir, 'main.typ'));
     await writeFile(join(dir, 'doc.json'), JSON.stringify(data));
     for (const f of files) await writeFile(join(dir, f.name), f.bytes);
 
     const left = job.deadline - Date.now();
     if (left <= 0) throw new PdfFailed('timeout');
     const { code, stderr, killed } = await new Promise((resolve, reject) => {
-      const child = spawn(typst, [
-        'compile', '--root', dir, '--font-path', fontDir, '--ignore-system-fonts',
-        join(dir, 'main.typ'), join(dir, 'out.pdf'),
-      ], {
+      const args = ['compile', '--root', job.root ?? dir, '--font-path', fontDir, '--ignore-system-fonts',
+        join(dir, 'main.typ'), join(dir, 'out.pdf')];
+      const child = spawn(job.traceTo ? 'strace' : typst, job.traceTo
+        ? ['-f', '-qq', '-e', 'trace=open,openat,openat2,connect,socket', '-o', job.traceTo, typst, ...args]
+        : args, {
         cwd: dir,
         stdio: ['ignore', 'ignore', 'pipe'],
         // Nothing inherited: no package path or cache Typst could use, no
@@ -161,7 +168,7 @@ export async function buildPdf(job) {
       const line = stderr.split('\n').find((l) => /error/i.test(l)) ?? `exit ${code}`;
       throw new PdfFailed('typst_failed', { message: line.replace(/"[^"]*"/g, '"…"').slice(0, 160) });
     }
-    return { pdf: await readFile(join(dir, 'out.pdf')), ms: Date.now() - t0 };
+    return { pdf: await readFile(join(dir, 'out.pdf')), ms: Date.now() - t0, dir }; // dir: gone by now; the gate reads its traces against it
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
