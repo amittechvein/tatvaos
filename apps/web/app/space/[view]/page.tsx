@@ -13,6 +13,7 @@ import { ShareDialog } from '@/components/space/ShareDialog';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { docsApi, docHref, isDocument } from '@/lib/docs';
+import { sheetsApi, sheetHref, isSpreadsheet } from '@/lib/sheets/api';
 import { Spinner } from '@/components/ui/Kit';
 
 /**
@@ -52,6 +53,11 @@ export default function SpacePage({ params }: { params: Promise<{ view: string }
   const [docsOn, setDocsOn] = useState(false);
   useEffect(() => {
     docsApi.status(authedFetch).then(setDocsOn).catch(() => setDocsOn(false));
+  }, [authedFetch]);
+  // Sheets likewise, on its own switch.
+  const [sheetsOn, setSheetsOn] = useState(false);
+  useEffect(() => {
+    sheetsApi.status(authedFetch).then(setSheetsOn).catch(() => setSheetsOn(false));
   }, [authedFetch]);
   const { upload, jobs, drainCompleted } = useUploads();
 
@@ -184,6 +190,13 @@ export default function SpacePage({ params }: { params: Promise<{ view: string }
           // A TatvaOS document opens in Docs. Its Download button still
           // works — it saves the HTML rendering the server keeps current.
           <Link href={docHref(file.id)}
+            className="min-w-0 flex-1 truncate text-sm font-medium text-ink hover:underline">
+            {item.name}
+          </Link>
+        ) : file && sheetsOn && isSpreadsheet(file) && !trashed ? (
+          // A TatvaOS spreadsheet opens in Sheets. Download saves the .xlsx
+          // its editor writes at every checkpoint.
+          <Link href={sheetHref(file.id)}
             className="min-w-0 flex-1 truncate text-sm font-medium text-ink hover:underline">
             {item.name}
           </Link>
@@ -322,6 +335,13 @@ export default function SpacePage({ params }: { params: Promise<{ view: string }
                   .catch((e: Error) => setError(e.message))}
                 className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink-muted transition hover:bg-canvas hover:text-ink">
                 New document
+              </button>}
+              {sheetsOn && <button type="button"
+                onClick={() => void sheetsApi.create(authedFetch, undefined, folderId, scope)
+                  .then((d) => router.push(sheetHref(d.id)))
+                  .catch((e: Error) => setError(e.message))}
+                className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink-muted transition hover:bg-canvas hover:text-ink">
+                New spreadsheet
               </button>}
               <button type="button" onClick={() => fileInput.current?.click()}
                 className="rounded-lg bg-brand-600 px-4 py-1.5 text-sm font-semibold text-white transition hover:bg-brand-700">
