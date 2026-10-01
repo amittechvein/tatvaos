@@ -50,10 +50,10 @@ consts = {}
 for m in re.finditer(r'public const string (\w+)\s*=\s*((?:\s*\+?\s*"(?:[^"\\]|\\.)*")+)\s*;', text['disclosure']):
     consts[m.group(1)] = ''.join(re.findall(r'"((?:[^"\\]|\\.)*)"', m.group(2)))
 WANTED = ['HelpMeWrite', 'SuggestedReplies', 'Summarise', 'Sorting', 'NeverSent', 'WhoDecides', 'Retention',
-          'MeetingNotes', 'Captions']
+          'MeetingNotes']
 # Sentences the privacy page carries but the ADMIN page does not show
 # (meetings and captions are not on the Mail AI card).
-PRIVACY_ONLY = {'MeetingNotes', 'Captions'}
+PRIVACY_ONLY = {'MeetingNotes'}
 missing = [w for w in WANTED if w not in consts]
 if missing:
     print(f'  AiDisclosure.cs has no {", ".join(missing)} - the check cannot read it, so it proves nothing')

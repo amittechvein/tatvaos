@@ -77,21 +77,14 @@ public static class AiDisclosure
         + "for misuse, unless the law requires it to be kept longer.";
 
     // ── Meetings ──────────────────────────────────────────────────────────
-    //  Minutes are written from live captions; no meeting audio reaches
-    //  OpenAI (checked 30 Sept 2026: the recording-transcription path is not
-    //  configured on production).
-    public const string MeetingNotes =
-        "the text of what was said, taken from live captions (not the audio)";
-
-    //  Live captions themselves: the BROWSER turns speech into text, and the
-    //  browser's own speech service hears the audio - Google for Chrome,
-    //  Microsoft for Edge, Apple for Safari (lib/useCaptions.ts uses whatever
-    //  the browser provides). Mr. Singh writes this sentence once his five
-    //  questions are answered (30 Sept 2026); until then it is a blank, and a
-    //  blank here keeps the Mail AI offer button closed like any other.
-    public const string Captions =
-        "[PENDING Mr. Singh: the live-captions sentence - which speech service hears the audio, where, "
-        + "who turns it on, what that service keeps, and whether there is a switch.]";
+    //  What the minutes are written from, in the words the privacy page has
+    //  used since 21 Sept ("meeting transcripts"). Nothing here about HOW the
+    //  transcript is made: live captions are a Connect disclosure, ruled OUT
+    //  of the Mail AI text by Mr. Singh on 1 Oct 2026, and the privacy page
+    //  says nothing new about them until he writes that sentence. It must NOT
+    //  be added here as a PENDING sentence: anything in this class gates the
+    //  Mail AI offer button (Complete, below).
+    public const string MeetingNotes = "the meeting's transcript";
 
     /// <summary>"OpenAI, in the United States" - the one way every sentence names who and where.</summary>
     public static string ToWhom(string vendor, string location) => $"{vendor}, in {location}";
