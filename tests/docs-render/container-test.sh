@@ -52,6 +52,24 @@ if ! docker info >/dev/null 2>&1; then
   docker info >/dev/null 2>&1 || { echo "the Docker engine did not start"; exit 2; }
   STARTED=1
 fi
+# NOT DOCKER DESKTOP (Amit + Mr. Singh, 30 Sept 2026: the Docker ENGINE from
+# Ubuntu's packages inside WSL; Docker Desktop is banned on the laptop). With
+# Docker Desktop running, its WSL integration answers on the same
+# /var/run/docker.sock, `docker info` succeeds, this script starts nothing —
+# and the whole run happens on Docker Desktop without a word (1 Oct 2026: a
+# 35/0 run that was on Docker Desktop, started by someone else). Refuse, and
+# say so; stopping Docker Desktop is its owner's call, not this script's.
+DAEMON_OS="$(docker info --format '{{.OperatingSystem}}' 2>/dev/null)"
+case "$DAEMON_OS" in
+  *"Docker Desktop"*)
+    echo "REFUSED: the daemon answering is Docker Desktop ('$DAEMON_OS'), not the Docker engine in WSL."
+    echo "  Docker Desktop is not used for this test. Ask whoever started it to stop it, then re-run."
+    # Before the trap is set: stop the engine here if this run started it.
+    [ "$STARTED" = 1 ] && { systemctl stop docker.service docker.socket 2>/dev/null || service docker stop; } >/dev/null 2>&1
+    rm -rf "$TMP"
+    exit 2 ;;
+esac
+echo "  (daemon: $DAEMON_OS)"
 DC()    { docker compose -p "$P" -f "$BASE" -f "$STUBS" "$@"; }
 DCRED() { docker compose -p "${P}red" -f "$BASE" -f "$STUBS" -f "$EGRESS_RED" "$@"; }
 cleanup() {
@@ -163,11 +181,16 @@ same "process limit 64" "$(docker inspect -f '{{.HostConfig.PidsLimit}}' "$R")" 
 
 echo "== 7. it renders, and the 10-second limit holds"
 # The payloads are made by the image itself, from the committed fixtures.
-MAKE='import * as Y from "yjs"; import { getSchema } from "@tiptap/core"; import { prosemirrorJSONToYDoc } from "@tiptap/y-tiptap"; import { documentExtensions } from "../web/components/docs/schema.ts"; import { readFileSync } from "node:fs"; const j = JSON.parse(readFileSync("/fx/" + process.argv[1], "utf8")); const s = Y.encodeStateAsUpdate(prosemirrorJSONToYDoc(getSchema(documentExtensions()), j, "default")); process.stdout.write(JSON.stringify({ updates: [Buffer.from(s).toString("base64")] }));'
-for f in nested-lists google-docs-paste; do
+MAKE='import * as Y from "yjs"; import { getSchema } from "@tiptap/core"; import { prosemirrorJSONToYDoc } from "@tiptap/y-tiptap"; import { documentExtensions } from "../web/components/docs/schema.ts"; import { readFileSync } from "node:fs"; const j0 = JSON.parse(readFileSync("/fx/" + process.argv[1], "utf8")); const n = Number(process.argv[2] || 1); const j = { ...j0, content: Array.from({ length: n }, () => j0.content).flat() }; const s = Y.encodeStateAsUpdate(prosemirrorJSONToYDoc(getSchema(documentExtensions()), j, "default")); process.stdout.write(JSON.stringify({ updates: [Buffer.from(s).toString("base64")] }));'
+# "big" = the Google Docs fixture twenty times over: the render must be far
+# past the lowered limit on ANY machine. One copy took ~400 ms on a busy laptop
+# (30 Sept) but 130-190 ms on an idle one (1 Oct), and the unit test with the
+# same document then failed 5 runs in 5. Twenty copies: ~2.5 s on that laptop.
+for spec in nested-lists:nested-lists:1 google-docs-paste:big:20; do
+  IFS=: read -r f out n <<<"$spec"
   DC run --rm --no-deps -T -v "$ROOT/tests/docs-render/fixtures:/fx:ro" --entrypoint node render \
-    --no-warnings --import ./src/register.mjs --input-type=module -e "$MAKE" "$f.json" > "$TMP/$f.json" 2>/dev/null
-  docker cp "$TMP/$f.json" "$(DC ps -q apistub)":/tmp/"$f".json >/dev/null
+    --no-warnings --import ./src/register.mjs --input-type=module -e "$MAKE" "$f.json" "$n" > "$TMP/$out.json" 2>/dev/null
+  docker cp "$TMP/$out.json" "$(DC ps -q apistub)":/tmp/"$out".json >/dev/null
 done
 POST='const [url,f]=process.argv.slice(1);fetch(url,{method:"POST",headers:{"content-type":"application/json"},body:require("fs").readFileSync(f)}).then(async r=>{const b=await r.json();console.log(r.status+" "+(b.html?"html":b.error||""))},e=>console.log("error "+e.message))'
 same "the API stand-in gets a document's file back (200)" \
@@ -175,13 +198,13 @@ same "the API stand-in gets a document's file back (200)" \
 same "the service's limit is 10 s" "$(DC exec -T apistub node -e 'fetch("http://render:8080/health").then(r=>r.json()).then(b=>console.log(b.limitMs))' 2>&1 | tail -1)" 10000
 # The limit, enforced inside the hardened container: the SAME definition,
 # with the limit lowered (it can only be lowered) so a large document outruns it.
-# 250 ms: far below the large fixture (~400 ms even on a free laptop), far
-# above a small one. 40 ms (the laptop unit test's value) also failed the
-# SMALL render on one CPU in a fresh worker — a test tolerance, not the service.
+# 250 ms: far below "big" (twenty copies of the large fixture), far above a
+# small one. 40 ms (the laptop unit test's first value) also failed the SMALL
+# render on one CPU in a fresh worker — a test tolerance, not the service.
 DC run -d --no-deps --name "${P}-render-limit" -e RENDER_TIMEOUT_MS=250 -e RENDER_WORKERS=1 render >/dev/null 2>&1
 for _ in $(seq 1 60); do DC exec -T apistub node -e "$WEB" "http://${P}-render-limit:8080/health" >/dev/null 2>&1 && break; sleep 1; done
 same "a render past the limit is stopped (504), in the hardened container" \
-  "$(DC exec -T apistub node -e "$POST" "http://${P}-render-limit:8080/render/doc" /tmp/google-docs-paste.json 2>&1 | tail -1)" "504 render timed out"
+  "$(DC exec -T apistub node -e "$POST" "http://${P}-render-limit:8080/render/doc" /tmp/big.json 2>&1 | tail -1)" "504 render timed out"
 same "…and the next render still works (the worker was replaced)" \
   "$(DC exec -T apistub node -e "$POST" "http://${P}-render-limit:8080/render/doc" /tmp/nested-lists.json 2>&1 | tail -1)" "200 html"
 docker rm -f "${P}-render-limit" >/dev/null 2>&1

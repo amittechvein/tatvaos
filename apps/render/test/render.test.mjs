@@ -106,13 +106,18 @@ test('the server renders, refuses bad input, and never logs content', async () =
 });
 
 test('a render past the limit is killed (504), and the next render still works', async () => {
-  // 250 ms: far below the large fixture (~400 ms), far above a small render even in a
-  // fresh worker. 40 ms failed the SMALL render too on a busy laptop and on one CPU.
+  // 250 ms: far above a small render even in a fresh worker (40 ms failed the SMALL
+  // render too on a busy laptop and on one CPU). The slow document must be far
+  // past it on ANY machine: the Google Docs fixture alone (~400 ms on a busy
+  // laptop on 30 Sept) took 130-190 ms on an idle one on 1 Oct and this test
+  // failed 5 runs in 5 — it was measuring the machine. Twenty copies: ~2.5 s
+  // on that idle laptop, 10x the limit (8.5 MB request, cap 48 MB).
   const s = await startServer(18432, { RENDER_TIMEOUT_MS: '250', RENDER_WORKERS: '1' });
   try {
-    const big = stateOf(JSON.parse(readFileSync(new URL('google-docs-paste.json', fixtures), 'utf8')));
+    const fixture = JSON.parse(readFileSync(new URL('google-docs-paste.json', fixtures), 'utf8'));
+    const big = stateOf({ ...fixture, content: Array.from({ length: 20 }, () => fixture.content).flat() });
     const slow = await post(18432, { updates: [b64(big)] });
-    assert.equal(slow.status, 504, 'the large document outruns a 250 ms limit');
+    assert.equal(slow.status, 504, 'twenty copies of the large document outrun a 250 ms limit');
     const after = await post(18432, { updates: [b64(stateOf(paragraph('small')))] });
     assert.equal(after.status, 200, 'the killed worker was replaced');
   } finally { s.child.kill(); }
