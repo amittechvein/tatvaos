@@ -138,6 +138,19 @@ public static class AiProductSwitch
     public const string MailSuggestFeature = "mail.suggest";
     public const string MailSummaryFeature = "mail.summary";
 
+    /// <summary>
+    /// What each feature starts as when an organisation first turns Mail AI
+    /// on, and what the operator's offer action resets it to. Only Help me
+    /// write starts on: it sends a person's own draft, when they ask.
+    /// Suggested replies send someone ELSE's email the moment it is opened,
+    /// with nobody asking, so the administrator turns them on deliberately,
+    /// like Summarise and sorting (Mr. Singh, 30 Sept 2026). The column
+    /// defaults in local/postgres/init must say the same.
+    /// </summary>
+    public const bool DefaultRewrite = true;
+    public const bool DefaultSuggest = false;
+    public const bool DefaultSummary = false;
+
     public const string MailFeatureOff =
         "This TatvaOS AI feature is switched off for your organisation. An administrator can turn it on "
         + "under TatvaOS AI.";

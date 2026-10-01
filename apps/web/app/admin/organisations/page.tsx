@@ -409,6 +409,7 @@ function ChangePlan({ org, plans, onClose, onChanged }: {
 
       <AiUsageSection orgId={org.id} />
       <AiCreditsSection orgId={org.id} />
+      <MailAiOfferSection orgId={org.id} />
 
       <hr className="my-6" />
 
@@ -642,6 +643,107 @@ function AiCreditsSection({ orgId }: { orgId: string }) {
         {saved && <span className="text-[0.75rem] text-ok">Saved and recorded in the audit trail.</span>}
       </div>
       <TopupsPanel orgId={orgId} topups={topups} hasLimit={c?.base !== null && c?.base !== undefined} onChanged={load} />
+    </>
+  );
+}
+
+/**
+ * Mail AI for this organisation (30 Sept 2026): whether it is on the Mail AI
+ * list (ai.mail.organisations), and the one action that puts it there.
+ *
+ * Offering is also a RESET: the organisation's own Mail AI goes off, sorting
+ * off, features to their defaults, so its administrator agrees again under
+ * the text that is live now. Organisation 5 is why: their switch from 25 Sept
+ * was still on behind the gate, and a plain list edit would have resumed it.
+ * The page sends back the list it showed, and the server refuses if it has
+ * changed since. Run only after the privacy text is live, on Amit's go.
+ */
+function MailAiOfferSection({ orgId }: { orgId: string }) {
+  const { authedFetch } = useAuth();
+  type S = { list: string; onList: boolean; everyone: boolean; allowAi: boolean; allowMailAi: boolean;
+    privacyTextComplete: boolean; privacyTextIncomplete: string | null;
+    sorting: boolean; features: { rewrite: boolean; suggest: boolean; summary: boolean } };
+  const [s, setS] = useState<S | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  const path = `/admin/organisations/${orgId}/mail-ai`;
+
+  const load = useCallback(() => {
+    authedFetch(path)
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error ?? 'Could not load Mail AI.');
+        setS(body);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : 'Could not load Mail AI.'));
+  }, [authedFetch, path]);
+  useEffect(() => { load(); }, [load]);
+
+  async function offer() {
+    if (!s) return;
+    setBusy(true); setError(null);
+    try {
+      const res = await authedFetch(`${path}/offer`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expectedList: s.list }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? 'Could not offer Mail AI.');
+      setDone(true); setConfirming(false);
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not offer Mail AI.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const onOff = (b: boolean) => (b ? 'on' : 'off');
+  return (
+    <>
+      <h6 className="font-semibold mb-2 mt-4">TatvaOS AI in Mail</h6>
+      {error && <Alert tone="danger">{error}</Alert>}
+      {s && (
+        <p className="text-sm mb-2">
+          {s.everyone ? 'Offered to every organisation (the list is "all").'
+            : s.onList ? 'On the Mail AI list.' : 'Not on the Mail AI list: its administrators see "not available yet".'}{' '}
+          <span className="text-ink-muted">
+            Its own switches: AI {onOff(s.allowAi)}, Mail AI {onOff(s.allowMailAi)}, sorting {onOff(s.sorting)};
+            Help me write {onOff(s.features.rewrite)}, suggested replies {onOff(s.features.suggest)},
+            Summarise {onOff(s.features.summary)}.
+          </span>
+        </p>
+      )}
+      {s && !s.onList && !s.everyone && !s.privacyTextComplete && (
+        <p className="text-[0.75rem] text-warn mb-0">{s.privacyTextIncomplete}</p>
+      )}
+      {s && !s.onList && !s.everyone && s.privacyTextComplete && (
+        <Button variant="ghost" disabled={busy} onClick={() => setConfirming(true)}>
+          Offer Mail AI to this organisation…
+        </Button>
+      )}
+      {done && <p className="text-[0.75rem] text-ok mb-0">Offered, reset, and recorded in the audit trail under your name.</p>}
+      {confirming && s && (
+        <Modal onClose={() => !busy && setConfirming(false)} title="Offer TatvaOS AI in Mail?" busy={busy}>
+          <p>
+            This organisation goes on the Mail AI list, and in the same step its own Mail AI is reset:
+            Mail AI off, sorting off, Help me write on, suggested replies and Summarise off. Nothing is
+            sent until its administrator turns Mail AI on again and agrees to the text shown then.
+          </p>
+          <p className="text-ink-muted">
+            Only do this once the Mail AI privacy text is live on production. It is recorded in this
+            organisation&apos;s audit trail under your name.
+          </p>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>Cancel</Button>
+            <Button variant="primary" disabled={busy} onClick={() => void offer()}>
+              {busy ? 'Offering…' : 'Offer and reset'}
+            </Button>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }

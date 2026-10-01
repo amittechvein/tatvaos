@@ -918,6 +918,8 @@ app.MapMyStorageEndpoints();
 app.MapOrgAiEndpoints();
 // The operator's read of an organisation's AI use (the limits are settings).
 app.MapOrgAiUsageEndpoints();
+// Offering Mail AI to one organisation, and resetting its own Mail AI with it.
+app.MapOrgMailAiOfferEndpoints();
 app.MapOrganisationDetailEndpoints();
 app.MapPlanFeatureEndpoints();
 TatvaOS.Api.Modules.Billing.BillingEndpoints.MapBillingEndpoints(app);
@@ -988,6 +990,8 @@ app.MapAiStatusEndpoints();
 //  the variables after the first start.
 // ---------------------------------------------------------------------------
 await BootstrapAdmin.EnsureAsync(app.Services, app.Logger);
+// Development-only test switch for the Mail AI offer button (ignored elsewhere, loudly).
+TatvaOS.Api.Shared.Ai.MailAiPrivacyText.ConfigureForTests(app.Environment, app.Configuration, app.Logger);
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }))
    .AllowAnonymous()
