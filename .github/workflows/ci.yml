@@ -417,6 +417,27 @@ jobs:
       - name: "Render container: no internet, no database, API only, non-root, read-only, limits"
         run: bash tests/docs-render/container-test.sh
 
+      # Decision 0011 condition 2 (Typst approved by Mr. Singh, 1 Oct 2026, with
+      # four conditions): the PDF gate, in the render container's own limits.
+      # Text = the server's text; document text never becomes Typst code (red
+      # first); a locked root; shaping equal to HarfBuzz's for every Indian
+      # script; inside the time and memory caps.
+      - name: "PDF gate: Typst, data never markup, shaping, limits"
+        env:
+          PDF_GATE_OUT: ${{ runner.temp }}/pdf-gate
+        run: bash tests/docs-render/pdf-gate.sh
+
+      # The sample PDFs, for the people who check a script by reading it
+      # (Amit, 1 Oct 2026: a script is switched on only after a reader checks).
+      - name: "PDF gate: keep the sample PDFs"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdf-gate-samples
+          path: ${{ runner.temp }}/pdf-gate/*.pdf
+          retention-days: 14
+          if-no-files-found: ignore
+
   mail-stack:
     name: Mail stack
     runs-on: ubuntu-latest
