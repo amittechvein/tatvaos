@@ -90,13 +90,16 @@ public static class AiProductSwitch
     //  text: "Until they're live, either show the Mail AI switches only to
     //  Techvein's organisation, or tell me why that's harder than I think."
     //  It is a platform setting (ai.mail.organisations), not code, so it is
-    //  lifted by emptying it on the Settings page — no deploy.
+    //  lifted on the Settings page — no deploy — by setting it to "all".
+    //  (Until 29 Sept 2026 it was lifted by EMPTYING it; empty now means
+    //  nobody. The rule is in MailAiOrganisationList.cs.)
     //
     //  Checked HERE, inside MailAllowedAsync, which every mail.* request
     //  already passes through in the gateway — so Help me write, suggested
     //  replies and sorting are all behind it without a line in any of them.
     //
-    //    row missing / empty  → every organisation may (no gate)
+    //    row missing / empty  → nobody (Mr. Singh, 29 Sept 2026)
+    //    exactly "all"        → every organisation
     //    a list of ids        → only those
     //    unreadable           → nobody (fail-closed, like every switch here)
     //    ids that do not parse are ignored and logged; a list with NONE that
@@ -106,16 +109,14 @@ public static class AiProductSwitch
         "TatvaOS AI in Mail is not available for your organisation yet. It will be offered once our "
         + "privacy policy has been updated to describe it.";
 
-    /// <summary>Whether this organisation is on the Mail AI list (or there is no list). Fail-closed.</summary>
+    /// <summary>Whether this organisation is on the Mail AI list ("all" = every one). Fail-closed.</summary>
     public static async Task<bool> MailOfferedToAsync(AppDbContext db, Guid tenantId, ILogger log, CancellationToken ct)
     {
         try
         {
             var all = await new SettingsReader(db).GetAsync(ct);
-            if (!all.TryGetValue(SettingKeys.AiMailOrganisations, out var raw) || string.IsNullOrWhiteSpace(raw))
-                return true;
-            var ids = ParseOrganisations(raw, log);
-            return ids.Contains(tenantId);
+            all.TryGetValue(SettingKeys.AiMailOrganisations, out var raw);
+            return MailAiOrganisationList.Allows(raw, tenantId, log);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -126,17 +127,8 @@ public static class AiProductSwitch
     }
 
     /// <summary>The ids in the setting. Bad entries are logged and skipped.</summary>
-    public static HashSet<Guid> ParseOrganisations(string raw, ILogger? log = null)
-    {
-        var ids = new HashSet<Guid>();
-        foreach (var part in raw.Split([',', ';', ' ', '\n', '\r', '\t'], StringSplitOptions.RemoveEmptyEntries))
-        {
-            if (Guid.TryParse(part, out var id)) ids.Add(id);
-            else log?.LogWarning("{Key} has an entry that is not an organisation id: '{Entry}' (ignored).",
-                SettingKeys.AiMailOrganisations, part);
-        }
-        return ids;
-    }
+    public static HashSet<Guid> ParseOrganisations(string raw, ILogger? log = null) =>
+        MailAiOrganisationList.Parse(raw, log);
 
     public static bool IsMail(string feature) =>
         feature.StartsWith(MailPrefix, StringComparison.Ordinal);
