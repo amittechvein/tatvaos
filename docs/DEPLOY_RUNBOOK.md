@@ -140,8 +140,8 @@ confirmed only by a build until somebody finally opened a meeting.
 Its deploy note states two things (Mr. Singh, 30 Sept and 1 Oct 2026):
 
 1. **Who is on each AI list** at that moment: `ai.mail.organisations`,
-   `ai.connect.organisations`, `ai.docs.organisations` (the deploy prints
-   them once PR 365 is live).
+   `ai.connect.organisations`, `ai.docs.organisations`,
+   `ai.sheets.organisations` (the deploy prints them, PR 365).
 2. **That the OpenAI sharing settings were checked off**, and when: the three
    Sharing options Disabled and retention as recorded in
    `docs/runbooks/backup-and-restore.md`, "Provider settings". This is read
