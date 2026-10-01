@@ -108,3 +108,29 @@ The script packages carry many families and weights. We would ship **Regular and
 4. **The engine:** A, with the gate above.
 5. **A second binary in the render image**, pinned by version and sha256.
 6. **The spike's downloads:** the Typst release tarball (17.5 MB, from GitHub, checked against its sha256) and the Alpine font packages, both into the throwaway test image only. That needs Amit's go too.
+
+## 8. Rulings (1 October 2026)
+
+**Mr. Singh: Typst approved, with four conditions.**
+
+1. **Customer text is data, never markup, by construction.** The document goes to Typst as a JSON file, `doc.json`, read by one fixed template (`apps/render/pdf/main.typ`). Nothing from a document is ever concatenated into Typst source. Red first: a document whose text is `#read("/etc/passwd")`, a raw `#include`, or a `#import "@preview/…"` must print each as literal text, with no file read and no fetch.
+2. **A locked file root.** Typst runs with `--root` set to an empty per-job folder that holds only the template, `doc.json` and the pictures the service wrote. There is no package path, no cache and no network. A picture comes from the stored document's own bytes, never a path.
+3. **Downloads: Alpine's own package first.** If Alpine lacks it, use the GitHub release with its SHA-256 written in the Dockerfile and checked at build time. Fonts are handled the same way (Noto, OFL). Our pinned base image is **Alpine 3.24**, whose signed repository has **Typst 0.14.2-r0** and every font needed, so nothing comes from GitHub.
+4. **Inside the container's limits.** The PDF is built in the same locked-down render container, under the same deadline as the render (one deadline for both). A PDF that can't be built in time fails the send with a clear message.
+
+**Amit:**
+
+1. **Fonts:** open substitutes are fine. Use metric-compatible ones where they exist (Liberation for Arial, Times and Courier) and close matches for Georgia, Verdana and Trebuchet.
+2. **Scripts:** day one is **English and Devanagari** (Hindi and Marathi), verified by a person who reads them. Every other script on the §4 list is built in and tool-checked from day one, but is switched on only once a reader has checked a sample PDF. A document containing a script nobody has checked yet is refused with `script_not_checked`, naming the script; it never goes out unchecked.
+3. **Page:** A4, with page numbers at the foot.
+
+**Then:** build the gate first, and bring its results before the email side is wired up.
+
+## 9. Scripts checked by a reader
+
+The record Amit asked for. A script is switched on in `CHECKED_SCRIPTS` (`apps/render/src/render-pdf.mjs`) only in the same change that adds its row here.
+
+| Script | Languages | Checked by | Date | Sample PDF |
+|---|---|---|---|---|
+| Latin | English | (always on) | | |
+| Devanagari | Hindi, Marathi | *pending: the gate's sample goes to a reader* | | |

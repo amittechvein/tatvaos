@@ -77,6 +77,7 @@ export function renderDoc(updates) {
     const dropped = dropUnknown(json);
     return {
       state: Y.encodeStateAsUpdate(doc),
+      json, // the PDF's input (render-pdf.mjs); not sent by /render/doc
       html: generateHTML(json, extensions),
       text: generateText(json, extensions, { blockSeparator: '\n' }),
       dropped,
