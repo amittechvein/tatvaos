@@ -209,14 +209,14 @@ async function main() {
   console.log('Checkpoint: the Space copy is a real .xlsx');
   const snap = a1!.model!.snapshot();
   const xlsx = await writeXlsx(snap);
-  const cp = await A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
+  const cp = await A(`/sheets/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
     state: b64(Y.encodeStateAsUpdate(a1!.doc)), upToSeq: a1!.lastSeq, html: '<table></table>', text: 'Fee', xlsx: b64(xlsx),
   }) });
   check('checkpoint with an .xlsx is accepted', cp.status === 200 && cp.body?.saved === true, `${cp.status} ${JSON.stringify(cp.body)}`);
-  const noX = await A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
+  const noX = await A(`/sheets/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
     state: b64(Y.encodeStateAsUpdate(a1!.doc)), upToSeq: a1!.lastSeq, html: '', text: '' }) });
   check('a spreadsheet checkpoint WITHOUT its .xlsx is refused (400)', noX.status === 400, `${noX.status}`);
-  const notZip = await A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
+  const notZip = await A(`/sheets/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
     state: b64(Y.encodeStateAsUpdate(a1!.doc)), upToSeq: a1!.lastSeq, html: '', text: '', xlsx: b64(new TextEncoder().encode('<html>not a zip</html>')) }) });
   check('an .xlsx that is not a zip is refused (400)', notZip.status === 400, `${notZip.status}`);
 
@@ -233,7 +233,7 @@ async function main() {
   // XlsxGuard.cs (Mr. Singh, 25 Sept 2026). Formulas are ordinary content and
   // pass; macros, embedded objects, links outside the file and calling-out
   // formulas are refused. Every refusal has its permit twin in this run.
-  const send = (bytes: Uint8Array) => A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
+  const send = (bytes: Uint8Array) => A(`/sheets/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
     state: b64(Y.encodeStateAsUpdate(a1!.doc)), upToSeq: a1!.lastSeq, html: '<table></table>', text: 'Fee', xlsx: b64(bytes) }) });
 
   // Permit 1: an ordinary workbook with ordinary formulas (incl. HYPERLINK, and "|" inside text).
@@ -306,9 +306,23 @@ async function main() {
 
   console.log('Documents and spreadsheets do not cross');
   const doc = await A('/docs', { method: 'POST', body: JSON.stringify({ title: 'E2E doc', scope: 'personal' }) });
-  const docCp = await A(`/docs/${doc.body.id}/checkpoint`, { method: 'POST', body: JSON.stringify({
-    state: b64(new Y.Doc() && Y.encodeStateAsUpdate(new Y.Doc())), upToSeq: 0, html: '<p>x</p>', text: 'x', xlsx: b64(xlsx) }) });
-  check('a DOCUMENT checkpoint carrying an .xlsx is refused (400)', docCp.status === 400, `${docCp.status}`);
+  // Each kind saves through its own routes (1 Oct 2026): a document's file is
+  // built on the server (/api/docs), a spreadsheet's is still its browser's
+  // .xlsx (/api/sheets). Each route refuses the other kind; the permit twins
+  // are the spreadsheet saves above and the named version below.
+  const docCp = await A(`/sheets/${doc.body.id}/checkpoint`, { method: 'POST', body: JSON.stringify({
+    state: b64(Y.encodeStateAsUpdate(new Y.Doc())), upToSeq: 0, html: '<p>x</p>', text: 'x', xlsx: b64(xlsx) }) });
+  check('a DOCUMENT saved through the spreadsheet route is refused (400)', docCp.status === 400, `${docCp.status} ${JSON.stringify(docCp.body)}`);
+  const sheetViaDocs = await A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({ upToSeq: a1!.lastSeq }) });
+  check('a SPREADSHEET saved through the document route is refused (400)', sheetViaDocs.status === 400, `${sheetViaDocs.status} ${JSON.stringify(sheetViaDocs.body)}`);
+  const sheetVerViaDocs = await A(`/docs/${id}/versions`, { method: 'POST', body: JSON.stringify({ kind: 'named', name: 'x' }) });
+  check('a SPREADSHEET version through the document route is refused (400)', sheetVerViaDocs.status === 400, `${sheetVerViaDocs.status} ${JSON.stringify(sheetVerViaDocs.body)}`);
+  const docVerViaSheets = await A(`/sheets/${doc.body.id}/versions`, { method: 'POST', body: JSON.stringify({
+    kind: 'named', name: 'x', state: b64(Y.encodeStateAsUpdate(new Y.Doc())), html: '<p>x</p>' }) });
+  check('a DOCUMENT version through the spreadsheet route is refused (400)', docVerViaSheets.status === 400, `${docVerViaSheets.status} ${JSON.stringify(docVerViaSheets.body)}`);
+  const sheetVer = await A(`/sheets/${id}/versions`, { method: 'POST', body: JSON.stringify({
+    kind: 'named', name: 'E2E named', state: b64(Y.encodeStateAsUpdate(a1!.doc)), html: '<table></table>' }) });
+  check('…its permit twin: a spreadsheet version through its own route is saved (201)', sheetVer.status === 201, `${sheetVer.status} ${JSON.stringify(sheetVer.body)}`);
   const docAi = await A(`/sheets/${doc.body.id}/ai`, { method: 'POST', body: JSON.stringify({ action: 'analyze', context: 'a\tb' }) });
   check('Sheets AI on a document is 404', docAi.status === 404, `${docAi.status}`);
 

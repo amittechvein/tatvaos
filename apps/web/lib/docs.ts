@@ -141,9 +141,11 @@ export const docsApi = {
       .then((r) => json<{ ticket: string }>(r, 'Could not connect to this document.'))
       .then((b) => b.ticket),
 
-  checkpoint: (f: AuthedFetch, id: string, body: {
-    state: string; upToSeq: number; html: string; text: string;
-  }) =>
+  // "Please save now." The server builds the file, the text and the stored
+  // state from what IT stored (decision 0011 condition 1); nothing of the
+  // browser's copy is sent. A 503 with reason "render_failed" means the file
+  // could not be built: the editor says so and tries again.
+  checkpoint: (f: AuthedFetch, id: string, body: { upToSeq: number }) =>
     f(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify(body) })
       .then((r) => ok(r, 'Could not save the document.')),
 
@@ -157,9 +159,9 @@ export const docsApi = {
       .then((r) => json<{ id: string; html: string; state: string; name: string | null; createdAt: string }>(
         r, 'Could not load that version.')),
 
-  saveVersion: (f: AuthedFetch, id: string, body: {
-    kind: 'named' | 'restore'; name?: string; state: string; html: string;
-  }) =>
+  // The version is the server's stored document at this moment, built by
+  // the render service; the browser sends only what kind and what name.
+  saveVersion: (f: AuthedFetch, id: string, body: { kind: 'named' | 'restore'; name?: string }) =>
     f(`/docs/${id}/versions`, { method: 'POST', body: JSON.stringify(body) })
       .then((r) => json<{ id: string }>(r, 'Could not save the version.')),
 

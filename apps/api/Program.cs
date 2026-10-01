@@ -384,6 +384,10 @@ builder.Services.AddSingleton<DocsLiveHub>();
 // Makes "exactly one API container" loud: only the lock holder serves live
 // editing (DocsInstanceGuard's header; decision 0008's deployment rule).
 builder.Services.AddSingleton<DocsInstanceGuard>();
+// Docs' file is built by the render service (apps/render), never taken from a
+// browser (decision 0011 condition 1). Its own 10 s limit, plus the network.
+builder.Services.AddHttpClient<TatvaOS.Api.Modules.Docs.DocsRenderClient>(c =>
+    c.Timeout = TatvaOS.Api.Modules.Docs.DocsRenderClient.Timeout + TimeSpan.FromSeconds(3));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DocsInstanceGuard>());
 
 // Scoped: it writes through the request's AppDbContext and reads its

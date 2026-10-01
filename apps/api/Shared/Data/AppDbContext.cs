@@ -310,6 +310,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<CalendarAttendee>().ToTable("event_attendees", "calendar");
         b.Entity<CalendarReminder>().ToTable("event_reminders", "calendar");
         b.Entity<CalendarReminderSend>().ToTable("reminder_sends", "calendar");
+        // Decision 0007's zero-layer PR: the second layer, beside the new RLS.
+        b.Entity<CalendarReminderSend>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
 
         // ---- Connect -----------------------------------------------------
         // Explicit schema on every one, like everything else here: a default

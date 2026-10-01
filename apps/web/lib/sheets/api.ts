@@ -5,8 +5,13 @@
 //  A spreadsheet is a Docs file with its own editor: same /api/docs
 //  endpoints (live channel, versions, comments), same Space file for
 //  sharing, trash and stars. So this file only adds what differs — the
-//  kind on create and list, the .xlsx on checkpoint, and the AI actions —
-//  and re-exports docsApi for everything else rather than copying it.
+//  kind on create and list, the save and version routes, and the AI
+//  actions — and re-exports docsApi for everything else rather than copying it.
+//
+//  SAVES AND VERSIONS go to /api/sheets/{id}/... (1 Oct 2026): a document's
+//  file is built on the server and Docs' routes ignore the browser's copy,
+//  but a spreadsheet's state and .xlsx are still the browser's until Sheets
+//  has its own server build. Docs' routes refuse a spreadsheet.
 // ============================================================================
 
 import { docsApi } from '../docs';
@@ -67,8 +72,14 @@ export const sheetsApi = {
   checkpointSheet: (f: AuthedFetch, id: string, body: {
     state: string; upToSeq: number; html: string; text: string; xlsx: string;
   }) =>
-    f(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify(body) })
+    f(`/sheets/${id}/checkpoint`, { method: 'POST', body: JSON.stringify(body) })
       .then((r) => json<{ saved: boolean }>(r, 'Could not save the spreadsheet.')),
+
+  saveVersion: (f: AuthedFetch, id: string, body: {
+    kind: 'named' | 'restore'; name?: string; state: string; html: string;
+  }) =>
+    f(`/sheets/${id}/versions`, { method: 'POST', body: JSON.stringify(body) })
+      .then((r) => json<{ id: string }>(r, 'Could not save the version.')),
 
   ai: (f: AuthedFetch, id: string, body: {
     action: SheetsAiAction; prompt?: string; context?: string; formula?: string; cell?: string;

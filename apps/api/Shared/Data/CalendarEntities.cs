@@ -160,6 +160,12 @@ public class CalendarReminder
 /// </summary>
 public class CalendarReminderSend
 {
+    /// <summary>
+    /// 20260927-d-zero-layer-rls.sql (decision 0007): until then this table had
+    /// no isolation at any layer. Set by the worker, which runs inside one
+    /// organisation at a time; RLS refuses a row for any other.
+    /// </summary>
+    public Guid TenantId { get; set; }
     public Guid ReminderId { get; set; }
     public DateTimeOffset OccurrenceStartsAt { get; set; }
     public DateTimeOffset SentAt { get; set; } = DateTimeOffset.UtcNow;
