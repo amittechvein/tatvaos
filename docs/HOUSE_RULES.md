@@ -299,6 +299,22 @@ every customer, on the second password a person generates, which is the one they
 generate because the first stopped working. The model knew nothing of the index,
 so the ORM was free to order the insert before the revoke.*
 
+**7a. A setting that promises a restriction is a customer-facing promise.** It
+ships only with its enforcement and the proof that the enforcement works,
+never ahead of it. (Mr. Singh's ruling, 1 Oct 2026.) Until the enforcement
+exists, the screen that offers the setting says plainly that it does not yet
+restrict anything.
+
+*Cost: the department setting "Can email outside the organisation" was saved,
+shown with an "internal only" badge, and described to administrators as "Off
+means they can only email colleagues" - and no sending path read it: not
+webmail, the phone app, the send API, or the mail edge. Every school that
+signed up was given a default "Students" department set to internal-only, so
+the product itself made the promise. Found on 30 Sept 2026 while removing an
+unused database grant (PR 363), seven weeks after the first such department
+was created. Production, 1 Oct: 2 such departments, in 2 organisations that
+were not live, with no active people in them - nobody had yet relied on it.*
+
 ## 8. Documented is not built
 
 When a document or comment tells you what the code does, **grep for the caller**

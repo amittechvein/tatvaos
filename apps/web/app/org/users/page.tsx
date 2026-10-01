@@ -523,7 +523,7 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
       </div>
 
       <Field label="Department"
-             hint="Sets their role, storage and whether they can email outsiders">
+             hint="Sets their role and storage">
         <Select  value={departmentId}
                 onChange={(e) => { setDepartmentId(e.target.value); setOverride(false); }}>
           <option value="">No department — organisation defaults</option>
@@ -586,10 +586,12 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
         )}
       </div>
 
+      {/* Not enforced yet (see app/org/departments/page.tsx, the "Can email
+          outside" switch). Until it is, this says so instead of promising it. */}
       {dept && !dept.canSendExternal && (
         <Alert tone="info" className="mt-4 mb-0">
-          {dept.name} is internal-only, so this person will be able to email colleagues
-          but not the outside world.
+          {dept.name} is marked internal-only. Internal-only departments are coming
+          soon: today this person can still email people outside the organisation.
         </Alert>
       )}
     </Modal>
