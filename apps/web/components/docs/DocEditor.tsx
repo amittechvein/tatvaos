@@ -4,14 +4,6 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import { EditorContent, useEditor, type Editor, type JSONContent } from '@tiptap/react';
-import StarterKit from '@tiptap/starter-kit';
-import { TextStyle, Color, FontFamily, FontSize } from '@tiptap/extension-text-style';
-import Highlight from '@tiptap/extension-highlight';
-import TextAlign from '@tiptap/extension-text-align';
-import Subscript from '@tiptap/extension-subscript';
-import Superscript from '@tiptap/extension-superscript';
-import { TableKit } from '@tiptap/extension-table';
-import { TaskList, TaskItem } from '@tiptap/extension-list';
 import { CharacterCount, Placeholder } from '@tiptap/extensions';
 import Collaboration from '@tiptap/extension-collaboration';
 import CollaborationCaret from '@tiptap/extension-collaboration-caret';
@@ -23,7 +15,7 @@ import type { EditorState } from '@tiptap/pm/state';
 
 import { useAuth } from '@/lib/auth';
 import {
-  docsApi, fromBase64, toBase64, DocsError,
+  docsApi, fromBase64, DocsError,
   type CommentThread, type DocumentMeta, type DocVersion,
 } from '@/lib/docs';
 import { DocsLiveProvider, type LiveEvent } from '@/lib/docsLive';
@@ -32,7 +24,8 @@ import { ShareDialog } from '@/components/space/ShareDialog';
 import { Modal } from '@/components/ui/Modal';
 import { Spinner } from '@/components/ui/Kit';
 
-import { CommentHighlights, DocsImage, PageBreak, ParagraphFormat, type CommentRange } from './extensions';
+import { CommentHighlights, type CommentRange } from './extensions';
+import { documentExtensions } from './schema';
 import { MenuBar, Toolbar, applyStyle, type MenuItem } from './Toolbar';
 import { CommentsPanel } from './CommentsPanel';
 import { HistoryPanel } from './HistoryPanel';
@@ -83,36 +76,6 @@ const colourFor = (id: string) => {
 };
 
 type Panel = 'comments' | 'history' | 'ai' | null;
-
-/**
- * The document schema: every node and mark a document can hold. Shared by
- * the live editor and the read-only version view, so a version renders with
- * exactly the rules it was written under — and through the schema, never as
- * raw HTML (react/no-danger is a security rule in this repo, and a version's
- * HTML is whatever an editor-level browser sent).
- */
-function documentExtensions(loadImage: (src: string) => Promise<string>) {
-  return [
-    StarterKit.configure({
-      undoRedo: false, // Yjs has its own, per person — undo never undoes a colleague
-      heading: { levels: [1, 2, 3, 4] },
-      link: {
-        openOnClick: false,
-        autolink: true,
-        protocols: ['mailto'],
-        HTMLAttributes: { rel: 'noopener noreferrer nofollow', target: '_blank' },
-      },
-    }),
-    TextStyle, Color, FontFamily, FontSize,
-    Highlight.configure({ multicolor: true }),
-    TextAlign.configure({ types: ['heading', 'paragraph'] }),
-    Subscript, Superscript,
-    TableKit.configure({ table: { resizable: true } }),
-    TaskList, TaskItem.configure({ nested: true }),
-    ParagraphFormat, PageBreak,
-    DocsImage.configure({ load: loadImage, inline: true }),
-  ];
-}
 
 /** Rebuild a stored Yjs state as editor JSON, without touching the live document. */
 function stateToJson(stateB64: string): { json: JSONContent; settings: Record<string, unknown> } {
@@ -430,22 +393,24 @@ function Workspace({ meta, setMeta, provider, eventSink }: {
   // or typing done during an outage would reach docs.updates but never
   // Space's copy, search or history until the next keystroke.
   const dirty = useRef(false);
+  // The server could not build the document's file (render_failed): SAID, not
+  // hidden behind "All changes saved" (Mr. Singh, 30 Sept 2026). The typing
+  // itself is stored already; saving retries until it works.
+  const [fileError, setFileError] = useState<string | null>(null);
   const checkpoint = useCallback(async () => {
     if (!editor || editor.isDestroyed || checkpointing.current) return false;
     if (!provider.canEdit || provider.status !== 'synced') return false;
     checkpointing.current = true;
     try {
-      await docsApi.checkpoint(authedFetch, id, {
-        state: toBase64(Y.encodeStateAsUpdate(provider.doc)),
-        upToSeq: provider.lastSeq,
-        html: editor.getHTML(),
-        text: editor.getText({ blockSeparator: '\n' }),
-      });
+      await docsApi.checkpoint(authedFetch, id, { upToSeq: provider.lastSeq });
       setSavedAt(new Date());
+      setFileError(null);
       dirty.current = false;
       return true;
-    } catch {
-      return false; // edits are already stored as updates; the next checkpoint retries
+    } catch (e) {
+      // Edits are already stored as updates; a later checkpoint retries.
+      if (e instanceof DocsError && e.status === 503) setFileError(e.message);
+      return false;
     } finally {
       checkpointing.current = false;
     }
@@ -473,6 +438,14 @@ function Workspace({ meta, setMeta, provider, eventSink }: {
       if (idle) { clearTimeout(idle); void checkpoint(); }
     };
   }, [provider, checkpoint]);
+
+  // The file could not be built: try again every 10 s until it can, even with
+  // no new typing, so the warning clears by itself once the service is back.
+  useEffect(() => {
+    if (!fileError) return;
+    const t = setInterval(() => { dirty.current = true; void checkpoint(); }, 10_000);
+    return () => clearInterval(t);
+  }, [fileError, checkpoint]);
 
   // Back from an outage with unsaved typing: checkpoint once the queued edits
   // have been acked, so Space's copy catches up without waiting for a keystroke.
@@ -577,7 +550,7 @@ function Workspace({ meta, setMeta, provider, eventSink }: {
   async function nameCurrentVersion(name: string) {
     if (!editor) return;
     await docsApi.saveVersion(authedFetch, id, {
-      kind: 'named', name, state: toBase64(Y.encodeStateAsUpdate(provider.doc)), html: editor.getHTML(),
+      kind: 'named', name,
     });
     loadVersions();
     setNotice(`Saved as “${name}”.`);
@@ -601,7 +574,6 @@ function Workspace({ meta, setMeta, provider, eventSink }: {
       // 1. Keep what is there now.
       await docsApi.saveVersion(authedFetch, id, {
         kind: 'restore', name: `Before restoring ${when}`,
-        state: toBase64(Y.encodeStateAsUpdate(provider.doc)), html: editor.getHTML(),
       });
       // 2. Put the old content in as an ordinary edit, so it reaches
       //    everyone in the document like any other change.
@@ -660,6 +632,9 @@ function Workspace({ meta, setMeta, provider, eventSink }: {
 
   // ---- status line -----------------------------------------------------------
   const status = lostAccess ? { text: provider.closedReason === 'too-many' ? 'Not connected' : 'You no longer have access', tone: 'text-danger', icon: <I.cloudOff className="h-4 w-4" /> }
+    // Before "Saving…" and "All changes saved": the typing reached the
+    // server, but the file others download was not built. Say so.
+    : fileError ? { text: 'Not saved as a file yet — your typing is safe, retrying', tone: 'text-warn', icon: <I.cloudOff className="h-4 w-4" /> }
     : provider.status === 'offline' ? { text: provider.pending ? 'Offline — your edits are kept in this tab' : 'Offline', tone: 'text-warn', icon: <I.cloudOff className="h-4 w-4" /> }
     : provider.status === 'connecting' ? { text: 'Connecting…', tone: 'text-ink-faint', icon: null }
     : provider.pending ? { text: 'Saving…', tone: 'text-ink-faint', icon: null }

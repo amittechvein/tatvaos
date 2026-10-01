@@ -384,6 +384,10 @@ builder.Services.AddSingleton<DocsLiveHub>();
 // Makes "exactly one API container" loud: only the lock holder serves live
 // editing (DocsInstanceGuard's header; decision 0008's deployment rule).
 builder.Services.AddSingleton<DocsInstanceGuard>();
+// Docs' file is built by the render service (apps/render), never taken from a
+// browser (decision 0011 condition 1). Its own 10 s limit, plus the network.
+builder.Services.AddHttpClient<TatvaOS.Api.Modules.Docs.DocsRenderClient>(c =>
+    c.Timeout = TatvaOS.Api.Modules.Docs.DocsRenderClient.Timeout + TimeSpan.FromSeconds(3));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DocsInstanceGuard>());
 
 // Scoped: it writes through the request's AppDbContext and reads its
@@ -829,8 +833,8 @@ else
 //  above read that header themselves and take its LAST entry, which is the
 //  one Caddy appended; this middleware would consume that entry and leave any
 //  client-supplied ones in front of it for the limiters to trust. Audit rows
-//  keep recording Caddy's address as they do today; a real-client-IP change
-//  is its own decision, not a side effect of the provider.
+//  read the same last entry themselves (AuditWriter, through ClientIp) since
+//  29 Sept 2026; before that they recorded Caddy's address.
 //
 //  No known-proxy list, on purpose: the API publishes no port, so the only
 //  thing that can reach it is Caddy on the compose network, whose container
@@ -936,6 +940,11 @@ app.MapSpaceThumbnailEndpoints();
 // Docs: collaborative documents, each one a Space file.
 app.MapDocsEndpoints();
 app.MapDocsAdminEndpoints();
+// Sheets' own per-organisation switch, beside Docs' (SheetsSwitch.cs).
+app.MapSheetsAdminEndpoints();
+// Sheets: spreadsheets are Docs files too (DocsFormat.SpreadsheetMimeType);
+// only their AI actions need endpoints of their own.
+app.MapSheetsAiEndpoints();
 
 // Connect. Meetings live in this monolith; only the MEDIA is a separate
 // container. The guest group and the LiveKit webhook are anonymous and
@@ -990,6 +999,13 @@ app.MapGet("/health/db", async (AppDbContext db, CancellationToken ct) =>
     return canConnect ? Results.Ok(new { database = "ok" })
                       : Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
 }).AllowAnonymous().WithTags("Operations");
+
+// Every operator write route must carry its transaction (OperatorWriteTransaction).
+// Logged once the routes exist: a CRITICAL line names any that do not.
+app.Lifetime.ApplicationStarted.Register(() =>
+    TatvaOS.Api.Shared.Data.OperatorWriteTransaction.Report(
+        ((IEndpointRouteBuilder)app).DataSources,
+        app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("OperatorWriteTransaction")));
 
 app.Run();
 

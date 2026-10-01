@@ -33,6 +33,9 @@
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { spawn, execSync } from 'node:child_process';
+import http from 'node:http';
+import { readFileSync } from 'node:fs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(path.join(here, '../../apps/web/package.json'));
@@ -155,8 +158,80 @@ const toB64 = (u8) => Buffer.from(u8).toString('base64');
 
 // ============================================================================
 
+// ---- the render service (0011 condition 1) ------------------------------------
+// This test owns it: started here on DOCS_RENDER_PORT (the API's
+// Docs:RenderUrl must point at it — tests/docs/run-docs-live.sh does that),
+// stopped mid-run to prove a failed render fails the save, started again.
+const RENDER_PORT = Number(process.env.DOCS_RENDER_PORT ?? 18450);
+// The API talks to a PROXY on RENDER_PORT (Docs:RenderUrl); the real service
+// runs on RENDER_PORT + 1. The proxy lets the test hold render requests and
+// release them in the order it chooses (two saves at once), with no test
+// hook in production code. With the real service stopped it answers 502,
+// which the API must treat as a failed render.
+const REAL_PORT = RENDER_PORT + 1;
+const held = [];
+let holding = false;
+const proxy = http.createServer((req, res) => {
+  const chunks = [];
+  req.on('data', (c) => chunks.push(c));
+  req.on('end', () => {
+    const forward = () => {
+      const up = http.request({ host: '127.0.0.1', port: REAL_PORT, path: req.url, method: req.method,
+        headers: { 'content-type': req.headers['content-type'] ?? 'application/json' } }, (r) => {
+        res.writeHead(r.statusCode ?? 502, { 'content-type': r.headers['content-type'] ?? 'application/json' });
+        r.pipe(res);
+      });
+      up.on('error', () => { res.writeHead(502, { 'content-type': 'application/json' }); res.end('{"error":"render service down"}'); });
+      up.end(Buffer.concat(chunks));
+    };
+    if (holding && req.url === '/render/doc') held.push(forward); else forward();
+  });
+});
+let renderChild = null;
+async function startRender() {
+  const dir = path.join(here, '../../apps/render');
+  renderChild = spawn(process.execPath, ['--import', './src/register.mjs', 'src/server.mjs'],
+    { cwd: dir, env: { ...process.env, PORT: String(REAL_PORT) }, stdio: 'ignore' });
+  for (let i = 0; i < 300; i += 1) { // up to 30 s: a cold start beside the API can take >10 s
+    try { if ((await fetch(`http://127.0.0.1:${REAL_PORT}/health`)).ok) return true; } catch { /* not yet */ }
+    await sleep(100);
+  }
+  return false;
+}
+function stopRender() { if (renderChild) { renderChild.kill(); renderChild = null; } }
+function stopAll() { stopRender(); proxy.close(); proxy.closeAllConnections?.(); }
+
+// SQL for the two checks only a database can set up (the browser-file guard).
+// TATVAOS_PSQL is exported by tests/lib/throwaway-db.sh: "<psql> -d <db> -Atc".
+function pg(sql) {
+  if (!process.env.TATVAOS_PSQL) throw new Error('TATVAOS_PSQL not set: run through tests/docs/run-docs-live.sh');
+  return execSync(`${process.env.TATVAOS_PSQL} "${sql}"`, { encoding: 'utf8' })
+    .split('\n').map((l) => l.replace(/\r$/, '')).filter((l) => l && !l.startsWith('wsl:')).pop() ?? '';
+}
+
 async function main() {
   console.log(`Docs end-to-end against ${API}\n`);
+  await new Promise((r) => proxy.listen(RENDER_PORT, '127.0.0.1', r));
+  if (!(await startRender())) throw new Error(`the render service did not start on ${REAL_PORT}`);
+
+  // The browser's ignored fields have an END DATE (Mr. Singh, 30 Sept 2026):
+  // by 14 October 2026 they must be gone from the API. After that date this
+  // fails while they remain, so the grace cannot quietly become permanent.
+  const endpoints = readFileSync(path.join(here, '../../apps/api/Modules/Docs/DocsEndpoints.cs'), 'utf8');
+  const stillThere = /record CheckpointRequest\(string\? State/.test(endpoints);
+  check('the ignored browser fields are removed by their end date (14 Oct 2026)',
+    // DOCS_TEST_NOW (an ISO date) exists only to show this check failing before the day.
+    (process.env.DOCS_TEST_NOW ? Date.parse(process.env.DOCS_TEST_NOW) : Date.now()) < Date.parse('2026-10-15T00:00:00Z') || !stillThere, [
+      'END DATE REACHED (14 Oct 2026; Mr. Singh, 30 Sept 2026). Browsers used to upload the document\'s state, HTML and',
+      'text with every save; since the server builds the file itself (decision 0011 condition 1) those uploads are',
+      'accepted and IGNORED, for open tabs, until this date. Remove them now — do NOT switch this check off:',
+      '  1. apps/api/Modules/Docs/DocsEndpoints.cs: CheckpointRequest(string? State, long UpToSeq, string? Html, string? Text)',
+      '     becomes CheckpointRequest(long UpToSeq)',
+      '  2. same file: VersionRequest(string? Kind, string? Name, string? State, string? Html) becomes VersionRequest(string? Kind, string? Name)',
+      '  3. same file, CheckpointAsync: delete the line "_ = req; // accepted for one release..." and the END DATE comments',
+      '  4. this test: stop sending state/html/text in the checkpoint and version calls, then delete this check',
+      'The web app already sends none of them (apps/web/lib/docs.ts). Nothing reads them: removing them changes no behaviour.',
+    ].join('\n        '));
 
   const owner = await signIn(OWNER);
   const employee = await signIn(EMPLOYEE);
@@ -291,21 +366,39 @@ async function main() {
     await waitFor(() => ![...a1.awareness.getStates().values()].some((s) => s.user?.name === 'Employee')));
 
   // ---- checkpoint --------------------------------------------------------------
-  console.log('Checkpoint and reload');
-  const future = await A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
-    state: toB64(Y.encodeStateAsUpdate(a1.doc)), upToSeq: a1.lastSeq + 1000, html: '<p>x</p>', text: 'x' }) });
-  check('a checkpoint claiming unseen updates is refused (409)', future.status === 409, `status ${future.status}`);
+  // The server builds the file from what IT stored (0011 condition 1; Mr.
+  // Singh, 29-30 Sept 2026). A checkpoint is "save now": the state, HTML and
+  // text a browser sends are accepted for one release and IGNORED.
+  console.log('Checkpoint and reload (the file is built by the server)');
+  const lie = await A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
+    state: toB64(new Uint8Array([0, 0])), upToSeq: a1.lastSeq + 1000,
+    html: '<p>Fees 5,000</p>', text: 'Fees 5,000' }) });
+  check('a checkpoint whose file and state say something else is taken as "save now" (200)',
+    lie.status === 200 && lie.body.saved === true, `status ${lie.status} ${JSON.stringify(lie.body)}`);
+  const lieDl = String((await A(`/space/files/${id}/content`)).body);
+  check('MR. SINGH\'S PROOF: a checkpoint with a mismatching file does not change what Space serves — it serves the document',
+    lieDl.includes('<p>Hello</p>') && lieDl.includes('B-two') && !lieDl.includes('Fees 5,000'),
+    `Hello=${lieDl.includes('<p>Hello</p>')} B-two=${lieDl.includes('B-two')} lie=${lieDl.includes('Fees 5,000')}`);
 
-  const htmlNow = '<p>Hello</p><p>world</p>';
-  const cp = await A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
-    state: toB64(Y.encodeStateAsUpdate(a1.doc)), upToSeq: a1.lastSeq, html: htmlNow, text: textOf(a1.doc) }) });
-  check('owner checkpoints (200)', cp.status === 200, `status ${cp.status} ${JSON.stringify(cp.body)}`);
+  const cp = await A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({ upToSeq: a1.lastSeq }) });
+  check('a save with nothing new since the last one changes nothing (200, unchanged)',
+    cp.status === 200 && cp.body.unchanged === true, `status ${cp.status} ${JSON.stringify(cp.body)}`);
 
-  // An editor whose browser is BEHIND (seq 0, empty content) must change nothing.
-  const staleCp = await B(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
-    state: toB64(new Uint8Array([0, 0])), upToSeq: 0, html: '', text: '' }) });
-  check('a stale checkpoint is accepted and ignored', staleCp.status === 200 && staleCp.body.stale === true,
-    `status ${staleCp.status} ${JSON.stringify(staleCp.body)}`);
+  // A colleague's edit the SAVING browser never saw is in the file: the
+  // server merges what it stored, it does not take one browser's state.
+  const b3 = await connect(B, id, 'employee-editor-late');
+  appendParagraph(b3.doc, 'COLLEAGUE WROTE THIS');
+  check('the colleague\'s edit is acked', await waitFor(() => b3.acks.length >= 1));
+  b3.ws.close();
+  const blindState = new Y.Doc(); // the owner's browser, as if it had not received the colleague's edit
+  Y.applyUpdate(blindState, Y.encodeStateAsUpdate(a1.doc));
+  const blind = await A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
+    state: toB64(Y.encodeStateAsUpdate(blindState)), upToSeq: 0, html: '<p>Hello</p>', text: 'Hello' }) });
+  const blindDl = String((await A(`/space/files/${id}/content`)).body);
+  check('a colleague\'s stored edit the saving browser never saw is in the file',
+    blind.status === 200 && blindDl.includes('COLLEAGUE WROTE THIS'), `status ${blind.status}`);
+  const a1Seen = await waitFor(() => textOf(a1.doc).includes('COLLEAGUE WROTE THIS'));
+  check('…and it reached the owner live, as everyone\'s edits do', a1Seen);
 
   const a2 = await connect(A, id, 'owner-reload');
   check('a fresh load starts from the compacted state', a2.stateSeq === a1.lastSeq, `stateSeq ${a2.stateSeq} vs ${a1.lastSeq}`);
@@ -329,8 +422,9 @@ async function main() {
   const v1 = await A(`/docs/${id}/versions`);
   check('the first checkpoint took an automatic version', v1.status === 200 && v1.body.versions.some((v) => v.kind === 'auto'),
     JSON.stringify(v1.body));
+  // The version is the server's stored document (the body names it, nothing more).
   const named = await A(`/docs/${id}/versions`, { method: 'POST', body: JSON.stringify({
-    kind: 'named', name: 'Draft v1', state: toB64(Y.encodeStateAsUpdate(a1.doc)), html: htmlNow }) });
+    kind: 'named', name: 'Draft v1', state: toB64(new Uint8Array([0, 0])), html: '<p>not this</p>' }) });
   check('owner names a version (201)', named.status === 201, `status ${named.status}`);
   const one = await A(`/docs/${id}/versions/${named.body.id}`);
   const rebuilt = new Y.Doc(); Y.applyUpdate(rebuilt, Buffer.from(one.body.state, 'base64'));
@@ -338,45 +432,129 @@ async function main() {
   check('other organisation cannot read versions', (await C(`/docs/${id}/versions/${named.body.id}`)).status === 404);
 
   // ---- the HTML that is stored ------------------------------------------------------
-  // The browser's HTML is rewritten from an allowlist before it is stored
-  // (DocsHtml.cs; its own cases are in tests/docs-html). Here: that the
-  // ENDPOINTS use it — a sanitiser nobody calls passes every unit test.
-  // Each refusal has its permit twin in the same request: the words and
-  // the honest markup around the hostile part must arrive.
-  console.log('The HTML that is stored');
-  const honest = '<h1>Fees</h1><p style="text-align: center">The fee is <strong>50,000</strong></p>'
-    + '<table><tbody><tr><td colspan="1" rowspan="1"><p>Asha</p></td></tr></tbody></table>';
-  const hostile = honest
-    + '<script>steal(document.cookie)</script>'
-    + '<p onclick="steal()">Words that stay</p>'
-    + '<a href="javascript:steal()">a link</a>'
-    + '<img src="https://pictures.example/x.png" onerror="steal()">'
-    + '<iframe src="https://evil.example"></iframe>';
-  const gone = ['<script', 'steal(', 'onclick', 'onerror', 'javascript:', '<iframe', 'evil.example'];
-  const kept = [honest, 'Words that stay', 'a link', 'src="https://pictures.example/x.png"'];
-
+  // The browser's HTML is never stored now. What can still reach the file is
+  // what is IN the document, so the hostile parts go in through the live
+  // channel, as an attacker with edit access would have to put them: a link
+  // to javascript: and a picture over http. The file comes from the render
+  // service AND is cleaned (DocsHtml.cs) — two layers; here, that the chain
+  // as a whole lets neither through, and keeps the words around them.
+  console.log('The HTML that is stored (hostile content IN the document)');
+  const acksBeforeHostile = a1.acks.length; // counted from here: a1 was acked for earlier edits already
+  a1.doc.transact(() => {
+    const frag = a1.doc.getXmlFragment('default');
+    const p = new Y.XmlElement('paragraph');
+    const t = new Y.XmlText();
+    t.insert(0, 'Words that stay ');
+    t.insert(t.length, 'a link', { link: { href: 'javascript:steal()', target: '_blank', rel: 'noopener', class: null } });
+    p.insert(0, [t]);
+    const img = new Y.XmlElement('image');
+    img.setAttribute('src', 'http://pictures.example/y.png');
+    img.setAttribute('alt', 'A chart');
+    p.insert(1, [img]);
+    frag.insert(frag.length, [p]);
+  });
+  check('the hostile paragraph is acked', await waitFor(() => a1.acks.length > acksBeforeHostile));
+  const browserHostile = '<p onclick="steal()">BROWSER SENT THIS</p><script>steal(document.cookie)</script>';
   const hostileCp = await A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
-    state: toB64(Y.encodeStateAsUpdate(a1.doc)), upToSeq: a1.lastSeq, html: hostile, text: textOf(a1.doc) }) });
-  check('a checkpoint carrying hostile HTML is accepted (it is cleaned, not refused)',
-    hostileCp.status === 200 && hostileCp.body.saved === true, `status ${hostileCp.status} ${JSON.stringify(hostileCp.body)}`);
+    upToSeq: a1.lastSeq, html: browserHostile, text: 'BROWSER SENT THIS' }) });
+  check('the save is accepted (200)', hostileCp.status === 200 && hostileCp.body.saved === true,
+    `status ${hostileCp.status} ${JSON.stringify(hostileCp.body)}`);
   const hostileDl = String((await A(`/space/files/${id}/content`)).body);
-  check('Space\'s copy holds none of the hostile parts',
-    gone.every((g) => !hostileDl.toLowerCase().includes(g)), gone.filter((g) => hostileDl.toLowerCase().includes(g)).join(' | '));
-  check('…and all of the honest ones, unchanged',
-    kept.every((k) => hostileDl.includes(k)), kept.filter((k) => !hostileDl.includes(k)).join(' | '));
+  const gone = ['javascript:', 'steal(', 'http://pictures.example', 'BROWSER SENT THIS', '<script', 'onclick'];
+  check('Space\'s copy holds none of the hostile parts, and nothing the browser sent',
+    gone.every((g) => !hostileDl.includes(g)), gone.filter((g) => hostileDl.includes(g)).join(' | '));
+  check('…and keeps the words, the link text and the picture (over https)',
+    ['Words that stay', 'a link', 'src="https://pictures.example/y.png"'].every((k) => hostileDl.includes(k)),
+    ['Words that stay', 'a link', 'src="https://pictures.example/y.png"'].filter((k) => !hostileDl.includes(k)).join(' | '));
 
   const hostileV = await A(`/docs/${id}/versions`, { method: 'POST', body: JSON.stringify({
-    kind: 'named', name: 'Hostile', state: toB64(Y.encodeStateAsUpdate(a1.doc)), html: hostile }) });
+    kind: 'named', name: 'Hostile', html: browserHostile }) });
   const hostileRead = String((await A(`/docs/${id}/versions/${hostileV.body.id}`)).body.html);
-  check('a version\'s HTML holds none of the hostile parts',
-    hostileV.status === 201 && gone.every((g) => !hostileRead.toLowerCase().includes(g)),
-    gone.filter((g) => hostileRead.toLowerCase().includes(g)).join(' | '));
-  check('…and all of the honest ones, unchanged',
-    kept.every((k) => hostileRead.includes(k)), kept.filter((k) => !hostileRead.includes(k)).join(' | '));
+  check('a version\'s HTML holds none of the hostile parts, and nothing the browser sent',
+    hostileV.status === 201 && gone.every((g) => !hostileRead.includes(g)), gone.filter((g) => hostileRead.includes(g)).join(' | '));
+  check('…and keeps the words', hostileRead.includes('Words that stay') && hostileRead.includes('Hello'));
 
-  // Put Space's copy back to what the document says, for the checks below.
-  await A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
-    state: toB64(Y.encodeStateAsUpdate(a1.doc)), upToSeq: a1.lastSeq, html: htmlNow, text: textOf(a1.doc) }) });
+  // ---- a failed render fails the save, visibly ------------------------------------
+  // Mr. Singh, 30 Sept 2026: "a failed render is a failed save, shown to the
+  // person — never a silent fallback to the browser's HTML".
+  console.log('The render service stops (a failed render fails the save)');
+  const fileBefore = String((await A(`/space/files/${id}/content`)).body);
+  stopRender();
+  const acksBeforeDown = a1.acks.length;
+  appendParagraph(a1.doc, 'TYPED WHILE DOWN');
+  check('typing still reaches the server while the renderer is down (acked)', await waitFor(() => a1.acks.length > acksBeforeDown));
+  const down = await A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
+    upToSeq: a1.lastSeq, html: '<p>TYPED WHILE DOWN</p><p>BROWSER COPY</p>', text: 'BROWSER COPY' }) });
+  check('the save FAILS, and says why: 503 render_failed with a sentence',
+    down.status === 503 && down.body.reason === 'render_failed' && /typing is safe/.test(down.body.error ?? ''),
+    `status ${down.status} ${JSON.stringify(down.body)}`);
+  const fileDuring = String((await A(`/space/files/${id}/content`)).body);
+  check('…Space\'s file is unchanged — not the browser\'s copy',
+    fileDuring === fileBefore && !fileDuring.includes('BROWSER COPY'), `changed=${fileDuring !== fileBefore}`);
+  const downV = await A(`/docs/${id}/versions`, { method: 'POST', body: JSON.stringify({ kind: 'named', name: 'While down' }) });
+  check('…and a version is refused the same way (503)', downV.status === 503 && downV.body.reason === 'render_failed');
+  check('the render service comes back', await startRender());
+  const upAgain = await A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({ upToSeq: a1.lastSeq }) });
+  const fileAfter = String((await A(`/space/files/${id}/content`)).body);
+  check('the next save works, and the typing done while it was down is in the file',
+    upAgain.status === 200 && fileAfter.includes('TYPED WHILE DOWN') && !fileAfter.includes('BROWSER COPY'),
+    `status ${upAgain.status} ${JSON.stringify(upAgain.body)}`);
+
+  // ---- two saves at once: an older build never overwrites a newer file -------------
+  // Mr. Singh, 30 Sept 2026. The render runs outside the editing lock, so
+  // two saves can build at once and finish in either order. The proxy holds
+  // both render requests (each save has taken its snapshot by then) and
+  // releases them in the order each case needs.
+  console.log('Two saves at once (an older build never overwrites a newer file)');
+  const save = () => A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({ upToSeq: a1.lastSeq }) });
+  async function twoSaves(olderText, newerText) {
+    holding = true;
+    let acks = a1.acks.length;
+    appendParagraph(a1.doc, olderText);
+    await waitFor(() => a1.acks.length > acks);
+    const older = save();
+    await waitFor(() => held.length === 1);
+    acks = a1.acks.length;
+    appendParagraph(a1.doc, newerText);
+    await waitFor(() => a1.acks.length > acks);
+    const newer = save();
+    await waitFor(() => held.length === 2);
+    holding = false;
+    return { older, newer, releaseOlder: held[0], releaseNewer: held[1] };
+  }
+
+  // Mr. Singh's case: the NEWER build finishes first, the OLDER one last.
+  let pair = await twoSaves('OLDER EDIT', 'NEWER EDIT');
+  check('both saves were building at once (the proxy held two render requests)', held.length === 2);
+  pair.releaseNewer();
+  const newerFirst = await pair.newer;
+  pair.releaseOlder();
+  const olderLast = await pair.older;
+  held.length = 0;
+  let file = String((await A(`/space/files/${id}/content`)).body);
+  check('the newer build, finishing first, is written (200 saved)',
+    newerFirst.status === 200 && newerFirst.body.saved === true, `status ${newerFirst.status} ${JSON.stringify(newerFirst.body)}`);
+  check('THE OLDER BUILD, FINISHING LAST, IS DISCARDED (stale) — not written over the newer file',
+    olderLast.status === 200 && olderLast.body.stale === true && olderLast.body.saved === false,
+    `status ${olderLast.status} ${JSON.stringify(olderLast.body)}`);
+  check('…and the file is the newer one (it holds the newer edit, and the older one before it)',
+    file.includes('NEWER EDIT') && file.includes('OLDER EDIT'), `newer=${file.includes('NEWER EDIT')} older=${file.includes('OLDER EDIT')}`);
+
+  // The reverse order: the OLDER build finishes first, the NEWER after it.
+  // The newer one must still be written — the first version of the check
+  // threw it away because the stored state had moved.
+  pair = await twoSaves('OLDER EDIT 2', 'NEWER EDIT 2');
+  pair.releaseOlder();
+  const olderFirst = await pair.older;
+  pair.releaseNewer();
+  const newerLast = await pair.newer;
+  held.length = 0;
+  file = String((await A(`/space/files/${id}/content`)).body);
+  check('the older build, finishing first, is written (it was newer than the stored file then)',
+    olderFirst.status === 200 && olderFirst.body.saved === true, `status ${olderFirst.status} ${JSON.stringify(olderFirst.body)}`);
+  check('THE NEWER BUILD, FINISHING AFTER IT, IS WRITTEN TOO — not thrown away',
+    newerLast.status === 200 && newerLast.body.saved === true && file.includes('NEWER EDIT 2'),
+    `status ${newerLast.status} ${JSON.stringify(newerLast.body)} newer-in-file=${file.includes('NEWER EDIT 2')}`);
 
   // ---- comments -------------------------------------------------------------------
   console.log('Comments');
@@ -497,6 +675,32 @@ async function main() {
   check('switching back on loses nothing (the document is still there)', back.status === 200 && back.body.title === 'E2E plan',
     `status ${back.status}`);
 
+  // ---- the browser-file guard (Mr. Singh, 30 Sept 2026, in place of a backfill) ----
+  // Switching Docs on is refused while any of the organisation's files was
+  // written by a browser (rendered_seq NULL with checkpoint_at set). Only the
+  // database can make such a file now, so the test sets one up directly.
+  console.log('The browser-file guard');
+  check('this document was built by the server (rendered_seq set)',
+    pg(`SELECT rendered_seq IS NOT NULL FROM docs.documents WHERE file_id='${id}'`) === 't');
+  pg(`UPDATE docs.documents SET rendered_seq = NULL WHERE file_id='${id}'`);
+  // Why the guard needs a definer function: through the app role and RLS, the
+  // operator cannot see this document at all, so a plain count reads 0.
+  const plain = pg(`SET ROLE tatvaos_app; SELECT set_config('app.tenant_id', '${TENANT_A}', false); `
+    + `SELECT count(*) FROM docs.documents WHERE rendered_seq IS NULL AND checkpoint_at IS NOT NULL`);
+  const definer = pg(`SELECT docs.browser_written_count('${TENANT_A}')`);
+  check('calibration: a plain count through RLS reads 0 — the definer function reads 1', plain === '0' && definer === '1',
+    `plain ${plain}, definer ${definer}`);
+  await P(`/admin/organisations/${TENANT_A}/docs`, { method: 'PUT', body: JSON.stringify({ enabled: false }) });
+  const guarded = await P(`/admin/organisations/${TENANT_A}/docs`, { method: 'PUT', body: JSON.stringify({ enabled: true }) });
+  check('switching Docs on is REFUSED while a browser-written file exists (409 browser_files, with the count)',
+    guarded.status === 409 && guarded.body.reason === 'browser_files' && guarded.body.count === 1,
+    `status ${guarded.status} ${JSON.stringify(guarded.body)}`);
+  check('…and Docs stays off', (await A('/docs/status')).body.enabled === false);
+  pg(`UPDATE docs.documents SET rendered_seq = state_seq WHERE file_id='${id}'`);
+  const unguarded = await P(`/admin/organisations/${TENANT_A}/docs`, { method: 'PUT', body: JSON.stringify({ enabled: true }) });
+  check('the same request once the file is server-built is allowed (200) — the refusal was the file, nothing else',
+    unguarded.status === 200 && unguarded.body.enabled === true, `status ${unguarded.status}`);
+
   // ---- rename + trash ---------------------------------------------------------------
   console.log('Rename and trash');
   // A fresh connection: the switch-off above rightly closed every earlier one.
@@ -517,8 +721,9 @@ async function main() {
   await P(`/admin/organisations/${TENANT_A}/docs`, { method: 'PUT', body: JSON.stringify({ enabled: false }) });
   await P(`/admin/organisations/${TENANT_C}/docs`, { method: 'PUT', body: JSON.stringify({ enabled: false }) });
 
+  stopAll();
   console.log(`\n  passed: ${passed}   failed: ${failed}`);
   process.exit(failed === 0 ? 0 : 1);
 }
 
-main().catch((e) => { console.error(`\nERROR: ${e.message}`); process.exit(2); });
+main().catch((e) => { stopAll(); console.error(`\nERROR: ${e.message}`); process.exit(2); });

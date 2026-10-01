@@ -27,6 +27,13 @@ public class DocsDocument
     public DateTimeOffset? CheckpointAt { get; set; }
     public Guid? CheckpointByUserId { get; set; }
 
+    /// <summary>
+    /// The update seq the render service last built the file from. NULL with
+    /// CheckpointAt set = a browser wrote the file (before 0011 condition 1).
+    /// See 20260930-b-docs-rendered-by-server.sql.
+    /// </summary>
+    public long? RenderedSeq { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
@@ -95,6 +102,18 @@ public class DocsImage
 /// platform operator (DocsAdminEndpoints); readable by the organisation.
 /// </summary>
 public class DocsTenantSetting
+{
+    public Guid TenantId { get; set; }
+    public bool Enabled { get; set; }
+    public Guid? UpdatedByUserId { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// Sheets' own per-organisation switch (20260925-sheets-switch.sql). Same
+/// rules as DocsTenantSetting: no row = off, written only by the operator.
+/// </summary>
+public class SheetsTenantSetting
 {
     public Guid TenantId { get; set; }
     public bool Enabled { get; set; }

@@ -299,6 +299,22 @@ every customer, on the second password a person generates, which is the one they
 generate because the first stopped working. The model knew nothing of the index,
 so the ORM was free to order the insert before the revoke.*
 
+**7a. A setting that promises a restriction is a customer-facing promise.** It
+ships only with its enforcement and the proof that the enforcement works,
+never ahead of it. (Mr. Singh's ruling, 1 Oct 2026.) Until the enforcement
+exists, the screen that offers the setting says plainly that it does not yet
+restrict anything.
+
+*Cost: the department setting "Can email outside the organisation" was saved,
+shown with an "internal only" badge, and described to administrators as "Off
+means they can only email colleagues" - and no sending path read it: not
+webmail, the phone app, the send API, or the mail edge. Every school that
+signed up was given a default "Students" department set to internal-only, so
+the product itself made the promise. Found on 30 Sept 2026 while removing an
+unused database grant (PR 363), seven weeks after the first such department
+was created. Production, 1 Oct: 2 such departments, in 2 organisations that
+were not live, with no active people in them - nobody had yet relied on it.*
+
 ## 8. Documented is not built
 
 When a document or comment tells you what the code does, **grep for the caller**
@@ -630,6 +646,46 @@ So, in a deploy step:
 post-deploy checklist asked for the document by hand; a rollback line wrong
 twice; and one day of reconstruction from `docker inspect` for an answer the
 log had already printed and thrown away.*
+
+---
+
+## 13. Every test run gets its own database
+
+Mr. Singh's ruling, 29 Sept 2026, to every developer session.
+
+1. **Each test run creates its own database, applies every file in
+   `local/postgres/init/` from nothing, runs, and drops it at the end, pass or
+   fail.** Applying the files twice is free, and it is the migration re-run
+   check: every file re-runs on every deploy.
+2. **Nobody edits the shared local database to make a test pass.** If a test
+   needs a particular state, it creates that state in its own database.
+3. **The shared database (`tatvaos_mail`) is for trying things in a browser,
+   never for proof.** A PR's evidence names the throwaway database it ran
+   against.
+
+`tests/lib/throwaway-db.sh` does 1 for a suite that sources it and calls
+`tdb_create <label>`. It prints the database's name, applies every migration
+twice with `ON_ERROR_STOP`, and drops the database in an `EXIT` trap. It stops
+the run, naming the reason, if a migration fails or changes a **server-wide
+role**, because roles are the one thing every database on a Postgres server
+shares. `tests/mfa/test-recovery-codes.sh` is the example. Each lane moves its
+own suites onto it as it touches them.
+
+**The incident.** On 29 Sept the PR 329 test (calendar reminders) failed in the
+shared database for a reason that had nothing to do with PR 329. PR 330, still
+a draft, had left its row-security rule on `calendar.reminder_sends` there,
+from an earlier run of its own tests, and 329's code could not satisfy it:
+every reminder send was refused. The session found it, set the table back to
+`main`'s shape for its runs, and restored 330's settings. That worked, but only
+because the restorer knew exactly what the table had been. A shared test
+database means:
+
+- one session's unmerged change can make another's test fail, or **pass for
+  the wrong reason**, which is worse, because nobody looks;
+- two sessions resetting the same tables at the same moment corrupt each
+  other's results, with nobody noticing;
+- "restored exactly as it was" depends on the restorer knowing what "was"
+  meant.
 
 ---
 

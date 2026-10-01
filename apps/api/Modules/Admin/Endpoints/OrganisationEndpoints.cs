@@ -21,7 +21,7 @@ public static class OrganisationEndpoints
     public static void MapOrganisationEndpoints(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api/admin/organisations")
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
 
         // The sales queue. Not a report — a work list.
@@ -37,7 +37,7 @@ public static class OrganisationEndpoints
         // Plans are platform-wide reference data, not tenant data — no RLS,
         // no scope switch, just the catalogue the change-plan dialog offers.
         var plans = app.MapGroup("/api/admin/plans")
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
         plans.MapGet("/", PlansAsync);
         plans.MapPost("/", CreatePlanAsync);
@@ -53,7 +53,7 @@ public static class OrganisationEndpoints
         // does, drifts again. Read-only on purpose: the catalogue is changed
         // by a migration, not by an operator.
         var products = app.MapGroup("/api/admin/products")
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
         products.MapGet("/", ProductsAsync);
     }
@@ -700,7 +700,7 @@ public static class OrganisationEndpoints
     // ------------------------------------------------------------------
 
     private static Guid CurrentUserId(HttpContext http) =>
-        Guid.TryParse(http.User.FindFirst("sub")?.Value, out var id) ? id : Guid.Empty;
+        TatvaOS.Api.Shared.Auth.SignedIn.UserIdOrEmpty(http);
 
     /// <summary>
     /// Turns "ABC School & Co." into abcschool.tatvaos.com, adding a numeric

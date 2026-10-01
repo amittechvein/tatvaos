@@ -217,6 +217,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     public DbSet<DocsComment> DocsComments => Set<DocsComment>();
     public DbSet<DocsImage> DocsImages => Set<DocsImage>();
     public DbSet<DocsTenantSetting> DocsTenantSettings => Set<DocsTenantSetting>();
+    // Sheets' own switch (20260925-sheets-switch.sql); configured beside Docs'.
+    public DbSet<SheetsTenantSetting> SheetsTenantSettings => Set<SheetsTenantSetting>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -308,6 +310,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<CalendarAttendee>().ToTable("event_attendees", "calendar");
         b.Entity<CalendarReminder>().ToTable("event_reminders", "calendar");
         b.Entity<CalendarReminderSend>().ToTable("reminder_sends", "calendar");
+        // Decision 0007's zero-layer PR: the second layer, beside the new RLS.
+        b.Entity<CalendarReminderSend>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
 
         // ---- Connect -----------------------------------------------------
         // Explicit schema on every one, like everything else here: a default
@@ -343,6 +347,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<TatvaOS.Api.Modules.Hire.HireCareersSite>()
             .HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<TatvaOS.Api.Modules.Mail.MailApiSend>().ToTable("api_sends", "mail");
+        // 20261001-mail-sender-gate-bounce: the outbound gate's record of each
+        // send's mailbox. No DbSet; append-only for the app.
+        b.Entity<TatvaOS.Api.Modules.Mail.MailApiSendEnvelope>().ToTable("api_send_envelopes", "mail");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingNotes>().ToTable("meeting_notes", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingChat>().ToTable("meeting_chat", "connect");
         b.Entity<TatvaOS.Api.Modules.Connect.ConnectMeetingBlock>().ToTable("meeting_blocks", "connect");
@@ -1035,6 +1042,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
             e.HasQueryFilter(s => s.TenantId == tenant.TenantId);
             e.HasOne<Tenant>().WithOne()
                 .HasForeignKey<DocsTenantSetting>(s => s.TenantId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<User>().WithMany()
+                .HasForeignKey(s => s.UpdatedByUserId).OnDelete(DeleteBehavior.SetNull);
+        });
+        b.Entity<SheetsTenantSetting>(e =>
+        {
+            e.ToTable("sheets_tenant_settings", "docs");
+            e.HasKey(s => s.TenantId);
+            e.HasQueryFilter(s => s.TenantId == tenant.TenantId);
+            e.HasOne<Tenant>().WithOne()
+                .HasForeignKey<SheetsTenantSetting>(s => s.TenantId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne<User>().WithMany()
                 .HasForeignKey(s => s.UpdatedByUserId).OnDelete(DeleteBehavior.SetNull);
         });

@@ -19,7 +19,8 @@
 #   5. the same code a second time is refused
 #
 # No test existed for MFA before this one. No mail server, no SMS.
-# WSL Postgres as tests/orgapi. Build first:  dotnet build apps/api -c Release
+# Its own throwaway database on the WSL Postgres (tests/lib/throwaway-db.sh).
+# Build first:  dotnet build apps/api -c Release
 # TATVAOS_ROOT=<another checkout> runs the same checks against that build
 # (how the red run on main was taken).
 # ---------------------------------------------------------------------------
@@ -31,17 +32,19 @@ PORT="${TATVAOS_MFA_TEST_PORT:-5095}"
 API="http://localhost:$PORT"
 SCRATCH="$(cd "$(dirname "$0")/../.." && pwd)/.tmp/mfa-codes-$$"; mkdir -p "$SCRATCH"; LOG="$SCRATCH/api.log"
 
-WSL_KEEPALIVE=""
+# ITS OWN DATABASE (house rule 13; Mr. Singh, 29 Sept 2026). Until then this
+# ran in the shared local database, where another session's unmerged change
+# could make it fail - or pass for the wrong reason. tests/lib/throwaway-db.sh
+# builds a new one from every file in local/postgres/init/ (applied twice: the
+# re-run check), and cleanup() drops it, pass or fail. A caller that sets
+# TATVAOS_PSQL (CI, with its own fresh database) is still obeyed.
+TDB_USED=""
 if [ -z "${TATVAOS_PSQL:-}" ]; then
-    if command -v wsl >/dev/null 2>&1; then
-        wsl -e sleep 1800 >/dev/null 2>&1 & WSL_KEEPALIVE=$!
-        sleep 2
-        TATVAOS_PSQL="wsl -u postgres -e psql -d tatvaos_mail -Atc"
-        TATVAOS_PG_HOST="${TATVAOS_PG_HOST:-$(wsl hostname -I | tr -d ' \r\n')}"
-    else
-        TATVAOS_PSQL="docker exec tv-postgres psql -U postgres -d tatvaos_mail -Atc"
-        TATVAOS_PG_HOST="${TATVAOS_PG_HOST:-localhost}"
-    fi
+    # shellcheck source=../lib/throwaway-db.sh
+    source "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/throwaway-db.sh"
+    tdb_create mfa || exit 2
+    TDB_USED=1
+    TATVAOS_PG_HOST="$TDB_HOST"
 fi
 PG() { $TATVAOS_PSQL "$1" 2>/dev/null | grep -v "^wsl:" | tr -d "\r" | tail -n1; }
 
@@ -75,24 +78,27 @@ reset_mfa() { PG "UPDATE core.users SET mfa_enabled=false, mfa_secret_ref=NULL, 
               PG "DELETE FROM core.mfa_recovery_codes WHERE user_id=(SELECT id FROM core.users WHERE email='$HR')" >/dev/null; }
 API_PID=""
 cleanup() {
-    reset_mfa
+    # A throwaway database is dropped below; resetting it first is pointless.
+    [ -z "$TDB_USED" ] && reset_mfa
     if [ -n "$API_PID" ]; then
         if command -v powershell.exe >/dev/null 2>&1; then
             powershell.exe -NoProfile -Command "\$c = Get-NetTCPConnection -LocalPort $PORT -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if (\$c) { Stop-Process -Id \$c.OwningProcess -Force }" >/dev/null 2>&1
         else fuser -k "$PORT/tcp" >/dev/null 2>&1 || true; fi
         kill "$API_PID" >/dev/null 2>&1 || true
     fi
-    [ -n "$WSL_KEEPALIVE" ] && kill "$WSL_KEEPALIVE" >/dev/null 2>&1
+    # AFTER the API has stopped, so nothing is connected when it goes.
+    [ -n "$TDB_USED" ] && tdb_drop
     if [ "$FAILED" -eq 0 ]; then rm -rf "$SCRATCH"; else printf "  kept for reading: %s\n" "$SCRATCH"; fi
 }
+# Replaces the helper's own drop trap: cleanup() calls tdb_drop itself.
 trap cleanup EXIT
 
-printf "\n  MFA recovery codes\n  tree under test: %s\n" "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)"
+printf "\n  MFA recovery codes\n  tree under test: %s\n  database: %s\n" "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)" "${TDB_NAME:-given by the caller (TATVAOS_PSQL)}"
 
 step "0. Start the API; the colleague gets a password"
 for _ in $(seq 1 30); do [ -n "$(PG "SELECT 1")" ] && break; sleep 1; done
 export JWT_SIGNING_KEY="dev-only-key-at-least-32-characters-long" ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS="$API"
-export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
+export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=${TDB_NAME:-tatvaos_mail};Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
 export Smtp__Host=localhost Smtp__Port=5870
 if command -v cygpath >/dev/null 2>&1; then export Oidc__KeyDirectory="$(cygpath -w "$SCRATCH")\\keys"; else export Oidc__KeyDirectory="$SCRATCH/keys"; fi
 dotnet run --no-build -c Release --project "$PROJ" > "$LOG" 2>&1 &
