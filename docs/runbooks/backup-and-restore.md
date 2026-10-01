@@ -103,8 +103,10 @@ The same five steps apply to every key in the table above.
 
 ## What is backed up
 
-`infra/scripts/backup.sh`, **every six hours** (02:30, 08:30, 14:30, 20:30) —
-or **every two hours** once the tiered schedule below is switched on:
+`infra/scripts/backup.sh`, **every two hours** on production (cron
+`30 */2 * * *`, read 2 Oct 2026; the tiered schedule below). The script's
+default without the tiered schedule is every six hours (02:30, 08:30, 14:30,
+20:30):
 
 | artefact | why losing it hurts |
 |---|---|
@@ -114,8 +116,8 @@ or **every two hours** once the tiered schedule below is switched on:
 | `dkimkeys.tar.gz` | small; losing them means re-publishing DNS for every customer domain |
 | `env.txt` | the uncommitted secrets, without which none of the above starts |
 
-So up to **six hours** can be lost (two, on the tiered schedule), not
-twenty-four.
+So on production up to **two hours** can be lost (six, without the tiered
+schedule), not twenty-four.
 
 ## Where the copies live
 
@@ -180,9 +182,11 @@ days; six-hourly, or two-hourly for the last day on the tiered schedule). Check 
 the dates before you plan the restore.
 
 **Rotating `BACKUP_ENC_PASSPHRASE`: keep the old one until everything written
-with it has aged out.** That is 3 days for local and pre-deploy copies and 7
-days for off-box objects. Rotate and throw away the old passphrase on the same
-day, and a week of backups can no longer be opened.
+with it has aged out.** That is 3 days for local and pre-deploy copies and
+**8 days** for off-box objects: the tiered schedule keeps a day's last set
+until it is 8 days old (see *The tiered schedule*), so the 7 in
+`BACKUP_S3_KEEP_DAYS` is not the number here. Rotate and throw away the old
+passphrase on the same day, and a week of backups can no longer be opened.
 
 **The old plain copies** (`pre-deploy-*.sql`, `pre-deploy-*.sql.gz`, 323 of
 them, 31 GB, 4 Aug to 24 Sept 2026) are **never deleted by a deploy**; each
@@ -193,31 +197,30 @@ count, the date range and who authorised it.
 
 ### The tiered schedule (Amit, 24 Sept 2026)
 
-**First, get the two scripts onto the server — WITHOUT moving the checkout.**
+**ON on production.** `.backup-env` gained the two lines on 25 Sept 2026, and
+production's `backup.sh` started obeying them with the deploy of `5c06a45`
+at 16:51Z that day. `BACKUP_LOCAL_KEEP` went from 2 to **4** (Amit, 26 Sept
+08:40Z), and `--install` moved cron to two-hourly at 08:46Z. Read on 2 Oct
+2026: cron `30 */2 * * *`, `BACKUP_S3_TIERED=1`, `BACKUP_LOCAL_KEEP=4`.
+On a fresh server it is off until both lines are in `.backup-env` **and**
+`--install` is re-run (it rewrites the cron line to match):
+
+```bash
+BACKUP_S3_TIERED=1
+BACKUP_LOCAL_KEEP=4                          # production since 26 Sept: 8 hours at two-hourly
+```
+
+**If only the backup scripts need to change on the server, take the files —
+not `git pull`.** On 25 Sept 2026 the server checkout stood at a deliberate
+"stage one" commit (`fdffa9f`) while `origin/main` was 38 commits and four
+migrations ahead. A `git pull` there deploys nothing by itself, but it arms
+the next deploy from that checkout with everything it pulled, which nobody
+changing a backup schedule expects:
 
 ```bash
 cd /srv/tatvaos-production
 git fetch origin main
 git checkout origin/main -- infra/scripts/backup.sh infra/scripts/backup-tiers.sh
-```
-
-**Not `git pull`.** On 25 Sept 2026 the server checkout stood at `fdffa9f` —
-the deliberate "stage one" commit, live `b42ffda` plus PR 254's five files —
-while `origin/main` was 38 commits ahead of it, four of them migrations in
-`local/postgres/init/`. `git pull` there would have moved the checkout to all
-38. It would not have deployed anything by itself, and cron would have been
-fine (the tiered schedule is off until the two lines below exist). But the
-next deploy from that checkout would then have shipped all 38 commits and
-applied four migrations, and nobody switching on a backup schedule expects to
-have armed that. Take the two files; leave `HEAD` where the deploy decided it
-should be.
-
-Off until these two lines are added to `.backup-env` **and** `--install` is
-re-run (it rewrites the cron line to match):
-
-```bash
-BACKUP_S3_TIERED=1
-BACKUP_LOCAL_KEEP=4                          # production since 26 Sept: 8 hours at two-hourly
 ```
 
 | age | kept in the bucket |
@@ -240,15 +243,21 @@ the set just uploaded, and it never deletes the newest three sets
 (`BACKUP_S3_MIN_KEEP`), so a week-long outage followed by one good run does not
 empty the bucket.
 
-**Measured on production, 25 Sept 2026, before the switch-on:** one set is
-**4.0 GB**; the server held **16 sets, 47 GB**, with **24 GB free** on a 157 GB
-disk; the bucket held **28 sets**; cron ran four times a day (02:30, 08:30,
-14:30, 20:30 UTC). With `BACKUP_LOCAL_KEEP=2` the server keeps about 8 GB
-instead of 47 — roughly **39 GB returned**, which is the answer to a free-space
-figure that had fallen from 32 GB to 24 GB in a day. The bucket goes the same
-way: about 21 sets rather than 28. What does rise is transfer — twelve runs a
-day instead of four, each uploading about 4 GB, so roughly 48 GB a day off the
-box rather than 16. That is a cost question for Amit, not a safety one.
+**What it costs, measured on production (no contents read):**
+
+| | 25 Sept 2026, before (six-hourly, by days) | 2 Oct 2026, now (two-hourly, tiered) |
+|---|---|---|
+| one set | 4.0 GB | **4.2 GB** (4,215 MB uploaded at 18:30Z) |
+| sets on the server | 16, **47 GB** | **4, 17 GB** |
+| disk free (of 157 GB) | 24 GB | **88 GB** |
+| sets in the bucket | 28 | **22** (the run log, every run) |
+| uploaded off the server per day | ~16 GB (4 runs) | **49.3 GB** (12 runs in the 24 h to 19:59Z, summed from the log) |
+
+The transfer is the one number that went **up**, about threefold: roughly
+**1.5 TB a month** leaves the server for the bucket. Whether that sits inside
+the allowance of the Linode plan or the object-storage plan, and what it costs
+if it does not, is on the Linode bill — Amit's to read, not a safety question.
+Re-measure with the log: each run writes `uploaded <stamp>.tar.gz.enc (N MB)`.
 
 `BACKUP_LOCAL_KEEP` is not optional here: twelve full sets a day would fill the
 server's disk within days. `--install` refuses the two-hourly cron line without
@@ -259,13 +268,13 @@ Tests, no server needed: `bash infra/scripts/backup-tiers-test.sh` (the rule —
 fourteen simulated days) and `bash infra/scripts/backup-sh-test.sh` (the
 deleting, end to end with fakes; Linux or WSL, it needs `flock`).
 
-**Restoring from more than four hours ago means a download first.** With
-`BACKUP_LOCAL_KEEP=2` the server holds only the last two sets — about four
-hours. Anything older is a 4 GB object in the bucket (`rclone copy`) that
-has to come down before the restore command above can start. **The download
-has not been timed.** What is known: a whole backup run — dump, tars, encrypt
-and the 4 GB upload — finishes in about 9 minutes (log, 25 Sept 2026), so a
-download within the same datacentre should be of that order; the 9 Sept drill
+**Restoring from more than eight hours ago means a download first.** With
+`BACKUP_LOCAL_KEEP=4` at two-hourly, the server holds only the last four sets,
+about eight hours. Anything older is a 4.2 GB object in the bucket
+(`rclone copy`) that has to come down before the restore command above can
+start. **The download has not been timed.** What is known: a whole backup run (dump,
+tars, encrypt and the 4 GB upload to that bucket) finishes in about 9 minutes
+(log, 25 Sept 2026), so a download should be of that order; the 9 Sept drill
 pulled a 0.6 GB object. Time it in the next drill and write the number here.
 Budget for it in the incident, not during it.
 
