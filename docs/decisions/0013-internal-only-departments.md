@@ -1,6 +1,6 @@
 # 0013 — Internal-only departments: enforce them, or stop offering them
 
-**Status:** proposed — the design Mr. Singh asked for on 1 October 2026, before anything is built. Whether to build it at all is Amit's decision.
+**Status:** accepted as the design (Mr. Singh, 2 October 2026). Whether to build it, or to leave the console's honest "coming soon" (#371), is Amit's decision. The bounce precondition below is built (#373).
 **Date:** 2026-10-01
 
 ## Context
