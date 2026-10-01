@@ -26,10 +26,18 @@ Postfix already runs one sender check on **both** submission ports, the API's (1
 
 **The last row is a precondition, independent of this decision.** With bounce tracking on, the existing verified-domain rule is skipped for the send API as well. It is **off today** (production 1 Oct: bounce domain set, no signing key), so nothing is exposed. It switches on the day a signing key is added for the bounce-routing work. **Fix first**, with one of two options:
 
-- **(a) The gate resolves the bounce address.** The send id inside the address leads to `mail.api_sends.from_address`, and the same rule applies. But today that row is written **after** the submit (`MailSendApiEndpoints`: submit at line 328, row at 355, saved at 379), so Postfix would find nothing. The row must be written first (outcome "submitting") and updated after.
+- **(a) The gate resolves the bounce address.** The send id inside the address leads to the mailbox that send is from, and the same rule applies.
 - **(b) The send API checks the view itself** before submitting, for the From mailbox, whenever it sets its own envelope. One more caller of the same view, not a second rule.
 
 I lean to (a): it keeps Postfix the only enforcer. Red first either way: bounce tracking on, an unverified domain, an outside recipient → refused.
+
+**Built as (a) in #373, approved by Mr. Singh on 2 Oct 2026.** The decision lives in one function, `mail.sender_gate_class`, which the gate query calls. A bounce-shaped address with no send behind it is **refused** (fails closed).
+
+The first draft of this section said to write the `mail.api_sends` row before the submit and update it after. **That does not work.** `api_sends` is append-only for the app (`20260905-mail-bounce-intake.sql` revokes UPDATE and DELETE), and #373's first green run failed every send with "permission denied for table api_sends".
+
+What was built instead is a separate table, `mail.api_send_envelopes`. It holds only the send id, the tenant and the from-address, and the send API writes it before each bounce-tracked submit. It is append-only too: the migration grants the app SELECT and INSERT, revokes UPDATE and DELETE, and gives the mail edge no grant. The isolation suite checks the revoke, and is calibrated against it.
+
+**Retention: none yet, and it can be pruned.** The gate needs a record only for the seconds a submit takes, so rows older than **one day** can be deleted without affecting it. Nothing deletes them today: the app has no DELETE on the table, so pruning would be a job running as the migration role. It is not built, and not needed at today's volume.
 
 ## What the sender sees: a clear refusal, never a silent drop
 
