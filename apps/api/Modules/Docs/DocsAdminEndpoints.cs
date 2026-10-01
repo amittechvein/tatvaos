@@ -49,7 +49,7 @@ public static class DocsAdminEndpoints
     public static void MapDocsAdminEndpoints(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api/admin/organisations/{id:guid}/docs")
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
 
         g.MapGet("/", GetAsync);
@@ -148,5 +148,5 @@ public static class DocsAdminEndpoints
         && (!env.IsDevelopment() || config.GetValue<bool>("Docs:RefuseSwitchOnInDevelopment"));
 
     private static Guid Actor(HttpContext http) =>
-        Guid.TryParse(http.User.FindFirst("sub")?.Value, out var uid) ? uid : Guid.Empty;
+        TatvaOS.Api.Shared.Auth.SignedIn.UserIdOrEmpty(http);
 }

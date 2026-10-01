@@ -28,7 +28,7 @@ public static class BillingEndpoints
     public static void MapBillingEndpoints(this IEndpointRouteBuilder app)
     {
         var op = app.MapGroup("/api/admin/organisations/{id:guid}")
-            .RequireAuthorization("SuperAdmin").WithTags("Platform administration");
+            .RequireOperator().WithTags("Platform administration");
         op.MapGet("/billing", OperatorBillingAsync);
         op.MapPut("/billing/profile", OperatorProfileAsync);
         op.MapPut("/billing/cycle", CycleAsync);
@@ -39,7 +39,7 @@ public static class BillingEndpoints
         op.MapPost("/invoices/{invoiceId:guid}/void", VoidAsync);
 
         app.MapGet("/api/admin/invoices", AllInvoicesAsync)
-            .RequireAuthorization("SuperAdmin").WithTags("Platform administration");
+            .RequireOperator().WithTags("Platform administration");
 
         var org = app.MapGroup("/api/org/billing")
             .RequireAuthorization("OrgAdmin").WithTags("Organisation administration");
@@ -365,5 +365,5 @@ public static class BillingEndpoints
     }
 
     private static Guid CurrentUserId(HttpContext http) =>
-        Guid.TryParse(http.User.FindFirst("sub")?.Value, out var uid) ? uid : Guid.Empty;
+        TatvaOS.Api.Shared.Auth.SignedIn.UserIdOrEmpty(http);
 }

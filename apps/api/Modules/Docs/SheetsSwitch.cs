@@ -89,8 +89,13 @@ public static class SheetsAdminEndpoints
 
     public static void MapSheetsAdminEndpoints(this IEndpointRouteBuilder app)
     {
+        // RequireOperator (PR 355): the operator policy AND the write
+        // transaction, so the switch and its audit line commit together. This
+        // route merged into main (PR 342) after 355 was written and still had
+        // the old guard; 355's own CI caught it (the operator's switch-on was
+        // refused: its audit line named nobody).
         var g = app.MapGroup("/api/admin/organisations/{id:guid}/sheets")
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
 
         g.MapGet("/", GetAsync);
@@ -163,6 +168,8 @@ public static class SheetsAdminEndpoints
         !SheetsSwitch.ServerRenderLanded
         && (!env.IsDevelopment() || config.GetValue<bool>("Sheets:RefuseSwitchOnInDevelopment"));
 
+    // The operator, read as every operator route reads them (SignedIn, PR 355):
+    // "sub" has been renamed by the JWT handler by the time an endpoint looks.
     private static Guid Actor(HttpContext http) =>
-        Guid.TryParse(http.User.FindFirst("sub")?.Value, out var uid) ? uid : Guid.Empty;
+        TatvaOS.Api.Shared.Auth.SignedIn.UserIdOrEmpty(http);
 }
