@@ -64,13 +64,17 @@ public static class AiDisclosure
         + "offered to hospitals and clinics.";
 
     // ── How long the provider keeps it, and training ──────────────────────
-    //  FROM THE OPENAI ACCOUNT'S DATA SETTINGS, read by Amit in his browser -
-    //  not assumed. Until he sends them this is a placeholder, and
-    //  tests/ai/privacy-text-matches.py FAILS while a PENDING marker is anywhere,
-    //  so this cannot merge or ship with the blank in it.
+    //  Mr. Singh's sentence, 1 Oct 2026. It describes the PRESENT: the
+    //  OpenAI account (organisation "Techvein") had training data-sharing ON
+    //  until 1 Oct 2026, when it was switched off on Amit's go and checked
+    //  after a reload; the past goes in notices to affected customers, not
+    //  in the policy. 30 days is OpenAI's own abuse-monitoring retention for
+    //  the API (developers.openai.com/api/docs/guides/your-data). The account
+    //  settings this depends on are recorded and checked as part of our
+    //  disclosure: docs/runbooks/backup-and-restore.md, "Provider settings".
     public const string Retention =
-        "[PENDING Amit: OpenAI keeps what we send for ___ and does / does not use it to train its models. "
-        + "This is from our OpenAI account's data settings, checked on ___.]";
+        "OpenAI does not use what we send to train its models. OpenAI keeps it for up to 30 days to check "
+        + "for misuse, unless the law requires it to be kept longer.";
 
     // ── Meetings ──────────────────────────────────────────────────────────
     //  Minutes are written from live captions; no meeting audio reaches

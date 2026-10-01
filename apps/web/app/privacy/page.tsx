@@ -53,7 +53,7 @@ const AI = {
   sorting: "the sender's name, the subject and the first 1,000 characters of the new text of every new email that arrives, including ones about health, children or money, without anyone clicking anything",
   neverSent: "The sender's email address, earlier messages quoted below the new text, attachments and junk mail are never sent. Suggested replies and sorting also skip mail your organisation sent and mail from automated senders.",
   whoDecides: "Mail AI is off by default. Only your organisation's administrator can turn it on, and they can turn each feature off again at any time. When Mail AI is turned on, Help me write starts on; suggested replies, Summarise and sorting stay off until the administrator turns each one on. Sorting is not offered to hospitals and clinics.",
-  retention: "[PENDING Amit: OpenAI keeps what we send for ___ and does / does not use it to train its models. This is from our OpenAI account's data settings, checked on ___.]",
+  retention: "OpenAI does not use what we send to train its models. OpenAI keeps it for up to 30 days to check for misuse, unless the law requires it to be kept longer.",
   meetingNotes: "the text of what was said, taken from live captions (not the audio)",
   captions: "[PENDING Mr. Singh: the live-captions sentence - which speech service hears the audio, where, who turns it on, what that service keeps, and whether there is a switch.]",
   toWhom: 'OpenAI, in the United States',
