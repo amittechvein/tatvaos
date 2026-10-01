@@ -788,6 +788,8 @@ for stmt in \
     "DELETE FROM mail.api_keys WHERE false" \
     "DELETE FROM mail.app_passwords WHERE false" \
     "DELETE FROM mail.api_sends WHERE false" \
+    "DELETE FROM mail.api_send_envelopes WHERE false" \
+    "UPDATE mail.api_send_envelopes SET from_address = from_address WHERE false" \
     "DELETE FROM family.contact_audit_logs WHERE false"     "DELETE FROM core.ai_usage WHERE false"     "UPDATE core.ai_usage SET tokens_in = tokens_in WHERE false"     "DELETE FROM core.ai_usage_alerts WHERE false"
 do
     if run_as tatvaos_app "$stmt" >/dev/null 2>&1; then
