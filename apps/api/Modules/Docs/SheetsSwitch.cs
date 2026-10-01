@@ -20,6 +20,22 @@ public static class SheetsSwitch
     /// <summary>403 with reason "sheets_off", which the web client shows as a sentence.</summary>
     public static IResult Off() =>
         Results.Json(new { error = OffMessage, reason = "sheets_off" }, statusCode: StatusCodes.Status403Forbidden);
+
+    /// <summary>
+    /// FALSE UNTIL SHEETS' OWN FILE IS BUILT ON THE SERVER. Amit, 30 Sept
+    /// 2026: Sheets refuses switch-on until the server builds its own .xlsx
+    /// (decision 0011 condition 1, as for Docs; Mr. Singh: the same rules,
+    /// with XlsxGuard on the server's own .xlsx). Today a spreadsheet's .xlsx
+    /// is the one its browser wrote (DocsEndpoints.SheetCheckpointAsync), so
+    /// production must never hold one. While false, the operator's switch
+    /// refuses to turn Sheets on. The server build's own pull request sets it
+    /// true, and nothing else should.
+    /// </summary>
+    public const bool ServerRenderLanded = false;
+
+    public const string BeforeRenderMessage =
+        "Sheets cannot be switched on yet. Spreadsheets must first be built on the server "
+        + "(decision 0011, condition 1); until then Sheets stays off for every organisation.";
 }
 
 /// <summary>
@@ -93,9 +109,22 @@ public static class SheetsAdminEndpoints
 
     private static async Task<IResult> PutAsync(
         Guid id, SwitchRequest req, AppDbContext db, TenantContext tenant, AuditWriter audit,
-        HttpContext http, CancellationToken ct)
+        HttpContext http, IHostEnvironment env, IConfiguration config, ILoggerFactory loggers, CancellationToken ct)
     {
         if (!await db.Tenants.AsNoTracking().AnyAsync(t => t.Id == id, ct)) return Results.NotFound();
+
+        // Switching ON is refused until Sheets' server build lands
+        // (SheetsSwitch.ServerRenderLanded). Switching OFF is never refused.
+        // Refused before anything is written or scoped, and logged — a refused
+        // attempt is somebody working against Amit's decision, or not knowing it.
+        if (req.Enabled && RefuseSwitchOn(env, config))
+        {
+            loggers.CreateLogger("TatvaOS.Sheets.Switch").LogWarning(
+                "Sheets switch-on REFUSED before the server build (Amit, 30 Sept 2026): organisation {OrganisationId}, operator {OperatorId}",
+                id, Actor(http));
+            return Results.Json(new { error = SheetsSwitch.BeforeRenderMessage, reason = "sheets_before_render" },
+                statusCode: StatusCodes.Status409Conflict);
+        }
 
         // Platform scope sets the tenant for this one operation; it does not
         // switch row-level security off (see OrganisationEndpoints).
@@ -121,6 +150,18 @@ public static class SheetsAdminEndpoints
 
         return Results.Ok(new { enabled = row.Enabled, updatedAt = row.UpdatedAt });
     }
+
+    /// <summary>
+    /// Refused everywhere but a developer's machine, where tests/sheets must
+    /// switch Sheets on to test it. Sheets:RefuseSwitchOnInDevelopment can only
+    /// ADD the refusal (tests/sheets/sheets-switch-production.test.mjs runs
+    /// with it) — no setting takes it away in production; only the server
+    /// build's pull request, by setting ServerRenderLanded. Same shape as
+    /// Docs' (DocsAdminEndpoints.RefuseSwitchOn).
+    /// </summary>
+    private static bool RefuseSwitchOn(IHostEnvironment env, IConfiguration config) =>
+        !SheetsSwitch.ServerRenderLanded
+        && (!env.IsDevelopment() || config.GetValue<bool>("Sheets:RefuseSwitchOnInDevelopment"));
 
     private static Guid Actor(HttpContext http) =>
         Guid.TryParse(http.User.FindFirst("sub")?.Value, out var uid) ? uid : Guid.Empty;
