@@ -116,15 +116,31 @@ const sameText = (d) => d.missing.length === 0 && d.extra.length === 0;
  * fixture). If the words differ but every character is accounted for, that
  * is the extractor, not the PDF; a changed word changes the characters.
  */
-function sameChars(server, pdf) {
+function charDiff(server, pdf) {
   const chars = (toks) => { const m = new Map(); for (const t of toks) for (const c of t) m.set(c, (m.get(c) ?? 0) + 1); return m; };
   const tok = (x) => x.normalize('NFC').split(/\s+/).filter((t) => t && !INDIC.test(t));
-  const a = chars(tok(server));
-  const b = chars(tok(pdf).filter((t) => !DECOR.test(t)));
-  if (a.size !== b.size) return false;
-  for (const [c, n] of a) if (b.get(c) !== n) return false;
-  return true;
+  const st = tok(server);
+  // A list marker or bullet is the PDF's own only beyond the times the
+  // document itself has that word (round 4: a document's own "–" was being
+  // dropped as if it were a third-level bullet).
+  const own = new Map();
+  for (const t of st) if (DECOR.test(t)) own.set(t, (own.get(t) ?? 0) + 1);
+  const pt = tok(pdf).filter((t) => {
+    if (!DECOR.test(t)) return true;
+    const n = own.get(t) ?? 0;
+    if (n > 0) { own.set(t, n - 1); return true; }
+    return false;
+  });
+  const a = chars(st);
+  const b = chars(pt);
+  const diff = [];
+  for (const c of new Set([...a.keys(), ...b.keys()])) {
+    const d = (b.get(c) ?? 0) - (a.get(c) ?? 0);
+    if (d !== 0) diff.push(`${JSON.stringify(c)}${d > 0 ? '+' : ''}${d}`);
+  }
+  return diff;
 }
+const sameChars = (server, pdf) => charDiff(server, pdf).length === 0;
 // "[picture: …]" is the PDF naming a picture it does not draw (a web address,
 // or no stored bytes); it is the PDF's own text, not the document's.
 const PLACEHOLDER = /\[picture(?:: [^\]]*)?\]/g;
@@ -181,7 +197,8 @@ for (const name of FIXTURES) {
     return i < 0 ? `"${tok}": not on any page` : JSON.stringify(t.words.slice(Math.max(0, i - 2), i + 3).map((w) => `${w.text}@p${w.page}(${Math.round(w.x)},${Math.round(w.y)})`));
   };
   check(`${name}: the PDF's text is the server's text (${t.pages} page(s), ${res.ms} ms)${exact ? '' : chars ? ' — same characters; pdftotext joined or split words at layout edges' : ''}`, chars,
-    `missing ${JSON.stringify(d.missing.slice(0, 12))} extra ${JSON.stringify(d.extra.slice(0, 12))}`
+    `characters that differ (PDF minus server): ${charDiff(res.r.text, pdfText).slice(0, 20).join(' ')}`
+    + `\n        missing ${JSON.stringify(d.missing.slice(0, 8))} extra ${JSON.stringify(d.extra.slice(0, 8))}`
     + (d.missing.length ? `\n        where the first missing word should be: ${near(d.missing[0])}` : ''));
   check(`${name}: every page has its number at the foot`, t.numbersOk);
   if (INDIC.test(res.r.text)) {
