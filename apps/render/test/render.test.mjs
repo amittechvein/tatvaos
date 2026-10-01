@@ -112,14 +112,48 @@ test('a render past the limit is killed (504), and the next render still works',
   // laptop on 30 Sept) took 130-190 ms on an idle one on 1 Oct and this test
   // failed 5 runs in 5 — it was measuring the machine. Twenty copies: ~2.5 s
   // on that idle laptop, 10x the limit (8.5 MB request, cap 48 MB).
-  const s = await startServer(18432, { RENDER_TIMEOUT_MS: '250', RENDER_WORKERS: '1' });
+  //
+  // SELF-CALIBRATING (Mr. Singh, 1 Oct 2026): first the same document is timed
+  // on THIS machine with the normal limit. Unless it takes at least twice the
+  // test limit, the test FAILS saying the document is too small for this
+  // machine — so a faster machine can never turn the 504 check into a pass, or
+  // a fail, for the wrong reason. RENDER_TEST_COPIES (default 20) exists only
+  // to show that failure (1 copy on a quiet laptop).
+  const LIMIT = 250;
+  const copies = Number(process.env.RENDER_TEST_COPIES ?? 20);
+  const fixture = JSON.parse(readFileSync(new URL('google-docs-paste.json', fixtures), 'utf8'));
+  const big = stateOf({ ...fixture, content: Array.from({ length: copies }, () => fixture.content).flat() });
+  const body = { updates: [b64(big)] };
+
+  const free = await startServer(18434, { RENDER_WORKERS: '1' });
+  let took = Infinity;
   try {
-    const fixture = JSON.parse(readFileSync(new URL('google-docs-paste.json', fixtures), 'utf8'));
-    const big = stateOf({ ...fixture, content: Array.from({ length: 20 }, () => fixture.content).flat() });
-    const slow = await post(18432, { updates: [b64(big)] });
-    assert.equal(slow.status, 504, 'twenty copies of the large document outrun a 250 ms limit');
+    for (let i = 0; i < 2; i += 1) { // the faster of two: a warm worker, the conservative figure
+      const t = performance.now();
+      const r = await post(18434, body);
+      assert.equal(r.status, 200, 'calibration: the document renders under the normal limit');
+      took = Math.min(took, performance.now() - t);
+    }
+  } finally { free.child.kill(); }
+  assert.ok(took >= 2 * LIMIT,
+    `CALIBRATION: the document is too small for this machine — ${copies} copies rendered in ${Math.round(took)} ms, `
+    + `needs at least ${2 * LIMIT} ms (twice the ${LIMIT} ms test limit). Use more copies.`);
+
+  const s = await startServer(18432, { RENDER_TIMEOUT_MS: String(LIMIT), RENDER_WORKERS: '1' });
+  try {
+    const slow = await post(18432, body);
+    // Every check says what it saw: on 1 Oct this test failed 2 runs in 5
+    // once and then passed 37 in a row (also with every core busy), and the
+    // run that failed had not kept its message. The next failure must explain itself.
+    const slowBody = await slow.text();
+    assert.equal(slow.status, 504,
+      `a document measured at ${Math.round(took)} ms should outrun the ${LIMIT} ms limit; got ${slow.status} ${slowBody.slice(0, 120)}`);
+    const t = performance.now();
     const after = await post(18432, { updates: [b64(stateOf(paragraph('small')))] });
-    assert.equal(after.status, 200, 'the killed worker was replaced');
+    const afterBody = await after.text();
+    assert.equal(after.status, 200,
+      `the killed worker was replaced: a small render answered ${after.status} in ${Math.round(performance.now() - t)} ms ${afterBody.slice(0, 120)}`
+      + `\nserver log: ${s.log().slice(-400)}`);
   } finally { s.child.kill(); }
 });
 

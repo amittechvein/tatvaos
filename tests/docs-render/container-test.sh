@@ -186,7 +186,8 @@ MAKE='import * as Y from "yjs"; import { getSchema } from "@tiptap/core"; import
 # past the lowered limit on ANY machine. One copy took ~400 ms on a busy laptop
 # (30 Sept) but 130-190 ms on an idle one (1 Oct), and the unit test with the
 # same document then failed 5 runs in 5. Twenty copies: ~2.5 s on that laptop.
-for spec in nested-lists:nested-lists:1 google-docs-paste:big:20; do
+# RENDER_TEST_COPIES (default 20) exists only to show the calibration failing.
+for spec in nested-lists:nested-lists:1 "google-docs-paste:big:${RENDER_TEST_COPIES:-20}"; do
   IFS=: read -r f out n <<<"$spec"
   DC run --rm --no-deps -T -v "$ROOT/tests/docs-render/fixtures:/fx:ro" --entrypoint node render \
     --no-warnings --import ./src/register.mjs --input-type=module -e "$MAKE" "$f.json" "$n" > "$TMP/$out.json" 2>/dev/null
@@ -201,6 +202,18 @@ same "the service's limit is 10 s" "$(DC exec -T apistub node -e 'fetch("http://
 # 250 ms: far below "big" (twenty copies of the large fixture), far above a
 # small one. 40 ms (the laptop unit test's first value) also failed the SMALL
 # render on one CPU in a fresh worker — a test tolerance, not the service.
+# SELF-CALIBRATING (Mr. Singh, 1 Oct 2026): "big" is first timed on THIS
+# machine through the normal service (10 s limit). Unless it takes at least
+# twice the 250 ms test limit, the 504 check below would prove nothing, so
+# the run FAILS here saying the document is too small for this machine.
+TIMED='const [url,f]=process.argv.slice(1);const b=require("fs").readFileSync(f);(async()=>{let best=Infinity,st=0;for(let i=0;i<2;i++){const t=Date.now();const r=await fetch(url,{method:"POST",headers:{"content-type":"application/json"},body:b});await r.text();st=r.status;best=Math.min(best,Date.now()-t)}console.log(st+" "+best)})().catch(e=>console.log("error "+e.message))'
+read -r cal_status cal_ms <<<"$(DC exec -T apistub node -e "$TIMED" http://render:8080/render/doc /tmp/big.json 2>&1 | tail -1)"
+if [ "$cal_status" != 200 ] || ! [ "${cal_ms:-0}" -ge 500 ] 2>/dev/null; then
+  bad "calibration: \"big\" must take at least 500 ms (twice the 250 ms limit) on this machine" \
+      "got status ${cal_status:-none} in ${cal_ms:-?} ms — the document is too small for this machine; use more copies"
+else
+  ok "calibration: \"big\" takes ${cal_ms} ms here under the normal limit (needs >= 500)"
+fi
 DC run -d --no-deps --name "${P}-render-limit" -e RENDER_TIMEOUT_MS=250 -e RENDER_WORKERS=1 render >/dev/null 2>&1
 for _ in $(seq 1 60); do DC exec -T apistub node -e "$WEB" "http://${P}-render-limit:8080/health" >/dev/null 2>&1 && break; sleep 1; done
 same "a render past the limit is stopped (504), in the hardened container" \
