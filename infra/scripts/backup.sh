@@ -158,6 +158,18 @@ copy_recordings_offbox() {
             RC_IMG="rclone/rclone:1.68.2@sha256:74c51b8817e5431bd6d7ed27cb2a50d8ee78d77f6807b72a41ef6f898845942b"
             rc() { docker run --rm $RC_ENV -v "$HOME/.config/rclone:/config/rclone:ro" "$@"; }
             REC_TMP=$(mktemp -d)
+            # What of rclone's output may reach the log: an ALLOW list, not a
+            # deny list. The 2 Oct 2026 proof run printed a recording's name
+            # through rclone's once-a-minute "Transferring:" block, which the
+            # first version's "drop the INFO lines" filter did not know about.
+            # So only the totals pass, plus error/notice lines with the file
+            # part replaced; anything else rclone prints, now or in a later
+            # version, is dropped.
+            rec_safe_log() {
+                grep -E '^[[:space:]]*(Transferred|Checks|Elapsed time|Errors|Deleted|Renamed):|ERROR|NOTICE' "$1" \
+                    | sed -E 's/((ERROR|NOTICE)[[:space:]]*:[[:space:]]*)[^:]+:[[:space:]]/\1<a recording>: /' \
+                    | sed 's/^/   /'
+            }
             # The volume is read only, through a throwaway container, the same
             # way the other volumes are read above. Bytes stream from the volume
             # to the bucket; nothing lands on the root disk.
@@ -171,7 +183,7 @@ copy_recordings_offbox() {
                 # straight after the first must say 0.
                 if rc -v tatvaos_connectrec:/src:ro "$RC_IMG" copy /src reccrypt: --transfers 2 -v > "$REC_TMP/copy.log" 2>&1; then
                     uploaded=$(grep -c -E 'Copied \((new|replaced)' "$REC_TMP/copy.log")
-                    grep -v ' INFO  : ' "$REC_TMP/copy.log" | grep -v '^[[:space:]]*$' | sed 's/^/   /'
+                    rec_safe_log "$REC_TMP/copy.log"
                     rc "$RC_IMG" lsf -R --files-only reccrypt: 2>/dev/null | sort > "$REC_TMP/bucket"
                     # Set difference: on the volume but not in the bucket.
                     missing=$(comm -23 "$REC_TMP/volume" "$REC_TMP/bucket" | wc -l)
@@ -187,7 +199,7 @@ copy_recordings_offbox() {
                     fi
                 else
                     bad "RECORDINGS: copy FAILED — the bucket may be behind the volume"
-                    grep -v ' INFO  : ' "$REC_TMP/copy.log" | tail -20 | sed 's/^/   /'
+                    rec_safe_log "$REC_TMP/copy.log" | tail -20
                     rec_failed=1
                 fi
             else
