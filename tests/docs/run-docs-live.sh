@@ -54,7 +54,15 @@ export ConnectionStrings__Postgres="Host=$TDB_HOST;Port=5432;Database=$TDB_NAME;
 export BOOTSTRAP_ADMIN_EMAIL="platform@docs.local" BOOTSTRAP_ADMIN_PASSWORD="dev-only-platform-pass"
 export Docs__RenderUrl="http://127.0.0.1:$RENDER_PORT"
 export Smtp__Host=localhost Smtp__Port=5871
-if command -v cygpath >/dev/null 2>&1; then export Oidc__KeyDirectory="$(cygpath -w "$SCRATCH")\\keys"; else export Oidc__KeyDirectory="$SCRATCH/keys"; fi
+# Space's files go in this run's scratch folder too, not the API's default
+# /var/lib/space/blobs: a CI runner cannot write there (PR 367's second CI run,
+# 1 Oct 2026: "Access to the path '/var/lib/space' is denied" -> 500 on create),
+# and on the laptop the default is the SHARED C:\var\lib\space (rule 13).
+if command -v cygpath >/dev/null 2>&1; then
+  export Oidc__KeyDirectory="$(cygpath -w "$SCRATCH")\\keys" Space__BlobRoot="$(cygpath -w "$SCRATCH")\\blobs"
+else
+  export Oidc__KeyDirectory="$SCRATCH/keys" Space__BlobRoot="$SCRATCH/blobs"
+fi
 dotnet run --no-build -c Release --project "$API_ROOT/apps/api/TatvaOS.Api.csproj" > "$SCRATCH/api.log" 2>&1 &
 API_PID=$!
 trap 'kill $API_PID 2>/dev/null; tdb_drop' EXIT
