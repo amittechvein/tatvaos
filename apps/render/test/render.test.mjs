@@ -107,37 +107,46 @@ test('the server renders, refuses bad input, and never logs content', async () =
 
 test('a render past the limit is killed (504), and the next render still works', async () => {
   // 250 ms: far above a small render even in a fresh worker (40 ms failed the SMALL
-  // render too on a busy laptop and on one CPU). The slow document must be far
-  // past it on ANY machine: the Google Docs fixture alone (~400 ms on a busy
-  // laptop on 30 Sept) took 130-190 ms on an idle one on 1 Oct and this test
-  // failed 5 runs in 5 — it was measuring the machine. Twenty copies: ~2.5 s
-  // on that idle laptop, 10x the limit (8.5 MB request, cap 48 MB).
+  // render too on a busy laptop and on one CPU).
   //
-  // SELF-CALIBRATING (Mr. Singh, 1 Oct 2026): first the same document is timed
-  // on THIS machine with the normal limit. Unless it takes at least twice the
-  // test limit, the test FAILS saying the document is too small for this
-  // machine — so a faster machine can never turn the 504 check into a pass, or
-  // a fail, for the wrong reason. RENDER_TEST_COPIES (default 20) exists only
-  // to show that failure (1 copy on a quiet laptop).
+  // THE LARGE DOCUMENT IS SIZED ON THIS MACHINE (Mr. Singh, 1 Oct 2026). A fixed
+  // size measured the machine twice over: one copy of the Google Docs fixture was
+  // ~400 ms on a busy laptop but 130-190 ms on an idle one (this test then failed
+  // 5 runs in 5), and twenty copies (2.5 s on that laptop) took more than the
+  // normal 10 s on CI's runner inside the one-CPU container. So: 1, 2, 4 ... 64
+  // copies, each timed under the normal limit (the faster of two renders), until
+  // one takes at least TWICE the test limit; that one is used. The test FAILS,
+  // saying which, if a size outruns even the normal limit first, or 64 copies are
+  // still too fast. RENDER_TEST_COPIES pins one size, only to show the failure.
   const LIMIT = 250;
-  const copies = Number(process.env.RENDER_TEST_COPIES ?? 20);
+  const sizes = process.env.RENDER_TEST_COPIES ? [Number(process.env.RENDER_TEST_COPIES)] : [1, 2, 4, 8, 16, 32, 64];
   const fixture = JSON.parse(readFileSync(new URL('google-docs-paste.json', fixtures), 'utf8'));
-  const big = stateOf({ ...fixture, content: Array.from({ length: copies }, () => fixture.content).flat() });
-  const body = { updates: [b64(big)] };
+  const bodyOf = (n) => ({ updates: [b64(stateOf({ ...fixture, content: Array.from({ length: n }, () => fixture.content).flat() }))] });
 
   const free = await startServer(18434, { RENDER_WORKERS: '1' });
+  const tried = [];
+  let body = null;
   let took = Infinity;
   try {
-    for (let i = 0; i < 2; i += 1) { // the faster of two: a warm worker, the conservative figure
-      const t = performance.now();
-      const r = await post(18434, body);
-      assert.equal(r.status, 200, 'calibration: the document renders under the normal limit');
-      took = Math.min(took, performance.now() - t);
+    for (const n of sizes) {
+      const candidate = bodyOf(n);
+      let best = Infinity;
+      for (let i = 0; i < 2; i += 1) { // the faster of two: a warm worker, the conservative figure
+        const t = performance.now();
+        const r = await post(18434, candidate);
+        await r.text();
+        assert.equal(r.status, 200,
+          `CALIBRATION: ${n} copies answered ${r.status} under the NORMAL limit before any size took ${2 * LIMIT} ms `
+          + `(tried: ${tried.join(' ')}) — the document could not be sized on this machine`);
+        best = Math.min(best, performance.now() - t);
+      }
+      tried.push(`${n}x=${Math.round(best)}ms`);
+      if (best >= 2 * LIMIT) { body = candidate; took = best; break; }
     }
   } finally { free.child.kill(); }
-  assert.ok(took >= 2 * LIMIT,
-    `CALIBRATION: the document is too small for this machine — ${copies} copies rendered in ${Math.round(took)} ms, `
-    + `needs at least ${2 * LIMIT} ms (twice the ${LIMIT} ms test limit). Use more copies.`);
+  assert.ok(body,
+    `CALIBRATION: the document is too small for this machine — no size took ${2 * LIMIT} ms `
+    + `(twice the ${LIMIT} ms test limit): ${tried.join(' ')}`);
 
   const s = await startServer(18432, { RENDER_TIMEOUT_MS: String(LIMIT), RENDER_WORKERS: '1' });
   try {
