@@ -656,6 +656,7 @@ function AiCreditsSection({ orgId }: { orgId: string }) {
 function MailAiOfferSection({ orgId }: { orgId: string }) {
   const { authedFetch } = useAuth();
   type S = { list: string; onList: boolean; everyone: boolean; allowAi: boolean; allowMailAi: boolean;
+    privacyTextComplete: boolean; privacyTextIncomplete: string | null;
     sorting: boolean; features: { rewrite: boolean; suggest: boolean; summary: boolean } };
   const [s, setS] = useState<S | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -710,7 +711,10 @@ function MailAiOfferSection({ orgId }: { orgId: string }) {
           </span>
         </p>
       )}
-      {s && !s.onList && !s.everyone && (
+      {s && !s.onList && !s.everyone && !s.privacyTextComplete && (
+        <p className="text-[0.75rem] text-warn mb-0">{s.privacyTextIncomplete}</p>
+      )}
+      {s && !s.onList && !s.everyone && s.privacyTextComplete && (
         <Button variant="ghost" disabled={busy} onClick={() => setConfirming(true)}>
           Offer Mail AI to this organisation…
         </Button>

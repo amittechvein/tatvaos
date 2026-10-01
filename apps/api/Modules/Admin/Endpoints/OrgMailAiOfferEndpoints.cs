@@ -46,11 +46,14 @@ public static class OrgMailAiOfferEndpoints
 {
     public static void MapOrgMailAiOfferEndpoints(this IEndpointRouteBuilder app)
     {
+        // RequireOperator (PR 355): the operator policy AND one transaction
+        // around the request - committed only on success, so a refused audit
+        // line, or any 4xx, undoes the list change and the reset with it.
         app.MapGet("/api/admin/organisations/{id:guid}/mail-ai", GetAsync)
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
         app.MapPost("/api/admin/organisations/{id:guid}/mail-ai/offer", OfferAsync)
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
     }
 
@@ -71,6 +74,10 @@ public static class OrgMailAiOfferEndpoints
             // back as expectedList.
             list,
             onList = MailAiOrganisationList.Allows(list, id),
+            // Whether the button may work at all (Mr. Singh, 30 Sept: not
+            // while the privacy text has a blank), and the sentence if not.
+            privacyTextComplete = MailAiPrivacyText.Complete,
+            privacyTextIncomplete = MailAiPrivacyText.Complete ? null : MailAiPrivacyText.Incomplete,
             everyone = IsEveryone(list),
             allowAi = org.AllowAi,
             allowMailAi = org.AllowMailAi,
@@ -83,6 +90,11 @@ public static class OrgMailAiOfferEndpoints
         Guid id, OfferRequest req, AppDbContext db, TenantContext tenant, HttpContext http,
         AuditWriter audit, CancellationToken ct)
     {
+        // FIRST, before anything is read or locked: not while the Mail AI
+        // privacy text still has a blank (Mr. Singh, 30 Sept 2026).
+        if (!MailAiPrivacyText.Complete)
+            return Results.Conflict(new { error = MailAiPrivacyText.Incomplete });
+
         if (req?.ExpectedList is null)
             return Results.BadRequest(new { error = "Send the list you were shown (expectedList), even if it is empty." });
 
@@ -90,7 +102,11 @@ public static class OrgMailAiOfferEndpoints
         tenant.EnterPlatformScope(id, actor);
         await db.SyncTenantAsync(ct);
 
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        // RequireOperator's transaction is already open; join it. (Opened
+        // here only if this ever runs without that filter, so the list change,
+        // the reset and the audit line can still never land apart.)
+        await using var own = db.Database.CurrentTransaction is null
+            ? await db.Database.BeginTransactionAsync(ct) : null;
 
         // Locked for the rest of the transaction: the check below and the
         // write after it see the same value.
@@ -176,7 +192,7 @@ public static class OrgMailAiOfferEndpoints
         await audit.WriteAsync("org.ai.mail.offered", "core.tenant", id.ToString(),
             before: before, after: after, ct: ct, productCode: "mail");
 
-        await tx.CommitAsync(ct);
+        if (own is not null) await own.CommitAsync(ct);
         return Results.Ok(after);
     }
 

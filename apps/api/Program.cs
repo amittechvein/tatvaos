@@ -981,6 +981,8 @@ app.MapAiStatusEndpoints();
 //  the variables after the first start.
 // ---------------------------------------------------------------------------
 await BootstrapAdmin.EnsureAsync(app.Services, app.Logger);
+// Development-only test switch for the Mail AI offer button (ignored elsewhere, loudly).
+TatvaOS.Api.Shared.Ai.MailAiPrivacyText.ConfigureForTests(app.Environment, app.Configuration, app.Logger);
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }))
    .AllowAnonymous()

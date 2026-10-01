@@ -152,6 +152,35 @@ same "  and the list it shows is the stored one" "$(jq_ "$(body "$r")" "d['list'
 TV_BEFORE=$(PG "SELECT allow_mail_ai::text||','||mail_ai_suggest::text||','||(mail_ai_triage_since IS NULL)::text FROM core.tenants WHERE id='$TECHVEIN'")
 T0=$(PG "SELECT now()")
 
+# Mr. Singh, 30 Sept 2026: the button must refuse while the privacy text
+# still has a blank. Until PR 366 there is no text, so this API refuses.
+step "2b. Refused while the Mail AI privacy text is incomplete"
+r=$(call GET "/api/admin/organisations/$SCHOOL/mail-ai" "$OPERATOR")
+same "the console is told the text is incomplete" "$(jq_ "$(body "$r")" "d['privacyTextComplete']")" "False"
+has  "  with the sentence it shows instead of the button" "$(jq_ "$(body "$r")" "d.get('privacyTextIncomplete') or ''")" "still has a blank"
+r=$(call POST "/api/admin/organisations/$SCHOOL/mail-ai/offer" "$OPERATOR" "{\"expectedList\":\"$TECHVEIN\"}")
+same "the offer is refused: 409" "$(status "$r")" "409"
+has  "  saying why" "$(body "$r")" "still has a blank"
+same "  list unchanged" "$(PG "SELECT value FROM core.platform_settings WHERE key='ai.mail.organisations'")" "$TECHVEIN"
+same "  school's Mail AI untouched" "$(PG "SELECT allow_mail_ai FROM core.tenants WHERE id='$SCHOOL'")" "t"
+same "  no audit line" "$(PG "SELECT count(*) FROM core.audit_logs WHERE action LIKE '%org.ai.mail.offered' AND occurred_at > '$T0'")" "0"
+
+# The rest proves the offer itself: the same API, restarted with the
+# Development-only switch that treats the text as complete.
+stop_one_api() {
+    if command -v powershell.exe >/dev/null 2>&1; then
+        powershell.exe -NoProfile -Command "\$c = Get-NetTCPConnection -LocalPort $PORT -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if (\$c) { Stop-Process -Id \$c.OwningProcess -Force }" >/dev/null 2>&1
+    else fuser -k "$PORT/tcp" >/dev/null 2>&1 || true; fi
+    kill "$API_PID" >/dev/null 2>&1 || true; wait "$API_PID" 2>/dev/null || true
+}
+stop_one_api
+export MailAi__PrivacyTextCompleteForTests=1
+dotnet run --no-build -c Release --project "$PROJ" > "$LOG" 2>&1 &
+API_PID=$!
+for _ in $(seq 1 150); do curl -s -o /dev/null -w "%{http_code}" "$API/health" 2>/dev/null | grep -q 200 && break; sleep 1; done
+curl -s -o /dev/null -w "%{http_code}" "$API/health" | grep -q 200 && pass "API restarted with the test switch" || { fail "API did not restart"; tail -5 "$LOG"; exit 1; }
+has "  and its log says the text is treated as complete, for tests" "$(cat "$LOG")" "TREATED AS COMPLETE for tests"
+
 step "3. Refused, and nothing changes"
 unchanged() {
     same "  list unchanged" "$(PG "SELECT value FROM core.platform_settings WHERE key='ai.mail.organisations'")" "$TECHVEIN"
