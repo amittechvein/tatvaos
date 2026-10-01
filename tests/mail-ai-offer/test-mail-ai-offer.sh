@@ -116,7 +116,8 @@ export Smtp__Host=localhost Smtp__Port=5870
 # AI configured (nothing is ever sent: no request reaches the provider in
 # this suite), so Mail's status answers from the SWITCHES. Unconfigured, it
 # says "unavailable" whatever they are, and step 6 would prove nothing.
-export Ai__BaseUrl=http://127.0.0.1:9/v1 Ai__ApiKey=test-only-not-a-key Ai__Model=test-model Ai__DataLocation="the United States"
+# An unknown host must name its vendor (PR 366), or AI stays unconfigured.
+export Ai__Vendor=OpenAI Ai__BaseUrl=http://127.0.0.1:9/v1 Ai__ApiKey=test-only-not-a-key Ai__Model=test-model Ai__DataLocation="the United States"
 export Personal__PhoneHashKey="test-only-phone-hash-key-at-least-32-characters"
 if command -v cygpath >/dev/null 2>&1; then export Oidc__KeyDirectory="$(cygpath -w "$SCRATCH")\\keys"; else export Oidc__KeyDirectory="$SCRATCH/keys"; fi
 
@@ -154,16 +155,15 @@ T0=$(PG "SELECT now()")
 
 # Mr. Singh, 30 Sept 2026: the button must refuse while the privacy text
 # still has a blank. Until PR 366 there is no text, so this API refuses.
-step "2b. Refused while the Mail AI privacy text is incomplete"
+step "2b. The Mail AI privacy text is complete in this tree, so the button is open"
+# PR 366 fills every Mail AI sentence (the captions sentence was ruled OUT of
+# the Mail AI text by Mr. Singh, 1 Oct 2026), so here the console must say the
+# text is complete, WITHOUT the test switch. The refusal while a blank remains
+# is proved on PR 364 (db4a0d2: 15 fail with it removed) and by 366's
+# calibration (blanks put back -> refused).
 r=$(call GET "/api/admin/organisations/$SCHOOL/mail-ai" "$OPERATOR")
-same "the console is told the text is incomplete" "$(jq_ "$(body "$r")" "d['privacyTextComplete']")" "False"
-has  "  with the sentence it shows instead of the button" "$(jq_ "$(body "$r")" "d.get('privacyTextIncomplete') or ''")" "still has a blank"
-r=$(call POST "/api/admin/organisations/$SCHOOL/mail-ai/offer" "$OPERATOR" "{\"expectedList\":\"$TECHVEIN\"}")
-same "the offer is refused: 409" "$(status "$r")" "409"
-has  "  saying why" "$(body "$r")" "still has a blank"
-same "  list unchanged" "$(PG "SELECT value FROM core.platform_settings WHERE key='ai.mail.organisations'")" "$TECHVEIN"
-same "  school's Mail AI untouched" "$(PG "SELECT allow_mail_ai FROM core.tenants WHERE id='$SCHOOL'")" "t"
-same "  no audit line" "$(PG "SELECT count(*) FROM core.audit_logs WHERE action LIKE '%org.ai.mail.offered' AND occurred_at > '$T0'")" "0"
+same "the console is told the text is complete (no test switch)" "$(jq_ "$(body "$r")" "d['privacyTextComplete']")" "True"
+same "  and shows no incomplete sentence" "$(jq_ "$(body "$r")" "d.get('privacyTextIncomplete')")" "None"
 
 # The rest proves the offer itself: the same API, restarted with the
 # Development-only switch that treats the text as complete.

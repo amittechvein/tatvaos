@@ -135,6 +135,19 @@ Then **use the thing you changed.** A green build proves the code compiles. It
 does not prove the feature works, and four features shipped this week were
 confirmed only by a build until somebody finally opened a meeting.
 
+### If the deploy carries an AI change
+
+Its deploy note states two things (Mr. Singh, 30 Sept and 1 Oct 2026):
+
+1. **Who is on each AI list** at that moment: `ai.mail.organisations`,
+   `ai.connect.organisations`, `ai.docs.organisations`,
+   `ai.sheets.organisations` (the deploy prints them, PR 365).
+2. **That the OpenAI sharing settings were checked off**, and when: the three
+   Sharing options Disabled and retention as recorded in
+   `docs/runbooks/backup-and-restore.md`, "Provider settings". This is read
+   in Amit's browser; it cannot be read from the server. If it was not
+   checked, the note says so - it does not say "checked".
+
 ### If something is broken
 
 1. `docker logs --tail 40 tatvaos-api-1` — the API's own startup and worker

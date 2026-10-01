@@ -105,7 +105,8 @@ export ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS="$API"
 export ConnectionStrings__Postgres="$TDB_CONN"
 export Smtp__Host=localhost Smtp__Port=5870
 export Personal__PhoneHashKey="test-only-phone-hash-key-at-least-32-characters"
-export Ai__BaseUrl="$FAKE/v1" Ai__ApiKey=test-only-not-a-key Ai__Model=test-model Ai__DataLocation="the United States"
+# An unknown host must name its vendor (PR 366), or AI stays unconfigured.
+export Ai__Vendor=OpenAI Ai__BaseUrl="$FAKE/v1" Ai__ApiKey=test-only-not-a-key Ai__Model=test-model Ai__DataLocation="the United States"
 if command -v cygpath >/dev/null 2>&1; then export Oidc__KeyDirectory="$(cygpath -w "$SCRATCH")\\keys"; else export Oidc__KeyDirectory="$SCRATCH/keys"; fi
 dotnet run --no-build -c Release --project "$PROJ" > "$LOG" 2>&1 &
 API_PID=$!

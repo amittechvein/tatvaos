@@ -52,6 +52,28 @@ built: new keys, the existing secrets re-encrypted in one transaction, and
 the sign-in key kept as the old key until the re-encryption is verified. When
 that lands, this row changes to name the new keys instead.
 
+## Provider settings that are part of what customers are told
+
+Some settings live in a provider's web console, not in `.env`, and what the
+privacy page promises depends on them. A discount offer can switch one with
+two clicks. **Any change to these goes to Mr. Singh first, the same as a
+change to a privacy sentence** (Mr. Singh, 1 Oct 2026, after the OpenAI
+account was found sharing every AI request for training in exchange for free
+daily tokens).
+
+| provider, where | setting | must be | last checked |
+|---|---|---|---|
+| OpenAI, platform.openai.com → organisation "Techvein" → Data controls → **Sharing** | Share inputs and outputs with OpenAI; Share evaluation and fine-tuning data; Playground feedback sharing | **Disabled, all three** | 1 Oct 2026: they were ENABLED for all projects (with "complimentary daily tokens") and were switched off that day on Amit's go; read again after a reload, all three Disabled |
+| OpenAI, the same → **Data retention** | API call logging; zero data retention | "Enabled per call" (our gateway never asks OpenAI to store a request); no zero data retention, so **OpenAI's default 30-day abuse-monitoring retention** applies ([OpenAI: your data](https://developers.openai.com/api/docs/guides/your-data)) | 1 Oct 2026 |
+| Google (live captions in Chrome) | - | **not yet known**: Mr. Singh's five questions and a check of any Google project setting are open | - |
+
+The sentence these support is `AiDisclosure.Retention` (PR 366). If a check
+finds a setting different from this table, do not "fix" the table: tell Amit
+and Mr. Singh, because the privacy page is then wrong.
+
+Every deploy that carries an AI change says in its note that these were
+checked, and on what date: see `docs/DEPLOY_RUNBOOK.md`, section 4.
+
 `PERSONAL_PHONE_HASH_KEY` is generated once (`openssl rand -hex 32`), at the
 switch-on of personal accounts. Compose refuses to run without it, and the API
 refuses to start outside Development if it is missing or shorter than 32

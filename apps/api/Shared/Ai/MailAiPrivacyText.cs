@@ -26,7 +26,8 @@ public static class MailAiPrivacyText
     /// <summary>False until PR 366 supplies the text and its blanks are filled.</summary>
     public static bool Complete => TextComplete || _testOverride;
 
-    private static bool TextComplete => false;
+    // PR 366: the text exists; complete = no blank left in any sentence.
+    private static bool TextComplete => AiDisclosure.Complete;
 
     // ── FOR TESTS, AND ONLY IN DEVELOPMENT ───────────────────────────────
     //  tests/mail-ai-offer must prove the offer itself as well as the
