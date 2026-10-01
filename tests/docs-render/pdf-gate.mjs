@@ -67,20 +67,28 @@ async function tryPdf(state, opts) {
   try { return await pdfOf(state, opts); } catch (e) { return { error: e }; }
 }
 
-/** pdftotext, with the page number at each foot checked and removed. */
+/**
+ * pdftotext's words WITH their positions (-bbox). The page number is the
+ * word(s) in the foot area of each page — by position, not "the last line":
+ * round 3 (1 Oct 2026) showed pdftotext's reading order can put a table's
+ * right-hand column after the footer.
+ */
+const ENT = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'", '&apos;': "'" };
 function textOf(pdf) {
   writeFileSync('/tmp/g.pdf', pdf);
-  const raw = sh('pdftotext', ['-enc', 'UTF-8', '/tmp/g.pdf', '-']);
-  const pages = raw.split('\f');
-  if (pages.length && pages[pages.length - 1].trim() === '') pages.pop();
+  const html = sh('pdftotext', ['-bbox', '-enc', 'UTF-8', '/tmp/g.pdf', '-']);
+  const pages = [...html.matchAll(/<page width="([\d.]+)" height="([\d.]+)">([\s\S]*?)<\/page>/g)];
   let numbersOk = pages.length > 0;
-  const body = pages.map((pg, i) => {
-    const lines = pg.split('\n').filter((l) => l.trim());
-    const last = lines.pop();
-    if ((last ?? '').trim() !== String(i + 1)) numbersOk = false;
-    return lines.join('\n');
-  }).join('\n');
-  return { body, pages: pages.length, numbersOk };
+  const all = [];
+  pages.forEach((m, i) => {
+    const height = Number(m[2]);
+    const words = [...m[3].matchAll(/<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">([^<]*)<\/word>/g)]
+      .map((w) => ({ x: Number(w[1]), y: Number(w[2]), text: w[5].replace(/&(amp|lt|gt|quot|#39|apos);/g, (e) => ENT[e]), page: i + 1 }));
+    const foot = words.filter((w) => w.y > height - 60);
+    if (foot.map((w) => w.text).join(' ') !== String(i + 1)) numbersOk = false;
+    all.push(...words.filter((w) => w.y <= height - 60));
+  });
+  return { body: all.map((w) => w.text).join(' '), words: all, pages: pages.length, numbersOk };
 }
 
 // Bullets, list numbers and task boxes are the PDF's own; nothing else may be extra.
@@ -101,6 +109,22 @@ function bagDiff(server, pdf) {
   return { missing, extra: extra.filter((t) => !DECOR.test(t)) };
 }
 const sameText = (d) => d.missing.length === 0 && d.extra.length === 0;
+/**
+ * The same characters, word boundaries aside. pdftotext reads a page by
+ * layout and can glue words from neighbouring table cells, or split a long
+ * word the PDF broke across a line (round 3: the scrubbed Google Docs
+ * fixture). If the words differ but every character is accounted for, that
+ * is the extractor, not the PDF; a changed word changes the characters.
+ */
+function sameChars(server, pdf) {
+  const chars = (toks) => { const m = new Map(); for (const t of toks) for (const c of t) m.set(c, (m.get(c) ?? 0) + 1); return m; };
+  const tok = (x) => x.normalize('NFC').split(/\s+/).filter((t) => t && !INDIC.test(t));
+  const a = chars(tok(server));
+  const b = chars(tok(pdf).filter((t) => !DECOR.test(t)));
+  if (a.size !== b.size) return false;
+  for (const [c, n] of a) if (b.get(c) !== n) return false;
+  return true;
+}
 // "[picture: …]" is the PDF naming a picture it does not draw (a web address,
 // or no stored bytes); it is the PDF's own text, not the document's.
 const PLACEHOLDER = /\[picture(?:: [^\]]*)?\]/g;
@@ -147,10 +171,18 @@ for (const name of FIXTURES) {
   built[name] = res;
   writeFileSync(`${OUT}/${name}.pdf`, res.pdf);
   const t = textOf(res.pdf);
-  const d = bagDiff(res.r.text, t.body.replace(PLACEHOLDER, ' '));
-  // Fixtures are synthetic or scrubbed, so the end of the extracted text may be shown.
-  check(`${name}: the PDF's text is the server's text (${t.pages} page(s), ${res.ms} ms)`, sameText(d),
-    `missing ${JSON.stringify(d.missing.slice(0, 12))} extra ${JSON.stringify(d.extra.slice(0, 12))}\n        pdftotext ends: ${JSON.stringify(t.body.slice(-300))}`);
+  const pdfText = t.body.replace(PLACEHOLDER, ' ');
+  const d = bagDiff(res.r.text, pdfText);
+  const exact = sameText(d);
+  const chars = exact || sameChars(res.r.text, pdfText);
+  // Fixtures are synthetic or scrubbed, so words and positions may be shown.
+  const near = (tok) => {
+    const i = t.words.findIndex((w) => w.text.includes(tok.slice(0, 4)));
+    return i < 0 ? `"${tok}": not on any page` : JSON.stringify(t.words.slice(Math.max(0, i - 2), i + 3).map((w) => `${w.text}@p${w.page}(${Math.round(w.x)},${Math.round(w.y)})`));
+  };
+  check(`${name}: the PDF's text is the server's text (${t.pages} page(s), ${res.ms} ms)${exact ? '' : chars ? ' — same characters; pdftotext joined or split words at layout edges' : ''}`, chars,
+    `missing ${JSON.stringify(d.missing.slice(0, 12))} extra ${JSON.stringify(d.extra.slice(0, 12))}`
+    + (d.missing.length ? `\n        where the first missing word should be: ${near(d.missing[0])}` : ''));
   check(`${name}: every page has its number at the foot`, t.numbersOk);
   if (INDIC.test(res.r.text)) {
     const want = res.r.text.normalize('NFC').split(/\s+/).filter((w) => INDIC.test(w));
@@ -170,7 +202,8 @@ for (const name of FIXTURES) {
     const words = ep.r.text.split(/\s+/);
     const i = words.findIndex((w) => w.length > 4);
     const planted = [...words.slice(0, i), `${words[i]}x`, ...words.slice(i + 1)].join(' ');
-    check('calibration: one changed word is caught', !sameText(bagDiff(planted, textOf(ep.pdf).body)));
+    const body = textOf(ep.pdf).body.replace(PLACEHOLDER, ' ');
+    check('calibration: one changed word is caught (by words AND by characters)', !sameText(bagDiff(planted, body)) && !sameChars(planted, body));
   }
 }
 

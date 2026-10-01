@@ -164,11 +164,18 @@ for p in sorted(by_page):
     body.extend(ls[:-1])
 
 # ---- compare --------------------------------------------------------------------
-def runs(text, lo, hi):
+# Characters the PDF draws from the script's font although they are not in
+# its block: the rupee sign. Liberation Sans has no "₹", so Typst falls back
+# to the first font in the list that has it — Noto Sans Devanagari (round 3,
+# 1 Oct 2026: "rupeeIndian" drawn there; the reference must shape it there too).
+EXTRA = {"Devanagari": (0x20B9,)}
+
+
+def runs(text, lo, hi, extra=()):
     out, cur = [], ""
     for ch in text:
         cp = ord(ch)
-        if lo <= cp <= hi or cp in (0x200C, 0x200D):
+        if lo <= cp <= hi or cp in (0x200C, 0x200D) or cp in extra:
             cur += ch
         else:
             if cur:
@@ -209,7 +216,7 @@ for i, exp in enumerate(expected):
     # off in the reference, and the conjunct lines must stop matching.
     feats = [f"--features={os.environ['SHAPING_FEATURES']}"] if os.environ.get("SHAPING_FEATURES") else []
     ref_names = []
-    for r in runs(exp["text"], lo, hi):
+    for r in runs(exp["text"], lo, hi, EXTRA.get(exp["script"], ())):
         shaped = run("hb-shape", f"--font-file={orig_path}", "--language=en", *feats,
                      "--no-positions", "--no-clusters", "--", r).strip().strip("[]")
         ref_names.extend(g for g in shaped.split("|") if g)
