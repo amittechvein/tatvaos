@@ -203,7 +203,18 @@ submission_sasl_auth_enable = no
 submission_client_restrictions = permit_mynetworks,reject
 submission_recipient_restrictions = permit_mynetworks,reject_unauth_destination,reject
 
+#  A SIGNED-IN sender may only use an address they own, checked BEFORE the
+#  outbound gate: the gate judges the address claimed, so it must first be
+#  the user's to claim. Until 2 Oct 2026 port 587 let any signed-in user send
+#  as any address, another organisation's mailboxes included, proven on the
+#  local stack with production's rules. "_authenticated_" limits it to
+#  signed-in sessions, so the API's port 10587 (no sign-in, own network) uses
+#  the same restriction list unchanged. Who owns what:
+#  sql/sender-login-maps.cf -> mail.sender_logins().
+smtpd_sender_login_maps = pgsql:/etc/postfix/sql/sender-login-maps.cf
+
 submission_sender_restrictions =
+    reject_authenticated_sender_login_mismatch,
     check_sender_access pgsql:/etc/postfix/sql/sender-external-gate.cf
 
 #  Consulted ONLY by the submission service in master.cf, never by port 25.
