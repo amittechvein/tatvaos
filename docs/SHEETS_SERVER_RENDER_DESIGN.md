@@ -49,7 +49,7 @@ Nothing from the browser is used: not its state, not its `.xlsx`, not its HTML o
 
 The engine's clock is injectable (`Engine({ now })`), but dates are read in the **process's** time zone, and the render container runs on **UTC**. Built on the server, a sheet saved at 01:00 in India would store **yesterday's date** for TODAY(), until the next save after 05:30. In the browser it uses the viewer's own zone.
 
-**Proposal:** set `TZ=Asia/Kolkata` for the render container. Every customer today is Indian. A per-organisation time zone can come later, if a customer outside India arrives. *Amit's call.*
+**Decided (Amit, 2 Oct 2026): India time.** `TZ=Asia/Kolkata` for the render container. Every customer today is Indian; a per-organisation time zone can come later, if a customer outside India arrives. The gate checks it: a TODAY() fixture built at 00:30 IST must show that day's date, not the day before.
 
 Volatile functions (TODAY, NOW, RAND) are recalculated at each server build, so the stored file shows the time of the **save**, as Excel does on open.
 
@@ -72,7 +72,7 @@ Volatile functions (TODAY, NOW, RAND) are recalculated at each server build, so 
 ## 7. Decisions needed
 
 **For Amit:**
-1. **Time zone:** fix TODAY()/NOW() to India time on the server (proposed), or something else?
+1. ~~Time zone~~: **decided 2 Oct: India time** (`TZ=Asia/Kolkata`).
 
 **For Mr. Singh:**
 
