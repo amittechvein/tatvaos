@@ -47,6 +47,22 @@ bad()  { printf '   %s[FAIL]%s %s\n' "$R" "$X" "$1"; }
 warn() { printf '   %s[warn]%s %s\n' "$Y" "$X" "$1"; }
 note() { printf '   %s%s%s\n' "$D" "$1" "$X"; }
 
+# ONE OPTION AT MOST, AND ONLY ONE WE KNOW. Until 2 Oct 2026 an argument this
+# script did not recognise was ignored and a FULL backup ran - found when
+# --recordings-only, before it existed, made a set and thinned the bucket
+# from 120 to 22 in a test. A typo (--recordings-onyl) or an option from
+# another script must do nothing, and say so, before anything is touched.
+# (Mr. Singh: "a script that silently ignores a flag is a hazard".)
+if [ "$#" -gt 1 ]; then
+    bad "one option at most (got $#: $*) — nothing was done"
+    exit 2
+fi
+case "${1:-}" in
+    ""|--install|--recordings-only) ;;
+    *)  bad "unknown option \"$1\" — nothing was done. Options: --install, --recordings-only, or none for a full backup."
+        exit 2 ;;
+esac
+
 DEST="${BACKUP_DIR:-/srv/backups/tatvaos}"
 
 # The config file loads FIRST, before any BACKUP_* default is read — it used
