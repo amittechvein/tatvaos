@@ -31,11 +31,37 @@ mkdir -p "$T/bin"
 # --- fakes --------------------------------------------------------------------
 cat > "$T/bin/docker" <<'EOF'
 #!/usr/bin/env bash
+echo "$*" >> "${FAKE_DOCKER_CALLS:-/dev/null}"
 case "$1" in
   ps)     echo "tatvaos-postgres-1" ;;
   exec)   head -c 4000 /dev/urandom | base64 ;;
   volume) exit 1 ;;                     # every volume "missing" — skipped with a warning
-  run)    printf '0\t/v\n' ;;
+  run)
+    # The recordings copy (#257) runs three things in containers. The
+    # recordings volume is $FAKE_REC_VOL and its bucket is $FAKE_REC_BUCKET;
+    # FAKE_REC_HIDE leaves one name out of the bucket listing, FAIL_REC_COPY
+    # makes the upload fail.
+    case "$*" in
+      *"tatvaos_connectrec:/src:ro alpine"*)
+        cd "$FAKE_REC_VOL" && find . -type f | sed 's#^\./##' | sort ;;
+      *" copy /src reccrypt:"*)
+        [ -n "${FAIL_REC_COPY:-}" ] && { echo "ERROR : connection refused"; exit 1; }
+        (cd "$FAKE_REC_VOL" && find . -type f | sed 's#^\./##') | while read -r f; do
+          if [ ! -e "$FAKE_REC_BUCKET/$f" ]; then
+            mkdir -p "$(dirname "$FAKE_REC_BUCKET/$f")"; cp "$FAKE_REC_VOL/$f" "$FAKE_REC_BUCKET/$f"
+            echo "2026/10/02 00:00:00 INFO  : $f: Copied (new)"
+          fi
+        done
+        # rclone -v prints a progress block every minute that NAMES the
+        # files in flight. Seen on production in the 2 Oct proof run:
+        # "Transferring:" then " * 01a0d6d9…-OqPhbJlu_iu2.mp4: 31% /1.654Gi".
+        printf 'Transferring:\n * room-a1/meeting-a1-part1.mp4: 31%% /1.654Gi, 43.670Mi/s, 26s\n'
+        echo "Transferred:   	          0 B / 0 B, -, 0 B/s, ETA -" ;;
+      *" lsf -R --files-only reccrypt:"*)
+        (cd "$FAKE_REC_BUCKET" && find . -type f | sed 's#^\./##') | grep -v -x -F -e "${FAKE_REC_HIDE:-(none)}" ;;
+      *" delete --min-age "*" reccrypt:"*) : ;;
+      *) printf '0\t/v\n' ;;
+    esac ;;
 esac
 EOF
 cat > "$T/bin/openssl" <<'EOF'
@@ -54,6 +80,7 @@ case "$1" in
   lsf)        [ -n "${FAIL_LSF:-}" ] && exit 1; ls -1 "$B" ;;
   deletefile) rm -f "$B/$(obj "$2")" ;;
   delete)     : ;;
+  obscure)    echo "obscured" ;;
 esac
 EOF
 cat > "$T/bin/crontab" <<'EOF'
@@ -176,6 +203,73 @@ for bad in 0 two -1; do
     same "BACKUP_LOCAL_KEEP=$bad refused"      "$rc" 1
     same "BACKUP_LOCAL_KEEP=$bad deleted nothing" "$(sets_on_disk)" 5
 done
+
+# --- recordings (#257): copied off the box, never failing the set -----------
+recordings_world() {
+    export FAKE_REC_VOL="$T/recvol" FAKE_REC_BUCKET="$T/recbucket" FAKE_DOCKER_CALLS="$T/docker.calls"
+    rm -rf "$FAKE_REC_VOL" "$FAKE_REC_BUCKET" "$FAKE_DOCKER_CALLS"
+    mkdir -p "$FAKE_REC_VOL/room-a1" "$FAKE_REC_BUCKET"
+    for n in 1 2 3; do echo "video $n" > "$FAKE_REC_VOL/room-a1/meeting-a1-part$n.mp4"; done
+    echo "BACKUP_RECORDINGS_REMOTE='fake:tatvaos-recordings'" >> "$BACKUP_DIR/.backup-env"
+}
+rec_only() { out=$(bash "$REPO/infra/scripts/backup.sh" --recordings-only 2>&1); rc=$?; }
+
+echo "== recordings: --recordings-only copies every file, and only that"
+fresh; recordings_world
+rec_only
+same  "exit code"                             "$rc" 0
+has   "the receipt: every file is in the bucket" "$out" "every one of the 3 files on the volume is in the bucket"
+has   "it counts what it uploaded"            "$out" "3 uploaded this run"
+same  "all three are in the bucket"           "$(find "$FAKE_REC_BUCKET" -type f | wc -l)" 3
+same  "no set was made on this disk"          "$(sets_on_disk)" 5
+same  "the main bucket was not touched"       "$(sets_in_bucket)" 120
+hasnt "no recording's name is printed"        "$out" "meeting-a1-part"
+has   "the rclone image is pulled by digest"  "$(cat "$FAKE_DOCKER_CALLS")" "rclone/rclone:1.68.2@sha256:74c51b8817e5431bd6d7ed27cb2a50d8ee78d77f6807b72a41ef6f898845942b"
+rec_only
+same  "a second run: exit code"               "$rc" 0
+has   "a second run uploads nothing"          "$out" "0 uploaded this run"
+
+echo "== recordings: one file missing from the bucket is a failure"
+export FAKE_REC_HIDE="room-a1/meeting-a1-part2.mp4"
+rec_only
+unset FAKE_REC_HIDE
+same  "exit code"                             "$rc" 1
+has   "it names the shortfall"                "$out" "1 file(s) on the volume are NOT in the bucket"
+hasnt "but not the file"                      "$out" "meeting-a1-part2"
+
+echo "== recordings: the upload fails"
+out=$(FAIL_REC_COPY=1 bash "$REPO/infra/scripts/backup.sh" --recordings-only 2>&1); rc=$?
+same  "exit code"                             "$rc" 1
+has   "and it says so"                        "$out" "copy FAILED"
+
+echo "== recordings: a failed upload is loud, and the main set still succeeds"
+fresh; recordings_world
+out=$(FAIL_REC_COPY=1 bash "$REPO/infra/scripts/backup.sh" 2>&1); rc=$?
+same  "exit code (the set is fine)"           "$rc" 0
+has   "the set completes"                     "$out" "backup complete"
+has   "the verdict repeats the failure"       "$out" "RECORDINGS were NOT fully copied off the box this run"
+
+echo "== recordings: --recordings-only with no remote is refused"
+fresh
+rec_only
+same  "exit code"                             "$rc" 1
+has   "and it says why"                       "$out" "BACKUP_RECORDINGS_REMOTE is not set"
+same  "no set was made"                       "$(sets_on_disk)" 5
+unset FAKE_REC_VOL FAKE_REC_BUCKET FAKE_DOCKER_CALLS
+
+echo "== an unknown option is refused, and nothing runs"
+# Found in the #257 red run (2 Oct 2026): the script ignored any argument it
+# did not know, so --recordings-only against the old code ran a FULL backup.
+# A typo of a real option must do nothing at all, loudly.
+fresh
+out=$(bash "$REPO/infra/scripts/backup.sh" --recordings-onyl 2>&1); rc=$?
+same  "a misspelt option: exit code"          "$rc" 2
+has   "and it names the option"               "$out" 'unknown option "--recordings-onyl"'
+same  "no set was made"                       "$(sets_on_disk)" 5
+same  "the bucket was not touched"            "$(sets_in_bucket)" 120
+out=$(bash "$REPO/infra/scripts/backup.sh" --install --recordings-only 2>&1); rc=$?
+same  "two options at once: exit code"        "$rc" 2
+same  "still no set made"                     "$(sets_on_disk)" 5
 
 echo "== --install"
 fresh

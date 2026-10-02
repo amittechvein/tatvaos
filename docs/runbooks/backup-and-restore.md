@@ -119,6 +119,39 @@ default without the tiered schedule is every six hours (02:30, 08:30, 14:30,
 So on production up to **two hours** can be lost (six, without the tiered
 schedule), not twenty-four.
 
+**Meeting recordings are not in the set**: at about 10 GB they would triple
+every upload. They have their own off-box copy, at the end of every run
+(#257, Mr. Singh's 25 Sept design, proven on production 1 Oct 2026):
+
+- **What it does.** `rclone copy` from the `tatvaos_connectrec` volume to
+  `BACKUP_RECORDINGS_REMOTE` (`linode:tatvaos-recordings`). It uploads only
+  new files and **never deletes**, so a recording removed on the server (by
+  the age-off, a bug or a person) is still in the bucket.
+- **Encryption.** It is encrypted with the same paper passphrase as the sets,
+  through rclone's crypt layer, with file names encrypted too. There is no
+  new secret to keep.
+- **The bucket keeps each recording 31 days**
+  (`BACKUP_RECORDINGS_KEEP_DAYS`), by age alone, whatever the volume does.
+- **The receipt.** Every file on the volume must be in the bucket (set
+  difference, not counts); one missing is a failure. The log line reads
+  `every one of the N files on the volume is in the bucket … M uploaded this
+  run`. It never prints a recording's name, because names carry meeting ids:
+  only rclone's totals and its errors, with the file part blanked, are let
+  through.
+- **It cannot fail the set.** A failed recordings copy is printed in capitals
+  and repeated in the verdict, and the run still exits 0 for the set.
+- **Re-run just this step:** `./infra/scripts/backup.sh --recordings-only`,
+  under the same lock, making no set. It exits 0 only when every file is in
+  the bucket, and run straight after a good copy it must say `0 uploaded`.
+- **The container image is pinned by digest** in `backup.sh`
+  (`rclone/rclone:1.68.2@sha256:74c5…`). To move it, change both halves and
+  re-run `--recordings-only`.
+- **Proof, 1 Oct 2026, 20:40Z:**
+  - first run: 22 files, 9.40 GiB, in 70 s;
+  - second run: `0 uploaded`;
+  - third run, on the corrected commit: `0 uploaded`, and no file name in
+    the output.
+
 ## Where the copies live
 
 **Local** — `/srv/backups/tatvaos/<stamp>/`, kept `BACKUP_KEEP_DAYS` days:
@@ -337,9 +370,21 @@ That is a note, not a warning. Nothing is wrong.
 
 ```bash
 cd /srv/tatvaos-production
-./infra/scripts/backup.sh              # run once by hand, read the output
-./infra/scripts/backup.sh --install    # cron
+./infra/scripts/backup.sh                     # run once by hand, read the output
+./infra/scripts/backup.sh --install           # cron
+./infra/scripts/backup.sh --recordings-only   # the recordings copy alone (see "What is backed up")
 ```
+
+**Anything else is refused, before anything is touched.** An unknown option,
+or more than one, exits 2 with `unknown option "…" — nothing was done`.
+Until 2 Oct 2026 the script **ignored an option it did not know and ran a
+full backup**. The #257 test caught it: `--recordings-only`, before it
+existed, made a set and thinned the bucket from 120 to 22. A misspelt
+`--recordings-onyl` would have done the same on production.
+
+**Check any other script you are about to run for the same hazard** before
+trusting a flag you typed. Mr. Singh, 2 Oct: "a script that silently ignores
+a flag is a hazard in every script we have."
 
 The cron logs to `$BACKUP_DIR/backup.log`, deliberately not `/var/log` — the
 deploy user cannot create a file there, and cron would fail on the redirect
