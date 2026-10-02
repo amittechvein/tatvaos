@@ -232,6 +232,34 @@ else
     echo "[postfix]   outbound    -> REAL DELIVERY as ${MAIL_HOSTNAME:-?}"
 fi
 
+# ---------------------------------------------------------------------------
+#  Port 587 sender ownership (PR 380): WARN or ENFORCE, one setting for both
+#  halves - Postfix's envelope check and the From-line filter.
+#
+#  warn (the default, Amit 2 Oct 2026): nothing is refused; every message that
+#  would be is recorded in /var/log/tatvaos/sender-ownership.jsonl, which is on
+#  the maillogs volume and so survives deploys. enforce: both are refused.
+#  Anything else is a typo, and a typo here must not silently pick a mode.
+# ---------------------------------------------------------------------------
+OWNERSHIP="${TATVAOS_SENDER_OWNERSHIP:-warn}"
+case "$OWNERSHIP" in
+    warn)    postconf -e "submission_sender_login_check=warn_if_reject reject_authenticated_sender_login_mismatch" ;;
+    enforce) postconf -e "submission_sender_login_check=reject_authenticated_sender_login_mismatch" ;;
+    *)       echo "[postfix] FATAL: TATVAOS_SENDER_OWNERSHIP='$OWNERSHIP' - must be warn or enforce"; exit 1 ;;
+esac
+echo "$OWNERSHIP" > /etc/postfix/sender-ownership-mode
+mkdir -p /var/log/tatvaos && chmod 750 /var/log/tatvaos
+echo "[postfix]   587 senders -> ownership checked, mode: $OWNERSHIP"
+
+# The From-line filter. Restarted if it exits; while it is down Postfix lets
+# mail through (default_action=accept in main.cf) and the envelope check,
+# which is Postfix's own, still holds.
+( while true; do
+      python3 /usr/local/lib/tatvaos/sender-milter.py
+      echo "[sender-milter] exited ($?) - restarting in 2 s"
+      sleep 2
+  done ) &
+
 # If start-fg dies, show why rather than silently restarting forever
 postfix start-fg
 rc=$?
