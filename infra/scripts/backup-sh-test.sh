@@ -257,6 +257,20 @@ has   "and it says why"                       "$out" "BACKUP_RECORDINGS_REMOTE i
 same  "no set was made"                       "$(sets_on_disk)" 5
 unset FAKE_REC_VOL FAKE_REC_BUCKET FAKE_DOCKER_CALLS
 
+echo "== an unknown option is refused, and nothing runs"
+# Found in the #257 red run (2 Oct 2026): the script ignored any argument it
+# did not know, so --recordings-only against the old code ran a FULL backup.
+# A typo of a real option must do nothing at all, loudly.
+fresh
+out=$(bash "$REPO/infra/scripts/backup.sh" --recordings-onyl 2>&1); rc=$?
+same  "a misspelt option: exit code"          "$rc" 2
+has   "and it names the option"               "$out" 'unknown option "--recordings-onyl"'
+same  "no set was made"                       "$(sets_on_disk)" 5
+same  "the bucket was not touched"            "$(sets_in_bucket)" 120
+out=$(bash "$REPO/infra/scripts/backup.sh" --install --recordings-only 2>&1); rc=$?
+same  "two options at once: exit code"        "$rc" 2
+same  "still no set made"                     "$(sets_on_disk)" 5
+
 echo "== --install"
 fresh
 echo "30 2 * * * cd /srv/tatvaos-production && ./infra/scripts/backup.sh >> /x/backup.log 2>&1" > "$FAKE_CRON"
