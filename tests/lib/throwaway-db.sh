@@ -74,6 +74,18 @@ tdb__init_dir() {
 }
 
 tdb_create() {
+    # NOT IN A PIPE OR $(...). 2 Oct 2026: `tdb_create X | tail -1` ran this
+    # in the pipe's subshell; the EXIT trap below dropped the database as that
+    # subshell ended, TDB_NAME was never set in the caller, and the isolation
+    # suite, handed an empty PGDATABASE, fell back to the SHARED tatvaos_mail.
+    # (Mr. Singh: make it impossible to happen silently.) tests/lib/
+    # throwaway-db-guard-test.sh.
+    if [ "${BASH_SUBSHELL:-0}" -gt 0 ]; then
+        echo "  tdb: refused - tdb_create ran inside a pipe or \$(...). Its database would be dropped when that" >&2
+        echo "  tdb: subshell ends and TDB_NAME would stay empty for the caller. Call it on a line of its own:" >&2
+        echo "  tdb:     tdb_create LABEL || exit 2" >&2
+        return 2
+    fi
     local label root init stamp rand
     label="$(printf '%s' "${1:-suite}" | tr 'A-Z-' 'a-z_' | tr -cd 'a-z0-9_' | cut -c1-20)"
     root="${TATVAOS_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
@@ -152,7 +164,25 @@ EOF
     local files; files="$(printf '%s\n' "$out" | sed -n 's/^TDB_OK //p')"
     TDB_CONN="Host=$TDB_HOST;Port=5432;Database=$TDB_NAME;Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
     export TDB_NAME TDB_HOST TDB_CONN TATVAOS_PSQL
+    tdb_assert || return 2
     printf "  tdb: %s ready - %s migration files applied twice (the re-run check), no server-wide role changed\n" "$TDB_NAME" "$files" >&2
+    return 0
+}
+
+# Refuse to go on without a throwaway database. Call it before anything that
+# passes $TDB_NAME on (PGDATABASE=$TDB_NAME, -d "$TDB_NAME"): an EMPTY name
+# makes psql and the suites fall back to their default, which is the SHARED
+# tatvaos_mail - exactly how a 2 Oct run reached it. Returns 2, loudly.
+tdb_assert() {
+    case "${TDB_NAME:-}" in
+        "")
+            echo "  tdb: refused - TDB_NAME is empty, so there is no throwaway database. Anything run now would fall" >&2
+            echo "  tdb: back to the SHARED tatvaos_mail (rule 13). Was tdb_create run in a pipe or \$(...)?" >&2
+            return 2 ;;
+        tatvaos_mail)
+            echo "  tdb: refused - TDB_NAME is tatvaos_mail, the SHARED database. Tests never run there (rule 13)." >&2
+            return 2 ;;
+    esac
     return 0
 }
 
