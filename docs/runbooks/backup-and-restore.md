@@ -258,10 +258,16 @@ leftover:**
 - **`linode:tatvaos-backups-hold`** holds one set put aside by hand on
   **24 Sept 2026**, the last set before the mail import. Nothing prunes it.
   See the end of *The tiered schedule*.
-- **`/srv/tatvaos-production/backups/env-pre-website-20260923-102553`** is a
-  copy of the environment file from 23 Sept (mode 600). It contains every
-  secret. No prune matches its name, so it stays until a person removes it.
-  Removing it is Amit's decision.
+- **`/srv/tatvaos-production/backups/env-pre-website-20260923-102553`**, a
+  copy of the environment file from 23 Sept, was **deleted on 2 Oct 2026 at
+  06:30Z**, on Amit's go and Mr. Singh's recommendation. It contained every
+  secret, and no prune matched its name. Checked first: all 40 of its key
+  names are still in the live `infra/docker/.env`, nothing had it open, and
+  no cron line or script referred to it. The record (size, date, checksum,
+  who authorised it, no contents) is
+  `/home/deploy/env-copy-deletion-2026-10-02.log` (mode 600). No
+  `env-*` copies remain in `backups/`. Any new one, made by hand before a
+  risky change, is the maker's to delete.
 
 ### The tiered schedule (Amit, 24 Sept 2026)
 
