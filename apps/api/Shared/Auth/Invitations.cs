@@ -155,46 +155,6 @@ public static class Invitations
     /// caller records the answer in <see cref="User.InviteDelivered"/>; this
     /// is the one send that is NOT best-effort-and-forgotten.
     /// </summary>
-    /// <summary>
-    /// Said after every invitation or sign-in link the console reports as
-    /// sent. ONE copy, because three screens say "sent" and wording that
-    /// drifts apart reads as three different features.
-    ///
-    /// Amit, 24 September 2026, after TatvaOS mail was found in Gmail's spam
-    /// folder. The cause is not a defect we can fix in code: authentication
-    /// is fully compliant (SPF, DKIM, DMARC, alignment — Google's own
-    /// dashboard says so) and the user-reported spam rate is 0.00%. What is
-    /// missing is SENDING HISTORY: Postmaster Tools has no data for the
-    /// domain after 21 September because the volume is below what Google
-    /// will report on, and an unknown sender is filed cautiously.
-    ///
-    /// So the honest thing is to tell the administrator at the moment they
-    /// are already waiting for the mail, rather than send every customer a
-    /// message announcing that our email looks untrustworthy. Marking it
-    /// "not spam" also teaches Gmail for the whole domain, which is the one
-    /// lever that works while the volume is small.
-    ///
-    /// ── REMOVE THIS ON OR AFTER 1 OCTOBER 2026 ─────────────────────────
-    ///
-    ///  Mr. Singh, 24 Sept: "keep the sentence for now, and put a date on
-    ///  removing it... Set the date; don't leave it to someone noticing."
-    ///
-    ///  He also named the flaw in the reasoning that produced it: three real
-    ///  message defects were found the SAME day (no text part, no
-    ///  Message-ID, a duplicated text part), and a missing Message-ID alone
-    ///  can file a message as spam. So the premise — "nothing is
-    ///  misconfigured, it is only reputation" — may simply have been wrong,
-    ///  and this sentence may be apologising for a fault that is now fixed.
-    ///
-    ///  The test, one week after those fixes went live (24 Sept): send a
-    ///  real invitation to a FRESH Gmail address, a fresh Outlook address
-    ///  and one other provider. If they land in the inbox, delete this
-    ///  sentence and its three call sites.
-    /// </summary>
-    public const string CheckSpamNote =
-        " If it has not arrived in a few minutes, ask them to check their spam folder "
-        + "and mark it as not spam, which helps later messages reach them.";
-
     public static Task<bool> SendAsync(
         SystemMailer mailer, User user, string orgName, string baseUrl, string token,
         CancellationToken ct = default)
