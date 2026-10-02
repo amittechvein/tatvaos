@@ -116,8 +116,16 @@ const sameText = (d) => d.missing.length === 0 && d.extra.length === 0;
  * fixture). If the words differ but every character is accounted for, that
  * is the extractor, not the PDF; a changed word changes the characters.
  */
+// Private Use Area characters (U+E000-U+F8FF, planes 15-16) are left out of
+// the comparison and COUNTED instead. Google Docs puts invisible markers there
+// in copied text (U+E200-E202 in the scrubbed fixture: 34 of them, for smart
+// chips and the like); no font has a glyph for them, so the PDF draws nothing
+// and pdftotext has nothing to extract. Found by round 5 (2 Oct 2026), whose
+// log printed them as "" — invisible.
+const PRIVATE = /[-]|[\u{F0000}-\u{10FFFF}]/u;
+const privateCount = (s) => [...s].filter((c) => PRIVATE.test(c)).length;
 function charDiff(server, pdf) {
-  const chars = (toks) => { const m = new Map(); for (const t of toks) for (const c of t) m.set(c, (m.get(c) ?? 0) + 1); return m; };
+  const chars = (toks) => { const m = new Map(); for (const t of toks) for (const c of t) if (!PRIVATE.test(c)) m.set(c, (m.get(c) ?? 0) + 1); return m; };
   const tok = (x) => x.normalize('NFC').split(/\s+/).filter((t) => t && !INDIC.test(t));
   const st = tok(server);
   // A list marker or bullet is the PDF's own only beyond the times the
@@ -136,7 +144,7 @@ function charDiff(server, pdf) {
   const diff = [];
   for (const c of new Set([...a.keys(), ...b.keys()])) {
     const d = (b.get(c) ?? 0) - (a.get(c) ?? 0);
-    if (d !== 0) diff.push(`${JSON.stringify(c)}${d > 0 ? '+' : ''}${d}`);
+    if (d !== 0) diff.push(`U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')} ${JSON.stringify(c)} ${d > 0 ? '+' : ''}${d}`);
   }
   return diff;
 }
@@ -201,6 +209,8 @@ for (const name of FIXTURES) {
     + `\n        missing ${JSON.stringify(d.missing.slice(0, 8))} extra ${JSON.stringify(d.extra.slice(0, 8))}`
     + (d.missing.length ? `\n        where the first missing word should be: ${near(d.missing[0])}` : ''));
   check(`${name}: every page has its number at the foot`, t.numbersOk);
+  const priv = privateCount(res.r.text);
+  if (priv) console.log(`  info  ${name}: ${priv} Private Use character(s) in the document (e.g. Google Docs markers) — no glyph, not drawn, left out of the text comparison`);
   if (INDIC.test(res.r.text)) {
     const want = res.r.text.normalize('NFC').split(/\s+/).filter((w) => INDIC.test(w));
     const got = new Set(t.body.normalize('NFC').split(/\s+/));
