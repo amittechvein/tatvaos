@@ -335,7 +335,9 @@ sl_teardown() {
                DELETE FROM mail.mailboxes WHERE address IN ('office@abcschool.local','notices@abcschool.local');" >/dev/null 2>&1
     docker exec tv-postfix postconf -e submission_sasl_auth_enable=no \
         "submission_client_restrictions=permit_mynetworks,reject" \
-        "submission_recipient_restrictions=permit_mynetworks,reject_unauth_destination,reject" >/dev/null 2>&1
+        "submission_recipient_restrictions=permit_mynetworks,reject_unauth_destination,reject" \
+        "submission_sender_login_check=warn_if_reject reject_authenticated_sender_login_mismatch" >/dev/null 2>&1
+    docker exec tv-postfix sh -c 'echo warn > /etc/postfix/sender-ownership-mode' >/dev/null 2>&1
     docker exec tv-postfix postfix reload >/dev/null 2>&1
     docker exec tv-dovecot sh -c 'rm -f /etc/dovecot/env-overrides.conf && doveadm reload' >/dev/null 2>&1
 }
@@ -371,13 +373,30 @@ docker exec tv-postfix postconf -e submission_sasl_auth_enable=yes \
     "submission_recipient_restrictions=permit_sasl_authenticated,reject_unauth_destination,reject" >/dev/null 2>&1
 docker exec tv-postfix postfix reload >/dev/null 2>&1
 
-# as LOGIN FROM TO -> the whole conversation, for code-and-wording asserts
-as() {
-    swaks --server "$SMTP_HOST:$SUB_PORT" --auth PLAIN --auth-user "$1" --auth-password "$PASS" \
-          --from "$2" --to "$3" --header "Subject: 587 login test $(date +%s)" --body "x" 2>&1
+# The check has two modes (Amit, 2 Oct 2026: warn first, enforce after a
+# week of evidence). sl_mode sets BOTH halves: Postfix's envelope check
+# (submission_sender_login_check) and the From-line filter
+# (/etc/postfix/sender-ownership-mode). Enforce first: it is the rule.
+sl_mode() {
+    local check="reject_authenticated_sender_login_mismatch"
+    [ "$1" = warn ] && check="warn_if_reject $check"
+    docker exec tv-postfix sh -c "echo $1 > /etc/postfix/sender-ownership-mode && postconf -e 'submission_sender_login_check=$check' && postfix reload" >/dev/null 2>&1
+    sleep 2
 }
-queued()  { printf '%s' "$1" | grep -q '250 2.0.0 Ok: queued'; }
-refused() { printf '%s' "$1" | grep -q '553 5.7.1' && printf '%s' "$1" | grep -q 'not owned by user'; }
+sl_mode enforce
+
+# as LOGIN FROM TO [HEADER-FROM] -> the whole conversation, for code-and-
+# wording asserts. HEADER-FROM is the visible From: line; without it swaks
+# writes the envelope sender there.
+as() {
+    local hdr=(); [ -n "${4:-}" ] && hdr=(--header "From: $4")
+    swaks --server "$SMTP_HOST:$SUB_PORT" --auth PLAIN --auth-user "$1" --auth-password "$PASS" \
+          --from "$2" --to "$3" --header "Subject: 587 login test $(date +%s)" "${hdr[@]}" --body "x" 2>&1
+}
+queued()   { printf '%s' "$1" | grep -q '250 2.0.0 Ok: queued'; }
+refused()  { printf '%s' "$1" | grep -q '553 5.7.1' && printf '%s' "$1" | grep -q 'not owned by user'; }
+# The From-line filter answers after the headers, with its own words.
+hrefused() { printf '%s' "$1" | grep -q '550 5.7.1' && printf '%s' "$1" | grep -q 'From: address'; }
 
 # Wait until 587 answers with AUTH - a reload is not instant. A section that
 # runs against a half-reloaded server tests the reload, not the rule.
@@ -417,6 +436,22 @@ out=$(as principal@abcschool.local AMIT@TechVein.local outside@example.com)
 if refused "$out"; then pass "...and capitals are not a way round"
 else fail "sent as AMIT@TechVein.local - case is a way round the check"; fi
 
+# The VISIBLE From: line (Mr. Singh, 2 Oct): mail apps show the person this,
+# not the envelope. An honest envelope with another organisation's From:
+# was queued until the From-line filter (local/postfix/sender-milter.py).
+out=$(as principal@abcschool.local principal@abcschool.local amit@techvein.local "amit@techvein.local")
+if hrefused "$out"; then pass "honest envelope, ANOTHER ORGANISATION'S From: line: refused (550 5.7.1)"
+elif queued "$out"; then fail "honest envelope with From: amit@techvein.local was ACCEPTED - the visible sender is forgeable"
+else fail "honest envelope + forged From: refused, but not by the From-line check:"
+     info "$(printf '%s' "$out" | grep -E '^<[-~*]' | grep -E ' (4|5)[0-9]{2} ' | head -2)"; fi
+out=$(as principal@abcschool.local principal@abcschool.local amit@techvein.local '"The Principal" <principal@abcschool.local>')
+queued "$out"  && pass "own From: line with a display name: accepted"  || fail "own From: with a display name refused"
+out=$(as principal@abcschool.local principal@abcschool.local amit@techvein.local "office@abcschool.local")
+queued "$out"  && pass "From: a shared mailbox they may SEND AS: accepted" || fail "From: a send_as shared mailbox refused"
+out=$(as principal@abcschool.local principal@abcschool.local amit@techvein.local "notices@abcschool.local")
+if hrefused "$out"; then pass "From: a shared mailbox they may only READ: refused"
+else fail "read-only permission let them put the shared mailbox in From:"; fi
+
 # The API's port: no sign-in, our own network, and it sends as whichever
 # mailbox the signed-in web user chose. The rule applies to SIGNED-IN
 # sessions only, so this must be unchanged. Spoken from inside Postfix's
@@ -431,6 +466,39 @@ if printf '%s' "$api_out" | tail -1 | grep -q '^250'; then
 else
     fail "the API port refused a sender - the web app could not send"
     info "$(printf '%s' "$api_out" | tr -d '\r' | tail -2)"
+fi
+
+# WARN MODE (how it first ships, Amit 2 Oct): nothing is refused, and every
+# message that WOULD be is written to a record that survives deploys - the
+# evidence Mr. Singh's count needs, which Postfix's own log (lost at every
+# deploy) cannot give. One line per mismatch: kind, class, organisation ids,
+# a hash of the sign-in. Never an address.
+sl_mode warn
+EV=/var/log/tatvaos/sender-ownership.jsonl
+ev_count() { docker exec tv-postfix sh -c "if [ -f $EV ]; then wc -l < $EV; else echo 0; fi" 2>/dev/null | tr -d ' \r'; }
+n0=$(ev_count)
+out=$(as principal@abcschool.local amit@techvein.local amit@techvein.local "principal@abcschool.local")
+queued "$out" && pass "warn: another organisation's envelope sender is accepted (not yet refused)" \
+              || fail "warn mode refused an envelope it should only record"
+out=$(as principal@abcschool.local principal@abcschool.local amit@techvein.local "amit@techvein.local")
+queued "$out" && pass "warn: another organisation's From: line is accepted (not yet refused)" \
+              || fail "warn mode refused a From: line it should only record"
+out=$(as principal@abcschool.local principal@abcschool.local amit@techvein.local)
+queued "$out" && pass "warn: an honest message is accepted"            || fail "warn mode refused an honest message"
+sleep 1
+n1=$(ev_count)
+if [ "$(( ${n1:-0} - ${n0:-0} ))" = 2 ]; then pass "warn: exactly two lines recorded (the two impersonations, not the honest one)"
+else fail "warn: expected 2 new evidence lines, got $(( ${n1:-0} - ${n0:-0} ))"; fi
+recent=$(docker exec tv-postfix sh -c "tail -n 2 $EV" 2>/dev/null)
+for want in '"kind": "envelope"' '"kind": "header"' '"class": "other_org"' \
+            "\"login_tenant\": \"$SL_SCHOOL\"" '"claimed_tenant": "11111111-1111-1111-1111-111111111111"'; do
+    if printf '%s' "$recent" | grep -qF -- "$want"; then pass "warn record says $want"
+    else fail "warn record lacks $want"; info "$(printf '%s' "$recent" | head -2)"; fi
+done
+if [ -n "$recent" ] && ! docker exec tv-postfix grep -q '@' "$EV" 2>/dev/null; then
+    pass "the record holds no address at all"
+else
+    fail "the record holds an address (or is missing) - it must carry ids and a hash only"
 fi
 
 sl_teardown
