@@ -202,8 +202,11 @@ same "the API stand-in gets a spreadsheet's .xlsx back (200, a zip)" \
   "$(DC exec -T apistub node -e "$SHEETPOST" http://render:8080/render/sheet /tmp/sheet.json 2>&1 | tail -1)" "200 xlsx"
 # TODAY() reads the process's zone. 2 Oct 2026 19:00 UTC is 3 Oct 00:30 in India:
 # the 3rd here, the 2nd if the image fell back to UTC (no tzdata in Alpine).
-same "the clock is India time (19:00 UTC on 2 Oct is the 3rd)" \
-  "$(DC exec -T render node -e 'console.log(new Date(Date.UTC(2026,9,2,19,0)).getDate()+" "+Intl.DateTimeFormat().resolvedOptions().timeZone)' 2>&1 | tr -d '\r' | tail -1)" "3 Asia/Kolkata"
+# Checked by date and offset (-330 minutes = +05:30), not by the zone's NAME:
+# Node's ICU data reports Asia/Kolkata by its older alias, Asia/Calcutta
+# (found 3 Oct 2026 by this check's first run in CI).
+same "the clock is India time (19:00 UTC on 2 Oct is the 3rd, offset +05:30)" \
+  "$(DC exec -T render node -e 'const d=new Date(Date.UTC(2026,9,2,19,0));console.log(d.getDate()+" "+d.getTimezoneOffset())' 2>&1 | tr -d '\r' | tail -1)" "3 -330"
 # The largest gate workbook's size, 20,000 cells, inside the limits (1 CPU, 512 MB).
 # Made by the image itself, through the editor's own model.
 SHEETMAKE='import * as Y from "yjs"; import { SheetsModel } from "../web/lib/sheets/model.ts"; const d = new Y.Doc(); const m = new SheetsModel(d); m.ensureSeeded(); const e = []; for (let r = 0; r < 1000; r++) { for (let c = 0; c < 19; c++) e.push({ r, c, input: String(r * 19 + c) }); e.push({ r, c: 19, input: "=SUM(A" + (r + 1) + ":S" + (r + 1) + ")" }); } m.setInputs(m.sheetIds()[0], e); process.stdout.write(JSON.stringify({ updates: [Buffer.from(Y.encodeStateAsUpdate(d)).toString("base64")] }));'
