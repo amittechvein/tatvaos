@@ -1,0 +1,6 @@
+# RED FIRST only (Mr. Singh, 29 Sept 2026): the same render service with its
+# network NOT internal. The egress check must SUCCEED with this — proving the
+# check can see the internet — before it is shown to FAIL with the real file.
+networks:
+  rendernet:
+    internal: false

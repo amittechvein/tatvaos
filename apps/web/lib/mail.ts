@@ -120,6 +120,12 @@ export type SearchHit = Message & {
   folderId: string;
   folderName: string | null;
   folderSlug: string | null;
+  /**
+   * Conversation rows only: other stored copies of this same message. Mail
+   * addressed to yourself is held in Sent AND Inbox; the server folds the two
+   * into one row and names the one it left out here.
+   */
+  copyIds?: string[];
 };
 
 export interface SearchPage {
