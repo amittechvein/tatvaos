@@ -143,15 +143,19 @@ same() {
 }
 # has <label> <haystack> <needle> — likewise: an empty needle matches
 # everything, so it is refused rather than searched for.
+# A here-string, NOT printf | grep -q: under pipefail, grep -q exits at the
+# first match, printf dies of SIGPIPE writing the rest, and the pipeline is
+# "false". On a long text with an early match that made has() FAIL with the
+# line present and hasnt() PASS with it present (3 Oct 2026, PR 386).
 has() {
     if [ -z "$3" ]; then fail "$1 — nothing to look for"
-    elif printf '%s' "$2" | grep -qF -- "$3"; then pass "$1"
+    elif grep -qF -- "$3" <<< "$2"; then pass "$1"
     else fail "$1 — not found"; fi
 }
 # hasnt <label> <haystack> <needle> — the same guard, opposite expectation.
 hasnt() {
     if [ -z "$3" ]; then fail "$1 — nothing to look for"
-    elif printf '%s' "$2" | grep -qF -- "$3"; then fail "$1 — it is still there"
+    elif grep -qF -- "$3" <<< "$2"; then fail "$1 — it is still there"
     else pass "$1"; fi
 }
 body()   { printf '%s' "$1" | sed '$d'; }
