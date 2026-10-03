@@ -70,6 +70,9 @@ trap cleanup EXIT
 
 printf "\n  SMS sender log redaction\n  tree under test: %s\n\n" "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)"
 for _ in $(seq 1 30); do [ -n "$(PG "SELECT 1")" ] && break; sleep 1; done
+# The three test phones, made true every run (tests/support/test-phones.sh).
+. "$(dirname "$0")/../support/test-phones.sh"
+[ "$(PG "$TEST_PHONES_SQL")" = "3" ] || { fail "the test phone numbers could not be set - see tests/support/test-phones.sh"; exit 1; }
 [ -n "$(PG "SELECT 1")" ] || { fail "psql does not answer"; exit 1; }
 # The path under test is "no provider configured". Refuse to run otherwise: with a
 # provider set this would send a real text to a seed number.
