@@ -190,6 +190,33 @@ POST='const [url,f]=process.argv.slice(1);fetch(url,{method:"POST",headers:{"con
 same "the API stand-in gets a document's file back (200)" \
   "$(DC exec -T apistub node -e "$POST" http://render:8080/render/doc /tmp/nested-lists.json 2>&1 | tail -1)" "200 html"
 same "the service's limit is 10 s" "$(DC exec -T apistub node -e 'fetch("http://render:8080/health").then(r=>r.json()).then(b=>console.log(b.limitMs))' 2>&1 | tail -1)" 10000
+
+# Sheets (docs/SHEETS_SERVER_RENDER_DESIGN.md): the same container builds a
+# spreadsheet's .xlsx from its stored state. The committed fixture IS the
+# stored state, so the payload needs no building.
+node -e 'const f=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(JSON.stringify({updates:[f.state]}))' \
+  "$ROOT/tests/sheets-render/fixtures/hindi-text.json" > "$TMP/sheet.json"
+docker cp "$TMP/sheet.json" "$(DC ps -q apistub)":/tmp/sheet.json >/dev/null
+SHEETPOST='const [url,f]=process.argv.slice(1);fetch(url,{method:"POST",headers:{"content-type":"application/json"},body:require("fs").readFileSync(f)}).then(async r=>{const b=await r.json();console.log(r.status+" "+(b.xlsx&&Buffer.from(b.xlsx,"base64").subarray(0,2).toString()==="PK"?"xlsx":b.error||""))},e=>console.log("error "+e.message))'
+same "the API stand-in gets a spreadsheet's .xlsx back (200, a zip)" \
+  "$(DC exec -T apistub node -e "$SHEETPOST" http://render:8080/render/sheet /tmp/sheet.json 2>&1 | tail -1)" "200 xlsx"
+# TODAY() reads the process's zone. 2 Oct 2026 19:00 UTC is 3 Oct 00:30 in India:
+# the 3rd here, the 2nd if the image fell back to UTC (no tzdata in Alpine).
+# Checked by date and offset (-330 minutes = +05:30), not by the zone's NAME:
+# Node's ICU data reports Asia/Kolkata by its older alias, Asia/Calcutta
+# (found 3 Oct 2026 by this check's first run in CI).
+same "the clock is India time (19:00 UTC on 2 Oct is the 3rd, offset +05:30)" \
+  "$(DC exec -T render node -e 'const d=new Date(Date.UTC(2026,9,2,19,0));console.log(d.getDate()+" "+d.getTimezoneOffset())' 2>&1 | tr -d '\r' | tail -1)" "3 -330"
+# The largest gate workbook's size, 20,000 cells, inside the limits (1 CPU, 512 MB).
+# Made by the image itself, through the editor's own model.
+SHEETMAKE='import * as Y from "yjs"; import { SheetsModel } from "../web/lib/sheets/model.ts"; const d = new Y.Doc(); const m = new SheetsModel(d); m.ensureSeeded(); const e = []; for (let r = 0; r < 1000; r++) { for (let c = 0; c < 19; c++) e.push({ r, c, input: String(r * 19 + c) }); e.push({ r, c: 19, input: "=SUM(A" + (r + 1) + ":S" + (r + 1) + ")" }); } m.setInputs(m.sheetIds()[0], e); process.stdout.write(JSON.stringify({ updates: [Buffer.from(Y.encodeStateAsUpdate(d)).toString("base64")] }));'
+DC run --rm --no-deps -T --entrypoint node render \
+  --no-warnings --import ./src/register.mjs --input-type=module -e "$SHEETMAKE" > "$TMP/sheet-large.json" 2>/dev/null
+docker cp "$TMP/sheet-large.json" "$(DC ps -q apistub)":/tmp/sheet-large.json >/dev/null
+SHEETTIMED='const [url,f]=process.argv.slice(1);const b=require("fs").readFileSync(f);const t=Date.now();fetch(url,{method:"POST",headers:{"content-type":"application/json"},body:b}).then(async r=>{await r.text();console.log(r.status+" "+(Date.now()-t))},e=>console.log("error "+e.message))'
+read -r sl_status sl_ms <<<"$(DC exec -T apistub node -e "$SHEETTIMED" http://render:8080/render/sheet /tmp/sheet-large.json 2>&1 | tail -1)"
+if [ "$sl_status" = 200 ] && [ -n "$sl_ms" ] && [ "$sl_ms" -lt 10000 ] 2>/dev/null; then ok "a 20,000-cell spreadsheet builds inside the limit (${sl_ms} ms)"
+else bad "a 20,000-cell spreadsheet builds inside the limit" "got [${sl_status:-nothing} ${sl_ms:-}]"; fi
 # The limit, enforced inside the hardened container: the SAME definition,
 # with the limit lowered (it can only be lowered) so a large document outruns it.
 # 250 ms: far above a small render. 40 ms (the laptop unit test's first value)
