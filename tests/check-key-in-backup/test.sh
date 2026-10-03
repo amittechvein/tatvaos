@@ -8,7 +8,11 @@ T=".tmp/ckb-$$"; rm -rf "$T"; mkdir -p "$T/backups/20260928-0900" "$T/bucket"
 PASSED=0; FAILED=0
 pass() { PASSED=$((PASSED+1)); printf '  ✓ %s\n' "$1"; }
 fail() { FAILED=$((FAILED+1)); printf '  ✗ %s\n' "$1"; }
-has()  { if printf '%s' "$2" | grep -qF -- "$3"; then pass "$1"; else fail "$1 — '$3' not in [$2]"; fi; }
+# A here-string, NOT printf | grep -q: under pipefail, grep -q exits at the
+# first match, printf dies of SIGPIPE writing the rest, and the pipeline is
+# "false". On a long text with an early match that made has() FAIL with the
+# line present and hasnt() PASS with it present (3 Oct 2026, PR 386).
+has()  { if grep -qF -- "$3" <<< "$2"; then pass "$1"; else fail "$1 — '$3' not in [$2]"; fi; }
 KEYV="k$(date +%s)$$0123456789abcdef0123456789abcdef"
 printf 'OTHER=1\nPERSONAL_PHONE_HASH_KEY=%s\n' "$KEYV" > "$T/.env"
 printf "BACKUP_S3_REMOTE='fake:bucket'\nBACKUP_ENC_PASSPHRASE='test-passphrase'\n" > "$T/backups/.backup-env"
