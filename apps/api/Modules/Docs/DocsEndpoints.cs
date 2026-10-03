@@ -132,14 +132,14 @@ public static class DocsEndpoints
     // (tests/docs/docs-live.test.mjs sends them and checks exactly that).
     public sealed record CheckpointRequest(long UpToSeq);
     /// <summary>
-    /// A spreadsheet's save (POST /api/sheets/{id}/checkpoint): its state, the
-    /// HTML/text for search and history, and the .xlsx Space serves — all
-    /// written by the browser until Sheets has its own server build
-    /// (docs/SHEETS_SERVER_RENDER_DESIGN.md). Docs' equivalent fields were
-    /// removed on 3 Oct 2026; these stay until that build lands.
+    /// A spreadsheet's save (POST /api/sheets/{id}/checkpoint) and version:
+    /// built on the server from what it stored, as for documents
+    /// (docs/SHEETS_SERVER_RENDER_DESIGN.md, Sheets server build stage 2).
+    /// The browser's state, HTML, text and .xlsx are no longer read; a browser
+    /// that still sends them is not refused (unknown JSON fields are ignored).
     /// </summary>
-    public sealed record SheetCheckpointRequest(string? State, long UpToSeq, string? Html, string? Text, string? Xlsx);
-    public sealed record SheetVersionRequest(string? Kind, string? Name, string? State, string? Html);
+    public sealed record SheetCheckpointRequest(long UpToSeq);
+    public sealed record SheetVersionRequest(string? Kind, string? Name);
     // Which kind of version and its name. The version itself is what the
     // server stored, built by the render service (browser state/HTML removed
     // 3 Oct 2026, as for CheckpointRequest).
@@ -618,17 +618,30 @@ public static class DocsEndpoints
         return Results.Ok(new { saved = true });
     }
 
-    /// <summary>
-    /// A spreadsheet's save. The Sheets branch's checkpoint, unchanged but for
-    /// its own route and request (see MapDocsEndpoints): the browser's state,
-    /// HTML, text and .xlsx are stored, the .xlsx only past XlsxGuard. Which
-    /// is why Sheets cannot be switched on until its own server build lands.
-    /// RenderedSeq is the DOCS render's marker and is not touched here: a
-    /// spreadsheet is never counted by Docs' browser-written guard.
-    /// </summary>
+    // ==================================================================
+    //  POST /api/sheets/{id}/checkpoint
+    // ==================================================================
+    //
+    //  A spreadsheet's save, in Docs' shape (CheckpointAsync above;
+    //  docs/SHEETS_SERVER_RENDER_DESIGN.md): nothing the browser sends is
+    //  used. Under the room lock, snapshot what the server STORED; outside
+    //  it, the render service runs the editor's own Sheets code on that and
+    //  builds the .xlsx, HTML, text and merged state; under the lock again,
+    //  write only if no build from a later point landed meanwhile.
+    //
+    //  XLSXGUARD RUNS ON THE SERVER'S OWN .xlsx (Mr. Singh). Our writer never
+    //  produces what it refuses, so a refusal is a writer bug: logged with its
+    //  reason, the save refused and shown, the file never stored.
+    //
+    //  A FAILED BUILD FAILS THE SAVE, visibly: 503 "render_failed". The
+    //  edits are not lost: they are stored as updates, and the next save
+    //  retries. Fields the browser still sends (state, html, text, xlsx) are
+    //  ignored; the browser stops sending them in the next stage.
+
     private static async Task<IResult> SheetCheckpointAsync(
         Guid id, SheetCheckpointRequest req, AppDbContext db, TenantContext tenant, DocsLiveHub hub,
-        IBlobStore blobs, StorageAllocator allocator, ILoggerFactory loggers, CancellationToken ct)
+        IBlobStore blobs, StorageAllocator allocator, DocsRenderClient render, ILoggerFactory loggers,
+        CancellationToken ct)
     {
         var (err, file, perm, uid) = await LoadAsync(db, tenant, id, tracked: true, forChange: true, ct);
         if (err is not null) return err;
@@ -636,68 +649,84 @@ public static class DocsEndpoints
         if (!LiveSwitch.IsSheet(file.MimeType))
             return Error(400, "A document saves through /api/docs/{id}/checkpoint.");
 
-        if (!TryDecode(req.State, MaxStateBytes, out var state))
-            return Error(400, "state must be base64, and within the size limit.");
-        if ((req.Html ?? "").Length > MaxHtmlChars) return Error(413, "This spreadsheet is too large to save.");
-        var html = CleanHtml(req.Html, id, uid, "checkpoint", loggers);
-        var text = req.Text ?? "";
-        if (text.Length > 2_000_000) text = text[..2_000_000];
-
-        // Space's copy is the .xlsx the editor wrote — never HTML, so a
-        // hand-made request cannot give a spreadsheet an HTML blob that Space
-        // would then hand out named ".xlsx".
-        if (!TryDecode(req.Xlsx, MaxStateBytes, out var xlsx) || xlsx.Length == 0)
-            return Error(400, "A spreadsheet checkpoint needs its .xlsx copy (base64, within the size limit).");
-        // PK\x03\x04: the start of every zip file, which is what an .xlsx is.
-        if (xlsx.Length < 4 || xlsx[0] != 0x50 || xlsx[1] != 0x4B || xlsx[2] != 0x03 || xlsx[3] != 0x04)
-            return Error(400, "The .xlsx copy is not a zip file.");
-        // Macros, embedded objects, links outside the file, calling-out
-        // formulas: refused (XlsxGuard). The editor's own writer never
-        // produces them, so this fires only for a hand-made client — or a
-        // writer bug, which the log line makes findable. Ids and the reason
-        // code only, never content.
-        var refusal = XlsxGuard.Check(xlsx);
-        if (refusal is not null)
+        // 1. What the server stored.
+        long upTo;
+        List<byte[]> updates;
+        using (await hub.LockAsync(id, ct))
         {
-            loggers.CreateLogger("TatvaOS.Sheets").LogWarning(
-                "Spreadsheet checkpoint refused its .xlsx: {Reason}. fileId={FileId} userId={UserId}", refusal, id, uid);
-            return Results.Json(new { error = "The spreadsheet's Excel copy was refused because it contains something that is not allowed in a TatvaOS file.", reason = refusal }, statusCode: 400);
+            var stored = await db.DocsDocuments.AsNoTracking().FirstOrDefaultAsync(d => d.FileId == id, ct);
+            if (stored is null) return Error(404, "No such spreadsheet.");
+            var after = await db.DocsUpdates.AsNoTracking()
+                .Where(u => u.FileId == id && u.Seq > stored.StateSeq)
+                .OrderBy(u => u.Seq)
+                .Select(u => new { u.Seq, u.Data })
+                .ToListAsync(ct);
+            upTo = after.Count > 0 ? after[^1].Seq : stored.StateSeq;
+            if (stored.RenderedSeq == upTo && after.Count == 0) return Results.Ok(new { saved = true, unchanged = true });
+            updates = [stored.State, .. after.Select(u => u.Data)];
         }
 
+        // 2. The build, outside the lock.
+        var log = loggers.CreateLogger("TatvaOS.Sheets.Render");
+        DocsRenderClient.SheetResult r;
+        try
+        {
+            r = await render.RenderSheetAsync(updates, ct);
+        }
+        catch (DocsRenderFailed e)
+        {
+            log.LogWarning(
+                "Sheets save FAILED: the file for {FileId} could not be built ({Reason}); the save was refused and shown, the edits stay stored as updates",
+                id, e.Reason);
+            return Results.Json(new
+            {
+                error = "This spreadsheet could not be saved as a file just now. Your work is safe, and saving will try again.",
+                reason = "render_failed",
+            }, statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+        if (r.State.Length > MaxStateBytes || r.Xlsx.Length > MaxStateBytes || r.Html.Length > MaxHtmlChars)
+            return Error(413, "This spreadsheet is too large to save.");
+        var refusal = XlsxGuard.Check(r.Xlsx);
+        if (refusal is not null)
+        {
+            log.LogError(
+                "Sheets save REFUSED the server's own .xlsx for {FileId}: {Reason}. Our writer produced something XlsxGuard refuses: a writer bug. Nothing was stored.",
+                id, refusal);
+            return Results.Json(new
+            {
+                error = "This spreadsheet could not be saved as a file because of a fault on our side. Your work is safe; please tell us.",
+                reason = "xlsx_refused",
+            }, statusCode: StatusCodes.Status500InternalServerError);
+        }
+        var html = CleanHtml(r.Html, id, uid, "render", loggers);
+        var text = r.Text.Length > 2_000_000 ? r.Text[..2_000_000] : r.Text;
+
+        // 3. Write, unless a build from a later point is already stored.
         string? oldKey = null;
         using (await hub.LockAsync(id, ct))
         {
             var doc = await db.DocsDocuments.FirstOrDefaultAsync(d => d.FileId == id, ct);
             if (doc is null) return Error(404, "No such spreadsheet.");
-
-            // A claim about the future is refused: a browser cannot have seen
-            // an update the server has not yet numbered.
-            var maxSeq = await db.DocsUpdates.Where(u => u.FileId == id)
-                .MaxAsync(u => (long?)u.Seq, ct) ?? doc.StateSeq;
-            if (req.UpToSeq > maxSeq)
-                return Error(409, "That checkpoint names updates this spreadsheet does not have.");
-
-            // A browser BEHIND the last checkpoint changes nothing: its state,
-            // HTML and .xlsx all predate what is already stored, and taking
-            // them would roll Space's copy backwards until someone else saved.
-            if (req.UpToSeq < doc.StateSeq)
+            // An older build never overwrites a newer file: see CheckpointAsync.
+            if ((doc.RenderedSeq is long builtFrom && builtFrom >= upTo) || doc.StateSeq > upTo)
                 return Results.Ok(new { saved = false, stale = true });
 
             var now = DateTimeOffset.UtcNow;
-            doc.State = state;
-            doc.StateSeq = req.UpToSeq;
+            doc.State = r.State;
+            doc.StateSeq = upTo;
+            doc.RenderedSeq = upTo;
             doc.TextContent = text;
             doc.CheckpointAt = now;
             doc.CheckpointByUserId = uid;
             doc.UpdatedAt = now;
 
             var key = blobs.NewKey(tenant.TenantId);
-            await using (var ms = new MemoryStream(xlsx))
-                await blobs.WriteAsync(key, ms, xlsx.Length, ct);
+            await using (var ms = new MemoryStream(r.Xlsx))
+                await blobs.WriteAsync(key, ms, r.Xlsx.Length, ct);
             oldKey = file.BlobKey;
             file.BlobKey = key;
             var imageBytes = await db.DocsImages.Where(i => i.FileId == id).SumAsync(i => (long?)i.SizeBytes, ct) ?? 0;
-            file.SizeBytes = xlsx.Length + imageBytes;
+            file.SizeBytes = r.Xlsx.Length + imageBytes;
             file.UpdatedAt = now;
 
             var latest = await db.DocsVersions.AsNoTracking()
@@ -744,12 +773,14 @@ public static class DocsEndpoints
     }
 
     /// <summary>
-    /// A spreadsheet's named or before-restore version: the browser's state
-    /// and HTML, as the Sheets branch stored them (see SheetCheckpointAsync).
+    /// A spreadsheet's named or before-restore version: what the SERVER
+    /// stored at this moment, built by the render service, as for documents
+    /// (CreateVersionAsync). The browser's state and HTML, if still sent, are
+    /// ignored. A failed build refuses the version.
     /// </summary>
     private static async Task<IResult> SheetVersionAsync(
         Guid id, SheetVersionRequest req, AppDbContext db, TenantContext tenant, DocsLiveHub hub,
-        ILoggerFactory loggers, CancellationToken ct)
+        DocsRenderClient render, ILoggerFactory loggers, CancellationToken ct)
     {
         var (err, file, perm, uid) = await LoadAsync(db, tenant, id, tracked: false, forChange: true, ct);
         if (err is not null) return err;
@@ -758,17 +789,42 @@ public static class DocsEndpoints
             return Error(400, "A document saves its versions through /api/docs/{id}/versions.");
 
         if (req.Kind is not ("named" or "restore")) return Error(400, "kind must be named or restore.");
-        if (!TryDecode(req.State, MaxStateBytes, out var state) || state.Length == 0)
-            return Error(400, "state must be base64, and within the size limit.");
         var name = string.IsNullOrWhiteSpace(req.Name) ? null : req.Name.Trim();
         if (name is { Length: > 200 }) name = name[..200];
         if (req.Kind == "named" && name is null) return Error(400, "A named version needs a name.");
-        if ((req.Html ?? "").Length > MaxHtmlChars) return Error(413, "This spreadsheet is too large to save.");
+
+        List<byte[]> updates;
+        using (await hub.LockAsync(id, ct))
+        {
+            var stored = await db.DocsDocuments.AsNoTracking().FirstOrDefaultAsync(d => d.FileId == id, ct);
+            if (stored is null) return Error(404, "No such spreadsheet.");
+            var after = await db.DocsUpdates.AsNoTracking()
+                .Where(u => u.FileId == id && u.Seq > stored.StateSeq)
+                .OrderBy(u => u.Seq).Select(u => u.Data).ToListAsync(ct);
+            updates = [stored.State, .. after];
+        }
+        DocsRenderClient.SheetResult r;
+        try
+        {
+            r = await render.RenderSheetAsync(updates, ct);
+        }
+        catch (DocsRenderFailed e)
+        {
+            loggers.CreateLogger("TatvaOS.Sheets.Render").LogWarning(
+                "Sheets version FAILED: {FileId} could not be built ({Reason}); the version was refused and shown", id, e.Reason);
+            return Results.Json(new
+            {
+                error = "That version could not be saved just now. Nothing was lost; please try again in a moment.",
+                reason = "render_failed",
+            }, statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+        if (r.State.Length > MaxStateBytes || r.Html.Length > MaxHtmlChars)
+            return Error(413, "This spreadsheet is too large to save.");
 
         var v = new DocsVersion
         {
             FileId = id, TenantId = tenant.TenantId, Kind = req.Kind, Name = name,
-            State = state, Html = CleanHtml(req.Html, id, uid, "version", loggers), CreatedByUserId = uid,
+            State = r.State, Html = CleanHtml(r.Html, id, uid, "version", loggers), CreatedByUserId = uid,
         };
         db.DocsVersions.Add(v);
         await db.SaveChangesAsync(ct);
