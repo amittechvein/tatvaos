@@ -91,6 +91,10 @@ interface AiState {
 const FEATURE_NAMES: Record<string, string> = {
   'connect.minutes': 'Meeting minutes',
   docs: 'Docs',
+  'docs.summarize': 'Docs — Summarise',
+  'docs.rewrite': 'Docs — Improve and rewrite',
+  'docs.translate': 'Docs — Translate',
+  'docs.write': 'Docs — Write with AI',
   sheets: 'Sheets',
   'platform.probe': 'Platform check',
   'mail.rewrite': 'Mail — Help me write',
