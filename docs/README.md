@@ -65,6 +65,7 @@ If you cannot tell which a document is, check when it was last changed
 **Mail**
 
 - [`CLIENT_MAIL_SETUP.md`](CLIENT_MAIL_SETUP.md) — connecting Outlook, phones
+- [`THUNDERBIRD_MAIL_IMPORT.md`](THUNDERBIRD_MAIL_IMPORT.md) — moving a customer's old Gmail or Outlook mail in, with Thunderbird
 - [`MAIL_IMIP_SEAM.md`](MAIL_IMIP_SEAM.md) — Calendar ↔ Mail invitations
 - [`MAIL_LARGE_ATTACHMENTS.md`](MAIL_LARGE_ATTACHMENTS.md)
 - [`RUNBOOK-2026-08-28.md`](RUNBOOK-2026-08-28.md) — **the TLS/SASL/app-password
