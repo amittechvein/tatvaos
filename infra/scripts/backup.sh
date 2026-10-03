@@ -472,7 +472,7 @@ if [ -n "${BACKUP_S3_REMOTE:-}" ] && [ -n "${BACKUP_ENC_PASSPHRASE:-}" ]; then
             # upload failed thins nothing.
             if [ "$offbox_ok" = "1" ] && [ "$TIERED" = "1" ]; then
                 listing=$(rclone lsf --files-only "$BACKUP_S3_REMOTE" 2>/dev/null)
-                if ! printf '%s\n' "$listing" | grep -qxF -- "${STAMP}.tar.gz.enc"; then
+                if ! grep -qxF -- "${STAMP}.tar.gz.enc" <<< "$listing"; then
                     # The set just uploaded must be in the listing. If it is
                     # not, the listing is wrong (failed, truncated) and must
                     # not be read as "these are all the sets there are".
