@@ -19,7 +19,7 @@ export const STORAGE_DROPS = [
   {
     id: 1,
     kind: 'marks on a hard break',
-    why: 'y-tiptap stores no marks on a non-text inline node. Invisible in practice (a line break shows no glyph); proven 30 Sept 2026 (14 of 60 in the Google Docs fixture, a 3-character reproduction). Ruled by Mr. Singh, 30 Sept 2026.',
+    why: 'y-tiptap stores no marks on a non-text inline node. Invisible in practice (a line break shows no glyph); proven 30 Sept 2026 (14 of 60 in the Google Docs fixture, a 3-character reproduction). Ruled by Mr. Singh, 30 Sept 2026. Since 3 Oct 2026 the editor strips such marks as they arrive (extensions.ts NoMarksOnHardBreaks), so NEW edits no longer produce it; the entry stays for documents and fixtures made before.',
     apply(node) {
       let n = 0;
       (function walk(x) {
