@@ -461,6 +461,10 @@ builder.Services.AddHostedService<VacationReplyWorker>();
 // Calendar reminders. Polls every minute and records every send, rather than
 // scheduling in-memory timers that a deploy would silently swallow.
 builder.Services.AddHostedService<CalendarReminderWorker>();
+// Decision 0009: ends the 48-hour hold on administrator-set recovery emails.
+// Crosses organisations through a SECURITY DEFINER function (the 0007 worker
+// rule); tests/recovery-admin/test-admin-recovery-email.sh runs it with a hold due.
+builder.Services.AddHostedService<RecoveryHoldWorker>();
 
 // TatvaOS AI sorts new inbox mail (Mail AI step 3). Does nothing unless an
 // organisation has switched sorting on; see the worker's header for its limits.
@@ -882,6 +886,7 @@ app.MapDevOperatorSignIn();
 app.MapMfaEndpoints();
 app.MapOrganisationEndpoints();
 app.MapUserEndpoints();
+app.MapRecoveryEmailAdminEndpoints();   // decision 0009
 app.MapOidcApplicationEndpoints();
 app.MapOidcEndpoints();
 app.MapDomainEndpoints();

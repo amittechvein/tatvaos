@@ -1087,3 +1087,47 @@ public class VacationSend
     [MaxLength(320)] public required string Address { get; set; }
     public DateTimeOffset LastSentAt { get; set; } = DateTimeOffset.UtcNow;
 }
+
+// ---- Decision 0009: an administrator sets a recovery email ----------------
+// (20260927-core-recovery-email-changes.sql). core.users.recovery_email only
+// changes when a change is APPLIED; until then it keeps the old address, so the
+// credential paths go on reading the old one without knowing about holds.
+
+/// <summary>One administrator change to one person's recovery email.</summary>
+public class RecoveryEmailChange
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid UserId { get; set; }
+    public Guid SetByUserId { get; set; }
+    [MaxLength(320)] public string? OldEmail { get; set; }
+    public DateTimeOffset? OldVerifiedAt { get; set; }
+    [MaxLength(320)] public required string NewEmail { get; set; }
+    /// <summary>pending | held | applied | reverted | superseded</summary>
+    [MaxLength(16)] public string Status { get; set; } = "pending";
+    [MaxLength(64)] public string? ConfirmTokenHash { get; set; }
+    public DateTimeOffset? ConfirmSentAt { get; set; }
+    public DateTimeOffset? ConfirmedAt { get; set; }
+    public DateTimeOffset? HoldUntil { get; set; }
+    public DateTimeOffset? AppliedAt { get; set; }
+    [MaxLength(64)] public string? NotMeTokenHash { get; set; }
+    public DateTimeOffset? NotMeExpiresAt { get; set; }
+    public DateTimeOffset? RevertedAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// An administrator whose change was reverted by the person ("this was not
+/// me") may not change recovery addresses until an owner clears this.
+/// </summary>
+public class RecoveryAdminSuspension
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid TenantId { get; set; }
+    public Guid AdminUserId { get; set; }
+    public Guid ChangeId { get; set; }
+    public DateTimeOffset SuspendedAt { get; set; } = DateTimeOffset.UtcNow;
+    public Guid? ClearedByUserId { get; set; }
+    public DateTimeOffset? ClearedAt { get; set; }
+}
+

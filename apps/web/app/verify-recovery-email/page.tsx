@@ -15,6 +15,9 @@ type State = 'working' | 'ok' | 'fail';
 export default function VerifyRecoveryEmailPage() {
   const [state, setState] = useState<State>('working');
   const [message, setMessage] = useState('');
+  // Decision 0009: an address an administrator set, replacing an existing one,
+  // is confirmed now but only takes effect after a 48-hour hold.
+  const [holdUntil, setHoldUntil] = useState<string | null>(null);
 
   useEffect(() => {
     const token = new URLSearchParams(window.location.search).get('token');
@@ -27,9 +30,9 @@ export default function VerifyRecoveryEmailPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ token }),
         });
-        const data = await r.json().catch(() => ({} as { verified?: boolean; error?: string }));
+        const data = await r.json().catch(() => ({} as { verified?: boolean; error?: string; held?: boolean; holdUntil?: string }));
         if (cancelled) return;
-        if (r.ok && data.verified) { setState('ok'); }
+        if (r.ok && data.verified) { if (data.held && data.holdUntil) setHoldUntil(data.holdUntil); setState('ok'); }
         else { setState('fail'); setMessage(data.error ?? 'This link is invalid or has expired.'); }
       } catch {
         if (!cancelled) { setState('fail'); setMessage('Something went wrong. Please try again.'); }
@@ -49,7 +52,11 @@ export default function VerifyRecoveryEmailPage() {
             <div className="mb-3 text-4xl text-ok">✓</div>
             <h1 className="mb-2 text-xl font-semibold text-ink">Recovery email confirmed</h1>
             <p className="mb-5 text-sm leading-relaxed text-ink-muted">
-              You can now use this address to get back into your account if you are ever locked out.
+              {holdUntil
+                ? <>It becomes your recovery email on <strong className="text-ink">{new Date(holdUntil).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</strong>.
+                    Until then your previous recovery email keeps working, so that nobody can take over an
+                    account by changing it quickly.</>
+                : 'You can now use this address to get back into your account if you are ever locked out.'}
             </p>
             <Link href="/org/users" className={`${AUTH_BUTTON} inline-block text-center no-underline`}>
               Continue

@@ -76,6 +76,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
     /// lookup. See the entity comment.
     /// </summary>
     public DbSet<MfaRecoveryCode> MfaRecoveryCodes => Set<MfaRecoveryCode>();
+    public DbSet<RecoveryEmailChange> RecoveryEmailChanges => Set<RecoveryEmailChange>();
+    public DbSet<RecoveryAdminSuspension> RecoveryAdminSuspensions => Set<RecoveryAdminSuspension>();
     public DbSet<UserAvatar> UserAvatars => Set<UserAvatar>();
 
     /// <summary>
@@ -254,6 +256,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, TenantC
         b.Entity<OidcScope>().ToTable("oidc_scopes", "core");
         b.Entity<OidcToken>().ToTable("oidc_tokens", "core");
         b.Entity<MfaRecoveryCode>().ToTable("mfa_recovery_codes", "core");
+        // Decision 0009. Filtered from the first line (0007's rule: every
+        // tenant-owned entity carries a query filter); RLS is forced as well.
+        b.Entity<RecoveryEmailChange>().ToTable("recovery_email_changes", "core");
+        b.Entity<RecoveryEmailChange>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
+        b.Entity<RecoveryAdminSuspension>().ToTable("recovery_admin_suspensions", "core");
+        b.Entity<RecoveryAdminSuspension>().HasQueryFilter(e => e.TenantId == tenant.TenantId);
         b.Entity<UserAvatar>().ToTable("user_avatars", "core");
         b.Entity<UserAvatar>().HasKey(a => a.UserId);
         b.Entity<SignupDraft>().ToTable("signup_drafts", "core");
