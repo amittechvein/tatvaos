@@ -53,6 +53,23 @@ The engine's clock is injectable (`Engine({ now })`), but dates are read in the 
 
 Volatile functions (TODAY, NOW, RAND) are recalculated at each server build, so the stored file shows the time of the **save**, as Excel does on open.
 
+## 4a. Older Excel: a one-line hint on download
+
+**Decided (Amit, 3 Oct 2026, on Mr. Singh's advice): yes.**
+
+Six functions the editor supports are newer than Excel 2019. Our file stores them correctly (`_xlfn.XLOOKUP`). Older Excel still doesn't know them and shows `#NAME?` in those cells. This laptop's Excel is 2019-class, and it did exactly that: the one miss in the real-Excel check (29/1) was XLOOKUP.
+
+| Function | Needs |
+|---|---|
+| XLOOKUP, XMATCH | Excel 2021 or Microsoft 365 |
+| CHOOSECOLS, CHOOSEROWS, REGEXEXTRACT, REGEXREPLACE | Microsoft 365 |
+
+- **What changes:** when someone chooses *Download as Excel (.xlsx)* and the workbook uses any of these, the download shows one line naming the functions it found. The file itself does not change.
+- **Proposed wording, for Mr. Singh:** "This workbook uses XLOOKUP. It works in Excel 2021 and Microsoft 365; older Excel shows #NAME? in those cells." When a Microsoft 365-only function is used, the sentence names Microsoft 365 alone.
+- **Where the list lives:** next to `XLFN` in `lib/sheets/io/xlsx.ts`. A unit test fails if the engine gains a prefixed function that is in neither the "fine in Excel 2019" list nor this one, so a new function can't skip the hint.
+- **Test:** a workbook with XLOOKUP gets the hint naming it; one without gets none. Calibrated: with the list emptied, the first test fails.
+- It is a separate small PR from the server build, and can go first.
+
 ## 5. The gate, before anything ships (same discipline as Docs)
 
 1. **The same workbook.** For every fixture, the server's `.xlsx` read back with our reader equals what the editor's own path writes for the same state: cell inputs, values, formats, merges, column widths and sheet order.
@@ -72,10 +89,12 @@ Volatile functions (TODAY, NOW, RAND) are recalculated at each server build, so 
 ## 7. Decisions needed
 
 **For Amit:**
-1. ~~Time zone~~: **decided 2 Oct: India time** (`TZ=Asia/Kolkata`).
+- ~~Time zone~~: **decided 2 Oct: India time** (`TZ=Asia/Kolkata`).
+- ~~Older Excel hint~~: **decided 3 Oct: yes** (§4a), on Mr. Singh's advice.
 
 **For Mr. Singh:**
 
 2. **Approach:** the render service runs the editor's own Sheets code (proposed), as it runs the Docs schema.
 3. **The gate in §5**, especially check 2 (a colleague's unseen edit) as condition 1's proof for Sheets.
 4. **XlsxGuard on the server's own `.xlsx`:** refuse and log on a hit (proposed), treated as a writer bug, never stored.
+5. **The hint's wording** in §4a, since it is what a customer is told.
