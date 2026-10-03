@@ -197,7 +197,9 @@ for _ in $(seq 1 150); do curl -s -o /dev/null -w '%{http_code}' "$API/health" 2
 curl -s -o /dev/null -w '%{http_code}' "$API/health" | grep -q 200 && pass "API up" || { fail "API did not start"; tail -5 "$LOG"; exit 1; }
 
 PG "UPDATE core.users SET role='org_owner' WHERE email='amit@techvein.local' AND role='owner'" >/dev/null
-PG "UPDATE core.users SET phone='+919999900001' WHERE email='amit@techvein.local' AND phone IS NULL" >/dev/null
+# The three test phones, made true every run (tests/support/test-phones.sh).
+. "$(dirname "$0")/../support/test-phones.sh"
+[ "$(PG "$TEST_PHONES_SQL")" = "3" ] || { fail "the test phone numbers could not be set - see tests/support/test-phones.sh"; exit 1; }
 PG "UPDATE core.users SET login_otp_sent_at=NULL, login_otp_attempts=0 WHERE phone='+919999900001'" >/dev/null
 code=$(curl -s -X POST "$API/api/auth/otp/request" -H 'Content-Type: application/json' -d '{"phone":"+919999900001"}' | j "d.get('devCode') or ''")
 TOKEN=$(curl -s -X POST "$API/api/auth/otp/verify" -H 'Content-Type: application/json' -d "{\"phone\":\"+919999900001\",\"code\":\"$code\"}" | j "d.get('accessToken') or ''")

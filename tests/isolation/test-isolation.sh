@@ -32,6 +32,16 @@ SCHOOL='22222222-2222-2222-2222-222222222222'
 MODE="${TATVAOS_PSQL_MODE:-docker}"
 PGHOST="${PGHOST:-localhost}"
 PGUSER="${PGUSER:-postgres}"
+# SET BUT EMPTY is a lost throwaway database name, not a request for the
+# default. 2 Oct 2026: PGDATABASE=$TDB_NAME with TDB_NAME empty (tdb_create
+# had run in a pipe) sent this whole suite to the SHARED tatvaos_mail, the
+# database rule 13 keeps tests out of. Unset still means tatvaos_mail: CI's
+# service database has that name. tests/lib/throwaway-db-guard-test.sh.
+if [ "${PGDATABASE+set}" = set ] && [ -z "$PGDATABASE" ]; then
+    echo "  PGDATABASE is set but empty - a throwaway database name went missing." >&2
+    echo "  Refusing to fall back to tatvaos_mail, the shared database (rule 13)." >&2
+    exit 2
+fi
 PGDATABASE="${PGDATABASE:-tatvaos_mail}"
 CONTAINER="${TATVAOS_PG_CONTAINER:-tv-postgres}"
 
@@ -788,6 +798,8 @@ for stmt in \
     "DELETE FROM mail.api_keys WHERE false" \
     "DELETE FROM mail.app_passwords WHERE false" \
     "DELETE FROM mail.api_sends WHERE false" \
+    "DELETE FROM mail.api_send_envelopes WHERE false" \
+    "UPDATE mail.api_send_envelopes SET from_address = from_address WHERE false" \
     "DELETE FROM family.contact_audit_logs WHERE false"     "DELETE FROM core.ai_usage WHERE false"     "UPDATE core.ai_usage SET tokens_in = tokens_in WHERE false"     "DELETE FROM core.ai_usage_alerts WHERE false"
 do
     if run_as tatvaos_app "$stmt" >/dev/null 2>&1; then

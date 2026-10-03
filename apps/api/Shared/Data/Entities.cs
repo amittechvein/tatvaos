@@ -99,7 +99,7 @@ public class Tenant
     /// Column: 20260926-mail-ai-features.sql. Enforced in AiProductSwitch.
     /// </summary>
     public bool MailAiRewrite { get; set; } = true;
-    public bool MailAiSuggest { get; set; } = true;
+    public bool MailAiSuggest { get; set; } = TatvaOS.Api.Shared.Ai.AiProductSwitch.DefaultSuggest;
     public bool MailAiSummary { get; set; }
 
     /// <summary>

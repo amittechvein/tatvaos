@@ -28,8 +28,16 @@ public static class DocsSwitch
     /// production never holds a file a browser wrote. While false, the
     /// operator's switch refuses to turn Docs on (DocsAdminEndpoints). The
     /// render's own pull request sets it true, and nothing else should.
+    ///
+    /// SET TRUE 1 Oct 2026, in its own pull request, after the render (PR 367,
+    /// main 9701b1e) was deployed and checked ON PRODUCTION: render container
+    /// healthy, the API reaches it, the internet refused from inside it (Mr.
+    /// Singh: merge only once those pass). Docs is still off for every
+    /// organisation until the operator switches it on; the browser-written-
+    /// files guard below still applies. Proven by
+    /// tests/docs/docs-switch-production.test.mjs (red on 9701b1e: 409).
     /// </summary>
-    public const bool ServerRenderLanded = false;
+    public const bool ServerRenderLanded = true;
 
     public const string BeforeRenderMessage =
         "Docs cannot be switched on yet. Documents must first be built on the server "
@@ -49,7 +57,7 @@ public static class DocsAdminEndpoints
     public static void MapDocsAdminEndpoints(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api/admin/organisations/{id:guid}/docs")
-            .RequireAuthorization("SuperAdmin")
+            .RequireOperator()
             .WithTags("Platform administration");
 
         g.MapGet("/", GetAsync);
@@ -139,7 +147,7 @@ public static class DocsAdminEndpoints
     /// <summary>
     /// Refused everywhere but a developer's machine, where tests/docs must
     /// switch Docs on to test it. Docs:RefuseSwitchOnInDevelopment can only
-    /// ADD the refusal (tests/docs/docs-switch-before-render.test.mjs runs
+    /// ADD the refusal (tests/docs/docs-switch-production.test.mjs runs
     /// with it) — no setting takes it away in production; only the render's
     /// pull request, by setting ServerRenderLanded.
     /// </summary>
@@ -148,5 +156,5 @@ public static class DocsAdminEndpoints
         && (!env.IsDevelopment() || config.GetValue<bool>("Docs:RefuseSwitchOnInDevelopment"));
 
     private static Guid Actor(HttpContext http) =>
-        Guid.TryParse(http.User.FindFirst("sub")?.Value, out var uid) ? uid : Guid.Empty;
+        TatvaOS.Api.Shared.Auth.SignedIn.UserIdOrEmpty(http);
 }

@@ -22,7 +22,7 @@ import Subscript from '@tiptap/extension-subscript';
 import Superscript from '@tiptap/extension-superscript';
 import { TableKit } from '@tiptap/extension-table';
 import { TaskList, TaskItem } from '@tiptap/extension-list';
-import { DocsImage, PageBreak, ParagraphFormat } from './extensions';
+import { DocsImage, NoMarksOnHardBreaks, PageBreak, ParagraphFormat } from './extensions';
 
 /**
  * The document schema. Shared by the live editor and the read-only version
@@ -51,6 +51,7 @@ export function documentExtensions(loadImage: (src: string) => Promise<string> =
     TableKit.configure({ table: { resizable: true } }),
     TaskList, TaskItem.configure({ nested: true }),
     ParagraphFormat, PageBreak,
+    NoMarksOnHardBreaks, // storage keeps no marks on a line break: strip them as they arrive (0011 condition 4, entry 1)
     DocsImage.configure({ load: loadImage, inline: true }),
   ];
 }

@@ -135,6 +135,13 @@ jobs:
       - name: "Dev operator check: only known sign-in paths reach the session tail"
         run: bash tests/dev-operator/check-signin-tail.sh
 
+      # Every AI entry point asks AiGate before sending, and every AI feature
+      # label has an organisation list (Mr. Singh, 30 Sept 2026, after a
+      # customer used Mail AI before its privacy text existed). Source scan,
+      # no database. deploy.sh runs the same file before it builds.
+      - name: "AI check: every entry point asks its organisation list"
+        run: python3 tests/ai/every_ai_entry_calls_gate.py apps/api
+
   isolation:
     name: Tenant isolation
     runs-on: ubuntu-latest
@@ -409,6 +416,14 @@ jobs:
       # it to prove a failed render fails the save, and holds two builds to
       # prove an older one never overwrites a newer file.
       - name: "Docs end to end: the file is the server's"
+        run: bash tests/docs/run-docs-live.sh
+
+      # The operator's switch with production's refusal added back: after the
+      # server render, switching on works (red before ServerRenderLanded: 409).
+      - name: "Docs switch: as production runs it"
+        env:
+          Docs__RefuseSwitchOnInDevelopment: 'true'
+          DOCS_TEST: tests/docs/docs-switch-production.test.mjs
         run: bash tests/docs/run-docs-live.sh
 
       # The container's hardening, each condition proven against the real

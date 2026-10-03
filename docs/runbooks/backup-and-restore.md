@@ -52,6 +52,28 @@ built: new keys, the existing secrets re-encrypted in one transaction, and
 the sign-in key kept as the old key until the re-encryption is verified. When
 that lands, this row changes to name the new keys instead.
 
+## Provider settings that are part of what customers are told
+
+Some settings live in a provider's web console, not in `.env`, and what the
+privacy page promises depends on them. A discount offer can switch one with
+two clicks. **Any change to these goes to Mr. Singh first, the same as a
+change to a privacy sentence** (Mr. Singh, 1 Oct 2026, after the OpenAI
+account was found sharing every AI request for training in exchange for free
+daily tokens).
+
+| provider, where | setting | must be | last checked |
+|---|---|---|---|
+| OpenAI, platform.openai.com → organisation "Techvein" → Data controls → **Sharing** | Share inputs and outputs with OpenAI; Share evaluation and fine-tuning data; Playground feedback sharing | **Disabled, all three** | 1 Oct 2026: they were ENABLED for all projects (with "complimentary daily tokens") and were switched off that day on Amit's go; read again after a reload, all three Disabled |
+| OpenAI, the same → **Data retention** | API call logging; zero data retention | "Enabled per call" (our gateway never asks OpenAI to store a request); no zero data retention, so **OpenAI's default 30-day abuse-monitoring retention** applies ([OpenAI: your data](https://developers.openai.com/api/docs/guides/your-data)) | 1 Oct 2026 |
+| Google (live captions in Chrome) | - | **not yet known**: Mr. Singh's five questions and a check of any Google project setting are open | - |
+
+The sentence these support is `AiDisclosure.Retention` (PR 366). If a check
+finds a setting different from this table, do not "fix" the table: tell Amit
+and Mr. Singh, because the privacy page is then wrong.
+
+Every deploy that carries an AI change says in its note that these were
+checked, and on what date: see `docs/DEPLOY_RUNBOOK.md`, section 4.
+
 `PERSONAL_PHONE_HASH_KEY` is generated once (`openssl rand -hex 32`), at the
 switch-on of personal accounts. Compose refuses to run without it, and the API
 refuses to start outside Development if it is missing or shorter than 32
@@ -81,8 +103,10 @@ The same five steps apply to every key in the table above.
 
 ## What is backed up
 
-`infra/scripts/backup.sh`, **every six hours** (02:30, 08:30, 14:30, 20:30) —
-or **every two hours** once the tiered schedule below is switched on:
+`infra/scripts/backup.sh`, **every two hours** on production (cron
+`30 */2 * * *`, read 2 Oct 2026; the tiered schedule below). The script's
+default without the tiered schedule is every six hours (02:30, 08:30, 14:30,
+20:30):
 
 | artefact | why losing it hurts |
 |---|---|
@@ -92,8 +116,41 @@ or **every two hours** once the tiered schedule below is switched on:
 | `dkimkeys.tar.gz` | small; losing them means re-publishing DNS for every customer domain |
 | `env.txt` | the uncommitted secrets, without which none of the above starts |
 
-So up to **six hours** can be lost (two, on the tiered schedule), not
-twenty-four.
+So on production up to **two hours** can be lost (six, without the tiered
+schedule), not twenty-four.
+
+**Meeting recordings are not in the set**: at about 10 GB they would triple
+every upload. They have their own off-box copy, at the end of every run
+(#257, Mr. Singh's 25 Sept design, proven on production 1 Oct 2026):
+
+- **What it does.** `rclone copy` from the `tatvaos_connectrec` volume to
+  `BACKUP_RECORDINGS_REMOTE` (`linode:tatvaos-recordings`). It uploads only
+  new files and **never deletes**, so a recording removed on the server (by
+  the age-off, a bug or a person) is still in the bucket.
+- **Encryption.** It is encrypted with the same paper passphrase as the sets,
+  through rclone's crypt layer, with file names encrypted too. There is no
+  new secret to keep.
+- **The bucket keeps each recording 31 days**
+  (`BACKUP_RECORDINGS_KEEP_DAYS`), by age alone, whatever the volume does.
+- **The receipt.** Every file on the volume must be in the bucket (set
+  difference, not counts); one missing is a failure. The log line reads
+  `every one of the N files on the volume is in the bucket … M uploaded this
+  run`. It never prints a recording's name, because names carry meeting ids:
+  only rclone's totals and its errors, with the file part blanked, are let
+  through.
+- **It cannot fail the set.** A failed recordings copy is printed in capitals
+  and repeated in the verdict, and the run still exits 0 for the set.
+- **Re-run just this step:** `./infra/scripts/backup.sh --recordings-only`,
+  under the same lock, making no set. It exits 0 only when every file is in
+  the bucket, and run straight after a good copy it must say `0 uploaded`.
+- **The container image is pinned by digest** in `backup.sh`
+  (`rclone/rclone:1.68.2@sha256:74c5…`). To move it, change both halves and
+  re-run `--recordings-only`.
+- **Proof, 1 Oct 2026, 20:40Z:**
+  - first run: 22 files, 9.40 GiB, in 70 s;
+  - second run: `0 uploaded`;
+  - third run, on the corrected commit: `0 uploaded`, and no file name in
+    the output.
 
 ## Where the copies live
 
@@ -158,25 +215,86 @@ days; six-hourly, or two-hourly for the last day on the tiered schedule). Check 
 the dates before you plan the restore.
 
 **Rotating `BACKUP_ENC_PASSPHRASE`: keep the old one until everything written
-with it has aged out.** That is 3 days for local and pre-deploy copies and 7
-days for off-box objects. Rotate and throw away the old passphrase on the same
-day, and a week of backups can no longer be opened.
+with it has aged out.** That is 3 days for local and pre-deploy copies and
+**8 days** for off-box objects: the tiered schedule keeps a day's last set
+until it is 8 days old (see *The tiered schedule*), so the 7 in
+`BACKUP_S3_KEEP_DAYS` is not the number here. Rotate and throw away the old
+passphrase on the same day, and a week of backups can no longer be opened.
 
-**The old plain copies** (`pre-deploy-*.sql`, `pre-deploy-*.sql.gz`, 323 of
-them, 31 GB, 4 Aug to 24 Sept 2026) are **never deleted by a deploy**; each
-deploy counts them aloud. They were chmod-ed 700/600 by hand on 25 Sept. Mr.
-Singh's order for removing them: (a) prove a restore into a scratch database;
-(b) PR 254 live; (c) one explicit deletion run by a person, logged with the
-count, the date range and who authorised it.
+**The old unencrypted copies are gone.** **323 files, 31 GB**, from
+4 Aug to 24 Sept 2026, were deleted on **25 Sept 2026 at 07:16Z**. It was
+done by hand, as one logged action, authorised by Amit, after both of Mr.
+Singh's conditions were met:
+- a restore proven on the off-box object (24 Sept) and on the new encrypted
+  pre-deploy copy (25 Sept 06:44Z);
+- PR 254 live (`fdffa9f`, since 24 Sept 18:08Z).
+
+None of the 323 was encrypted, but they were not all one kind:
+
+| kind | count | dates |
+|---|---|---|
+| `pre-deploy-*.sql.gz`: gzip-compressed, **not encrypted** | 311 | 4 Aug (`20260804-161107`) to 23 Sept (`20260923-183336`) |
+| `pre-deploy-*.sql`: plain, not even compressed | 12 | 24 Sept (`20260924-044441` to `20260924-112411`) |
+| encrypted (`.enc`) | 0 | the one encrypted copy that existed was left alone |
+
+Compression is not protection: anyone holding a `.sql.gz` could read the
+whole database.
+
+The record is `/home/deploy/predeploy-deletion-2026-09-25.log` on the server
+(mode 600). It lists every file name and ends `deleted 323 (31G), plain
+copies left: 0, encrypted copies: 1 -> 1`, with 53 GB free afterwards. The
+same summary is on PR 254. The counts and dates above were taken from that
+log on 2 Oct 2026.
+
+**What is still kept on purpose, so a search does not mistake it for a
+leftover:**
+- **Pre-deploy copies** (`pre-deploy-*.sql.gz.enc`, encrypted) are pruned by
+  `deploy.sh`. A copy goes once `find -mtime +3` sees it as more than **four
+  whole days** old (`BACKUP_KEEP_DAYS=3`), so one can sit there for up to
+  just under five days.
+- **Scheduled sets:** the newest **4** stay on the server, about 8 hours. The
+  bucket keeps each day's last set **until 8 days**. See *The tiered
+  schedule* below.
+- **`linode:tatvaos-backups-hold`** holds one set put aside by hand on
+  **24 Sept 2026**, the last set before the mail import. Nothing prunes it.
+  See the end of *The tiered schedule*.
+- **`/srv/tatvaos-production/backups/env-pre-website-20260923-102553`**, a
+  copy of the environment file from 23 Sept, was **deleted on 2 Oct 2026 at
+  06:30Z**, on Amit's go and Mr. Singh's recommendation. It contained every
+  secret, and no prune matched its name. Checked first: all 40 of its key
+  names are still in the live `infra/docker/.env`, nothing had it open, and
+  no cron line or script referred to it. The record (size, date, checksum,
+  who authorised it, no contents) is
+  `/home/deploy/env-copy-deletion-2026-10-02.log` (mode 600). No
+  `env-*` copies remain in `backups/`. Any new one, made by hand before a
+  risky change, is the maker's to delete.
 
 ### The tiered schedule (Amit, 24 Sept 2026)
 
-Off until these two lines are added to `.backup-env` **and** `--install` is
-re-run (it rewrites the cron line to match):
+**ON on production.** `.backup-env` gained the two lines on 25 Sept 2026, and
+production's `backup.sh` started obeying them with the deploy of `5c06a45`
+at 16:51Z that day. `BACKUP_LOCAL_KEEP` went from 2 to **4** (Amit, 26 Sept
+08:40Z), and `--install` moved cron to two-hourly at 08:46Z. Read on 2 Oct
+2026: cron `30 */2 * * *`, `BACKUP_S3_TIERED=1`, `BACKUP_LOCAL_KEEP=4`.
+On a fresh server it is off until both lines are in `.backup-env` **and**
+`--install` is re-run (it rewrites the cron line to match):
 
 ```bash
 BACKUP_S3_TIERED=1
 BACKUP_LOCAL_KEEP=4                          # production since 26 Sept: 8 hours at two-hourly
+```
+
+**If only the backup scripts need to change on the server, take the files —
+not `git pull`.** On 25 Sept 2026 the server checkout stood at a deliberate
+"stage one" commit (`fdffa9f`) while `origin/main` was 38 commits and four
+migrations ahead. A `git pull` there deploys nothing by itself, but it arms
+the next deploy from that checkout with everything it pulled, which nobody
+changing a backup schedule expects:
+
+```bash
+cd /srv/tatvaos-production
+git fetch origin main
+git checkout origin/main -- infra/scripts/backup.sh infra/scripts/backup-tiers.sh
 ```
 
 | age | kept in the bucket |
@@ -199,6 +317,22 @@ the set just uploaded, and it never deletes the newest three sets
 (`BACKUP_S3_MIN_KEEP`), so a week-long outage followed by one good run does not
 empty the bucket.
 
+**What it costs, measured on production (no contents read):**
+
+| | 25 Sept 2026, before (six-hourly, by days) | 2 Oct 2026, now (two-hourly, tiered) |
+|---|---|---|
+| one set | 4.0 GB | **4.2 GB** (4,215 MB uploaded at 18:30Z) |
+| sets on the server | 16, **47 GB** | **4, 17 GB** |
+| disk free (of 157 GB) | 24 GB | **88 GB** |
+| sets in the bucket | 28 | **22** (the run log, every run) |
+| uploaded off the server per day | ~16 GB (4 runs) | **49.3 GB** (12 runs in the 24 h to 19:59Z, summed from the log) |
+
+The transfer is the one number that went **up**, about threefold: roughly
+**1.5 TB a month** leaves the server for the bucket. Whether that sits inside
+the allowance of the Linode plan or the object-storage plan, and what it costs
+if it does not, is on the Linode bill — Amit's to read, not a safety question.
+Re-measure with the log: each run writes `uploaded <stamp>.tar.gz.enc (N MB)`.
+
 `BACKUP_LOCAL_KEEP` is not optional here: twelve full sets a day would fill the
 server's disk within days. `--install` refuses the two-hourly cron line without
 it. A run takes a lock (`.backup.lock`), so a slow run and the next one never
@@ -208,13 +342,13 @@ Tests, no server needed: `bash infra/scripts/backup-tiers-test.sh` (the rule —
 fourteen simulated days) and `bash infra/scripts/backup-sh-test.sh` (the
 deleting, end to end with fakes; Linux or WSL, it needs `flock`).
 
-**Restoring from more than four hours ago means a download first.** With
-`BACKUP_LOCAL_KEEP=2` the server holds only the last two sets — about four
-hours. Anything older is a 4 GB object in the bucket (`rclone copy`) that
-has to come down before the restore command above can start. **The download
-has not been timed.** What is known: a whole backup run — dump, tars, encrypt
-and the 4 GB upload — finishes in about 9 minutes (log, 25 Sept 2026), so a
-download within the same datacentre should be of that order; the 9 Sept drill
+**Restoring from more than eight hours ago means a download first.** With
+`BACKUP_LOCAL_KEEP=4` at two-hourly, the server holds only the last four sets,
+about eight hours. Anything older is a 4.2 GB object in the bucket
+(`rclone copy`) that has to come down before the restore command above can
+start. **The download has not been timed.** What is known: a whole backup run (dump,
+tars, encrypt and the 4 GB upload to that bucket) finishes in about 9 minutes
+(log, 25 Sept 2026), so a download should be of that order; the 9 Sept drill
 pulled a 0.6 GB object. Time it in the next drill and write the number here.
 Budget for it in the incident, not during it.
 
@@ -242,9 +376,21 @@ That is a note, not a warning. Nothing is wrong.
 
 ```bash
 cd /srv/tatvaos-production
-./infra/scripts/backup.sh              # run once by hand, read the output
-./infra/scripts/backup.sh --install    # cron
+./infra/scripts/backup.sh                     # run once by hand, read the output
+./infra/scripts/backup.sh --install           # cron
+./infra/scripts/backup.sh --recordings-only   # the recordings copy alone (see "What is backed up")
 ```
+
+**Anything else is refused, before anything is touched.** An unknown option,
+or more than one, exits 2 with `unknown option "…" — nothing was done`.
+Until 2 Oct 2026 the script **ignored an option it did not know and ran a
+full backup**. The #257 test caught it: `--recordings-only`, before it
+existed, made a set and thinned the bucket from 120 to 22. A misspelt
+`--recordings-onyl` would have done the same on production.
+
+**Check any other script you are about to run for the same hazard** before
+trusting a flag you typed. Mr. Singh, 2 Oct: "a script that silently ignores
+a flag is a hazard in every script we have."
 
 The cron logs to `$BACKUP_DIR/backup.log`, deliberately not `/var/log` — the
 deploy user cannot create a file there, and cron would fail on the redirect
