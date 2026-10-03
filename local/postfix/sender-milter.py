@@ -17,7 +17,8 @@ TWO MODES, from /etc/postfix/sender-ownership-mode (the entrypoint writes it
 from TATVAOS_SENDER_OWNERSHIP; read again for every message):
   warn     (how it first ships, Amit 2 Oct): nothing is refused; every
            message that WOULD be (envelope or From: not owned) is written to
-           /var/log/tatvaos/sender-ownership.jsonl, on the maillogs volume,
+           /var/log/tatvaos/sender-ownership-YYYY-MM.jsonl (one file per UTC
+           month), on the maillogs volume,
            so it survives deploys. Postfix's own log (container stdout) is
            lost at every deploy, which is why the 30-day count Mr. Singh asked
            for could not be made. This record is that count, from now on.
@@ -47,6 +48,7 @@ Postfix: refused forged From: in enforce, recorded mismatches in warn.
 import hashlib
 import json
 import os
+import pwd
 import socketserver
 import struct
 import sys
@@ -59,7 +61,14 @@ import psycopg2
 LISTEN = ("127.0.0.1", int(os.environ.get("SENDER_MILTER_PORT", "10028")))
 MODE_FILE = "/etc/postfix/sender-ownership-mode"
 LOOKUP_CF = "/etc/postfix/sql/sender-login-maps.cf"   # rendered: the mail edge's credentials
-EVIDENCE = "/var/log/tatvaos/sender-ownership.jsonl"
+EVIDENCE_DIR = "/var/log/tatvaos"
+RUN_AS = "postfix"
+DB_SETTINGS = {}            # read ONCE, as root, before the privilege drop
+
+
+def evidence_path():
+    """One file per UTC month (Mr. Singh, 3 Oct: rotate it so it stays readable)."""
+    return f"{EVIDENCE_DIR}/sender-ownership-{time.strftime('%Y-%m', time.gmtime())}.jsonl"
 
 # Protocol flags we ask Postfix NOT to send (only those it offers are kept).
 NO_CONNECT, NO_HELO, NO_RCPT, NO_BODY, NO_UNKNOWN, NO_DATA = 0x1, 0x2, 0x8, 0x10, 0x100, 0x200
@@ -104,7 +113,7 @@ class Db:
 
     def _cur(self):
         if self.conn is None or self.conn.closed:
-            s = db_settings()
+            s = DB_SETTINGS
             self.conn = psycopg2.connect(host=s["hosts"].split()[0], user=s["user"],
                                          password=s["password"], dbname=s["dbname"], connect_timeout=5)
             self.conn.autocommit = True
@@ -160,8 +169,7 @@ def record(db, kind, m, action, login, address):
         "login_hash": hashlib.sha256(login.lower().encode()).hexdigest()[:12],
     }
     with _evidence_lock:
-        os.makedirs(os.path.dirname(EVIDENCE), exist_ok=True)
-        with open(EVIDENCE, "a", encoding="utf-8") as f:
+        with open(evidence_path(), "a", encoding="utf-8") as f:
             f.write(json.dumps(line) + "\n")
     log(f"{m}: {kind} not owned, class={cls} login_tenant={login_tenant} claimed_tenant={claimed_tenant} -> {action}")
 
@@ -264,12 +272,30 @@ class Server(socketserver.ThreadingTCPServer):
     daemon_threads = True
 
 
+def drop_privileges():
+    """Root only long enough to read the owner-only credentials file and bind;
+    every message is handled as the postfix user (Mr. Singh, 3 Oct: a header-
+    reading program with database access must not stay root). Refuses to go
+    on if the drop did not take - root silently kept is the failure mode."""
+    u = pwd.getpwnam(RUN_AS)
+    os.setgroups([])
+    os.setgid(u.pw_gid)
+    os.setuid(u.pw_uid)
+    if os.getuid() == 0 or os.geteuid() == 0:
+        log("FATAL: still root after the privilege drop - refusing to handle mail")
+        sys.exit(1)
+    return u.pw_uid
+
+
 if __name__ == "__main__":
-    log(f"listening on {LISTEN[0]}:{LISTEN[1]}, mode={mode()}, record={EVIDENCE}")
+    DB_SETTINGS.update(db_settings())                    # as root: the file is 0600
+    srv = Server(LISTEN, Session)                        # bind before the drop
+    uid = drop_privileges()
+    log(f"listening on {LISTEN[0]}:{LISTEN[1]} as {RUN_AS} (uid {uid}), mode={mode()}, record={evidence_path()}")
     try:
         Db()._cur().close()
         log("database reachable")
     except Exception as e:
         log(f"database not reachable yet ({type(e).__name__}) - will retry per message")
-    with Server(LISTEN, Session) as srv:
+    with srv:
         srv.serve_forever()

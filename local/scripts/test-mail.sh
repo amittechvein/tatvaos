@@ -535,7 +535,9 @@ fi
 curl -s -X DELETE "http://localhost:8025/api/v1/search?query=subject:%22sender-milter%22" >/dev/null 2>&1
 docker exec tv-postfix sh -c 'rm -f /var/log/tatvaos/sender-milter-restarts /var/log/tatvaos/sender-milter-alerted' >/dev/null 2>&1
 for _ in 1 2 3 4; do
-    p=$(milter_pid); [ -n "$p" ] && docker exec tv-postfix kill "$p" >/dev/null 2>&1
+    # sh -c: the slim image has no kill program, only the shell builtin - a
+    # bare `docker exec ... kill` killed nothing and the alert check proved nothing.
+    p=$(milter_pid); [ -n "$p" ] && docker exec tv-postfix sh -c "kill $p" >/dev/null 2>&1
     for _ in $(seq 1 15); do sleep 1; np=$(milter_pid); [ -n "$np" ] && [ "$np" != "$p" ] && break; done
 done
 sleep 5
