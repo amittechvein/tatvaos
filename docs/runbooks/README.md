@@ -8,6 +8,7 @@ Format: **symptom → diagnosis → fix → confirm**.
 
 - [x] [Postfix/Dovecot config errors](01-mail-edge-config-errors.md)
 - [x] [Billing: encrypted secrets, the rollback floor, refunds](billing-secrets-and-rollback.md)
+- [x] [A CI job stuck "in progress": force-cancel at three times its usual run](ci-stuck-job.md)
 - [ ] Mail queue backing up
 - [ ] Delivery latency above SLA
 - [ ] Blocklist entry appeared — delisting procedure
