@@ -303,6 +303,255 @@ trap - EXIT
 pass "fixture removed"
 
 # ===========================================================================
+#  PORT 587: A SIGNED-IN USER SENDS ONLY AS AN ADDRESS THEY OWN
+# ===========================================================================
+#
+#  Found 1 Oct 2026, proven on this stack 2 Oct: production's 587 required a
+#  sign-in, and then let the signed-in user put ANY address in MAIL FROM.
+#  Signed in as ABC School's principal, mail as Techvein's amit@ went out
+#  (250 queued), so did mail as ceo@bank.example. A school account could
+#  send as another organisation, and past the outbound gate, since the gate
+#  judged the address claimed rather than the person signed in.
+#
+#  The fix is Postfix's own: smtpd_sender_login_maps says who may use each
+#  address (mail.sender_logins(), the mail edge's one question), and
+#  reject_authenticated_sender_login_mismatch refuses everything else - for
+#  signed-in sessions only, so the API's port 10587 (no sign-in, our own
+#  network) is untouched.
+#
+#  This stack's 587 normally takes NO sign-in (local posture), so nothing
+#  here could fail. The section switches 587 to production's exact rules
+#  first - the lines Postfix's and Dovecot's entrypoints apply outside local,
+#  minus the certificate - and puts the local ones back when it ends.
+# ===========================================================================
+hdr "Port 587: senders tied to the signed-in user"
+
+SL_SCHOOL='22222222-2222-2222-2222-222222222222'
+SL_DOMAIN='b2222222-2222-2222-2222-222222222222'
+SL_USER='d2222222-2222-2222-2222-222222222222'      # the principal's person
+
+sl_teardown() {
+    psql_root "DELETE FROM mail.aliases   WHERE address IN ('hello@abcschool.local');
+               DELETE FROM mail.mailboxes WHERE address IN ('office@abcschool.local','notices@abcschool.local');" >/dev/null 2>&1
+    docker exec tv-postfix postconf -e submission_sasl_auth_enable=no \
+        "submission_client_restrictions=permit_mynetworks,reject" \
+        "submission_recipient_restrictions=permit_mynetworks,reject_unauth_destination,reject" \
+        "submission_sender_login_check=warn_if_reject reject_authenticated_sender_login_mismatch" >/dev/null 2>&1
+    docker exec tv-postfix sh -c 'echo warn > /etc/postfix/sender-ownership-mode' >/dev/null 2>&1
+    docker exec tv-postfix postfix reload >/dev/null 2>&1
+    docker exec tv-dovecot sh -c 'rm -f /etc/dovecot/env-overrides.conf && doveadm reload' >/dev/null 2>&1
+}
+trap sl_teardown EXIT
+sl_teardown
+
+# Two shared mailboxes - one the principal may SEND AS, one they may only
+# READ - and an alias that delivers to the principal.
+sl_setup=$(psql_root "
+    INSERT INTO mail.mailboxes (tenant_id, domain_id, address, local_part, type, imap_password_hash, quota_bytes)
+    VALUES ('$SL_SCHOOL', '$SL_DOMAIN', 'office@abcschool.local',  'office',  'shared', '{PLAIN}devpass123', 1073741824),
+           ('$SL_SCHOOL', '$SL_DOMAIN', 'notices@abcschool.local', 'notices', 'shared', '{PLAIN}devpass123', 1073741824);
+    INSERT INTO mail.mailbox_permissions (mailbox_id, user_id, permission)
+    SELECT id, '$SL_USER', 'send_as' FROM mail.mailboxes WHERE address = 'office@abcschool.local';
+    INSERT INTO mail.mailbox_permissions (mailbox_id, user_id, permission)
+    SELECT id, '$SL_USER', 'read'    FROM mail.mailboxes WHERE address = 'notices@abcschool.local';
+    INSERT INTO mail.aliases (tenant_id, domain_id, target_mailbox_id, address)
+    SELECT '$SL_SCHOOL', '$SL_DOMAIN', id, 'hello@abcschool.local' FROM mail.mailboxes WHERE address = 'principal@abcschool.local';
+")
+if [ "$(psql_root "SELECT count(*) FROM mail.mailbox_permissions p JOIN mail.mailboxes m ON m.id = p.mailbox_id
+                   WHERE m.address IN ('office@abcschool.local','notices@abcschool.local')")" = 2 ] \
+   && [ "$(psql_root "SELECT count(*) FROM mail.aliases WHERE address = 'hello@abcschool.local'")" = 1 ]; then
+    pass "fixture: a send-as shared mailbox, a read-only one, an alias"
+else
+    fail "could not create the fixture - this section proves nothing"
+    printf '         %s\n' "$(printf '%s' "$sl_setup" | tail -3)"
+fi
+
+# Production's 587: sign-in required (Postfix), and Dovecot's SASL listener.
+docker exec tv-dovecot sh -c 'printf "%s\n" "service auth {" "    inet_listener postfix-sasl {" "        port = 12345" "    }" "}" > /etc/dovecot/env-overrides.conf && doveadm reload' >/dev/null 2>&1
+docker exec tv-postfix postconf -e submission_sasl_auth_enable=yes \
+    "submission_client_restrictions=permit_sasl_authenticated,reject" \
+    "submission_recipient_restrictions=permit_sasl_authenticated,reject_unauth_destination,reject" >/dev/null 2>&1
+docker exec tv-postfix postfix reload >/dev/null 2>&1
+
+# The check has two modes (Amit, 2 Oct 2026: warn first, enforce after a
+# week of evidence). sl_mode sets BOTH halves: Postfix's envelope check
+# (submission_sender_login_check) and the From-line filter
+# (/etc/postfix/sender-ownership-mode). Enforce first: it is the rule.
+sl_mode() {
+    local check="reject_authenticated_sender_login_mismatch"
+    [ "$1" = warn ] && check="warn_if_reject $check"
+    docker exec tv-postfix sh -c "echo $1 > /etc/postfix/sender-ownership-mode && postconf -e 'submission_sender_login_check=$check' && postfix reload" >/dev/null 2>&1
+    sleep 2
+}
+sl_mode enforce
+
+# as LOGIN FROM TO [HEADER-FROM] -> the whole conversation, for code-and-
+# wording asserts. HEADER-FROM is the visible From: line; without it swaks
+# writes the envelope sender there.
+as() {
+    local hdr=(); [ -n "${4:-}" ] && hdr=(--header "From: $4")
+    swaks --server "$SMTP_HOST:$SUB_PORT" --auth PLAIN --auth-user "$1" --auth-password "$PASS" \
+          --from "$2" --to "$3" --header "Subject: 587 login test $(date +%s)" "${hdr[@]}" --body "x" 2>&1
+}
+queued()   { printf '%s' "$1" | grep -q '250 2.0.0 Ok: queued'; }
+refused()  { printf '%s' "$1" | grep -q '553 5.7.1' && printf '%s' "$1" | grep -q 'not owned by user'; }
+# The From-line filter answers after the headers, with its own words.
+hrefused() { printf '%s' "$1" | grep -q '550 5.7.1' && printf '%s' "$1" | grep -q 'From: address'; }
+
+# Wait until 587 answers with AUTH - a reload is not instant. A section that
+# runs against a half-reloaded server tests the reload, not the rule.
+for _ in $(seq 1 20); do
+    swaks --server "$SMTP_HOST:$SUB_PORT" --quit-after EHLO 2>&1 | grep -q 'AUTH' && break; sleep 1
+done
+
+# The controls: the rules really are production's.
+out=$(swaks --server "$SMTP_HOST:$SUB_PORT" --from principal@abcschool.local --to colleague@abcschool.local --body x 2>&1)
+printf '%s' "$out" | grep -q '554 5.7.1' && pass "control: no sign-in is refused (554)" \
+                                         || fail "control: unauthenticated submission was not refused - production rules not active"
+out=$(swaks --server "$SMTP_HOST:$SUB_PORT" --auth PLAIN --auth-user principal@abcschool.local --auth-password wrong \
+            --from principal@abcschool.local --to colleague@abcschool.local --body x 2>&1)
+printf '%s' "$out" | grep -q '535 5.7.8' && pass "control: a wrong password is refused (535)" \
+                                         || fail "control: a wrong password was not refused"
+
+out=$(as principal@abcschool.local principal@abcschool.local amit@techvein.local)
+queued "$out"  && pass "own address: accepted"                         || fail "own address refused - real users could not send"
+out=$(as principal@abcschool.local office@abcschool.local amit@techvein.local)
+queued "$out"  && pass "a shared mailbox they may SEND AS: accepted"   || fail "send_as on a shared mailbox refused"
+out=$(as principal@abcschool.local hello@abcschool.local amit@techvein.local)
+queued "$out"  && pass "an alias that delivers to them: accepted"      || fail "their own alias refused"
+out=$(as office@abcschool.local office@abcschool.local amit@techvein.local)
+queued "$out"  && pass "a shared mailbox signed in as itself: accepted" || fail "a shared mailbox's own sign-in refused"
+
+out=$(as principal@abcschool.local amit@techvein.local outside@example.com)
+if refused "$out"; then pass "ANOTHER ORGANISATION'S mailbox: refused (553 5.7.1, not owned)"
+else fail "signed in as ABC School, SENT AS TECHVEIN - any user can impersonate any mailbox"
+     info "$(printf '%s' "$out" | grep -E '^<[-~*]' | grep -E ' (4|5)[0-9]{2} ' | head -2)"; fi
+out=$(as principal@abcschool.local ceo@bank.example outside@example.com)
+if refused "$out"; then pass "an address nobody here owns: refused"
+else fail "signed in as ABC School, SENT AS ceo@bank.example"; fi
+out=$(as principal@abcschool.local notices@abcschool.local amit@techvein.local)
+if refused "$out"; then pass "a shared mailbox they may only READ: refused"
+else fail "read-only permission let them send as the shared mailbox"; fi
+out=$(as principal@abcschool.local AMIT@TechVein.local outside@example.com)
+if refused "$out"; then pass "...and capitals are not a way round"
+else fail "sent as AMIT@TechVein.local - case is a way round the check"; fi
+
+# The VISIBLE From: line (Mr. Singh, 2 Oct): mail apps show the person this,
+# not the envelope. An honest envelope with another organisation's From:
+# was queued until the From-line filter (local/postfix/sender-milter.py).
+out=$(as principal@abcschool.local principal@abcschool.local amit@techvein.local "amit@techvein.local")
+if hrefused "$out"; then pass "honest envelope, ANOTHER ORGANISATION'S From: line: refused (550 5.7.1)"
+elif queued "$out"; then fail "honest envelope with From: amit@techvein.local was ACCEPTED - the visible sender is forgeable"
+else fail "honest envelope + forged From: refused, but not by the From-line check:"
+     info "$(printf '%s' "$out" | grep -E '^<[-~*]' | grep -E ' (4|5)[0-9]{2} ' | head -2)"; fi
+out=$(as principal@abcschool.local principal@abcschool.local amit@techvein.local '"The Principal" <principal@abcschool.local>')
+queued "$out"  && pass "own From: line with a display name: accepted"  || fail "own From: with a display name refused"
+out=$(as principal@abcschool.local principal@abcschool.local amit@techvein.local "office@abcschool.local")
+queued "$out"  && pass "From: a shared mailbox they may SEND AS: accepted" || fail "From: a send_as shared mailbox refused"
+out=$(as principal@abcschool.local principal@abcschool.local amit@techvein.local "notices@abcschool.local")
+if hrefused "$out"; then pass "From: a shared mailbox they may only READ: refused"
+else fail "read-only permission let them put the shared mailbox in From:"; fi
+
+# The API's port: no sign-in, our own network, and it sends as whichever
+# mailbox the signed-in web user chose. The rule applies to SIGNED-IN
+# sessions only, so this must be unchanged. Spoken from inside Postfix's
+# container (10587 is never published).
+api_out=$(docker exec tv-postfix bash -c 'exec 3<>/dev/tcp/127.0.0.1/10587; r(){ IFS= read -r l <&3; printf "%s\n" "$l"; }; r >/dev/null;
+    printf "EHLO test\r\n" >&3; while r | grep -q "^250-"; do :; done;
+    printf "MAIL FROM:<amit@techvein.local>\r\n" >&3; r;
+    printf "RCPT TO:<principal@abcschool.local>\r\n" >&3; r;
+    printf "QUIT\r\n" >&3' 2>&1)
+if printf '%s' "$api_out" | tail -1 | grep -q '^250'; then
+    pass "the API port (10587, no sign-in) is unchanged"
+else
+    fail "the API port refused a sender - the web app could not send"
+    info "$(printf '%s' "$api_out" | tr -d '\r' | tail -2)"
+fi
+
+# WARN MODE (how it first ships, Amit 2 Oct): nothing is refused, and every
+# message that WOULD be is written to a record that survives deploys - the
+# evidence Mr. Singh's count needs, which Postfix's own log (lost at every
+# deploy) cannot give. One line per mismatch: kind, class, organisation ids,
+# a hash of the sign-in. Never an address.
+sl_mode warn
+# Rotated monthly (Mr. Singh, 2 Oct): one file per UTC month.
+EV=/var/log/tatvaos/sender-ownership-$(docker exec tv-postfix date -u +%Y-%m 2>/dev/null | tr -cd '0-9-').jsonl
+ev_count() { docker exec tv-postfix sh -c "if [ -f $EV ]; then wc -l < $EV; else echo 0; fi" 2>/dev/null | tr -d ' \r'; }
+n0=$(ev_count)
+out=$(as principal@abcschool.local amit@techvein.local amit@techvein.local "principal@abcschool.local")
+queued "$out" && pass "warn: another organisation's envelope sender is accepted (not yet refused)" \
+              || fail "warn mode refused an envelope it should only record"
+out=$(as principal@abcschool.local principal@abcschool.local amit@techvein.local "amit@techvein.local")
+queued "$out" && pass "warn: another organisation's From: line is accepted (not yet refused)" \
+              || fail "warn mode refused a From: line it should only record"
+out=$(as principal@abcschool.local principal@abcschool.local amit@techvein.local)
+queued "$out" && pass "warn: an honest message is accepted"            || fail "warn mode refused an honest message"
+sleep 1
+n1=$(ev_count)
+if [ "$(( ${n1:-0} - ${n0:-0} ))" = 2 ]; then pass "warn: exactly two lines recorded (the two impersonations, not the honest one)"
+else fail "warn: expected 2 new evidence lines, got $(( ${n1:-0} - ${n0:-0} ))"; fi
+recent=$(docker exec tv-postfix sh -c "tail -n 2 $EV" 2>/dev/null)
+for want in '"kind": "envelope"' '"kind": "header"' '"class": "other_org"' \
+            "\"login_tenant\": \"$SL_SCHOOL\"" '"claimed_tenant": "11111111-1111-1111-1111-111111111111"'; do
+    if printf '%s' "$recent" | grep -qF -- "$want"; then pass "warn record says $want"
+    else fail "warn record lacks $want"; info "$(printf '%s' "$recent" | head -2)"; fi
+done
+if [ -n "$recent" ] && ! docker exec tv-postfix grep -q '@' "$EV" 2>/dev/null; then
+    pass "the record holds no address at all"
+else
+    fail "the record holds an address (or is missing) - it must carry ids and a hash only"
+fi
+
+# The daily count (Mr. Singh, 2 Oct): infra/scripts/sender-ownership-report.sh,
+# run in the deployer's morning check during the week of warn mode. It reads
+# the record; it never prints an address.
+rep=$(POSTFIX=tv-postfix bash "$(dirname "$0")/../../infra/scripts/sender-ownership-report.sh" 2>&1); rep_rc=$?
+if [ "$rep_rc" -eq 0 ] && printf '%s' "$rep" | grep -qF -- "$SL_SCHOOL" && printf '%s' "$rep" | grep -q 'other_org'; then
+    pass "the daily report counts the warn record by organisation and class"
+else
+    fail "the daily report does not show the school's mismatches (exit $rep_rc)"; info "$(printf '%s' "$rep" | head -4)"
+fi
+# Only a report that RAN can be checked for addresses: a missing script's
+# error message contains no '@' either, and passed this check in the red run.
+if [ "$rep_rc" -eq 0 ] && [ -n "$rep" ] && ! printf '%s' "$rep" | grep -q '@'; then pass "the daily report prints no address"
+else fail "the daily report printed an address, or did not run (exit $rep_rc)"; fi
+
+# The filter does not stay root (Mr. Singh, 2 Oct): it reads the owner-only
+# credentials as root, then drops to the postfix user before any message.
+milter_pid() {
+    docker exec tv-postfix sh -c 'for p in /proc/[0-9]*; do tr "\0" " " < $p/cmdline 2>/dev/null | grep -q "^python3 /usr/local/lib/tatvaos/sender-milter.py" && echo ${p#/proc/}; done' 2>/dev/null | head -1 | tr -cd '0-9'
+}
+mpid=$(milter_pid)
+muid=$(docker exec tv-postfix sh -c "awk '/^Uid:/{print \$2}' /proc/${mpid:-0}/status" 2>/dev/null | tr -cd '0-9')
+puid=$(docker exec tv-postfix id -u postfix 2>/dev/null | tr -cd '0-9')
+if [ -n "$mpid" ] && [ -n "$muid" ] && [ "$muid" != 0 ] && [ "$muid" = "$puid" ]; then
+    pass "the filter handles mail as the postfix user (uid $muid), not root"
+else
+    fail "the filter runs as uid '${muid:-?}' (postfix is '${puid:-?}') - it must not handle mail as root"
+fi
+
+# A crash must be visible (Mr. Singh, 2 Oct): more than three restarts in an
+# hour mails an alert, the way the disk alert does - once, not per restart.
+curl -s -X DELETE "http://localhost:8025/api/v1/search?query=subject:%22sender-milter%22" >/dev/null 2>&1
+docker exec tv-postfix sh -c 'rm -f /var/log/tatvaos/sender-milter-restarts /var/log/tatvaos/sender-milter-alerted' >/dev/null 2>&1
+for _ in 1 2 3 4; do
+    # sh -c: the slim image has no kill program, only the shell builtin - a
+    # bare `docker exec ... kill` killed nothing and the alert check proved nothing.
+    p=$(milter_pid); [ -n "$p" ] && docker exec tv-postfix sh -c "kill $p" >/dev/null 2>&1
+    for _ in $(seq 1 15); do sleep 1; np=$(milter_pid); [ -n "$np" ] && [ "$np" != "$p" ] && break; done
+done
+sleep 5
+alerts=$(curl -s "http://localhost:8025/api/v1/search?query=subject:%22sender-milter%22" 2>/dev/null | grep -o '"ID":"[^"]*"' | wc -l | tr -d ' ')
+if [ "${alerts:-0}" = 1 ]; then pass "four crashes in a row: exactly one alert mail"
+else fail "four crashes in a row: expected 1 alert mail, got ${alerts:-0}"; fi
+if [ -n "$(milter_pid)" ]; then pass "...and the filter is running again"
+else fail "the filter did not come back after the crashes"; fi
+
+sl_teardown
+trap - EXIT
+pass "587 back to the local rules, fixture removed"
+
+# ===========================================================================
 #  DKIM SIGNING
 # ===========================================================================
 #

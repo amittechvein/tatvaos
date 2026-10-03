@@ -111,6 +111,18 @@ services:
       # mail reaches real people, which cannot be undone.
       RELAY_TO_MAILPIT: ${RELAY_TO_MAILPIT:-true}
       RELAY_HOST: ${RELAY_HOST:-}
+      # Port 587 sender ownership (PR 380): warn records would-be refusals in
+      # /var/log/tatvaos/sender-ownership.jsonl; enforce refuses them. WARN
+      # until a week of that record has been read (Amit, 2 Oct 2026). The
+      # switch to enforce is this one line in .env, then a deploy. Anything but
+      # warn/enforce stops Postfix starting, on purpose.
+      TATVAOS_SENDER_OWNERSHIP: ${SENDER_OWNERSHIP:-warn}
+      # Where the From-line filter mails "restarted more than three times in an
+      # hour" (Mr. Singh, 3 Oct: a crash must be visible, the way the disk alert
+      # is). The disk alert's own address lives only in the deploy user's crontab,
+      # which a container cannot read, so it is repeated in .env as ALERT_TO.
+      # Unset: Postfix starts, logs a WARNING, and an alert would reach nobody.
+      TATVAOS_ALERT_TO: ${ALERT_TO:-}
     volumes:
       # ONE source of truth, shared with the local stack and CI.
       #
