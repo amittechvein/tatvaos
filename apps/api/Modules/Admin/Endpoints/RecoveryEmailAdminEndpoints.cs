@@ -53,7 +53,8 @@ public static class RecoveryEmailAdminEndpoints
             .WithTags("Authentication");
     }
 
-    public sealed record SetRecoveryRequest(string? Email);
+    /// <summary>CurrentPassword / MfaCode: the ADMINISTRATOR's own (Mr. Singh, 3 Oct).</summary>
+    public sealed record SetRecoveryRequest(string? Email, string? CurrentPassword = null, string? MfaCode = null);
     public sealed record NotMeRequest(string? Token);
 
     /// <summary>A hold that is running on a person's recovery email, if any.</summary>
@@ -83,7 +84,8 @@ public static class RecoveryEmailAdminEndpoints
     /// <summary>PUT /api/org/users/{id}/recovery-email — an administrator sets it.</summary>
     private static async Task<IResult> SetAsync(
         Guid id, SetRecoveryRequest req, AppDbContext db, TenantContext tenant, AuditWriter audit,
-        SystemMailer mailer, IConfiguration config, ILoggerFactory logs, CancellationToken ct)
+        SystemMailer mailer, IConfiguration config, ILoggerFactory logs,
+        IPasswordHasher hasher, TotpService totp, CancellationToken ct)
     {
         var email = req.Email?.Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(email) || !System.Net.Mail.MailAddress.TryCreate(email, out _)
@@ -119,6 +121,16 @@ public static class RecoveryEmailAdminEndpoints
             && user.RecoveryEmailVerifiedAt is not null)
             return Results.Ok(new { status = "unchanged", message = "That is already their confirmed recovery email." });
 
+        // The administrator proves it is them, in this same request, before
+        // anything is written or mailed (Mr. Singh, 3 Oct 2026). Last of the
+        // refusals on purpose: the ones above change nothing, and a typo in the
+        // address should not cost a try against the sign-in lock.
+        var actor = await db.Users.FirstOrDefaultAsync(u => u.Id == tenant.UserId, ct);
+        if (actor is null) return Results.Unauthorized();
+        var unproven = await Auth.Endpoints.AuthEndpoints.RequireActorProofAsync(
+            actor, req.CurrentPassword, req.MfaCode, hasher, totp, db, ct);
+        if (unproven is not null) return unproven;
+
         // One change in flight per person: a new one supersedes the old.
         await db.RecoveryEmailChanges
             .Where(c => c.UserId == user.Id && (c.Status == "pending" || c.Status == "held"))
@@ -143,8 +155,7 @@ public static class RecoveryEmailAdminEndpoints
         db.RecoveryEmailChanges.Add(change);
         await db.SaveChangesAsync(ct);
 
-        var admin = await db.Users.AsNoTracking()
-            .Where(u => u.Id == tenant.UserId).Select(u => u.DisplayName).FirstOrDefaultAsync(ct) ?? "An administrator";
+        var admin = string.IsNullOrWhiteSpace(actor.DisplayName) ? "An administrator" : actor.DisplayName;
         var replacing = !string.IsNullOrWhiteSpace(user.RecoveryEmail);
         var baseUrl = (config["Jwt:Issuer"] ?? "https://core.tatvaos.com").TrimEnd('/');
 

@@ -1516,6 +1516,80 @@ public static class AuthEndpoints
         return null;
     }
 
+    // ---- Decision 0009: the administrator proves it is them -------------------
+    //
+    //  Mr. Singh, 3 Oct 2026: "the administrator confirms their own password
+    //  (or MFA code, if they have MFA) within the same request that sets the
+    //  recovery email". The threat is a person at an unattended administrator's
+    //  keyboard pointing someone else's account recovery at themselves; a live
+    //  session is not proof of who is sitting at it.
+    //
+    //  Wrong tries count against the SAME counter and lock as sign-in (see
+    //  CheckCurrentPasswordAsync), for codes as well as passwords, as the
+    //  sign-in MFA step already does: otherwise a live session could guess six
+    //  digits without limit. A code is spent the moment it is accepted
+    //  (MfaLastStep is saved here, not with the change), so a refusal further
+    //  on cannot leave it replayable.
+    //
+    //  An administrator with no password and no MFA (signs in by phone code
+    //  only) is refused with the reason rather than counted: there is nothing
+    //  to confirm with until they set a password. For Mr. Singh's read.
+    internal static async Task<IResult?> RequireActorProofAsync(
+        User actor, string? currentPassword, string? mfaCode,
+        IPasswordHasher hasher, TotpService totp, AppDbContext db, CancellationToken ct)
+    {
+        if (actor.MfaEnabled && actor.MfaSecretRef is not null)
+        {
+            if (actor.LockedUntil is DateTimeOffset until && until > DateTimeOffset.UtcNow)
+                return LockedReply(actor);
+            if (string.IsNullOrWhiteSpace(mfaCode))
+                return Results.Json(new
+                {
+                    error = "Enter the code from your authenticator app to confirm it is you.",
+                    mfaRequired = true,
+                }, statusCode: 403);
+            var secret = totp.Unprotect(actor.MfaSecretRef);
+            var step = secret is null ? null : totp.Verify(secret, mfaCode.Trim(), actor.MfaLastStep);
+            if (step is null)
+            {
+                actor.FailedLoginCount++;
+                if (actor.FailedLoginCount >= MaxFailedAttempts)
+                {
+                    actor.LockedUntil = DateTimeOffset.UtcNow.Add(LockoutDuration);
+                    actor.FailedLoginCount = 0;
+                }
+                await db.SaveChangesAsync(ct);
+                return actor.LockedUntil is DateTimeOffset lockedNow && lockedNow > DateTimeOffset.UtcNow
+                    ? LockedReply(actor)
+                    : Results.Json(new { error = "That code was not accepted.", mfaRequired = true }, statusCode: 403);
+            }
+            actor.MfaLastStep = step;
+            actor.FailedLoginCount = 0;
+            await db.SaveChangesAsync(ct);
+            return null;
+        }
+
+        if (actor.PasswordHash is null)
+            return Results.Json(new
+            {
+                error = "Your account has no password to confirm it is you. Set one on your account page first.",
+                needsPassword = true,
+            }, statusCode: 403);
+        if (string.IsNullOrEmpty(currentPassword))
+            return Results.Json(new
+            {
+                error = "Enter your own password to confirm it is you.",
+                needsPassword = true,
+            }, statusCode: 403);
+        return await CheckCurrentPasswordAsync(actor, currentPassword, hasher, db, ct) switch
+        {
+            CurrentPasswordCheck.Locked => LockedReply(actor),
+            CurrentPasswordCheck.Wrong => Results.Json(
+                new { error = "That is not your password.", needsPassword = true }, statusCode: 403),
+            _ => null,
+        };
+    }
+
     /// <summary>An owner changed their own recovery address: tell every other owner and admin.</summary>
     private static void NotifyOtherOwnersAndAdmins(IServiceScopeFactory scopeFactory, User owner, string what)
     {
