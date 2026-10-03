@@ -345,6 +345,7 @@ async function main() {
   if (imp?.model) {
     const rows = Array.from({ length: 2000 }, (_, r) => ({ r, c: 0, input: `Imported row ${r + 1}` }));
     const impSheet = emptySheet('Imported');
+    impSheet.rows = 2500; // a sheet holds its size; a real import sets it from the file (a default sheet is 1,000 rows)
     for (const x of rows) impSheet.cells.set(cellKey(x.r, x.c), { input: x.input });
     impSheet.cells.set(cellKey(0, 1), { input: '=COUNTA(A1:A2000)' });
     const acksBefore = imp.acks;
