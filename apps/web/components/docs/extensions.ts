@@ -4,7 +4,7 @@
 
 import { Extension, Node, mergeAttributes } from '@tiptap/core';
 import Image from '@tiptap/extension-image';
-import { Plugin, PluginKey, type EditorState } from '@tiptap/pm/state';
+import { Plugin, PluginKey, type EditorState, type Transaction } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 
 declare module '@tiptap/core' {
@@ -146,6 +146,58 @@ export const PageBreak = Node.create({
 
   addKeyboardShortcuts() {
     return { 'Mod-Enter': () => this.editor.commands.setPageBreak() };
+  },
+});
+
+/**
+ * NO MARKS ON A LINE BREAK (decision 0011 condition 4, entry 1; Mr. Singh,
+ * 30 Sept 2026: "strip marks on paste" as a follow-up).
+ *
+ * The storage layer (y-tiptap) keeps no marks on a non-text inline node, so
+ * a bold hard break comes back plain after a reload: the first view and the
+ * reload differ (14 of 60 breaks in the Google Docs paste fixture). Marks
+ * reach a break two ways — a paste that carries them, and ProseMirror giving
+ * an inserted break the marks at the cursor (Shift+Enter inside bold text) —
+ * so this runs after EVERY change, but looks only at the changed ranges.
+ * A break shows no glyph, so nothing visible is lost; the first view simply
+ * matches what storage keeps.
+ *
+ * A plain function, so it is tested without a browser
+ * (apps/render/test/hard-break-marks.test.mjs).
+ */
+export function stripHardBreakMarks(
+  transactions: readonly Transaction[], _old: EditorState, state: EditorState,
+): Transaction | null {
+  if (!transactions.some((t) => t.docChanged)) return null;
+  // The changed ranges, in the new document's positions.
+  const ranges: [number, number][] = [];
+  for (const t of transactions) {
+    t.mapping.maps.forEach((map, i) => {
+      map.forEach((_a, _b, start, end) => {
+        let from = start, to = end;
+        for (const later of t.mapping.maps.slice(i + 1)) { from = later.map(from, -1); to = later.map(to, 1); }
+        ranges.push([from, to]);
+      });
+    });
+  }
+  const size = state.doc.content.size;
+  const breaks = new Set<number>();
+  for (const [a, b] of ranges) {
+    const from = Math.max(0, Math.min(a, size)), to = Math.max(from, Math.min(b, size));
+    state.doc.nodesBetween(from, to, (node, pos) => {
+      if (node.type.name === 'hardBreak' && node.marks.length > 0) breaks.add(pos);
+    });
+  }
+  if (breaks.size === 0) return null;
+  const tr = state.tr;
+  for (const pos of breaks) tr.removeMark(pos, pos + 1);
+  return tr;
+}
+
+export const NoMarksOnHardBreaks = Extension.create({
+  name: 'noMarksOnHardBreaks',
+  addProseMirrorPlugins() {
+    return [new Plugin({ key: new PluginKey('noMarksOnHardBreaks'), appendTransaction: stripHardBreakMarks })];
   },
 });
 
