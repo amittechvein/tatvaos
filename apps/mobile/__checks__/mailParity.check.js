@@ -63,6 +63,42 @@ describe('reply in reply — the conversation', () => {
     expect(mailApi.threadMessages).toHaveBeenCalledWith('AT', 't1', null);
   });
 
+  // ── ONE MAIL, STORED TWICE (client report, 28 Sept 2026) ─────────────────
+  //  He sent a reminder addressed to himself. It is held in Sent AND in
+  //  Inbox; the server folds the pair into one row carrying the Sent copy
+  //  ('m1s') and names the other in copyIds. The phone has the DELIVERED
+  //  copy open ('m1'), so "not this id" listed the message being read as
+  //  another message under itself.
+  test('a copy of the message being read is not listed as another message', async () => {
+    const reminder = {
+      id: 'm1s', copyIds: ['m1'], folderName: 'Sent',
+      from: { name: 'Ravi Kumar', email: 'ravi@example.com' },
+      subject: 'Invoice for August', snippet: 'Please find attached', receivedAt: '2026-09-23T10:00:02Z',
+    };
+    mailApi.threadMessages = jest.fn(async () => [
+      { id: 'm0', from: { name: 'Amit', email: 'amit@tatvaos.com' }, subject: 'Invoice for August', snippet: 'Sending the PO', receivedAt: '2026-09-22T09:00:00Z' },
+      reminder,
+      { id: 'm2', from: { name: 'Priya', email: 'priya@example.com' }, subject: 'Re: Invoice', snippet: 'Looks right to me', receivedAt: '2026-09-23T11:00:00Z' },
+    ]);
+    const r = await openMessage();
+    await waitFor(() => expect(r.getByText('2 other messages in this conversation')).toBeTruthy());
+    expect(r.queryByLabelText(/Open the message from Ravi Kumar/)).toBeNull();
+    expect(r.getByLabelText(/Open the message from Priya/)).toBeTruthy();
+  });
+
+  // The calibration for the check above: the SAME row without copyIds is
+  // somebody else's message and must be listed. Without this, a filter that
+  // dropped every row from the same sender would pass too.
+  test('...but the same row WITHOUT copyIds is another message, and is listed', async () => {
+    mailApi.threadMessages = jest.fn(async () => [
+      { id: 'm0', from: { name: 'Amit', email: 'amit@tatvaos.com' }, subject: 'Invoice for August', snippet: 'Sending the PO', receivedAt: '2026-09-22T09:00:00Z' },
+      { id: 'm1s', from: { name: 'Ravi Kumar', email: 'ravi@example.com' }, subject: 'Invoice for August', snippet: 'Please find attached', receivedAt: '2026-09-23T10:00:02Z' },
+    ]);
+    const r = await openMessage();
+    await waitFor(() => expect(r.getByText('2 other messages in this conversation')).toBeTruthy());
+    expect(r.getByLabelText(/Open the message from Ravi Kumar/)).toBeTruthy();
+  });
+
   test('a message with no thread shows no strip', async () => {
     mailApi.getMessage = jest.fn(async () => msg({ threadId: null }));
     const r = await openMessage();
@@ -92,6 +128,26 @@ describe('reply in reply — the response box', () => {
     expect(onSent).toHaveBeenCalled();
     // The box closes after sending.
     expect(r.queryByLabelText('Send reply')).toBeNull();
+  });
+
+  // Replying to a message I SENT used to address the reply to me - the
+  // reminder "to vipin" that started the 28 Sept report.
+  test('Reply on my OWN message goes to the people I wrote to, not to me', async () => {
+    mailApi.getMessage = jest.fn(async () => msg({
+      from: { name: 'Amit', email: 'amit@tatvaos.com' },
+      to: [{ email: 'ravi@example.com' }, { email: 'priya@example.com' }],
+      cc: [{ email: 'accounts@example.com' }],
+    }));
+    const r = await openMessage();
+    fireEvent.press(r.getByLabelText('Reply'));
+    expect(r.getByText(/To: ravi@example.com, priya@example.com/)).toBeTruthy();
+    expect(r.queryByText(/To: amit@tatvaos.com/)).toBeNull();
+    fireEvent.changeText(r.getByLabelText('Your reply'), 'Reminder');
+    await act(async () => { fireEvent.press(r.getByLabelText('Send reply')); });
+    const [, fields] = mailApi.send.mock.calls[0];
+    expect(fields.to).toBe('ravi@example.com, priya@example.com');
+    expect(fields.cc).toBe('');
+    expect(fields.inReplyToId).toBe('m1');
   });
 
   test('switching Reply → Reply all recomputes recipients and KEEPS what was typed', async () => {

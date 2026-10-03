@@ -15,6 +15,12 @@
 #  What would make this test wrong: a green on an empty body. Every check
 #  asserts the field it is about, and the accepting run asserts the exact
 #  phrase the screen will print.
+#
+#  30 Sept 2026: the screen names the VENDOR as well as the place ("sent to
+#  OpenAI, in the United States"), guarded the same way (Mr. Singh): a known
+#  host names its own vendor and refuses a contradicting Ai:Vendor; an unknown
+#  host must state one. Cases 5 and 6 are those refusals. And the run now has
+#  a database of its own (house rule 13).
 # ============================================================================
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -27,19 +33,10 @@ LOG="$SCRATCH/api.log"
 PY="${PYTHON:-python}"
 
 WSL_KEEPALIVE=""
-if [ -z "${TATVAOS_PSQL:-}" ]; then
-    if command -v wsl >/dev/null 2>&1; then
-        wsl -e sleep 7200 >/dev/null 2>&1 &
-        WSL_KEEPALIVE=$!
-        sleep 2
-        TATVAOS_PSQL="wsl -u postgres -e psql -d tatvaos_mail -Atc"
-        TATVAOS_PG_HOST="${TATVAOS_PG_HOST:-$(wsl hostname -I | tr -d ' \r\n')}"
-    else
-        TATVAOS_PSQL="docker exec tv-postgres psql -U postgres -d tatvaos_mail -Atc"
-        TATVAOS_PG_HOST="${TATVAOS_PG_HOST:-localhost}"
-    fi
-fi
-PG() { $TATVAOS_PSQL "$1" 2>/dev/null | grep -v "^wsl:" | tail -n1; }
+# House rule 13: this run's own database (every migration applied twice).
+source "$ROOT/tests/lib/throwaway-db.sh"
+tdb_create aidisclosure || { echo "  the throwaway database could not be made - the check did NOT run"; exit 2; }
+PG() { $TATVAOS_PSQL "$1" 2>/dev/null | grep -v "^wsl:" | tr -d "\r" | tail -n1; }
 
 PASSED=0; FAILED=0
 c() { [ -t 1 ] && printf '%s' "$1" || true; }
@@ -52,7 +49,7 @@ jq_() { printf '%s' "$1" | j "$2"; }
 
 export JWT_SIGNING_KEY='dev-only-key-at-least-32-characters-long'
 export ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS="$API"
-export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
+export ConnectionStrings__Postgres="$TDB_CONN"
 export Smtp__Host=localhost Smtp__Port=5870
 # A key that is never used: the gateway is only ever asked whether it is
 # configured. No call leaves this machine.
@@ -79,8 +76,10 @@ stop_api() {
     wait "$API_PID" 2>/dev/null || true
     API_PID=""
 }
-cleanup() { stop_api; [ -n "$WSL_KEEPALIVE" ] && kill "$WSL_KEEPALIVE" 2>/dev/null; rm -rf "$SCRATCH"; }
+cleanup() { stop_api; rm -rf "$SCRATCH"; tdb_drop; }
 trap cleanup EXIT
+# The seeded owner has no phone on a fresh database; give them the test one.
+PG "UPDATE core.users SET phone='+919999900001' WHERE email='amit@techvein.local' AND phone IS NULL" >/dev/null
 
 PHONE='+919999900001'   # the seeded org owner (amit@techvein.local)
 
@@ -105,6 +104,8 @@ run_case() {
     step "$name"
     export Ai__BaseUrl="$base"
     if [ -n "$loc" ]; then export Ai__DataLocation="$loc"; else unset Ai__DataLocation; fi
+    # VENDOR, when set by the caller for this case only.
+    if [ -n "${CASE_VENDOR:-}" ]; then export Ai__Vendor="$CASE_VENDOR"; else unset Ai__Vendor; fi
     start_api || return 1
     local body cfg disc
     body=$(org_ai) || { stop_api; return 1; }
@@ -128,9 +129,9 @@ for _ in $(seq 1 30); do [ -n "$(PG 'SELECT 1')" ] && break; sleep 1; done
 [ -n "$(PG 'SELECT 1')" ] || { fail "psql does not answer ($TATVAOS_PSQL)"; exit 1; }
 pass "psql answers"
 
-run_case "1. OpenAI host, location says the United States: accepted, and the screen names the place" \
+run_case "1. OpenAI host, location says the United States, no Ai:Vendor: accepted, and the screen names OpenAI and the place" \
     "https://api.openai.com/v1" "the United States" true \
-    "on a third-party service in the United States."
+    "are sent to OpenAI, in the United States, to write meeting notes."
 
 run_case "2. OpenAI host, location claims India: refused — the screen would lie" \
     "https://api.openai.com/v1" "India" false \
@@ -140,9 +141,24 @@ run_case "3. A key with no location at all: refused — the screen could not say
     "https://api.openai.com/v1" "" false \
     "TatvaOS AI is not configured" "Ai:DataLocation is not set"
 
-run_case "4. An unknown host with a stated location: accepted on trust, and the screen prints it" \
+CASE_VENDOR="Microsoft (Azure OpenAI)" run_case "4. An unknown host with a stated vendor and location: accepted on trust, and the screen prints both" \
     "https://example-resource.openai.azure.com/v1" "India (Azure, Central India)" true \
-    "on a third-party service in India (Azure, Central India)."
+    "are sent to Microsoft (Azure OpenAI), in India (Azure, Central India), to write meeting notes."
 
+CASE_VENDOR="Anthropic" run_case "5. OpenAI host, Ai:Vendor names another company: refused - the screen would name the wrong company" \
+    "https://api.openai.com/v1" "the United States" false \
+    "TatvaOS AI is not configured" "Refused: the consent screen would name the wrong company"
+
+run_case "6. An unknown host with a location but no vendor: refused - the screen could not say who" \
+    "https://example-resource.openai.azure.com/v1" "India (Azure, Central India)" false \
+    "TatvaOS AI is not configured" "Refused: AI features are unavailable until the company the data goes to is stated"
+
+# Every case must have RUN. On 30 Sept a case whose API could not start
+# (the laptop out of memory: fork failed) printed nothing, and the run said
+# "15 passed, 0 failed". 1 + 2+3+3+2+3+3 checks when all six run.
+EXPECTED=17
+if [ $((PASSED + FAILED)) -ne "$EXPECTED" ]; then
+    fail "only $((PASSED + FAILED)) of $EXPECTED checks ran - a case did not run, so this proves nothing"
+fi
 printf '\n%d passed, %d failed\n' "$PASSED" "$FAILED"
 [ "$FAILED" -eq 0 ]
