@@ -474,7 +474,8 @@ fi
 # deploy) cannot give. One line per mismatch: kind, class, organisation ids,
 # a hash of the sign-in. Never an address.
 sl_mode warn
-EV=/var/log/tatvaos/sender-ownership.jsonl
+# Rotated monthly (Mr. Singh, 2 Oct): one file per UTC month.
+EV=/var/log/tatvaos/sender-ownership-$(docker exec tv-postfix date -u +%Y-%m 2>/dev/null | tr -cd '0-9-').jsonl
 ev_count() { docker exec tv-postfix sh -c "if [ -f $EV ]; then wc -l < $EV; else echo 0; fi" 2>/dev/null | tr -d ' \r'; }
 n0=$(ev_count)
 out=$(as principal@abcschool.local amit@techvein.local amit@techvein.local "principal@abcschool.local")
@@ -500,6 +501,49 @@ if [ -n "$recent" ] && ! docker exec tv-postfix grep -q '@' "$EV" 2>/dev/null; t
 else
     fail "the record holds an address (or is missing) - it must carry ids and a hash only"
 fi
+
+# The daily count (Mr. Singh, 2 Oct): infra/scripts/sender-ownership-report.sh,
+# run in the deployer's morning check during the week of warn mode. It reads
+# the record; it never prints an address.
+rep=$(POSTFIX=tv-postfix bash "$(dirname "$0")/../../infra/scripts/sender-ownership-report.sh" 2>&1); rep_rc=$?
+if [ "$rep_rc" -eq 0 ] && printf '%s' "$rep" | grep -qF -- "$SL_SCHOOL" && printf '%s' "$rep" | grep -q 'other_org'; then
+    pass "the daily report counts the warn record by organisation and class"
+else
+    fail "the daily report does not show the school's mismatches (exit $rep_rc)"; info "$(printf '%s' "$rep" | head -4)"
+fi
+# Only a report that RAN can be checked for addresses: a missing script's
+# error message contains no '@' either, and passed this check in the red run.
+if [ "$rep_rc" -eq 0 ] && [ -n "$rep" ] && ! printf '%s' "$rep" | grep -q '@'; then pass "the daily report prints no address"
+else fail "the daily report printed an address, or did not run (exit $rep_rc)"; fi
+
+# The filter does not stay root (Mr. Singh, 2 Oct): it reads the owner-only
+# credentials as root, then drops to the postfix user before any message.
+milter_pid() {
+    docker exec tv-postfix sh -c 'for p in /proc/[0-9]*; do tr "\0" " " < $p/cmdline 2>/dev/null | grep -q "^python3 /usr/local/lib/tatvaos/sender-milter.py" && echo ${p#/proc/}; done' 2>/dev/null | head -1 | tr -cd '0-9'
+}
+mpid=$(milter_pid)
+muid=$(docker exec tv-postfix sh -c "awk '/^Uid:/{print \$2}' /proc/${mpid:-0}/status" 2>/dev/null | tr -cd '0-9')
+puid=$(docker exec tv-postfix id -u postfix 2>/dev/null | tr -cd '0-9')
+if [ -n "$mpid" ] && [ -n "$muid" ] && [ "$muid" != 0 ] && [ "$muid" = "$puid" ]; then
+    pass "the filter handles mail as the postfix user (uid $muid), not root"
+else
+    fail "the filter runs as uid '${muid:-?}' (postfix is '${puid:-?}') - it must not handle mail as root"
+fi
+
+# A crash must be visible (Mr. Singh, 2 Oct): more than three restarts in an
+# hour mails an alert, the way the disk alert does - once, not per restart.
+curl -s -X DELETE "http://localhost:8025/api/v1/search?query=subject:%22sender-milter%22" >/dev/null 2>&1
+docker exec tv-postfix sh -c 'rm -f /var/log/tatvaos/sender-milter-restarts /var/log/tatvaos/sender-milter-alerted' >/dev/null 2>&1
+for _ in 1 2 3 4; do
+    p=$(milter_pid); [ -n "$p" ] && docker exec tv-postfix kill "$p" >/dev/null 2>&1
+    for _ in $(seq 1 15); do sleep 1; np=$(milter_pid); [ -n "$np" ] && [ "$np" != "$p" ] && break; done
+done
+sleep 5
+alerts=$(curl -s "http://localhost:8025/api/v1/search?query=subject:%22sender-milter%22" 2>/dev/null | grep -o '"ID":"[^"]*"' | wc -l | tr -d ' ')
+if [ "${alerts:-0}" = 1 ]; then pass "four crashes in a row: exactly one alert mail"
+else fail "four crashes in a row: expected 1 alert mail, got ${alerts:-0}"; fi
+if [ -n "$(milter_pid)" ]; then pass "...and the filter is running again"
+else fail "the filter did not come back after the crashes"; fi
 
 sl_teardown
 trap - EXIT
