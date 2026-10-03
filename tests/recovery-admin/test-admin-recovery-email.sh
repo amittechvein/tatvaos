@@ -26,6 +26,10 @@
 #      administrator is told
 #   H. the person's own change overtakes an administrator's change in flight
 #   I. audit rows carry masked addresses only
+#   R. the administrator proves it is them (Mr. Singh, 3 Oct): their own
+#      password, or their authenticator code if they have MFA, in the same
+#      request; nothing is written or mailed without it; wrong tries count
+#      against sign-in's own five-try lock; a code cannot be replayed
 #
 # Mail is read from the local SMTP sink's raw log and DECODED (MIME,
 # base64 / quoted-printable) before any address is searched for: a search of
@@ -33,7 +37,8 @@
 # calibrated first - it must find the MASKED address where it should be.
 #
 # Needs: the SMTP sink, tests/support/smtp-sink.mjs (SMTP :5871, raw log at
-# TATVAOS_MAIL_SINK_LOG, default .tmp/mail-sink.log). WSL Postgres as tests/orgapi.
+# TATVAOS_MAIL_SINK_LOG, default .tmp/mail-sink.log). Its own throwaway
+# database on the WSL Postgres (tests/lib/throwaway-db.sh, house rule 13).
 # Build first:  dotnet build apps/api -c Release
 # TATVAOS_ROOT=<another checkout> runs it against that build (the red run).
 # ---------------------------------------------------------------------------
@@ -49,17 +54,17 @@ RUN=$(date +%s)
 SCRATCH="$HERE/.tmp/recovery-admin-$$"; mkdir -p "$SCRATCH"; LOG="$SCRATCH/api.log"
 TV="11111111-1111-1111-1111-111111111111"; TV_DOMAIN="a1111111-1111-1111-1111-111111111111"
 
-WSL_KEEPALIVE=""
+# ITS OWN DATABASE (house rule 13; Mr. Singh, 29 Sept 2026). Until 3 Oct this
+# ran in the shared tatvaos_mail, where another session's unmerged change could
+# make it fail - or pass for the wrong reason. A caller that sets TATVAOS_PSQL
+# (CI, with its own fresh database) is still obeyed.
+TDB_USED=""
 if [ -z "${TATVAOS_PSQL:-}" ]; then
-    if command -v wsl >/dev/null 2>&1; then
-        wsl -e sleep 1800 >/dev/null 2>&1 & WSL_KEEPALIVE=$!
-        sleep 2
-        TATVAOS_PSQL="wsl -u postgres -e psql -d tatvaos_mail -Atc"
-        TATVAOS_PG_HOST="${TATVAOS_PG_HOST:-$(wsl hostname -I | tr -d ' \r\n')}"
-    else
-        TATVAOS_PSQL="docker exec tv-postgres psql -U postgres -d tatvaos_mail -Atc"
-        TATVAOS_PG_HOST="${TATVAOS_PG_HOST:-localhost}"
-    fi
+    # shellcheck source=../lib/throwaway-db.sh
+    source "$HERE/tests/lib/throwaway-db.sh"
+    tdb_create recadmin || exit 2
+    TDB_USED=1
+    TATVAOS_PG_HOST="$TDB_HOST"
 fi
 PG() { $TATVAOS_PSQL "$1" 2>/dev/null | grep -v "^wsl:" | tr -d "\r" | tail -n1; }
 
@@ -149,19 +154,21 @@ cleanup() {
         else fuser -k "$PORT/tcp" >/dev/null 2>&1 || true; fi
         kill "$API_PID" >/dev/null 2>&1 || true
     fi
-    [ -n "$WSL_KEEPALIVE" ] && kill "$WSL_KEEPALIVE" >/dev/null 2>&1
+    # AFTER the API has stopped, so nothing is connected when it goes.
+    [ -n "$TDB_USED" ] && tdb_drop
     if [ "$FAILED" -eq 0 ]; then rm -rf "$SCRATCH"; else printf "  kept for reading: %s\n" "$SCRATCH"; fi
 }
 HR_ID_SAFE="00000000-0000-0000-0000-000000000000"
+# Replaces the helper's own drop trap: cleanup() calls tdb_drop itself.
 trap cleanup EXIT
 
-printf "\n  Decision 0009 - an administrator sets a recovery email\n  tree under test: %s\n" "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)"
+printf "\n  Decision 0009 - an administrator sets a recovery email\n  tree under test: %s\n  database: %s\n" "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)" "${TDB_NAME:-given by the caller (TATVAOS_PSQL)}"
 
 step "0. The sink, the API, and the people"
 [ -f "$SINK_LOG" ] && pass "the mail sink's log exists ($SINK_LOG)" || { fail "no mail sink log at $SINK_LOG - start fake-ai-and-mail.mjs"; exit 1; }
 for _ in $(seq 1 30); do [ -n "$(PG "SELECT 1")" ] && break; sleep 1; done
 export JWT_SIGNING_KEY="dev-only-key-at-least-32-characters-long" ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS="$API"
-export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=tatvaos_mail;Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
+export ConnectionStrings__Postgres="Host=$TATVAOS_PG_HOST;Port=5432;Database=${TDB_NAME:-tatvaos_mail};Username=tatvaos_app;Password=dev_app_pw;Pooling=true"
 export Smtp__Host=localhost Smtp__Port=5871
 if command -v cygpath >/dev/null 2>&1; then export Oidc__KeyDirectory="$(cygpath -w "$SCRATCH")\\keys"; else export Oidc__KeyDirectory="$SCRATCH/keys"; fi
 dotnet run --no-build -c Release --project "$PROJ" > "$LOG" 2>&1 &
@@ -196,24 +203,77 @@ fresh() {
     [ -n "$OWNER" ] && [ -n "$ADMIN" ] || { fail "could not sign in again"; exit 1; }
 }
 [ -n "$ADMIN" ] && pass "an org_admin signed in" || { fail "admin sign-in failed"; exit 1; }
+# The administrator's own proof, carried by every change they make (section R).
+ADMIN_PROOF="\"currentPassword\":\"$ADMIN_PW\""
 PG "UPDATE core.users SET recovery_email='$OLD', recovery_email_verified_at=now() WHERE id='$PW_ID'" >/dev/null
 PG "UPDATE core.users SET recovery_email='$UNCONF_OLD', recovery_email_verified_at=NULL WHERE id='$UNCONF_ID'" >/dev/null
 PG "UPDATE core.users SET recovery_email='$NP2_OLD', recovery_email_verified_at=NULL WHERE id='$NP2_ID'" >/dev/null
 pass "people: a person with a password and a CONFIRMED recovery email, one with an UNconfirmed one, two never signed in"
 
 step "A. Who may"
-r=$(call PUT "/api/org/users/$OWNER2_ID/recovery-email" "$ADMIN" "{\"email\":\"$NEW\"}")
+r=$(call PUT "/api/org/users/$OWNER2_ID/recovery-email" "$ADMIN" "{\"email\":\"$NEW\",$ADMIN_PROOF}")
 same "an administrator, for an owner: 403" "$(status "$r")" "403"
 r=$(call PUT "/api/org/users/$OWNER2_ID/recovery-email" "$OWNER" "{\"email\":\"$NEW\"}")
 same "another owner, for an owner: 403 (only that owner)" "$(status "$r")" "403"
-r=$(call PUT "/api/org/users/$ADMIN_ID/recovery-email" "$ADMIN" "{\"email\":\"$NEW\"}")
+r=$(call PUT "/api/org/users/$ADMIN_ID/recovery-email" "$ADMIN" "{\"email\":\"$NEW\",$ADMIN_PROOF}")
 same "for yourself: 400" "$(status "$r")" "400"
 has "...pointing to the account page" "$(body "$r")" "account page"
 
-step "B. Replacing a confirmed address: confirmation, notices, the hold"
+step "R. The administrator proves it is them (Mr. Singh, 3 Oct)"
+# The threat: a person at an unattended administrator's keyboard redirects
+# someone else's account recovery. So the change needs the administrator's
+# OWN password - or their authenticator code if they have MFA - in the same
+# request. Every refusal is also checked for what it must NOT have done: no
+# change row and no mail, or a refusal that writes anyway would pass.
+fresh
+PG "UPDATE core.users SET failed_login_count=0, locked_until=NULL WHERE id='$ADMIN_ID'" >/dev/null
+rows() { PG "SELECT count(*) FROM core.recovery_email_changes WHERE user_id='$1'"; }
 mark
 r=$(call PUT "/api/org/users/$PW_ID/recovery-email" "$ADMIN" "{\"email\":\"$NEW\"}")
-same "the administrator sets it" "$(status "$r")/$(body "$r" | j "d.get('status')")/$(body "$r" | j "d.get('held')")" "200/pending/True"
+same "no password: refused, asking for it" "$(status "$r")/$(body "$r" | j "d.get('needsPassword')")" "403/True"
+r=$(call PUT "/api/org/users/$PW_ID/recovery-email" "$ADMIN" "{\"email\":\"$NEW\",\"currentPassword\":\"not-$ADMIN_PW\"}")
+same "a wrong password: refused" "$(status "$r")/$(body "$r" | j "d.get('needsPassword')")" "403/True"
+same "...counted against sign-in's own lock" "$(PG "SELECT failed_login_count FROM core.users WHERE id='$ADMIN_ID'")" "1"
+r=$(call PUT "/api/org/users/$PW_ID/recovery-email" "$ADMIN" "{\"email\":\"$NEW\",\"currentPassword\":\"$OWNER2_PW\"}")
+same "ANOTHER person's password: refused (it must be the administrator's own)" "$(status "$r")" "403"
+same "no refusal wrote a change" "$(rows "$PW_ID")" "0"
+same "...or sent any mail" "$(mail count "$NEW" "")/$(mail count "$PW_MAIL" "")/$(mail count "$OLD" "")" "0/0/0"
+for _ in 1 2 3; do call PUT "/api/org/users/$PW_ID/recovery-email" "$ADMIN" "{\"email\":\"$NEW\",\"currentPassword\":\"not-$ADMIN_PW\"}" >/dev/null; done
+r=$(call PUT "/api/org/users/$PW_ID/recovery-email" "$ADMIN" "{\"email\":\"$NEW\",$ADMIN_PROOF}")
+same "after five wrong passwords, even the right one is locked out" "$(status "$r")" "429"
+same "...and it is sign-in's lock: signing in is refused too" "$(status "$(login "$ADMIN_MAIL" "$ADMIN_PW")")" "429"
+same "...still no change written" "$(rows "$PW_ID")" "0"
+PG "UPDATE core.users SET failed_login_count=0, locked_until=NULL WHERE id='$ADMIN_ID'" >/dev/null
+fresh
+
+# An administrator with MFA gives the code from their authenticator instead.
+ADMIN2_MAIL="rec-admin2-$RUN@techvein.local"; ADMIN2_ID=$(mkuser "$ADMIN2_MAIL" org_admin)
+RA_MAIL="rec-ra-$RUN@techvein.local"; RA_ID=$(mkuser "$RA_MAIL" employee)
+ADMIN2_PW=$(temp_pw "$ADMIN2_ID")
+ADMIN2=$(body "$(login "$ADMIN2_MAIL" "$ADMIN2_PW")" | j "d.get('accessToken') or ''")
+SECRET2=$(body "$(call POST /api/auth/mfa/begin "$ADMIN2" "{}")" | j "d.get('secret') or ''")
+same "a second administrator turns MFA on" "$(status "$(call POST /api/auth/mfa/confirm "$ADMIN2" "{\"code\":\"$(totp "$SECRET2")\"}")")" "200"
+r=$(call PUT "/api/org/users/$RA_ID/recovery-email" "$ADMIN2" "{\"email\":\"ra-$RUN@example.test\",\"currentPassword\":\"$ADMIN2_PW\"}")
+same "with MFA on, the password alone: refused, asking for the code" "$(status "$r")/$(body "$r" | j "d.get('mfaRequired')")" "403/True"
+r=$(call PUT "/api/org/users/$RA_ID/recovery-email" "$ADMIN2" "{\"email\":\"ra-$RUN@example.test\",\"mfaCode\":\"000000\"}")
+same "a wrong code: refused" "$(status "$r")/$(body "$r" | j "d.get('mfaRequired')")" "403/True"
+same "...counted against the same lock" "$(PG "SELECT failed_login_count FROM core.users WHERE id='$ADMIN2_ID'")" "1"
+same "still no change written for them" "$(rows "$RA_ID")" "0"
+sleep $(( 31 - $(date +%s) % 30 ))   # a fresh 30-second step: the code used to enrol cannot be reused
+CODE2=$(totp "$SECRET2")
+r=$(call PUT "/api/org/users/$RA_ID/recovery-email" "$ADMIN2" "{\"email\":\"ra-$RUN@example.test\",\"mfaCode\":\"$CODE2\"}")
+same "the right code: accepted" "$(status "$r")/$(body "$r" | j "d.get('status')")" "200/pending"
+same "...the change is written" "$(rows "$RA_ID")" "1"
+same "...and the counter is cleared" "$(PG "SELECT failed_login_count FROM core.users WHERE id='$ADMIN2_ID'")" "0"
+r=$(call PUT "/api/org/users/$RA_ID/recovery-email" "$ADMIN2" "{\"email\":\"ra2-$RUN@example.test\",\"mfaCode\":\"$CODE2\"}")
+same "the same code again: refused (no replay)" "$(status "$r")" "403"
+same "...no second change" "$(rows "$RA_ID")" "1"
+
+step "B. Replacing a confirmed address: confirmation, notices, the hold"
+fresh
+mark
+r=$(call PUT "/api/org/users/$PW_ID/recovery-email" "$ADMIN" "{\"email\":\"$NEW\",$ADMIN_PROOF}")
+same "the administrator sets it, with their password" "$(status "$r")/$(body "$r" | j "d.get('status')")/$(body "$r" | j "d.get('held')")" "200/pending/True"
 same "the confirmation link goes to the new address" "$(mail count "$NEW" "Confirm your TatvaOS recovery email")" "1"
 same "a notice goes to their sign-in mailbox" "$(mail count "$PW_MAIL" "recovery details were changed")" "1"
 same "a notice goes to the OLD address" "$(mail count "$OLD" "recovery details were changed")" "1"
@@ -279,7 +339,7 @@ same "the OLD address is back, confirmed as before" "$(PG "SELECT recovery_email
 same "the owner is told" "$(mail count "amit@techvein.local" "reversed")" "1"
 r=$(call POST /api/auth/recovery-email/not-me "" "{\"token\":\"$NOTME_TOKEN\"}")
 same "the link works once" "$(status "$r")" "400"
-r=$(call PUT "/api/org/users/$UNCONF_ID/recovery-email" "$ADMIN" "{\"email\":\"$NEW2\"}")
+r=$(call PUT "/api/org/users/$UNCONF_ID/recovery-email" "$ADMIN" "{\"email\":\"$NEW2\",$ADMIN_PROOF}")
 same "that administrator is suspended from changing recovery emails" "$(status "$r")" "403"
 r=$(call POST "/api/org/users/$ADMIN_ID/recovery-suspension/clear" "$ADMIN" "{}")
 same "an administrator cannot clear it" "$(status "$r")" "403"
@@ -291,13 +351,13 @@ fresh
 r=$(call POST "/api/org/users/$UNCONF_ID/signin-link" "$ADMIN" "{}")
 same "Send sign-in link to an UNconfirmed address: refused (27 Sept)" "$(status "$r")" "400"
 has "...saying it is not confirmed" "$(body "$r")" "not been confirmed"
-call PUT "/api/org/users/$UNCONF_ID/recovery-email" "$ADMIN" "{\"email\":\"$NEW2\"}" >/dev/null
+call PUT "/api/org/users/$UNCONF_ID/recovery-email" "$ADMIN" "{\"email\":\"$NEW2\",$ADMIN_PROOF}" >/dev/null
 PG "UPDATE core.recovery_email_changes SET confirm_token_hash='$(sha "c2-$RUN")' WHERE user_id='$UNCONF_ID' AND status='pending'" >/dev/null
 same "the change confirms and is held" "$(body "$(call POST /api/auth/recovery-email/verify "" "{\"token\":\"c2-$RUN\"}")" | j "d.get('held')")" "True"
 r=$(call POST "/api/org/users/$UNCONF_ID/signin-link" "$ADMIN" "{}")
 same "during the hold, with no confirmed old address: sign-in link refused" "$(status "$r")" "400"
 has "...naming when the hold ends" "$(body "$r")" "on hold until"
-call PUT "/api/org/users/$NP2_ID/recovery-email" "$ADMIN" "{\"email\":\"$NP2_NEW\"}" >/dev/null
+call PUT "/api/org/users/$NP2_ID/recovery-email" "$ADMIN" "{\"email\":\"$NP2_NEW\",$ADMIN_PROOF}" >/dev/null
 PG "UPDATE core.recovery_email_changes SET confirm_token_hash='$(sha "c3-$RUN")' WHERE user_id='$NP2_ID' AND status='pending'" >/dev/null
 same "a never-signed-in person's REPLACED address is held too" "$(body "$(call POST /api/auth/recovery-email/verify "" "{\"token\":\"c3-$RUN\"}")" | j "d.get('held')")" "True"
 r=$(call POST "/api/org/users/$NP2_ID/invitation/resend" "$ADMIN" "{}")
@@ -306,7 +366,7 @@ has "...naming when the hold ends" "$(body "$r")" "on hold until"
 
 step "F. Empty -> value is not held"
 fresh
-call PUT "/api/org/users/$NP1_ID/recovery-email" "$ADMIN" "{\"email\":\"$NP1_NEW\"}" >/dev/null
+call PUT "/api/org/users/$NP1_ID/recovery-email" "$ADMIN" "{\"email\":\"$NP1_NEW\",$ADMIN_PROOF}" >/dev/null
 PG "UPDATE core.recovery_email_changes SET confirm_token_hash='$(sha "c4-$RUN")' WHERE user_id='$NP1_ID' AND status='pending'" >/dev/null
 same "confirmed means applied at once" "$(body "$(call POST /api/auth/recovery-email/verify "" "{\"token\":\"c4-$RUN\"}")" | j "d.get('held')")" "False"
 same "...it is the confirmed recovery email" "$(PG "SELECT recovery_email || '/' || (recovery_email_verified_at IS NOT NULL) FROM core.users WHERE id='$NP1_ID'")" "$NP1_NEW/true"
@@ -336,7 +396,7 @@ same "an administrator is told" "$(mail count "$ADMIN_MAIL" "An owner changed th
 
 step "H. The person's own change overtakes an administrator's"
 fresh
-call PUT "/api/org/users/$PW_ID/recovery-email" "$ADMIN" "{\"email\":\"$NEW\"}" >/dev/null
+call PUT "/api/org/users/$PW_ID/recovery-email" "$ADMIN" "{\"email\":\"$NEW\",$ADMIN_PROOF}" >/dev/null
 PWTOKEN=$(body "$(login "$PW_MAIL" "$PW_PW")" | j "d.get('accessToken') or ''")
 call POST /api/auth/recovery-email "$PWTOKEN" "{\"email\":\"$SELF_NEW\",\"currentPassword\":\"$PW_PW\"}" >/dev/null
 same "the administrator's pending change is superseded" "$(PG "SELECT status FROM core.recovery_email_changes WHERE user_id='$PW_ID' ORDER BY created_at DESC LIMIT 1")" "superseded"
