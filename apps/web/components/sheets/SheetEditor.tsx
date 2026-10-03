@@ -14,7 +14,7 @@ import { parseRect, rectName, colName, type Rect } from '@/lib/sheets/engine/add
 import { formatValue } from '@/lib/sheets/engine/format';
 import { workbookHtml, workbookText, rangeForAi } from '@/lib/sheets/render';
 import { printSheet } from '@/lib/sheets/print';
-import { readXlsx, writeXlsx } from '@/lib/sheets/io/xlsx';
+import { readXlsx, writeXlsx, functionsNeedingNewerExcel, olderExcelNote } from '@/lib/sheets/io/xlsx';
 import { readCsv, writeCsv } from '@/lib/sheets/io/csv';
 import type { CellFormat } from '@/lib/sheets/workbook';
 import { ShareDialog } from '@/components/space/ShareDialog';
@@ -528,6 +528,9 @@ function Workspace({ meta, setMeta, provider, model, eventSink }: {
     const snap = model.snapshot();
     if (kind === 'xlsx') {
       save(new Blob([await writeXlsx(snap) as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `${safeTitle}.xlsx`);
+      // Excel 2019 and older show #NAME? for XLOOKUP and friends; say so once, here.
+      const note = olderExcelNote(functionsNeedingNewerExcel(snap));
+      if (note) setNotice(note);
       return;
     }
     const s = snap.sheets.find((x) => x.name === model.meta(sheetId)?.name) ?? snap.sheets[0]!;
