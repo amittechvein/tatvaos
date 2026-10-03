@@ -1,6 +1,6 @@
 # Docs AI — what we tell customers (proposal)
 
-**Status: draft, 3 October 2026. Wording only; no code changed.** For Mr. Singh's ruling and Amit's price before Docs AI is offered to anyone, Techvein included.
+**Status: draft, 3 October 2026. Wording only; no code changed.** For Mr. Singh's ruling before Docs AI is offered to anyone, Techvein included. Price decided by Amit on 3 Oct (step 2).
 
 ## Why it's needed
 
@@ -76,11 +76,11 @@ Reusing them keeps one statement per fact.
 ## Before Docs AI can be switched on (in order)
 
 1. **Mr. Singh** rules on the sentences above.
-2. **Amit** sets the price per action. Today every Docs AI action costs the default 1 credit, because `AiCredits` has no "docs" line. Mr. Singh suggested 1 / 1 / 1 / 5 (Summarise / Rewrite / Translate / Write). That needs a separate feature name per action, since today all four are metered as "docs".
+2. ~~Amit sets the price per action~~: **decided 3 Oct: Mr. Singh's 1 / 1 / 1 / 5 credits** (Summarise / Rewrite / Translate / Write). Today every Docs AI action costs the default 1 credit, because `AiCredits` has no "docs" line, and all four are metered as "docs". So the build gives each action its own feature name, and Write costs 5.
 3. **A build PR (Docs lane):**
    - the sentences go into `AiDisclosure.cs`, the privacy page and the AI page;
    - `privacy-text-matches.py` must pass;
-   - the per-action metering is added if (2) asks for it.
+   - the per-action metering from (2): a feature name per action, Write at 5 credits, the others at 1.
 4. **Deploy** by the Mail session.
 5. **The operator** puts Techvein on `ai.docs.organisations`, and Techvein's administrator turns Docs AI on.
 
