@@ -21,7 +21,8 @@ It lives in **two** places:
 In the disaster this backup exists for — the server is gone — copy 1 is gone
 with it. **Copy 2 is the one that matters, and phoning Amit is step zero of any
 real restore.** The paper copy was verified against a live object on 9 Sept
-2026; it works.
+2026; it works. **Confirmed again on 25 September 2026: Amit holds the
+paper copy. It is not yet in a password manager; he is adding it.**
 
 ## Keys that must never change
 
@@ -459,6 +460,38 @@ credentials or network, which is a different problem.
 
 **`-pbkdf2 -iter 200000` must match what wrote the object.** They are not
 openssl's defaults. Omit them and the decrypt fails with `bad decrypt`.
+
+### C — one recording, from the recordings bucket
+
+Recordings are not in the sets. Once `backup.sh`'s recordings step is switched
+on (`BACKUP_RECORDINGS_REMOTE` in `.backup-env`), they are **copied** to their
+own bucket and kept there for 31 days *regardless of what happens on the
+server* — so a recording deleted by the age-off, a bug or a mistaken command is
+still there for the rest of its 31 days. The bucket holds the extra; the
+volume never has anything the bucket lacks (that is the receipt the step
+checks every run).
+
+The bucket is an rclone *crypt* remote keyed from the same passphrase as the
+sets. Build the remote in the environment for the one command, exactly as the
+script does; nothing is written to `rclone.conf`.
+
+```bash
+export PATH="$HOME/bin:$PATH"
+set -a; . /srv/backups/tatvaos/.backup-env; set +a
+export RCLONE_CONFIG_RECCRYPT_TYPE=crypt
+export RCLONE_CONFIG_RECCRYPT_REMOTE="$BACKUP_RECORDINGS_REMOTE"
+export RCLONE_CONFIG_RECCRYPT_FILENAME_ENCRYPTION=standard
+export RCLONE_CONFIG_RECCRYPT_DIRECTORY_NAME_ENCRYPTION=true
+RCLONE_CONFIG_RECCRYPT_PASSWORD=$(rclone obscure "$BACKUP_ENC_PASSPHRASE"); export RCLONE_CONFIG_RECCRYPT_PASSWORD
+rclone lsf -R --files-only reccrypt: | grep <meeting-id>     # names are decrypted for you
+rclone copy reccrypt:<path/from/the/listing> "$HOME/restore-rec/"
+unset RCLONE_CONFIG_RECCRYPT_PASSWORD
+```
+
+Put the file back where the volume expects it only with the API stopped, the
+same as **Putting it back** below; the row in `connect.recordings` must
+already exist for the file to be served. If the box is gone, the paper
+passphrase opens this bucket too — it is the same one.
 
 ### Putting it back
 
