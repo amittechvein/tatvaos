@@ -12,6 +12,12 @@ namespace TatvaOS.Api.Workers;
 /// DEFINER function. It never reads a forced-RLS table without a tenant, so it
 /// cannot see "nothing due" by mistake. The function returns how many it
 /// applied; a non-zero count is logged, so a hold that ended leaves a trace.
+///
+/// IT ALSO SAYS IT IS ALIVE: once when it starts and once after its first
+/// sweep, with the count even when it is 0. Most days no hold is running, and
+/// a worker that logs only when it applies one looks, from the log, exactly
+/// like one that never started (Mr. Singh, 3 Oct: "confirm its first tick in
+/// the production log"). Only those two lines - not one per minute.
 /// tests/recovery-admin/test-admin-recovery-email.sh runs this worker with a
 /// hold due and checks the address moved.
 /// </summary>
@@ -22,6 +28,9 @@ public sealed class RecoveryHoldWorker(IServiceScopeFactory scopes, ILogger<Reco
 
     protected override async Task ExecuteAsync(CancellationToken stopping)
     {
+        log.LogInformation("Recovery hold worker started: first sweep in 30 s, then every {Minutes} min",
+            (int)Tick.TotalMinutes);
+        var first = true;
         try { await Task.Delay(TimeSpan.FromSeconds(30), stopping); }
         catch (OperationCanceledException) { return; }
 
@@ -37,6 +46,11 @@ public sealed class RecoveryHoldWorker(IServiceScopeFactory scopes, ILogger<Reco
                     .ToListAsync(stopping)).FirstOrDefault();
                 if (applied > 0)
                     log.LogInformation("Recovery email holds ended: {Count} applied", applied);
+                if (first)
+                {
+                    log.LogInformation("Recovery hold worker: first sweep done, {Count} applied", applied);
+                    first = false;
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

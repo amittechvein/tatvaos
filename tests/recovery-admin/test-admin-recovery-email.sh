@@ -81,9 +81,13 @@ same() {
     elif [ "$2" = "$3" ]; then pass "$1  [got $2]"
     else fail "$1 - got [$2], wanted [$3]"; fi
 }
+# A here-string, NOT printf | grep -q: under pipefail, grep -q exits at the
+# first match, printf dies of SIGPIPE writing the rest, and the pipeline is
+# "false" - on a long API log with an early match that failed 20 times in 20
+# (3 Oct 2026, the hold worker's start line on line 17 of 14,315).
 has() {
     if [ -z "$3" ]; then fail "$1 - nothing to look for"
-    elif printf "%s" "$2" | grep -qiF -- "$3"; then pass "$1"
+    elif grep -qiF -- "$3" <<< "$2"; then pass "$1"
     else fail "$1 - [$3] not in: $(printf '%s' "$2" | head -c 200 | tr '\n' ' ')"; fi
 }
 xff() { printf "10.8.%d.%d" $((RANDOM % 250 + 1)) $((RANDOM % 250 + 1)); }
@@ -317,6 +321,13 @@ same "the People list shows the hold" "$(printf '%s' "$LIST" | ID="$PW_ID" "$PY"
 same "the People list carries neither full address" "$(printf '%s' "$LIST" | grep -ciF -e "$OLD" -e "$NEW")" "0"
 
 step "C. The hold ends (the real worker, with a hold made due)"
+# The worker must say it is alive even when nothing is due - production has
+# no hold running on most days, and a worker that logs only when it applies
+# one is indistinguishable, from its log, from one that never started
+# (Mr. Singh's 3 Oct deploy condition: "confirm its first tick").
+has "the worker says it started" "$(cat "$LOG")" "Recovery hold worker started"
+for _ in $(seq 1 90); do grep -qF -- "Recovery hold worker: first sweep done" "$LOG" && break; sleep 1; done
+has "...and says when its first sweep is done, with the count" "$(cat "$LOG")" "Recovery hold worker: first sweep done, 0 applied"
 fresh
 PG "UPDATE core.recovery_email_changes SET hold_until = now() - interval '1 minute' WHERE user_id='$PW_ID' AND status='held'" >/dev/null
 for _ in $(seq 1 120); do [ "$(PG "SELECT status FROM core.recovery_email_changes WHERE user_id='$PW_ID' ORDER BY created_at DESC LIMIT 1")" = "applied" ] && break; sleep 1; done
