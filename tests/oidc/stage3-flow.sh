@@ -206,9 +206,9 @@ for _ in $(seq 1 30); do [ -n "$(PG 'SELECT 1')" ] && break; sleep 1; done
 start_api || exit 1
 pass "API up; log at $LOG"
 # The seeded people, given phones for OTP sign-in (the seed has none).
-PG "UPDATE core.users SET phone='+919999900001' WHERE email='amit@techvein.local' AND phone IS NULL" >/dev/null
-PG "UPDATE core.users SET phone='+919999900002' WHERE email='hr@techvein.local' AND phone IS NULL" >/dev/null
-PG "UPDATE core.users SET phone='+919999900003' WHERE email='principal@abcschool.local' AND phone IS NULL" >/dev/null
+# The three test phones, made true every run (tests/support/test-phones.sh).
+. "$(dirname "$0")/../support/test-phones.sh"
+[ "$(PG "$TEST_PHONES_SQL")" = "3" ] || { fail "the test phone numbers could not be set - see tests/support/test-phones.sh"; exit 1; }
 OWNER_ID=$(PG "SELECT id FROM core.users WHERE email='amit@techvein.local'")
 HR_ID=$(PG "SELECT id FROM core.users WHERE email='hr@techvein.local'")
 curl -s "$API/api/oauth/jwks" > "$SCRATCH/jwks.json"

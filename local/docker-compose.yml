@@ -113,6 +113,10 @@ services:
     container_name: tv-postfix
     restart: unless-stopped
     hostname: mail.techvein.local
+    environment:
+      # Where the From-line filter mails "restarted too often" (PR 380).
+      # Locally it lands in Mailpit like everything else.
+      TATVAOS_ALERT_TO: ops-alerts@example.test
     depends_on:
       postgres:
         condition: service_healthy

@@ -99,7 +99,7 @@ public class Tenant
     /// Column: 20260926-mail-ai-features.sql. Enforced in AiProductSwitch.
     /// </summary>
     public bool MailAiRewrite { get; set; } = true;
-    public bool MailAiSuggest { get; set; } = true;
+    public bool MailAiSuggest { get; set; } = TatvaOS.Api.Shared.Ai.AiProductSwitch.DefaultSuggest;
     public bool MailAiSummary { get; set; }
 
     /// <summary>
@@ -107,6 +107,14 @@ public class Tenant
     /// organisation, whatever its plan says. Null = follow the plan; 0 = none.
     /// </summary>
     public int? AiCreditsOverride { get; set; }
+
+    /// <summary>
+    /// "organisation" (every customer) or "personal_house" — the one tenant
+    /// personal accounts live in. Never compare it inline: ask PersonalHouse,
+    /// so "is this a personal account?" has one answer. Column:
+    /// 20260926-a-personal-join.sql.
+    /// </summary>
+    [MaxLength(16)] public string Kind { get; set; } = "organisation";
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? SuspendedAt { get; set; }
@@ -626,6 +634,9 @@ public class Plan
     public string[]? IncludedFeatures { get; set; }
     public decimal? PricePerUserMonthly { get; set; }
     public decimal? PriceMonthly { get; set; }
+    /// <summary>Yearly prices (20260926-d-billing-invoices.sql). Null = 12 × the monthly price.</summary>
+    public decimal? PricePerUserYearly { get; set; }
+    public decimal? PriceYearly { get; set; }
 
     /// <summary>
     /// AI credits (26 Sept 2026) — the same choice as storage: 'pooled' gives
@@ -648,6 +659,8 @@ public class Subscription
     public DateTimeOffset StartedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? RenewsAt { get; set; }
     public DateTimeOffset? CancelledAt { get; set; }
+    /// <summary>monthly | yearly. RenewsAt is when the next period — and its invoice — starts.</summary>
+    [MaxLength(16)] public string BillingCycle { get; set; } = "monthly";
 
     public Plan? Plan { get; set; }
 }

@@ -200,9 +200,9 @@ PG "UPDATE core.audit_logs SET occurred_at = occurred_at - interval '2 hours'
     WHERE action='connect.recording.share_lookup' AND occurred_at > now() - interval '1 hour'" >/dev/null
 
 PG "UPDATE core.users SET role='org_owner' WHERE email='amit@techvein.local' AND role='owner'" >/dev/null
-PG "UPDATE core.users SET phone='+919999900001' WHERE email='amit@techvein.local' AND phone IS NULL" >/dev/null
-PG "UPDATE core.users SET phone='+919999900002' WHERE email='hr@techvein.local' AND phone IS NULL" >/dev/null
-PG "UPDATE core.users SET phone='+919999900003' WHERE email='principal@abcschool.local' AND phone IS NULL" >/dev/null
+# The three test phones, made true every run (tests/support/test-phones.sh).
+. "$(dirname "$0")/../support/test-phones.sh"
+[ "$(PG "$TEST_PHONES_SQL")" = "3" ] || { fail "the test phone numbers could not be set - see tests/support/test-phones.sh"; exit 1; }
 PG "INSERT INTO core.users (tenant_id, email, display_name, role, status, phone)
     SELECT '$TECHVEIN', 'attendee@techvein.local', 'Attendee', 'employee', 'active', '+919999900004'
     WHERE NOT EXISTS (SELECT 1 FROM core.users WHERE email='attendee@techvein.local')" >/dev/null
