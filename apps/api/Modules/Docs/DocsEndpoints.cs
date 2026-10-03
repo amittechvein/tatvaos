@@ -85,9 +85,10 @@ public static class DocsEndpoints
         // a spreadsheet's .xlsx is still the one its browser wrote, behind
         // XlsxGuard, until Sheets has its own server build — and until then
         // Sheets cannot be switched on (SheetsSwitch.ServerRenderLanded). Kept
-        // apart so that removing Docs' ignored fields (by 14 Oct 2026) cannot
-        // break Sheets, and so the browser-written path is one named place
-        // that the server build replaces. Each route refuses the other kind.
+        // apart so that removing Docs' ignored browser fields (done 3 Oct
+        // 2026) could not break Sheets, and so the browser-written path is one
+        // named place that the server build replaces. Each route refuses the
+        // other kind.
         var s = app.MapGroup("/api/sheets")
             .RequireAuthorization("User")
             .WithTags("Sheets");
@@ -122,22 +123,27 @@ public static class DocsEndpoints
     /// <summary>Kind: "document" (default) or "spreadsheet".</summary>
     public sealed record CreateRequest(string? Title, Guid? FolderId, string? Scope, string? Kind = null);
     public sealed record RenameRequest(string? Title);
-    // State / Html / Text: ACCEPTED AND IGNORED, for tabs opened before the
-    // server built the files (0011 condition 1). END DATE (Mr. Singh, 30 Sept
-    // 2026): removed at the SECOND production deploy after the one that ships
-    // this, and in any case by 14 October 2026. tests/docs/docs-live.test.mjs
-    // fails after that date while these fields are still here, so the grace
-    // cannot quietly become permanent.
-    public sealed record CheckpointRequest(string? State, long UpToSeq, string? Html, string? Text);
+    // Only "up to which update". The browser's state, HTML and text were
+    // accepted and ignored for one grace period after the server began
+    // building the files (0011 condition 1), then REMOVED on 3 Oct 2026, past
+    // the end date Mr. Singh set (the second deploy after the render shipped
+    // in a437fad). An old tab that still sends them is harmless: unknown JSON
+    // fields are skipped, and nothing it sends reaches the file
+    // (tests/docs/docs-live.test.mjs sends them and checks exactly that).
+    public sealed record CheckpointRequest(long UpToSeq);
     /// <summary>
     /// A spreadsheet's save (POST /api/sheets/{id}/checkpoint): its state, the
     /// HTML/text for search and history, and the .xlsx Space serves — all
-    /// written by the browser until Sheets has its own server build. NOT
-    /// covered by the 14 Oct end date, which is Docs' ignored fields only.
+    /// written by the browser until Sheets has its own server build
+    /// (docs/SHEETS_SERVER_RENDER_DESIGN.md). Docs' equivalent fields were
+    /// removed on 3 Oct 2026; these stay until that build lands.
     /// </summary>
     public sealed record SheetCheckpointRequest(string? State, long UpToSeq, string? Html, string? Text, string? Xlsx);
     public sealed record SheetVersionRequest(string? Kind, string? Name, string? State, string? Html);
-    public sealed record VersionRequest(string? Kind, string? Name, string? State, string? Html);
+    // Which kind of version and its name. The version itself is what the
+    // server stored, built by the render service (browser state/HTML removed
+    // 3 Oct 2026, as for CheckpointRequest).
+    public sealed record VersionRequest(string? Kind, string? Name);
     public sealed record NameVersionRequest(string? Name);
     public sealed record CommentRequest(string? Body, string? Anchor, string? Quote);
     public sealed record PatchCommentRequest(string? Body, bool? Resolved);
@@ -451,10 +457,8 @@ public static class DocsEndpoints
     // ==================================================================
     //
     //  "Please save now." Nothing the browser sends is used (decision 0011
-    //  condition 1; Mr. Singh, 29-30 Sept 2026): not its state, not its HTML,
-    //  not its text. Those fields are still ACCEPTED for one release, so a tab
-    //  opened before this change keeps working, and ignored — until the end
-    //  date on CheckpointRequest (by 14 October 2026). We:
+    //  condition 1; Mr. Singh, 29-30 Sept 2026): only "up to which update"
+    //  arrives (CheckpointRequest). We:
     //
     //    1. under the room lock, snapshot what the server STORED: the state
     //       and every update after it (what it relayed to everyone)
@@ -482,7 +486,6 @@ public static class DocsEndpoints
         // come back as an empty page stored as its file. See MapDocsEndpoints.
         if (LiveSwitch.IsSheet(file.MimeType))
             return Error(400, "A spreadsheet saves through /api/sheets/{id}/checkpoint.");
-        _ = req; // accepted for one release, never read: see above
 
         // 1. What the server stored.
         byte[] baseState;
