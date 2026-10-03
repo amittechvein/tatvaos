@@ -20,6 +20,7 @@ optional.
 | Connect | [`connect/WELCOME.md`](connect/WELCOME.md) | [`../CONNECT_DECISIONS.md`](../CONNECT_DECISIONS.md) |
 | Mobile | [`mobile/WELCOME.md`](mobile/WELCOME.md) | [`../MOBILE_LANE_BRIEF.md`](../MOBILE_LANE_BRIEF.md) |
 | Hire & People | [`hire-people/WELCOME.md`](hire-people/WELCOME.md) | [`../TATVAOS_HR_ROADMAP.md`](../TATVAOS_HR_ROADMAP.md) |
+| Docs & Sheets | [`docs-sheets/WELCOME.md`](docs-sheets/WELCOME.md) | [`../decisions/`](../decisions/) (0011) and [`../DOCS_SERVER_RENDER_DESIGN.md`](../DOCS_SERVER_RENDER_DESIGN.md) |
 
 **Not on that list, and not lanes you can take:**
 
