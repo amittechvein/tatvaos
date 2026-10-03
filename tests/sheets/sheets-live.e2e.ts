@@ -335,6 +335,34 @@ async function main() {
   const after = await download();
   check('…and the edit typed while it was down is in the file', after.wb?.sheets[0]?.cells.get('12,0')?.input === 'Typed while the render service was down');
 
+  console.log('A spreadsheet created with content (a template or an imported file)');
+  // What SheetsHome.createWith does (stage 3): create it empty, send the whole
+  // workbook as ONE edit over the live channel, wait for the server to store
+  // it, then save with nothing but upToSeq. The browser sends no file.
+  const made = await A('/docs', { method: 'POST', body: JSON.stringify({ title: 'E2E imported', scope: 'personal', kind: 'spreadsheet' }) });
+  const imp = made.status === 201 ? await connect(A, made.body.id) : null;
+  check('a new spreadsheet opens on the live channel', !!imp?.synced, `${made.status}`);
+  if (imp?.model) {
+    const rows = Array.from({ length: 2000 }, (_, r) => ({ r, c: 0, input: `Imported row ${r + 1}` }));
+    const impSheet = emptySheet('Imported');
+    for (const x of rows) impSheet.cells.set(cellKey(x.r, x.c), { input: x.input });
+    impSheet.cells.set(cellKey(0, 1), { input: '=COUNTA(A1:A2000)' });
+    const acksBefore = imp.acks;
+    imp.model.load({ sheets: [impSheet] }, 'replace');
+    await waitFor(() => imp.acks > acksBefore, 10_000);
+    await sleep(500); // in case the load went out as more than one edit
+    const impSave = await A(`/sheets/${made.body.id}/checkpoint`, { method: 'POST', body: JSON.stringify({ upToSeq: imp.lastSeq }) });
+    check('…filled by one live edit and saved with only upToSeq (200)', impSave.status === 200 && impSave.body?.saved === true,
+      `${impSave.status} ${JSON.stringify(impSave.body)}`);
+    let impBook = null;
+    try { impBook = await readXlsx((await A(`/space/files/${made.body.id}/content`)).bytes); } catch (e) { console.log('   ', e); }
+    const impCells = impBook?.sheets[0]?.cells;
+    check("…and its file holds the imported content, built by the server",
+      impBook?.sheets[0]?.name === 'Imported' && impCells?.get('1999,0')?.input === 'Imported row 2000' && impCells?.get('0,1')?.value === 2000,
+      `${impBook?.sheets[0]?.name} ${JSON.stringify(impCells?.get('1999,0'))} ${JSON.stringify(impCells?.get('0,1'))}`);
+    imp.model.destroy(); imp.ws.close();
+  }
+
   console.log('Documents and spreadsheets do not cross');
   const doc = await A('/docs', { method: 'POST', body: JSON.stringify({ title: 'E2E doc', scope: 'personal' }) });
   // Each kind saves through its own routes (1 Oct 2026), and each is built

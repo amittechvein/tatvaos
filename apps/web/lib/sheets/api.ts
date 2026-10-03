@@ -8,10 +8,11 @@
 //  kind on create and list, the save and version routes, and the AI
 //  actions — and re-exports docsApi for everything else rather than copying it.
 //
-//  SAVES AND VERSIONS go to /api/sheets/{id}/... (1 Oct 2026): a document's
-//  file is built on the server and Docs' routes ignore the browser's copy,
-//  but a spreadsheet's state and .xlsx are still the browser's until Sheets
-//  has its own server build. Docs' routes refuse a spreadsheet.
+//  SAVES AND VERSIONS go to /api/sheets/{id}/... (1 Oct 2026), which build
+//  the spreadsheet's .xlsx, HTML, text and state on the server from what it
+//  stored (Sheets server build, stages 1-3; docs/SHEETS_SERVER_RENDER_DESIGN.md).
+//  The browser sends only how far it has seen, or the version's kind and
+//  name. Docs' routes refuse a spreadsheet: each kind has its own renderer.
 // ============================================================================
 
 import { docsApi } from '../docs';
@@ -69,15 +70,14 @@ export const sheetsApi = {
         : { title, scope, kind: 'spreadsheet' }),
     }).then((r) => json<{ id: string; title: string }>(r, 'Could not create the spreadsheet.')),
 
-  checkpointSheet: (f: AuthedFetch, id: string, body: {
-    state: string; upToSeq: number; html: string; text: string; xlsx: string;
-  }) =>
+  // "Please save now." A 503 with reason "render_failed" means the server
+  // could not build the file just now: the editor says so and retries.
+  checkpointSheet: (f: AuthedFetch, id: string, body: { upToSeq: number }) =>
     f(`/sheets/${id}/checkpoint`, { method: 'POST', body: JSON.stringify(body) })
       .then((r) => json<{ saved: boolean }>(r, 'Could not save the spreadsheet.')),
 
-  saveVersion: (f: AuthedFetch, id: string, body: {
-    kind: 'named' | 'restore'; name?: string; state: string; html: string;
-  }) =>
+  // The version is the server's stored spreadsheet at this moment.
+  saveVersion: (f: AuthedFetch, id: string, body: { kind: 'named' | 'restore'; name?: string }) =>
     f(`/sheets/${id}/versions`, { method: 'POST', body: JSON.stringify(body) })
       .then((r) => json<{ id: string }>(r, 'Could not save the version.')),
 
