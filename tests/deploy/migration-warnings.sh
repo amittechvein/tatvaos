@@ -39,7 +39,7 @@ same() {
 }
 
 LOOP="$(awk '/^schema_failed=0$/{f=1} f{print} f&&/^done$/{exit}' "$DEPLOY")"
-if [ -z "$LOOP" ] || ! printf '%s\n' "$LOOP" | grep -q '^done$'; then
+if [ -z "$LOOP" ] || ! grep -q '^done$' <<< "$LOOP"; then
     echo "  could not find the migration loop in deploy.sh (schema_failed=0 ... done) - the check did NOT run"; exit 2
 fi
 
