@@ -178,6 +178,8 @@ export interface SyncChanges<T> {
 export type StorageModel = 'per_user' | 'pooled';
 
 export interface Plan {
+  /** 'personal' plans belong to one person in the personal house and are never offered to an organisation. */
+  audience?: 'organisation' | 'personal';
   id: Uuid;
   name: string;
   /** null means unlimited */

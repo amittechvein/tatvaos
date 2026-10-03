@@ -121,6 +121,8 @@ builder.Services.AddScoped<TatvaOS.Api.Modules.Hire.HireAccess>();
 // and the keyed phone fingerprint (Personal:PhoneHashKey; unset = /join closed).
 builder.Services.AddScoped<TatvaOS.Api.Modules.Personal.PersonalHouse>();
 builder.Services.AddSingleton<TatvaOS.Api.Modules.Personal.PersonalPhone>();
+// The one "what may this person have?" answer (build plan §2.5).
+builder.Services.AddScoped<TatvaOS.Api.Shared.Plans.EffectiveSettings>();
 // Signup's prune, hourly: an abandoned signup's plain phone number lives a
 // day at most even while /join is shut and nobody starts one (PR 311).
 builder.Services.AddHostedService<TatvaOS.Api.Modules.Personal.PersonalSignupPruneWorker>();
@@ -888,6 +890,7 @@ app.MapDomainEndpoints();
 app.MapSignupEndpoints();
 app.MapJoinEndpoints();
 app.MapReservedUsernameEndpoints();
+app.MapPersonalPlanEndpoints();
 app.MapSettingsEndpoints();
 app.MapDepartmentEndpoints();
 // Locations and designations: Phase 0 of Hire & People (24 Sept 2026).

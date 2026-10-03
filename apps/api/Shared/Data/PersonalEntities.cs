@@ -60,6 +60,18 @@ public class PersonalSignupAttempt
 }
 
 /// <summary>
+/// One AI trial per phone fingerprint, ever (build plan D6, §8). Outlives the
+/// account: UserId goes null on deletion, the row stays. Part D starts it.
+/// </summary>
+public class AiTrial
+{
+    [MaxLength(64)] public required string PhoneHash { get; set; }
+    public Guid? UserId { get; set; }
+    public DateTimeOffset StartedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset EndsAt { get; set; }
+}
+
+/// <summary>
 /// What is true of a personal account and of no organisation account: the
 /// phone fingerprint (one personal account per number), when the person
 /// declared they are an adult (never their date of birth), and which terms
