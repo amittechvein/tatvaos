@@ -317,6 +317,13 @@ same "the People list shows the hold" "$(printf '%s' "$LIST" | ID="$PW_ID" "$PY"
 same "the People list carries neither full address" "$(printf '%s' "$LIST" | grep -ciF -e "$OLD" -e "$NEW")" "0"
 
 step "C. The hold ends (the real worker, with a hold made due)"
+# The worker must say it is alive even when nothing is due - production has
+# no hold running on most days, and a worker that logs only when it applies
+# one is indistinguishable, from its log, from one that never started
+# (Mr. Singh's 3 Oct deploy condition: "confirm its first tick").
+has "the worker says it started" "$(cat "$LOG")" "Recovery hold worker started"
+for _ in $(seq 1 90); do grep -qF -- "Recovery hold worker: first sweep done" "$LOG" && break; sleep 1; done
+has "...and says when its first sweep is done, with the count" "$(cat "$LOG")" "Recovery hold worker: first sweep done, 0 applied"
 fresh
 PG "UPDATE core.recovery_email_changes SET hold_until = now() - interval '1 minute' WHERE user_id='$PW_ID' AND status='held'" >/dev/null
 for _ in $(seq 1 120); do [ "$(PG "SELECT status FROM core.recovery_email_changes WHERE user_id='$PW_ID' ORDER BY created_at DESC LIMIT 1")" = "applied" ] && break; sleep 1; done
