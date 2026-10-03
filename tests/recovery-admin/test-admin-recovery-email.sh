@@ -81,9 +81,13 @@ same() {
     elif [ "$2" = "$3" ]; then pass "$1  [got $2]"
     else fail "$1 - got [$2], wanted [$3]"; fi
 }
+# A here-string, NOT printf | grep -q: under pipefail, grep -q exits at the
+# first match, printf dies of SIGPIPE writing the rest, and the pipeline is
+# "false" - on a long API log with an early match that failed 20 times in 20
+# (3 Oct 2026, the hold worker's start line on line 17 of 14,315).
 has() {
     if [ -z "$3" ]; then fail "$1 - nothing to look for"
-    elif printf "%s" "$2" | grep -qiF -- "$3"; then pass "$1"
+    elif grep -qiF -- "$3" <<< "$2"; then pass "$1"
     else fail "$1 - [$3] not in: $(printf '%s' "$2" | head -c 200 | tr '\n' ' ')"; fi
 }
 xff() { printf "10.8.%d.%d" $((RANDOM % 250 + 1)) $((RANDOM % 250 + 1)); }
