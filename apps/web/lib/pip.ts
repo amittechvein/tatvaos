@@ -124,6 +124,9 @@ export interface PipTile {
   name: string;
   /** The letter in the circle when there is no camera. */
   initial: string;
+  /** Profile photo (an object URL) to show in the circle instead of the
+   *  initial. Same origin, so it loads in the PiP document too. */
+  photo?: string;
   /** A shared screen rather than a face: full width, and fitted not cropped. */
   screen?: boolean;
   speaking?: boolean;
@@ -170,11 +173,18 @@ const PIP_CSS = `
      expect a mirror of themselves and read an un-mirrored self-view as a
      stranger. Never on a screen share. */
   .tile.self video{transform:scaleX(-1)}
-  .ph{position:absolute;inset:0;display:grid;place-items:center}
+  /* The circle grows with the tile, like the stage's (Amit, 26 Sept 2026):
+     it was capped at 56px, a dot in a lone tile. 40% of the tile's shorter
+     side, 20-120px. The fixed sizes first are for a browser without
+     container units. */
+  .ph{position:absolute;inset:0;display:grid;place-items:center;container-type:size}
   .ph b{display:grid;place-items:center;border-radius:50%;background:#2b2b36;
-    color:#d8d8e2;font-weight:600;line-height:1;
+    color:#d8d8e2;font-weight:600;line-height:1;overflow:hidden;
     width:44%;height:44%;max-width:56px;max-height:56px;min-width:20px;min-height:20px;
     font-size:min(22px,4.5vw)}
+  @supports (width:1cqmin){.ph b{width:clamp(20px,40cqmin,120px);height:clamp(20px,40cqmin,120px);
+    max-width:none;max-height:none;font-size:clamp(10px,15cqmin,44px)}}
+  .ph b img{width:100%;height:100%;object-fit:cover;display:block}
   .nm{position:absolute;left:0;right:0;bottom:0;padding:2px 5px;font-size:10px;
     line-height:1.4;background:linear-gradient(transparent,rgba(0,0,0,.72));
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -662,7 +672,24 @@ export async function openPipWindow(opts: {
       entry.root.classList.toggle('scr', t.screen === true);
       entry.root.classList.toggle('spk', t.speaking === true && t.screen !== true);
       entry.root.classList.toggle('self', t.mirror === true && t.screen !== true);
-      entry.initial.textContent = t.initial;
+      // Photo when there is one, else the initial. Only touched when it
+      // changes, so a re-render does not reload the image.
+      const want = t.photo ?? '';
+      const circle = entry.initial;
+      if (circle.dataset.photo !== want || (!want && circle.textContent !== t.initial)) {
+        circle.dataset.photo = want;
+        if (want) {
+          const img = doc.createElement('img');
+          img.alt = '';
+          img.src = want;
+          // A revoked or failed URL falls back to the letter, not a broken image.
+          const letter = t.initial;
+          img.onerror = () => { circle.textContent = letter; };
+          circle.replaceChildren(img);
+        } else {
+          circle.textContent = t.initial;
+        }
+      }
 
       const bits: string[] = [t.name];
       if (t.local) bits.push('(you)');
