@@ -407,6 +407,32 @@ console.log('\n5b. The copy/search finding: another face (tracked, not a gate ch
   }
 }
 
+// The other half of the tracked fix (Mr. Singh, 2 Oct 2026): does a NEWER
+// Typst copy Indian-script text better? Dockerfile.pdf-gate unpacks Alpine
+// edge's typst to /opt/typst-edge (verified, not installed). The same
+// document, the same fonts, counted the same way for both versions.
+{
+  const EDGE = '/opt/typst-edge/usr/bin/typst';
+  const v = spawnSync(EDGE, ['--version'], { encoding: 'utf8' });
+  if (v.error || v.status !== 0) {
+    console.log(`  info  newer Typst not tried: ${v.error ? v.error.code : (v.stderr || '').split('\n')[0].slice(0, 120) || `exit ${v.status}`}`);
+  } else {
+    const count = (res, re) => {
+      const want = res.r.text.normalize('NFC').split(/\s+/).filter((w) => re.test(w));
+      const got = new Set(textOf(res.pdf).body.normalize('NFC').split(/\s+/));
+      return `${want.filter((w) => got.has(w)).length} of ${want.length}`;
+    };
+    const DEV = /[ऀ-ॿ]/;
+    const now = await tryPdf(stateOf(fixture('indian-scripts')));
+    const edge = await tryPdf(stateOf(fixture('indian-scripts')), { typst: EDGE });
+    if (now.error || edge.error) console.log(`  info  newer Typst trial did not build: ${now.error?.code ?? ''} ${edge.error?.code ?? ''} ${JSON.stringify(edge.error?.detail ?? '')}`);
+    else {
+      console.log(`  info  Typst 0.14.2 (production): ${count(now, INDIC)} Indian-script words intact, Devanagari ${count(now, DEV)}`);
+      console.log(`  info  ${v.stdout.trim()} (Alpine edge): ${count(edge, INDIC)} Indian-script words intact, Devanagari ${count(edge, DEV)}`);
+    }
+  }
+}
+
 console.log('\n6. A sample for the reader (Devanagari, day one)');
 {
   const s = await tryPdf(stateOf(fixture('devanagari-sample')));

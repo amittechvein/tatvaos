@@ -18,4 +18,19 @@ ARG RENDER_IMAGE
 FROM ${RENDER_IMAGE}
 USER root
 RUN apk add --no-cache poppler-utils harfbuzz-utils mupdf-tools py3-fonttools strace
+# A NEWER Typst beside the real one, for ONE comparison only (Mr. Singh,
+# 2 Oct 2026, the copy/search finding: "check whether a newer Typst ...
+# copies correctly"). Fetched from Alpine's own signed EDGE repository, its
+# signature verified against the image's Alpine keys, and only the program
+# unpacked to /opt/typst-edge — NOT installed, so the image's typst stays the
+# pinned 0.14.2 that production runs. The gate's part 5b reports both counts.
+# If any of this fails, the image still builds and 5b says so.
+RUN cd /tmp \
+ && ( apk fetch --no-cache --repository https://dl-cdn.alpinelinux.org/alpine/edge/community typst \
+      && apk verify typst-*.apk \
+      && mkdir -p /opt/typst-edge \
+      && tar -xzf typst-*.apk -C /opt/typst-edge usr/bin/typst \
+      && echo "edge typst: $(ls typst-*.apk)" \
+    || echo "edge typst NOT available for the comparison" ) \
+ ; rm -f /tmp/typst-*.apk
 USER node
