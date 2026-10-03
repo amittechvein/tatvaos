@@ -613,6 +613,12 @@ function AddPerson({ departments, domains, poolFloor, onClose, onCreated, onErro
  * confirmed previous one. The person is told at their sign-in mailbox and old
  * address, with a "this was not me" link. An owner's own recovery email is
  * theirs alone to change. Addresses shown here are always masked.
+ *
+ * The administrator confirms it is them in the same request: their own
+ * password, or their authenticator code if they have two-step verification
+ * (Mr. Singh, 3 Oct 2026), so nobody at an unattended administrator's
+ * keyboard can redirect someone else's account recovery. Wrong tries count
+ * against their own sign-in lock. Neither is kept after the request.
  */
 function RecoveryEmailSection({ person, busy, setBusy, canClear, onSaved, onError }: {
   person: Person;
@@ -622,8 +628,11 @@ function RecoveryEmailSection({ person, busy, setBusy, canClear, onSaved, onErro
   onSaved: (msg: string) => void;
   onError: (m: string) => void;
 }) {
-  const { authedFetch } = useAuth();
+  const { authedFetch, user: me } = useAuth();
   const [email, setEmail] = useState('');
+  const [proof, setProof] = useState('');
+  // The server is the judge: if it asks for a code, ask for a code.
+  const [askCode, setAskCode] = useState(Boolean(me?.mfaEnabled));
   const change = person.recoveryChange;
 
   async function call(path: string, method: string, body?: unknown, done?: (b: Record<string, unknown>) => void) {
@@ -633,6 +642,7 @@ function RecoveryEmailSection({ person, busy, setBusy, canClear, onSaved, onErro
         method, body: body === undefined ? undefined : JSON.stringify(body),
       });
       const data = await res.json().catch(() => ({}));
+      if (data.mfaRequired === true) setAskCode(true);
       if (!res.ok) throw new Error(typeof data.error === 'string' ? data.error : 'That did not work.');
       done?.(data);
     } catch (e) {
@@ -685,12 +695,28 @@ function RecoveryEmailSection({ person, busy, setBusy, canClear, onSaved, onErro
           <div className="flex gap-2 flex-wrap items-start">
             <Input style={{ maxWidth: 300 }} type="email" placeholder="their.personal@example.com"
                    value={email} onChange={(e) => setEmail(e.target.value)} aria-label="New recovery email" />
-            <Button variant="secondary" size="sm" disabled={busy || !email.includes('@')}
-                    onClick={() => void call('/recovery-email', 'PUT', { email }, (b) =>
-                      onSaved(String(b.message ?? 'Confirmation link sent.')))}>
+            <Input style={{ maxWidth: 200 }} type={askCode ? 'text' : 'password'}
+                   inputMode={askCode ? 'numeric' : undefined}
+                   autoComplete={askCode ? 'one-time-code' : 'current-password'}
+                   placeholder={askCode ? 'Code from your app' : 'Your password'}
+                   value={proof} onChange={(e) => setProof(e.target.value)}
+                   aria-label={askCode ? 'Your authenticator code' : 'Your own password'} />
+            <Button variant="secondary" size="sm" disabled={busy || !email.includes('@') || proof.trim().length === 0}
+                    onClick={() => {
+                      const sent = proof;
+                      setProof('');
+                      void call('/recovery-email', 'PUT',
+                        askCode ? { email, mfaCode: sent.trim() } : { email, currentPassword: sent },
+                        (b) => onSaved(String(b.message ?? 'Confirmation link sent.')));
+                    }}>
               Set recovery email
             </Button>
           </div>
+          <p className="mt-1.5 text-xs text-ink-muted">
+            {askCode
+              ? 'To confirm it is you, enter the code from your authenticator app.'
+              : 'To confirm it is you, enter your own password — not theirs.'}
+          </p>
           <p className="mt-1.5 text-xs text-ink-muted">
             A confirmation link goes to the new address, and they are told at their sign-in mailbox
             {person.recoveryEmailMasked ? ' and their current recovery email' : ''}.
