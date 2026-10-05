@@ -31,6 +31,9 @@ step() { printf '\n%s%s>> %s%s\n' "$B" "$C" "$1" "$X"; }
 ok()   { printf '   %s[ ok ]%s %s\n' "$G" "$X" "$1"; }
 bad()  { printf '   %s[FAIL]%s %s\n' "$R" "$X" "$1"; FAILURES=$((FAILURES + 1)); }
 note() { printf '   %s%s%s\n' "$D" "$1" "$X"; }
+# Something a person should read that is NOT a failure: it never counts toward
+# FAILURES, so it never turns a deploy's verdict red. Same form as deploy.sh's.
+warn() { printf '   %s[warn]%s %s\n' "$Y" "$X" "$1"; }
 
 COMPOSE="docker compose \
     -f infra/docker/docker-compose.base.yml \
@@ -214,13 +217,94 @@ check_smtp() {
 #  integer. No queue-ID alphabet assumption, no date parsing, no year bug.
 #  On an empty queue it prints nothing and exits 0 — verified on the box.
 #
-#  AGE, NOT DEPTH, DECIDES. One depth sample cannot tell five messages in
-#  flight from five stuck, and a threshold on depth goes stale the day this
-#  box gets busy. On a box whose normal queue is empty, a message older than
-#  ten minutes is delivery stuck, whatever the count; a busy queue that is
-#  moving never trips it. Depth is reported for the human, not gated on.
+#  WHOSE SIDE, THEN AGE (Mr. Singh, 2 Oct 2026). Until then any message
+#  older than ten minutes failed the check. On 1 Oct a good deploy (a437fad)
+#  reported DEPLOY VERDICT: FAIL for ONE message, 4.4 h old, that Gmail was
+#  refusing with "452-4.2.2 The recipient's inbox is out of storage space"
+#  while twelve others went out. A verdict that says FAIL on a working release
+#  invites the rollback that breaks it. Postfix records why it deferred each
+#  recipient (delay_reason), so the check now reads it:
+#
+#   * the far server answered with its own refusal ("host X said: 4xx") -
+#     a full mailbox, a disabled account, greylisting: the RECIPIENT'S side.
+#     A named [warn], with the address masked and the age. Never a failure.
+#     Except 4.7.x: that is the far side's policy about OUR server (rate,
+#     reputation, our IP listed), so it counts as ours.
+#   * anything else - connection refused or timed out, no DNS, TLS, Dovecot's
+#     LMTP unreachable, or no reason recorded at all: OUR side. A failure once
+#     the message is older than QUEUE_OURS_MAX_AGE; younger, it is retrying.
+#   * more than QUEUE_MAX_DEFERRED deferred at once is systemic, whoever the
+#     recipients are, and fails regardless of the reasons.
+#
+#  A recipient-side message is not left for ever: Postfix returns it to its
+#  sender after maximal_queue_lifetime, 5d on production (Postfix's default;
+#  read with postconf on 2 Oct 2026, not set in local/postfix/main.cf).
 # ---------------------------------------------------------------------------
-QUEUE_MAX_AGE=600
+QUEUE_OURS_MAX_AGE=1800
+QUEUE_MAX_DEFERRED=10
+
+# The judging is Python (python3 is on the box, /usr/bin/python3, 2 Oct
+# 2026): reading a reason out of JSON with grep is how the year bug above
+# happened. It prints one verdict per line - OK / WARN / NOTE / FAIL - and
+# the shell below turns those into the usual lines and the failure count.
+# Every address is masked to ***@domain before it is printed: this output
+# lands in deploy logs that are forwarded whole.
+QUEUE_JUDGE=$(cat <<'PY'
+import json, os, re, sys, time
+now = int(time.time())
+ours_max = int(os.environ["QUEUE_OURS_MAX_AGE"])
+max_deferred = int(os.environ["QUEUE_MAX_DEFERRED"])
+ADDR = re.compile(r"[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+)")
+def mask(s): return ADDR.sub(lambda m: "***@" + m.group(1), s or "")
+def side(reason):
+    # "host mx[ip] said: 452-4.2.2 ..." - the far server's own words.
+    m = re.search(r"\bsaid:\s*\d{3}[ -](\d\.\d{1,3}\.\d{1,3})?", reason)
+    if m:
+        return "ours" if (m.group(1) or "").startswith("4.7.") else "theirs"
+    return "ours" if reason else "unknown"
+def dur(s):
+    h, r = divmod(max(s, 0), 3600)
+    return f"{h}h{r // 60:02d}m" if h else f"{r // 60}m"
+msgs = []
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        msgs.append(json.loads(line))
+    except ValueError:
+        print("FAIL Queue output not understood: a line is not JSON."); sys.exit(0)
+arrivals = [m.get("arrival_time") for m in msgs]
+if not msgs or not all(isinstance(a, int) for a in arrivals):
+    print(f"FAIL {len(msgs)} queue entr(y/ies) and no arrival_time could be read - queue output not understood."); sys.exit(0)
+deferred = sum(1 for m in msgs if m.get("queue_name") == "deferred")
+oldest = now - min(arrivals)
+print(f"NOTE {len(msgs)} message(s) queued, {deferred} deferred, oldest {oldest}s old.")
+failed, theirs = False, 0
+if deferred > max_deferred:
+    failed = True
+    print(f"FAIL {deferred} messages deferred at once (more than {max_deferred}) - something systemic, whoever the recipients are.")
+for m in msgs:
+    age = now - m["arrival_time"]
+    for r in (m.get("recipients") or [{}]):
+        reason = " ".join((r.get("delay_reason") or "").split())
+        who = mask(r.get("address") or "(no recipient)")
+        s = side(reason)
+        if s == "theirs":
+            theirs += 1
+            print(f'WARN Recipient\'s side, not ours: {who}, queued {dur(age)} - "{mask(reason)[:170]}". Postfix keeps retrying and returns it to the sender after maximal_queue_lifetime.')
+        elif age > ours_max:
+            failed = True
+            if s == "ours":
+                print(f'FAIL Mail has been queued for {age}s and the last error is on OUR side: "{mask(reason)[:170]}" ({who}).')
+            else:
+                print(f"FAIL Mail has been queued for {age}s with no reason recorded ({who}) - delivery is stuck, not slow.")
+        else:
+            print(f"NOTE Still retrying after {dur(age)}: {who}" + (f' - "{mask(reason)[:120]}"' if reason else ""))
+if not failed:
+    print(f"OK Queue judged: nothing stuck on our side (oldest {oldest}s; {theirs} recipient-side deferral(s)).")
+PY
+)
 
 # Parsing lives in its own function taking (exit-code, output) so the
 # fixtures below the verdict can drive it without a mail server. A check
@@ -245,40 +329,45 @@ parse_queue() {
         return 0
     fi
 
-    local depth
-    depth=$(printf '%s\n' "$out" | grep -c '"queue_id"')
-
-    local now oldest=0 secs
-    now=$(date +%s)
-    # Keep the EARLIEST. oldest=0 means "nothing parsed yet", which is why it
-    # is also the sentinel the failure branch below tests for.
-    while IFS= read -r secs; do
-        [ -n "$secs" ] || continue
-        if [ "$oldest" -eq 0 ] || [ "$secs" -lt "$oldest" ]; then
-            oldest=$secs
-        fi
-    done < <(printf '%s\n' "$out" \
-             | grep -o '"arrival_time": *[0-9][0-9]*' \
-             | grep -o '[0-9][0-9]*$')
-
-    # Output exists but not one arrival time parsed: the output is in a shape
-    # we do not understand, which is a failure to test, not a pass.
-    if [ "$oldest" -eq 0 ]; then
-        bad "${depth} queue entr(y/ies) and no arrival_time could be read — queue output not understood."
+    # FAIL CLOSED here too: no judge, or a judge that crashed or said nothing
+    # we recognise, is "could not test", never "fine".
+    if ! command -v python3 >/dev/null 2>&1; then
+        bad "python3 is not on this machine — the mail queue cannot be judged."
+        return 1
+    fi
+    local verdict jrc=0
+    verdict=$(printf '%s\n' "$out" \
+              | QUEUE_OURS_MAX_AGE="$QUEUE_OURS_MAX_AGE" QUEUE_MAX_DEFERRED="$QUEUE_MAX_DEFERRED" \
+                python3 -c "$QUEUE_JUDGE" 2>&1) || jrc=$?
+    if [ "$jrc" -ne 0 ]; then
+        bad "The mail queue could not be judged (python3 exit $jrc)."
+        note "${verdict##*$'\n'}"
         return 1
     fi
 
-    local age=$(( now - oldest ))
-    note "${depth} message(s) queued, oldest ${age}s old."
+    local line kind failed=0 decided=0
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        kind=${line%% *}; line=${line#* }
+        case "$kind" in
+            OK)   ok "$line"; decided=1 ;;
+            WARN) warn "$line" ;;
+            NOTE) note "$line" ;;
+            FAIL) bad "$line"; failed=1; decided=1 ;;
+            *)    bad "The queue judge printed something unexpected: ${kind:0:40}"; failed=1; decided=1 ;;
+        esac
+    done <<< "$verdict"
 
-    if [ "$age" -gt "$QUEUE_MAX_AGE" ]; then
-        bad "Mail has been queued for ${age}s — delivery is stuck, not slow."
-        note "Postfix accepts and holds when Dovecot LMTP is unreachable. Nothing is lost yet."
-        note "Check: docker compose ps dovecot"
+    if [ "$decided" -eq 0 ]; then
+        bad "The queue judge reached no verdict — queue output not understood."
         return 1
     fi
-
-    ok "Queue moving (oldest ${age}s)."
+    if [ "$failed" -ne 0 ]; then
+        note "Our side means our Postfix could not connect, resolve, authenticate, or reach Dovecot's LMTP."
+        note "Check: docker compose logs postfix --since 1h | grep -i deferred"
+        return 1
+    fi
+    return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -294,17 +383,34 @@ parse_queue() {
 if [ "${1:-}" = "--selftest" ]; then
     now=$(date +%s)
     j() { printf '{"queue_name": "deferred", "queue_id": "%s", "arrival_time": %s, "message_size": 1204, "sender": "a@b", "recipients": [{"address": "c@d"}]}\n' "$1" "$2"; }
+    # jr <id> <arrival> <recipient> <delay_reason> - a deferral WITH Postfix's reason.
+    jr() { printf '{"queue_name": "deferred", "queue_id": "%s", "arrival_time": %s, "message_size": 1204, "sender": "a@b", "recipients": [{"address": "%s", "delay_reason": "%s"}]}\n' "$1" "$2" "$3" "$4"; }
+    # Reasons as Postfix writes them. FULL is word for word the deferral on
+    # production on 1 Oct 2026, which turned a good deploy's verdict to FAIL.
+    FULL="host alt1.gmail-smtp-in.l.google.com[173.194.41.27] said: 452-4.2.2 The recipient's inbox is out of storage space. Please direct the 452-4.2.2 recipient to https://support.google.com/mail/?p=OverQuotaTemp (in reply to RCPT TO command)"
+    REFUSED="connect to gmail-smtp-in.l.google.com[142.250.4.27]:25: Connection refused"
+    NODNS="Host or domain name not found. Name service error for name=example.in type=MX: Host not found, try again"
+    LMTP="connect to dovecot[172.18.0.9]:24: Connection refused"
+    REPUTATION="host mx.example.com[192.0.2.10] said: 421-4.7.28 Our system has detected an unusual rate of unsolicited mail originating from your IP address (in reply to end of DATA command)"
 
     ST_FAILED=0
-    fixture() {  # fixture <name> <expected-rc> <rc> <output>
-        local name="$1" want="$2" rc="$3" out="$4" got
+    # fixture <name> <expected-rc> <rc> <output> [must-say] [must-not-say]
+    # The text checks matter as much as the code: a warning that names the
+    # whole address leaks it into a log Amit forwards, and a warning that names
+    # nothing tells the reader nothing.
+    fixture() {
+        local name="$1" want="$2" rc="$3" out="$4" say="${5:-}" nosay="${6:-}" got text
         echo "== $name (expect rc $want)"
-        parse_queue "$rc" "$out"; got=$?
-        if [ "$got" -eq "$want" ]; then
-            echo "   rc=$got — as expected"
+        text=$(parse_queue "$rc" "$out"); got=$?
+        printf '%s\n' "$text"
+        if [ "$got" -ne "$want" ]; then
+            echo "   rc=$got — EXPECTED $want: SELF-TEST FAILURE"; ST_FAILED=1
+        elif [ -n "$say" ] && ! printf '%s' "$text" | grep -qF -- "$say"; then
+            echo "   rc=$got, but the output does not say '$say': SELF-TEST FAILURE"; ST_FAILED=1
+        elif [ -n "$nosay" ] && printf '%s' "$text" | grep -qF -- "$nosay"; then
+            echo "   rc=$got, but the output says '$nosay', which it must not: SELF-TEST FAILURE"; ST_FAILED=1
         else
-            echo "   rc=$got — EXPECTED $want: SELF-TEST FAILURE"
-            ST_FAILED=1
+            echo "   rc=$got — as expected"
         fi
     }
 
@@ -314,12 +420,29 @@ if [ "${1:-}" = "--selftest" ]; then
     fixture "D: one old (45m, stuck)"           1 0 "$(j BBBB2222 $((now-2700)))"
     fixture "E: mixed - oldest must win"        1 0 "$(j AAAA1111 $((now-30)); j BBBB2222 $((now-2700)))"
     fixture "F: entries but no arrival_time"    1 0 '{"queue_id": "CCCC3333", "sender": "a@b"}'
+    # Recipient's side versus ours (Mr. Singh, 2 Oct 2026).
+    fixture "G: a full Gmail inbox, 4h old - recipient's side: PASS, warned" \
+            0 0 "$(jr DDDD4444 $((now-15896)) priya.sharma@gmail.com "$FULL")" "[warn]" "priya.sharma"
+    fixture "H: connection refused, 45m - OUR side: FAIL" \
+            1 0 "$(jr EEEE5555 $((now-2700)) someone@gmail.com "$REFUSED")" "Connection refused"
+    fixture "I: connection refused, 5m - still retrying: PASS" \
+            0 0 "$(jr EEEE5555 $((now-300)) someone@gmail.com "$REFUSED")"
+    fixture "J: no DNS for the recipient's MX, 45m - OUR side: FAIL" \
+            1 0 "$(jr FFFF6666 $((now-2700)) someone@example.in "$NODNS")"
+    fixture "K: Dovecot unreachable, 45m - OUR side: FAIL" \
+            1 0 "$(jr GGGG7777 $((now-2700)) colleague@techvein.com "$LMTP")"
+    fixture "L: 4.7.x from the far side is about OUR server's reputation: FAIL" \
+            1 0 "$(jr HHHH8888 $((now-2700)) someone@example.com "$REPUTATION")"
+    many=$(for n in 01 02 03 04 05 06 07 08 09 10 11; do jr "MANY00$n" $((now-120)) "p$n@gmail.com" "$FULL"; done)
+    fixture "M: eleven deferred at once, all fresh, all recipient-side - systemic: FAIL" 1 0 "$many" "11"
+    fixture "N: a full inbox beside one of ours - ours still fails" \
+            1 0 "$(jr DDDD4444 $((now-15896)) a@gmail.com "$FULL"; jr EEEE5555 $((now-2700)) b@gmail.com "$REFUSED")"
 
     if [ "$ST_FAILED" -ne 0 ]; then
         echo; echo "SELF-TEST FAILED — parse_queue does not behave as the fixtures require."
         exit 1
     fi
-    echo; echo "self-test passed: 6 fixtures, 4 of them failures that failed correctly."
+    echo; echo "self-test passed: 14 fixtures, 9 of them failures that failed correctly."
     exit 0
 fi
 
@@ -420,6 +543,62 @@ check_rate_limit() {
 }
 
 # ---------------------------------------------------------------------------
+#  The development-only operator sign-in does not exist here.
+#
+#  POST /api/dev/operator-session issues a password-less platform-operator
+#  session on a developer's own machine (PR 281,
+#  apps/api/Modules/Auth/Endpoints/DevOperatorSignIn.cs). The API refuses to
+#  boot with its switch on outside Development, and maps the route only in
+#  Development — but nobody reads the live container's environment, so this
+#  asks production itself, every deploy (Mr. Singh, 25 Sept 2026).
+#
+#  404 EXACTLY, on both methods. The route is POST-only, so a GET answering
+#  405 means it is MAPPED — a failure, however harmless the method looks.
+#  And first a neighbouring API route must answer its own 400: Caddy sends
+#  all of /api/* to the API, so that proves a 404 below came from the API's
+#  router and not from the proxy failing to reach it.
+#
+#  VERIFY_BASE_URL (default https://<SITE_DOMAIN>) exists so this one check
+#  can be calibrated against a local API; nothing in a deploy sets it.
+# ---------------------------------------------------------------------------
+check_dev_operator_route() {
+    step "Development-only operator sign-in is absent"
+
+    local domain="${VERIFY_DOMAIN:-$(grep '^SITE_DOMAIN=' infra/docker/.env 2>/dev/null | cut -d= -f2)}"
+    local base="${VERIFY_BASE_URL:-${domain:+https://$domain}}"
+    if [ -z "$base" ]; then
+        bad "SITE_DOMAIN is not set in infra/docker/.env — cannot ask the API whether the route exists."
+        return 1
+    fi
+    if ! command -v curl >/dev/null 2>&1; then
+        bad "curl is not installed on this host; the route cannot be probed."
+        return 1
+    fi
+
+    local neighbour post get
+    neighbour=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X POST "$base/api/auth/otp/request" \
+        -H 'Content-Type: application/json' -d '{"phone":"not-a-number"}')
+    if [ "$neighbour" != "400" ]; then
+        bad "the neighbouring route /api/auth/otp/request answered ${neighbour} (expected 400) — cannot tell the API's 404 from the proxy's"
+        return 1
+    fi
+    # GET first, and POST only if GET found nothing mapped: if the door were
+    # open, a POST from this probe could itself be what opens a session.
+    get=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$base/api/dev/operator-session")
+    post="not sent"
+    [ "$get" = "404" ] && post=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X POST "$base/api/dev/operator-session")
+
+    if [ "$post" = "404" ] && [ "$get" = "404" ]; then
+        ok "/api/dev/operator-session: POST 404, GET 404 — not mapped (the API answered its neighbour with 400)"
+        return 0
+    fi
+    bad "/api/dev/operator-session: POST ${post}, GET ${get} (expected 404 and 404)"
+    [ "$get" = "405" ] && note "GET 405 means the route IS MAPPED on this server — the development operator door exists here"
+    [ "$post" = "200" ] && note "POST 200 means a PLATFORM-OPERATOR SESSION WAS ISSUED with no password — roll back now"
+    return 1
+}
+
+# ---------------------------------------------------------------------------
 #  Run everything. No check aborts the script: a dead IMAP must not hide a
 #  stuck queue — the operator gets the whole picture, then one verdict.
 # ---------------------------------------------------------------------------
@@ -469,10 +648,11 @@ check_imap       || true
 check_smtp       || true
 check_queue      || true
 check_rate_limit || true
+check_dev_operator_route || true
 
 step "Verdict"
 if [ "$FAILURES" -gt 0 ]; then
     printf '\n   %s%sNOT verified — %d check(s) failed.%s\n\n' "$B" "$R" "$FAILURES" "$X"
     exit 1
 fi
-printf '\n   %sproduction verified — services, website, IMAP, SMTP, queue all answer; the rate limit holds through the proxy.%s\n\n' "$G" "$X"
+printf '\n   %sproduction verified — services, website, IMAP, SMTP, queue all answer; the rate limit holds through the proxy; no development operator door.%s\n\n' "$G" "$X"

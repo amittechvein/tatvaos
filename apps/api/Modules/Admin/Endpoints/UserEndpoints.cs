@@ -67,6 +67,9 @@ public static class UserEndpoints
             .RequireAuthorization("User")
             .WithTags("Organisation administration");
         avatars.MapGet("/{id:guid}/avatar", AvatarAsync);
+        // POST, not GET: a mail list asks about up to 200 addresses at once,
+        // and that many in a query string passes Kestrel's 8 KB request line.
+        avatars.MapPost("/photos", PhotoLookupAsync);
         avatars.MapPut("/{id:guid}/avatar", SetAvatarAsync);
         avatars.MapDelete("/{id:guid}/avatar", DeleteAvatarAsync);
 
@@ -211,6 +214,17 @@ public static class UserEndpoints
             .ToListAsync(ct);
         var usageByUser = usageRows.ToDictionary(r => r.UserId);
 
+        // Decision 0009: administrator changes in flight, and suspended administrators.
+        var changes = (await db.RecoveryEmailChanges.AsNoTracking()
+            .Where(c => ids.Contains(c.UserId) && (c.Status == "pending" || c.Status == "held"))
+            .Select(c => new { c.UserId, c.Status, c.NewEmail, c.HoldUntil })
+            .ToListAsync(ct))
+            .ToDictionary(c => c.UserId);
+        var suspendedAdmins = (await db.RecoveryAdminSuspensions.AsNoTracking()
+            .Where(x => ids.Contains(x.AdminUserId) && x.ClearedAt == null)
+            .Select(x => x.AdminUserId)
+            .ToListAsync(ct)).ToHashSet();
+
         var boxByUser = boxes.GroupBy(b => b.UserId).ToDictionary(g => g.Key, g => g.First());
         var productsByUser = access.GroupBy(a => a.UserId)
             .ToDictionary(g => g.Key, g => g.Select(a => a.ProductCode).ToArray());
@@ -241,7 +255,12 @@ public static class UserEndpoints
                     ? null
                     : new InvitationInfo(inviteState, r.InviteSentAt, Mask.Email(r.RecoveryEmail)),
                 r.HasPassword,
-                !string.IsNullOrWhiteSpace(r.RecoveryEmail));
+                !string.IsNullOrWhiteSpace(r.RecoveryEmail),
+                string.IsNullOrWhiteSpace(r.RecoveryEmail) ? null : Mask.Email(r.RecoveryEmail),
+                changes.TryGetValue(r.Id, out var ch)
+                    ? new RecoveryChangeInfo(ch.Status, Mask.Email(ch.NewEmail), ch.HoldUntil)
+                    : null,
+                suspendedAdmins.Contains(r.Id));
         }).ToList();
 
         return Results.Ok(list);
@@ -524,7 +543,7 @@ public static class UserEndpoints
             note = inviteToken is null
                 ? "They must change the password you typed on first sign-in."
                 : inviteDelivered == true
-                    ? $"An invitation to set their password has been sent to {Mask.Email(recoveryEmail)}." + Invitations.CheckSpamNote
+                    ? $"An invitation to set their password has been sent to {Mask.Email(recoveryEmail)}."
                     : "The invitation could not be sent. Resend it from their profile once the address is right, or set a password instead.",
         });
     }
@@ -1054,8 +1073,26 @@ public static class UserEndpoints
             return Results.BadRequest(new { error = "This person has not set a password yet. Use Resend invitation." });
         if (string.IsNullOrWhiteSpace(user.RecoveryEmail))
             return Results.BadRequest(new { error = Invitations.NoRecoveryEmail });
-        // (There is no screen yet for adding a recovery email to an existing
-        // person, so the refusal does not tell the administrator to add one.)
+
+        // Decision 0009 (Mr. Singh, 24 + 27 Sept). During a hold on an
+        // administrator's change, recovery_email is still the OLD address; a
+        // link may go there only if it was confirmed. And in any case, "an
+        // unconfirmed address is not a recovery address": a sign-in link for
+        // someone who has a password goes to a CONFIRMED address or nowhere.
+        var hold = await RecoveryEmailAdminEndpoints.ActiveHoldAsync(db, user.Id, ct);
+        if (hold is not null && !hold.HasConfirmedOld)
+            return Results.BadRequest(new
+            {
+                error = "Their recovery email was changed by an administrator and is on hold until "
+                      + $"{RecoveryEmailAdminEndpoints.HoldEndText(hold.Until)}. There is no confirmed previous "
+                      + "address to send a link to meanwhile. Use Reset password instead.",
+            });
+        if (user.RecoveryEmailVerifiedAt is null)
+            return Results.BadRequest(new
+            {
+                error = "Their recovery email has not been confirmed, so a sign-in link has nowhere safe to go. "
+                      + "Ask them to open the confirmation link sent to it, or use Reset password instead.",
+            });
 
         var token = Invitations.Issue(user, Invitations.ChannelSignInLink);
         await db.SaveChangesAsync(ct);
@@ -1079,7 +1116,7 @@ public static class UserEndpoints
             sent = delivered,
             sentTo = Mask.Email(user.RecoveryEmail),
             note = delivered
-                ? $"A link has been sent to {Mask.Email(user.RecoveryEmail)}. It works once, for {(int)Invitations.SignInLinkLifetime.TotalHours} hours. Their current password keeps working until they use it." + Invitations.CheckSpamNote
+                ? $"A link has been sent to {Mask.Email(user.RecoveryEmail)}. It works once, for {(int)Invitations.SignInLinkLifetime.TotalHours} hours. Their current password keeps working until they use it."
                 : "The link could not be sent. Check the recovery address, or use Reset password.",
         });
     }
@@ -1104,6 +1141,17 @@ public static class UserEndpoints
                 error = "This person already has a password. Use Reset password if they have lost it.",
             });
 
+        // Decision 0009: the hold covers invitations too. During a hold the
+        // invitation may go only to a confirmed previous address.
+        var hold = await RecoveryEmailAdminEndpoints.ActiveHoldAsync(db, user.Id, ct);
+        if (hold is not null && !hold.HasConfirmedOld)
+            return Results.BadRequest(new
+            {
+                error = "Their recovery email was changed by an administrator and is on hold until "
+                      + $"{RecoveryEmailAdminEndpoints.HoldEndText(hold.Until)}. There is no confirmed previous "
+                      + "address to send an invitation to meanwhile.",
+            });
+
         var channel = Invitations.ChannelFor(user.RecoveryEmail, user.Phone);
         if (channel is null) return Results.BadRequest(new { error = Invitations.NoWayIn });
 
@@ -1123,7 +1171,7 @@ public static class UserEndpoints
             sent = delivered,
             sentTo = Mask.Email(user.RecoveryEmail),
             note = delivered
-                ? $"A new invitation has been sent to {Mask.Email(user.RecoveryEmail)}. The previous link no longer works." + Invitations.CheckSpamNote
+                ? $"A new invitation has been sent to {Mask.Email(user.RecoveryEmail)}. The previous link no longer works."
                 : "The invitation could not be sent. Check the recovery address, or set a password instead.",
         });
     }
@@ -1505,13 +1553,109 @@ public static class UserEndpoints
         tenant.UserId == targetUserId ||
         tenant.Role is "org_owner" or "org_admin" or "super_admin";
 
-    private static async Task<IResult> AvatarAsync(Guid id, AppDbContext db, CancellationToken ct)
+    /// <summary>
+    /// A person's photo. With ?v= equal to the photo's CURRENT version (its
+    /// UpdatedAt, in ms — the number PhotoLookupAsync hands out) the response
+    /// is cacheable for a year: that URL can only ever mean that picture, and
+    /// a mail list of fifty senders then costs no photo requests on the second
+    /// visit. Any other v, or none, must be re-checked every time, or a
+    /// changed photo would stay stale in someone's browser indefinitely.
+    /// </summary>
+    private static async Task<IResult> AvatarAsync(
+        Guid id, long? v, HttpContext http, AppDbContext db, CancellationToken ct)
     {
         var a = await db.UserAvatars.AsNoTracking()
             .Where(x => x.UserId == id)
-            .Select(x => new { x.Image, x.Mime })
+            .Select(x => new { x.Image, x.Mime, x.UpdatedAt })
             .FirstOrDefaultAsync(ct);
-        return a is null ? Results.NotFound() : Results.File(a.Image, a.Mime);
+        if (a is null) return Results.NotFound();
+
+        http.Response.Headers.CacheControl =
+            v == a.UpdatedAt.ToUnixTimeMilliseconds()
+                ? "private, max-age=31536000, immutable"
+                : "private, no-cache";
+        return Results.File(a.Image, a.Mime);
+    }
+
+    private const int MaxPhotoLookup = 200;
+
+    /// <summary>
+    /// Which of these people are colleagues in THIS organisation with a photo,
+    /// and at what version.
+    ///
+    /// ── WHY ────────────────────────────────────────────────────────────────
+    ///  Amit, 25 Sept 2026: "if any user photo updated in tatvaos app show
+    ///  photo in all apps like email and connect people section". A photo was
+    ///  shown in three places (admin People page, header, account menu); Mail
+    ///  knows people only by address and Connect only by participant identity,
+    ///  so both drew initials. This is the one question both can ask.
+    ///
+    /// ── TENANCY (rule 7) ──────────────────────────────────────────────────
+    ///  Every table read here — users, mailboxes, aliases, user_avatars — has
+    ///  the tenant query filter (AppDbContext), so a colleague is someone in
+    ///  the CALLER'S organisation by construction, not by a WHERE written here.
+    ///  An address from anywhere else simply does not match, and the caller
+    ///  draws initials. Nothing but user id and a version leaves: no name, no
+    ///  address the caller did not already send, no image bytes.
+    ///
+    ///  By address, a person is matched on their sign-in email, any PERSONAL
+    ///  mailbox (shared ones have no person, UserId is null), or an alias of
+    ///  one — mail arrives from whichever of those they sent from. Compared
+    ///  lower-cased on both sides: users.email is citext, and citext = text[]
+    ///  resolves to a case-SENSITIVE text comparison.
+    /// </summary>
+    private static async Task<IResult> PhotoLookupAsync(
+        PhotoLookupRequest req, AppDbContext db, CancellationToken ct)
+    {
+        var emails = (req.Emails ?? [])
+            .Where(e => !string.IsNullOrWhiteSpace(e) && e.Length <= 320)
+            .Select(e => e.Trim().ToLowerInvariant())
+            .Distinct().Take(MaxPhotoLookup).ToList();
+        var ids = (req.UserIds ?? []).Distinct().Take(MaxPhotoLookup).ToList();
+        if (emails.Count == 0 && ids.Count == 0) return Results.Ok(new { people = Array.Empty<object>() });
+
+        // address -> person, from the three places an address can belong to one.
+        var byAddress = new Dictionary<string, Guid>(StringComparer.Ordinal);
+        if (emails.Count > 0)
+        {
+            var viaUser = await db.Users.AsNoTracking()
+                .Where(u => emails.Contains(u.Email.ToLower()))
+                .Select(u => new { Address = u.Email.ToLower(), u.Id })
+                .ToListAsync(ct);
+            var viaMailbox = await db.Mailboxes.AsNoTracking()
+                .Where(m => m.UserId != null && m.IsActive && emails.Contains(m.Address.ToLower()))
+                .Select(m => new { Address = m.Address.ToLower(), Id = m.UserId!.Value })
+                .ToListAsync(ct);
+            var viaAlias = await (
+                from al in db.Aliases.AsNoTracking()
+                join m in db.Mailboxes.AsNoTracking() on al.TargetMailboxId equals m.Id
+                where al.IsActive && m.IsActive && m.UserId != null && emails.Contains(al.Address.ToLower())
+                select new { Address = al.Address.ToLower(), Id = m.UserId!.Value })
+                .ToListAsync(ct);
+
+            // Sign-in email first, then mailbox, then alias: TryAdd keeps the
+            // first, so an address that is somebody's login is that person.
+            foreach (var x in viaUser) byAddress.TryAdd(x.Address, x.Id);
+            foreach (var x in viaMailbox) byAddress.TryAdd(x.Address, x.Id);
+            foreach (var x in viaAlias) byAddress.TryAdd(x.Address, x.Id);
+        }
+
+        var candidates = byAddress.Values.Concat(ids).Distinct().ToList();
+        var versions = await db.UserAvatars.AsNoTracking()
+            .Where(a => candidates.Contains(a.UserId))
+            .Select(a => new { a.UserId, a.UpdatedAt })
+            .ToDictionaryAsync(a => a.UserId, a => a.UpdatedAt.ToUnixTimeMilliseconds(), ct);
+
+        // Only people WITH a photo come back: "not in the answer" means
+        // initials, whether that is an outsider, a shared mailbox, or a
+        // colleague who has not set one.
+        var people = new List<object>();
+        foreach (var (address, userId) in byAddress)
+            if (versions.TryGetValue(userId, out var ver)) people.Add(new { email = address, userId, v = ver });
+        foreach (var userId in ids)
+            if (versions.TryGetValue(userId, out var ver)) people.Add(new { userId, v = ver });
+
+        return Results.Ok(new { people });
     }
 
     private static async Task<IResult> SetAvatarAsync(

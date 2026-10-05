@@ -56,11 +56,19 @@ class El {
     // check was red for four weeks without anyone running it — which is
     // why it runs in CI from 17 Sept (rule 8).
     this.attrs = {};
+    // dataset, since 26 Sept 2026 when the tiles gained profile photos
+    // (#308): setTiles keeps the photo URL in circle.dataset.photo so a
+    // re-render does not reload the image. Every browser element has it; the
+    // fake did not, so this check crashed in CI ("Cannot read properties of
+    // undefined (reading 'photo')") from that day, while the real window
+    // worked - and a red main blocks every deploy.
+    this.dataset = {};
   }
   setAttribute(name, value) { this.attrs[name] = String(value); }
   getAttribute(name) { return name in this.attrs ? this.attrs[name] : null; }
   removeAttribute(name) { delete this.attrs[name]; }
   replaceChildren(...kids) {
+    this.textContent = '';   // as a browser does: the old text goes with the old children
     for (const c of this.children) c.parent = null;
     this.children = [];
     this.append(...kids);
@@ -186,6 +194,17 @@ const sam = tiles()[0];
 ok('the video element is hidden', sam.children[0].style.display === 'none');
 ok('the initial circle is shown', sam.children[1].style.display === 'grid');
 ok('and the initial is the letter', sam.children[1].children[0].textContent === 'S');
+
+handles.setTiles([tile('sam', { trackId: '', photo: 'blob:sam-photo' })]);
+const circle = tiles()[0].children[1].children[0];
+const img = circle.children[0];
+ok('with a photo, the circle shows the photo', img !== undefined && img.tag === 'img' && img.src === 'blob:sam-photo');
+log.length = 0;
+handles.setTiles([tile('sam', { trackId: '', photo: 'blob:sam-photo' })]);
+ok('and a re-render keeps the same image (not reloaded)', circle.children[0] === img);
+ok('...and the letter is gone while the photo shows', circle.textContent === '');
+if (img) img.onerror();
+ok('a photo that fails to load falls back to the letter', img !== undefined && circle.textContent === 'S');
 
 section('a shared screen takes the width and is fitted, not cropped');
 handles.setTiles([

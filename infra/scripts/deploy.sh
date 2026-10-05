@@ -55,6 +55,93 @@ case "$ENV" in
 esac
 
 # ---------------------------------------------------------------------------
+#  RUN DETACHED, OR DO NOT RUN — HOUSE_RULES rule 11b (Mr. Singh, 27 Sept 2026).
+#
+#  On 26 September a hand deploy died at 13:58Z when the SSH session reset
+#  during the pre-deploy backup. It had not reached the schema step, so
+#  production was untouched — by luck: one step later and the box would have
+#  been half-updated with nobody watching. It then sat unnoticed for three
+#  hours, because the tool call driving it had timed out into the background.
+#
+#  A deploy attached to a session dies with that session. So this script
+#  refuses to start unless it is detached, and prints the one command that
+#  runs it correctly.
+#
+#  WHAT "ATTACHED" MEANS — three tests, each closing a hole the one before
+#  left open (tests/deploy/test-detached-guard.sh runs every form):
+#
+#   1. Input, output or errors are a terminal. The first version of this
+#      guard asked only about OUTPUT, so `./deploy.sh production > log 2>&1`
+#      — the natural thing to type — passed, while still sitting in the SSH
+#      session (Mr. Singh, 28 Sept).
+#   2. The process has a controlling terminal at all: /dev/tty opens. This is
+#      what `setsid` removes, and it catches a run with every stream
+#      redirected that is still in the session's process group.
+#   3. Output is not a regular file. `ssh host ./deploy.sh production` with
+#      no terminal has NO controlling terminal, so test 2 passes it — but its
+#      output is the SSH channel, and the first write after the connection
+#      drops kills it with SIGPIPE. Measured 28 Sept: a process with no
+#      terminal and its output on a pipe died when the reader went away; the
+#      same process writing to a file ran to the end. This is also why
+#      `| tee deploy.log` is refused: tee dies with the session.
+#
+#  There are two ways past, both deliberate and neither a habit: see
+#  override_allowed below.
+# ---------------------------------------------------------------------------
+has_controlling_terminal() { [ -e /dev/tty ] && sh -c ': < /dev/tty' 2>/dev/null; }
+# Sets ATTACHED_WHY and returns 0 when attached. NEVER called as $(...): inside
+# a command substitution, standard output IS the substitution's own pipe, so
+# the output tests would be asking about that pipe and not about this
+# script's output. The first draft did exactly that. It refused the correct
+# detached form as "not a log file", and its terminal test could never fire.
+# Found by tests/deploy/test-detached-guard.sh, 28 Sept 2026.
+ATTACHED_WHY=""
+attached_because() {
+    if [ -t 0 ]; then ATTACHED_WHY="its input is a terminal"; return 0; fi
+    if [ -t 1 ] || [ -t 2 ]; then ATTACHED_WHY="its output is a terminal"; return 0; fi
+    if has_controlling_terminal; then
+        ATTACHED_WHY="it is inside a login or SSH session (it has a controlling terminal)"; return 0
+    fi
+    if ! { [ -f /dev/stdout ] && [ -f /dev/stderr ]; }; then
+        ATTACHED_WHY="its output is not a log file (a pipe or an SSH channel breaks when the connection drops)"; return 0
+    fi
+    return 1
+}
+# THE OVERRIDE IS NARROW ON PURPOSE (Mr. Singh, 29 Sept 2026). A single
+# variable that silences the guard gets typed by habit, and then the guard is
+# a formality. So:
+#   - DEPLOY_ATTACHED=1 counts ONLY beside GITHUB_ACTIONS=true. The workflow
+#     sets both on its own command line (GITHUB_ACTIONS is not inherited
+#     over SSH from the runner). Typed alone in an SSH session, it does
+#     nothing, and the refusal says so.
+#   - DEPLOY_LOCAL_REHEARSAL=1 is the laptop's switch, named for what it is.
+override_allowed() {
+    [ "${DEPLOY_LOCAL_REHEARSAL:-}" = "1" ] && return 0
+    [ "${DEPLOY_ATTACHED:-}" = "1" ] && [ "${GITHUB_ACTIONS:-}" = "true" ] && return 0
+    return 1
+}
+if ! override_allowed && attached_because; then
+    printf '\n   [FAIL] deploy.sh is attached: %s.\n' "$ATTACHED_WHY"
+    if [ "${DEPLOY_ATTACHED:-}" = "1" ]; then
+        printf '          DEPLOY_ATTACHED=1 is ignored here: it counts only from the GitHub\n'
+        printf '          workflow. It does not make a hand deploy safe to run attached.\n'
+    fi
+    printf '          Run it detached, so a dropped connection cannot kill it halfway\n'
+    printf '          (HOUSE_RULES rule 11b):\n\n'
+    printf '     LOG=~/deploy-%s-$(date -u +%%Y%%m%%dT%%H%%M%%SZ).log\n' "$ENV"
+    printf '     CI=1 setsid nohup ./infra/scripts/deploy.sh %s > "$LOG" 2>&1 < /dev/null &\n' "$ENV"
+    printf '     tail -f "$LOG"        # Ctrl-C stops the tail only, never the deploy\n\n'
+    printf '   The log ends in a DEPLOY VERDICT line. No verdict line = the deploy did not\n'
+    printf '   finish: check the server before doing anything else.\n\n'
+    exit 1
+fi
+
+# Every exit prints a verdict. A log with no "DEPLOY VERDICT" line was cut
+# off — killed, or the box died — and rule 11b says that is a failure, not a
+# maybe. The PASS line is printed by the success path at the bottom.
+trap 'rc=$?; if [ "$rc" -ne 0 ]; then printf "\n   DEPLOY VERDICT: FAIL (exit %s) at %s\n\n" "$rc" "$(date -u +%FT%TZ)"; fi' EXIT
+
+# ---------------------------------------------------------------------------
 #  ONE DEPLOYER AT A TIME — the lock rule 11 promised.
 #
 #  Since 29 August every lane deploys its own work, so two people reaching
@@ -103,6 +190,71 @@ if grep -q 'CHANGE_ME' infra/docker/.env; then
     exit 1
 fi
 ok "secrets present"
+
+# ---------------------------------------------------------------------------
+step "Settings files are private"
+# ── .env AND EVERY COPY OF IT: READABLE BY THIS ACCOUNT ONLY, OR NO DEPLOY. ──
+#  infra/docker/.env holds every production secret, and a copy of it is the
+#  same secret in a second place. On 28 Sept 2026 .env was found at mode 664
+#  — readable by every account on the server — with three copies beside it
+#  the same way, one 52 days old. Nobody chose that: this account's umask is
+#  002, so every file it creates is born world-readable unless the command
+#  says otherwise. A runbook rule was written that day. A rule is a sentence.
+#
+#  Mr. Singh (reached this lane by 28 Sept 2026, given in a separate session;
+#  first written "1 Oct", a date that had not yet come): the deploy REFUSES —
+#  it does not warn — because
+#  the deploy is the one moment somebody is watching.
+#
+#  WHAT COUNTS: every file named .env* in the settings directory that is NOT
+#  tracked by git. The tracked ones are the published examples
+#  (.env.production.example): they are in the repository, git writes them
+#  664, and a secret in one of them is a different mistake. Deciding by git
+#  and not by the name "*.example" matters: a copy somebody called
+#  .env.example.bak is a copy of the secrets, and is refused.
+#
+#  WHAT FAILS: any group or other permission bit at all (so 640 fails, not
+#  only 644), or an owner that is not the account running the deploy.
+#
+#  OLD COPIES are named, not refused: removing a file is a person's decision
+#  (docs/DEPLOY_RUNBOOK.md). The age comes from the UTC stamp in the NAME
+#  when there is one — `cp -p` carries the original's date onto the copy, so
+#  the file's own date says when .env was last edited, not when it was copied.
+# ─────────────────────────────────────────────────────────────────────────
+ENV_DIR=infra/docker
+ME=$(id -un)
+env_checked=0; env_bad=(); env_old=()
+while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    git ls-files --error-unmatch -- "$f" >/dev/null 2>&1 && continue
+    env_checked=$((env_checked + 1))
+    if [ -n "$(find "$f" -maxdepth 0 \( -perm /077 -o ! -user "$ME" \) 2>/dev/null)" ]; then
+        env_bad+=("$f")
+    fi
+    [ "$f" = "$ENV_DIR/.env" ] && continue
+    stamp=$(printf '%s' "$f" | grep -oE '20[0-9]{6}T?[0-9]{0,6}Z?$' | cut -c1-8 || true)
+    if [ -n "$stamp" ] && born=$(date -u -d "$stamp" +%s 2>/dev/null); then :
+    else born=$(stat -c %Y "$f"); fi
+    [ $(( ( $(date -u +%s) - born ) / 86400 )) -gt 7 ] && env_old+=("$f")
+done < <(find "$ENV_DIR" -maxdepth 1 -type f -name '.env*' 2>/dev/null | sort)
+
+if [ "$env_checked" -eq 0 ]; then
+    bad "found no settings file to check in $ENV_DIR — the check itself is broken; stopping"
+    exit 1
+fi
+if [ "${#env_bad[@]}" -gt 0 ]; then
+    bad "${#env_bad[@]} settings file(s) can be read by someone other than $ME — refusing to deploy"
+    for f in "${env_bad[@]}"; do note "  $(stat -c 'mode %a, owner %U' "$f")  $f"; done
+    note "Each holds production secrets. Fix, then deploy again:"
+    note "  chmod 600 ${env_bad[*]}"
+    note "and make copies with:  ( umask 077; cp .env .env.before-<reason>-\$(date -u +%Y%m%dT%H%M%SZ) )"
+    exit 1
+fi
+ok "$env_checked settings file(s), each readable by $ME only"
+if [ "${#env_old[@]}" -gt 0 ]; then
+    note "${#env_old[@]} copy(ies) of .env older than seven days — remove by hand (docs/DEPLOY_RUNBOOK.md):"
+    for f in "${env_old[@]}"; do note "  $f"; done
+fi
 
 # ---------------------------------------------------------------------------
 #  Docker must exist AND be usable by this user.
@@ -270,6 +422,22 @@ if [ "$ENV" = "production" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Every AI entry point asks AiGate before sending, and every AI feature label
+# has an organisation list (Mr. Singh, 30 Sept 2026: a customer used Mail AI
+# on 25 Sept before its privacy text existed). CI runs the same check; it runs
+# here too because a hand deploy is the path that has skipped CI before.
+# Source scan only - no database, no containers - so it costs nothing and
+# refuses before anything is built or stopped.
+step "Every AI entry point asks its organisation list"
+if ai_gate_out=$(python3 tests/ai/every_ai_entry_calls_gate.py apps/api 2>&1); then
+    printf '%s\n' "$ai_gate_out" | sed 's/^/   /'
+else
+    printf '%s\n' "$ai_gate_out" | sed 's/^/      /'
+    bad "an AI entry point does not ask AiGate, or a feature has no list - stopping"
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
 step "Pulling and building"
 $COMPOSE pull 2>&1 | grep -Ei 'error|warn' | sed 's/^/   /' || true
 
@@ -290,19 +458,130 @@ ok "images ready"
 
 # ---------------------------------------------------------------------------
 step "Backing up the database"
+# ── COMPRESSED, CHECKED WHOLE, ENCRYPTED, LOCKED DOWN, KEPT BY DAYS. ──────
+#  Until 24 September 2026 this wrote an UNCOMPRESSED dump before every
+#  deploy and never deleted one. On 25 Sept the server held 323 of them,
+#  31 GB back to 4 Aug, unencrypted and readable by every account on the
+#  machine — a full copy of everything every customer believes was deleted.
+#  Mr. Singh's ruling, 25 Sept 2026 (PR 254), and each rule's failure:
+#
+#   1. gzip AS IT IS WRITTEN, then encrypt, in one pipe. pipefail (top of
+#      this file) makes a failed pg_dumpall fail the pipeline, so a dead
+#      dump cannot hide behind a successful gzip or openssl.
+#
+#   2. ENCRYPTED AT REST with the SAME scheme and passphrase as backup.sh's
+#      off-box copies (AES-256-CBC, PBKDF2, 200,000 iterations;
+#      BACKUP_ENC_PASSPHRASE from backup.sh's config file, which Amit also
+#      holds on paper). One scheme, one key to keep. On production a missing
+#      passphrase STOPS the deploy: an unencrypted copy is exactly what this
+#      replaces, so it is not an acceptable fallback.
+#
+#   3. LOCKED DOWN FROM BIRTH: umask 077, the directory 700, each file 600.
+#      Not fixed afterwards — created that way (the 323 old copies were
+#      chmod-ed by hand on 25 Sept, Amit's go).
+#
+#   4. CHECKED WHOLE, not just present: decrypted and gunzipped in a pipe and
+#      checked for pg_dumpall's "database cluster dump complete" marker. A
+#      wrong passphrase, a damaged archive or a dump cut off halfway all fail
+#      here — before anything is deleted and before the deploy continues.
+#
+#   5. KEPT BY DAYS, NOT BY COUNT. A count makes the period depend on how
+#      often we deploy, which no privacy notice can state. The window is
+#      backup.sh's own BACKUP_KEEP_DAYS (same config file, same default 14),
+#      so pre-deploy copies and the regular local backups are ONE number.
+#      Pruning runs only after this deploy's copy passed rule 4, and removes
+#      only ENCRYPTED pre-deploy copies (*.sql.gz.enc) older than the window.
+#
+#   6. THE OLD PLAIN COPIES ARE NOT TOUCHED HERE. Mr. Singh: they are deleted
+#      only after a restore has been proven, by a person, in one explicit
+#      logged action — never as a side effect of a deploy. This step counts
+#      them and says so every time until they are gone.
+#
+#  Restore one:
+#    openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:BACKUP_ENC_PASSPHRASE \
+#        -in backups/pre-deploy-<stamp>.sql.gz.enc | gunzip | psql -U postgres
+# ─────────────────────────────────────────────────────────────────────────
+BACKUP_CONF="${BACKUP_DIR:-/srv/backups/tatvaos}/.backup-env"
+# Only the two values this step needs, read in a subshell: sourcing the
+# whole file here would put the object-storage credentials into every
+# process deploy.sh starts.
+conf_value() {
+    [ -r "$BACKUP_CONF" ] || return 0
+    ( set -a; . "$BACKUP_CONF" >/dev/null 2>&1; eval "printf '%s' \"\${$1:-}\"" )
+}
+PREDEPLOY_KEEP_DAYS="${PREDEPLOY_KEEP_DAYS:-$(conf_value BACKUP_KEEP_DAYS)}"
+PREDEPLOY_KEEP_DAYS="${PREDEPLOY_KEEP_DAYS:-14}"
+PREDEPLOY_PASS="${PREDEPLOY_PASS:-$(conf_value BACKUP_ENC_PASSPHRASE)}"
+if ! [[ "$PREDEPLOY_KEEP_DAYS" =~ ^[0-9]+$ ]] || [ "$PREDEPLOY_KEEP_DAYS" -lt 1 ]; then
+    bad "BACKUP_KEEP_DAYS is '$PREDEPLOY_KEEP_DAYS' — not a whole number of days; stopping"
+    exit 1
+fi
 if docker ps --format '{{.Names}}' | grep -q postgres; then
-    mkdir -p backups
+    ( umask 077; mkdir -p backups )
+    chmod 700 backups
     STAMP=$(date +%Y%m%d-%H%M%S)
-    if $COMPOSE exec -T postgres pg_dumpall -U postgres > "backups/pre-deploy-${STAMP}.sql" 2>/dev/null; then
-        SIZE=$(du -h "backups/pre-deploy-${STAMP}.sql" | cut -f1)
-        ok "backups/pre-deploy-${STAMP}.sql (${SIZE})"
+    if [ -z "$PREDEPLOY_PASS" ]; then
+        if [ "$ENV" = "production" ]; then
+            bad "no BACKUP_ENC_PASSPHRASE in $BACKUP_CONF — will not write an unencrypted copy of production; stopping"
+            exit 1
+        fi
+        note "no encryption passphrase ($ENV) — this non-production copy is compressed but NOT encrypted"
+    fi
+    if [ -n "$PREDEPLOY_PASS" ]; then
+        DUMP="backups/pre-deploy-${STAMP}.sql.gz.enc"
+        export PREDEPLOY_PASS
+        if ! ( umask 077; $COMPOSE exec -T postgres pg_dumpall -U postgres 2>/dev/null \
+                 | gzip -6 \
+                 | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:PREDEPLOY_PASS > "$DUMP" ); then
+            bad "backup failed — stopping rather than deploying over unbacked data"
+            rm -f -- "$DUMP"; exit 1
+        fi
+        read_back() { openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:PREDEPLOY_PASS -in "$DUMP" 2>/dev/null; }
     else
-        bad "backup failed — stopping rather than deploying over unbacked data"
+        DUMP="backups/pre-deploy-${STAMP}.sql.gz"
+        if ! ( umask 077; $COMPOSE exec -T postgres pg_dumpall -U postgres 2>/dev/null | gzip -6 > "$DUMP" ); then
+            bad "backup failed — stopping rather than deploying over unbacked data"
+            rm -f -- "$DUMP"; exit 1
+        fi
+        read_back() { cat -- "$DUMP"; }
+    fi
+    chmod 600 -- "$DUMP"
+    if ! read_back | gzip -t 2>/dev/null; then
+        bad "backup does not decrypt to a valid gzip ($DUMP) — stopping"
         exit 1
+    fi
+    # Captured, then matched in bash — NOT `| grep -q`. Under pipefail a
+    # grep -q that exits on its first match can SIGPIPE the stage before it
+    # and fail the pipeline on a GOOD dump: the false red PR 227 removed
+    # from verify-live.sh. tail reads to EOF, so nothing here exits early.
+    dump_end=$(read_back | gzip -dc 2>/dev/null | tail -c 400)
+    if [[ "$dump_end" != *"database cluster dump complete"* ]]; then
+        bad "backup is TRUNCATED — no end-of-dump marker in $DUMP — stopping"
+        exit 1
+    fi
+    ok "$DUMP ($(du -h "$DUMP" | cut -f1), whole, $( [ -n "$PREDEPLOY_PASS" ] && echo encrypted || echo NOT encrypted ), mode $(stat -c %a "$DUMP"))"
+
+    # Encrypted pre-deploy copies older than the window go. -- guards
+    # against a name starting with '-'. Plain .sql / .sql.gz are NOT matched
+    # (rule 6).
+    mapfile -t old < <(find backups -maxdepth 1 -type f -name 'pre-deploy-*.sql.gz.enc' \
+                            -mtime "+$PREDEPLOY_KEEP_DAYS" 2>/dev/null | sort)
+    if [ "${#old[@]}" -gt 0 ]; then
+        rm -f -- "${old[@]}"
+        ok "removed ${#old[@]} encrypted pre-deploy copy(ies) older than $PREDEPLOY_KEEP_DAYS days"
+    fi
+    kept=$(find backups -maxdepth 1 -type f -name 'pre-deploy-*.sql.gz.enc' | wc -l)
+    ok "$kept encrypted pre-deploy copy(ies) kept; window $PREDEPLOY_KEEP_DAYS days (BACKUP_KEEP_DAYS)"
+    legacy=$(find backups -maxdepth 1 -type f \( -name 'pre-deploy-*.sql' -o -name 'pre-deploy-*.sql.gz' \) | wc -l)
+    if [ "$legacy" -gt 0 ]; then
+        note "$legacy OLD UNENCRYPTED pre-deploy copies still here — left for the explicit, logged deletion after a restore is proven (Mr. Singh, 25 Sept). Not deleted by deploys."
     fi
 else
     note "no running database yet — first deploy"
 fi
+# The passphrase was exported only for openssl above. Nothing started from
+# here on (builds, compose up, verify-live) has any business holding it.
+unset PREDEPLOY_PASS
 
 # ---------------------------------------------------------------------------
 # SCHEMA BEFORE SERVICES — the order is the point.
@@ -347,12 +626,31 @@ for f in local/postgres/init/*.sql; do
     if out=$($COMPOSE exec -T postgres psql -U postgres -d tatvaos_mail \
              -v ON_ERROR_STOP=1 < "$f" 2>&1); then
         ok "$(basename "$f")"
+        # A migration that did something unusual says so with RAISE WARNING,
+        # and it is shown here, under its [ ok ] - WARNING lines only, never
+        # NOTICE, or a hundred files of chatter would bury it (Mr. Singh,
+        # 30 Sept 2026; rule 12). Until then a successful migration's output
+        # went nowhere, so PR 330's count of deleted orphan rows could not be
+        # seen on a deploy. A failed one already shows its last 20 lines,
+        # warnings included. tests/deploy/migration-warnings.sh runs this loop.
+        printf '%s\n' "$out" | grep -E '^(psql:[^ ]+ )?WARNING:' | sed 's/^/      /' || true
     else
         bad "$(basename "$f")"
         printf '%s\n' "$out" | tail -20 | sed 's/^/      /'
         schema_failed=1
     fi
 done
+
+# Which organisations each AI feature is offered to, AS THIS DEPLOY STARTS
+# (Mr. Singh, 30 Sept 2026: every AI deploy note states it). Printed here,
+# after the schema, so the deploy log carries it whoever writes the note.
+# Organisation ids only; "(no row)" and "" both mean nobody (PR 360).
+ai_lists=$($COMPOSE exec -T postgres psql -U postgres -d tatvaos_mail -At -c "
+    SELECT k || ' = ' || COALESCE((SELECT CASE WHEN value = '' THEN '(empty - nobody)' ELSE value END
+                                   FROM core.platform_settings s WHERE s.key = k), '(no row - nobody)')
+      FROM unnest(ARRAY['ai.mail.organisations','ai.connect.organisations','ai.docs.organisations','ai.sheets.organisations']) AS k" 2>&1) \
+    && { note "AI offered to (organisation lists):"; printf '%s\n' "$ai_lists" | sed 's/^/      /'; } \
+    || note "could not read the AI organisation lists: $ai_lists"
 
 # A half-applied schema is worse than a failed deploy: the containers come up,
 # the health check may even pass, and the breakage surfaces later as missing
@@ -799,7 +1097,12 @@ else
 fi
 
 DOMAIN=$(grep '^SITE_DOMAIN=' infra/docker/.env | cut -d= -f2)
-printf '\n   %s%s deployed.%s\n\n' "$G" "$ENV" "$X"
+printf '\n   %s%s deployed.%s\n' "$G" "$ENV" "$X"
+# PASS covers everything above, INCLUDING this script's own verify-live.sh run
+# (a failure there is a bad() and never reaches this line). It does not cover
+# what runs after this script: the workflow's second verify-live and its
+# checks from outside have their own results.
+printf '   DEPLOY VERDICT: PASS %s at %s (verify-live passed inside this run)\n\n' "$BUILD_SHA" "$(date -u +%FT%TZ)"
 printf '   App        https://%s\n' "$DOMAIN"
 printf '   API        https://%s/api\n' "$DOMAIN"
 printf '   Health     https://%s/health\n' "$DOMAIN"

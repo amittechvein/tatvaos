@@ -34,10 +34,20 @@
   <ItemGroup>
     <!-- The production file itself. Not a copy. -->
     <Compile Include="../../apps/api/Shared/Notify/HtmlToText.cs" Link="HtmlToText.cs" />
-    <Compile Include="../../apps/api/Shared/Notify/MailIdentity.cs" Link="MailIdentity.cs" />
     <Compile Include="../../apps/api/Shared/Notify/SystemMailMessage.cs" Link="SystemMailMessage.cs" />
+    <Compile Include="../../apps/api/Shared/Notify/WelcomeEmail.cs" Link="WelcomeEmail.cs" />
+    <Compile Include="../../apps/api/Shared/Notify/ResetEmail.cs" Link="ResetEmail.cs" />
+    <Compile Include="../../apps/api/Shared/Notify/RecoveryVerifyEmail.cs" Link="RecoveryVerifyEmail.cs" />
+    <Compile Include="../../apps/api/Shared/Notify/RecoveryChangedEmail.cs" Link="RecoveryChangedEmail.cs" />
+    <Compile Include="../../apps/api/Shared/Notify/SignInAlertEmail.cs" Link="SignInAlertEmail.cs" />
+    <Compile Include="../../apps/api/Shared/Notify/StorageWarningEmail.cs" Link="StorageWarningEmail.cs" />
+    <Compile Include="../../apps/api/Shared/Notify/GetTheAppRow.cs" Link="GetTheAppRow.cs" />
     <!-- A real template, so the test measures the mail we actually send. -->
     <Compile Include="../../apps/api/Shared/Notify/InviteEmail.cs" Link="InviteEmail.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MimeKit" Version="4.17.0" />
   </ItemGroup>
 
 </Project>
