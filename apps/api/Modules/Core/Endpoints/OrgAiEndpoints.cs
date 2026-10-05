@@ -67,6 +67,11 @@ public static class OrgAiEndpoints
             .FirstOrDefaultAsync(ct);
         if (row is null) return Results.NotFound();
 
+        // Who and where, the one way every sentence says it (AiDisclosure).
+        // Both guarded against the provider's host in OpenAiGateway; null
+        // only when AI is not configured, and then no sentence uses them.
+        var toWhom = AiDisclosure.ToWhom(ai.Vendor ?? "", ai.DataLocation ?? "");
+
         return Results.Ok(new
         {
             enabled = row.AllowAi,
@@ -81,10 +86,12 @@ public static class OrgAiEndpoints
             // United States); a vendor move that forgets this setting turns AI
             // off rather than letting this sentence go stale. Mr. Singh, 23
             // Sept 2026: "nobody will remember it exists" — so nothing has to.
+            //
+            // 30 Sept 2026: names the vendor as well as the place (Mr. Singh),
+            // and says how long the vendor keeps it (AiDisclosure.Retention).
             disclosure = ai.IsConfigured
-                ? "When enabled, meeting transcripts from this organisation are "
-                  + $"processed by TatvaOS AI on a third-party service in {ai.DataLocation}. "
-                  + "Nothing is sent while this is off."
+                ? $"When enabled, meeting transcripts from this organisation are sent to {toWhom}, "
+                  + $"to write meeting notes. {AiDisclosure.Retention} Nothing is sent while this is off."
                 : "TatvaOS AI is not configured on this platform. Nothing is sent.",
             // Mail's own switch. Meaningful only while `enabled` is on — the
             // gateway needs both — and the screen says so.
@@ -103,9 +110,9 @@ public static class OrgAiEndpoints
             },
             mailFeatureDisclosure = new
             {
-                rewrite = "Sends only the text a person typed, when they ask for a rewrite.",
-                suggest = "Sends the sender's name, the subject and the new text of an email when a person opens it.",
-                summary = "Sends the sender names, dates and new text of a whole conversation when a person asks for a summary.",
+                rewrite = $"Sends {AiDisclosure.HelpMeWrite}.",
+                suggest = $"Sends {AiDisclosure.SuggestedReplies}.",
+                summary = $"Sends {AiDisclosure.Summarise}.",
             },
             // What Mail sends, in the API's words for the same reason as
             // `disclosure`. Kept SEPARATE from it: that sentence is asserted
@@ -117,12 +124,15 @@ public static class OrgAiEndpoints
             // is sent unless they ask", which stopped being true the moment
             // suggested replies read a message when it is OPENED. A consent
             // sentence that understates what is sent is worse than none.
+            //
+            // 30 Sept 2026: rebuilt from AiDisclosure, the approved text (Mr.
+            // Singh), naming the vendor, what never leaves, and retention.
             mailDisclosure = ai.IsConfigured
-                ? "When Mail AI is on, two things are processed on a third-party service in "
-                  + $"{ai.DataLocation}: a draft a person asks TatvaOS AI to rewrite, and — to "
-                  + "suggest replies — the sender's name, the subject and the new text of a message "
-                  + "when a person opens it. Nothing is sent in the background unless sorting is "
-                  + "also switched on below."
+                ? $"When Mail AI is on, the following is sent to {toWhom}. "
+                  + $"Help me write: {AiDisclosure.HelpMeWrite}. "
+                  + $"Suggested replies: {AiDisclosure.SuggestedReplies}. "
+                  + "Summarise and sorting send more, and each has its own switch below. "
+                  + $"{AiDisclosure.NeverSent} {AiDisclosure.Retention}"
                 : "TatvaOS AI is not configured on this platform. Nothing is sent.",
             // Sorting incoming mail (step 3): its own consent, because it
             // sends mail nobody clicked on. `since` is when it was turned on;
@@ -140,10 +150,10 @@ public static class OrgAiEndpoints
             // other two disclosures so a provider move cannot leave it stale.
             mailTriageDisclosure = ai.IsConfigured
                 ? "Every new email that arrives, including ones about health, children or money, will be "
-                  + $"sent to TatvaOS AI on a service in {ai.DataLocation}, without anyone clicking anything. "
-                  + "What is sent is the sender's name, the subject and the start of the message, so that it "
-                  + "can be labelled Needs reply, FYI, Updates or Promotions. Emails that arrived before "
-                  + "sorting was switched on are never sent."
+                  + $"sent to {toWhom}, without anyone clicking anything. "
+                  + "What is sent is the sender's name, the subject and the first 1,000 characters of the new "
+                  + "text, so that it can be labelled Needs reply, FYI, Updates or Promotions. Emails that "
+                  + $"arrived before sorting was switched on are never sent. {AiDisclosure.Retention}"
                 : "TatvaOS AI is not configured on this platform. Nothing is sent.",
             // This month's use against the allowance — the number the
             // administrator is emailed about at 80 % and 100 % (MeteredAiGateway).
@@ -187,6 +197,19 @@ public static class OrgAiEndpoints
         var triageNow = row.MailAiTriageSince != null;
 
         var featuresBefore = new { rewrite = row.MailAiRewrite, suggest = row.MailAiSuggest, summary = row.MailAiSummary };
+        // Turning Mail AI ON (from off) starts every feature at the published
+        // default: Help me write on; suggested replies and Summarise off
+        // (AiDisclosure.WhoDecides, Mr. Singh 30 Sept 2026). Without this an
+        // organisation that never used Mail AI would come back with the OLD
+        // stored default - suggestions on - and the page would contradict the
+        // privacy text. The feature loop below audits each one that moved.
+        // A mailFeatures value in the same request still wins.
+        if (req.Mail == true && !before.allowMailAi)
+        {
+            row.MailAiRewrite = AiProductSwitch.DefaultRewrite;
+            row.MailAiSuggest = AiProductSwitch.DefaultSuggest;
+            row.MailAiSummary = AiProductSwitch.DefaultSummary;
+        }
         if (req.MailFeatures is { } set)
         {
             if (set.Rewrite is bool rw) row.MailAiRewrite = rw;
