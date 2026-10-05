@@ -71,6 +71,7 @@ public sealed class MeteredAiGateway(
     public bool IsConfigured => inner.IsConfigured;
     public string Model => inner.Model;
     public string? DataLocation => inner.DataLocation;
+    public string? Vendor => inner.Vendor;
     public Task<bool> EnabledForTenantAsync(CancellationToken ct) => inner.EnabledForTenantAsync(ct);
 
     /// <summary>The limits in force. NULL means no limit; 0 means none allowed.</summary>
@@ -154,6 +155,13 @@ public sealed class MeteredAiGateway(
         //    refusal, unmetered.
         if (!inner.IsConfigured || !tenant.HasTenant || !await inner.EnabledForTenantAsync(ct))
             return await inner.CompleteAsync(instruction, input, ct, feature);
+
+        // 1a. Is this feature offered to this organisation at all (AiGate,
+        //     30 Sept 2026)? Every label has a list; one without is refused.
+        //     Before the product switches, so a feature shipped ahead of its
+        //     disclosure is refused here whatever an administrator switched on.
+        if (!await AiGate.AllowedAsync(db, tenant.TenantId, feature, log, ct))
+            return AiResult.Failed(AiGate.RefusalFor(feature));
 
         // 1b. The product's own switch, where it has one (Mail, 25 Sept 2026).
         //     Same standing as consent: nothing was about to be sent, so not

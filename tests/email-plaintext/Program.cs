@@ -79,36 +79,48 @@ internal static class Program
 
         Console.WriteLine();
         Console.WriteLine("  The Message-ID (Amit's forwarded mail had NONE; Gmail invented one)");
-        var id = MailIdentity.MessageIdFor("no_reply@tatvaos.com");
-        Ok("has the angle brackets a header needs", id.StartsWith('<') && id.EndsWith('>'));
-        Ok("on the SENDER's domain, never the container's hostname", id.EndsWith("@tatvaos.com>"));
-        Ok("two calls never collide", MailIdentity.MessageIdFor("a@b.test") != MailIdentity.MessageIdFor("a@b.test"));
-        Ok("a display-name sender reads the right domain",
-            MailIdentity.MessageIdFor("TatvaOS <no_reply@tatvaos.com>").EndsWith("@tatvaos.com>"));
-        Ok("an address with no domain still gets ours",
-            MailIdentity.MessageIdFor("broken").EndsWith("@tatvaos.com>"));
-        Ok("null or empty does not throw", MailIdentity.MessageIdFor(null).EndsWith("@tatvaos.com>")
-            && MailIdentity.MessageIdFor("").EndsWith("@tatvaos.com>"));
+        // Generated the same way webmail generates it, by the same library.
+        // MailIdentity existed only because the system path used a different
+        // one — Mr. Singh, 24 Sept: the divergence IS the bug.
+        var id = Templates.Built("<p>x</p>").MessageId ?? "";
+        Ok("there is one at all", id.Length > 0);
+        Ok("on the SENDER's domain, never the container's hostname", id.EndsWith("@tatvaos.com"));
+        Ok("two messages never collide",
+            Templates.Built("<p>x</p>").MessageId != Templates.Built("<p>x</p>").MessageId);
         Ok("no spaces or control characters (a header must not fold here)",
             !id.Contains(' ') && id.All(c => !char.IsControl(c)));
 
         Console.WriteLine();
-        Console.WriteLine("  The REAL message on the wire (written by System.Net.Mail itself)");
-        var mime = WriteAndRead(html);
-        var crlf = string.Concat((char)13, (char)10);      // no escapes: a heredoc mangles them
-        var headerEnd = mime.IndexOf(crlf + crlf, StringComparison.Ordinal);
-        var headers = headerEnd > 0 ? mime[..headerEnd] : mime;
-        Ok("it is multipart/alternative", headers.Contains("Content-Type: multipart/alternative"));
-        Ok("EXACTLY ONE text/plain part (it was sent twice on 24 Sept)",
-            CountOf(mime, "Content-Type: text/plain") == 1);
-        Ok("exactly one text/html part", CountOf(mime, "Content-Type: text/html") == 1);
-        Ok("the text part comes BEFORE the html (RFC 2046: least preferred first)",
-            mime.IndexOf("text/plain", StringComparison.Ordinal) < mime.IndexOf("text/html", StringComparison.Ordinal));
-        Ok("a Message-ID on our domain, so nothing invents one",
-            headers.Contains("Message-ID: <") && headers.Contains("@tatvaos.com>"));
-        Ok("marked auto-generated", headers.Contains("Auto-Submitted: auto-generated"));
-        Ok("no List-Unsubscribe on a password email (nothing to turn off)",
-            !headers.Contains("List-Unsubscribe"));
+        Console.WriteLine("  EVERY template, as bytes on the wire (Mr. Singh, 24 Sept)");
+        var crlf = string.Concat((char)13, (char)10);
+        foreach (var (name, templateHtml) in Templates.All())
+        {
+            var mime = Templates.OnTheWire(templateHtml);
+            var headerEnd = mime.IndexOf(crlf + crlf, StringComparison.Ordinal);
+            var headers = headerEnd > 0 ? mime[..headerEnd] : mime;
+            var built = Templates.Built(templateHtml);
+            var plain = built.TextBody ?? "";
+
+            var faults = new List<string>();
+            if (!headers.Contains("multipart/alternative")) faults.Add("not multipart/alternative");
+            if (CountOf(mime, "Content-Type: text/plain") != 1) faults.Add("text/plain count is not 1");
+            if (CountOf(mime, "Content-Type: text/html") != 1) faults.Add("text/html count is not 1");
+            if (mime.IndexOf("text/plain", StringComparison.Ordinal) > mime.IndexOf("text/html", StringComparison.Ordinal))
+                faults.Add("html before text");
+            if (!headers.Contains("@tatvaos.com>") || !headers.Contains("Message-Id:") && !headers.Contains("Message-ID:"))
+                faults.Add("no Message-ID on our domain");
+            if (!headers.Contains("Auto-Submitted: auto-generated")) faults.Add("not marked auto-generated");
+            if (headers.Contains("List-Unsubscribe")) faults.Add("carries List-Unsubscribe");
+            if (!headers.Contains("From: " + SystemMailMessage.FromName)) faults.Add("From has no display name");
+            if (!System.Text.RegularExpressions.Regex.IsMatch(headers, @"Date: [A-Z][a-z]{2}, "))
+                faults.Add("Date has no day-of-week");
+            if (plain.Trim().Length < 80) faults.Add("text part too short to be the message");
+            if (plain.Contains('<') || plain.Contains("font-family", StringComparison.OrdinalIgnoreCase))
+                faults.Add("markup or CSS leaked into the text part");
+
+            Ok($"{name}: correct on the wire", faults.Count == 0);
+            if (faults.Count > 0) Console.WriteLine("          " + string.Join("; ", faults));
+        }
 
         if (Environment.GetEnvironmentVariable("TEXT_PREVIEW") is { Length: > 0 })
         {
@@ -131,28 +143,4 @@ internal static class Program
         return n;
     }
 
-    /// <summary>
-    /// The message as bytes, without an SMTP server: System.Net.Mail will
-    /// write it to a directory instead of a socket. This is what three faults
-    /// in one day were hiding from — shape is now testable.
-    /// </summary>
-    private static string WriteAndRead(string htmlBody)
-    {
-        var dir = Path.Combine(Path.GetTempPath(), "tatvaos-mail-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
-        try
-        {
-            using var client = new System.Net.Mail.SmtpClient
-            {
-                DeliveryMethod = System.Net.Mail.SmtpDeliveryMethod.SpecifiedPickupDirectory,
-                PickupDirectoryLocation = dir,
-            };
-            using var msg = SystemMailMessage.Build(
-                "no_reply@tatvaos.com", "someone@example.com", "A link to choose a new password",
-                htmlBody, html: true);
-            client.Send(msg);
-            return File.ReadAllText(Directory.GetFiles(dir, "*.eml")[0]);
-        }
-        finally { try { Directory.Delete(dir, true); } catch { /* a temp dir */ } }
-    }
 }
