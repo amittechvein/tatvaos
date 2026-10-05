@@ -108,6 +108,13 @@ jobs:
         run: dotnet run --project tests/connect-minutes
       - name: "Connect check: screen-share mode"
         run: dotnet run --project tests/connect-share
+      # Every token signed with Jwt:SigningKey carries its type, and every
+      # verifier accepts only its own (access at+jwt, Connect download ticket,
+      # MFA challenge). Mr. Singh, in a ruling that reached this lane by
+      # 28 Sept 2026 (given in a separate session): "make the distinction
+      # structural, not observed."
+      - name: "Auth check: every token type is checked for its own type"
+        run: dotnet run --project tests/token-types
 
       # Hire: HireAccess is the only route to hire.job_openings. A handler
       # that read the table directly would show a hiring manager every job in
@@ -127,6 +134,13 @@ jobs:
         run: dotnet run --project tests/dev-operator/gates
       - name: "Dev operator check: only known sign-in paths reach the session tail"
         run: bash tests/dev-operator/check-signin-tail.sh
+
+      # Every AI entry point asks AiGate before sending, and every AI feature
+      # label has an organisation list (Mr. Singh, 30 Sept 2026, after a
+      # customer used Mail AI before its privacy text existed). Source scan,
+      # no database. deploy.sh runs the same file before it builds.
+      - name: "AI check: every entry point asks its organisation list"
+        run: python3 tests/ai/every_ai_entry_calls_gate.py apps/api
 
   isolation:
     name: Tenant isolation
@@ -314,11 +328,118 @@ jobs:
       - name: "Dev operator: impossible outside Development, proven on the built API"
         run: bash tests/dev-operator/test.sh
 
+      # Decision 0009: an administrator sets a recovery email. Reads the mail it
+      # sends (decoded MIME) from a local SMTP sink, and runs the real hold
+      # worker with a hold due. Approved into CI by Mr. Singh, 27 Sept 2026.
+      - name: "0009: an administrator sets a recovery email"
+        run: |
+          node tests/support/smtp-sink.mjs > /tmp/smtp-sink.out 2>&1 &
+          for _ in $(seq 1 20); do [ -f .tmp/mail-sink.log ] && break; sleep 0.5; done
+          TATVAOS_MAIL_SINK_LOG="$PWD/.tmp/mail-sink.log" bash tests/recovery-admin/test-admin-recovery-email.sh
+
+      # Two-step recovery codes: enrols a person with a real TOTP code, then
+      # measures the codes the API issues (>= 80 bits each: 0024-mfa.sql's
+      # unsalted SHA-256 depends on it), hash-only storage, one use each.
+      # Red on c7cb110 at 50 bits. Approved into CI by Mr. Singh on 29 Sept 2026, for when Actions returns.
+      - name: "MFA: recovery codes are 80 bits, stored hashed, used once"
+        run: bash tests/mfa/test-recovery-codes.sh
+
       - name: Install the web app's TypeScript (for the PiP check)
         run: pnpm install --frozen-lockfile
 
       - name: "Connect check: picture-in-picture grid"
         run: bash infra/scripts/connect-pip-test.sh
+
+  # Docs: the file Space serves is built on the server (decision 0011
+  # condition 1). A job of its own: the render service needs Node 24 (it runs
+  # the editor's TypeScript schema directly), and the end-to-end test builds
+  # its own throwaway database (house rule 13) rather than sharing one.
+  # Approved into CI by Mr. Singh (1 Oct 2026: "the Docs render and container
+  # tests, with PR 367").
+  docs-render:
+    name: Docs render (service, gate, end to end, container)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: devpass
+          POSTGRES_DB: tatvaos_mail
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+        ports: ['5432:5432']
+    env:
+      # tests/lib/throwaway-db.sh, outside WSL, uses psql with these.
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: devpass
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '10.0.x' }
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install client
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list /etc/apt/sources.list.d/google-chrome*.sources
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+
+      # The server-wide roles (tatvaos_app, tatvaos_mailedge) exist on every
+      # real Postgres before a throwaway database is made; on this fresh service
+      # they do not. Without this step the first migration CREATES them inside
+      # the throwaway run, and throwaway-db.sh rightly stops: "a migration
+      # changed a SERVER-WIDE role" (PR 367's first CI run, 1 Oct 2026). The
+      # same step as the Verification scripts job.
+      - name: Apply schema (creates the server-wide roles)
+        run: |
+          for f in local/postgres/init/*.sql; do
+            echo "-- $f"
+            psql -h localhost -U postgres -d tatvaos_mail -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: "Render service: its own tests"
+        working-directory: apps/render
+        run: node --import ./src/register.mjs --test test/*.test.mjs
+
+      # The gate Mr. Singh set before any building: the server's file is the
+      # same document as the editor reloaded from storage, for every fixture,
+      # and the editor's first view differs from that only by the closed list
+      # of known storage drops (0011 condition 4). The comparison is calibrated.
+      - name: "Render gate: the same document, and the closed list of storage drops"
+        working-directory: apps/render
+        run: node --import ./spike/register.mjs spike/gate.mjs
+
+      - name: Build the API
+        run: dotnet build -c Release apps/api/TatvaOS.Api.csproj
+
+      # Its own throwaway database; the test starts the render service, STOPS
+      # it to prove a failed render fails the save, and holds two builds to
+      # prove an older one never overwrites a newer file.
+      - name: "Docs end to end: the file is the server's"
+        run: bash tests/docs/run-docs-live.sh
+
+      # The operator's switch with production's refusal added back: after the
+      # server render, switching on works (red before ServerRenderLanded: 409).
+      - name: "Docs switch: as production runs it"
+        env:
+          Docs__RefuseSwitchOnInDevelopment: 'true'
+          DOCS_TEST: tests/docs/docs-switch-production.test.mjs
+        run: bash tests/docs/run-docs-live.sh
+
+      # The container's hardening, each condition proven against the real
+      # compose definition, red first on the network rule. Docker is already
+      # running on the runner, so the script leaves it as it found it.
+      - name: "Render container: no internet, no database, API only, non-root, read-only, limits"
+        run: bash tests/docs-render/container-test.sh
 
   mail-stack:
     name: Mail stack
@@ -348,3 +469,80 @@ jobs:
         if: failure()
         working-directory: local
         run: docker compose logs --tail 80
+
+  # Sheets (PR 342). Until 1 Oct 2026 CI ran NO Sheets test, so a green run
+  # said nothing about Sheets — and "merge only after CI green" was Mr.
+  # Singh's condition for this PR. Its own job so its result reads as Sheets'.
+  # Same footing as the Docs job: Postgres 17, each end-to-end run on its own
+  # throwaway database (rule 13), the roles made first.
+  sheets:
+    name: Sheets (unit, guard, end to end, switch)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: devpass
+          POSTGRES_DB: tatvaos_mail
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+        ports: ['5432:5432']
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: devpass
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '10.0.x' }
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install client
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list /etc/apt/sources.list.d/google-chrome*.sources
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+
+      # The server-wide roles, as in the Docs job (see there).
+      - name: Apply schema (creates the server-wide roles)
+        run: |
+          for f in local/postgres/init/*.sql; do
+            echo "-- $f"
+            psql -h localhost -U postgres -d tatvaos_mail -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: "Sheets: the engine, model and .xlsx reader/writer"
+        run: node --import ./tests/sheets/register.mjs --test tests/sheets/*.test.ts
+
+      # Every refusal with its permit case; CONTROL=permit-all / refuse-all
+      # are the calibrations (tests/sheets-xlsx-guard). The real-Excel check
+      # (excel-check.ps1) needs Windows + Excel and stays a laptop run.
+      - name: "Sheets: XlsxGuard against our own files and the attack corpus"
+        run: |
+          node --import ./tests/sheets/register.mjs tests/sheets-xlsx-guard/make-ours.ts "$RUNNER_TEMP/ours"
+          OURS="$RUNNER_TEMP/ours" dotnet run --project tests/sheets-xlsx-guard -c Release
+
+      - name: Build the API
+        run: dotnet build -c Release apps/api/TatvaOS.Api.csproj
+
+      - name: "Sheets end to end: live editing, the .xlsx, the guard, documents and spreadsheets apart"
+        env:
+          SHEETS_API: http://localhost:5141/api
+          NODE_OPTIONS: --import ./tests/sheets/register.mjs
+          DOCS_TEST: tests/sheets/sheets-live.e2e.ts
+        run: bash tests/docs/run-docs-live.sh
+
+      # As production runs it: switch-on refused until Sheets' own server build.
+      - name: "Sheets switch: refused before its server build"
+        env:
+          Sheets__RefuseSwitchOnInDevelopment: 'true'
+          DOCS_TEST: tests/sheets/sheets-switch-production.test.mjs
+        run: bash tests/docs/run-docs-live.sh

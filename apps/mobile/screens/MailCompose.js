@@ -26,6 +26,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import {
   send, addressList, quoted, replySubject, forwardSubject, senderLabel,
   suggestRecipients, typingTerm, withRecipient, signatureFor, replyAllRecipients, forwardHeader,
+  replyRecipients,
 } from '../lib/mail';
 import { htmlToText } from '../lib/mailHtml';
 import { brand, surface, text } from '../theme';
@@ -76,7 +77,9 @@ export default function MailCompose({ session, draft, signature, mailboxId = nul
     const sig = signatureFor(signature, kind);
     if (kind === 'reply' && original) {
       return {
-        to: original.from?.email ?? '',
+        // Not simply the sender: a reply to my OWN message goes to the
+        // people I wrote to (see replyRecipients).
+        to: replyRecipients(original, myAddress).to,
         subject: replySubject(original.subject),
         body: `\n${sig ? `\n${sig}\n` : ''}${quoted(original)}`,
       };
